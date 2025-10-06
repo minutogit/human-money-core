@@ -90,7 +90,44 @@ Dieser Mechanismus ermöglicht eine dezentrale, fundierte Entscheidung im Konfli
 
 -----
 
-## 5\. Konfliktlösung: Die Geteilte Strategie (Offline vs. Layer 2)
+## 5\. Peer-to-Peer-Verbreitung (Gossip-Protokoll)
+
+Neben der zentralisierten Erkennung über einen Layer-2-Server ermöglicht die Architektur eine dezentrale, rein Peer-to-Peer-basierte Verbreitung von Fingerprints. Dies geschieht durch ein "Gossip-Protokoll", bei dem Teilnehmer sich gegenseitig über Transaktionen informieren, die sie beobachtet haben.
+
+Jedes Mal, wenn ein Wallet ein Transaktionsbündel an einen Empfänger sendet, legt es eine Sammlung von bis zu 150 Fingerprints bei, die es für relevant hält. Dieser Prozess ist intelligent gestaltet, um maximale Effizienz zu erreichen.
+
+### Die Intelligente Auswahl (Heuristik)
+
+Die `select_fingerprints_for_bundle`-Methode wählt nicht zufällig aus, welche Fingerprints sie weiterleitet. Sie folgt einer klaren Heuristik, um die nützlichsten Informationen zu verbreiten:
+
+- **Priorisierung nach Relevanz (`depth`):** Jeder Fingerprint hat eine "Tiefe" (`depth`), die angibt, wie viele Stationen (Hops) er bereits durchlaufen hat. Die Auswahl-Logik bevorzugt immer Fingerprints mit der niedrigsten `depth` (beginnend bei 0). Das sorgt dafür, dass neue, "frische" Informationen sich am schnellsten im Netzwerk verbreiten.
+
+- **Vermeidung von Redundanz (`known_by_peers`):** Das Wallet merkt sich für jeden Fingerprint, welchen Peers es diesen bereits gesendet hat. Vor dem Senden prüft es, ob der aktuelle Empfänger den Fingerprint schon kennt. Wenn ja, wird er übersprungen. Dies verhindert unnötigen Datenverkehr und Endlosschleifen.
+
+- **"Gieriges" Füllen des Kontingents:** Das Protokoll versucht immer, das Kontingent von 150 Fingerprints zu füllen. Wenn nicht genügend Fingerprints mit niedriger `depth` verfügbar sind, werden auch solche mit höherer `depth` ausgewählt. Dies maximiert den Informationsaustausch bei jeder Transaktion.
+
+### Die Verarbeitung (Min-Merge-Regel)
+
+Wenn ein Wallet ein Bündel mit Fingerprints empfängt, verarbeitet es diese nach einer einfachen, aber effektiven Regel:
+
+1.  Die `depth` jedes empfangenen Fingerprints wird um 1 erhöht (für den "Hop" vom Sender).
+2.  Das Wallet vergleicht diese neue, empfangene `depth` mit dem `depth`-Wert, den es eventuell bereits für denselben Fingerprint lokal gespeichert hat.
+3.  Es wird immer der **niedrigere (bessere) Wert beibehalten**.
+
+Diese "Min-Merge-Regel" stellt sicher, dass sich im Netzwerk immer die Information über den kürzesten Pfad zur ursprünglichen Transaktion durchsetzt.
+
+### Effizienz und Funktionsweise
+
+Das Protokoll ist aus mehreren Gründen effizient:
+
+- Es erzeugt keinen zusätzlichen Netzwerkverkehr, da die Fingerprints an reguläre Transaktionen "angehängt" (piggybacked) werden.
+- Es vermeidet durch die `known_by_peers`-Logik die redundante Verbreitung von Informationen.
+
+Durch diesen Mechanismus entsteht ein "Informations-Immunsystem": Kritische Informationen, insbesondere über Double-Spending-Versuche, verbreiten sich als natürlicher Nebeneffekt der normalen Systemnutzung schnell und organisch im gesamten Netzwerk.
+
+-----
+
+## 6\. Konfliktlösung: Die Geteilte Strategie (Offline vs. Layer 2)
 
 Die Reaktion des Wallets auf einen `ProofOfDoubleSpend` wurde verbessert und hängt davon ab, ob ein autoritatives Urteil eines L2-Servers vorliegt.
 

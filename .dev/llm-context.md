@@ -36,6 +36,8 @@ Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `voucher
 
 - **Fokus auf Betrugserkennung, nicht -vermeidung:** Da es kein globales Ledger gibt, kann die Core-Bibliothek nicht verhindern, dass ein Nutzer widersprüchliche Transaktionshistorien (Double Spending) erzeugt. Das System stellt stattdessen sicher, dass jeder Betrugsversuch durch digitale Signaturen kryptographisch beweisbar ist, was eine Erkennung und soziale Sanktionen in einem übergeordneten System (Layer 2) ermöglicht.
 
+- **Peer-to-Peer Gossip-Protokoll:** Zur dezentralen und anonymisierten Erkennung von Double Spending tauschen Wallets bei jeder Transaktion "Fingerabdrücke" anderer Transaktionen aus. Eine Heuristik (`depth`, `known_by_peers`) sorgt für eine effiziente Verbreitung.
+
 - **Fokus auf Kernlogik:** Zunächst wird nur die grundlegende Funktionalität der Gutschein- und Transaktionsverwaltung implementiert. Die "Transaction Verification Layer" und "User Trust Verification Layer" (Layer 2 mit Servern) sollen *nicht* implementiert werden, aber die Struktur der Transaktionsketten sollte so optimiert werden, dass eine spätere Erweiterung um diese Layer möglich ist.
 
 - **FFI/WASM-Kompatibilität:** Rust-Typen und -Funktionen müssen so gestaltet sein, dass sie einfach über FFI und WASM exponiert werden können (z.B. durch Verwendung von `#[no_mangle]`, C-kompatiblen Datentypen und `wasm_bindgen`).
@@ -241,8 +243,8 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
 ├── Cargo.lock
 ├── Cargo.toml
 ├── README.md
-├── sign_test_standards.sh
 ├── sign_standards.sh
+├── sign_test_standards.sh
 ├── src
 │   ├── app_service
 │   │   ├── app_queries.rs
@@ -287,14 +289,19 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
 │   │   └── mod.rs
 │   ├── test_utils.rs
 │   └── wallet
-│       ├── conflict_handler.rs
-│       ├── instance.rs
-│       ├── mod.rs
-│       ├── queries.rs
-│       ├── signature_handler.rs
-│       └── tests.rs
+│       ├── conflict_handler.rs
+│       ├── instance.rs
+│       ├── mod.rs
+│       ├── queries.rs
+│       ├── signature_handler.rs
+│       └── tests.rs
 ├── test_plan.txt
 ├── tests
+│   ├── architecture
+│   │   ├── hardening.rs
+│   │   ├── mod.rs
+│   │   └── resilience_and_gossip.rs
+│   ├── architecture_tests.rs
 │   ├── core_logic
 │   │   ├── lifecycle.rs
 │   │   ├── math.rs
@@ -313,15 +320,15 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
 │   ├── services_tests.rs
 │   ├── test_data
 │   │   └── standards
-│   │       ├── standard_behavior_rules.toml
-│   │       ├── standard_conflicting_rules.toml
-│   │       ├── standard_content_rules.toml
-│   │       ├── standard_field_group_rules.toml
-│   │       ├── standard_no_split.toml
-│   │       ├── standard_path_not_found.toml
-│   │       ├── standard_required_signatures.toml
-│   │       ├── standard_strict_counts.toml
-│   │       └── standard_strict_sig_description.toml
+│   │       ├── standard_behavior_rules.toml
+│   │       ├── standard_conflicting_rules.toml
+│   │       ├── standard_content_rules.toml
+│   │       ├── standard_field_group_rules.toml
+│   │       ├── standard_no_split.toml
+│   │       ├── standard_path_not_found.toml
+│   │       ├── standard_required_signatures.toml
+│   │       ├── standard_strict_counts.toml
+│   │       └── standard_strict_sig_description.toml
 │   ├── validation
 │   │   ├── business_rules.rs
 │   │   ├── forward_compatibility.rs
@@ -341,12 +348,12 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
 │   └── wallet_api_tests.rs
 ├── validate_standards.sh
 └── voucher_standards
-    ├── minuto_v1
-    │   └── standard.toml
-    ├── readme_de.md
-    ├── silver_v1
-    │   └── standard.toml
-    └── standard_template.toml
+    ├── minuto_v1
+    │   └── standard.toml
+    ├── readme_de.md
+    ├── silver_v1
+    │   └── standard.toml
+    └── standard_template.toml
 ```
 
 ## 7\. Implementierte Kernfunktionen
@@ -369,8 +376,8 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
   - Validiert eine vom Benutzer eingegebene BIP-39 Mnemonic-Phrase.
 - `pub fn create_profile(&mut self, mnemonic: &str, passphrase: Option<&str>, user_prefix: Option<&str>, password: &str) -> Result<(), String>`
   - Erstellt ein komplett neues Wallet und Profil, speichert es und setzt den Service in den `Unlocked`-Zustand.
-- `pub fn login(&mut self, mnemonic: &str, passphrase: Option<&str>, prefix: Option<&str>, password: &str) -> Result<(), String>`
-  - Entsperrt ein existierendes Wallet. Benötigt `mnemonic`, `passphrase` und `prefix`, um den korrekten, anonymisierten Speicher-Unterordner zu finden.
+- `pub fn login(&mut self, ..., cleanup_on_login: bool) -> Result<...>`
+  - Entsperrt ein existierendes Wallet. Benötigt die Geheimnisse, um den Speicherort zu finden. Bietet eine Option, beim Login eine Speicherbereinigung durchzuführen.
 - `pub fn recover_wallet_and_set_new_password(&mut self, mnemonic: &str, passphrase: Option<&str>, prefix: Option<&str>, new_password: &str) -> Result<(), String>`
   - Stellt ein Wallet wieder her und setzt ein neues Passwort. Benötigt ebenfalls die Geheimnisse (`mnemonic`, `passphrase`, `prefix`), um den Speicherort zu finden.
 - `pub fn logout(&mut self)`
@@ -397,6 +404,8 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
   - Verarbeitet eine empfangene losgelöste Signatur, validiert den Gutschein neu gegen den Standard, fügt die Signatur hinzu und speichert den Zustand.
 - `pub fn save_encrypted_data(...) -> Result<(), String>`
   - Speichert einen beliebigen Byte-Slice verschlüsselt auf der Festplatte.
+- `pub fn run_storage_cleanup(&mut self) -> Result<CleanupReport, VoucherCoreError>`
+  - Führt die Speicherbereinigung für Fingerprints und deren Metadaten durch.
 - `pub fn load_encrypted_data(...) -> Result<Vec<u8>, String>`
   - Lädt und entschlüsselt einen zuvor gespeicherten, beliebigen Datenblock.
 - `pub fn list_conflicts(&self) -> Result<Vec<ProofOfDoubleSpendSummary>, String>`
@@ -413,14 +422,17 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
 Das `wallet`-Modul wurde refaktorisiert, um die Komplexität zu reduzieren und die Verantwortlichkeiten klarer zu trennen. Die `Wallet`-Struktur ist weiterhin die zentrale Fassade der Kernlogik, delegiert aber spezifische Aufgaben an Sub-Module.
 
 - `pub struct Wallet` (`mod.rs`)
-  - Hält `UserProfile`, `VoucherStore`, `BundleMetadataStore`, `FingerprintStore` und `ProofStore` als In-Memory-Zustand.
+  - Hält `UserProfile`, `VoucherStore`, `BundleMetadataStore`, die getrennten `KnownFingerprints`, `OwnFingerprints`, `ProofStore` und den neuen `CanonicalMetadataStore` für Metadaten als In-Memory-Zustand.
 - **Lebenszyklus & Kernoperationen** (`mod.rs`)
   - `pub fn new_from_mnemonic(...)`: Erstellt ein brandneues Wallet.
   - `pub fn load(...)`: Lädt ein existierendes Wallet aus dem Storage.
   - `pub fn save(...)`: Speichert den aktuellen Zustand des Wallets.
   - `pub fn create_new_voucher(...)`: Erstellt einen neuen Gutschein und fügt ihn direkt zum Wallet hinzu.
-  - `pub fn create_transfer(...)`: Führt einen Transfer durch und managt den internen Zustand (Archivierung, Restbetrag).
-  - `pub fn process_encrypted_transaction_bundle(...)`: Verarbeitet eingehende Gutscheine oder Signaturen.
+  - `pub fn create_transfer(...)`: Führt einen Transfer durch und managt den internen Zustand (Archivierung, Restbetrag). Wählt und inkludiert dabei Fingerprints für das Gossip-Protokoll.
+  - `pub fn process_encrypted_transaction_bundle(...)`: Verarbeitet eingehende Gutscheine oder Signaturen, inkl. der Verarbeitung von empfangenen Fingerprints.
+- **Speicher-Management** (`mod.rs`)
+  - `pub fn run_storage_cleanup(...)`: Führt eine mehrstufige Bereinigung der Fingerprint-Stores durch (abgelaufen, dann nach `depth`).
+  - `pub fn rebuild_derived_stores(...)`: Rekonstruiert alle abgeleiteten Stores (Fingerprints, Metadaten) aus dem `VoucherStore`.
 - **Abfragen & Ansichten** (`queries.rs`)
   - `pub fn list_vouchers(&self) -> Vec<VoucherSummary>`: Gibt eine vereinfachte Liste aller Gutscheine zurück.
   - `pub fn get_voucher_details(...) -> Result<VoucherDetails, ...>`: Gibt detaillierte Informationen zu einem Gutschein zurück.
@@ -431,8 +443,8 @@ Das `wallet`-Modul wurde refaktorisiert, um die Komplexität zu reduzieren und d
   - `pub fn create_detached_signature_response(...)`: Erstellt eine signierte Antwort auf eine Anfrage.
   - `pub fn process_and_attach_signature(...)`: Verarbeitet eine empfangene Signatur und fügt sie dem passenden Gutschein hinzu.
 - **Konflikt-Management** (`conflict_handler.rs`)
-  - `pub fn scan_and_update_own_fingerprints(...)`: Scannt das Wallet und aktualisiert den Fingerprint-Store.
-  - `pub fn check_for_double_spend(&self) -> DoubleSpendCheckResult`: Prüft auf Double-Spending-Konflikte.
+  - `pub fn scan_and_rebuild_fingerprints(...)`: Scannt das Wallet und baut die getrennten Fingerprint-Stores (`OwnFingerprints`, `KnownFingerprints`) neu auf.
+  - `pub fn check_for_double_spend(&self) -> DoubleSpendCheckResult`: Prüft auf Double-Spending-Konflikte, indem es die verschiedenen Fingerprint-Stores zusammenführt.
   - `pub fn export_own_fingerprints(...)` & `import_foreign_fingerprints(...)`: Ermöglichen den Austausch von Fingerprints zwischen Wallets.
 - **Voucher Instance Management** (`instance.rs`)
   - `pub struct VoucherInstance`: Repräsentiert eine Instanz eines Gutscheins mit einem bestimmten Status.
@@ -446,7 +458,7 @@ Das `wallet`-Modul wurde refaktorisiert, um die Komplexität zu reduzieren und d
 Definiert die Abstraktion für die persistente Speicherung und stellt eine Standardimplementierung für das Dateisystem bereit.
 
 - `pub trait Storage`
-  - Definiert die Schnittstelle für Speicheroperationen, die nun für jeden Datenspeicher separat existieren (`load/save_wallet`, `load/save_bundle_metadata`, `load/save_fingerprints`, `load/save_proofs`).
+  - Definiert die Schnittstelle für Speicheroperationen, die nun für jeden Datenspeicher separat existieren (`load/save_wallet`, `load/save_bundle_metadata`, `load/save_known_fingerprints`, `load/save_own_fingerprints`, `load/save_fingerprint_metadata`, `load/save_proofs`).
 - `pub struct FileStorage`
   - Implementiert den `Storage`-Trait.
   - Speichert die Daten jedes Profils in einem eigenen **anonymen Unterverzeichnis**, um die Privatsphäre zu erhöhen.
@@ -477,14 +489,13 @@ Kapselt die zustandslose Logik für das Erstellen, Verschlüsseln, Öffnen und V
 Dieses Modul kapselt die Geschäftslogik zur Erkennung, Verifizierung und Verwaltung von Double-Spending-Konflikten.
 
 - `pub fn create_fingerprint_for_transaction(...) -> Result<TransactionFingerprint, ...>`: Erstellt einen einzelnen, anonymisierten Fingerprint für eine Transaktion, inklusive des verschlüsselten Zeitstempels.
-- `pub fn scan_and_update_own_fingerprints(...)`: Durchsucht alle Gutscheine und aktualisiert den Store mit den eigenen Fingerprints.
-- `pub fn check_for_double_spend(...) -> DoubleSpendCheckResult`: Führt eine Double-Spend-Prüfung durch, indem eigene und fremde Fingerprints kombiniert werden.
+- `pub fn scan_and_rebuild_fingerprints(...) -> Result<(OwnFingerprints, KnownFingerprints), ...>`: Baut die Fingerprint-Stores aus dem `VoucherStore` neu auf und partitioniert sie korrekt.
+- `pub fn check_for_double_spend(...) -> DoubleSpendCheckResult`: Führt eine Double-Spend-Prüfung durch, indem die nun getrennten `OwnFingerprints` und `KnownFingerprints` Stores kombiniert werden.
 - `pub fn create_proof_of_double_spend(...) -> Result<ProofOfDoubleSpend, ...>`: Erstellt einen fälschungssicheren, portablen Beweis für einen Double-Spend-Versuch mit deterministischer `proof_id`.
 - `pub fn create_and_sign_resolution_endorsement(...) -> Result<ResolutionEndorsement, ...>`: Erstellt eine signierte Beilegungserklärung für einen Konflikt.
 - `pub fn encrypt_transaction_timestamp(...) -> Result<u128, ...>`: Verschlüsselt einen Transaktionszeitstempel via XOR für die anonymisierte Analyse auf Layer 2.
 
-
-Dieses Modul enthält kryptographische Hilfsfunktionen für Schlüsselgenerierung, Hashing, Signaturen und User ID-Verwaltung.
+Dieses Modul enthält kryptographische Hilfsfunktionen für Schlüsselgenerierung, Hashing, Signaturen und User-ID-Verwaltung.
 
 - `pub fn get_hash(input: impl AsRef<[u8]>) -> String`
   - Berechnet einen SHA3-256-Hash der Eingabe und gibt ihn als Base58-kodierten String zurück.
@@ -494,6 +505,8 @@ Dieses Modul enthält kryptographische Hilfsfunktionen für Schlüsselgenerierun
   - Generiert eine User ID konform zum **`did:key`-Standard** mit einer integrierten Prüfsumme. Das Format ist `[prefix-]checksum@did:key:z...`.
 - `pub fn get_pubkey_from_user_id(user_id: &str) -> Result<EdPublicKey, GetPubkeyError>`
   - Extrahiert den Ed25519 Public Key aus einer `did:key`-basierten User ID-Zeichenkette.
+- `pub fn get_short_hash_from_user_id(user_id: &str) -> [u8; 4]`
+  - Erzeugt einen 4-Byte-Kurz-Hash aus der User ID für speichereffizientes Tracking von bekannten Peers im Gossip-Protokoll.
 - Bietet Funktionen zur Generierung und Validierung von BIP-39 Mnemonic-Phrasen (`generate_mnemonic`, `validate_mnemonic_phrase`).
 
 ### `services::secure_container_manager` Modul
@@ -543,7 +556,7 @@ Dieses Modul stellt die Kernlogik für die Erstellung und Verarbeitung von Gutsc
 
 Dieses Modul enthält die Logik zur Validierung eines `Voucher`-Objekts gegen die Regeln seines Standards. **Die Validierungslogik wurde erheblich gehärtet.**
 
-  - `pub fn validate_voucher_against_standard(voucher: &Voucher, standard: &VoucherStandardDefinition) -> Result<(), VoucherCoreError>`  - Führt eine umfassende Prüfung des Gutscheins durch, inklusive der korrekten Verkettung unter Einbeziehung des `voucher_nonce`, der Validierung der vereinfachten Transaktions-Signatur und neuer Geschäftsregeln (z.B. keine Transaktionen an sich selbst).
-  - Überprüft die **Konsistenz des eingebetteten Standard-Hashes** mit dem Hash des aktuellen Standard-Objekts, um sicherzustellen, dass der Gutschein immer gegen die exakte Version des Standards validiert wird, mit der er erstellt wurde.
-  - Überprüft, ob der **Transaktionstyp** (`t_type`) laut Standard erlaubt ist.
-  - Überprüft die Integrität und kryptographische Gültigkeit aller **zusätzlichen Signaturen** (`additional_signatures`).
+- `pub fn validate_voucher_against_standard(voucher: &Voucher, standard: &VoucherStandardDefinition) -> Result<(), VoucherCoreError>`  - Führt eine umfassende Prüfung des Gutscheins durch, inklusive der korrekten Verkettung unter Einbeziehung des `voucher_nonce`, der Validierung der vereinfachten Transaktions-Signatur und neuer Geschäftsregeln (z.B. keine Transaktionen an sich selbst).
+- Überprüft die **Konsistenz des eingebetteten Standard-Hashes** mit dem Hash des aktuellen Standard-Objekts, um sicherzustellen, dass der Gutschein immer gegen die exakte Version des Standards validiert wird, mit der er erstellt wurde.
+- Überprüft, ob der **Transaktionstyp** (`t_type`) laut Standard erlaubt ist.
+- Überprüft die Integrität und kryptographische Gültigkeit aller **zusätzlichen Signaturen** (`additional_signatures`).
