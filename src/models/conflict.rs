@@ -87,7 +87,7 @@ pub struct FingerprintMetadata {
     /// Ein Set von Hash-Suffixen der Peer-IDs, die diesen Fingerprint bereits
     /// kennen. Dient als effizienter Redundanzfilter beim Senden von Bundles.
     #[serde(default)]
-    pub known_by_peers: HashSet<String>,
+    pub known_by_peers: HashSet<[u8; 4]>,
 }
 
 /// Der zentrale, kanonische Speicher für alle dynamischen Fingerprint-Metadaten.

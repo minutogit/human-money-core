@@ -99,6 +99,28 @@ pub fn get_hash(input: impl AsRef<[u8]>) -> String {
     bs58::encode(hash_bytes).into_string()
 }
 
+/// Erzeugt einen 4-stelligen, Base58-kodierten Kurz-Hash aus der User ID für
+/// speichereffizientes Tracking von bekannten Peers.
+/// Gibt die letzten 4 Bytes des Hashes als Array zurück, um Speicher zu sparen.
+/// ACHTUNG: Dies ist ein verkürzter Hash und dient nur als Heuristik.
+pub fn get_short_hash_from_user_id(user_id: &str) -> [u8; 4] {
+    let hash = get_hash(user_id.as_bytes());
+    
+    // 1. Base58-String zurück in Bytes dekodieren
+    let hash_bytes = bs58::decode(&hash).into_vec().unwrap_or_default();
+
+    let len = hash_bytes.len();
+    let mut short_hash = [0u8; 4];
+
+    if len >= 4 {
+        // 2. Die letzten 4 Bytes kopieren (beste Streuung)
+        short_hash.copy_from_slice(&hash_bytes[len - 4..]);
+    } else if len > 0 {
+        // Notfall: Falls der Hash kürzer ist, mit Nullen auffüllen.
+        short_hash[4 - len..].copy_from_slice(&hash_bytes);
+    }
+    short_hash
+}
 
 /// Derives an Ed25519 keypair from a mnemonic phrase and an optional passphrase.
 ///

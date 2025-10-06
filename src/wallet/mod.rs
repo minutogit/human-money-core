@@ -55,7 +55,7 @@ pub struct Wallet {
     pub own_fingerprints: OwnFingerprints,
     /// Der Speicher für kryptographisch bewiesene Double-Spend-Konflikte.
     pub proof_store: ProofStore,
-    /// NEU: Zentraler, kanonischer Speicher für dynamische Metadaten.
+    /// Zentraler, kanonischer Speicher für dynamische Metadaten.
     /// Enthält Metadaten für ALLE Fingerprints in den anderen Stores.
     pub fingerprint_metadata: CanonicalMetadataStore,
 }
@@ -923,7 +923,9 @@ impl Wallet {
         vouchers_in_bundle: &[Voucher],
     ) -> Result<(Vec<TransactionFingerprint>, HashMap<String, u8>), VoucherCoreError> {
         const MAX_FINGERPRINTS_TO_SEND: usize = 150;
-        let recipient_id_str = recipient_id.to_string();
+        
+        // NEU: Verwende den speichereffizienten Kurz-Hash (gibt [u8; 4] zurück)
+        let recipient_short_hash = crate::services::crypto_utils::get_short_hash_from_user_id(recipient_id);
 
         let mut selected_fingerprints = Vec::new();
         let mut selected_depths = HashMap::new();
@@ -937,7 +939,7 @@ impl Wallet {
                     .fingerprint_metadata
                     .get_mut(&fingerprint.prvhash_senderid_hash)
                 {
-                    meta.known_by_peers.insert(recipient_id_str.clone());
+                    meta.known_by_peers.insert(recipient_short_hash);
                 }
             }
         }
@@ -961,7 +963,7 @@ impl Wallet {
                 .filter(|fp| {
                     if let Some(meta) = self.fingerprint_metadata.get(&fp.prvhash_senderid_hash) {
                         // Kriterien: Korrekte Tiefe UND Empfänger kennt ihn noch nicht
-                        meta.depth == current_depth && !meta.known_by_peers.contains(&recipient_id_str)
+                        meta.depth == current_depth && !meta.known_by_peers.contains(&recipient_short_hash)
                     } else {
                         false
                     }
@@ -979,7 +981,7 @@ impl Wallet {
             for fp in candidates_at_depth {
                 // Metadaten aktualisieren: Empfänger als "wissend" markieren
                 if let Some(meta) = self.fingerprint_metadata.get_mut(&fp.prvhash_senderid_hash) {
-                    meta.known_by_peers.insert(recipient_id_str.clone());
+                    meta.known_by_peers.insert(recipient_short_hash);
                     selected_fingerprints.push(fp.clone());
                     selected_depths.insert(fp.prvhash_senderid_hash.clone(), meta.depth);
                 }
@@ -998,7 +1000,9 @@ impl Wallet {
         forwarded_fingerprints: &[TransactionFingerprint],
         fingerprint_depths: &HashMap<String, u8>,
     ) -> Result<(), VoucherCoreError> {
-        let sender_id_str = bundle_header.sender_id.to_string();
+        
+        // NEU: Verwende den speichereffizienten Kurz-Hash (gibt [u8; 4] zurück)
+        let sender_short_hash = crate::services::crypto_utils::get_short_hash_from_user_id(&bundle_header.sender_id);
 
         // Phase 1: Aktiver Austausch (aus dem Bundle) - Min-Merge-Regel
         for fp in forwarded_fingerprints {
@@ -1011,7 +1015,7 @@ impl Wallet {
             if new_depth < meta.depth || meta.depth == 0 { // 0 ist der Default-Wert
                 meta.depth = new_depth;
             }
-            meta.known_by_peers.insert(sender_id_str.clone());
+            meta.known_by_peers.insert(sender_short_hash);
         }
 
         // Phase 2: Implizite Bestätigung (aus der Gutscheinkette)
@@ -1028,7 +1032,7 @@ impl Wallet {
                 // Nur initialisieren, wenn der Wert noch nicht durch aktiven Austausch gesetzt wurde
                 // KORREKTUR: Die Tiefe aus der Kette ist immer die aktuellste Information und sollte bestehende Werte überschreiben.
                 meta.depth = depth_in_chain;
-                meta.known_by_peers.insert(sender_id_str.clone());
+                meta.known_by_peers.insert(sender_short_hash);
             }
         }
         Ok(())

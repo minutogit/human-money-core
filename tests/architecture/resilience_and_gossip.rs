@@ -323,11 +323,15 @@ mod tests {
         let init_tx_fp_key = alice_service.get_unlocked_mut_for_test().0.fingerprint_metadata.keys().next().unwrap().clone();
 
         let bob_id = bob_service.get_user_id().unwrap();
+        
+        // NEU: Berechne den erwarteten Kurz-Hash für die Assertion
+        let bob_short_hash = voucher_lib::crypto_utils::get_short_hash_from_user_id(&bob_id);
+
         alice_service.create_transfer_bundle(&SILVER_STANDARD.0, &local_id, &bob_id, "10", None, None, PASSWORD).unwrap();
 
         let (alice_wallet, _) = alice_service.get_unlocked_mut_for_test();
         let meta = alice_wallet.fingerprint_metadata.get(&init_tx_fp_key).unwrap();
-        assert!(meta.known_by_peers.contains(&bob_id), "Bob sollte implizit als Kenner des Fingerprints markiert sein.");
+        assert!(meta.known_by_peers.contains(&bob_short_hash), "Bobs Kurz-Hash sollte implizit als Kenner des Fingerprints markiert sein.");
     }
 
     #[test]
@@ -388,7 +392,7 @@ mod tests {
             sender_signature: String::new(),
             valid_until: String::new(),
         };        let mut meta = FingerprintMetadata { depth: 0, ..Default::default() };
-        meta.known_by_peers.insert(bob_id.clone());
+        meta.known_by_peers.insert(voucher_lib::crypto_utils::get_short_hash_from_user_id(&bob_id));
         wallet.fingerprint_metadata.insert(key.clone(), meta);
         wallet.known_fingerprints.local_history.insert(key, vec![fp]);
 
