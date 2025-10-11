@@ -72,7 +72,17 @@ mod tests {
         let local_id = alice_service.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
 
         // Führe einen Split durch ( sende 40 an Bob, behalte 60)
-        alice_service.create_transfer_bundle(&SILVER_STANDARD.0, &local_id, &ACTORS.bob.user_id, "40", None, None, PASSWORD).unwrap();
+        let request = voucher_lib::wallet::MultiTransferRequest {
+            recipient_id: ACTORS.bob.user_id.clone(),
+            sources: vec![voucher_lib::wallet::SourceTransfer {
+                local_instance_id: local_id.clone(),
+                amount_to_send: "40".to_string(),
+            }],
+            notes: None,
+        };
+        let mut standards_toml = std::collections::HashMap::new();
+        standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
+        alice_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD).unwrap();
 
         let wallet_path = dir.path().join(&alice_profile.folder_name);
         alice_service.logout(); // Speichert den Zustand mit 2 Transaktionen

@@ -216,7 +216,21 @@ mod tests {
 
         // Tx 2: Alice -> Bob
         let bob_id = bob_service.get_user_id().unwrap();
-        let bundle1 = alice_service.create_transfer_bundle(&SILVER_STANDARD.0, &local_id, &bob_id, "10", None, None, PASSWORD).unwrap();
+        let bundle1 = {
+            let request = voucher_lib::wallet::MultiTransferRequest {
+                recipient_id: bob_id.clone(),
+                sources: vec![voucher_lib::wallet::SourceTransfer {
+                    local_instance_id: local_id.clone(),
+                    amount_to_send: "10".to_string(),
+                }],
+                notes: None,
+            };
+
+            let mut standards_toml = std::collections::HashMap::new();
+            standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
+
+            alice_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD)
+        }.unwrap();
         let mut standards = HashMap::new();
         standards.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
         bob_service.receive_bundle(&bundle1, &standards, None, PASSWORD).unwrap();
@@ -224,7 +238,17 @@ mod tests {
 
         // Tx 3: Bob -> Alice
         let alice_id = alice_service.get_user_id().unwrap();
-        let bundle2 = bob_service.create_transfer_bundle(&SILVER_STANDARD.0, &bob_local_id, &alice_id, "5", None, None, PASSWORD).unwrap();
+        let request = voucher_lib::wallet::MultiTransferRequest {
+            recipient_id: alice_id.clone(),
+            sources: vec![voucher_lib::wallet::SourceTransfer {
+                local_instance_id: bob_local_id.clone(),
+                amount_to_send: "5".to_string(),
+            }],
+            notes: None,
+        };
+        let mut standards_toml = std::collections::HashMap::new();
+        standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
+        let bundle2 = bob_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD).unwrap();
         // Erneute Bereitstellung der Standard-Definition für den Empfang.
         alice_service.receive_bundle(&bundle2, &standards, None, PASSWORD).unwrap();
 
@@ -327,7 +351,17 @@ mod tests {
         // NEU: Berechne den erwarteten Kurz-Hash für die Assertion
         let bob_short_hash = voucher_lib::crypto_utils::get_short_hash_from_user_id(&bob_id);
 
-        alice_service.create_transfer_bundle(&SILVER_STANDARD.0, &local_id, &bob_id, "10", None, None, PASSWORD).unwrap();
+        let request = voucher_lib::wallet::MultiTransferRequest {
+            recipient_id: bob_id.clone(),
+            sources: vec![voucher_lib::wallet::SourceTransfer {
+                local_instance_id: local_id.clone(),
+                amount_to_send: "10".to_string(),
+            }],
+            notes: None,
+        };
+        let mut standards_toml = std::collections::HashMap::new();
+        standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
+        alice_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD).unwrap();
 
         let (alice_wallet, _) = alice_service.get_unlocked_mut_for_test();
         let meta = alice_wallet.fingerprint_metadata.get(&init_tx_fp_key).unwrap();

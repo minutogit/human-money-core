@@ -91,13 +91,20 @@ fn api_app_service_full_lifecycle() {
     let local_id_alice = summaries_alice[0].local_instance_id.clone();
 
     // --- 5. Alice sendet den Gutschein an Bob ---
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: id_bob.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: local_id_alice.clone(),
+            amount_to_send: "100".to_string(),
+        }],
+        notes: None,
+    };
+    let mut standards_toml = std::collections::HashMap::new();
+    standards_toml.insert(standard.metadata.uuid.clone(), silver_standard_toml.clone());
     let transfer_bundle = service_alice
         .create_transfer_bundle(
-            &standard,
-            &local_id_alice,
-            &id_bob,
-            "100",
-            None,
+            request,
+            &standards_toml,
             None,
             password,
         )
@@ -347,14 +354,23 @@ fn api_wallet_transfer_full_amount() {
     let bob = &ACTORS.bob;
     let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
 
-    let (bundle_bytes, _) = alice_wallet
-        .create_transfer(
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: bob.identity.user_id.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: voucher_id.clone(),
+            amount_to_send: "100".to_string(),
+        }],
+        notes: None,
+    };
+
+    let mut standards = std::collections::HashMap::new();
+    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+
+    let bundle_bytes = alice_wallet
+        .execute_multi_transfer_and_bundle(
             &alice.identity,
-            minuto_standard,
-            &voucher_id,
-            &bob.identity.user_id,
-            "100",
-            None,
+            &standards,
+            request,
             None,
         )
         .unwrap();
@@ -394,14 +410,23 @@ fn api_wallet_transfer_split_amount() {
     let bob = &ACTORS.bob;
     let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
 
-    let (bundle_bytes, _) = alice_wallet
-        .create_transfer(
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: bob.identity.user_id.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: voucher_id.clone(),
+            amount_to_send: "30".to_string(),
+        }],
+        notes: None,
+    };
+
+    let mut standards = std::collections::HashMap::new();
+    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+
+    let bundle_bytes = alice_wallet
+        .execute_multi_transfer_and_bundle(
             &alice.identity,
-            minuto_standard,
-            &voucher_id,
-            &bob.identity.user_id,
-            "30",
-            None,
+            &standards,
+            request,
             None,
         )
         .unwrap();
@@ -436,13 +461,22 @@ fn api_wallet_transfer_invalid_amount() {
             .unwrap();
     let bob = &ACTORS.bob;
 
-    let result_negative = alice_wallet.create_transfer(
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: bob.identity.user_id.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: voucher_id.clone(),
+            amount_to_send: "-50".to_string(),
+        }],
+        notes: None,
+    };
+
+    let mut standards = std::collections::HashMap::new();
+    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+
+    let result_negative = alice_wallet.execute_multi_transfer_and_bundle(
         &alice.identity,
-        minuto_standard,
-        &voucher_id,
-        &bob.identity.user_id,
-        "-50",
-        None,
+        &standards,
+        request,
         None,
     );
     assert!(matches!(
@@ -450,13 +484,22 @@ fn api_wallet_transfer_invalid_amount() {
         Err(VoucherCoreError::Manager(_))
     ));
 
-    let result_decimal = alice_wallet.create_transfer(
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: bob.identity.user_id.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: voucher_id.clone(),
+            amount_to_send: "50.5".to_string(),
+        }],
+        notes: None,
+    };
+
+    let mut standards = std::collections::HashMap::new();
+    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+
+    let result_decimal = alice_wallet.execute_multi_transfer_and_bundle(
         &alice.identity,
-        minuto_standard,
-        &voucher_id,
-        &bob.identity.user_id,
-        "50.5",
-        None,
+        &standards,
+        request,
         None,
     );
     assert!(matches!(
@@ -488,13 +531,22 @@ fn api_wallet_transfer_inactive_voucher() {
         .unwrap();
     instance.status = VoucherStatus::Quarantined { reason: "test".to_string() };
 
-    let result = alice_wallet.create_transfer(
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: bob.identity.user_id.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: voucher_id.clone(),
+            amount_to_send: "50".to_string(),
+        }],
+        notes: None,
+    };
+
+    let mut standards = std::collections::HashMap::new();
+    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+
+    let result = alice_wallet.execute_multi_transfer_and_bundle(
         &alice.identity,
-        minuto_standard,
-        &voucher_id,
-        &bob.identity.user_id,
-        "50",
-        None,
+        &standards,
+        request,
         None,
     );
     assert!(matches!(
@@ -522,25 +574,43 @@ fn api_wallet_proactive_double_spend_prevention() {
             .unwrap();
     let bob = &ACTORS.bob;
 
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: bob.identity.user_id.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: voucher_id.clone(),
+            amount_to_send: "100".to_string(),
+        }],
+        notes: None,
+    };
+
+    let mut standards = std::collections::HashMap::new();
+    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+
     alice_wallet
-        .create_transfer(
+        .execute_multi_transfer_and_bundle(
             &alice.identity,
-            minuto_standard,
-            &voucher_id,
-            &bob.identity.user_id,
-            "100",
-            None,
+            &standards,
+            request,
             None,
         )
         .expect("First transfer should succeed");
 
-    let result = alice_wallet.create_transfer(
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: ACTORS.charlie.identity.user_id.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: voucher_id.clone(),
+            amount_to_send: "100".to_string(),
+        }],
+        notes: None,
+    };
+
+    let mut standards = std::collections::HashMap::new();
+    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+
+    let result = alice_wallet.execute_multi_transfer_and_bundle(
         &alice.identity,
-        minuto_standard,
-        &voucher_id,
-        &ACTORS.charlie.identity.user_id,
-        "100",
-        None,
+        &standards,
+        request,
         None,
     );
     assert!(matches!(
@@ -824,4 +894,76 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
     assert_eq!(details.voucher.creator.id, id_alice, "Creator ID should match");
     assert!(!details.voucher.transactions.is_empty(), "Voucher should have at least one transaction");
     assert_eq!(details.voucher.transactions[0].t_type, "init", "First transaction should be init");
+}
+
+/// Testet einen Multi-Transfer, bei dem Guthaben von mehreren Quellen gebündelt wird.
+///
+/// ### Szenario:
+/// 1.  Alice hat zwei Gutscheine (100m und 50m).
+/// 2.  Sie sendet 20m vom ersten und 30m vom zweiten Gutschein in einer einzigen Transaktion an Bob.
+/// 3.  Ihre alten Gutscheine werden archiviert und zwei neue, aktive Gutscheine
+///     mit den Restbeträgen (80m und 20m) werden für sie erstellt.
+/// 4.  Bob empfängt das Bundle und hat danach zwei neue, aktive Gutscheine (20m und 30m),
+///     was einem Gesamtguthaben von 50m entspricht.
+#[test]
+fn api_wallet_transfer_multi_source() {
+    // 1. SETUP
+    let alice = &ACTORS.alice;
+    let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
+    let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
+
+    // Füge zwei Gutscheine zu Alices Wallet hinzu
+    let voucher_id_1 =
+        add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", minuto_standard, true)
+            .unwrap();
+    let voucher_id_2 =
+        add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "50", minuto_standard, true)
+            .unwrap();
+
+    let bob = &ACTORS.bob;
+    let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
+
+    // 2. AKTION: Erstelle eine Anfrage, die 20 vom ersten und 30 vom zweiten Gutschein sendet.
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: bob.identity.user_id.clone(),
+        sources: vec![
+            voucher_lib::wallet::SourceTransfer {
+                local_instance_id: voucher_id_1.clone(),
+                amount_to_send: "20".to_string(),
+            },
+            voucher_lib::wallet::SourceTransfer {
+                local_instance_id: voucher_id_2.clone(),
+                amount_to_send: "30".to_string(),
+            },
+        ],
+        notes: Some("Zahlung aus zwei Quellen".to_string()),
+    };
+
+    let mut standards = std::collections::HashMap::new();
+    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+
+    let bundle_bytes = alice_wallet
+        .execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None)
+        .unwrap();
+
+    // 3. VERIFIZIERUNG (Alice)
+    let alice_summaries = alice_wallet.list_vouchers(None, None);
+    let mut remaining_amounts_alice: Vec<_> = alice_summaries
+        .iter()
+        .filter(|s| s.status == VoucherStatus::Active)
+        .map(|s| Decimal::from_str(&s.current_amount).unwrap())
+        .collect();
+    remaining_amounts_alice.sort(); // Sortieren für deterministischen Vergleich
+
+    assert_eq!(remaining_amounts_alice.len(), 2, "Alice sollte zwei aktive Rest-Gutscheine haben");
+    assert_eq!(remaining_amounts_alice, vec![Decimal::from(20), Decimal::from(80)]);
+
+    // 4. VERIFIZIERUNG (Bob)
+    bob_wallet
+        .process_encrypted_transaction_bundle(&bob.identity, &bundle_bytes, None)
+        .unwrap();
+    let balances = bob_wallet.get_total_balance_by_currency();
+    let minuto_balance = balances.iter().find(|b| b.unit == "Minuto").unwrap();
+    assert_eq!(minuto_balance.total_amount, "50", "Bobs Gesamtguthaben sollte 50 sein");
+    assert_eq!(bob_wallet.list_vouchers(None, None).len(), 2, "Bob sollte zwei neue Gutscheine erhalten haben");
 }

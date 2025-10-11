@@ -47,12 +47,24 @@ fn test_disallowed_transaction_type() {
     assert_eq!(voucher.voucher_standard.uuid, hostile_standard.metadata.uuid);
 
     // 2. ACT: Versuche einen Split-Transfer
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: "recipient-id".to_string(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: local_id.clone(),
+            amount_to_send: "40".to_string(), // Teilbetrag -> "split"
+        }],
+        notes: None,
+    };
+
+    let mut standards_toml = std::collections::HashMap::new();
+    standards_toml.insert(
+        hostile_standard.metadata.uuid.clone(),
+        hostile_standard_toml.clone()
+    );
+
     let result = service.create_transfer_bundle(
-        &hostile_standard,
-        &local_id,
-        "recipient-id",
-        "40", // Teilbetrag -> "split"
-        None,
+        request,
+        &standards_toml,
         None,
         password,
     );

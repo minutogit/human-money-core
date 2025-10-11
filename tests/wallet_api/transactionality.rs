@@ -75,12 +75,25 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
 
     // 2. ACT: Versuche, einen Transfer mit falschem Passwort zu erstellen.
     let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: "bob-recipient-id".to_string(), // Kann ein Dummy sein, da die Operation fehlschlägt
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: voucher_to_split_id.clone(),
+            amount_to_send: "40".to_string(),
+        }],
+        notes: None,
+    };
+
+    let mut standards_toml = std::collections::HashMap::new();
+    standards_toml.insert(
+        silver_standard.metadata.uuid.clone(),
+        silver_toml.clone() // Use the silver_toml from earlier in the test
+    );
+
     let result = service.create_transfer_bundle(
-        silver_standard,
-        &voucher_to_split_id,
-        "bob-recipient-id", // Kann ein Dummy sein, da die Operation fehlschlägt
-        "40",
-        None,
+        request,
+        &standards_toml,
         None,
         wrong_password, // Falsches Passwort, um Speicherfehler auszulösen
     );
@@ -145,13 +158,25 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
     let voucher_id = service_sender.get_voucher_summaries(None, None).unwrap()[0]
         .local_instance_id
         .clone();
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: id_recipient.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: voucher_id.clone(),
+            amount_to_send: "100".to_string(),
+        }],
+        notes: None,
+    };
+
+    let mut standards_toml = std::collections::HashMap::new();
+    standards_toml.insert(
+        silver_standard.metadata.uuid.clone(),
+        silver_toml.clone() // Use the silver_toml from earlier in the test
+    );
+
     let bundle = service_sender
         .create_transfer_bundle(
-            silver_standard,
-            &voucher_id,
-            &id_recipient,
-            "100",
-            None,
+            request,
+            &standards_toml,
             None,
             "pwd",
         )

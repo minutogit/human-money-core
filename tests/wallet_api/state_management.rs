@@ -463,7 +463,21 @@ fn api_wallet_save_and_load_fidelity() {
             .expect("Silver voucher summary not found")
             .local_instance_id
             .clone();
-        service_a.create_transfer_bundle(silver_standard, &silver_voucher_id_10oz, &ACTORS.bob.identity.user_id, "3", None, None, password).unwrap();
+        
+        let request = voucher_lib::wallet::MultiTransferRequest {
+            recipient_id: ACTORS.bob.identity.user_id.clone(),
+            sources: vec![voucher_lib::wallet::SourceTransfer {
+                local_instance_id: silver_voucher_id_10oz.clone(),
+                amount_to_send: "3".to_string(),
+            }],
+            notes: None,
+        };
+        let mut standards_toml = std::collections::HashMap::new();
+        standards_toml.insert(
+            silver_standard.metadata.uuid.clone(),
+            silver_toml.clone()
+        );
+        service_a.create_transfer_bundle(request, &standards_toml, None, password).unwrap();
 
         // Bundle-Metadaten durch Empfang erzeugen
         let transfer_back_bundle = {
@@ -484,7 +498,23 @@ fn api_wallet_save_and_load_fidelity() {
                 )
                 .unwrap();
             let local_id = service_bob.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
-            service_bob.create_transfer_bundle(silver_standard, &local_id, &id_a, "1", None, None, "pwd").unwrap()
+            
+            let request = voucher_lib::wallet::MultiTransferRequest {
+                recipient_id: id_a.clone(),
+                sources: vec![voucher_lib::wallet::SourceTransfer {
+                    local_instance_id: local_id.clone(),
+                    amount_to_send: "1".to_string(),
+                }],
+                notes: None,
+            };
+
+            let mut standards_toml = std::collections::HashMap::new();
+            standards_toml.insert(
+                silver_standard.metadata.uuid.clone(),
+                silver_toml.clone()
+            );
+
+            service_bob.create_transfer_bundle(request, &standards_toml, None, "pwd").unwrap()
         };
         service_a.receive_bundle(&transfer_back_bundle, &standards_map, None, password).unwrap();
 
@@ -497,12 +527,20 @@ fn api_wallet_save_and_load_fidelity() {
             .expect("7oz silver voucher for full transfer not found")
             .local_instance_id
             .clone();
-        service_a.create_transfer_bundle(
-            silver_standard,
-            &silver_voucher_id_7oz,
-            &ACTORS.charlie.identity.user_id, "7", None, None,
-            password
-        ).unwrap();
+        let request = voucher_lib::wallet::MultiTransferRequest { 
+            recipient_id: ACTORS.charlie.identity.user_id.clone(), 
+            sources: vec![voucher_lib::wallet::SourceTransfer { 
+                local_instance_id: silver_voucher_id_7oz.clone(), 
+                amount_to_send: "7".to_string(), 
+            }], 
+            notes: None, 
+        }; 
+        let mut standards_toml = std::collections::HashMap::new(); 
+        standards_toml.insert( 
+            silver_standard.metadata.uuid.clone(), 
+            silver_toml.clone() 
+        ); 
+        service_a.create_transfer_bundle(request, &standards_toml, None, password).unwrap();
     } // service_a geht out of scope, Wallet wird aus dem Speicher entfernt
 
     // --- 3. Wallet B aus demselben Verzeichnis laden ---

@@ -229,6 +229,8 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
 
 - **Teilzahlungen:** Ein Gutschein kann in kleinere Beträge aufgeteilt werden. Der Restbetrag verbleibt beim Sender, der daraus weitere Transaktionen erstellen kann.
 
+- **Multi-Quellen-Transfers:** Guthaben kann aus mehreren Gutscheinen in einer einzigen Transaktion an einen Empfänger gebündelt werden. Dies wird durch die `MultiTransferRequest`-Struktur und die `execute_multi_transfer_and_bundle`-Methode ermöglicht.
+
 - **Zusätzliche Signaturen:** Möglichkeit, weitere Signaturen (z.B. von Bürgen/Garanten) in die Gutschein-Datei zu integrieren.
 
 - **Verschlüsselung:** Die Übertragung von Daten (z.B. Transaktionsbündel) wird durch einen generischen `SecureContainer` geschützt, der Multi-Empfänger-Fähigkeiten mittels statischem Diffie-Hellman (X25519) und Key-Wrapping bietet.
@@ -392,8 +394,8 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
   - Gibt die User-ID des Wallet-Inhabers zurück.
 - `pub fn create_new_voucher(&mut self, standard_toml_content: &str, lang_preference: &str, data: NewVoucherData, password: &str) -> Result<Voucher, String>`
   - Erstellt einen brandneuen Gutschein, validiert ihn gegen den bereitgestellten Standard, fügt ihn zum Wallet hinzu und speichert den Zustand.
-- `pub fn create_transfer_bundle(&mut self, standard_definition: &VoucherStandardDefinition, local_instance_id: &str, recipient_id: &str, amount_to_send: &str, notes: Option<String>, archive: Option<&dyn VoucherArchive>, password: &str) -> Result<Vec<u8>, String>`
-  - Erstellt eine Transaktion, verpackt sie in ein `SecureContainer`-Bundle und speichert den neuen Wallet-Zustand. Benötigt die Standard-Definition zur Validierung.
+- `pub fn create_transfer_bundle(&mut self, request: MultiTransferRequest, standard_definitions_toml: &HashMap<String, String>, archive: Option<&dyn VoucherArchive>, password: &str) -> Result<Vec<u8>, String>`
+  - Erstellt eine(n oder mehrere) Transaktion(en) für einen oder mehrere Quell-Gutscheine, verpackt sie in ein `SecureContainer`-Bundle und speichert den neuen Wallet-Zustand. Akzeptiert eine `MultiTransferRequest`-Struktur, die eine Liste von Quell-Gutscheinen und Beträgen enthält.
 - `pub fn receive_bundle(&mut self, bundle_data: &[u8], standard_definitions_toml: &HashMap<String, String>, archive: Option<&dyn VoucherArchive>, password: &str) -> Result<ProcessBundleResult, String>`
   - Verarbeitet ein empfangenes Transaktions-Bundle, validiert die enthaltenen Gutscheine gegen die bereitgestellten Standard-Definitionen und speichert den neuen Wallet-Zustand.
 - `pub fn create_signing_request_bundle(...) -> Result<Vec<u8>, String>`
@@ -423,12 +425,13 @@ Das `wallet`-Modul wurde refaktorisiert, um die Komplexität zu reduzieren und d
 
 - `pub struct Wallet` (`mod.rs`)
   - Hält `UserProfile`, `VoucherStore`, `BundleMetadataStore`, die getrennten `KnownFingerprints`, `OwnFingerprints`, `ProofStore` und den neuen `CanonicalMetadataStore` für Metadaten als In-Memory-Zustand.
+  - Enthält neue Strukturen: `MultiTransferRequest` für die Anforderung von Transfers mit mehreren Quellen und `SourceTransfer` für die Definition einzelner Quellpositionen in einem Transfer.
 - **Lebenszyklus & Kernoperationen** (`mod.rs`)
   - `pub fn new_from_mnemonic(...)`: Erstellt ein brandneues Wallet.
   - `pub fn load(...)`: Lädt ein existierendes Wallet aus dem Storage.
   - `pub fn save(...)`: Speichert den aktuellen Zustand des Wallets.
   - `pub fn create_new_voucher(...)`: Erstellt einen neuen Gutschein und fügt ihn direkt zum Wallet hinzu.
-  - `pub fn create_transfer(...)`: Führt einen Transfer durch und managt den internen Zustand (Archivierung, Restbetrag). Wählt und inkludiert dabei Fingerprints für das Gossip-Protokoll.
+  - `pub fn execute_multi_transfer_and_bundle(...)`: Führt einen Transfer durch, der Guthaben aus mehreren Quell-Gutscheinen kombinieren kann. Ersetzt die alte `create_transfer`-Methode. Akzeptiert eine `MultiTransferRequest`-Struktur mit einer Liste von Quellen und führt alle Transaktionen in einem einzigen Bundle durch. Managt den internen Zustand (Archivierung, Restbetrag) und wählt Fingerprints für das Gossip-Protokoll.
   - `pub fn process_encrypted_transaction_bundle(...)`: Verarbeitet eingehende Gutscheine oder Signaturen, inkl. der Verarbeitung von empfangenen Fingerprints.
 - **Speicher-Management** (`mod.rs`)
   - `pub fn run_storage_cleanup(...)`: Führt eine mehrstufige Bereinigung der Fingerprint-Stores durch (abgelaufen, dann nach `depth`).

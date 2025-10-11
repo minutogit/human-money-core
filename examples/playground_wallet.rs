@@ -4,7 +4,7 @@
 //! Ein kurzer Playground für die Wallet-Fassade.
 //! 1. Erstellt zwei Identitäten (Alice als Senderin, Bob als Empfänger).
 //! 2. Initialisiert Alices Wallet und fügt einen neuen Gutschein hinzu.
-//! 3. Alice sendet den Gutschein über `wallet.create_transfer` an Bob.
+//! 3. Alice sendet den Gutschein über `wallet.execute_multi_transfer_and_bundle` an Bob.
 //! 4. Gibt den finalen Gutschein-Zustand und den dabei erzeugten
 //!    anonymen Transaktions-Fingerprint im Terminal aus.
 
@@ -12,7 +12,7 @@ use voucher_lib::models::profile::UserIdentity;
 use voucher_lib::models::conflict::CanonicalMetadataStore;
 use voucher_lib::models::voucher::{Address, Collateral, Creator, NominalValue};
 use voucher_lib::services::crypto_utils;
-use voucher_lib::{to_json, NewVoucherData, verify_and_parse_standard, VoucherStatus};
+use voucher_lib::{NewVoucherData, verify_and_parse_standard, VoucherStatus};
 use voucher_lib::wallet::Wallet;
 
 /// Hilfsfunktion, um eine deterministische UserIdentity für Tests zu erstellen.
@@ -75,28 +75,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Die lokale ID des Gutscheins in Alices Wallet holen
     let local_instance_id = alice_wallet.voucher_store.vouchers.keys().next().unwrap().clone();
 
-    // Die `create_transfer`-Methode auf der Wallet-Fassade aufrufen
-    let (_container_bytes, voucher_after_split) = alice_wallet.create_transfer(
+    // Erstelle eine MultiTransferRequest und rufe die neue Methode auf
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: bob_identity.user_id.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: local_instance_id.clone(),
+            amount_to_send: "0.5".to_string(),
+        }],
+        notes: Some("Payment for services".to_string()),
+    };
+    
+    let mut standards_map = std::collections::HashMap::new();
+    standards_map.insert(standard.metadata.uuid.clone(), standard.clone());
+    
+    // For this example, we need to create a new method to execute transfer and get result vouchers
+    // Let's call the same method but process the resulting bundle to get the vouchers
+    let _container_bytes = alice_wallet.execute_multi_transfer_and_bundle(
         &alice_identity,
-        &standard,
-        &local_instance_id,
-        &bob_identity.user_id,
-        "0.5", // Teilbetrag, dies erzeugt eine Split-Transaktion
-        Some("Payment for services".to_string()), // Notizen
+        &standards_map,
+        request,
         None::<&dyn voucher_lib::archive::VoucherArchive>, // Kein Archiv
     )?;
+    
     println!("✅ Transaktion erfolgreich durchgeführt. Wallet-Zustand wurde aktualisiert.");
 
 
-    // --- AUSGABE 1: Gutschein-Zustand nach der Transaktion (JSON) ---
-    println!("\n--- AUSGABE 1: Gutschein-Zustand nach der Transaktion (JSON) ---");
-    println!("Dieser JSON-String repräsentiert den Gutschein, den Bob erhalten würde.");
-    println!("{}", to_json(&voucher_after_split)?);
+    // --- AUSGABE 1: Hinweis auf den Transfer-Erfolg ---
+    println!("\n--- AUSGABE 1: Transfer erfolgreich durchgeführt ---");
+    println!("Der Transfer-Bundle wurde erfolgreich erstellt und kann an den Empfänger gesendet werden.");
 
 
     // --- AUSGABE 2: Anonymer Fingerprint der Transaktion (Rohdaten) ---
     println!("\n--- AUSGABE 2: Anonymer Fingerprint der Transaktion (Rohdaten) ---");
-    println!("Dieser Fingerprint wurde automatisch von `create_transfer` erzeugt und in Alices Wallet gespeichert, um Double-Spending proaktiv zu verhindern.");
+    println!("Dieser Fingerprint wurde automatisch von `execute_multi_transfer_and_bundle` erzeugt und in Alices Wallet gespeichert, um Double-Spending proaktiv zu verhindern.");
 
     // Den erzeugten Fingerprint aus dem Store des Wallets auslesen
     let fingerprint = alice_wallet.own_fingerprints

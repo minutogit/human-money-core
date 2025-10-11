@@ -6,10 +6,9 @@
 use super::{AppState, AppService};
 use crate::archive::VoucherArchive;
 use crate::models::conflict::ResolutionEndorsement;
-use crate::models::voucher::Voucher;
-use crate::models::voucher_standard_definition::VoucherStandardDefinition;
+use crate::models::voucher::{Voucher};
 use crate::services::voucher_manager::NewVoucherData;
-use crate::wallet::ProcessBundleResult;
+use crate::wallet::{MultiTransferRequest, ProcessBundleResult};
 use std::collections::HashMap;
 
 impl AppService {
@@ -116,34 +115,40 @@ impl AppService {
     /// Schlägt fehl, wenn das Wallet gesperrt ist, die Transaktion ungültig ist oder der Speicherzugriff misslingt.
     pub fn create_transfer_bundle(
         &mut self,
-        standard_definition: &VoucherStandardDefinition,
-        local_instance_id: &str,
-        recipient_id: &str,
-        amount_to_send: &str,
-        notes: Option<String>,
+        // NEU: Nur noch die universelle Request-Struktur
+        request: MultiTransferRequest,
+        // NEU: Notwendig für die Orchestrierung
+        standard_definitions_toml: &HashMap<String, String>,
         archive: Option<&dyn VoucherArchive>,
         password: &str,
     ) -> Result<Vec<u8>, String> {
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
- 
+
+        // Vorab alle benötigten Standards parsen
+        let mut verified_definitions = HashMap::new();
+        for (_uuid, toml_content) in standard_definitions_toml {
+            match crate::services::standard_manager::verify_and_parse_standard(toml_content) {
+                Ok((def, _hash)) => { verified_definitions.insert(def.metadata.uuid.clone(), def); },
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+
         let (result, new_state) = match current_state {
             AppState::Unlocked { mut storage, wallet, identity } => {
                 // TRANSANKTIONALER ANSATZ:
                 // 1. Erstelle eine temporäre Kopie des Wallets für die Änderungen.
                 let mut temp_wallet = wallet.clone();
- 
+
                 // 2. Führe die Operation auf der Kopie aus.
-                match temp_wallet.create_transfer(
+                // RUFE DIE NEUE, VEREINHEITLICHTE ORCHESTRIERUNGS-LOGIK AUF
+                match temp_wallet.execute_multi_transfer_and_bundle(
                     &identity,
-                    standard_definition,
-                    local_instance_id,
-                    recipient_id,
-                    amount_to_send,
-                    notes,
+                    &verified_definitions,
+                    request,
                     archive,
                 ) {
                     // 3. Versuche, die Kopie zu speichern ("Commit").
-                    Ok((bundle_bytes, _)) => {
+                    Ok(bundle_bytes) => {
                         match temp_wallet.save(&mut storage, &identity, password) {
                             Ok(_) => (
                                 // 4a. Erfolg: Gib die modifizierte Kopie als neuen Zustand zurück.

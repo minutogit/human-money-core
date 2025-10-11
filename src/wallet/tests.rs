@@ -211,14 +211,21 @@ mod instance_state_behavior {
 
         // --- Aktion & Assertions ---
 
-        // 1. Test create_transfer
-        let transfer_result = wallet.create_transfer(
+        // 1. Test execute_multi_transfer_and_bundle with MultiTransferRequest
+        let request = crate::wallet::MultiTransferRequest {
+            recipient_id: ACTORS.bob.user_id.clone(),
+            sources: vec![crate::wallet::SourceTransfer {
+                local_instance_id: local_id.clone(),
+                amount_to_send: "50".to_string(),
+            }],
+            notes: None,
+        };
+        let mut standards_map = std::collections::HashMap::new();
+        standards_map.insert(standard.metadata.uuid.clone(), standard.clone());
+        let transfer_result = wallet.execute_multi_transfer_and_bundle(
             alice,
-            standard,
-            &local_id,
-            &ACTORS.bob.user_id,
-            "50",
-            None,
+            &standards_map,
+            request,
             None,
         );
         assert!(

@@ -247,13 +247,22 @@ mod local_double_spend_detection {
         // ### Akt 1: Legitime Transaktion ###
         // Sender sendet den Gutschein an Empfänger 1.
         // Dies sollte erfolgreich sein und den Fingerprint der Transaktion im Wallet des Senders speichern.
-        let transfer1_result = sender_wallet.create_transfer(
+        let request = voucher_lib::wallet::MultiTransferRequest {
+            recipient_id: recipient1_identity.user_id.clone(),
+            sources: vec![voucher_lib::wallet::SourceTransfer {
+                local_instance_id: initial_local_id.clone(),
+                amount_to_send: "100".to_string(),
+            }],
+            notes: None,
+        };
+
+        let mut standards = std::collections::HashMap::new();
+        standards.insert(standard.metadata.uuid.clone(), standard.clone());
+
+        let transfer1_result = sender_wallet.execute_multi_transfer_and_bundle(
             sender_identity,
-            standard,
-            &initial_local_id,
-            &recipient1_identity.user_id,
-            "100",
-            None,
+            &standards,
+            request,
             None,
         );
         assert!(transfer1_result.is_ok(), "Die erste Transaktion sollte erfolgreich sein.");
@@ -269,13 +278,22 @@ mod local_double_spend_detection {
         // ### Akt 3: Der blockierte Double-Spend-Versuch ###
         // Sender versucht, den wiederhergestellten, ursprünglichen Gutschein an Empfänger 2 zu senden.
         // Dies MUSS fehlschlagen, weil `create_transfer` den existierenden Fingerprint aus der ersten Transaktion erkennt.
-        let transfer2_result = sender_wallet.create_transfer(
+        let request = voucher_lib::wallet::MultiTransferRequest {
+            recipient_id: recipient2_identity.user_id.clone(),
+            sources: vec![voucher_lib::wallet::SourceTransfer {
+                local_instance_id: initial_local_id.clone(), // Wichtig: Dieselbe lokale ID wird wiederverwendet
+                amount_to_send: "100".to_string(),
+            }],
+            notes: None,
+        };
+
+        let mut standards = std::collections::HashMap::new();
+        standards.insert(standard.metadata.uuid.clone(), standard.clone());
+
+        let transfer2_result = sender_wallet.execute_multi_transfer_and_bundle(
             sender_identity,
-            standard,
-            &initial_local_id, // Wichtig: Dieselbe lokale ID wird wiederverwendet
-            &recipient2_identity.user_id,
-            "100",
-            None,
+            &standards,
+            request,
             None,
         );
 
@@ -311,13 +329,23 @@ mod local_double_spend_detection {
         // Alice verwendet die neue, korrekte Methode, um den Gutschein an Bob zu senden.
         // Wir klonen die ID, um den immutable borrow auf alice_wallet sofort zu beenden.
         let alice_initial_local_id = alice_wallet.voucher_store.vouchers.keys().next().unwrap().clone();
-        let (bundle_to_bob, _) = alice_wallet.create_transfer(
+        
+        let request = voucher_lib::wallet::MultiTransferRequest {
+            recipient_id: bob_identity.user_id.clone(),
+            sources: vec![voucher_lib::wallet::SourceTransfer {
+                local_instance_id: alice_initial_local_id.clone(),
+                amount_to_send: "100".to_string(),
+            }],
+            notes: None,
+        };
+
+        let mut standards = std::collections::HashMap::new();
+        standards.insert(standard.metadata.uuid.clone(), standard.clone());
+
+        let bundle_to_bob = alice_wallet.execute_multi_transfer_and_bundle(
             alice_identity,
-            standard,
-            &alice_initial_local_id,
-            &bob_identity.user_id,
-            "100",
-            None,
+            &standards,
+            request,
             Some(&archive),
         ).unwrap();
         bob_wallet.process_encrypted_transaction_bundle(bob_identity, &bundle_to_bob, Some(&archive)).unwrap();
@@ -367,13 +395,23 @@ mod local_double_spend_detection {
         // Charlie handelt legitim und verwendet die korrekte `create_transfer` Methode.
         // Wir klonen die ID, um den immutable borrow auf charlie_wallet sofort zu beenden.
         let charlie_local_id = charlie_wallet.voucher_store.vouchers.keys().next().unwrap().clone();
-        let (bundle_to_alice_1, _) = charlie_wallet.create_transfer(
+        
+        let request = voucher_lib::wallet::MultiTransferRequest {
+            recipient_id: alice_identity.user_id.clone(),
+            sources: vec![voucher_lib::wallet::SourceTransfer {
+                local_instance_id: charlie_local_id.clone(),
+                amount_to_send: "100".to_string(),
+            }],
+            notes: None,
+        };
+
+        let mut standards = std::collections::HashMap::new();
+        standards.insert(standard.metadata.uuid.clone(), standard.clone());
+
+        let bundle_to_alice_1 = charlie_wallet.execute_multi_transfer_and_bundle(
             charlie_identity,
-            standard,
-            &charlie_local_id,
-            &alice_identity.user_id,
-            "100",
-            None,
+            &standards,
+            request,
             Some(&archive)
         ).unwrap();
 
@@ -395,13 +433,23 @@ mod local_double_spend_detection {
         // David handelt ebenfalls legitim (aus seiner Sicht) und verwendet `create_transfer`.
         // Wir klonen die ID, um den immutable borrow auf david_wallet sofort zu beenden.
         let david_local_id = david_wallet.voucher_store.vouchers.keys().next().unwrap().clone();
-        let (bundle_to_alice_2, _) = david_wallet.create_transfer(
+        
+        let request = voucher_lib::wallet::MultiTransferRequest {
+            recipient_id: alice_identity.user_id.clone(),
+            sources: vec![voucher_lib::wallet::SourceTransfer {
+                local_instance_id: david_local_id.clone(),
+                amount_to_send: "100".to_string(),
+            }],
+            notes: None,
+        };
+
+        let mut standards = std::collections::HashMap::new();
+        standards.insert(standard.metadata.uuid.clone(), standard.clone());
+
+        let bundle_to_alice_2 = david_wallet.execute_multi_transfer_and_bundle(
             david_identity,
-            standard,
-            &david_local_id,
-            &alice_identity.user_id,
-            "100",
-            None,
+            &standards,
+            request,
             Some(&archive)
         ).unwrap();
 
@@ -441,12 +489,22 @@ mod local_double_spend_detection {
         );
 
         // Der Versuch, den unter Quarantäne stehenden Gutschein (die 'Verlierer'-Instanz) auszugeben, muss fehlschlagen.
-        let transfer_attempt = alice_wallet.create_transfer(
+        let request = voucher_lib::wallet::MultiTransferRequest {
+            recipient_id: bob_identity.user_id.clone(),
+            sources: vec![voucher_lib::wallet::SourceTransfer {
+                local_instance_id: loser_local_id.unwrap(),
+                amount_to_send: "100".to_string(),
+            }],
+            notes: None,
+        };
+
+        let mut standards = std::collections::HashMap::new();
+        standards.insert(standard.metadata.uuid.clone(), standard.clone());
+
+        let transfer_attempt = alice_wallet.execute_multi_transfer_and_bundle(
             alice_identity,
-            standard,
-            &loser_local_id.unwrap(),
-            &bob_identity.user_id,
-            "100", None, // notes
+            &standards,
+            request,
             Some(&archive) // archive
         );
         assert!(transfer_attempt.is_err(), "Die Verwendung eines unter Quarantäne stehenden Gutscheins via create_transfer muss fehlschlagen.");
@@ -722,7 +780,19 @@ mod security_vulnerabilities {
         issuer_wallet.voucher_store.vouchers.insert(local_id.clone(), instance);
 
         // Issuer sendet den Gutschein an den Hacker, der ihn nun für Angriffe besitzt.
-        let (container_to_hacker, _) = issuer_wallet.create_transfer(&ACTORS.issuer, standard, &local_id, &ACTORS.hacker.user_id, "100", None, None).unwrap();
+        let request = voucher_lib::wallet::MultiTransferRequest {
+            recipient_id: ACTORS.hacker.user_id.clone(),
+            sources: vec![voucher_lib::wallet::SourceTransfer {
+                local_instance_id: local_id.clone(),
+                amount_to_send: "100".to_string(),
+            }],
+            notes: None,
+        };
+
+        let mut standards = std::collections::HashMap::new();
+        standards.insert(standard.metadata.uuid.clone(), standard.clone());
+
+        let container_to_hacker = issuer_wallet.execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None).unwrap();
         hacker_wallet.process_encrypted_transaction_bundle(&ACTORS.hacker, &container_to_hacker, None).unwrap();
         let voucher_in_hacker_wallet = &hacker_wallet.voucher_store.vouchers.iter().next().unwrap().1.voucher;
 
@@ -797,7 +867,19 @@ mod security_vulnerabilities {
         let local_id_a = Wallet::calculate_local_instance_id(&voucher_a, &ACTORS.alice.user_id).unwrap();
         let instance_a = VoucherInstance { voucher: voucher_a, status: VoucherStatus::Active, local_instance_id: local_id_a.clone() };
         alice_wallet.voucher_store.vouchers.insert(local_id_a.clone(), instance_a);
-        let (container_to_bob, _) = alice_wallet.create_transfer(&ACTORS.alice, standard, &local_id_a, &ACTORS.bob.user_id, "100", None, None).unwrap();
+        let request = voucher_lib::wallet::MultiTransferRequest {
+            recipient_id: ACTORS.bob.user_id.clone(),
+            sources: vec![voucher_lib::wallet::SourceTransfer {
+                local_instance_id: local_id_a.clone(),
+                amount_to_send: "100".to_string(),
+            }],
+            notes: None,
+        };
+
+        let mut standards = std::collections::HashMap::new();
+        standards.insert(standard.metadata.uuid.clone(), standard.clone());
+
+        let container_to_bob = alice_wallet.execute_multi_transfer_and_bundle(&ACTORS.alice, &standards, request, None).unwrap();
         bob_wallet_hacker.process_encrypted_transaction_bundle(&ACTORS.bob, &container_to_bob, None).unwrap();
         let voucher_in_bob_wallet = &bob_wallet_hacker.voucher_store.vouchers.iter().next().unwrap().1.voucher;
 
@@ -832,7 +914,19 @@ mod security_vulnerabilities {
         let local_id_issuer = Wallet::calculate_local_instance_id(&initial_voucher, &ACTORS.issuer.user_id).unwrap();
         let instance_i = VoucherInstance { voucher: initial_voucher, status: VoucherStatus::Active, local_instance_id: local_id_issuer.clone() };
         issuer_wallet.voucher_store.vouchers.insert(local_id_issuer.clone(), instance_i);
-        let (container_to_hacker, _) = issuer_wallet.create_transfer(&ACTORS.issuer, standard, &local_id_issuer, &ACTORS.hacker.user_id, "100", None, None).unwrap();
+        let request = voucher_lib::wallet::MultiTransferRequest {
+            recipient_id: ACTORS.hacker.user_id.clone(),
+            sources: vec![voucher_lib::wallet::SourceTransfer {
+                local_instance_id: local_id_issuer.clone(),
+                amount_to_send: "100".to_string(),
+            }],
+            notes: None,
+        };
+
+        let mut standards = std::collections::HashMap::new();
+        standards.insert(standard.metadata.uuid.clone(), standard.clone());
+
+        let container_to_hacker = issuer_wallet.execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None).unwrap();
         hacker_wallet.process_encrypted_transaction_bundle(&ACTORS.hacker, &container_to_hacker, None).unwrap();
         let voucher_in_hacker_wallet = &hacker_wallet.voucher_store.vouchers.iter().next().unwrap().1.voucher;
 
@@ -1193,13 +1287,22 @@ mod security_vulnerabilities {
         let original_local_id = wallet_a.voucher_store.vouchers.keys().next().unwrap().clone();
 
         // 3. Aktion: Wallet A sendet 40 an Wallet B
-        let (bundle_to_b, _) = wallet_a.create_transfer(
+        let request = voucher_lib::wallet::MultiTransferRequest {
+            recipient_id: b_identity.user_id.clone(),
+            sources: vec![voucher_lib::wallet::SourceTransfer {
+                local_instance_id: original_local_id.clone(),
+                amount_to_send: "40".to_string(),
+            }],
+            notes: None,
+        };
+
+        let mut standards = std::collections::HashMap::new();
+        standards.insert(standard.metadata.uuid.clone(), standard.clone());
+
+        let bundle_to_b = wallet_a.execute_multi_transfer_and_bundle(
             &a_identity,
-            standard,
-            &original_local_id,
-            &b_identity.user_id,
-            "40",
-            None,
+            &standards,
+            request,
             None,
         )
             .unwrap();

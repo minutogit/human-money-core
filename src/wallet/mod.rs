@@ -39,6 +39,27 @@ use ed25519_dalek::Signature;
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
+/// Beschreibt einen Teil-Transfer von einem spezifischen Quell-Gutschein.
+/// Wird verwendet, um die Quellen (lokale ID und Betrag) für einen Multi-Transfer zu definieren.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceTransfer {
+    /// Die lokale ID des Gutscheins, von dem ein Betrag abgezogen werden soll.
+    pub local_instance_id: String,
+    /// Der Betrag, der von diesem Gutschein abgezogen werden soll, als String.
+    pub amount_to_send: String,
+}
+
+/// Die aggregierte Anforderung für den universellen Transfer-Befehl.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultiTransferRequest {
+    /// Die User-ID des Empfängers.
+    pub recipient_id: String,
+    /// Eine Liste von Quell-Gutscheinen und den jeweils zu sendenden Beträgen (1 bis N).
+    pub sources: Vec<SourceTransfer>,
+    /// Optionale Notizen für das Bundle.
+    pub notes: Option<String>,
+}
+
 /// Die zentrale Verwaltungsstruktur für ein Nutzer-Wallet.
 /// Hält den In-Memory-Zustand und interagiert mit dem Speichersystem.
 #[derive(Clone)]
@@ -643,25 +664,25 @@ impl Wallet {
         }
     }
 
-    /// Erstellt eine Transaktion, um einen Gutschein oder einen Teilbetrag davon zu überweisen.
-    pub fn create_transfer(
+    /// Führt die Zustandsveränderung für EINEN Gutschein im Wallet durch.
+    ///
+    /// Diese Funktion ist die Core-Logik des Transfers. Sie führt KEIN Bundling durch.
+    fn _execute_single_transfer(
         &mut self,
         identity: &UserIdentity,
         standard_definition: &VoucherStandardDefinition,
         local_instance_id: &str,
         recipient_id: &str,
         amount_to_send: &str,
-        notes: Option<String>,
         archive: Option<&dyn VoucherArchive>,
-    ) -> Result<(Vec<u8>, Voucher), VoucherCoreError> {
+    ) -> Result<Voucher, VoucherCoreError> {
         let instance = self
             .voucher_store
             .vouchers
             .get(local_instance_id)
-            .ok_or(VoucherCoreError::VoucherNotFound(
+            .ok_or_else(|| VoucherCoreError::VoucherNotFound(
                 local_instance_id.to_string(),
             ))?;
-
         if !matches!(instance.status, VoucherStatus::Active) {
             return Err(VoucherCoreError::VoucherNotActive(instance.status.clone()));
         }
@@ -723,37 +744,11 @@ impl Wallet {
             archive_backend.archive_voucher(&new_voucher_state, &identity.user_id, standard_definition)?;
         }
 
-        // NEU: Fingerprints für das Bundle auswählen
-        let (fingerprints_to_send, depths_to_send) = self.select_fingerprints_for_bundle(
-            recipient_id,
-            &[new_voucher_state.clone()]
-        )?;
-
-        let vouchers_for_bundle = vec![new_voucher_state.clone()];
-        let container_bytes = self.create_and_encrypt_transaction_bundle(
-            identity,
-            vouchers_for_bundle.clone(),
-            recipient_id,
-            notes,
-            // NEU: Zusätzliche Argumente
-            fingerprints_to_send,
-            depths_to_send,
-        )?;
-
+        // Fingerprint-Erstellung und Speicherung im *historischen* Store
         let created_tx = new_voucher_state.transactions.last().unwrap();
         let fingerprint =
             conflict_manager::create_fingerprint_for_transaction(created_tx, &new_voucher_state)?;
 
-        // Füge Fingerprint zum flüchtigen Speicher der aktiven eigenen Transaktionen hinzu.
-        let active_entry = self.own_fingerprints
-            .active_fingerprints
-            .entry(fingerprint.prvhash_senderid_hash.clone())
-            .or_default();
-        if !active_entry.contains(&fingerprint) {
-            active_entry.push(fingerprint.clone());
-        }
-
-        // Füge Fingerprint zum persistenten, kritischen Verlaufsspeicher hinzu.
         let history_entry = self.own_fingerprints
             .history
             .entry(fingerprint.prvhash_senderid_hash.clone())
@@ -762,7 +757,63 @@ impl Wallet {
             history_entry.push(fingerprint.clone());
         }
 
-        Ok((container_bytes, new_voucher_state))
+        // WICHTIG: KEIN BUNDLE, NUR DER MUTIERTE VOUCHER WIRD ZURÜCKGEGEBEN
+        Ok(new_voucher_state)
+    }
+
+    /// Führt eine 1-zu-N-Transaktion durch (Multi-Transfer) und erstellt ein einziges Bundle.
+    pub fn execute_multi_transfer_and_bundle(
+        &mut self,
+        identity: &UserIdentity,
+        standard_definitions: &HashMap<String, VoucherStandardDefinition>,
+        request: MultiTransferRequest,
+        archive: Option<&dyn VoucherArchive>,
+    ) -> Result<Vec<u8>, VoucherCoreError> {
+        let mut all_vouchers_for_bundle: Vec<Voucher> = Vec::new();
+
+        // 1. **Orchestrierung:** Führe `_execute_single_transfer` für jede Quelle aus.
+        for source in request.sources {
+            let instance = self
+                .voucher_store
+                .vouchers
+                .get(&source.local_instance_id)
+                .ok_or_else(|| VoucherCoreError::VoucherNotFound(source.local_instance_id.clone()))?;
+
+            let standard_uuid = instance.voucher.voucher_standard.uuid.clone();
+            let standard_definition = standard_definitions
+                .get(&standard_uuid)
+                .ok_or_else(|| VoucherCoreError::Generic(format!("Standard with UUID '{}' not found in provided definitions.", standard_uuid)))?;
+
+            let new_voucher = self._execute_single_transfer(
+                identity,
+                standard_definition,
+                &source.local_instance_id,
+                &request.recipient_id,
+                &source.amount_to_send,
+                archive,
+            )?;
+
+            all_vouchers_for_bundle.push(new_voucher);
+        }
+
+        // 2. **Bündelung:** Erstelle ein einziges SecureContainer-Bundle.
+        let (fingerprints_to_send, depths_to_send) = self.select_fingerprints_for_bundle(
+            &request.recipient_id,
+            &all_vouchers_for_bundle,
+        )?;
+
+        let container_bytes = self.create_and_encrypt_transaction_bundle(
+            identity,
+            all_vouchers_for_bundle,
+            &request.recipient_id,
+            request.notes,
+            // NEU: Zusätzliche Argumente
+            fingerprints_to_send,
+            depths_to_send,
+        )?;
+
+        Ok(container_bytes)
+
     }
 
     /// Erstellt einen brandneuen Gutschein und fügt ihn direkt zum Wallet hinzu.

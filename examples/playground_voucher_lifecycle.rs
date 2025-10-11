@@ -127,7 +127,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut standards_map = HashMap::new();
     standards_map.insert(standard.metadata.uuid.clone(), standard_toml.clone());
 
-    let transfer_bundle = service_creator.create_transfer_bundle(&standard, &local_id, &recipient_id, "25", Some("Viel Spaß!".to_string()), None, password)?;
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: recipient_id.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: local_id.clone(),
+            amount_to_send: "25".to_string(),
+        }],
+        notes: Some("Viel Spaß!".to_string()),
+    };
+    let mut standards_toml = std::collections::HashMap::new();
+    standards_toml.insert(standard.metadata.uuid.clone(), standard_toml.clone());
+    let transfer_bundle = service_creator.create_transfer_bundle(request, &standards_toml, None, password)?;
 
     // --- 6. Verifizierung der Kontostände ---
     println!("\n--- SCHRITT 6: Empfänger erhält das Bundle und Kontostände werden geprüft ---");
@@ -161,15 +171,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let recipient_local_id = recipient_summary.local_instance_id;
 
     // Der erste Empfänger erstellt jetzt das Transfer-Bundle für Charlie
-    let transfer_bundle_to_charlie = service_recipient.create_transfer_bundle(
-        &standard,
-        &recipient_local_id,
-        &charlie_id,
-        "25", // (ÄNDERUNG) Sende den vollen Restbetrag
-        Some("Weitergereicht!".to_string()),
-        None,
-        password,
-    )?;
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: charlie_id.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: recipient_local_id.clone(),
+            amount_to_send: "25".to_string(), // (ÄNDERUNG) Sende den vollen Restbetrag
+        }],
+        notes: Some("Weitergereicht!".to_string()),
+    };
+    let mut standards_toml = std::collections::HashMap::new();
+    standards_toml.insert(standard.metadata.uuid.clone(), standard_toml.clone());
+    let transfer_bundle_to_charlie = service_recipient.create_transfer_bundle(request, &standards_toml, None, password)?;
 
     // Charlie empfängt das Bundle
     service_charlie.receive_bundle(&transfer_bundle_to_charlie, &standards_map, None, password)?;

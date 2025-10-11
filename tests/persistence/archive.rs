@@ -74,17 +74,34 @@ fn test_voucher_archiving_on_full_spend() {
 
     // 2. AKTION
     // Alice sendet ihr GESAMTES Guthaben ("100") an Bob und übergibt dabei ihr Archiv.
-    let (_bundle_bytes, transferred_voucher_state) = alice_wallet
-        .create_transfer(
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: bob_identity.user_id.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: local_id.clone(),
+            amount_to_send: "100.0000".to_string(), // KORREKTUR: Betrag muss ebenfalls das korrekte Format haben.
+        }],
+        notes: None,
+    };
+
+    let mut standards = std::collections::HashMap::new();
+    standards.insert(standard.metadata.uuid.clone(), standard.clone());
+
+    let bundle_bytes = alice_wallet
+        .execute_multi_transfer_and_bundle(
             &alice_identity,
-            &standard,
-            &local_id,
-            &bob_identity.user_id,
-            "100.0000", // KORREKTUR: Betrag muss ebenfalls das korrekte Format haben.
-            None,
+            &standards,
+            request,
             Some(&archive), // Das Archiv-Backend wird übergeben.
         )
         .expect("Transfer with archive should succeed.");
+    
+    // The new method returns only bundle bytes, not the voucher state, so we need to reconstruct
+    // it from the bundle to maintain the test functionality
+    let transferred_voucher_state = {
+        // To get the transferred voucher state, we need to open the bundle
+        let bundle_result = voucher_lib::services::bundle_processor::open_and_verify_bundle(&bob_identity, &bundle_bytes).unwrap();
+        bundle_result.vouchers.into_iter().next().unwrap()
+    };
 
     // 3. VERIFIZIERUNG
     // Prüfe, ob das Archiv-System die korrekte Datei im korrekten Unterverzeichnis angelegt hat.

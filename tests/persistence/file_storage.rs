@@ -244,14 +244,23 @@ fn test_save_and_load_with_bundle_history() {
             .unwrap();
 
     // 2. Aktion: Führe eine Transaktion durch, um Bundle-Metadaten zu erzeugen.
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: bob_identity.user_id.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: local_id.clone(),
+            amount_to_send: "100".to_string(), // Sende den vollen Betrag
+        }],
+        notes: Some("Test transfer".to_string()),
+    };
+
+    let mut standards = std::collections::HashMap::new();
+    standards.insert(silver_standard.metadata.uuid.clone(), silver_standard.clone());
+
     let _ = alice_wallet
-        .create_transfer(
+        .execute_multi_transfer_and_bundle(
             alice_identity,
-            silver_standard,
-            &local_id,
-            &bob_identity.user_id,
-            "100", // Sende den vollen Betrag
-            Some("Test transfer".to_string()),
+            &standards,
+            request,
             None::<&dyn voucher_lib::archive::VoucherArchive>,
         )
         .expect("Transfer failed");

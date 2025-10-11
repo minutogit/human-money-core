@@ -848,13 +848,22 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     // --- 3. SECURE TRANSFER from Alice to Bob ---
     // Anstatt die Transaktion manuell zu erstellen und zu bündeln, verwenden wir die
     // öffentliche `create_transfer`-Methode, die die Zustandsverwaltung (Archivierung) korrekt durchführt.
-    let (encrypted_bundle_for_bob, _) = alice_wallet.create_transfer(
+    let request = voucher_lib::wallet::MultiTransferRequest {
+        recipient_id: bob_identity.user_id.clone(),
+        sources: vec![voucher_lib::wallet::SourceTransfer {
+            local_instance_id: local_id.clone(),
+            amount_to_send: "500".to_string(), // Sende den vollen Betrag
+        }],
+        notes: Some("Here is the voucher I promised!".to_string()),
+    };
+
+    let mut standards = std::collections::HashMap::new();
+    standards.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
+
+    let encrypted_bundle_for_bob = alice_wallet.execute_multi_transfer_and_bundle(
         &alice_identity,
-        &SILVER_STANDARD.0,
-        &local_id,
-        &bob_identity.user_id,
-        "500", // Sende den vollen Betrag
-        Some("Here is the voucher I promised!".to_string()),
+        &standards,
+        request,
         None::<&dyn voucher_lib::archive::VoucherArchive>,
     ).unwrap();
 
