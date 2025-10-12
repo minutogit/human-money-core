@@ -1,21 +1,20 @@
 //! # src/services/secure_container_manager.rs
 //!
-//! Enthält die Kernlogik zur Erstellung, Verschlüsselung, Entschlüsselung und
-//! Verifizierung des generischen `SecureContainer`.
+//! Enthält die Kernlogik zur Erstellung, Verschlüsselung, Entschlüsselung und Verifizierung
+//! des anonymisierten `SecureContainer`. Implementiert Forward Secrecy und Double-Key-Wrapping.
 
 use crate::error::VoucherCoreError;
 use crate::models::profile::UserIdentity;
-use crate::models::secure_container::{PayloadType, SecureContainer};
+use crate::models::secure_container::{PayloadType, SecureContainer, WrappedKey};
 use crate::services::crypto_utils::{
-    self, ed25519_pub_to_x25519, ed25519_sk_to_x25519_sk, get_hash, get_pubkey_from_user_id,
+    self, decode_base64, ed25519_pub_to_x25519, ed25519_sk_to_x25519_sk, encode_base64, get_hash,
+    get_pubkey_from_user_id,
 };
 use crate::services::utils::to_canonical_json;
-use crate::error::ValidationError;
-use ed25519_dalek::Signature;
 use hkdf::Hkdf;
 use rand_core::{OsRng, RngCore};
 use sha2::Sha256;
-use std::collections::HashMap;
+use zeroize::Zeroize;
 
 /// Definiert die Fehler, die im `secure_container_manager`-Modul auftreten können.
 #[derive(Debug, thiserror::Error)]
@@ -28,13 +27,12 @@ pub enum ContainerManagerError {
     KeyDerivationError(String),
 }
 
-/// Erstellt, verschlüsselt und signiert einen `SecureContainer` für mehrere Empfänger.
+/// Erstellt, verschlüsselt und signiert einen anonymen `SecureContainer` für mehrere Empfänger.
 ///
 /// # Arguments
 /// * `sender_identity` - Die Identität des Senders, inklusive seiner Schlüssel.
 /// * `recipient_ids` - Eine Liste der User-IDs der Empfänger.
 /// * `payload` - Die zu verschlüsselnden Rohdaten (z.B. ein serialisiertes JSON-Objekt).
-/// * `payload_type` - Der Typ der Daten im Payload.
 ///
 /// # Returns
 /// Ein `Result`, das den vollständig konfigurierten `SecureContainer` oder einen `VoucherCoreError` enthält.
@@ -42,113 +40,138 @@ pub fn create_secure_container(
     sender_identity: &UserIdentity,
     recipient_ids: &[String],
     payload: &[u8],
-    payload_type: PayloadType,
+    content_type: PayloadType,
 ) -> Result<SecureContainer, VoucherCoreError> {
-    // 1. Einen einmaligen, symmetrischen Schlüssel für den Payload generieren.
-    let mut payload_key = [0u8; 32];
-    OsRng.fill_bytes(&mut payload_key);
+    // KORREKTUR: Erzeuge direkt ein wiederverwendbares `StaticSecret`.
+    let esk_priv_static = x25519_dalek::StaticSecret::random_from_rng(OsRng);
+    let esk_pub = x25519_dalek::PublicKey::from(&esk_priv_static);
 
-    // 2. Den Payload mit diesem symmetrischen Schlüssel verschlüsseln.
-    let encrypted_payload = crypto_utils::encrypt_data(&payload_key, payload)?;
+    // Scope, um sicherzustellen, dass der ephemere private Schlüssel so schnell wie möglich gelöscht wird.
+    let (encrypted_payload_b64, wrapped_keys) = {
+        // 1. Einen einmaligen, symmetrischen Schlüssel für den Payload generieren.
+        let mut payload_key = [0u8; 32];
+        OsRng.fill_bytes(&mut payload_key);
 
-    // 3. Den symmetrischen `payload_key` für jeden Empfänger einzeln verschlüsseln.
-    let mut recipient_key_map = HashMap::new();
-    let sender_x25519_sk = ed25519_sk_to_x25519_sk(&sender_identity.signing_key);
+        // 2. Den Payload mit diesem symmetrischen Schlüssel verschlüsseln und Base64-kodieren.
+        let encrypted_payload = crypto_utils::encrypt_data(&payload_key, payload)?;
+        let encrypted_payload_b64 = encode_base64(&encrypted_payload);
 
-    for recipient_id in recipient_ids {
-        let recipient_pubkey_ed = get_pubkey_from_user_id(recipient_id)?;
-        let recipient_pubkey_x = ed25519_pub_to_x25519(&recipient_pubkey_ed);
+        let mut wrapped_keys = Vec::new();
 
-        // Statischen DH-Austausch durchführen, um ein Shared Secret zu erhalten.
-        let shared_secret = sender_x25519_sk.diffie_hellman(&recipient_pubkey_x);
+        // 3. Den `payload_key` für jeden Empfänger einzeln verschlüsseln (Key Wrapping).
+        for recipient_id in recipient_ids {
+            let recipient_pubkey_ed = get_pubkey_from_user_id(recipient_id)?;
+            let recipient_pubkey_x = ed25519_pub_to_x25519(&recipient_pubkey_ed);
 
-        // Einen Key-Encryption-Key (KEK) aus dem Shared Secret ableiten (Best Practice).
-        let hkdf = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
-        let mut kek = [0u8; 32];
-        hkdf.expand(b"secure-container-kek", &mut kek)
-            .map_err(|e| ContainerManagerError::KeyDerivationError(e.to_string()))?;
+            let shared_secret = esk_priv_static.diffie_hellman(&recipient_pubkey_x);
+            let kek = derive_kek(shared_secret.as_bytes())?;
+            let encrypted_payload_key = crypto_utils::encrypt_data(&kek, &payload_key)?;
 
-        // Den `payload_key` mit dem KEK verschlüsseln.
-        let encrypted_payload_key = crypto_utils::encrypt_data(&kek, &payload_key)?;
-        recipient_key_map.insert(recipient_id.clone(), encrypted_payload_key);
-    }
+            wrapped_keys.push(WrappedKey {
+                r: Some(encode_base64(&encrypted_payload_key)),
+                m: Some(get_hash(recipient_id)),
+                s: None,
+            });
+        }
 
-    // 4. Den Container zusammenbauen (vorerst ohne ID und Signatur).
+        // 4. Double-Key-Wrapping: Den `payload_key` auch für den Sender verschlüsseln.
+        let sender_static_sk_x = ed25519_sk_to_x25519_sk(&sender_identity.signing_key);
+        let shared_secret_sender = sender_static_sk_x.diffie_hellman(&esk_pub);
+        let kek_sender = derive_kek(shared_secret_sender.as_bytes())?;
+        let encrypted_payload_key_sender = crypto_utils::encrypt_data(&kek_sender, &payload_key)?;
+        wrapped_keys.push(WrappedKey {
+            s: Some(encode_base64(&encrypted_payload_key_sender)),
+            r: None,
+            m: None,
+        });
+
+        // WICHTIG: payload_key und KEKs aus dem Speicher entfernen.
+        payload_key.zeroize();
+        (encrypted_payload_b64, wrapped_keys)
+    };
+    // Ephemeren privaten Schlüssel sicher aus dem Speicher entfernen.
+    // esk_priv_static wird automatisch ge-zeroized, wenn es aus dem Scope fällt.
+
+    // 5. Den Container zusammenbauen (vorerst ohne ID und Signatur).
     let mut container = SecureContainer {
-        container_id: "".to_string(),
-        sender_id: sender_identity.user_id.clone(),
-        payload_type,
-        encrypted_payload,
-        recipient_key_map,
-        sender_signature: "".to_string(),
+        i: "".to_string(),
+        c: content_type,
+        esk: encode_base64(esk_pub.as_bytes()),
+        wk: wrapped_keys,
+        p: encrypted_payload_b64,
+        t: "".to_string(),
     };
 
-    // 5. Die `container_id` aus dem Hash des kanonischen Inhalts generieren.
+    // 6. Die `container_id` (`i`) aus dem Hash des kanonischen Inhalts generieren.
     let container_json_for_id = to_canonical_json(&container)?;
-    container.container_id = get_hash(container_json_for_id);
+    container.i = get_hash(container_json_for_id);
 
-    // 6. Die `container_id` signieren und dem Container hinzufügen.
-    let signature =
-        crypto_utils::sign_ed25519(&sender_identity.signing_key, container.container_id.as_bytes());
-    container.sender_signature = bs58::encode(signature.to_bytes()).into_string();
+    // 7. Die `container_id` signieren und dem Container hinzufügen.
+    let signature = crypto_utils::sign_ed25519(&sender_identity.signing_key, container.i.as_bytes());
+    container.t = encode_base64(&signature.to_bytes());
 
     Ok(container)
 }
 
-/// Öffnet, verifiziert und entschlüsselt einen `SecureContainer`.
+/// Entschlüsselt den Payload eines `SecureContainer`.
+/// **Achtung:** Diese Funktion verifiziert NICHT die Signatur des Containers, da
+/// dafür die `sender_id` aus dem (noch verschlüsselten) Payload benötigt wird.
+/// Die Signatur-Verifizierung ist die Verantwortung des Aufrufers (z.B. `bundle_processor`).
 ///
 /// # Arguments
 /// * `container` - Der zu öffnende `SecureContainer`.
 /// * `recipient_identity` - Die Identität des Empfängers (des aktuellen Nutzers).
 ///
 /// # Returns
-/// Ein `Result`, das ein Tupel aus den entschlüsselten Payload-Daten und dem `PayloadType`
-/// oder einen `VoucherCoreError` enthält.
+/// Ein `Result`, das die entschlüsselten Payload-Daten oder einen `VoucherCoreError` enthält.
 pub fn open_secure_container(
     container: &SecureContainer,
     recipient_identity: &UserIdentity,
-) -> Result<(Vec<u8>, PayloadType), VoucherCoreError> {
-    // 1. Authentizität des Containers durch Signaturprüfung sicherstellen.
-    let sender_pubkey_ed = get_pubkey_from_user_id(&container.sender_id)?;
-    let signature_bytes = bs58::decode(&container.sender_signature)
-        .into_vec()
-        .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
-    let signature = Signature::from_slice(&signature_bytes)
-        .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
+    // Gibt nun nur die Bytes zurück. Der Payload-Typ ist über `container.c` zugänglich.
+) -> Result<Vec<u8>, VoucherCoreError> {
+    let my_id_hash = get_hash(&recipient_identity.user_id);
+    let recipient_x25519_sk = ed25519_sk_to_x25519_sk(&recipient_identity.signing_key);
+    let esk_pub_bytes = decode_base64(&container.esk)?;
+    let esk_pub = x25519_dalek::PublicKey::from(
+        <[u8; 32]>::try_from(esk_pub_bytes)
+            .map_err(|_| VoucherCoreError::Crypto("Invalid ephemeral key length".to_string()))?,
+    );
 
-    if !crypto_utils::verify_ed25519(
-        &sender_pubkey_ed,
-        container.container_id.as_bytes(),
-        &signature,
-    ) {
-        return Err(ContainerManagerError::InvalidContainerSignature.into());
+    // Versuche, den Payload-Schlüssel zu entschlüsseln.
+    for wrapped_key in &container.wk {
+        let encrypted_payload_key_b64 = if wrapped_key.s.is_some() {
+            // Bin ich der Sender?
+            wrapped_key.s.as_deref()
+        } else if wrapped_key.m.as_deref() == Some(&my_id_hash) {
+            // Bin ich der Empfänger?
+            wrapped_key.r.as_deref()
+        } else {
+            None
+        };
+
+        if let Some(b64_key) = encrypted_payload_key_b64 {
+            let encrypted_payload_key = decode_base64(b64_key)?;
+            let shared_secret = recipient_x25519_sk.diffie_hellman(&esk_pub);
+            let kek = derive_kek(shared_secret.as_bytes())?;
+
+            if let Ok(payload_key_bytes) = crypto_utils::decrypt_data(&kek, &encrypted_payload_key) {
+                let payload_key: [u8; 32] = payload_key_bytes.try_into()
+                    .map_err(|_| VoucherCoreError::Crypto("Decrypted payload key has incorrect length".to_string()))?;
+
+                let encrypted_payload = decode_base64(&container.p)?;
+                return Ok(crypto_utils::decrypt_data(&payload_key, &encrypted_payload)?);
+            }
+        }
     }
 
-    // 2. Den für diesen Empfänger verschlüsselten Payload Key finden.
-    let encrypted_payload_key = container
-        .recipient_key_map
-        .get(&recipient_identity.user_id)
-        .ok_or(ContainerManagerError::NotAnIntendedRecipient)?;
+    Err(ContainerManagerError::NotAnIntendedRecipient.into())
+}
 
-    // 3. Shared Secret neu berechnen, um den Payload Key zu entschlüsseln.
-    let recipient_x25519_sk = ed25519_sk_to_x25519_sk(&recipient_identity.signing_key);
-    let sender_pubkey_x = ed25519_pub_to_x25519(&sender_pubkey_ed);
-    let shared_secret = recipient_x25519_sk.diffie_hellman(&sender_pubkey_x);
-
-    // Denselben KEK wie der Sender ableiten.
-    let hkdf = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
+/// Leitet einen Key-Encryption-Key (KEK) aus einem Shared Secret mittels HKDF ab.
+fn derive_kek(shared_secret: &[u8]) -> Result<[u8; 32], ContainerManagerError> {
+    let hkdf = Hkdf::<Sha256>::new(None, shared_secret);
     let mut kek = [0u8; 32];
     hkdf.expand(b"secure-container-kek", &mut kek)
         .map_err(|e| ContainerManagerError::KeyDerivationError(e.to_string()))?;
-
-    // 4. Den Payload Key entschlüsseln.
-    let payload_key_bytes = crypto_utils::decrypt_data(&kek, encrypted_payload_key)?;
-    let payload_key: [u8; 32] = payload_key_bytes
-        .try_into()
-        .map_err(|_| VoucherCoreError::Crypto("Decrypted payload key has incorrect length".to_string()))?;
-
-    // 5. Den eigentlichen Payload entschlüsseln.
-    let decrypted_payload = crypto_utils::decrypt_data(&payload_key, &container.encrypted_payload)?;
-
-    Ok((decrypted_payload, container.payload_type.clone()))
+    Ok(kek)
 }

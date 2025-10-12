@@ -97,8 +97,7 @@ fn api_wallet_full_signature_workflow() {
 
     let received_request_bytes = fs::read(&request_file_path).unwrap();
     let container: SecureContainer = serde_json::from_slice(&received_request_bytes).unwrap();
-    let (decrypted_payload, _) =
-        secure_container_manager::open_secure_container(&container, &bob.identity).unwrap();
+    let decrypted_payload = secure_container_manager::open_secure_container(&container, &bob.identity).unwrap();
     let voucher_from_alice: Voucher = serde_json::from_slice(&decrypted_payload).unwrap();
 
     let guarantor_metadata = GuarantorSignature {
@@ -191,9 +190,14 @@ fn api_wallet_signature_fail_tampered_container() {
         .unwrap();
 
     let mut container: SecureContainer = serde_json::from_slice(&response_bytes).unwrap();
-    if !container.encrypted_payload.is_empty() {
-        container.encrypted_payload[10] ^= 0xff; // Flip some bits
+    
+    // Manipuliere den Base64-String des Payloads, um einen AEAD-Fehler zu provozieren.
+    let mut chars: Vec<char> = container.p.chars().collect();
+    if chars.len() > 10 {
+        // Tausche ein Zeichen aus, um die Signatur ungültig zu machen.
+        chars[10] = if chars[10] == 'A' { 'B' } else { 'A' };
     }
+    container.p = chars.into_iter().collect();
     let tampered_bytes = serde_json::to_vec(&container).unwrap();
 
     let result = alice_wallet.process_and_attach_signature(&alice.identity, &tampered_bytes);
@@ -341,12 +345,12 @@ fn api_app_service_full_signature_workflow() {
         .create_signing_request_bundle(&local_id, &id_guarantor)
         .unwrap();
 
-    let (voucher_to_sign, sender_id) = {
+    let voucher_to_sign = {
         service_guarantor.login(&profile_guarantor.folder_name, password, false).unwrap();
         let guarantor_identity = service_guarantor.get_unlocked_mut_for_test().1;
+        // Der Sender (creator) ist bekannt, wir brauchen ihn nicht aus dem Container.
         debug_open_container(&request_bytes, guarantor_identity).unwrap()
     };
-
     let signature_data = create_additional_signature_data(
         service_guarantor.get_unlocked_mut_for_test().1,
         &voucher_to_sign.voucher_id,
@@ -354,7 +358,7 @@ fn api_app_service_full_signature_workflow() {
     );
 
     let response_bytes = service_guarantor
-        .create_detached_signature_response_bundle(&voucher_to_sign, signature_data, &sender_id)
+        .create_detached_signature_response_bundle(&voucher_to_sign, signature_data, &service_creator.get_user_id().unwrap())
         .unwrap();
 
     service_creator
@@ -397,8 +401,7 @@ fn api_wallet_signature_roundtrip_minuto_required() {
         .unwrap();
 
     // Bob verarbeitet die Anfrage und erstellt eine Antwort
-    let (voucher_for_signing, _) =
-        debug_open_container(&request_bytes, &bob.identity).unwrap();
+    let voucher_for_signing = debug_open_container(&request_bytes, &bob.identity).unwrap();
 
     // Bob erstellt seine Signatur-Daten (als Enum)
     let mut signature_data_enum =
@@ -566,7 +569,7 @@ fn api_wallet_signature_roundtrip_silver_optional() {
         .create_signing_request(&alice.identity, &voucher_id, &bob.identity.user_id)
         .unwrap();
 
-    let (voucher_for_signing, _) = debug_open_container(&request_bytes, &bob.identity).unwrap();
+    let voucher_for_signing = debug_open_container(&request_bytes, &bob.identity).unwrap();
 
     let mut signature_data_enum =
         test_utils::create_guarantor_signature_data(&bob.identity, "1", &voucher_for_signing.voucher_id);

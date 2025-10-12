@@ -156,6 +156,10 @@ pub enum ValidationError {
     #[error("The signature of the transaction bundle is invalid.")]
     InvalidBundleSignature,
 
+    /// Die digitale Signatur des SecureContainers ist ungültig.
+    #[error("The digital signature of the secure container is invalid.")]
+    InvalidContainerSignature,
+
     /// Fehler bei der Dekodierung einer Signatur (z.B. Base58).
     #[error("Failed to decode signature: {0}")]
     SignatureDecodeError(String),
@@ -288,6 +292,8 @@ pub enum VoucherCoreError {
     DoubleSpendAttemptBlocked,
     #[error("Base58 decode error: {0}")]
     Bs58Decode(#[from] bs58::decode::Error),
+    #[error("Base64 decode error: {0}")]
+    Base64(String),
     #[error("Ed25519 crypto error: {0}")]
     Ed25519(#[from] ed25519_dalek::ed25519::Error),
     #[error("Mismatched signature data: {0}")]

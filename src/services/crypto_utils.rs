@@ -38,6 +38,7 @@ use std::convert::TryInto;
 use std::fmt;
 
 use crate::error::VoucherCoreError;
+use base64::{Engine as _, engine::general_purpose};
 
 /// Generates a mnemonic phrase with a specified word count and language.
 ///
@@ -405,6 +406,27 @@ pub fn verify_ed25519(public_key: &EdPublicKey, message: &[u8], signature: &Sign
     public_key.verify(message, signature).is_ok()
 }
 
+/// Encodes byte data into a URL-safe Base64 string.
+///
+/// # Arguments
+/// * `data` - The byte slice to encode.
+///
+/// # Returns
+/// A Base64-encoded string.
+pub fn encode_base64(data: &[u8]) -> String {
+    general_purpose::URL_SAFE_NO_PAD.encode(data)
+}
+
+/// Decodes a URL-safe Base64 string into bytes.
+///
+/// # Arguments
+/// * `encoded_data` - The Base64 string to decode.
+///
+/// # Returns
+/// A `Result` containing the decoded byte vector or a `VoucherCoreError`.
+pub fn decode_base64(encoded_data: &str) -> Result<Vec<u8>, VoucherCoreError> {
+    general_purpose::URL_SAFE_NO_PAD.decode(encoded_data).map_err(|e| VoucherCoreError::Base64(e.to_string()))
+}
 
 /// Error types for user ID creation.
 #[derive(Debug)]

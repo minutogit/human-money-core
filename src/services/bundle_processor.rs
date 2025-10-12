@@ -7,13 +7,13 @@
 use ed25519_dalek::Signature;
 
 use crate::error::VoucherCoreError;
+use crate::error::ValidationError;
 use crate::models::conflict::TransactionFingerprint;
-use crate::models::profile::{TransactionBundle, UserIdentity,};
+use crate::models::profile::{TransactionBundle, UserIdentity};
 use crate::models::secure_container::{PayloadType, SecureContainer};
-use crate::services::crypto_utils::{get_hash, get_pubkey_from_user_id, sign_ed25519, verify_ed25519};
+use crate::services::crypto_utils::{decode_base64, get_hash, get_pubkey_from_user_id, sign_ed25519, verify_ed25519};
 use crate::services::secure_container_manager::{create_secure_container, open_secure_container};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
-use crate::error::ValidationError;
 use crate::models::voucher::Voucher;
 use std::collections::HashMap;
 
@@ -54,7 +54,7 @@ pub fn create_and_encrypt_bundle(
         identity,
         &[recipient_id.to_string()],
         &signed_bundle_bytes,
-        PayloadType::TransactionBundle,
+        PayloadType::TransactionBundle, // content type
     )?;
 
     let container_bytes = serde_json::to_vec(&secure_container)?;
@@ -72,17 +72,37 @@ pub fn open_and_verify_bundle(
     identity: &UserIdentity,
     container_bytes: &[u8],
 ) -> Result<TransactionBundle, VoucherCoreError> {
-    let container: SecureContainer = serde_json::from_slice(container_bytes)?;
-    let (decrypted_bundle_bytes, payload_type) = open_secure_container(&container, identity)?;
+    let mut container: SecureContainer = serde_json::from_slice(container_bytes)?;
 
-    if payload_type != PayloadType::TransactionBundle {
+    if container.c != PayloadType::TransactionBundle {
         return Err(VoucherCoreError::InvalidPayloadType);
     }
 
+    let decrypted_bundle_bytes = open_secure_container(&container, identity)?;
     let bundle: TransactionBundle = serde_json::from_slice(&decrypted_bundle_bytes)?;
+
+    // Kaskadierte Verifizierung:
+    // 1. Zuerst die Signatur des *Containers* verifizieren.
+    //    Dafür benötigen wir die sender_id aus dem entschlüsselten Bundle.
+    verify_container_signature(&mut container, &bundle.sender_id)?;
+
+    // 2. Dann die interne Signatur des *Bundles* verifizieren.
     verify_bundle_signature(&bundle)?;
 
     Ok(bundle)
+}
+
+/// Verifiziert die digitale Signatur des SecureContainers.
+fn verify_container_signature(container: &mut SecureContainer, sender_id: &str) -> Result<(), VoucherCoreError> {
+    let sender_pubkey_ed = get_pubkey_from_user_id(sender_id)?;
+    let signature_bytes = decode_base64(&container.t)?;
+    let signature = Signature::from_slice(&signature_bytes)?;
+
+    if !verify_ed25519(&sender_pubkey_ed, container.i.as_bytes(), &signature) {
+        return Err(ValidationError::InvalidContainerSignature.into());
+    }
+
+    Ok(())
 }
 
 /// Verifiziert die digitale Signatur eines `TransactionBundle`.

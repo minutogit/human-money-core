@@ -524,14 +524,12 @@ pub fn create_additional_signature_data(
 pub fn debug_open_container(
     container_bytes: &[u8],
     recipient_identity: &UserIdentity,
-) -> Result<(Voucher, String), VoucherCoreError> {
+) -> Result<Voucher, VoucherCoreError> {
     let container: crate::models::secure_container::SecureContainer =
         serde_json::from_slice(container_bytes)?;
-    let (payload, _) =
-        secure_container_manager::open_secure_container(&container, recipient_identity)?;
+    let payload = secure_container_manager::open_secure_container(&container, recipient_identity)?;
     let voucher: Voucher = serde_json::from_slice(&payload)?;
-    let sender_id = container.sender_id;
-    Ok((voucher, sender_id))
+    Ok(voucher)
 }
 
 #[allow(dead_code)]

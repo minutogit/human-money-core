@@ -233,7 +233,7 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
 
 - **Zusätzliche Signaturen:** Möglichkeit, weitere Signaturen (z.B. von Bürgen/Garanten) in die Gutschein-Datei zu integrieren.
 
-- **Verschlüsselung:** Die Übertragung von Daten (z.B. Transaktionsbündel) wird durch einen generischen `SecureContainer` geschützt, der Multi-Empfänger-Fähigkeiten mittels statischem Diffie-Hellman (X25519) und Key-Wrapping bietet.
+- **Verschlüsselung:** Die Übertragung von Daten (z.B. Transaktionsbündel) wird durch einen generischen, **anonymisierten** `SecureContainer` geschützt. Dieser implementiert **Forward Secrecy durch ephemere X25519-Schlüssel**. Ein "Double Key Wrapping"-Mechanismus stellt sicher, dass sowohl die Empfänger als auch der Sender selbst den Container entschlüsseln können. Alle binären Daten werden als Base64-Strings kodiert.
 
 - **Begrenzte Gültigkeitsdauer:** Gutscheine sollen nach einer bestimmten Zeit ihre Gültigkeit verlieren.
 
@@ -514,10 +514,10 @@ Dieses Modul enthält kryptographische Hilfsfunktionen für Schlüsselgenerierun
 
 ### `services::secure_container_manager` Modul
 
-Stellt die Kernlogik für den generischen `SecureContainer` bereit, der für den sicheren, verschlüsselten Austausch von Daten (z.B. Bundles, Signaturanfragen) verwendet wird.
+Stellt die Kernlogik für den **anonymisierten und weiterleitungs-sicheren** `SecureContainer` bereit, der für den Austausch von Daten (z.B. Bundles, Signaturanfragen) verwendet wird.
 
-- `pub fn create_secure_container(...)`: Implementiert eine Multi-Empfänger-Verschlüsselung. Ein symmetrischer Payload-Schlüssel wird für jeden Empfänger mittels statischem Diffie-Hellman (X25519) und Key-Wrapping (HKDF) asymmetrisch verschlüsselt. Der Container wird als Ganzes signiert, um die Authentizität zu gewährleisten.
-- `pub fn open_secure_container(...)`: Verifiziert die Signatur des Containers und entschlüsselt den Payload, indem der symmetrische Schlüssel mit dem privaten Schlüssel des Empfängers und dem öffentlichen Schlüssel des Senders wiederhergestellt wird.
+- `pub fn create_secure_container(...)`: Erstellt einen **anonymen, weiterleitungs-sicheren** `SecureContainer`. Ein symmetrischer Payload-Schlüssel wird für jeden Empfänger **und den Sender selbst** mittels eines **ephemeren Diffie-Hellman-Austauschs (X25519)** und Key-Wrapping verschlüsselt. Der Container enthält keine direkten Identifikatoren und wird als Ganzes signiert.
+- `pub fn open_secure_container(...)`: Entschlüsselt den Payload, indem es versucht, den Payload-Schlüssel mit dem privaten Schlüssel des Nutzers (als Sender oder Empfänger) und dem öffentlichen ephemeren Schlüssel des Containers zu entschlüsseln. Die Signatur des Containers muss vom Aufrufer separat verifiziert werden, da die `sender_id` erst nach der Entschlüsselung bekannt ist.
 
 ### `services::signature_manager` Modul
 

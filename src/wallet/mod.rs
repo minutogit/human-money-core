@@ -489,7 +489,7 @@ impl Wallet {
         if let Ok(deserialized_container) = serde_json::from_slice::<SecureContainer>(container_bytes)
         {
             if matches!(
-                deserialized_container.payload_type,
+                deserialized_container.c,
                 PayloadType::DetachedSignature
             ) {
                 self.process_and_attach_signature(identity, container_bytes)?;
@@ -769,11 +769,15 @@ impl Wallet {
         request: MultiTransferRequest,
         archive: Option<&dyn VoucherArchive>,
     ) -> Result<Vec<u8>, VoucherCoreError> {
-        let mut all_vouchers_for_bundle: Vec<Voucher> = Vec::new();
+        // TRANSANKTIONALER ANSATZ:
+        // 1. Erstelle eine temporäre Kopie des Wallets. Alle Änderungen werden
+        //    zuerst auf dieser Kopie durchgeführt.
+        let mut temp_wallet = self.clone();
+        let mut vouchers_for_bundle: Vec<Voucher> = Vec::new();
 
-        // 1. **Orchestrierung:** Führe `_execute_single_transfer` für jede Quelle aus.
+        // 2. **Orchestrierung:** Führe `_execute_single_transfer` für jede Quelle auf der Kopie aus.
         for source in request.sources {
-            let instance = self
+            let instance = temp_wallet
                 .voucher_store
                 .vouchers
                 .get(&source.local_instance_id)
@@ -784,7 +788,8 @@ impl Wallet {
                 .get(&standard_uuid)
                 .ok_or_else(|| VoucherCoreError::Generic(format!("Standard with UUID '{}' not found in provided definitions.", standard_uuid)))?;
 
-            let new_voucher = self._execute_single_transfer(
+            // Führe die Kernoperation auf der temporären Wallet-Instanz aus.
+            let new_voucher = temp_wallet._execute_single_transfer(
                 identity,
                 standard_definition,
                 &source.local_instance_id,
@@ -793,18 +798,18 @@ impl Wallet {
                 archive,
             )?;
 
-            all_vouchers_for_bundle.push(new_voucher);
+            vouchers_for_bundle.push(new_voucher);
         }
 
-        // 2. **Bündelung:** Erstelle ein einziges SecureContainer-Bundle.
-        let (fingerprints_to_send, depths_to_send) = self.select_fingerprints_for_bundle(
+        // 3. **Bündelung:** Erstelle ein einziges SecureContainer-Bundle.
+        let (fingerprints_to_send, depths_to_send) = temp_wallet.select_fingerprints_for_bundle(
             &request.recipient_id,
-            &all_vouchers_for_bundle,
+            &vouchers_for_bundle,
         )?;
 
-        let container_bytes = self.create_and_encrypt_transaction_bundle(
+        let container_bytes = temp_wallet.create_and_encrypt_transaction_bundle(
             identity,
-            all_vouchers_for_bundle,
+            vouchers_for_bundle,
             &request.recipient_id,
             request.notes,
             // NEU: Zusätzliche Argumente
@@ -812,8 +817,11 @@ impl Wallet {
             depths_to_send,
         )?;
 
-        Ok(container_bytes)
+        // 4. **Commit:** Wenn alle Operationen erfolgreich waren, ersetze den
+        //    ursprünglichen Wallet-Zustand durch den der temporären Instanz.
+        *self = temp_wallet;
 
+        Ok(container_bytes)
     }
 
     /// Erstellt einen brandneuen Gutschein und fügt ihn direkt zum Wallet hinzu.

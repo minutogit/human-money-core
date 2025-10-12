@@ -111,10 +111,9 @@ impl Wallet {
         container_bytes: &[u8],
     ) -> Result<String, VoucherCoreError> {
         let container: SecureContainer = serde_json::from_slice(container_bytes)?;
-        let (payload, payload_type) =
-            crate::services::secure_container_manager::open_secure_container(&container, identity)?;
+        let payload = crate::services::secure_container_manager::open_secure_container(&container, identity)?;
 
-        if !matches!(payload_type, PayloadType::DetachedSignature) {
+        if !matches!(container.c, PayloadType::DetachedSignature) {
             return Err(VoucherCoreError::InvalidPayloadType);
         }
 

@@ -264,7 +264,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let (_, signer_identity_ref) = service_signer.get_unlocked_mut_for_test();
     let signer_identity = signer_identity_ref.clone();
     let request_container: SecureContainer = serde_json::from_slice(&bundle_req).unwrap();
-    let (payload, _) = voucher_lib::services::secure_container_manager::open_secure_container(&request_container, &signer_identity).unwrap();
+    let payload = voucher_lib::services::secure_container_manager::open_secure_container(&request_container, &signer_identity).unwrap();
     let voucher_from_request: voucher_lib::models::voucher::Voucher = serde_json::from_slice(&payload).unwrap();
 
     // FIX: Argumente in der korrekten Reihenfolge übergeben (voucher_id, description).
@@ -307,7 +307,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let (_, signer_identity_ref2) = service_signer.get_unlocked_mut_for_test();
     let signer_identity2 = signer_identity_ref2.clone();
     let request_container2: SecureContainer = serde_json::from_slice(&bundle_req2).unwrap();
-    let (payload2, _) = voucher_lib::services::secure_container_manager::open_secure_container(&request_container2, &signer_identity2).unwrap();
+    let payload2 = voucher_lib::services::secure_container_manager::open_secure_container(&request_container2, &signer_identity2).unwrap();
     let voucher_from_request2: voucher_lib::models::voucher::Voucher = serde_json::from_slice(&payload2).unwrap();
 
     // 2. Zweite Signatur erstellen.

@@ -135,20 +135,19 @@ impl AppService {
 
         let (result, new_state) = match current_state {
             AppState::Unlocked { mut storage, wallet, identity } => {
-                // TRANSANKTIONALER ANSATZ:
-                // 1. Erstelle eine temporäre Kopie des Wallets für die Änderungen.
+                // Die Transaktionalität wurde in die Wallet::execute_multi_transfer_and_bundle
+                // Methode verschoben. Wir können sie direkt auf dem Wallet aufrufen.
+                // Wir erstellen hier dennoch eine Kopie, um die AppService-Logik konsistent zu halten:
+                // Der `wallet`-Zustand wird nur bei Erfolg durch `temp_wallet` ersetzt.
                 let mut temp_wallet = wallet.clone();
-
-                // 2. Führe die Operation auf der Kopie aus.
-                // RUFE DIE NEUE, VEREINHEITLICHTE ORCHESTRIERUNGS-LOGIK AUF
                 match temp_wallet.execute_multi_transfer_and_bundle(
                     &identity,
                     &verified_definitions,
                     request,
                     archive,
                 ) {
-                    // 3. Versuche, die Kopie zu speichern ("Commit").
                     Ok(bundle_bytes) => {
+                        // Speichere den neuen Zustand, der von der Wallet-Methode committet wurde.
                         match temp_wallet.save(&mut storage, &identity, password) {
                             Ok(_) => (
                                 // 4a. Erfolg: Gib die modifizierte Kopie als neuen Zustand zurück.

@@ -1,11 +1,11 @@
 //! # src/models/secure_container.rs
 //!
-//! Definiert die Datenstruktur für einen generischen, signierten und für mehrere
-//! Empfänger verschlüsselten Daten-Container. Dieser Container dient als universelles
-//! und sicheres Transportmittel für beliebige Daten zwischen Nutzern.
+//! Definiert die Datenstruktur für einen anonymisierten, signierten und für
+//! mehrere Empfänger verschlüsselten Daten-Container. Dieser Container dient als
+//! universelles und sicheres Transportmittel für beliebige Daten zwischen Nutzern.
 
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
+use zeroize::Zeroize;
 
 /// Definiert die Art des Inhalts, der im `SecureContainer` transportiert wird.
 ///
@@ -32,29 +32,51 @@ impl Default for PayloadType {
     }
 }
 
-/// Repräsentiert einen sicheren Container für den Datenaustausch.
+/// Enthält einen verschlüsselten Payload-Schlüssel für einen Empfänger oder den Sender.
 ///
-/// Die Struktur implementiert das "Key Wrapping"-Muster:
-/// 1. Der eigentliche `encrypted_payload` wird mit einem einmaligen, symmetrischen Schlüssel ("Payload Key") verschlüsselt.
-/// 2. Dieser Payload Key wird für jeden Empfänger in `recipient_key_map` einzeln verschlüsselt,
-///    und zwar mit einem Schlüssel, der aus einem statischen Diffie-Hellman-Austausch
-///    zwischen Sender und dem jeweiligen Empfänger abgeleitet wird.
+/// - `r`: Wrapped key für einen Empfänger (`recipient`).
+/// - `s`: Wrapped key für den Sender (`sender`) für permanenten Zugriff.
+/// - `m`: Ein "Matcher" oder Identifikator (Hash der User-ID des Empfängers), damit
+///        dieser seinen Schlüssel schnell finden kann, ohne alle entschlüsseln zu müssen.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, Zeroize)]
+#[zeroize(drop)]
+pub struct WrappedKey {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub m: Option<String>,
+}
+
+/// Repräsentiert einen anonymen, sicheren Container für den Datenaustausch.
+///
+/// Die Struktur implementiert Forward Secrecy durch ephemere Schlüssel (`esk`) und
+/// Anonymität, indem keine direkten Identifikatoren im Container-Header enthalten sind.
+/// Alle binären Daten werden als Base64-Strings kodiert.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct SecureContainer {
-    /// Eine eindeutige ID für diesen Container, generiert aus dem Hash seines Inhalts.
-    pub container_id: String,
-    /// Die User-ID des Senders.
-    pub sender_id: String,
-    /// Gibt an, welche Art von Daten im `encrypted_payload` enthalten ist.
-    pub payload_type: PayloadType,
-    /// Die verschlüsselten Nutzdaten.
-    pub encrypted_payload: Vec<u8>,
-    /// Eine Map, die jedem Empfänger (`user_id`) den für ihn verschlüsselten Payload Key zuordnet.
-    ///
-    /// - Key: `user_id` des Empfängers.
-    /// - Value: Der verschlüsselte Payload Key als Byte-Vektor.
-    pub recipient_key_map: HashMap<String, Vec<u8>>,
-    /// Die digitale Signatur des Senders, die die `container_id` unterzeichnet und somit die
-    /// Authentizität und Integrität des gesamten Containers sicherstellt.
-    pub sender_signature: String,
+    /// `id`: Eine eindeutige ID für diesen Container, generiert aus dem Hash seines Inhalts.
+    pub i: String,
+    /// `content_type`: Gibt an, welche Art von Daten im `encrypted_payload` (`p`) enthalten ist.
+    pub c: PayloadType,
+    /// `ephemeral_key`: Der öffentliche Teil des ephemeren Diffie-Hellman-Schlüssels (X25519).
+    pub esk: String,
+    /// `wrapped_keys`: Eine Liste von verschlüsselten Payload-Schlüsseln.
+    pub wk: Vec<WrappedKey>,
+    /// `payload`: Die verschlüsselten Nutzdaten als Base64-String.
+    pub p: String,
+    /// `tag`: Die digitale Signatur des Senders (Ed25519), die die `id` (`i`) unterzeichnet
+    /// und somit die Authentizität und Integrität des gesamten Containers sicherstellt.
+    pub t: String,
+}
+
+/// Implementiert `Drop`, um sensible Felder im `SecureContainer` sicher zu löschen.
+impl Drop for SecureContainer {
+    fn drop(&mut self) {
+        self.esk.zeroize();
+        self.wk.zeroize();
+        self.p.zeroize();
+        self.t.zeroize();
+    }
 }

@@ -41,17 +41,15 @@ fn test_multi_recipient_secure_container() {
     // --- 3. VERIFICATION BY RECIPIENTS ---
 
     // Bob versucht, den Container zu öffnen.
-    let (bob_payload, bob_payload_type) =
-        open_secure_container(&container, &bob_identity).unwrap();
+    let bob_payload = open_secure_container(&container, &bob_identity).unwrap();
     assert_eq!(bob_payload, secret_payload);
-    assert_eq!(bob_payload_type, PayloadType::Generic("test_message".to_string()));
+    assert_eq!(container.c, PayloadType::Generic("test_message".to_string()));
     println!("SUCCESS: Bob successfully opened the container.");
 
     // Carol versucht, denselben Container zu öffnen.
-    let (carol_payload, carol_payload_type) =
-        open_secure_container(&container, &carol_identity).unwrap();
+    let carol_payload = open_secure_container(&container, &carol_identity).unwrap();
     assert_eq!(carol_payload, secret_payload);
-    assert_eq!(carol_payload_type, bob_payload_type);
+    assert_eq!(container.c, PayloadType::Generic("test_message".to_string()));
     println!("SUCCESS: Carol successfully opened the container.");
 
     // --- 4. VERIFICATION FAILURE BY UNAUTHORIZED USER ---
@@ -70,6 +68,44 @@ fn test_multi_recipient_secure_container() {
     }
 }
 
+/// Testet, ob der Sender einen von ihm erstellten Container später wieder öffnen kann.
+/// Dies ist der kritische Testfall für das "Double Key Wrapping".
+#[test]
+fn test_sender_can_reopen_container() {
+    // --- 1. SETUP ---
+    let sender = &ACTORS.sender;
+    let recipient = &ACTORS.recipient1;
+    let payload = b"message for recipient that sender must be able to read later";
+
+    // --- 2. CONTAINER CREATION ---
+    // Sender erstellt einen Container für den Empfänger.
+    let container = create_secure_container(
+        sender,
+        &[recipient.user_id.clone()],
+        payload,
+        PayloadType::TransactionBundle,
+    )
+    .unwrap();
+
+    // --- 3. VERIFICATION BY RECIPIENT (Standardfall) ---
+    // Der Empfänger kann den Container öffnen.
+    let recipient_payload = open_secure_container(&container, recipient).unwrap();
+    assert_eq!(
+        recipient_payload,
+        payload,
+        "Recipient should be able to open the container"
+    );
+
+    // --- 4. VERIFICATION BY SENDER (Wichtiger Testfall) ---
+    // Der Sender muss denselben Container ebenfalls öffnen können.
+    let sender_payload = open_secure_container(&container, sender).unwrap();
+    assert_eq!(
+        sender_payload,
+        payload,
+        "Sender should be able to re-open their own container"
+    );
+    println!("SUCCESS: Sender was able to re-open the container, Double Key Wrapping works.");
+}
 
 // --- Tests from test_crypto_utils.rs ---
 
