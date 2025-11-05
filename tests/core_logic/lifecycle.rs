@@ -855,12 +855,13 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
             amount_to_send: "500".to_string(), // Sende den vollen Betrag
         }],
         notes: Some("Here is the voucher I promised!".to_string()),
+        sender_profile_name: None,
     };
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
 
-    let encrypted_bundle_for_bob = alice_wallet.execute_multi_transfer_and_bundle(
+    let (encrypted_bundle_for_bob, _header) = alice_wallet.execute_multi_transfer_and_bundle(
         &alice_identity,
         &standards,
         request,
@@ -878,8 +879,11 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     );
 
     // --- 4. RECEIPT AND PROCESSING by Bob ---
+    // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+    let mut standards_for_bob = std::collections::HashMap::new();
+    standards_for_bob.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
     bob_wallet
-        .process_encrypted_transaction_bundle(&bob_identity, &encrypted_bundle_for_bob, None::<&dyn voucher_lib::archive::VoucherArchive>)
+        .process_encrypted_transaction_bundle(&bob_identity, &encrypted_bundle_for_bob, None::<&dyn voucher_lib::archive::VoucherArchive>, &standards_for_bob)
         .unwrap();
 
     // --- 5. VERIFICATION ---

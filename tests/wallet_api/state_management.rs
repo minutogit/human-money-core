@@ -471,6 +471,7 @@ fn api_wallet_save_and_load_fidelity() {
                 amount_to_send: "3".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(
@@ -506,6 +507,7 @@ fn api_wallet_save_and_load_fidelity() {
                     amount_to_send: "1".to_string(),
                 }],
                 notes: None,
+                sender_profile_name: None,
             };
 
             let mut standards_toml = std::collections::HashMap::new();
@@ -514,7 +516,8 @@ fn api_wallet_save_and_load_fidelity() {
                 silver_toml.clone()
             );
 
-            service_bob.create_transfer_bundle(request, &standards_toml, None, "pwd").unwrap()
+            let (bundle_bytes, _header) = service_bob.create_transfer_bundle(request, &standards_toml, None, "pwd").unwrap();
+            bundle_bytes
         };
         service_a.receive_bundle(&transfer_back_bundle, &standards_map, None, password).unwrap();
 
@@ -534,6 +537,7 @@ fn api_wallet_save_and_load_fidelity() {
                 amount_to_send: "7".to_string(), 
             }], 
             notes: None, 
+            sender_profile_name: None,
         }; 
         let mut standards_toml = std::collections::HashMap::new(); 
         standards_toml.insert( 

@@ -254,6 +254,7 @@ mod local_double_spend_detection {
                 amount_to_send: "100".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
 
         let mut standards = std::collections::HashMap::new();
@@ -285,6 +286,7 @@ mod local_double_spend_detection {
                 amount_to_send: "100".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
 
         let mut standards = std::collections::HashMap::new();
@@ -337,18 +339,22 @@ mod local_double_spend_detection {
                 amount_to_send: "100".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
 
         let mut standards = std::collections::HashMap::new();
         standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-        let bundle_to_bob = alice_wallet.execute_multi_transfer_and_bundle(
+        let (bundle_to_bob, _header) = alice_wallet.execute_multi_transfer_and_bundle(
             alice_identity,
             &standards,
             request,
             Some(&archive),
         ).unwrap();
-        bob_wallet.process_encrypted_transaction_bundle(bob_identity, &bundle_to_bob, Some(&archive)).unwrap();
+        // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+        let mut standards_for_bob = std::collections::HashMap::new();
+        standards_for_bob.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
+        bob_wallet.process_encrypted_transaction_bundle(bob_identity, &bundle_to_bob, Some(&archive), &standards_for_bob).unwrap();
 
         assert_eq!(alice_wallet.voucher_store.vouchers.len(), 1, "Alices Wallet muss den gesendeten Gutschein als 'Archived' behalten.");
         let instance_a = alice_wallet.voucher_store.vouchers.values().next().unwrap();
@@ -377,14 +383,20 @@ mod local_double_spend_detection {
         let losing_tx_id = voucher_for_david.transactions.last().unwrap().t_id.clone();
 
         // Er verpackt und sendet die erste betrügerische Version an Charlie. Hierfür nutzt er die alte Methode.
-        let bundle_to_charlie = bob_wallet.create_and_encrypt_transaction_bundle(bob_identity, vec![voucher_for_charlie.clone()], &charlie_identity.user_id, None, Vec::new(), std::collections::HashMap::new()).unwrap();
-        charlie_wallet.process_encrypted_transaction_bundle(charlie_identity, &bundle_to_charlie, Some(&archive)).unwrap();
+        let (bundle_to_charlie, _header) = bob_wallet.create_and_encrypt_transaction_bundle(bob_identity, vec![voucher_for_charlie.clone()], &charlie_identity.user_id, None, Vec::new(), std::collections::HashMap::new(), None).unwrap();
+        // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+        let mut standards_for_charlie = std::collections::HashMap::new();
+        standards_for_charlie.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
+        charlie_wallet.process_encrypted_transaction_bundle(charlie_identity, &bundle_to_charlie, Some(&archive), &standards_for_charlie).unwrap();
 
         // Um den zweiten Betrug zu ermöglichen, setzt er den Zustand seines Wallets künstlich zurück.
         let local_id_bob = Wallet::calculate_local_instance_id(&voucher_from_bob, &bob_identity.user_id).unwrap();
         bob_wallet.add_voucher_instance(local_id_bob, voucher_from_bob, VoucherStatus::Active);
-        let bundle_to_david = bob_wallet.create_and_encrypt_transaction_bundle(bob_identity, vec![voucher_for_david.clone()], &david_identity.user_id, None, Vec::new(), std::collections::HashMap::new()).unwrap();
-        david_wallet.process_encrypted_transaction_bundle(david_identity, &bundle_to_david, Some(&archive)).unwrap();
+        let (bundle_to_david, _header) = bob_wallet.create_and_encrypt_transaction_bundle(bob_identity, vec![voucher_for_david.clone()], &david_identity.user_id, None, Vec::new(), std::collections::HashMap::new(), None).unwrap();
+        // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+        let mut standards_for_david = std::collections::HashMap::new();
+        standards_for_david.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
+        david_wallet.process_encrypted_transaction_bundle(david_identity, &bundle_to_david, Some(&archive), &standards_for_david).unwrap();
 
         assert_eq!(charlie_wallet.voucher_store.vouchers.len(), 1);
         assert_eq!(david_wallet.voucher_store.vouchers.len(), 1);
@@ -403,12 +415,13 @@ mod local_double_spend_detection {
                 amount_to_send: "100".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
 
         let mut standards = std::collections::HashMap::new();
         standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-        let bundle_to_alice_1 = charlie_wallet.execute_multi_transfer_and_bundle(
+        let (bundle_to_alice_1, _header) = charlie_wallet.execute_multi_transfer_and_bundle(
             charlie_identity,
             &standards,
             request,
@@ -421,8 +434,11 @@ mod local_double_spend_detection {
         }
         println!("[Debug Test] Verarbeite jetzt Bündel von Charlie...");
 
+        // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+        let mut standards_for_alice = std::collections::HashMap::new();
+        standards_for_alice.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
         let result1 = alice_wallet
-            .process_encrypted_transaction_bundle(alice_identity, &bundle_to_alice_1, Some(&archive))
+            .process_encrypted_transaction_bundle(alice_identity, &bundle_to_alice_1, Some(&archive), &standards_for_alice)
             .unwrap();
         assert_eq!(alice_wallet.voucher_store.vouchers.len(), 2, "Alice muss jetzt einen 'Archived' und einen 'Active' Gutschein haben.");
         assert!(result1.check_result.verifiable_conflicts.is_empty(), "Nach dem ersten zurückerhaltenen Gutschein darf es noch keinen Konflikt geben.");
@@ -441,20 +457,24 @@ mod local_double_spend_detection {
                 amount_to_send: "100".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
 
         let mut standards = std::collections::HashMap::new();
         standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-        let bundle_to_alice_2 = david_wallet.execute_multi_transfer_and_bundle(
+        let (bundle_to_alice_2, _header) = david_wallet.execute_multi_transfer_and_bundle(
             david_identity,
             &standards,
             request,
             Some(&archive)
         ).unwrap();
 
+        // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+        let mut standards_for_alice_2 = std::collections::HashMap::new();
+        standards_for_alice_2.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
         let result2 = alice_wallet
-            .process_encrypted_transaction_bundle(alice_identity, &bundle_to_alice_2, Some(&archive))
+            .process_encrypted_transaction_bundle(alice_identity, &bundle_to_alice_2, Some(&archive), &standards_for_alice_2)
             .unwrap();
 
         // Assertions
@@ -496,6 +516,7 @@ mod local_double_spend_detection {
                 amount_to_send: "100".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
 
         let mut standards = std::collections::HashMap::new();
@@ -700,6 +721,7 @@ mod security_vulnerabilities {
             sender_signature: "".to_string(),
             forwarded_fingerprints: Vec::new(),
             fingerprint_depths: std::collections::HashMap::new(),
+            sender_profile_name: None,
         };
         let bundle_json_for_id = to_canonical_json(&bundle).unwrap();
         bundle.bundle_id = get_hash(bundle_json_for_id);
@@ -787,13 +809,17 @@ mod security_vulnerabilities {
                 amount_to_send: "100".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
 
         let mut standards = std::collections::HashMap::new();
         standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-        let container_to_hacker = issuer_wallet.execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None).unwrap();
-        hacker_wallet.process_encrypted_transaction_bundle(&ACTORS.hacker, &container_to_hacker, None).unwrap();
+        let (container_to_hacker, _header) = issuer_wallet.execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None).unwrap();
+        // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+        let mut standards_for_hacker = std::collections::HashMap::new();
+        standards_for_hacker.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
+        hacker_wallet.process_encrypted_transaction_bundle(&ACTORS.hacker, &container_to_hacker, None, &standards_for_hacker).unwrap();
         let voucher_in_hacker_wallet = &hacker_wallet.voucher_store.vouchers.iter().next().unwrap().1.voucher;
 
         // ### SZENARIO 1a: WERTINFLATION ###
@@ -817,7 +843,10 @@ mod security_vulnerabilities {
         inflated_voucher.transactions.push(final_tx);
 
         let hacked_container = create_hacked_bundle_and_container(&ACTORS.hacker, &ACTORS.victim.user_id, inflated_voucher);
-        victim_wallet.process_encrypted_transaction_bundle(&ACTORS.victim, &hacked_container, None).unwrap();
+        // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+        let mut standards_for_victim = std::collections::HashMap::new();
+        standards_for_victim.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
+        victim_wallet.process_encrypted_transaction_bundle(&ACTORS.victim, &hacked_container, None, &standards_for_victim).unwrap();
         let received_voucher = &victim_wallet.voucher_store.vouchers.iter().next().unwrap().1.voucher;
         let result = voucher_validation::validate_voucher_against_standard(received_voucher, standard);
         assert!(matches!(result, Err(VoucherCoreError::Validation(ValidationError::InvalidCreatorSignature { .. }))),
@@ -842,7 +871,10 @@ mod security_vulnerabilities {
         tampered_guarantor_voucher.transactions.push(final_tx_2);
 
         let hacked_container = create_hacked_bundle_and_container(&ACTORS.hacker, &ACTORS.victim.user_id, tampered_guarantor_voucher);
-        victim_wallet.process_encrypted_transaction_bundle(&ACTORS.victim, &hacked_container, None).unwrap();
+        // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+        let mut standards_for_victim = std::collections::HashMap::new();
+        standards_for_victim.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
+        victim_wallet.process_encrypted_transaction_bundle(&ACTORS.victim, &hacked_container, None, &standards_for_victim).unwrap();
         let received_voucher = &victim_wallet.voucher_store.vouchers.iter().next().unwrap().1.voucher;
         let result = voucher_validation::validate_voucher_against_standard(received_voucher, standard);
         assert!(matches!(result, Err(VoucherCoreError::Validation(ValidationError::InvalidSignatureId(_)))),
@@ -874,13 +906,17 @@ mod security_vulnerabilities {
                 amount_to_send: "100".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
 
         let mut standards = std::collections::HashMap::new();
         standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-        let container_to_bob = alice_wallet.execute_multi_transfer_and_bundle(&ACTORS.alice, &standards, request, None).unwrap();
-        bob_wallet_hacker.process_encrypted_transaction_bundle(&ACTORS.bob, &container_to_bob, None).unwrap();
+        let (container_to_bob, _header) = alice_wallet.execute_multi_transfer_and_bundle(&ACTORS.alice, &standards, request, None).unwrap();
+        // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+        let mut standards_for_bob = std::collections::HashMap::new();
+        standards_for_bob.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
+        bob_wallet_hacker.process_encrypted_transaction_bundle(&ACTORS.bob, &container_to_bob, None, &standards_for_bob).unwrap();
         let voucher_in_bob_wallet = &bob_wallet_hacker.voucher_store.vouchers.iter().next().unwrap().1.voucher;
 
         // ### ANGRIFF ###
@@ -921,13 +957,17 @@ mod security_vulnerabilities {
                 amount_to_send: "100".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
 
         let mut standards = std::collections::HashMap::new();
         standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-        let container_to_hacker = issuer_wallet.execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None).unwrap();
-        hacker_wallet.process_encrypted_transaction_bundle(&ACTORS.hacker, &container_to_hacker, None).unwrap();
+        let (container_to_hacker, _header) = issuer_wallet.execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None).unwrap();
+        // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+        let mut standards_for_hacker = std::collections::HashMap::new();
+        standards_for_hacker.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
+        hacker_wallet.process_encrypted_transaction_bundle(&ACTORS.hacker, &container_to_hacker, None, &standards_for_hacker).unwrap();
         let voucher_in_hacker_wallet = &hacker_wallet.voucher_store.vouchers.iter().next().unwrap().1.voucher;
 
         // ### SZENARIO 3a: OVERSPENDING ###
@@ -945,7 +985,10 @@ mod security_vulnerabilities {
         let overspend_tx = create_hacked_tx(&ACTORS.hacker, overspend_tx_unsigned);
         overspend_voucher.transactions.push(overspend_tx);
         let hacked_container = create_hacked_bundle_and_container(&ACTORS.hacker, &ACTORS.victim.user_id, overspend_voucher);
-        victim_wallet.process_encrypted_transaction_bundle(&ACTORS.victim, &hacked_container, None).unwrap();
+        // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+        let mut standards_for_victim = std::collections::HashMap::new();
+        standards_for_victim.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
+        victim_wallet.process_encrypted_transaction_bundle(&ACTORS.victim, &hacked_container, None, &standards_for_victim).unwrap();
         let received_voucher = &victim_wallet.voucher_store.vouchers.iter().next().unwrap().1.voucher;
         let result = voucher_validation::validate_voucher_against_standard(received_voucher, standard);
 
@@ -1294,12 +1337,13 @@ mod security_vulnerabilities {
                 amount_to_send: "40".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
 
         let mut standards = std::collections::HashMap::new();
         standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-        let bundle_to_b = wallet_a.execute_multi_transfer_and_bundle(
+        let (bundle_to_b, _header) = wallet_a.execute_multi_transfer_and_bundle(
             &a_identity,
             &standards,
             request,
@@ -1307,7 +1351,10 @@ mod security_vulnerabilities {
         )
             .unwrap();
 
-        wallet_b.process_encrypted_transaction_bundle(&b_identity, &bundle_to_b, None).unwrap();
+        // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+        let mut standards_for_bob = std::collections::HashMap::new();
+        standards_for_bob.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
+        wallet_b.process_encrypted_transaction_bundle(&b_identity, &bundle_to_b, None, &standards_for_bob).unwrap();
 
         // 4. Verifizierung (Wallet A)
         // NACH ÄNDERUNG: Wallet A sollte jetzt nur noch EINE Instanz haben - den aktiven Restbetrag.
@@ -1356,11 +1403,15 @@ mod security_vulnerabilities {
         let voucher_for_bob = create_transaction(&initial_voucher, standard, &eve_identity.user_id, &eve_identity.signing_key, &b_identity.user_id, "100").unwrap();
 
         // Eve verpackt und sendet die Gutscheine
-        let bundle_to_alice = eve_wallet.create_and_encrypt_transaction_bundle(&eve_identity, vec![voucher_for_alice], &a_identity.user_id, None, Vec::new(), std::collections::HashMap::new()).unwrap();
-        let bundle_to_bob = eve_wallet.create_and_encrypt_transaction_bundle(&eve_identity, vec![voucher_for_bob], &b_identity.user_id, None, Vec::new(), std::collections::HashMap::new()).unwrap();
+        let (bundle_to_alice, _header) = eve_wallet.create_and_encrypt_transaction_bundle(&eve_identity, vec![voucher_for_alice], &a_identity.user_id, None, Vec::new(), std::collections::HashMap::new(), None).unwrap();
+        let (bundle_to_bob, _header) = eve_wallet.create_and_encrypt_transaction_bundle(&eve_identity, vec![voucher_for_bob], &b_identity.user_id, None, Vec::new(), std::collections::HashMap::new(), None).unwrap();
 
-        alice_wallet.process_encrypted_transaction_bundle(&a_identity, &bundle_to_alice, None).unwrap();
-        bob_wallet.process_encrypted_transaction_bundle(&b_identity, &bundle_to_bob, None).unwrap();
+        // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+        let mut standards_map = std::collections::HashMap::new();
+        standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
+
+        alice_wallet.process_encrypted_transaction_bundle(&a_identity, &bundle_to_alice, None, &standards_map).unwrap();
+        bob_wallet.process_encrypted_transaction_bundle(&b_identity, &bundle_to_bob, None, &standards_map).unwrap();
 
         // 3. Akt 2 (Austausch)
         println!("\n[DEBUG TEST] --- Phase 2: Austausch ---");

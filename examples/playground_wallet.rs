@@ -83,6 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             amount_to_send: "0.5".to_string(),
         }],
         notes: Some("Payment for services".to_string()),
+        sender_profile_name: None,
     };
     
     let mut standards_map = std::collections::HashMap::new();

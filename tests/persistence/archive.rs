@@ -81,12 +81,13 @@ fn test_voucher_archiving_on_full_spend() {
             amount_to_send: "100.0000".to_string(), // KORREKTUR: Betrag muss ebenfalls das korrekte Format haben.
         }],
         notes: None,
+        sender_profile_name: None,
     };
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-    let bundle_bytes = alice_wallet
+    let (bundle_bytes, _header) = alice_wallet
         .execute_multi_transfer_and_bundle(
             &alice_identity,
             &standards,

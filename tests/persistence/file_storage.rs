@@ -251,6 +251,7 @@ fn test_save_and_load_with_bundle_history() {
             amount_to_send: "100".to_string(), // Sende den vollen Betrag
         }],
         notes: Some("Test transfer".to_string()),
+        sender_profile_name: None,
     };
 
     let mut standards = std::collections::HashMap::new();

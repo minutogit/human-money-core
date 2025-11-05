@@ -63,6 +63,9 @@ pub struct TransactionBundleHeader {
     pub sender_signature: String,
     /// Gibt an, ob das Bündel gesendet oder empfangen wurde.
     pub direction: TransactionDirection,
+    /// Optionaler Profilname des Senders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_profile_name: Option<String>,
 }
 
 /// Repräsentiert ein vollständiges, signiertes Bündel für einen Austausch von Gutscheinen.
@@ -93,6 +96,10 @@ pub struct TransactionBundle {
     /// Key: prvhash_senderid_hash des Fingerprints.
     #[serde(default)]
     pub fingerprint_depths: HashMap<String, u8>,
+
+    /// Optionaler Profilname des Senders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_profile_name: Option<String>,
 }
 
 impl TransactionBundle {
@@ -107,6 +114,7 @@ impl TransactionBundle {
             notes: self.notes.clone(),
             sender_signature: self.sender_signature.clone(),
             direction,
+            sender_profile_name: self.sender_profile_name.clone(),
         }
     }
 }

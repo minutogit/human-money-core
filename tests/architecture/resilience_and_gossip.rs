@@ -53,13 +53,15 @@ mod tests {
  let fingerprint_depths: HashMap<String, u8> = depths.into_iter().collect();
  let (wallet, identity) = sender_service.get_unlocked_mut_for_test();
 
-        wallet.create_and_encrypt_transaction_bundle( identity,
+        let (bundle_bytes, _header) = wallet.create_and_encrypt_transaction_bundle( identity,
             vec![], // Keine Gutscheine
             recipient_id,
             None,
             forwarded_fingerprints,
             fingerprint_depths,
- ).unwrap()
+            None, // sender_profile_name
+ ).unwrap();
+ bundle_bytes
     }
 
 
@@ -224,13 +226,15 @@ mod tests {
                     amount_to_send: "10".to_string(),
                 }],
                 notes: None,
+                sender_profile_name: None,
             };
 
             let mut standards_toml = std::collections::HashMap::new();
             standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
 
-            alice_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD)
-        }.unwrap();
+            let (bundle1_result, _header) = alice_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD).unwrap();
+            bundle1_result
+        };
         let mut standards = HashMap::new();
         standards.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
         bob_service.receive_bundle(&bundle1, &standards, None, PASSWORD).unwrap();
@@ -245,10 +249,11 @@ mod tests {
                 amount_to_send: "5".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
-        let bundle2 = bob_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD).unwrap();
+        let (bundle2, _header) = bob_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD).unwrap();
         // Erneute Bereitstellung der Standard-Definition für den Empfang.
         alice_service.receive_bundle(&bundle2, &standards, None, PASSWORD).unwrap();
 
@@ -358,6 +363,7 @@ mod tests {
                 amount_to_send: "10".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
@@ -390,13 +396,14 @@ mod tests {
         // WHEN: Alice einen Transfer auslöst, der die Heuristik intern verwendet.
         let bob_id = bob_service.get_user_id().unwrap();
         let (fingerprints_to_send, depths_to_send) = wallet.select_fingerprints_for_bundle(&bob_id, &[]).unwrap();
- let bundle_bytes = wallet.create_and_encrypt_transaction_bundle(
+ let (bundle_bytes, _header) = wallet.create_and_encrypt_transaction_bundle(
             alice_identity,
             vec![], // Kein echter Gutschein-Transfer nötig
             &bob_id,
             None,
             fingerprints_to_send,
             depths_to_send,
+            None, // sender_profile_name
         ).unwrap();
 
         // THEN: Wir öffnen das Bundle, um zu prüfen, was ausgewählt wurde.
@@ -431,13 +438,14 @@ mod tests {
         wallet.known_fingerprints.local_history.insert(key, vec![fp]);
 
         // WHEN: Alice einen neuen Transfer an Bob erstellt
-        let bundle_bytes = wallet.create_and_encrypt_transaction_bundle(
+        let (bundle_bytes, _header) = wallet.create_and_encrypt_transaction_bundle(
             alice_identity,
             vec![],
             &bob_id,
             None,
             vec![],
             HashMap::new(),
+            None, // sender_profile_name
         ).unwrap();
 
         // THEN: Der bereits bekannte Fingerprint wird nicht erneut gesendet.
@@ -472,13 +480,14 @@ mod tests {
         // WHEN: Ein Transfer ausgelöst wird
         let bob_id = bob_service.get_user_id().unwrap();
         let (fingerprints_to_send, depths_to_send) = wallet.select_fingerprints_for_bundle(&bob_id, &[]).unwrap();
- let bundle_bytes = wallet.create_and_encrypt_transaction_bundle(
+ let (bundle_bytes, _header) = wallet.create_and_encrypt_transaction_bundle(
             alice_identity,
             vec![],
             &bob_id,
             None,
             fingerprints_to_send,
             depths_to_send,
+            None, // sender_profile_name
         ).unwrap();
 
         // THEN: Das Kontingent von 150 wird exakt gefüllt

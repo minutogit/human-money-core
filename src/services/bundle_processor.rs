@@ -30,6 +30,7 @@ pub fn create_and_encrypt_bundle(
     notes: Option<String>,
     forwarded_fingerprints: Vec<TransactionFingerprint>,
     fingerprint_depths: HashMap<String, u8>,
+    sender_profile_name: Option<String>,
 ) -> Result<(Vec<u8>, TransactionBundle), VoucherCoreError> {
     let mut bundle = TransactionBundle {
         bundle_id: "".to_string(),
@@ -41,6 +42,7 @@ pub fn create_and_encrypt_bundle(
         sender_signature: "".to_string(),
         forwarded_fingerprints,
         fingerprint_depths,
+        sender_profile_name,
     };
 
     let bundle_json_for_id = to_canonical_json(&bundle)?;

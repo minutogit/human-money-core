@@ -7,7 +7,7 @@ use super::{AppState, AppService};
 use crate::archive::VoucherArchive;
 use crate::models::conflict::ResolutionEndorsement;
 use crate::models::voucher::{Voucher};
-use crate::services::voucher_manager::NewVoucherData;
+use crate::services::{standard_manager, voucher_manager::NewVoucherData}; // Import standard_manager
 use crate::wallet::{MultiTransferRequest, ProcessBundleResult};
 use std::collections::HashMap;
 
@@ -121,7 +121,7 @@ impl AppService {
         standard_definitions_toml: &HashMap<String, String>,
         archive: Option<&dyn VoucherArchive>,
         password: &str,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<(Vec<u8>, String), String> { // GIBT JETZT (bytes, bundle_id) ZURÜCK
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
         // Vorab alle benötigten Standards parsen
@@ -146,12 +146,12 @@ impl AppService {
                     request,
                     archive,
                 ) {
-                    Ok(bundle_bytes) => {
+                    Ok((bundle_bytes, header)) => { // Fange Header hier auf
                         // Speichere den neuen Zustand, der von der Wallet-Methode committet wurde.
                         match temp_wallet.save(&mut storage, &identity, password) {
                             Ok(_) => (
                                 // 4a. Erfolg: Gib die modifizierte Kopie als neuen Zustand zurück.
-                                Ok(bundle_bytes),
+                                Ok((bundle_bytes, header.bundle_id)), // Gib ID hier zurück
                                 AppState::Unlocked { storage, wallet: temp_wallet, identity },
                             ),
                             Err(e) => (
@@ -196,6 +196,18 @@ impl AppService {
  
         let (result, new_state) = match current_state {
             AppState::Unlocked { mut storage, wallet, identity } => {
+                // NEU: Parse die TOML-Definitionen hier, damit sie an die Wallet-Methode
+                // übergeben werden können.
+                let mut verified_definitions = HashMap::new();
+                for (uuid, toml_content) in standard_definitions_toml {
+                    match standard_manager::verify_and_parse_standard(toml_content) {
+                        Ok((def, _hash)) => {
+                            verified_definitions.insert(uuid.clone(), def);
+                        }
+                        Err(e) => return Err(e.to_string()),
+                    }
+                }
+
                 match self.validate_vouchers_in_bundle(
                     &identity,
                     bundle_data,
@@ -206,7 +218,7 @@ impl AppService {
                         // TRANSANKTIONALER ANSATZ:
                         let mut temp_wallet = wallet.clone();
                         match temp_wallet
-                            .process_encrypted_transaction_bundle(&identity, bundle_data, archive)
+                            .process_encrypted_transaction_bundle(&identity, bundle_data, archive, &verified_definitions)
                         {
                             Ok(proc_result) => {
                                 match temp_wallet.save(&mut storage, &identity, password) {

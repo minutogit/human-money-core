@@ -83,6 +83,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
             amount_to_send: "40".to_string(),
         }],
         notes: None,
+        sender_profile_name: None,
     };
 
     let mut standards_toml = std::collections::HashMap::new();
@@ -165,6 +166,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
             amount_to_send: "100".to_string(),
         }],
         notes: None,
+        sender_profile_name: None,
     };
 
     let mut standards_toml = std::collections::HashMap::new();
@@ -173,7 +175,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         silver_toml.clone() // Use the silver_toml from earlier in the test
     );
 
-    let bundle = service_sender
+    let (bundle, _header) = service_sender
         .create_transfer_bundle(
             request,
             &standards_toml,

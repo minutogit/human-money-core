@@ -98,10 +98,11 @@ fn api_app_service_full_lifecycle() {
             amount_to_send: "100".to_string(),
         }],
         notes: None,
+        sender_profile_name: None,
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.metadata.uuid.clone(), silver_standard_toml.clone());
-    let transfer_bundle = service_alice
+    let (transfer_bundle, _header) = service_alice
         .create_transfer_bundle(
             request,
             &standards_toml,
@@ -361,12 +362,13 @@ fn api_wallet_transfer_full_amount() {
             amount_to_send: "100".to_string(),
         }],
         notes: None,
+        sender_profile_name: None,
     };
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
 
-    let bundle_bytes = alice_wallet
+    let (bundle_bytes, _header) = alice_wallet
         .execute_multi_transfer_and_bundle(
             &alice.identity,
             &standards,
@@ -382,8 +384,11 @@ fn api_wallet_transfer_full_amount() {
         .unwrap();
     assert_eq!(summary.status, VoucherStatus::Archived);
 
+    // KORREKTUR: Die Map muss den Minuto-Standard enthalten.
+    let mut standards_for_bob = std::collections::HashMap::new();
+    standards_for_bob.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
     bob_wallet
-        .process_encrypted_transaction_bundle(&bob.identity, &bundle_bytes, None)
+        .process_encrypted_transaction_bundle(&bob.identity, &bundle_bytes, None, &standards_for_bob)
         .unwrap();
 
     let summary = bob_wallet.list_vouchers(None, None).pop().unwrap();
@@ -417,12 +422,13 @@ fn api_wallet_transfer_split_amount() {
             amount_to_send: "30".to_string(),
         }],
         notes: None,
+        sender_profile_name: None,
     };
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
 
-    let bundle_bytes = alice_wallet
+    let (bundle_bytes, _header) = alice_wallet
         .execute_multi_transfer_and_bundle(
             &alice.identity,
             &standards,
@@ -438,8 +444,11 @@ fn api_wallet_transfer_split_amount() {
         .unwrap();
     assert_eq!(active_summary.current_amount, "70");
 
+    // KORREKTUR: Die Map muss den Minuto-Standard enthalten.
+    let mut standards_for_bob = std::collections::HashMap::new();
+    standards_for_bob.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
     bob_wallet
-        .process_encrypted_transaction_bundle(&bob.identity, &bundle_bytes, None)
+        .process_encrypted_transaction_bundle(&bob.identity, &bundle_bytes, None, &standards_for_bob)
         .unwrap();
     let bob_summary = bob_wallet.list_vouchers(None, None).pop().unwrap();
     assert_eq!(bob_summary.current_amount, "30");
@@ -468,6 +477,7 @@ fn api_wallet_transfer_invalid_amount() {
             amount_to_send: "-50".to_string(),
         }],
         notes: None,
+        sender_profile_name: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -491,6 +501,7 @@ fn api_wallet_transfer_invalid_amount() {
             amount_to_send: "50.5".to_string(),
         }],
         notes: None,
+        sender_profile_name: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -538,6 +549,7 @@ fn api_wallet_transfer_inactive_voucher() {
             amount_to_send: "50".to_string(),
         }],
         notes: None,
+        sender_profile_name: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -581,6 +593,7 @@ fn api_wallet_proactive_double_spend_prevention() {
             amount_to_send: "100".to_string(),
         }],
         notes: None,
+        sender_profile_name: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -602,6 +615,7 @@ fn api_wallet_proactive_double_spend_prevention() {
             amount_to_send: "100".to_string(),
         }],
         notes: None,
+        sender_profile_name: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -797,7 +811,7 @@ fn api_wallet_rejects_invalid_bundle() {
 
     voucher.description = "BAD-FORMAT".to_string(); // Verstößt gegen Regex
 
-    let bundle_bytes = alice_wallet
+    let (bundle_bytes, _header) = alice_wallet
         .create_and_encrypt_transaction_bundle(
             &alice.identity,
             vec![voucher.clone()],
@@ -805,6 +819,7 @@ fn api_wallet_rejects_invalid_bundle() {
             None,
             Vec::new(),
             std::collections::HashMap::new(),
+            None, // sender_profile_name
         )
         .unwrap();
 
@@ -937,12 +952,13 @@ fn api_wallet_transfer_multi_source() {
             },
         ],
         notes: Some("Zahlung aus zwei Quellen".to_string()),
+        sender_profile_name: None,
     };
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
 
-    let bundle_bytes = alice_wallet
+    let (bundle_bytes, _header) = alice_wallet
         .execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None)
         .unwrap();
 
@@ -959,8 +975,11 @@ fn api_wallet_transfer_multi_source() {
     assert_eq!(remaining_amounts_alice, vec![Decimal::from(20), Decimal::from(80)]);
 
     // 4. VERIFIZIERUNG (Bob)
+    // KORREKTUR: Die Map muss den Minuto-Standard enthalten.
+    let mut standards_for_bob = std::collections::HashMap::new();
+    standards_for_bob.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
     bob_wallet
-        .process_encrypted_transaction_bundle(&bob.identity, &bundle_bytes, None)
+        .process_encrypted_transaction_bundle(&bob.identity, &bundle_bytes, None, &standards_for_bob)
         .unwrap();
     let balances = bob_wallet.get_total_balance_by_currency();
     let minuto_balance = balances.iter().find(|b| b.unit == "Minuto").unwrap();

@@ -54,6 +54,7 @@ fn test_disallowed_transaction_type() {
             amount_to_send: "40".to_string(), // Teilbetrag -> "split"
         }],
         notes: None,
+        sender_profile_name: None,
     };
 
     let mut standards_toml = std::collections::HashMap::new();

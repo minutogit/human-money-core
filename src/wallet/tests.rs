@@ -219,6 +219,7 @@ mod instance_state_behavior {
                 amount_to_send: "50".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
         let mut standards_map = std::collections::HashMap::new();
         standards_map.insert(standard.metadata.uuid.clone(), standard.clone());

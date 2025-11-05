@@ -739,6 +739,7 @@ pub fn create_test_bundle(
         // HINZUGEFÜGT: Fehlende Argumente mit Standardwerten, um alte Tests nicht zu brechen
         Vec::new(),
         std::collections::HashMap::new(),
+        None, // sender_profile_name
     )?;
     Ok(result.0)
 }

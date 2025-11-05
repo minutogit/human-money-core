@@ -79,6 +79,7 @@ mod tests {
                 amount_to_send: "40".to_string(),
             }],
             notes: None,
+            sender_profile_name: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());

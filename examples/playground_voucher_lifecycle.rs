@@ -134,10 +134,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             amount_to_send: "25".to_string(),
         }],
         notes: Some("Viel Spaß!".to_string()),
+        sender_profile_name: None,
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.metadata.uuid.clone(), standard_toml.clone());
-    let transfer_bundle = service_creator.create_transfer_bundle(request, &standards_toml, None, password)?;
+    let (transfer_bundle, _header) = service_creator.create_transfer_bundle(request, &standards_toml, None, password)?;
 
     // --- 6. Verifizierung der Kontostände ---
     println!("\n--- SCHRITT 6: Empfänger erhält das Bundle und Kontostände werden geprüft ---");
@@ -178,10 +179,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             amount_to_send: "25".to_string(), // (ÄNDERUNG) Sende den vollen Restbetrag
         }],
         notes: Some("Weitergereicht!".to_string()),
+        sender_profile_name: None,
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.metadata.uuid.clone(), standard_toml.clone());
-    let transfer_bundle_to_charlie = service_recipient.create_transfer_bundle(request, &standards_toml, None, password)?;
+    let (transfer_bundle_to_charlie, _header) = service_recipient.create_transfer_bundle(request, &standards_toml, None, password)?;
 
     // Charlie empfängt das Bundle
     service_charlie.receive_bundle(&transfer_bundle_to_charlie, &standards_map, None, password)?;

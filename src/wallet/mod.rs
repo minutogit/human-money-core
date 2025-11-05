@@ -29,13 +29,17 @@ use crate::models::profile::{
 use crate::models::secure_container::{PayloadType, SecureContainer};
 use crate::models::voucher::{Transaction, Voucher};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
-use crate::services::crypto_utils::{create_user_id, get_hash, get_pubkey_from_user_id, verify_ed25519};
+use crate::services::crypto_utils::{
+    create_user_id, get_hash, get_pubkey_from_user_id, verify_ed25519,
+};
 use crate::services::utils::to_canonical_json;
 use crate::services::{bundle_processor, conflict_manager, voucher_manager, voucher_validation};
 use crate::storage::{AuthMethod, Storage, StorageError};
 use chrono::{DateTime, Duration, Utc};
 use crate::services::voucher_manager::NewVoucherData;
 use ed25519_dalek::Signature;
+use rust_decimal::Decimal; // NEU: Hinzufügen für Dezimal-Arithmetik
+use std::str::FromStr; // NEU: Hinzufügen für `Decimal::from_str`
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +62,9 @@ pub struct MultiTransferRequest {
     pub sources: Vec<SourceTransfer>,
     /// Optionale Notizen für das Bundle.
     pub notes: Option<String>,
+    /// Optionaler Profilname des Senders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_profile_name: Option<String>,
 }
 
 /// Die zentrale Verwaltungsstruktur für ein Nutzer-Wallet.
@@ -81,15 +88,36 @@ pub struct Wallet {
     pub fingerprint_metadata: CanonicalMetadataStore,
 }
 
+/// Fasst die Ergebnisse eines Transfers pro Standard zusammen.
+/// Key: Währungseinheit (z.B. "Minuto"), Value: Summe als String (teilbar) oder Anzahl (nicht-teilbar).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct TransferSummary {
+    /// Aufsummierte Beträge für teilbare/summierbare Gutscheine (z.B. "10.50 Minuto").
+    /// Key: Währungseinheit (z.B. "Minuto"), Value: Summe als String.
+    #[serde(default)]
+    pub summable_amounts: HashMap<String, String>,
+    /// Gezählte Einheiten für nicht-teilbare/nicht-summierbare Gutscheine (z.B. "3 Brote").
+    /// Key: Währungseinheit (z.B. "Brot"), Value: Anzahl.
+    #[serde(default)]
+    pub countable_items: HashMap<String, u32>,
+}
+
 /// Das Ergebnis der Verarbeitung eines eingehenden Transaktionsbündels.
-#[derive(Debug, Default)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ProcessBundleResult {
     pub header: TransactionBundleHeader,
     pub check_result: DoubleSpendCheckResult,
+    /// Detaillierte Zusammenfassung der transferierten Werte (Summen und Zähler).
+    #[serde(default)]
+    pub transfer_summary: TransferSummary,
+    /// Liste der lokalen IDs der Gutscheine, die im Wallet des Empfängers
+    /// durch diesen Transfer erstellt oder aktualisiert wurden.
+    #[serde(default)]
+    pub involved_vouchers: Vec<String>,
 }
 
 /// Das Ergebnis einer Double-Spend-Prüfung.
-#[derive(Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct DoubleSpendCheckResult {
     pub verifiable_conflicts: HashMap<String, Vec<crate::models::conflict::TransactionFingerprint>>,
     pub unverifiable_warnings: HashMap<String, Vec<crate::models::conflict::TransactionFingerprint>>,
@@ -393,7 +421,8 @@ impl Wallet {
         notes: Option<String>,
         forwarded_fingerprints: Vec<TransactionFingerprint>,
         fingerprint_depths: HashMap<String, u8>,
-    ) -> Result<Vec<u8>, VoucherCoreError> {
+        sender_profile_name: Option<String>,
+    ) -> Result<(Vec<u8>, TransactionBundleHeader), VoucherCoreError> {
         // DEBUG: Log sender and recipient to trace the NotAnIntendedRecipient error.
         println!(
             "[Debug Wallet::create_and_encrypt] Sender: {}, Recipient: {}",
@@ -416,14 +445,15 @@ impl Wallet {
             notes,
             forwarded_fingerprints,
             fingerprint_depths,
+            sender_profile_name,
         )?;
 
         let header = bundle.to_header(TransactionDirection::Sent);
         self.bundle_meta_store
             .history
-            .insert(header.bundle_id.clone(), header);
+            .insert(header.bundle_id.clone(), header.clone());
 
-        Ok(container_bytes)
+        Ok((container_bytes, header))
     }
 
     /// Verarbeitet einen serialisierten `SecureContainer`, der ein `TransactionBundle` enthält.
@@ -432,6 +462,7 @@ impl Wallet {
         identity: &UserIdentity,
         container_bytes: &[u8],
         archive: Option<&dyn VoucherArchive>,
+        standard_definitions: &HashMap<String, VoucherStandardDefinition>,
     ) -> Result<ProcessBundleResult, VoucherCoreError> {
         let bundle = bundle_processor::open_and_verify_bundle(identity, container_bytes)?;
 
@@ -439,6 +470,10 @@ impl Wallet {
         let forwarded_fingerprints = bundle.forwarded_fingerprints.clone();
         let fingerprint_depths = bundle.fingerprint_depths.clone();
         let received_vouchers = bundle.vouchers.clone();
+
+        // Initialisiere die neuen Ergebnis-Strukturen
+        let mut transfer_summary = TransferSummary::default();
+        let mut involved_vouchers = Vec::new();
 
         // --- NEUES DEBUGGING: Zustand des Voucher Stores VOR der Verarbeitung ---
         println!("\n[Debug Wallet Process] === Zustand VOR Verarbeitung des Bundles ===");
@@ -458,9 +493,57 @@ impl Wallet {
                 println!("[Debug Wallet Process]     Alte tx_count: {}, Neue tx_count: {}", existing_instance.voucher.transactions.len(), voucher.transactions.len());
             }
             println!("[Debug Wallet Process] Füge Instanz hinzu: local_id={}, voucher_id={}, tx_count={}", local_id, voucher.voucher_id, voucher.transactions.len());
-            self.add_voucher_instance(local_id, voucher, VoucherStatus::Active);
+            self.add_voucher_instance(local_id.clone(), voucher.clone(), VoucherStatus::Active);
+
+            // --- NEU: TransferSummary-Logik ---
+            // 1. Sammle die lokale ID
+            involved_vouchers.push(local_id.clone());
+
+            // 2. Finde den relevanten Standard
+            let standard_uuid = &voucher.voucher_standard.uuid;
+            let standard = standard_definitions.get(standard_uuid).ok_or_else(|| {
+                VoucherCoreError::Generic(format!(
+                    "Standard definition not found for UUID: {}",
+                    standard_uuid
+                ))
+            })?;
+
+            // 3. Finde die letzte Transaktion, um den erhaltenen Betrag zu ermitteln
+            let last_tx = voucher.transactions.last().ok_or_else(|| {
+                VoucherCoreError::Generic("Received voucher has no transactions.".to_string())
+            })?;
+
+            // 4. Bestimme die Einheit
+            let unit = voucher.nominal_value.unit.clone();
+
+            // 5. Akkumuliere den Wert, basierend auf 'is_summable'
+            if standard.template.fixed.is_summable {
+                let current_sum = transfer_summary
+                    .summable_amounts
+                    .entry(unit)
+                    .or_insert_with(|| "0.0".to_string());
+
+                // Verwende decimal_utils, um Strings sicher zu addieren
+                // KORREKTUR: Verwende rust_decimal::Decimal für die Addition
+                let val1 = Decimal::from_str(current_sum)
+                    .map_err(|e| VoucherCoreError::Generic(format!("Invalid decimal amount in summary: {}", e)))?;
+                let val2 = Decimal::from_str(&last_tx.amount)
+                    .map_err(|e| VoucherCoreError::Generic(format!("Invalid decimal amount in transaction: {}", e)))?;
+                
+                *current_sum = (val1 + val2).to_string();
+            } else {
+                let count = transfer_summary
+                    .countable_items
+                    .entry(unit)
+                    .or_insert(0);
+                *count += 1;
+            }
+            // --- Ende TransferSummary-Logik ---
         }
 
+        // Die 'bundle'-Variable ist hier noch verfügbar, da `bundle.vouchers.clone()`
+        // verwendet wurde. Erstelle den Header (der `sender_profile_name` enthält,
+        // da `to_header` in Patch 1 angepasst wurde).
         let header = bundle.to_header(TransactionDirection::Received);
         self.bundle_meta_store
             .history
@@ -542,6 +625,8 @@ impl Wallet {
         Ok(ProcessBundleResult {
             header,
             check_result,
+            transfer_summary,
+            involved_vouchers,
         })
     }
 
@@ -768,7 +853,7 @@ impl Wallet {
         standard_definitions: &HashMap<String, VoucherStandardDefinition>,
         request: MultiTransferRequest,
         archive: Option<&dyn VoucherArchive>,
-    ) -> Result<Vec<u8>, VoucherCoreError> {
+    ) -> Result<(Vec<u8>, TransactionBundleHeader), VoucherCoreError> {
         // TRANSANKTIONALER ANSATZ:
         // 1. Erstelle eine temporäre Kopie des Wallets. Alle Änderungen werden
         //    zuerst auf dieser Kopie durchgeführt.
@@ -807,7 +892,7 @@ impl Wallet {
             &vouchers_for_bundle,
         )?;
 
-        let container_bytes = temp_wallet.create_and_encrypt_transaction_bundle(
+        let (container_bytes, header) = temp_wallet.create_and_encrypt_transaction_bundle(
             identity,
             vouchers_for_bundle,
             &request.recipient_id,
@@ -815,13 +900,14 @@ impl Wallet {
             // NEU: Zusätzliche Argumente
             fingerprints_to_send,
             depths_to_send,
+            request.sender_profile_name,
         )?;
 
         // 4. **Commit:** Wenn alle Operationen erfolgreich waren, ersetze den
         //    ursprünglichen Wallet-Zustand durch den der temporären Instanz.
         *self = temp_wallet;
 
-        Ok(container_bytes)
+        Ok((container_bytes, header))
     }
 
     /// Erstellt einen brandneuen Gutschein und fügt ihn direkt zum Wallet hinzu.
