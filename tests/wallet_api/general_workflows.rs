@@ -102,7 +102,7 @@ fn api_app_service_full_lifecycle() {
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.metadata.uuid.clone(), silver_standard_toml.clone());
-    let (transfer_bundle, _header) = service_alice
+    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: transfer_bundle, .. } = service_alice
         .create_transfer_bundle(
             request,
             &standards_toml,
@@ -368,7 +368,7 @@ fn api_wallet_transfer_full_amount() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
 
-    let (bundle_bytes, _header) = alice_wallet
+    let voucher_lib::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
         .execute_multi_transfer_and_bundle(
             &alice.identity,
             &standards,
@@ -428,7 +428,7 @@ fn api_wallet_transfer_split_amount() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
 
-    let (bundle_bytes, _header) = alice_wallet
+    let voucher_lib::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
         .execute_multi_transfer_and_bundle(
             &alice.identity,
             &standards,
@@ -958,7 +958,7 @@ fn api_wallet_transfer_multi_source() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
 
-    let (bundle_bytes, _header) = alice_wallet
+    let voucher_lib::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
         .execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None)
         .unwrap();
 

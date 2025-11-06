@@ -861,7 +861,7 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
 
-    let (encrypted_bundle_for_bob, _header) = alice_wallet.execute_multi_transfer_and_bundle(
+    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: encrypted_bundle_for_bob, .. } = alice_wallet.execute_multi_transfer_and_bundle(
         &alice_identity,
         &standards,
         request,

@@ -232,7 +232,7 @@ mod tests {
             let mut standards_toml = std::collections::HashMap::new();
             standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
 
-            let (bundle1_result, _header) = alice_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD).unwrap();
+            let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle1_result, .. } = alice_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD).unwrap();
             bundle1_result
         };
         let mut standards = HashMap::new();
@@ -253,7 +253,7 @@ mod tests {
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
-        let (bundle2, _header) = bob_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD).unwrap();
+        let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle2, .. } = bob_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD).unwrap();
         // Erneute Bereitstellung der Standard-Definition für den Empfang.
         alice_service.receive_bundle(&bundle2, &standards, None, PASSWORD).unwrap();
 

@@ -516,7 +516,7 @@ fn api_wallet_save_and_load_fidelity() {
                 silver_toml.clone()
             );
 
-            let (bundle_bytes, _header) = service_bob.create_transfer_bundle(request, &standards_toml, None, "pwd").unwrap();
+            let voucher_lib::wallet::CreateBundleResult { bundle_bytes, .. } = service_bob.create_transfer_bundle(request, &standards_toml, None, "pwd").unwrap();
             bundle_bytes
         };
         service_a.receive_bundle(&transfer_back_bundle, &standards_map, None, password).unwrap();

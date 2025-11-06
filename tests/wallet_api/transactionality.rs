@@ -175,7 +175,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         silver_toml.clone() // Use the silver_toml from earlier in the test
     );
 
-    let (bundle, _header) = service_sender
+    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle, .. } = service_sender
         .create_transfer_bundle(
             request,
             &standards_toml,

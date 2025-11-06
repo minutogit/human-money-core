@@ -7,8 +7,8 @@ use super::{AppState, AppService};
 use crate::archive::VoucherArchive;
 use crate::models::conflict::ResolutionEndorsement;
 use crate::models::voucher::{Voucher};
-use crate::services::{standard_manager, voucher_manager::NewVoucherData}; // Import standard_manager
-use crate::wallet::{MultiTransferRequest, ProcessBundleResult};
+use crate::services::{standard_manager, voucher_manager::NewVoucherData};
+use crate::wallet::{CreateBundleResult, MultiTransferRequest, ProcessBundleResult};
 use std::collections::HashMap;
 
 impl AppService {
@@ -121,7 +121,7 @@ impl AppService {
         standard_definitions_toml: &HashMap<String, String>,
         archive: Option<&dyn VoucherArchive>,
         password: &str,
-    ) -> Result<(Vec<u8>, String), String> { // GIBT JETZT (bytes, bundle_id) ZURÜCK
+    ) -> Result<CreateBundleResult, String> {
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
         // Vorab alle benötigten Standards parsen
@@ -146,12 +146,12 @@ impl AppService {
                     request,
                     archive,
                 ) {
-                    Ok((bundle_bytes, header)) => { // Fange Header hier auf
+                    Ok(create_result) => { // Fange die neue CreateBundleResult Struktur
                         // Speichere den neuen Zustand, der von der Wallet-Methode committet wurde.
                         match temp_wallet.save(&mut storage, &identity, password) {
                             Ok(_) => (
                                 // 4a. Erfolg: Gib die modifizierte Kopie als neuen Zustand zurück.
-                                Ok((bundle_bytes, header.bundle_id)), // Gib ID hier zurück
+                                Ok(create_result), // Gib die gesamte Struktur zurück
                                 AppState::Unlocked { storage, wallet: temp_wallet, identity },
                             ),
                             Err(e) => (

@@ -345,7 +345,7 @@ mod local_double_spend_detection {
         let mut standards = std::collections::HashMap::new();
         standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-        let (bundle_to_bob, _header) = alice_wallet.execute_multi_transfer_and_bundle(
+        let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle_to_bob, .. } = alice_wallet.execute_multi_transfer_and_bundle(
             alice_identity,
             &standards,
             request,
@@ -421,7 +421,7 @@ mod local_double_spend_detection {
         let mut standards = std::collections::HashMap::new();
         standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-        let (bundle_to_alice_1, _header) = charlie_wallet.execute_multi_transfer_and_bundle(
+        let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle_to_alice_1, .. } = charlie_wallet.execute_multi_transfer_and_bundle(
             charlie_identity,
             &standards,
             request,
@@ -463,7 +463,7 @@ mod local_double_spend_detection {
         let mut standards = std::collections::HashMap::new();
         standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-        let (bundle_to_alice_2, _header) = david_wallet.execute_multi_transfer_and_bundle(
+        let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle_to_alice_2, .. } = david_wallet.execute_multi_transfer_and_bundle(
             david_identity,
             &standards,
             request,
@@ -815,7 +815,7 @@ mod security_vulnerabilities {
         let mut standards = std::collections::HashMap::new();
         standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-        let (container_to_hacker, _header) = issuer_wallet.execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None).unwrap();
+        let voucher_lib::wallet::CreateBundleResult { bundle_bytes: container_to_hacker, .. } = issuer_wallet.execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None).unwrap();
         // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
         let mut standards_for_hacker = std::collections::HashMap::new();
         standards_for_hacker.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
@@ -912,7 +912,7 @@ mod security_vulnerabilities {
         let mut standards = std::collections::HashMap::new();
         standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-        let (container_to_bob, _header) = alice_wallet.execute_multi_transfer_and_bundle(&ACTORS.alice, &standards, request, None).unwrap();
+        let voucher_lib::wallet::CreateBundleResult { bundle_bytes: container_to_bob, .. } = alice_wallet.execute_multi_transfer_and_bundle(&ACTORS.alice, &standards, request, None).unwrap();
         // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
         let mut standards_for_bob = std::collections::HashMap::new();
         standards_for_bob.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
@@ -963,7 +963,7 @@ mod security_vulnerabilities {
         let mut standards = std::collections::HashMap::new();
         standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-        let (container_to_hacker, _header) = issuer_wallet.execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None).unwrap();
+        let voucher_lib::wallet::CreateBundleResult { bundle_bytes: container_to_hacker, .. } = issuer_wallet.execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None).unwrap();
         // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
         let mut standards_for_hacker = std::collections::HashMap::new();
         standards_for_hacker.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
@@ -1343,7 +1343,7 @@ mod security_vulnerabilities {
         let mut standards = std::collections::HashMap::new();
         standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-        let (bundle_to_b, _header) = wallet_a.execute_multi_transfer_and_bundle(
+        let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle_to_b, .. } = wallet_a.execute_multi_transfer_and_bundle(
             &a_identity,
             &standards,
             request,

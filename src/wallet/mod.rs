@@ -114,6 +114,9 @@ pub struct ProcessBundleResult {
     /// durch diesen Transfer erstellt oder aktualisiert wurden.
     #[serde(default)]
     pub involved_vouchers: Vec<String>,
+    /// Detaillierte Aufschlüsselung jedes empfangenen Gutscheins.
+    #[serde(default)]
+    pub involved_vouchers_details: Vec<InvolvedVoucherInfo>,
 }
 
 /// Das Ergebnis einer Double-Spend-Prüfung.
@@ -121,6 +124,36 @@ pub struct ProcessBundleResult {
 pub struct DoubleSpendCheckResult {
     pub verifiable_conflicts: HashMap<String, Vec<crate::models::conflict::TransactionFingerprint>>,
     pub unverifiable_warnings: HashMap<String, Vec<crate::models::conflict::TransactionFingerprint>>,
+}
+
+/// Enthält detaillierte Informationen zu einem einzelnen Gutschein, der
+/// an einer Transaktion (Senden oder Empfangen) beteiligt war.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct InvolvedVoucherInfo {
+    /// Die lokale ID der Gutschein-Instanz im Wallet des Benutzers.
+    pub local_instance_id: String,
+    /// Die globale, unveränderliche ID des Gutscheins.
+    pub voucher_id: String,
+    /// Der menschenlesbare Name des Standards (z.B. "Minuto-Gutschein").
+    pub standard_name: String,
+    /// Die Währungseinheit (z.B. "Minuto", "Gramm").
+    pub unit: String,
+    /// Der Betrag, der von diesem Gutschein gesendet oder empfangen wurde.
+    pub amount: String,
+    /// Gibt an, ob der Gutschein teilbar ist.
+    pub is_divisible: bool,
+}
+
+/// Das Ergebnis der Erstellung eines Transfer-Bündels.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct CreateBundleResult {
+    /// Die serialisierten Bytes des SecureContainers, bereit zum Senden.
+    pub bundle_bytes: Vec<u8>,
+    /// Die eindeutige ID des erstellten Bundles.
+    pub bundle_id: String,
+    /// Detaillierte Aufschlüsselung jedes Quell-Gutscheins, der in der Transaktion verwendet wurde.
+    #[serde(default)]
+    pub involved_sources_details: Vec<InvolvedVoucherInfo>,
 }
 
 /// Ein Bericht, der die Ergebnisse der Speicherbereinigung zusammenfasst.
@@ -474,6 +507,7 @@ impl Wallet {
         // Initialisiere die neuen Ergebnis-Strukturen
         let mut transfer_summary = TransferSummary::default();
         let mut involved_vouchers = Vec::new();
+        let mut involved_vouchers_details = Vec::new();
 
         // --- NEUES DEBUGGING: Zustand des Voucher Stores VOR der Verarbeitung ---
         println!("\n[Debug Wallet Process] === Zustand VOR Verarbeitung des Bundles ===");
@@ -538,6 +572,18 @@ impl Wallet {
                     .or_insert(0);
                 *count += 1;
             }
+
+            // --- NEU: InvolvedVoucherInfo erstellen ---
+            involved_vouchers_details.push(InvolvedVoucherInfo {
+                local_instance_id: local_id.clone(),
+                voucher_id: voucher.voucher_id.clone(),
+                standard_name: standard.metadata.name.clone(),
+                unit: voucher.nominal_value.unit.clone(),
+                amount: last_tx.amount.clone(),
+                // HINWEIS: Wir verwenden voucher.divisible, da dies der korrekte
+                // Pfad laut Gutschein-JSON-Struktur ist.
+                is_divisible: voucher.divisible,
+            });
             // --- Ende TransferSummary-Logik ---
         }
 
@@ -627,6 +673,7 @@ impl Wallet {
             check_result,
             transfer_summary,
             involved_vouchers,
+            involved_vouchers_details,
         })
     }
 
@@ -853,12 +900,14 @@ impl Wallet {
         standard_definitions: &HashMap<String, VoucherStandardDefinition>,
         request: MultiTransferRequest,
         archive: Option<&dyn VoucherArchive>,
-    ) -> Result<(Vec<u8>, TransactionBundleHeader), VoucherCoreError> {
+    ) -> Result<CreateBundleResult, VoucherCoreError> {
         // TRANSANKTIONALER ANSATZ:
         // 1. Erstelle eine temporäre Kopie des Wallets. Alle Änderungen werden
         //    zuerst auf dieser Kopie durchgeführt.
         let mut temp_wallet = self.clone();
         let mut vouchers_for_bundle: Vec<Voucher> = Vec::new();
+        // NEU: Liste für die Quelldetails initialisieren
+        let mut involved_sources_details: Vec<InvolvedVoucherInfo> = Vec::new();
 
         // 2. **Orchestrierung:** Führe `_execute_single_transfer` für jede Quelle auf der Kopie aus.
         for source in request.sources {
@@ -872,6 +921,18 @@ impl Wallet {
             let standard_definition = standard_definitions
                 .get(&standard_uuid)
                 .ok_or_else(|| VoucherCoreError::Generic(format!("Standard with UUID '{}' not found in provided definitions.", standard_uuid)))?;
+
+            // NEU: InvolvedVoucherInfo für die Quelle erstellen (VOR dem Transfer)
+            involved_sources_details.push(InvolvedVoucherInfo {
+                local_instance_id: source.local_instance_id.clone(),
+                voucher_id: instance.voucher.voucher_id.clone(),
+                standard_name: standard_definition.metadata.name.clone(),
+                unit: instance.voucher.nominal_value.unit.clone(),
+                amount: source.amount_to_send.clone(),
+                // HINWEIS: Wir verwenden voucher.divisible, da dies der korrekte
+                // Pfad laut Gutschein-JSON-Struktur ist.
+                is_divisible: instance.voucher.divisible,
+            });
 
             // Führe die Kernoperation auf der temporären Wallet-Instanz aus.
             let new_voucher = temp_wallet._execute_single_transfer(
@@ -907,7 +968,11 @@ impl Wallet {
         //    ursprünglichen Wallet-Zustand durch den der temporären Instanz.
         *self = temp_wallet;
 
-        Ok((container_bytes, header))
+        Ok(CreateBundleResult {
+            bundle_bytes: container_bytes,
+            bundle_id: header.bundle_id,
+            involved_sources_details,
+        })
     }
 
     /// Erstellt einen brandneuen Gutschein und fügt ihn direkt zum Wallet hinzu.
