@@ -499,6 +499,27 @@ impl Wallet {
     ) -> Result<ProcessBundleResult, VoucherCoreError> {
         let bundle = bundle_processor::open_and_verify_bundle(identity, container_bytes)?;
 
+        // --- ZUSÄTZLICHE SICHERHEITSPRÜFUNG ---
+        // Stelle sicher, dass jeder Gutschein im Bundle auch wirklich für DIESES
+        // Wallet (identity.user_id) als Empfänger vorgesehen ist.
+        let own_user_id = &identity.user_id;
+        for voucher in &bundle.vouchers {
+            if let Some(last_tx) = voucher.transactions.last() {
+                if last_tx.recipient_id != *own_user_id {
+                    // Dieser Gutschein ist nicht für uns! Breche die gesamte
+                    // Bundle-Verarbeitung ab, um eine Selbst-Annahme zu verhindern.
+                    return Err(VoucherCoreError::BundleRecipientMismatch {
+                        expected: own_user_id.clone(),
+                        found: last_tx.recipient_id.clone(),
+                    });
+                }
+            } else {
+                // Ein Gutschein ohne Transaktionen ist per se ungültig.
+                return Err(VoucherCoreError::Validation(ValidationError::InvalidTransaction("Received voucher has no transactions.".to_string())));
+            }
+        }
+        // --- Ende der Sicherheitsprüfung ---
+
         // Kopiere die Daten, bevor 'bundle' verschoben wird
         let forwarded_fingerprints = bundle.forwarded_fingerprints.clone();
         let fingerprint_depths = bundle.fingerprint_depths.clone();

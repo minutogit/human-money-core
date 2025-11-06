@@ -248,6 +248,8 @@ pub enum ValidationError {
 pub enum VoucherCoreError {
     #[error("Validation Error: {0}")]
     Validation(#[from] ValidationError),
+    #[error("Bundle Recipient Mismatch: This bundle was not intended for this wallet. Expected recipient: {expected}, but last transaction was for: {found}")]
+    BundleRecipientMismatch { expected: String, found: String },
     #[error("Voucher Manager Error: {0}")]
     Manager(#[from] VoucherManagerError),
     #[error("Storage Error: {0}")]

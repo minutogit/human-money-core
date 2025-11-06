@@ -1,5 +1,6 @@
 //! # tests/wallet_api/hostile_bundles.rs
 //!
+// HINWEIS: Tests 2.1 und 2.2 wurden auf die öffentliche `AppService::create_new_voucher` API umgestellt.
 //! Enthält Tests, die den `AppService` gegen den Empfang von feindseligen,
 //! intern inkonsistenten Gutscheinen härten.
 
@@ -8,9 +9,9 @@ use voucher_lib::{
     test_utils::{
         create_test_bundle, generate_signed_standard_toml, resign_transaction, ACTORS,
         SILVER_STANDARD, setup_service_with_profile,
-    },
-    UserIdentity,
+    }, UserIdentity,
     models::voucher::{Creator, NominalValue}, services::voucher_manager::NewVoucherData,
+    wallet::{instance::VoucherStatus, MultiTransferRequest, SourceTransfer},
 };
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -18,7 +19,10 @@ use tempfile::tempdir;
 /// Erstellt eine Sender- und Empfänger-Instanz für die Tests.
 fn setup_sender_recipient() -> (AppService, UserIdentity, AppService, String) {
     let dir_sender = tempdir().unwrap();
-    let sender = &ACTORS.sender;
+    // HINWEIS: Wir MÜSSEN einen "slow" crypto-Akteur (wie alice) verwenden,
+    // damit die 'identity_sender' mit der von AppService abgeleiteten Identität übereinstimmt.
+    // `ACTORS.sender` verwendet 'fast' crypto und ist hierfür ungeeignet.
+    let sender = &ACTORS.alice;
     let (service_sender, _) =
         setup_service_with_profile(dir_sender.path(), sender, "Sender", "pwd");
     let identity_sender = sender.identity.clone();
@@ -41,23 +45,22 @@ fn test_rejection_of_broken_transaction_chain() {
         setup_sender_recipient();
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml);
+    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
 
-    let (wallet, _) = service_sender.get_unlocked_mut_for_test();
-    let mut voucher = wallet
+    // Verwende die öffentliche API des AppService
+    let mut voucher = service_sender
         .create_new_voucher(
-            &identity_sender,
-            &SILVER_STANDARD.0,
-            &SILVER_STANDARD.1,
+            &silver_toml,
             "en",
             NewVoucherData {
                 creator: Creator {
-                    id: identity_sender.user_id.clone(),
+                    id: service_sender.get_user_id().unwrap(),
                     ..Default::default()
                 },
                 nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
                 ..Default::default()
             },
+            "pwd",
         )
         .unwrap();
 
@@ -97,19 +100,16 @@ fn test_rejection_of_inconsistent_split_math() {
         setup_sender_recipient();
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml);
+    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
 
-    let (wallet, _) = service_sender.get_unlocked_mut_for_test();
-    let mut voucher = wallet
+    // Erstelle einen Gutschein mit 100 (über die öffentliche API)
+    let mut voucher = service_sender
         .create_new_voucher(
-            &identity_sender,
-            &SILVER_STANDARD.0,
-            &SILVER_STANDARD.1,
-            "en",
-            // Erstelle einen Gutschein mit 100
+            &silver_toml,
+            "en", // Erstelle einen Gutschein mit 100
             NewVoucherData {
                 creator: Creator {
-                    id: identity_sender.user_id.clone(),
+                    id: service_sender.get_user_id().unwrap(),
                     ..Default::default()
                 },
                 nominal_value: NominalValue {
@@ -118,7 +118,7 @@ fn test_rejection_of_inconsistent_split_math() {
                 },
                 ..Default::default()
             },
-        )
+            "pwd")
         .unwrap();
 
     let prev_tx_hash = voucher_lib::services::crypto_utils::get_hash(
@@ -151,4 +151,89 @@ fn test_rejection_of_inconsistent_split_math() {
 
     // Sobald die Validierung gehärtet ist, kann die spezifische Fehlermeldung geprüft werden.
     // assert!(result.unwrap_err().contains("InvalidSplitBalance"));
+}
+
+/// Test 2.3: Ein Bundle, das für einen anderen Empfänger (Bob) erstellt wurde,
+/// darf nicht vom Sender (Alice) selbst eingelesen werden können.
+#[test]
+fn test_rejection_of_self_received_bundle() {
+    // 1. ARRANGE
+    let (mut service_sender, _, mut service_recipient, id_recipient) =
+        setup_sender_recipient();
+
+    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let mut standards_map = HashMap::new();
+    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
+
+    // Sender erstellt einen neuen Gutschein
+    let _ = service_sender // Das zurückgegebene Voucher-Objekt wird nicht direkt benötigt
+        .create_new_voucher(
+            &silver_toml,
+            "en",
+            NewVoucherData {
+                creator: Creator {
+                    id: service_sender.get_user_id().unwrap(),
+                    ..Default::default()
+                },
+                nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+                ..Default::default()
+            },
+            "pwd",
+        )
+        .unwrap();
+
+    // KORREKTUR für E0609: Die local_instance_id muss aus den Summaries geholt werden.
+    let summaries = service_sender.get_voucher_summaries(None, None).unwrap();
+    let local_id = summaries.first()
+        .expect("Wallet should have one voucher summary after creation")
+        .local_instance_id.clone();
+
+    // Sender erstellt ein Bundle für den Empfänger (id_recipient)
+    let transfer_request = MultiTransferRequest {
+        recipient_id: id_recipient.clone(),
+        sources: vec![SourceTransfer {
+            local_instance_id: local_id,
+            amount_to_send: "50".to_string(),
+        }],
+        notes: Some("Für Bob".to_string()),
+        sender_profile_name: None,
+    };
+
+    let bundle_result = service_sender
+        .create_transfer_bundle(transfer_request, &standards_map, None, "pwd")
+        .unwrap();
+    let bundle_bytes_for_bob = bundle_result.bundle_bytes;
+
+    // 2. ACT
+    // Der SENDER versucht nun, das Bundle, das für Bob bestimmt ist, SELBST einzulesen.
+    let result_self_receive =
+        service_sender.receive_bundle(&bundle_bytes_for_bob, &standards_map, None, "pwd");
+
+    // 3. ASSERT
+    assert!(result_self_receive.is_err());
+    let err_str = result_self_receive.unwrap_err();
+    assert!(
+        err_str.contains("Bundle Recipient Mismatch"),
+        "Error should complain about recipient mismatch. Got: {}",
+        err_str
+    );
+
+    // Stelle sicher, dass der ursprüngliche Gutschein (jetzt mit Restbetrag)
+    // im 'Active'-Status verblieben ist und kein neuer Gutschein erstellt wurde.
+    let summaries = service_sender.get_voucher_summaries(None, None).unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].status, VoucherStatus::Active);
+    assert_eq!(summaries[0].current_amount, "50.0000"); // Der Restbetrag nach dem Split
+
+    // Der Empfänger (Bob) kann es problemlos empfangen
+    let result_recipient =
+        service_recipient.receive_bundle(&bundle_bytes_for_bob, &standards_map, None, "pwd");
+    assert!(result_recipient.is_ok());
+    assert_eq!(
+        service_recipient
+            .get_voucher_summaries(None, None)
+            .unwrap()
+            .len(),
+        1
+    );
 }
