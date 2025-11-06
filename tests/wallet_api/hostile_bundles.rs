@@ -213,8 +213,13 @@ fn test_rejection_of_self_received_bundle() {
     assert!(result_self_receive.is_err());
     let err_str = result_self_receive.unwrap_err();
     assert!(
-        err_str.contains("Bundle Recipient Mismatch"),
-        "Error should complain about recipient mismatch. Got: {}",
+        // HINWEIS: Dieser Test hat sich durch die Einführung des Layer-1-Replay-Schutzes (Bundle-ID-Prüfung) geändert.
+        // Da der Sender das Bundle erstellt, ist die Bundle-ID in seinem `bundle_meta_store` bekannt.
+        // Der Versuch, dasselbe Bundle erneut zu empfangen, wird nun von der Layer-1-Prüfung
+        // (BundleAlreadyProcessed) abgefangen, *bevor* die Layer-3-Prüfung (BundleRecipientMismatch) erreicht wird.
+        // Dies ist das neue, korrekte Verhalten.
+        err_str.contains("Bundle has already been processed"),
+        "Error should be 'BundleAlreadyProcessed' (L1 check). Got: {}",
         err_str
     );
 
@@ -236,4 +241,117 @@ fn test_rejection_of_self_received_bundle() {
             .len(),
         1
     );
+}
+
+
+/// Test 2.4: (Layer 1) Ein identisches Bundle, das erneut empfangen wird,
+/// muss anhand seiner Bundle-ID abgewiesen werden.
+#[test]
+fn test_rejection_of_identical_bundle_replay() {
+    // 1. ARRANGE
+    let (mut service_sender, _, mut service_recipient, id_recipient) =
+        setup_sender_recipient();
+
+    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let mut standards_map = HashMap::new();
+    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
+
+    // Sender erstellt einen neuen Gutschein
+    let _ = service_sender
+        .create_new_voucher(
+            &silver_toml,
+            "en",
+            NewVoucherData {
+                creator: Creator {
+                    id: service_sender.get_user_id().unwrap(),
+                    ..Default::default()
+                },
+                nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+                ..Default::default()
+            },
+            "pwd",
+        )
+        .unwrap();
+
+    let summaries = service_sender.get_voucher_summaries(None, None).unwrap();
+    let local_id = summaries.first().unwrap().local_instance_id.clone();
+
+    // Sender erstellt ein Bundle für den Empfänger
+    let transfer_request = MultiTransferRequest {
+        recipient_id: id_recipient.clone(),
+        sources: vec![SourceTransfer {
+            local_instance_id: local_id,
+            amount_to_send: "50".to_string(),
+        }],
+        notes: None,
+        sender_profile_name: None,
+    };
+
+    let bundle_result = service_sender
+        .create_transfer_bundle(transfer_request, &standards_map, None, "pwd")
+        .unwrap();
+    let bundle_bytes = bundle_result.bundle_bytes;
+
+    // 2. ACT (First Receive)
+    let result_first =
+        service_recipient.receive_bundle(&bundle_bytes, &standards_map, None, "pwd");
+
+    // 3. ASSERT (First Receive)
+    assert!(result_first.is_ok());
+    assert_eq!(service_recipient.get_voucher_summaries(None, None).unwrap().len(), 1);
+
+    // 4. ACT (Second Receive - Replay)
+    let result_second =
+        service_recipient.receive_bundle(&bundle_bytes, &standards_map, None, "pwd");
+
+    // 5. ASSERT (Second Receive)
+    assert!(result_second.is_err());
+    let err_str = result_second.unwrap_err();
+    assert!(
+        err_str.contains("Bundle has already been processed"),
+        "Error should be BundleAlreadyProcessed. Got: {}",
+        err_str
+    );
+    // Der Zustand des Wallets darf sich nicht geändert haben
+    assert_eq!(service_recipient.get_voucher_summaries(None, None).unwrap().len(), 1);
+}
+
+/// Test 2.5: (Layer 2) Ein Gutschein, der bereits empfangen wurde, darf nicht
+/// in einem *neuen* Bundle erneut empfangen werden (Fingerprint-Prüfung).
+#[test]
+fn test_rejection_of_voucher_replay_in_new_bundle() {
+    // 1. ARRANGE
+    let (mut service_sender, identity_sender, mut service_recipient, id_recipient) =
+        setup_sender_recipient();
+
+    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let mut standards_map = HashMap::new();
+    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
+
+    // Manuelles Erstellen von voucher_A (wie in Test 2.1)
+    let voucher_a = service_sender.create_new_voucher(&silver_toml, "en", NewVoucherData { creator: Creator { id: service_sender.get_user_id().unwrap(), ..Default::default() }, nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() }, ..Default::default() }, "pwd").unwrap();
+    let voucher_a_sent = voucher_lib::services::voucher_manager::create_transaction(&voucher_a, &SILVER_STANDARD.0, &identity_sender.user_id, &identity_sender.signing_key, &id_recipient, "50.0000").unwrap();
+
+    // Bundle 1 (Das legitime Bundle)
+    let bundle_1_bytes = create_test_bundle(&identity_sender, vec![voucher_a_sent.clone()], &id_recipient, Some("Bundle 1")).unwrap();
+    // Bundle 2 (Das bösartige Replay-Bundle mit neuer Bundle-ID, aber identischem Inhalt)
+    let bundle_2_bytes = create_test_bundle(&identity_sender, vec![voucher_a_sent], &id_recipient, Some("Bundle 2")).unwrap();
+
+    // 2. ACT (First Receive)
+    let result_first = service_recipient.receive_bundle(&bundle_1_bytes, &standards_map, None, "pwd");
+    assert!(result_first.is_ok());
+    assert_eq!(service_recipient.get_voucher_summaries(None, None).unwrap().len(), 1);
+
+    // 3. ACT (Second Receive - Replay)
+    let result_second = service_recipient.receive_bundle(&bundle_2_bytes, &standards_map, None, "pwd");
+
+    // 4. ASSERT (Second Receive)
+    assert!(result_second.is_err());
+    let err_str = result_second.unwrap_err();
+    assert!(
+        err_str.contains("Transaction fingerprint is already known"),
+        "Error should be TransactionFingerprintAlreadyKnown. Got: {}",
+        err_str
+    );
+    assert_eq!(service_recipient.get_voucher_summaries(None, None).unwrap().len(), 1);
 }

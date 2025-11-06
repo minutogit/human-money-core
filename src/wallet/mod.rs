@@ -499,6 +499,20 @@ impl Wallet {
     ) -> Result<ProcessBundleResult, VoucherCoreError> {
         let bundle = bundle_processor::open_and_verify_bundle(identity, container_bytes)?;
 
+        // --- LAYER 1: BUNDLE-ID REPLAY-SCHUTZ ---
+        // Weist ein identisches Bundle sofort ab, das bereits verarbeitet wurde.
+        if self.bundle_meta_store.history.contains_key(&bundle.bundle_id) {
+            return Err(VoucherCoreError::BundleAlreadyProcessed { bundle_id: bundle.bundle_id.clone() });
+        }
+
+        // --- LAYER 2: FINGERPRINT REPLAY-SCHUTZ ---
+        // Weist ein NEUES Bundle ab, das Gutscheine enthält, deren letzte Transaktion
+        // (Fingerprint) bereits bekannt ist. Verhindert modifizierte Replay-Angriffe.
+        self.check_bundle_fingerprints_against_history(&bundle.vouchers)?;
+
+        // --- ENDE REPLAY-SCHUTZ ---
+
+
         // --- ZUSÄTZLICHE SICHERHEITSPRÜFUNG ---
         // Stelle sicher, dass jeder Gutschein im Bundle auch wirklich für DIESES
         // Wallet (identity.user_id) als Empfänger vorgesehen ist.
@@ -760,6 +774,72 @@ impl Wallet {
         )?;
 
         Ok(Some(proof))
+    }
+
+    /// Interne Hilfsfunktion für Layer-2-Replay-Schutz.
+    ///
+    /// Prüft die Fingerprints der letzten Transaktionen aller eingehenden Gutscheine
+    /// in einem Bundle gegen die gesamte bekannte Fingerprint-Historie des Wallets.
+    ///
+    /// # Errors
+    /// Gibt `VoucherCoreError::TransactionFingerprintAlreadyKnown` zurück, wenn
+    /// einer der Fingerprints bereits in `own_fingerprints` oder `known_fingerprints`
+    /// (sowohl `local_history` als auch `foreign_fingerprints`) vorhanden ist UND
+    /// die `t_id` ebenfalls übereinstimmt (Replay-Angriff).
+    ///
+    /// Ein Double-Spend (gleicher `fingerprint_hash`, aber NEUE `t_id`) wird
+    /// *absichtlich durchgelassen*, damit er von der nachgelagerten
+    /// Konfliktlösungslogik ("Earliest Wins") behandelt werden kann.
+    fn check_bundle_fingerprints_against_history(
+        &self,
+        vouchers: &[Voucher]
+    ) -> Result<(), VoucherCoreError> {
+        for voucher in vouchers {
+            let last_tx = voucher.transactions.last()
+                .ok_or_else(|| VoucherCoreError::Validation(ValidationError::InvalidTransaction(
+                    "Received voucher has no transactions.".to_string()
+                )))?;
+    
+            // Berechne den relevanten Fingerprint-Hash (die "Kollisions-ID")
+            let fingerprint_hash = get_hash(format!("{}{}", last_tx.prev_hash, last_tx.sender_id));
+    
+            // --- KORRIGIERTE LOGIK: Unterscheide Replay vs. Double Spend ---
+    
+            // 1. Sammle alle bekannten t_ids für diesen Fingerprint-Hash
+            let mut known_t_ids = std::collections::HashSet::new();
+    
+            if let Some(t_ids_vec) = self.own_fingerprints.history.get(&fingerprint_hash) {
+                for fp in t_ids_vec { known_t_ids.insert(&fp.t_id); }
+            }
+            if let Some(t_ids_vec) = self.known_fingerprints.local_history.get(&fingerprint_hash) {
+                for fp in t_ids_vec { known_t_ids.insert(&fp.t_id); }
+            }
+            if let Some(t_ids_vec) = self.known_fingerprints.foreign_fingerprints.get(&fingerprint_hash) {
+                for fp in t_ids_vec { known_t_ids.insert(&fp.t_id); }
+            }
+    
+            // 2. Prüfe, ob der Fingerprint-Hash überhaupt bekannt ist.
+            if !known_t_ids.is_empty() {
+                // Der Fingerprint-Hash ist bekannt.
+                // 3. Prüfe, ob die *spezifische t_id* auch bekannt ist.
+                let incoming_t_id = &last_tx.t_id;
+    
+                if known_t_ids.contains(incoming_t_id) {
+                    // --- FALL A (Echter Replay) ---
+                    // Wir haben DIESE EXAKTE Transaktion (gleicher Hash, gleiche t_id)
+                    // schon einmal gesehen. Das ist ein Replay-Angriff.
+                    return Err(VoucherCoreError::TransactionFingerprintAlreadyKnown {
+                        fingerprint_hash,
+                    });
+                }
+                // --- FALL B (Double Spend) ---
+                // Der Hash ist bekannt, aber die t_id ist NEU.
+                // Dies ist ein Double Spend. Wir lassen ihn passieren, damit
+                // die "Earliest Wins"-Heuristik ihn fangen kann.
+            }
+        }
+    
+        Ok(())
     }
 
     pub fn add_voucher_instance(

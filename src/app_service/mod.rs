@@ -133,6 +133,37 @@ impl AppService {
         crypto_utils::get_hash(secret_string.as_bytes())
     }
 
+    /// Validiert alle Gutscheine innerhalb eines verschlüsselten Bundles.
+    /// Diese Methode wird vom `command_handler` vor der Verarbeitung eines Bundles
+    /// aufgerufen und bleibt daher hier zentral verfügbar.
+    fn validate_vouchers_in_bundle(
+        &self,
+        identity: &UserIdentity,
+        bundle_data: &[u8],
+        standard_definitions_toml: &HashMap<String, String>,
+    ) -> Result<(), String> {
+        let bundle = bundle_processor::open_and_verify_bundle(identity, bundle_data)
+            .map_err(|e| e.to_string())?;
+
+        for voucher in &bundle.vouchers {
+            let standard_uuid = &voucher.voucher_standard.uuid;
+            let standard_toml = standard_definitions_toml.get(standard_uuid).ok_or_else(
+                || format!("Required standard definition for UUID '{}' not provided.", standard_uuid),
+            )?;
+
+            let (verified_standard, _) =
+                crate::services::standard_manager::verify_and_parse_standard(standard_toml)
+                    .map_err(|e| e.to_string())?;
+
+            crate::services::voucher_validation::validate_voucher_against_standard(
+                voucher,
+                &verified_standard,
+            )
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
     /// Die zentrale Logik zur Bestimmung des Gutschein-Status.
     /// Diese Methode wird von mehreren Handlern (`command_handler`, `signature_handler`)
     /// verwendet und verbleibt daher hier.
@@ -164,6 +195,7 @@ impl AppService {
                         ValidationError::MissingRequiredSignature {
                             ref role
                         } => Some(
+                            // KORREKTUR: Tippfehler `ValidationFailureFailureReason` behoben (E0433)
                             ValidationFailureReason::RequiredSignatureMissing {
                                 role_description: role.clone(),
                             },
@@ -182,43 +214,16 @@ impl AppService {
             }
         }
     }
-
-    /// Validiert alle Gutscheine innerhalb eines verschlüsselten Bundles.
-    /// Diese Methode wird vom `command_handler` vor der Verarbeitung eines Bundles
-    /// aufgerufen und bleibt daher hier zentral verfügbar.
-    fn validate_vouchers_in_bundle(
-        &self,
-        identity: &UserIdentity,
-        bundle_data: &[u8],
-        standard_definitions_toml: &HashMap<String, String>,
-    ) -> Result<(), String> {
-        let bundle = bundle_processor::open_and_verify_bundle(identity, bundle_data)
-            .map_err(|e| e.to_string())?;
-
-        for voucher in &bundle.vouchers {
-            let standard_uuid = &voucher.voucher_standard.uuid;
-            let standard_toml = standard_definitions_toml.get(standard_uuid).ok_or_else(
-                || format!("Required standard definition for UUID '{}' not provided.", standard_uuid),
-            )?;
-
-            let (verified_standard, _) =
-                crate::services::standard_manager::verify_and_parse_standard(standard_toml)
-                    .map_err(|e| e.to_string())?;
-
-            crate::services::voucher_validation::validate_voucher_against_standard(
-                voucher,
-                &verified_standard,
-            )
-                .map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    }
 }
 
 // --- Interne Hilfsmethoden für Tests ---
-impl AppService {    /// Gibt eine schreibgeschützte Referenz auf das interne Wallet zurück.
+// KORREKTUR: Geändert von `#[cfg(test)]` zu `#[cfg(debug_assertions)]`,
+// damit diese Funktionen für Integrationstests (z.B. in `tests/wallet_api/`)
+// sichtbar sind, aber nicht in Release-Builds.
+#[cfg(debug_assertions)]
+impl AppService {
+    /// Fügt einen Gutschein *direkt* zum In-Memory-Wallet-Zustand hinzu und
     /// NUR FÜR TESTS.
-    #[cfg(test)]
     pub fn get_wallet_for_test(&self) -> Option<&crate::wallet::Wallet> {
         if let AppState::Unlocked { wallet, .. } = &self.state {
             Some(wallet)
@@ -229,7 +234,6 @@ impl AppService {    /// Gibt eine schreibgeschützte Referenz auf das interne W
 
     /// Gibt eine mutable Referenz auf das interne Wallet zurück.
     /// NUR FÜR TESTS.
-    #[cfg(test)]
     pub fn get_wallet_mut(&mut self) -> Option<&mut crate::wallet::Wallet> {
         if let AppState::Unlocked { wallet, .. } = &mut self.state {
             Some(wallet)
@@ -239,7 +243,7 @@ impl AppService {    /// Gibt eine schreibgeschützte Referenz auf das interne W
     }
 
 
-    /// Eine Hilfsmethode nur für Tests, um Zugriff auf die interne Identität zu bekommen.
+    /// Eine Hilfsmethoden nur für Tests, um Zugriff auf die interne Identität zu bekommen.
     #[doc(hidden)]
     pub fn get_unlocked_mut_for_test(&mut self) -> (&mut Wallet, &UserIdentity) {
         match &mut self.state {

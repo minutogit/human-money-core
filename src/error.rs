@@ -248,6 +248,10 @@ pub enum ValidationError {
 pub enum VoucherCoreError {
     #[error("Validation Error: {0}")]
     Validation(#[from] ValidationError),
+    #[error("Bundle has already been processed and was rejected. Bundle ID: {bundle_id}")]
+    BundleAlreadyProcessed { bundle_id: String },
+    #[error("Transaction fingerprint is already known, indicating a potential replay attack. Fingerprint Hash: {fingerprint_hash}")]
+    TransactionFingerprintAlreadyKnown { fingerprint_hash: String },
     #[error("Bundle Recipient Mismatch: This bundle was not intended for this wallet. Expected recipient: {expected}, but last transaction was for: {found}")]
     BundleRecipientMismatch { expected: String, found: String },
     #[error("Voucher Manager Error: {0}")]

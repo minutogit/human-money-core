@@ -245,9 +245,10 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     let mut voucher_v2_charlie = voucher_v1.clone();
     voucher_v2_charlie.transactions.push(tx_b);
 
-    let bundle_bob = create_test_bundle(&identity_alice, vec![voucher_v2_bob], &id_david, None).unwrap();
+    let bundle_bob =
+        create_test_bundle(&identity_alice, vec![voucher_v2_bob], &id_david, None).unwrap();
     let bundle_charlie =
-        create_test_bundle(&identity_alice, vec![voucher_v2_charlie], &id_david, None)
+        create_test_bundle(&identity_alice, vec![voucher_v2_charlie.clone()], &id_david, None)
         .unwrap();
 
     // --- 4. David empfängt zuerst das spätere Bundle (Charlie) ---
@@ -262,6 +263,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     // --- 5. David empfängt das frühere Bundle (Bob), was den Konflikt auslöst ---
     println!("\n[Debug] Wallet-Zustand VOR dem zweiten Empfang (Konflikt-Auslöser):");
     dbg!(service_david.get_voucher_summaries(None, None).unwrap());
+
     service_david
         .receive_bundle(&bundle_bob, &standards_map, None, "pwd")
         .unwrap();
@@ -374,7 +376,7 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     let mut voucher_b = voucher_v1.clone();
     voucher_b.transactions.push(tx_b.clone());
 
-    let bundle_a = create_test_bundle(&identity_alice, vec![voucher_a], &id_david, None).unwrap();
+    let bundle_a = create_test_bundle(&identity_alice, vec![voucher_a.clone()], &id_david, None).unwrap();
     let bundle_b = create_test_bundle(&identity_alice, vec![voucher_b], &id_david, None).unwrap();
 
     // Sicherstellen, dass die Transaktionen unterschiedlich sind (und damit auch die Gutscheine)
@@ -382,7 +384,10 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
 
     // --- 3. David empfängt beide Bundles ---
     service_david.receive_bundle(&bundle_a, &standards_map, None, "pwd").unwrap();
-    service_david.receive_bundle(&bundle_b, &standards_map, None, "pwd").unwrap();
+
+    service_david
+        .receive_bundle(&bundle_b, &standards_map, None, "pwd")
+        .unwrap();
 
     // --- 4. Assertions ---
     let summaries_after = service_david.get_voucher_summaries(None, None).unwrap();
