@@ -30,7 +30,10 @@ Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `voucher
 
 - **Entkoppelte & Anonymisierte Speicherung:** Die Kernlogik (`Wallet`) ist vom Speicher (`Storage`-Trait) entkoppelt. Die Standardimplementierung `FileStorage` speichert jedes Benutzerprofil in einem eigenen, anonymen Unterverzeichnis. Der Name dieses Verzeichnisses wird aus einem Hash der Benutzergeheimnisse (`mnemonic`, `passphrase`, `prefix`) abgeleitet, um die Privatsphäre auf dem Speichermedium zu schützen.
 
-- **Kryptographisch getrennte Konten:** Jedes Konto (identifiziert durch ein `prefix`, z.B. "pc", "mobil") wird von einem einzigen Master-Mnemonic abgeleitet, erzeugt aber ein eigenes, einzigartiges Schlüsselpaar. Dies geschieht, indem das Präfix an die Passphrase angehängt wird, bevor der Schlüssel abgeleitet wird (`final_passphrase = passphrase + prefix`). Dies verhindert, dass ein Gutschein versehentlich auf dem falschen Gerät angenommen werden kann und erhöht die Sicherheit.
+- **Separated Account Identity (SAI) für strikte Kontotrennung:** Ein Benutzer besitzt eine einzige kryptographische Identität (Public Key), die aus dem Mnemonic abgeleitet wird. Durch die Verwendung von Präfixen (z.B. "pc", "mobil") werden separate Konten für verschiedene Kontexte definiert, wobei jedes Konto eine eindeutige User-ID hat (z.B. `pc-aB3@did:key:z...xyzA`, `mobil-C4d@did:key:z...xyzA`). Dies gewährleistet:
+  - Einheitliche Identität für das Web of Trust: Alle Aktionen werden kryptographisch derselben Identität zugeordnet.
+  - Strikte Kontentrennung: Die Wallet-Logik verwendet die vollständige User-ID zur Validierung des Besitzes und lehnt Gutscheine ab, die an ein anderes Präfix als das eigene gerichtet sind, um Double Spending durch Zustands-Inkonsistenzen zu verhindern.
+  - Interne Transfers: Guthaben zwischen eigenen Geräten müssen durch explizite Transaktionen bewegt werden.
 
 - **Offline-Fähigkeit:** Transaktionen sollen auch offline durchgeführt werden können, indem die aktualisierte Gutschein-Datei direkt an den neuen Halter übergeben wird.
 
@@ -394,10 +397,10 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
   - Gibt die User-ID des Wallet-Inhabers zurück.
 - `pub fn create_new_voucher(&mut self, standard_toml_content: &str, lang_preference: &str, data: NewVoucherData, password: &str) -> Result<Voucher, String>`
   - Erstellt einen brandneuen Gutschein, validiert ihn gegen den bereitgestellten Standard, fügt ihn zum Wallet hinzu und speichert den Zustand.
-- `pub fn create_transfer_bundle(&mut self, request: MultiTransferRequest, standard_definitions_toml: &HashMap<String, String>, archive: Option<&dyn VoucherArchive>, password: &str) -> Result<Vec<u8>, String>`
-  - Erstellt eine(n oder mehrere) Transaktion(en) für einen oder mehrere Quell-Gutscheine, verpackt sie in ein `SecureContainer`-Bundle und speichert den neuen Wallet-Zustand. Akzeptiert eine `MultiTransferRequest`-Struktur, die eine Liste von Quell-Gutscheinen und Beträgen enthält.
+- `pub fn create_transfer_bundle(&mut self, request: MultiTransferRequest, standard_definitions_toml: &HashMap<String, String>, archive: Option<&dyn VoucherArchive>, password: &str) -> Result<CreateBundleResult, String>`
+  - Erstellt eine(n oder mehrere) Transaktion(en) für einen oder mehrere Quell-Gutscheine, verpackt sie in ein `SecureContainer`-Bundle und speichert den neuen Wallet-Zustand. Akzeptiert eine `MultiTransferRequest`-Struktur, die eine Liste von Quell-Gutscheinen und Beträgen enthält. Gibt ein `CreateBundleResult` zurück, das detaillierte Informationen über die involvierten Quell-Gutscheine enthält.
 - `pub fn receive_bundle(&mut self, bundle_data: &[u8], standard_definitions_toml: &HashMap<String, String>, archive: Option<&dyn VoucherArchive>, password: &str) -> Result<ProcessBundleResult, String>`
-  - Verarbeitet ein empfangenes Transaktions-Bundle, validiert die enthaltenen Gutscheine gegen die bereitgestellten Standard-Definitionen und speichert den neuen Wallet-Zustand.
+  - Verarbeitet ein empfangenes Transaktions-Bundle, validiert die enthaltenen Gutscheine gegen die bereitgestellten Standard-Definitionen und speichert den neuen Wallet-Zustand. Gibt ein `ProcessBundleResult` zurück, das auch detaillierte Informationen über die involvierten Gutscheine und Transfer-Zusammenfassungen enthält.
 - `pub fn create_signing_request_bundle(...) -> Result<Vec<u8>, String>`
   - Erstellt ein Bundle, um einen Gutschein zur Unterzeichnung an einen Bürgen zu senden.
 - `pub fn create_detached_signature_response_bundle(...) -> Result<Vec<u8>, String>`
@@ -432,7 +435,7 @@ Das `wallet`-Modul wurde refaktorisiert, um die Komplexität zu reduzieren und d
   - `pub fn save(...)`: Speichert den aktuellen Zustand des Wallets.
   - `pub fn create_new_voucher(...)`: Erstellt einen neuen Gutschein und fügt ihn direkt zum Wallet hinzu.
   - `pub fn execute_multi_transfer_and_bundle(...)`: Führt einen Transfer durch, der Guthaben aus mehreren Quell-Gutscheinen kombinieren kann. Ersetzt die alte `create_transfer`-Methode. Akzeptiert eine `MultiTransferRequest`-Struktur mit einer Liste von Quellen und führt alle Transaktionen in einem einzigen Bundle durch. Managt den internen Zustand (Archivierung, Restbetrag) und wählt Fingerprints für das Gossip-Protokoll.
-  - `pub fn process_encrypted_transaction_bundle(...)`: Verarbeitet eingehende Gutscheine oder Signaturen, inkl. der Verarbeitung von empfangenen Fingerprints.
+  - `pub fn process_encrypted_transaction_bundle(...)`: Verarbeitet eingehende Gutscheine oder Signaturen, inkl. der Verarbeitung von empfangenen Fingerprints. Implementiert umfassenden Schutz gegen Replay-Angriffe durch zwei Schichten (Bundle-ID-Prüfung und Fingerprint-Prüfung) und weist eingehende Bundles zurück, die nicht explizit für den Wallet-Besitzer bestimmt sind.
 - **Speicher-Management** (`mod.rs`)
   - `pub fn run_storage_cleanup(...)`: Führt eine mehrstufige Bereinigung der Fingerprint-Stores durch (abgelaufen, dann nach `depth`).
   - `pub fn rebuild_derived_stores(...)`: Rekonstruiert alle abgeleiteten Stores (Fingerprints, Metadaten) aus dem `VoucherStore`.
@@ -563,3 +566,25 @@ Dieses Modul enthält die Logik zur Validierung eines `Voucher`-Objekts gegen di
 - Überprüft die **Konsistenz des eingebetteten Standard-Hashes** mit dem Hash des aktuellen Standard-Objekts, um sicherzustellen, dass der Gutschein immer gegen die exakte Version des Standards validiert wird, mit der er erstellt wurde.
 - Überprüft, ob der **Transaktionstyp** (`t_type`) laut Standard erlaubt ist.
 - Überprüft die Integrität und kryptographische Gültigkeit aller **zusätzlichen Signaturen** (`additional_signatures`).
+
+### `src/wallet` Modul - Neue Sicherheitsfeatures
+
+Das Wallet-Modul implementiert umfassenden Schutz gegen Replay-Angriffe durch zwei Schichten:
+
+- **Layer 1: Duplicate Processing Guard (Bundle ID Check)**: Eine schnelle Prüfung gegen den `bundle_meta_store`. Wenn die **ID des eingehenden Bundles** bereits bekannt ist, wird das Bundle sofort mit `VoucherCoreError::BundleAlreadyProcessed` abgelehnt. Dies schützt gegen versehentliche oder einfache Wiederholungen derselben Daten und stellt sicher, dass ein Bundle nur einmal verarbeitet wird.
+
+- **Layer 2: Malicious Replay Guard (Transaction Fingerprint Check)**: Eine neue Funktion `check_bundle_fingerprints_against_history` validiert die **Transaktionsfingerprints** (`prvhash_senderid_hash`) aller Gutscheine innerhalb des Bundles. Wenn ein Fingerprint bereits in der Wallet-Historie vorhanden ist, wird das Bundle mit `VoucherCoreError::TransactionFingerprintAlreadyKnown` abgelehnt. Dies verhindert bösartige modifizierte Angriffe, bei denen ein bekannter, signierter Gutschein in ein neues Bundle gepackt wird, um Double-Spending zu versuchen.
+
+- **Empfänger-Validierung**: Ein Wallet lehnt eingehende Bundles ab, die nicht explizit für den Wallet-Besitzer bestimmt sind. Das Wallet prüft, ob jede Transaktion innerhalb des Bundles für die eigene User-ID bestimmt ist, und wirft einen `VoucherCoreError::BundleRecipientMismatch`-Fehler, falls dies nicht der Fall ist.
+
+### Neue Ergebnis- und Informationsstrukturen
+
+Das Wallet-Modul und die AppService-Schnittstelle wurden um neue Informationsstrukturen erweitert, um die API-Effizienz zu verbessern:
+
+- `TransferSummary`: Fasst die Ergebnisse eines Transfers pro Standard zusammen. Enthält aufsummierte Beträge für teilbare Gutscheine und gezählte Einheiten für nicht-teilbare Gutscheine.
+
+- `InvolvedVoucherInfo`: Enthält detaillierte Informationen zu einem einzelnen Gutschein, der an einer Transaktion beteiligt war (lokale ID, globale ID, Standardname, Währung, Betrag, Teilbarkeit).
+
+- `CreateBundleResult`: Das Ergebnis der `create_transfer_bundle`-Methode, das neben den Bundle-Daten auch detaillierte Informationen über die involvierten Quell-Gutscheine (`involved_sources_details`) enthält.
+
+- `ProcessBundleResult`: Das Ergebnis der `receive_bundle`-Methode, das neben den Header-Informationen auch `transfer_summary` und `involved_vouchers_details` enthält, um eine umfassende Übersicht über den empfangenen Transfer zu bieten.

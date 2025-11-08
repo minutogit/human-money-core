@@ -355,3 +355,107 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
     );
     assert_eq!(service_recipient.get_voucher_summaries(None, None).unwrap().len(), 1);
 }
+
+/// Test 2.6: (Layer 3) Ein Bundle, das an ein anderes Präfix (mobil) derselben
+/// Identität gesendet wird, muss vom Wallet mit dem "pc"-Präfix abgewiesen werden.
+/// Dies ist der Kerntest für das "Separated Account Identity (SAI)".
+#[test]
+fn test_rejection_of_bundle_for_different_prefix_same_identity() {
+    // 1. ARRANGE
+    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let mut standards_map = HashMap::new();
+    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
+
+    // --- Sender (Alice) ---
+    let dir_sender = tempdir().unwrap();
+    let sender = &ACTORS.alice;
+    let (mut service_sender, _) =
+        setup_service_with_profile(dir_sender.path(), sender, "Sender", "pwd");
+
+    // --- Empfänger-Wallets (Beide "Bob", aber unterschiedliche Präfixe) ---
+    // WICHTIG: Wir verwenden ACTORS.bob und ACTORS.issuer. Beide nutzen
+    // dieselbe Mnemonic (mnemonics::BOB), aber unterschiedliche Präfixe ("bo", "is").
+    // Dies simuliert denselben User auf zwei Geräten.
+    let recipient_user_pc = &ACTORS.bob; // prefix "bo"
+    let recipient_user_mobil = &ACTORS.issuer; // prefix "is"
+
+    // Wallet 1: PC
+    let dir_recipient_pc = tempdir().unwrap();
+    let (mut service_recipient_pc, _) = setup_service_with_profile(
+        dir_recipient_pc.path(),
+        recipient_user_pc,
+        "Bob_PC",
+        "pwd_bob",
+    );
+    let id_recipient_pc = service_recipient_pc.get_user_id().unwrap();
+
+    // Wallet 2: Mobil
+    let dir_recipient_mobil = tempdir().unwrap();
+    let (mut service_recipient_mobil, _) = setup_service_with_profile(
+        dir_recipient_mobil.path(),
+        recipient_user_mobil,
+        "Bob_Mobil",
+        "pwd_bob",
+    );
+    let id_recipient_mobil = service_recipient_mobil.get_user_id().unwrap();
+
+    // Sanity Check: Sicherstellen, dass die Public Keys gleich sind,
+    // aber die vollen User-IDs (Adressen) unterschiedlich.
+    let pk_pc = voucher_lib::services::crypto_utils::get_pubkey_from_user_id(&id_recipient_pc).unwrap();
+    let pk_mobil = voucher_lib::services::crypto_utils::get_pubkey_from_user_id(&id_recipient_mobil).unwrap();
+    assert_eq!(pk_pc, pk_mobil, "Public keys must be identical for this test.");
+    assert_ne!(id_recipient_pc, id_recipient_mobil, "Full User IDs (addresses) must be different.");
+    assert!(id_recipient_pc.starts_with("bo-")); // Präfix von ACTORS.bob
+    assert!(id_recipient_mobil.starts_with("is-")); // Präfix von ACTORS.issuer
+
+    // --- Sender erstellt Gutschein und Bundle für "Mobil" ---
+    let _ = service_sender
+        .create_new_voucher(
+            &silver_toml,
+            "en",
+            NewVoucherData {
+                creator: Creator { id: service_sender.get_user_id().unwrap(), ..Default::default() },
+                nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+                ..Default::default()
+            },
+            "pwd",
+        )
+        .unwrap();
+    let local_id_sender = service_sender.get_voucher_summaries(None, None).unwrap().first().unwrap().local_instance_id.clone();
+
+    // Bundle wird explizit an die "Mobil"-Adresse gesendet
+    let transfer_request = MultiTransferRequest {
+        recipient_id: id_recipient_mobil.clone(),
+        sources: vec![SourceTransfer { local_instance_id: local_id_sender, amount_to_send: "50".to_string() }],
+        notes: Some("Für Bobs Handy".to_string()),
+        sender_profile_name: None,
+    };
+
+    let bundle_result = service_sender.create_transfer_bundle(transfer_request, &standards_map, None, "pwd").unwrap();
+    let bundle_bytes_for_mobil = bundle_result.bundle_bytes;
+
+    // 2. ACT
+    // Das "PC"-Wallet versucht, das für "Mobil" bestimmte Bundle einzulesen.
+    let result_pc_receive =
+        service_recipient_pc.receive_bundle(&bundle_bytes_for_mobil, &standards_map, None, "pwd_bob");
+
+    // 3. ASSERT (PC Wallet)
+    assert!(result_pc_receive.is_err());
+    let err_str = result_pc_receive.unwrap_err();
+    assert!(
+        // KORREKTUR: Der Fehler tritt korrekterweise bereits auf Layer 1
+        // (Secure Container) auf, da die User-ID "bo-..." nicht in der
+        // Empfängerliste des Containers ("is-...") enthalten ist.
+        err_str.contains("The current user is not in the list of recipients for this container"),
+        "Error must be 'Not in recipient list' (L1 check). Got: {}",
+        err_str
+    );
+    // Das PC-Wallet muss leer bleiben
+    assert!(service_recipient_pc.get_voucher_summaries(None, None).unwrap().is_empty());
+
+    // 4. ASSERT (Mobil Wallet - Sanity Check)
+    // Das "Mobil"-Wallet (der korrekte Empfänger) kann es problemlos annehmen.
+    let result_mobil_receive = service_recipient_mobil.receive_bundle(&bundle_bytes_for_mobil, &standards_map, None, "pwd_bob");
+    assert!(result_mobil_receive.is_ok());
+    assert_eq!(service_recipient_mobil.get_voucher_summaries(None, None).unwrap().len(), 1);
+}

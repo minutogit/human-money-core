@@ -23,45 +23,33 @@ Um dies zu erreichen, kann die Berechnung nicht einfach die letzte Transaktion d
 
 
 # Architekturentscheidung: Identitäts- und Schlüsselmanagement in voucher_core
-Zur Verwaltung von Benutzerkonten auf mehreren Geräten (z.B. PC und Handy) wurden zwei primäre Architekturmodelle evaluiert. Nach sorgfältiger Abwägung der Sicherheits- und Benutzerfreundlichkeits-Aspekte haben wir uns für Modell B entschieden, da es eine inhärent sicherere und robustere Lösung darstellt.
+Zur Verwaltung von Benutzerkonten auf mehreren Geräten (z.B. PC und Handy) wurde eine Architektur für Separated Account Identity (SAI) gewählt. Sie kombiniert die Anforderung eines einheitlichen "Web of Trust" mit der Notwendigkeit einer strikt getrennten Kontoführung, um Double Spending durch Zustands-Inkonsistenzen zu verhindern.
 
-## Die evaluierten Modelle
-### Modell A: Ein einziger kryptographischer Schlüssel mit Präfix-Aliasen
-Konzept: Der Nutzer besitzt eine einzige kryptographische Identität (z.B. did:key:z...A). Verschiedene Geräte verwenden lediglich unterschiedliche "Adressen" oder Aliase, wie `pc-chk@did:key:z...A` und `handy-chk@did:key:z...A`.
+## Das entschiedene Separated Account Identity (SAI) Modell
+Konzept: Ein Nutzer besitzt eine einzige kryptographische Identität, die durch einen einzigen Public Key (z.B. did:key:z...xyzA) repräsentiert wird. Diese Identität wird direkt aus dem Mnemonic (und optionaler Passphrase) abgeleitet, ohne Einbeziehung eines Präfixes.
 
-Implikation: Beide Adressen verweisen auf dasselbe Schlüsselpaar. Ein an handy@... gesendeter Gutschein könnte prinzipiell auch von der PC-Wallet verarbeitet werden. Dies erfordert eine komplexe Synchronisierungs- und "Claiming"-Logik, um unbeabsichtigte Double Spends zu verhindern.
+Getrennte Konten: Obwohl die kryptographische Identität (der Public Key) gleich ist, definiert der Nutzer separate Konten für verschiedene Kontexte (z.B. "pc", "mobil"), indem er unterschiedliche Präfixe verwendet.
 
-### Modell B: Kryptographisch getrennte Schlüssel pro Konto/Gerät (Entschiedenes Modell)
-Konzept: Jedes Konto, das ein Nutzer anlegt (z.B. für "PC" oder "Handy"), ist eine eigenständige kryptographische Identität mit einem eigenen, einzigartigen Schlüsselpaar. Die Adressen lauten z.B. `pc-chkB@did:key:z...B` und `handy-chkC@did:key:z...C`.
+Eindeutige Adressen: Jedes Konto hat eine eindeutige, vollständige User-ID, die aus dem Präfix, einer Prüfsumme und dem einheitlichen Public Key besteht.
 
-Implikation: Ein an `pc-chkB@did:key:z...B` gesendeter Gutschein kann ausschließlich von der Wallet verarbeitet werden, die den privaten Schlüssel für `...B` besitzt. Eine Annahme durch die "Handy"-Wallet ist kryptographisch unmöglich.
+Konto 1 (PC): pc-aB3@did:key:z...xyzA
 
-## Begründung der Entscheidung für Modell B
-Die Entscheidung für Modell B basiert auf drei fundamentalen Vorteilen gegenüber Modell A:
+Konto 2 (Mobil): mobil-C4d@did:key:z...xyzA
 
-Maximale Sicherheit durch Eliminierung von Protokoll-Fehlern
-Das Hauptproblem von Modell A ist, dass es eine gefährliche Fehlerklasse zulässt: Ein Nutzer kann denselben eingehenden Gutschein versehentlich auf zwei Geräten annehmen und erzeugt so unwissentlich einen Double Spend. Diesen Fehler nachträglich zu entdecken, erfordert ständige, disziplinierte Synchronisierung. Modell B eliminiert diese Fehlerquelle auf der Protokollebene. Ein unbeabsichtigter Double Spend durch fehlerhafte Annahme ist unter Modell B technisch unmöglich, was das System inhärent sicherer macht.
+## Kernprinzipien der Implementierung
+Einheitliche Identität für das Web of Trust: Für das externe Reputationssystem (Web of Trust) ist nur der Public Key (did:key:z...xyzA) relevant. Alle Aktionen, unabhängig vom Präfix, werden kryptographisch dieser einen Identität zugeordnet.
 
-Vereinfachung der Core-Bibliothek und des Protokolls
-Modell A erfordert komplexe Zusatzlogik in voucher_core, um die Synchronisationsprobleme zu bewältigen (z.B. "Claiming"-Transaktionen, Konflikterkennung, "Earliest-Wins"-Heuristik). Modell B hingegen vereinfacht das Protokoll drastisch. Die Validierung eines Transfers ist ein simpler, zustandsloser Check: "Stimmt der Empfänger-Schlüssel mit meinem Schlüssel überein?". Ein einfacheres Protokoll ist robuster, leichter zu prüfen und weniger anfällig für Implementierungsfehler.
+Strikte Kontentrennung zur Verhinderung von Double Spending: Die Wallet-Logik muss die vollständige User-ID (z.B. pc-aB3@did:key:z...xyzA) zur Validierung des Besitzes verwenden.
 
-Schaffung eines klaren mentalen Modells für den Nutzer
-Modell B erzwingt ein klares und leicht verständliches mentales Modell: "Ein Konto, ein Gerät, ein Guthaben." Der Nutzer versteht intuitiv, dass seine Guthaben getrennt sind. Er muss nicht über den verborgenen Zustand anderer Geräte nachdenken. Es ersetzt den fehleranfälligen Zwang zur Synchronisierung durch die einfache und verständliche Aktion eines normalen Transfers, wenn Guthaben zwischen Geräten bewegt werden soll.
+Beim Empfang (receive_bundle): Ein Gutschein, der an mobil-C4d@... adressiert ist, muss von einer Wallet, die als pc-aB3@... agiert, abgewiesen werden. Ein automatisches "Mitladen" ist ausgeschlossen, da dies zu kritischen Double-Spend-Szenarien führen würde, wenn beide Geräte (z.B. offline) denselben eingehenden Gutschein annehmen.
 
-Pragmatische Umsetzung: Nutzerkomfort durch deterministische Ableitung
-Um den Nachteil der Verwaltung mehrerer Geheimnisse zu umgehen, wird Modell B nutzerfreundlich umgesetzt:
+Prüfsummen-Validierung: Die in der User-ID enthaltene Checksumme (z.B. aB3) stellt sicher, dass Gutscheine durch Tippfehler nicht an ungültige oder falsche Präfix-Varianten gesendet werden können.
 
-Einziger Mnemonic: Der Nutzer muss sich nur einen einzigen Mnemonic (Seed-Phrase) merken.
+Ermöglichung von internen Transfers: Dieses Modell erzwingt ein klares mentales Modell: Guthaben auf pc-aB3@... ist getrennt von Guthaben auf mobil-C4d@.... Um Guthaben zwischen seinen eigenen Geräten zu bewegen, muss der Nutzer eine explizite Transaktion (einen Transfer an sich selbst) durchführen. Dies ist ein gewollter und notwendiger Schritt, um die Zustände sauber und konsistent zu halten.
 
-Präfix als Ableitungs-Parameter: Bei der Erstellung eines neuen Kontos wählt der Nutzer einen Namen (das "Präfix", z.B. "pc"). Dieser Name wird als Suffix an die optionale BIP-39-Passphrase angehängt.
+## Zusammenfassung der Architektur
+Diese Separated Account Identity (SAI) Lösung ist optimal auf die Anforderungen des Systems zugeschnitten:
 
-final_passphrase = optionale_user_passphrase + "pc"
+Sicherheit: Sie verhindert die gefährlichste Fehlerklasse – die unbeabsichtigte Doppel-Annahme desselben Gutscheins auf verschiedenen Geräten – durch eine strikte, adressbasierte Kontentrennung.
 
-* **Sicheres und lesbares ID-Format:** Um Tippfehler zu verhindern und die Integrität der ID sicherzustellen, wird eine kurze Prüfsumme (`checksum`) generiert. Sie verbindet den menschenlesbaren Präfix kryptographisch mit dem `did:key`. Das finale Format lautet: `[präfix-]prüfsumme@did:key`.
-    * **Mit Präfix:** `pc-aB3@did:key:z...B`
-    * **Ohne Präfix (Standardkonto):** `aB3@did:key:z...A`
-
-
-Sicherheit: Dieser Ansatz ist kryptographisch sicher. Aufgrund des "Avalanche-Effekts" der Key-Derivation-Functions erzeugt jede noch so kleine Änderung an der Passphrase ein völlig anderes, unkorreliertes Schlüsselpaar.
-
-Diese Methode kombiniert das Beste aus beiden Welten: den Komfort eines einzigen Geheimnisses für den Nutzer mit der maximalen Sicherheit kryptographisch getrennter Konten.
+Vertrauen: Sie wahrt die Integrität des Web of Trust, indem alle Konten eines Nutzers auf dieselbe, verifizierbare kryptographische Identität (did:key) zurückgeführt werden.

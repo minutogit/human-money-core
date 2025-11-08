@@ -112,7 +112,7 @@ fn test_sender_can_reopen_container() {
 use bip39::Language;
 use voucher_lib::services::crypto_utils::{
     create_user_id, decrypt_data, derive_ed25519_keypair, ed25519_pub_to_x25519,
-    ed25519_sk_to_x25519_sk, encrypt_data, generate_ed25519_keypair_for_tests,
+    ed25519_sk_to_x25519_sk, encrypt_data, generate_ed25519_keypair_for_tests, UserIdError,
     generate_ephemeral_x25519_keypair, generate_mnemonic, get_pubkey_from_user_id,
     perform_diffie_hellman, sign_ed25519, validate_mnemonic_phrase, validate_user_id,
     verify_ed25519,
@@ -163,17 +163,46 @@ fn test_validate_mnemonic() {
     println!("SUCCESS: Correctly identified a mnemonic with a bad checksum.");
 }
 
+/// Testet die Erstellung von User-IDs und stellt sicher, dass ein Präfix obligatorisch ist.
+///
+/// HINWEIS: Das Präfix ist obligatorisch (darf nicht `None` oder leer sein).
+///
+/// Diese Anforderung ist eine fundamentale Sicherheitsentscheidung, um die
+/// Integrität der Kontentrennung im "Separated Account Identity (SAI)" zu gewährleisten.
+///
+/// **Begründung (Verhinderung von Double Spends):**
+/// Ein Benutzer kann dieselbe Mnemonic (und damit denselben Public Key,
+/// z.B. `...did:key:zABC`) auf mehreren Geräten (z.B. PC und Mobiltelefon) verwenden.
+///
+/// Damit ein an `pc-123@did:key:zABC` gesendeter Gutschein nicht versehentlich
+/// auch vom Mobiltelefon (z.B. `mobil-456@did:key:zABC`) angenommen werden kann,
+/// muss die Wallet-Logik die *gesamte User-ID* strikt prüfen.
+///
+/// Indem wir ein Präfix erzwingen, vereinfachen wir das mentale Modell für den
+/// Benutzer drastisch: "Jedes Gerät/Konto benötigt einen eigenen, eindeutigen
+/// Namen (Präfix)."
+///
+/// Ein leeres Präfix würde zu einer "Standard-Adresse" (z.B. `789@did:key:zABC`)
+/// führen, was die Anweisungen für Benutzer verkompliziert und das Risiko von
+/// Zustands-Inkonsistenzen erhöht.
 #[test]
-fn test_user_id_creation() -> Result<(), Box<dyn std::error::Error>> {
+fn test_user_id_creation_requires_prefix() -> Result<(), Box<dyn std::error::Error>> {
     let mnemonic = generate_mnemonic(24, Language::English)?;
     let (ed_pub, _) = derive_ed25519_keypair(&mnemonic, None)?;
 
-    let user_id_no_prefix = create_user_id(&ed_pub, None).unwrap();
-    assert!(!user_id_no_prefix.is_empty());
-    println!("User ID (no prefix):   {}", user_id_no_prefix);
+    // 1. Test: `None` als Präfix muss fehlschlagen
+    let result_none = create_user_id(&ed_pub, None);
+    assert!(matches!(result_none, Err(UserIdError::PrefixEmpty)));
+    println!("SUCCESS: create_user_id correctly failed for None prefix.");
 
-    let prefix = "ID";
-    let user_id_with_prefix = create_user_id(&ed_pub, Some(prefix)).unwrap();
+    // 2. Test: Ein leeres String-Präfix muss fehlschlagen
+    let result_empty = create_user_id(&ed_pub, Some(""));
+    assert!(matches!(result_empty, Err(UserIdError::PrefixEmpty)));
+    println!("SUCCESS: create_user_id correctly failed for empty string prefix.");
+
+    // 3. Test: Ein gültiges Präfix muss erfolgreich sein
+    let prefix = "pc";
+    let user_id_with_prefix = create_user_id(&ed_pub, Some(prefix))?;
     assert!(!user_id_with_prefix.is_empty());
     println!("User ID (prefix '{}'): {}", prefix, user_id_with_prefix);
 

@@ -431,6 +431,8 @@ pub fn decode_base64(encoded_data: &str) -> Result<Vec<u8>, VoucherCoreError> {
 /// Error types for user ID creation.
 #[derive(Debug)]
 pub enum UserIdError {
+    /// Das Präfix ist obligatorisch und darf nicht leer sein.
+    PrefixEmpty,
     /// Das Präfix ist zu lang (maximal 63 Zeichen erlaubt).
     PrefixTooLong(usize),
     /// Das Präfix enthält ungültige Zeichen.
@@ -444,6 +446,9 @@ pub enum UserIdError {
 impl fmt::Display for UserIdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            UserIdError::PrefixEmpty => {
+                write!(f, "Prefix is mandatory and must not be empty.")
+            }
             UserIdError::PrefixTooLong(len) => write!(
                 f,
                 "Prefix is too long: {} characters (maximum is 63).",
@@ -476,12 +481,16 @@ pub fn create_user_id(public_key: &EdPublicKey, user_prefix: Option<&str>) -> Re
     bytes_to_encode.extend_from_slice(&public_key.to_bytes());
     let did_key = format!("did:key:z{}", bs58::encode(bytes_to_encode).into_string());
 
-    let prefix = user_prefix.unwrap_or("").to_lowercase();
+    // Das Präfix ist nun obligatorisch und darf nicht leer sein.
+    let prefix_str = user_prefix.ok_or(UserIdError::PrefixEmpty)?;
+    let prefix = prefix_str.to_lowercase();
 
-    if !prefix.is_empty() {
-        if prefix.len() > 63 {
-            return Err(UserIdError::PrefixTooLong(prefix.len()));
-        }
+    if prefix.is_empty() {
+        return Err(UserIdError::PrefixEmpty);
+    }
+    if prefix.len() > 63 {
+        return Err(UserIdError::PrefixTooLong(prefix.len()));
+    }
         if !prefix
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
@@ -494,18 +503,14 @@ pub fn create_user_id(public_key: &EdPublicKey, user_prefix: Option<&str>) -> Re
         if prefix.contains("--") {
             return Err(UserIdError::PrefixHasDoubleHyphen);
         }
-    }
 
     // Generiere Prüfsumme
     let checksum_input = format!("{}{}", prefix, did_key);
     let hash = get_hash(checksum_input.as_bytes());
     let checksum = &hash[hash.len() - 3..];
 
-    let human_readable_part = if prefix.is_empty() {
-        checksum.to_string()
-    } else {
-        format!("{}-{}", prefix, checksum)
-    };
+    // Da das Präfix nun obligatorisch ist, entfällt der `if prefix.is_empty()`-Check.
+    let human_readable_part = format!("{}-{}", prefix, checksum);
 
     Ok(format!("{}@{}", human_readable_part, did_key))
 }
