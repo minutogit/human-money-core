@@ -134,6 +134,7 @@ impl AppService {
         }
 
         let (result, new_state) = match current_state {
+            // HINWEIS: 'wallet' ist hier der *originale* Zustand VOR dem Klonen.
             AppState::Unlocked { mut storage, wallet, identity } => {
                 // Die Transaktionalität wurde in die Wallet::execute_multi_transfer_and_bundle
                 // Methode verschoben. Wir können sie direkt auf dem Wallet aufrufen.
@@ -141,6 +142,8 @@ impl AppService {
                 // Der `wallet`-Zustand wird nur bei Erfolg durch `temp_wallet` ersetzt.
                 let mut temp_wallet = wallet.clone();
                 match temp_wallet.execute_multi_transfer_and_bundle(
+                    // Änderungen werden auf 'temp_wallet' durchgeführt
+                    // Das originale 'wallet' bleibt für die Fehlerbehandlung (Selbstheilung) erhalten.
                     &identity,
                     &verified_definitions,
                     request,
@@ -162,7 +165,43 @@ impl AppService {
                             ),
                         }
                     }
-                    Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity }),
+                    // --- SELBSTHEILUNG (Self-Healing) ---
+                    // Fange den spezifischen Fehler ab, bei dem die interne Fingerprint-Prüfung
+                    // einen inkonsistenten Zustand erkannt hat (z.B. ein 'Active' Gutschein,
+                    // der bereits versendet wurde).
+                    Err(crate::error::VoucherCoreError::DoubleSpendAttemptBlocked { local_instance_id }) => {
+                        // WICHTIG: Wir verwenden hier das *originale* 'wallet'-Objekt,
+                        // nicht 'temp_wallet', um die Korrektur durchzuführen.
+                        let mut wallet_to_correct = wallet; // Nimm das Original
+                        
+                        // 1. Setze den problematischen Gutschein auf Quarantäne
+                        wallet_to_correct.update_voucher_status(
+                            &local_instance_id,
+                            crate::wallet::instance::VoucherStatus::Quarantined {
+                                reason: "Self-healing: Detected state inconsistency during transfer attempt.".to_string(),
+                            },
+                        );
+
+                        // 2. Speichere den korrigierten Zustand
+                        match wallet_to_correct.save(&mut storage, &identity, password) {
+                            Ok(_) => {
+                                // 3a. Rückgabe des korrigierten Zustands
+                                (
+                                    Err(format!("Action blocked and wallet state corrected: Voucher {} was internally inconsistent and is now in quarantine.", local_instance_id)),
+                                    AppState::Unlocked { storage, wallet: wallet_to_correct, identity }
+                                )
+                            }
+                            Err(save_err) => {
+                                // 3b. Fehler beim Speichern der Korrektur (schlimmster Fall)
+                                (
+                                    Err(format!("Critical Error: Failed to save wallet correction after detecting inconsistency. Error: {}", save_err)),
+                                    AppState::Unlocked { storage, wallet: wallet_to_correct, identity } // Gib trotzdem den korrigierten In-Memory-Zustand zurück
+                                )
+                            }
+                        }
+                    }
+                    // Alle anderen Fehler
+                    Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity }), // Gib das Original zurück
                 }
             }
             AppState::Locked => (Err("Wallet is locked.".to_string()), AppState::Locked),

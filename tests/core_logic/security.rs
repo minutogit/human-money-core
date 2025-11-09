@@ -23,7 +23,10 @@ use voucher_lib::test_utils;
 
 mod local_double_spend_detection {
     use voucher_lib::archive::file_archive::FileVoucherArchive;
+    // NEU: AppService und Storage importieren
+    use voucher_lib::app_service::AppService; // KORREKTUR: Falscher Import E0432
     use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat};
+    use std::collections::HashMap;
     use std::{path::Path};
     use voucher_lib::test_utils::{setup_in_memory_wallet, ACTORS, SILVER_STANDARD};
     use voucher_lib::{services::crypto_utils, UserIdentity, VoucherStatus};
@@ -224,29 +227,52 @@ mod local_double_spend_detection {
     // ===================================================================================
 
     #[test]
-    fn test_proactive_double_spend_prevention_in_wallet() {
+    fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         // ### Setup ###
         // Erstellt einen Sender und zwei potenzielle Empfänger.
-        let _temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage_path = temp_dir.path();
 
-        let sender_identity = &ACTORS.sender;
-        let mut sender_wallet = setup_in_memory_wallet(sender_identity);
         let recipient1_identity = &ACTORS.recipient1;
         let recipient2_identity = &ACTORS.recipient2;
 
-        // Sender erhält einen initialen Gutschein.
-        let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+        // 1. AppService für Sender erstellen und entsperren
+        let mut app_service = AppService::new(storage_path).unwrap();
+        // KORREKTUR: Verwende den korrekten Pfad zur Mnemonic des Senders aus test_utils.rs
+        // KORREKTUR (Panic-Fix): Übergebe das in ACTORS definierte Präfix ('Some("se")') an create_profile.
+        app_service.create_profile("sender", &ACTORS.sender.mnemonic, None, ACTORS.sender.prefix, "password123").unwrap();
 
-        let voucher_data = new_test_voucher_data(sender_identity.user_id.clone());
-        let initial_voucher = voucher_manager::create_voucher(voucher_data, standard, standard_hash, &sender_identity.signing_key, "en").unwrap();
-        // Wir klonen den Gutschein hier, damit die 'initial_voucher'-Variable für den späteren Test gültig bleibt.
-        let local_id = Wallet::calculate_local_instance_id(&initial_voucher, &sender_identity.user_id).unwrap();
-        sender_wallet.add_voucher_instance(local_id, initial_voucher.clone(), VoucherStatus::Active);
-        let initial_local_id = sender_wallet.voucher_store.vouchers.keys().next().unwrap().clone();
+        // KORREKTUR (Panic-Fix): Wir müssen den anonymen 'folder_name' abrufen,
+        // da 'login' diesen anstelle des 'profile_name' erwartet.
+        let profile_info = app_service.list_profiles().unwrap()
+            .into_iter()
+            .find(|p| p.profile_name == "sender")
+            .expect("Konnte das 'sender'-Profil nach der Erstellung nicht finden");
+        let sender_folder_name = profile_info.folder_name;
+
+        let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+        // KORREKTUR: Lade den rohen TOML-String. Der Service erwartet TOML-Inhalt, nicht den Hash.
+        let silver_toml_str = include_str!("../../voucher_standards/silver_v1/standard.toml");
+
+        let mut standards_map = HashMap::new();
+        // KORREKTUR: Die Map muss UUID -> TOML-Inhalt enthalten (für spätere Transfer-Aufrufe).
+        standards_map.insert(standard.metadata.uuid.clone(), silver_toml_str.to_string());
+
+        // 2. Sender erhält einen initialen Gutschein.
+        let voucher_data = new_test_voucher_data(app_service.get_user_id().unwrap());
+        let initial_voucher = app_service.create_new_voucher(
+            silver_toml_str, // KORREKTUR (Panic-Fix): Übergebe den TOML-Inhalt, nicht den Hash
+            "en",
+            voucher_data,
+            "password123"
+        ).unwrap();
+
+        // Merke dir die lokale ID des Gutscheins
+        let initial_local_id = app_service.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
+        let original_voucher_state_for_attack = initial_voucher.clone(); // Klonen für späteren Angriff
 
         // ### Akt 1: Legitime Transaktion ###
         // Sender sendet den Gutschein an Empfänger 1.
-        // Dies sollte erfolgreich sein und den Fingerprint der Transaktion im Wallet des Senders speichern.
         let request = voucher_lib::wallet::MultiTransferRequest {
             recipient_id: recipient1_identity.user_id.clone(),
             sources: vec![voucher_lib::wallet::SourceTransfer {
@@ -257,50 +283,90 @@ mod local_double_spend_detection {
             sender_profile_name: None,
         };
 
-        let mut standards = std::collections::HashMap::new();
-        standards.insert(standard.metadata.uuid.clone(), standard.clone());
-
-        let transfer1_result = sender_wallet.execute_multi_transfer_and_bundle(
-            sender_identity,
-            &standards,
+        let transfer1_result = app_service.create_transfer_bundle(
             request,
+            &standards_map,
             None,
+            "password123"
         );
         assert!(transfer1_result.is_ok(), "Die erste Transaktion sollte erfolgreich sein.");
-        assert_eq!(sender_wallet.own_fingerprints.history.len(), 1, "Ein Fingerprint sollte nach der ersten Transaktion existieren.");
+
+        // Status-Prüfung: Der Gutschein sollte jetzt 'Archived' sein
+        let summary_after_send = app_service.get_voucher_summaries(None, None).unwrap();
+
+        // KORREKTUR: Die 'initial_local_id' existiert nicht mehr. Die Wallet-Logik
+        // hat die alte Instanz entfernt und eine NEUE Instanz mit einer NEUEN local_id
+        // und dem Status 'Archived' erstellt.
+        assert_eq!(summary_after_send.len(), 1, "Es sollte genau eine Gutschein-Instanz (die archivierte) im Wallet geben.");
+        
+        let instance_status = &summary_after_send[0].status;
+        assert!(matches!(instance_status, VoucherStatus::Archived), "Der Status des neuen Gutscheins sollte 'Archived' sein, war aber: {:?}", instance_status);
+
+        // Stelle sicher, dass die alte ID wirklich weg ist.
+        let old_instance_exists = summary_after_send.iter().any(|s| s.local_instance_id == initial_local_id);
+        assert!(!old_instance_exists, "Die alte Gutschein-Instanz MUSS entfernt worden sein.");
 
         // ### Akt 2: Manuelle Manipulation für einen Betrugsversuch ###
         // Wir simulieren, dass der Sender versucht, denselben ursprünglichen Gutschein-Zustand erneut auszugeben.
-        // Da create_transfer die ursprüngliche Instanz (`initial_local_id`) entfernt hat, fügen wir sie manuell
-        // wieder hinzu. Dies ahmt einen Angreifer nach, der einen alten Wallet-Zustand wiederherstellt.
-        let local_id_2 = Wallet::calculate_local_instance_id(&initial_voucher, &sender_identity.user_id).unwrap();
-        sender_wallet.add_voucher_instance(local_id_2, initial_voucher, VoucherStatus::Active);
+        // Wir müssen den AppService austricksen, indem wir das Wallet manuell laden,
+        // manipulieren und den AppService neu initialisieren (ein "Restore" simulieren).
+        app_service.logout();
+
+        // HIER IST DER FIX: Wir müssen die `FileStorage`-Instanz mit dem exakten
+        // Pfad zum Profil-Ordner (den wir aus Akt 1 kennen) initialisieren,
+        // nicht nur mit dem Basis-Speicherpfad.
+        let profile_storage_path = storage_path.join(&sender_folder_name);
+        let mut storage = voucher_lib::storage::file_storage::FileStorage::new(&profile_storage_path);
+        // KORREKTUR: E0609 Verwende die korrekte AuthMethod
+        let auth = voucher_lib::storage::AuthMethod::Password("password123");
+        let (mut wallet, identity) = Wallet::load(&storage, &auth).unwrap();
+
+        // HIER IST DER ANGRIFF: Füge den alten, ausgegebenen Gutschein wieder als 'Active' hinzu.
+        let user_id = identity.user_id.clone();
+        let local_id_2 = Wallet::calculate_local_instance_id(&original_voucher_state_for_attack, &user_id).unwrap();
+        wallet.add_voucher_instance(local_id_2, original_voucher_state_for_attack, VoucherStatus::Active);
+        wallet.save(&mut storage, &identity, "password123").unwrap();
+
+        // AppService neu laden (simuliert App-Neustart nach "Restore")
+        let mut app_service = AppService::new(storage_path).unwrap();
+        // KORREKTUR (Panic-Fix): Verwende den 'sender_folder_name' anstelle von "sender".
+        app_service.login(&sender_folder_name, "password123", false).unwrap();
+        assert_eq!(app_service.get_voucher_summaries(None, Some(&[VoucherStatus::Active])).unwrap().len(), 1, "Wallet sollte jetzt einen inkonsistenten 'Active' Gutschein haben.");
 
         // ### Akt 3: Der blockierte Double-Spend-Versuch ###
         // Sender versucht, den wiederhergestellten, ursprünglichen Gutschein an Empfänger 2 zu senden.
-        // Dies MUSS fehlschlagen, weil `create_transfer` den existierenden Fingerprint aus der ersten Transaktion erkennt.
-        let request = voucher_lib::wallet::MultiTransferRequest {
+        // Dies MUSS fehlschlagen UND die Selbstheilung auslösen.
+        let request_2 = voucher_lib::wallet::MultiTransferRequest {
             recipient_id: recipient2_identity.user_id.clone(),
             sources: vec![voucher_lib::wallet::SourceTransfer {
-                local_instance_id: initial_local_id.clone(), // Wichtig: Dieselbe lokale ID wird wiederverwendet
+                local_instance_id: initial_local_id.clone(), // KORREKTUR: E0063
                 amount_to_send: "100".to_string(),
             }],
             notes: None,
             sender_profile_name: None,
         };
-
-        let mut standards = std::collections::HashMap::new();
-        standards.insert(standard.metadata.uuid.clone(), standard.clone());
-
-        let transfer2_result = sender_wallet.execute_multi_transfer_and_bundle(
-            sender_identity,
-            &standards,
-            request,
+        
+        // KORREKTUR: E0425 Ersetze alte sender_wallet Logik
+        let transfer2_result = app_service.create_transfer_bundle(
+            request_2,
+            &standards_map, // standards_map existiert bereits von oben
             None,
+            "password123"
         );
 
         assert!(transfer2_result.is_err(), "Die zweite Transaktion von demselben Zustand aus muss fehlschlagen.");
-        matches!(transfer2_result.err().unwrap(), voucher_lib::VoucherCoreError::DoubleSpendAttemptBlocked);
+        assert!(transfer2_result.err().unwrap().contains("Action blocked and wallet state corrected"));
+
+        // ### Akt 4: Verifizierung der Selbstheilung ###
+        // Überprüfe, ob der AppService den inkonsistenten Gutschein auf 'Quarantined' gesetzt hat.
+        let summary_after_fail = app_service.get_voucher_summaries(None, None).unwrap();
+        let instance = summary_after_fail.iter().find(|s| s.local_instance_id.contains(&initial_local_id)).unwrap();
+
+        assert!(
+            matches!(instance.status, VoucherStatus::Quarantined { .. }),
+            "Der inkonsistente Gutschein MUSS jetzt auf 'Quarantined' gesetzt sein (Self-Healing)."
+        );
+        println!("Test erfolgreich: Inkonsistenz erkannt, Transfer blockiert UND Wallet-Zustand selbst geheilt.");
     }
 
     // ===================================================================================

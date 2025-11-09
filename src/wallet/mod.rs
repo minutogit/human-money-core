@@ -935,7 +935,9 @@ impl Wallet {
         let new_fingerprint_hash = get_hash(format!("{}{}", prev_hash, identity.user_id));
         if self.own_fingerprints.active_fingerprints.contains_key(&new_fingerprint_hash)
             || self.own_fingerprints.history.contains_key(&new_fingerprint_hash) {
-            return Err(VoucherCoreError::DoubleSpendAttemptBlocked);
+            // SELBSTHEILUNG: Gebe die ID des Gutscheins zurück, der die Inkonsistenz verursacht hat.
+            // Der aufrufende AppService kann diesen Gutschein dann in Quarantäne verschieben.
+            return Err(VoucherCoreError::DoubleSpendAttemptBlocked { local_instance_id: local_instance_id.to_string() });
         }
 
         let new_voucher_state = voucher_manager::create_transaction(

@@ -294,8 +294,8 @@ pub enum VoucherCoreError {
     VoucherNotActive(VoucherStatus),
     #[error("Ownership validation failed: {0}")]
     VoucherOwnershipNotFound(String),
-    #[error("Double spend attempt blocked: A transaction has already been issued from this voucher state.")]
-    DoubleSpendAttemptBlocked,
+    #[error("Double spend attempt blocked for voucher {local_instance_id}: A transaction has already been issued from this voucher state.")]
+    DoubleSpendAttemptBlocked { local_instance_id: String },
     #[error("Base58 decode error: {0}")]
     Bs58Decode(#[from] bs58::decode::Error),
     #[error("Base64 decode error: {0}")]
