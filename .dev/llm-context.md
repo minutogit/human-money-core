@@ -251,114 +251,124 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
 ├── sign_standards.sh
 ├── sign_test_standards.sh
 ├── src
-│   ├── app_service
-│   │   ├── app_queries.rs
-│   │   ├── app_signature_handler.rs
-│   │   ├── command_handler.rs
-│   │   ├── conflict_handler.rs
-│   │   ├── data_encryption.rs
-│   │   ├── lifecycle.rs
-│   │   └── mod.rs
-│   ├── archive
-│   │   ├── file_archive.rs
-│   │   └── mod.rs
-│   ├── bin
-│   │   ├── validate-standard.rs
-│   │   └── voucher-cli.rs
-│   ├── error.rs
-│   ├── lib.rs
-│   ├── main.rs
-│   ├── models
-│   │   ├── conflict.rs
-│   │   ├── mod.rs
-│   │   ├── profile.rs
-│   │   ├── readme_de.md
-│   │   ├── secure_container.rs
-│   │   ├── signature.rs
-│   │   ├── voucher.rs
-│   │   └── voucher_standard_definition.rs
-│   ├── services
-│   │   ├── bundle_processor.rs
-│   │   ├── conflict_manager.rs
-│   │   ├── crypto_utils.rs
-│   │   ├── decimal_utils.rs
-│   │   ├── mod.rs
-│   │   ├── secure_container_manager.rs
-│   │   ├── signature_manager.rs
-│   │   ├── standard_manager.rs
-│   │   ├── utils.rs
-│   │   ├── voucher_manager.rs
-│   │   └── voucher_validation.rs
-│   ├── storage
-│   │   ├── file_storage.rs
-│   │   └── mod.rs
-│   ├── test_utils.rs
-│   └── wallet
-│       ├── conflict_handler.rs
-│       ├── instance.rs
-│       ├── mod.rs
-│       ├── queries.rs
-│       ├── signature_handler.rs
-│       └── tests.rs
+│   ├── app_service
+│   │   ├── app_queries.rs
+│   │   ├── app_signature_handler.rs
+│   │   ├── command_handler.rs
+│   │   ├── conflict_handler.rs
+│   │   ├── data_encryption.rs
+│   │   ├── lifecycle.rs
+│   │   └── mod.rs
+│   ├── archive
+│   │   ├── file_archive.rs
+│   │   └── mod.rs
+│   ├── bin
+│   │   ├── validate-standard.rs
+│   │   └── voucher-cli.rs
+│   ├── error.rs
+│   ├── lib.rs
+│   ├── main.rs
+│   ├── models
+│   │   ├── conflict.rs
+│   │   ├── mod.rs
+│   │   ├── profile.rs
+│   │   ├── readme_de.md
+│   │   ├── secure_container.rs
+│   │   ├── signature.rs
+│   │   ├── voucher.rs
+│   │   └── voucher_standard_definition.rs
+│   ├── services
+│   │   ├── bundle_processor.rs
+│   │   ├── conflict_manager.rs
+│   │   ├── crypto_utils.rs
+│   │   ├── decimal_utils.rs
+│   │   ├── mod.rs
+│   │   ├── secure_container_manager.rs
+│   │   ├── signature_manager.rs
+│   │   ├── standard_manager.rs
+│   │   ├── utils.rs
+│   │   ├── voucher_manager.rs
+│   │   └── voucher_validation.rs
+│   ├── storage
+│   │   ├── file_storage.rs
+│   │   └── mod.rs
+│   ├── test_utils.rs
+│   └── wallet
+│       ├── conflict_handler.rs
+│       ├── instance.rs
+│       ├── lifecycle.rs
+│       ├── maintenance.rs
+│       ├── mod.rs
+│       ├── queries.rs
+│       ├── signature_handler.rs
+│       ├── tests.rs
+│       ├── transaction_handler.rs
+│       └── types.rs
 ├── test_plan.txt
 ├── tests
-│   ├── architecture
-│   │   ├── hardening.rs
-│   │   ├── mod.rs
-│   │   └── resilience_and_gossip.rs
-│   ├── architecture_tests.rs
-│   ├── core_logic
-│   │   ├── lifecycle.rs
-│   │   ├── math.rs
-│   │   ├── mod.rs
-│   │   └── security.rs
-│   ├── core_logic_tests.rs
-│   ├── persistence
-│   │   ├── archive.rs
-│   │   ├── file_storage.rs
-│   │   └── mod.rs
-│   ├── persistence_tests.rs
-│   ├── services
-│   │   ├── crypto.rs
-│   │   ├── mod.rs
-│   │   └── utils.rs
-│   ├── services_tests.rs
-│   ├── test_data
-│   │   └── standards
-│   │       ├── standard_behavior_rules.toml
-│   │       ├── standard_conflicting_rules.toml
-│   │       ├── standard_content_rules.toml
-│   │       ├── standard_field_group_rules.toml
-│   │       ├── standard_no_split.toml
-│   │       ├── standard_path_not_found.toml
-│   │       ├── standard_required_signatures.toml
-│   │       ├── standard_strict_counts.toml
-│   │       └── standard_strict_sig_description.toml
-│   ├── validation
-│   │   ├── business_rules.rs
-│   │   ├── forward_compatibility.rs
-│   │   ├── mod.rs
-│   │   ├── standard_definition.rs
-│   │   └── unit_service.rs
-│   ├── validation_tests.rs
-│   ├── wallet_api
-│   │   ├── general_workflows.rs
-│   │   ├── hostile_bundles.rs
-│   │   ├── hostile_standards.rs
-│   │   ├── lifecycle_and_data.rs
-│   │   ├── mod.rs
-│   │   ├── signature_workflows.rs
-│   │   ├── state_management.rs
-│   │   └── transactionality.rs
-│   └── wallet_api_tests.rs
+│   ├── architecture
+│   │   ├── hardening.rs
+│   │   ├── mod.rs
+│   │   └── resilience_and_gossip.rs
+│   ├── architecture_tests.rs
+│   ├── core_logic
+│   │   ├── lifecycle.rs
+│   │   ├── math.rs
+│   │   ├── mod.rs
+│   │   └── security
+│   │   ├── double_spend.rs
+│   │   ├── mod.rs
+│   │   ├── standard_validation.rs
+│   │   ├── state_and_collaboration.rs
+│   │   └── vulnerabilities.rs
+│   ├── core_logic_tests.rs
+│   ├── persistence
+│   │   ├── archive.rs
+│   │   ├── file_storage.rs
+│   │   └── mod.rs
+│   ├── persistence_tests.rs
+│   ├── services
+│   │   ├── crypto.rs
+│   │   ├── mod.rs
+│   │   └── utils.rs
+│   ├── services_tests.rs
+│   ├── test_data
+│   │   └── standards
+│   │   ├── standard_behavior_rules.toml
+│   │   ├── standard_conflicting_rules.toml
+│   │   ├── standard_content_rules.toml
+│   │   ├── standard_field_group_rules.toml
+│   │   ├── standard_no_split.toml
+│   │   ├── standard_path_not_found.toml
+│   │   ├── standard_required_signatures.toml
+│   │   ├── standard_strict_counts.toml
+│   │   └── standard_strict_sig_description.toml
+│   ├── validation
+│   │   ├── business_rules.rs
+│   │   ├── forward_compatibility.rs
+│   │   ├── mod.rs
+│   │   ├── standard_definition.rs
+│   │   └── unit_service.rs
+│   ├── validation_tests.rs
+│   ├── wallet_api
+│   │   ├── general_workflows.rs
+│   │   ├── hostile_bundles.rs
+│   │   ├── hostile_standards.rs
+│   │   ├── lifecycle_and_data.rs
+│   │   ├── mod.rs
+│   │   ├── signature_workflows.rs
+│   │   ├── state_management.rs
+│   │   └── transactionality.rs
+│   └── wallet_api_tests.rs
+├── update-docs.sh
 ├── validate_standards.sh
 └── voucher_standards
-    ├── minuto_v1
-    │   └── standard.toml
-    ├── readme_de.md
-    ├── silver_v1
-    │   └── standard.toml
-    └── standard_template.toml
+    ├── minuto_v1
+    │   └── standard.toml
+    ├── readme_de.md
+    ├── silver_v1
+    │   └── standard.toml
+    └── standard_template.toml
 ```
 
 ## 7\. Implementierte Kernfunktionen
@@ -399,6 +409,7 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
   - Erstellt einen brandneuen Gutschein, validiert ihn gegen den bereitgestellten Standard, fügt ihn zum Wallet hinzu und speichert den Zustand.
 - `pub fn create_transfer_bundle(&mut self, request: MultiTransferRequest, standard_definitions_toml: &HashMap<String, String>, archive: Option<&dyn VoucherArchive>, password: &str) -> Result<CreateBundleResult, String>`
   - Erstellt eine(n oder mehrere) Transaktion(en) für einen oder mehrere Quell-Gutscheine, verpackt sie in ein `SecureContainer`-Bundle und speichert den neuen Wallet-Zustand. Akzeptiert eine `MultiTransferRequest`-Struktur, die eine Liste von Quell-Gutscheinen und Beträgen enthält. Gibt ein `CreateBundleResult` zurück, das detaillierte Informationen über die involvierten Quell-Gutscheine enthält.
+  - Implementiert eine **Selbstheilungsfunktion**: Wenn ein interner Inkonsistenzfehler erkannt wird (z.B. ein 'Active'-Gutschein, der bereits versendet wurde), wird der inkonsistente Gutschein automatisch in den Quarantänezustand (`Quarantined`) verschoben und der Wallet-Zustand gespeichert, um zukünftige Verwendung des fehlerhaften Gutscheins zu verhindern.
 - `pub fn receive_bundle(&mut self, bundle_data: &[u8], standard_definitions_toml: &HashMap<String, String>, archive: Option<&dyn VoucherArchive>, password: &str) -> Result<ProcessBundleResult, String>`
   - Verarbeitet ein empfangenes Transaktions-Bundle, validiert die enthaltenen Gutscheine gegen die bereitgestellten Standard-Definitionen und speichert den neuen Wallet-Zustand. Gibt ein `ProcessBundleResult` zurück, das auch detaillierte Informationen über die involvierten Gutscheine und Transfer-Zusammenfassungen enthält.
 - `pub fn create_signing_request_bundle(...) -> Result<Vec<u8>, String>`
@@ -424,21 +435,28 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
 
 ### `src/wallet` Modul
 
-Das `wallet`-Modul wurde refaktorisiert, um die Komplexität zu reduzieren und die Verantwortlichkeiten klarer zu trennen. Die `Wallet`-Struktur ist weiterhin die zentrale Fassade der Kernlogik, delegiert aber spezifische Aufgaben an Sub-Module.
+Das `wallet`-Modul wurde umfassend refaktorisiert, um die Komplexität zu reduzieren und die Verantwortlichkeiten klarer zu trennen. Die `Wallet`-Struktur ist weiterhin die zentrale Fassade der Kernlogik, delegiert aber spezifische Aufgaben an neue Sub-Module.
 
 - `pub struct Wallet` (`mod.rs`)
   - Hält `UserProfile`, `VoucherStore`, `BundleMetadataStore`, die getrennten `KnownFingerprints`, `OwnFingerprints`, `ProofStore` und den neuen `CanonicalMetadataStore` für Metadaten als In-Memory-Zustand.
   - Enthält neue Strukturen: `MultiTransferRequest` für die Anforderung von Transfers mit mehreren Quellen und `SourceTransfer` für die Definition einzelner Quellpositionen in einem Transfer.
-- **Lebenszyklus & Kernoperationen** (`mod.rs`)
+- **Lebenszyklus & Kernoperationen** (`lifecycle.rs`)
   - `pub fn new_from_mnemonic(...)`: Erstellt ein brandneues Wallet.
   - `pub fn load(...)`: Lädt ein existierendes Wallet aus dem Storage.
   - `pub fn save(...)`: Speichert den aktuellen Zustand des Wallets.
   - `pub fn create_new_voucher(...)`: Erstellt einen neuen Gutschein und fügt ihn direkt zum Wallet hinzu.
+- **Transaktionsverarbeitung** (`transaction_handler.rs`)
   - `pub fn execute_multi_transfer_and_bundle(...)`: Führt einen Transfer durch, der Guthaben aus mehreren Quell-Gutscheinen kombinieren kann. Ersetzt die alte `create_transfer`-Methode. Akzeptiert eine `MultiTransferRequest`-Struktur mit einer Liste von Quellen und führt alle Transaktionen in einem einzigen Bundle durch. Managt den internen Zustand (Archivierung, Restbetrag) und wählt Fingerprints für das Gossip-Protokoll.
   - `pub fn process_encrypted_transaction_bundle(...)`: Verarbeitet eingehende Gutscheine oder Signaturen, inkl. der Verarbeitung von empfangenen Fingerprints. Implementiert umfassenden Schutz gegen Replay-Angriffe durch zwei Schichten (Bundle-ID-Prüfung und Fingerprint-Prüfung) und weist eingehende Bundles zurück, die nicht explizit für den Wallet-Besitzer bestimmt sind.
-- **Speicher-Management** (`mod.rs`)
+  - `pub fn create_and_encrypt_transaction_bundle(...)`: Erstellt ein `TransactionBundle`, verpackt es und aktualisiert den Wallet-Zustand.
+- **Wartung & Speicher-Management** (`maintenance.rs`)
   - `pub fn run_storage_cleanup(...)`: Führt eine mehrstufige Bereinigung der Fingerprint-Stores durch (abgelaufen, dann nach `depth`).
+  - `pub fn cleanup_storage(...)`: Führt Wartungsarbeiten am Wallet-Speicher durch, um veraltete Daten zu entfernen.
   - `pub fn rebuild_derived_stores(...)`: Rekonstruiert alle abgeleiteten Stores (Fingerprints, Metadaten) aus dem `VoucherStore`.
+  - `pub fn add_voucher_instance(...)`: Fügt eine Gutscheininstanz zum Wallet hinzu.
+  - `pub fn get_voucher_instance(...)`: Ruft eine Gutscheininstanz ab.
+  - `pub fn update_voucher_status(...)`: Aktualisiert den Status einer Gutscheininstanz.
+  - `pub fn calculate_local_instance_id(...)`: Berechnet eine deterministische ID für eine Gutscheininstanz.
 - **Abfragen & Ansichten** (`queries.rs`)
   - `pub fn list_vouchers(&self) -> Vec<VoucherSummary>`: Gibt eine vereinfachte Liste aller Gutscheine zurück.
   - `pub fn get_voucher_details(...) -> Result<VoucherDetails, ...>`: Gibt detaillierte Informationen zu einem Gutschein zurück.
@@ -452,10 +470,16 @@ Das `wallet`-Modul wurde refaktorisiert, um die Komplexität zu reduzieren und d
   - `pub fn scan_and_rebuild_fingerprints(...)`: Scannt das Wallet und baut die getrennten Fingerprint-Stores (`OwnFingerprints`, `KnownFingerprints`) neu auf.
   - `pub fn check_for_double_spend(&self) -> DoubleSpendCheckResult`: Prüft auf Double-Spending-Konflikte, indem es die verschiedenen Fingerprint-Stores zusammenführt.
   - `pub fn export_own_fingerprints(...)` & `import_foreign_fingerprints(...)`: Ermöglichen den Austausch von Fingerprints zwischen Wallets.
+  - `pub fn verify_and_create_proof(...)`: Verifiziert einen Konflikt und erstellt einen Beweis.
+  - `pub fn check_bundle_fingerprints_against_history(...)`: Interne Hilfsfunktion für Layer-2-Replay-Schutz.
+  - `pub fn select_fingerprints_for_bundle(...)`: Wählt Fingerprints für die Weiterleitung in einem Bundle aus.
+  - `pub fn process_received_fingerprints(...)`: Verarbeitet empfangene Fingerprints (aktiv und implizit) und aktualisiert die Metadaten.
 - **Voucher Instance Management** (`instance.rs`)
   - `pub struct VoucherInstance`: Repräsentiert eine Instanz eines Gutscheins mit einem bestimmten Status.
   - `pub enum VoucherStatus`: Definiert den Status eines Gutscheins (z.B. `Incomplete`, `Active`, `Archived`, `Quarantined`).
   - `pub fn calculate_local_instance_id(...)`: Berechnet eine deterministische ID für eine Gutscheininstanz.
+- **Typdefinitionen** (`types.rs`)
+  - Definiert öffentliche Datenstrukturen wie `MultiTransferRequest`, `SourceTransfer`, `TransferSummary`, `ProcessBundleResult`, `DoubleSpendCheckResult`, `InvolvedVoucherInfo`, `CreateBundleResult`, `CleanupReport`, `AggregatedBalance`, `VoucherSummary`, `ProofOfDoubleSpendSummary`, `VoucherDetails`.
 - **Tests** (`tests.rs`)
   - Enthält umfassende Unit-Tests für die Wallet-Logik.
 
@@ -550,6 +574,7 @@ Dieses Modul stellt die Kernlogik für die Erstellung und Verarbeitung von Gutsc
   - Orchestriert die Erstellung eines neuen, vollständigen Gutscheins.
   - Erzeugt eine `voucher_nonce`, um den initialen `prev_hash` unvorhersehbar zu machen und so die Anonymität des Erstellers auf Layer 2 zu schützen.
   - Nutzt eine korrigierte Logik zur Berechnung von Gültigkeitsdauern.
+  - Implementiert einen **"Gatekeeper"-Validierungsmechanismus** für `issuance_minimum_validity_duration`: Verhindert die Erstellung von Gutscheinen, deren Gültigkeitsdauer die im Standard definierte Mindestgültigkeit unterschreitet (z.B. bei Erstellung mit zu kurz gewählter Gültigkeitsdauer).
   - Nimmt den **Konsistenz-Hash** des verifizierten Standards entgegen und bettet ihn in den Gutschein ein.
   - Verwendet die Logik zur Auswahl des mehrsprachigen Beschreibungstextes aus dem Standard.
 - `pub fn create_transaction(voucher: &Voucher, standard: &VoucherStandardDefinition, sender_id: &str, sender_key: &SigningKey, recipient_id: &str, amount_to_send_str: &str) -> Result<Voucher, VoucherCoreError>`
@@ -557,6 +582,7 @@ Dieses Modul stellt die Kernlogik für die Erstellung und Verarbeitung von Gutsc
   - Die Signatur der Transaktion sichert nun ein minimales Objekt (`{prev_hash, sender_id, t_id}`).
   - Verwendet `decimal_utils` zur **strengen Validierung der Betragspräzision** und zur **kanonischen Formatierung** der Werte.
   - Verwendet explizit den Transaktionstyp "transfer" für einen vollen Transfer.
+  - Implementiert eine **"Zirkulations-Firewall" (`issuance_minimum_validity_duration`)**: Verhindert, dass der *ursprüngliche Ersteller* einen Gutschein an einen *Dritten* sendet, wenn die *Restgültigkeit* des Gutscheins die im Standard definierte Mindestgültigkeit unterschreitet. Diese Prüfung gilt *nicht* für nicht-Ersteller oder interne SAI-Transfers (z.B. Creator zu sich selbst).
 
 ### `services::voucher_validation` Modul
 
@@ -566,6 +592,7 @@ Dieses Modul enthält die Logik zur Validierung eines `Voucher`-Objekts gegen di
 - Überprüft die **Konsistenz des eingebetteten Standard-Hashes** mit dem Hash des aktuellen Standard-Objekts, um sicherzustellen, dass der Gutschein immer gegen die exakte Version des Standards validiert wird, mit der er erstellt wurde.
 - Überprüft, ob der **Transaktionstyp** (`t_type`) laut Standard erlaubt ist.
 - Überprüft die Integrität und kryptographische Gültigkeit aller **zusätzlichen Signaturen** (`additional_signatures`).
+- **Hinweis:** Die Validierung der `issuance_minimum_validity_duration` erfolgt nun nicht mehr in dieser Funktion, sondern wird als "Gatekeeper" in `create_voucher` (bei Erstellung) und als "Firewall" in `create_transaction` (bei Transfer) separat behandelt.
 
 ### `src/wallet` Modul - Neue Sicherheitsfeatures
 
