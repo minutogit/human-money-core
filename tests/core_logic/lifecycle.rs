@@ -569,41 +569,16 @@ fn test_validity_duration_rules() {
         "Creation should fail with InvalidValidityDuration error"
     );
 
-    // 3. Testfall: Erstelle einen gültigen Gutschein und manipuliere dann sein Gültigkeitsdatum.
-    let valid_data = self::test_utils::create_minuto_voucher_data(creator.clone());
-    let mut voucher = self::test_utils::create_voucher_for_manipulation(valid_data, minuto_standard, standard_hash, &identity.signing_key, "en");
-
-    // Mache ihn mit Bürgen vollständig gültig, um die Datumsprüfung zu isolieren.
-    let g1 = &ACTORS.guarantor1;
-    let g2 = &ACTORS.guarantor2;
-    voucher.guarantor_signatures.push(self::test_utils::create_guarantor_signature(&voucher, g1, "G1", "1"));
-    voucher.guarantor_signatures.push(self::test_utils::create_guarantor_signature(&voucher, g2, "G2", "2"));
-    assert!(validate_voucher_against_standard(&voucher, minuto_standard).is_ok());
-
-    // Manipuliere das Datum
-    let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date).unwrap();
-    let tampered_until_dt = creation_dt + chrono::Duration::days(10); // weniger als 90
-    voucher.valid_until = tampered_until_dt.to_rfc3339();
-
-    // KORREKTUR: Jede Änderung an den Gutscheindaten nach der Erstellung macht die Signatur
-    // des Erstellers ungültig. Um gezielt die Gültigkeitsdauer-Regel zu testen, müssen wir
-    // den Gutschein neu signieren, damit die Validierung nicht vorzeitig an einer ungültigen
-    // Signatur scheitert. Die Logik hier spiegelt die in `verify_creator_signature`.
-    let mut voucher_to_sign = voucher.clone();
-    voucher_to_sign.creator.signature = "".to_string();
-    voucher_to_sign.voucher_id = "".to_string();
-    voucher_to_sign.transactions.clear();
-    voucher_to_sign.guarantor_signatures.clear();
-    voucher_to_sign.additional_signatures.clear();
-    let hash = crypto_utils::get_hash(to_canonical_json(&voucher_to_sign).unwrap());
-    let new_sig = crypto_utils::sign_ed25519(&identity.signing_key, hash.as_bytes());
-    voucher.creator.signature = bs58::encode(new_sig.to_bytes()).into_string();
-
-    let validation_result = validate_voucher_against_standard(&voucher, minuto_standard);
-    assert!(matches!(validation_result.unwrap_err(), VoucherCoreError::Validation(ValidationError::ValidityDurationTooShort)));
+    // 3. Testfall: (ENTFERNT)
+    // Die statische Prüfung der Mindestgültigkeit (ValidityDurationTooShort)
+    // findet nicht mehr in `validate_voucher_against_standard` statt.
+    // Sie wird jetzt durch den "Gatekeeper" (in `create_voucher`, oben getestet)
+    // und die "Firewall" (in `create_transaction`) abgedeckt.
+    // Der folgende Testfall (4.) ist weiterhin gültig.
 
     // 4. Testfall: Nicht übereinstimmende Mindestgültigkeitsregel zwischen Gutschein und Standard
-    let mut voucher2 = self::test_utils::create_voucher_for_manipulation(self::test_utils::create_minuto_voucher_data(creator.clone()), minuto_standard, standard_hash, &identity.signing_key, "en");
+    let valid_data = self::test_utils::create_minuto_voucher_data(creator.clone());
+    let mut voucher2 = self::test_utils::create_voucher_for_manipulation(valid_data, minuto_standard, standard_hash, &identity.signing_key, "en");
 
     // Füge gültige Bürgen hinzu, damit die Validierung nicht an der Anzahl scheitert.
     let g1 = &ACTORS.guarantor1;

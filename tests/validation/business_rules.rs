@@ -345,34 +345,12 @@ mod behavioral_rules {
 
     #[test]
     fn test_validate_voucher_when_validity_is_too_short_then_fails() {
-        let (standard, standard_hash) = load_toml_standard("tests/test_data/standards/standard_behavior_rules.toml");
-        let creator_identity = &ACTORS.alice;
-        let voucher_data = NewVoucherData {
-            creator: Creator { id: creator_identity.user_id.clone(), ..Default::default() },
-            validity_duration: Some("P2Y".to_string()),
-            nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
-            ..Default::default()
-        };
-        let mut voucher = create_voucher_for_manipulation(voucher_data, &standard, &standard_hash, &creator_identity.signing_key, "en");
-        let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date).unwrap();
-        let short_validity_dt = creation_dt + chrono::Months::new(6);
-        voucher.valid_until = short_validity_dt.to_rfc3339();
-
-        let mut voucher_to_sign = voucher.clone();
-        voucher_to_sign.creator.signature = "".to_string();
-        voucher_to_sign.voucher_id = "".to_string();
-        voucher_to_sign.transactions.clear();
-        voucher_to_sign.guarantor_signatures.clear();
-        voucher_to_sign.additional_signatures.clear();
-        let hash = crypto_utils::get_hash(to_canonical_json(&voucher_to_sign).unwrap());
-        let new_sig = crypto_utils::sign_ed25519(&creator_identity.signing_key, hash.as_bytes());
-        voucher.creator.signature = bs58::encode(new_sig.to_bytes()).into_string();
-
-        let result = validate_voucher_against_standard(&voucher, &standard);
-        assert!(matches!(
-            result.unwrap_err(),
-            VoucherCoreError::Validation(ValidationError::ValidityDurationTooShort)
-        ));
+        // TEST ENTFERNT (OBSOLET):
+        // Diese statische Prüfung (ValidityDurationTooShort) wurde aus `validate_voucher_against_standard`
+        // entfernt und durch den "Gatekeeper" (in `create_voucher`) und die "Firewall" (in `create_transaction`)
+        // ersetzt.
+        // Der Test `core_logic::lifecycle::test_validity_duration_rules` (Testfall 1)
+        // deckt den "Gatekeeper"-Teil bereits ab.
     }
 
     #[test]
@@ -483,7 +461,19 @@ mod behavioral_rules {
     #[test]
     fn test_create_transaction_when_type_is_not_allowed_then_fails() {
         let (restricted_standard, hash) = test_utils::create_custom_standard(&MINUTO_STANDARD.0, |s| {
-            s.validation.as_mut().unwrap().behavior_rules.as_mut().unwrap().allowed_t_types = Some(vec!["init".to_string()]);
+            // KORREKTUR: Verwende `get_or_insert_with` statt `unwrap()`, um robust
+            // gegen `None`-Werte in der Standard-Definition zu sein.
+            let validation = s.validation.get_or_insert_with(Default::default);
+
+            // 1. Setze die Regel, die wir testen wollen (nur 'init' erlaubt)
+            let b_rules = validation.behavior_rules.get_or_insert_with(Default::default);
+            b_rules.allowed_t_types = Some(vec!["init".to_string()]);
+            // 3. (FIX) Deaktiviere die Issuance-Firewall, damit der Test nicht daran scheitert.
+            b_rules.issuance_minimum_validity_duration = None;
+
+            // 2. Entschärfe die 'max=1' Transaktions-Regel des Minuto-Standards
+            let count_rules = validation.counts.get_or_insert_with(Default::default);
+            count_rules.transactions = Some(voucher_lib::models::voucher_standard_definition::MinMax { min: 1, max: 2 });
         });
         let identity = &ACTORS.alice;
         
@@ -500,7 +490,211 @@ mod behavioral_rules {
         voucher.guarantor_signatures.push(create_female_guarantor_signature(&voucher));
 
         let result = create_transaction(&voucher, &restricted_standard, &identity.user_id, &identity.signing_key, &ACTORS.bob.user_id, "100");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Transaction type 'transfer' is not allowed"));
+
+        // KORREKTUR: Verwende `matches!` für eine robuste Fehlerprüfung statt String-Vergleich.
+        assert!(matches!(
+            result.unwrap_err(),
+            VoucherCoreError::Validation(ValidationError::TransactionTypeNotAllowed { t_type, .. }) if t_type == "transfer"
+        ));
+    }
+
+
+    /// Testet die "Issuance Firewall" (issuance_minimum_validity_duration).
+    /// Diese Tests validieren die "Gatekeeper"-Funktion (bei Erstellung) und
+    // die "Firewall"-Funktion (bei Transaktion).
+    #[cfg(test)]
+    mod issuance_firewall {
+        use super::*;
+        use voucher_lib::test_utils::{create_custom_standard, SILVER_STANDARD};
+        use voucher_lib::services::voucher_manager::VoucherManagerError;
+
+        /// Erstellt eine Testumgebung mit den benötigten Akteuren und Standards.
+        struct TestSetup {
+            creator_pc: &'static test_utils::TestUser,
+            creator_mobil: test_utils::TestUser,
+            user_b: &'static test_utils::TestUser,
+            user_c: &'static test_utils::TestUser,
+            standard_a: (voucher_lib::VoucherStandardDefinition, String), // P1Y Firewall
+            standard_b: (&'static voucher_lib::VoucherStandardDefinition, &'static String), // Keine Firewall
+        }
+
+        fn setup() -> TestSetup {
+            let creator_pc = &ACTORS.alice;
+            let user_b = &ACTORS.bob;
+            let user_c = &ACTORS.charlie;
+
+            // Erstellt einen "Mobil"-Akteur mit derselben Mnemonic (gleiche PK), aber anderem Präfix.
+            let creator_mobil = test_utils::user_from_mnemonic_slow(
+                &creator_pc.mnemonic,
+                creator_pc.passphrase,
+                Some("am"), // "alice mobile"
+            );
+
+            // Standard A: Mit 1-Jahres-Firewall
+            let (standard_a, hash_a) = create_custom_standard(&SILVER_STANDARD.0, |s| {
+                let validation = s.validation.get_or_insert_with(Default::default);
+                let behavior = validation.behavior_rules.get_or_insert_with(Default::default);
+                behavior.issuance_minimum_validity_duration = Some("P1Y".to_string());
+            });
+
+            TestSetup {
+                creator_pc,
+                creator_mobil,
+                user_b,
+                user_c,
+                standard_a: (standard_a, hash_a),
+                standard_b: (&SILVER_STANDARD.0, &SILVER_STANDARD.1),
+            }
+        }
+
+        /// Hilfsfunktion zum Erstellen von Test-Voucher-Daten.
+        fn create_voucher_data(creator: &test_utils::TestUser, duration: &str) -> NewVoucherData {
+            NewVoucherData {
+                creator: Creator { id: creator.user_id.clone(), ..Default::default() },
+                nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+                validity_duration: Some(duration.to_string()),
+                ..Default::default()
+            }
+        }
+
+        /// Hilfsfunktion, um einen Gutschein nach Manipulation neu zu signieren (Creator-Signatur).
+        fn resign_voucher_creator_signature(mut voucher: voucher_lib::Voucher, signer_key: &ed25519_dalek::SigningKey) -> voucher_lib::Voucher {
+            let mut voucher_to_sign = voucher.clone();
+            voucher_to_sign.creator.signature = "".to_string();
+            voucher_to_sign.voucher_id = "".to_string();
+            voucher_to_sign.transactions.clear();
+            voucher_to_sign.guarantor_signatures.clear();
+            voucher_to_sign.additional_signatures.clear();
+            let hash = crypto_utils::get_hash(to_canonical_json(&voucher_to_sign).unwrap());
+            let new_sig = crypto_utils::sign_ed25519(signer_key, hash.as_bytes());
+            voucher.creator.signature = bs58::encode(new_sig.to_bytes()).into_string();
+            voucher
+        }
+
+        #[test]
+        /// Testet Fall 1 (Gatekeeper): Erstellung schlägt fehl, wenn Gültigkeit < Regel.
+        fn test_gatekeeper_blocks_creation_of_too_short_voucher() {
+            let setup = setup();
+            let (standard_a, hash_a) = (&setup.standard_a.0, &setup.standard_a.1);
+
+            // Szenario: Erstelle Gutschein mit P6M Gültigkeit (Regel = P1Y)
+            let voucher_data = create_voucher_data(setup.creator_pc, "P6M");
+
+            let result = create_voucher(
+                voucher_data,
+                standard_a,
+                hash_a,
+                &setup.creator_pc.signing_key,
+                "en"
+            );
+
+            // Erwartung: Die Erstellung (Gatekeeper) schlägt fehl.
+            assert!(matches!(
+                result.unwrap_err(),
+                VoucherCoreError::Manager(VoucherManagerError::InvalidValidityDuration(_))
+            ));
+        }
+
+        #[test]
+        /// Testet Fall 1 (Firewall): Transaktion schlägt fehl, wenn Restgültigkeit < Regel.
+        fn test_firewall_blocks_expired_issuance_to_third_party() {
+            let setup = setup();
+            let (standard_a, hash_a) = (&setup.standard_a.0, &setup.standard_a.1);
+
+            // 1. Erstelle GÜLTIGEN Gutschein (P2Y > P1Y)
+            let voucher_data = create_voucher_data(setup.creator_pc, "P2Y");
+            let mut voucher = create_voucher(voucher_data, standard_a, hash_a, &setup.creator_pc.signing_key, "en").unwrap();
+
+            // 2. Simuliere Zeitablauf: Manipuliere valid_until auf 6 Monate in der Zukunft
+            let now = chrono::Utc::now();
+            let six_months_from_now = voucher_lib::services::voucher_manager::add_iso8601_duration(now, "P6M").unwrap();
+            voucher.valid_until = six_months_from_now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+            voucher = resign_voucher_creator_signature(voucher, &setup.creator_pc.signing_key);
+
+            // 3. Aktion: Versuche zu senden (Creator -> Dritter)
+            let result = create_transaction(
+                &voucher, standard_a, &setup.creator_pc.user_id, &setup.creator_pc.signing_key, &setup.user_b.user_id, "100"
+            );
+
+            // 4. Erwartung: Firewall schlägt fehl
+            assert!(matches!(
+                result.unwrap_err(),
+                VoucherCoreError::Manager(VoucherManagerError::InvalidValidityDuration(msg))
+                if msg.contains("less than the required minimum remaining duration")
+            ));
+        }
+
+        #[test]
+        /// Testet Fall 2: Transaktion (Creator -> Creator) ist trotz abgelaufener Frist erfolgreich (SAI-Ausnahme).
+        fn test_firewall_allows_internal_creator_transfer_when_expired() {
+            let setup = setup();
+            let (standard_a, hash_a) = (&setup.standard_a.0, &setup.standard_a.1);
+            let voucher_data = create_voucher_data(setup.creator_pc, "P2Y");
+            let mut voucher = create_voucher(voucher_data, standard_a, hash_a, &setup.creator_pc.signing_key, "en").unwrap();
+
+            // Simuliere Zeitablauf
+            let now = chrono::Utc::now();
+            let six_months_from_now = voucher_lib::services::voucher_manager::add_iso8601_duration(now, "P6M").unwrap();
+            voucher.valid_until = six_months_from_now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+            voucher = resign_voucher_creator_signature(voucher, &setup.creator_pc.signing_key);
+
+            // Aktion: Sende an Creator_Mobil (gleiche PK, anderer Prefix)
+            let result = create_transaction(
+                &voucher, standard_a, &setup.creator_pc.user_id, &setup.creator_pc.signing_key, &setup.creator_mobil.user_id, "100"
+            );
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        /// Testet Fall 3: Transaktion (Nicht-Ersteller -> Dritter) ist trotz abgelaufener Frist erfolgreich.
+        fn test_firewall_allows_non_creator_transfer_when_expired() {
+            let setup = setup();
+            let (standard_a, hash_a) = (&setup.standard_a.0, &setup.standard_a.1);
+            let voucher_data = create_voucher_data(setup.creator_pc, "P2Y");
+            let voucher = create_voucher(voucher_data, standard_a, hash_a, &setup.creator_pc.signing_key, "en").unwrap();
+
+            // Sende an User_B (erfolgreich)
+            let voucher_at_b = create_transaction(&voucher, standard_a, &setup.creator_pc.user_id, &setup.creator_pc.signing_key, &setup.user_b.user_id, "100").unwrap();
+
+            // Simuliere Zeitablauf
+            let mut voucher_at_b_expired = voucher_at_b.clone();
+            let now = chrono::Utc::now();
+            let six_months_from_now = voucher_lib::services::voucher_manager::add_iso8601_duration(now, "P6M").unwrap();
+            voucher_at_b_expired.valid_until = six_months_from_now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+            voucher_at_b_expired = resign_voucher_creator_signature(voucher_at_b_expired, &setup.creator_pc.signing_key);
+
+            // Aktion: User_B (Nicht-Ersteller) sendet an User_C
+            let result = create_transaction(
+                &voucher_at_b_expired, standard_a, &setup.user_b.user_id, &setup.user_b.signing_key, &setup.user_c.user_id, "100"
+            );
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        /// Testet Fall 4: Transaktion (Creator -> Dritter) ist erfolgreich, wenn Gültigkeit ausreicht.
+        fn test_firewall_allows_valid_issuance_to_third_party() {
+            let setup = setup();
+            let (standard_a, hash_a) = (&setup.standard_a.0, &setup.standard_a.1);
+            let voucher_data = create_voucher_data(setup.creator_pc, "P2Y"); // P2Y > P1Y
+            let voucher = create_voucher(voucher_data, standard_a, hash_a, &setup.creator_pc.signing_key, "en").unwrap();
+
+            let result = create_transaction(&voucher, standard_a, &setup.creator_pc.user_id, &setup.creator_pc.signing_key, &setup.user_b.user_id, "100");
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        /// Testet Fall 5: Transaktion (Creator -> Dritter) ist erfolgreich, wenn Regel nicht definiert ist.
+        fn test_firewall_allows_transfer_if_rule_is_undefined() {
+            let setup = setup();
+            let (standard_b, hash_b) = (setup.standard_b.0, setup.standard_b.1); // Standard B (keine Regel)
+
+            // Erstelle Gutschein mit P6M (wäre bei Standard A ungültig)
+            let voucher_data = create_voucher_data(setup.creator_pc, "P6M");
+            let voucher = create_voucher(voucher_data, standard_b, hash_b, &setup.creator_pc.signing_key, "en").unwrap();
+
+            // Aktion: Sende an User_B
+            let result = create_transaction(&voucher, standard_b, &setup.creator_pc.user_id, &setup.creator_pc.signing_key, &setup.user_b.user_id, "100");
+            assert!(result.is_ok());
+        }
     }
 }

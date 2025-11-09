@@ -54,7 +54,7 @@ impl Deref for TestUser {
 
 /// Erstellt eine `TestUser`-Instanz mit der langsamen, produktionssicheren Schlüsselableitung.
 /// Notwendig für Tests, die Passphrasen oder die Recovery-Logik verifizieren.
-fn user_from_mnemonic_slow(
+pub fn user_from_mnemonic_slow(
     mnemonic: &str,
     passphrase: Option<&'static str>,
     prefix: Option<&'static str>,

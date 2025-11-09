@@ -140,7 +140,8 @@ Steuert Aktionen und systemweites Verhalten.
 **Mögliche Schlüssel:**
 
 * `allowed_t_types` (Array von Strings): Definiert die erlaubten Transaktionstypen (mögliche Werte: `"init"`, `"transfer"`, `"split"`).
-* `issuance_minimum_validity_duration` (String, ISO 8601 Duration): Die Mindestgültigkeit, die ein Gutschein bei seiner Erstellung haben muss (z.B. `"P6M"` für 6 Monate).
+* `issuance_minimum_validity_duration` (String, ISO 8601 Duration): Eine **Zirkulations-Firewall** für den Ersteller. Gibt an, welche *Restgültigkeit* ein Gutschein mindestens haben muss (z.B. `"P6M"`), damit der *ursprüngliche Ersteller* ihn noch an Dritte ausgeben (transferieren) darf. Dies soll sicherstellen, dass Gutscheine lange genug zirkulieren können.
+    * **Wichtig:** Diese Regel gilt *nicht* für normale Inhaber und auch *nicht*, wenn der Ersteller den Gutschein an sich selbst (z.B. zur Einlösung auf ein anderes Konto) transferiert.
 * `max_creation_validity_duration` (String, ISO 8601 Duration): Die maximal erlaubte Gültigkeitsdauer ab Erstellung (z.B. `"P10Y"` für 10 Jahre).
 * `amount_decimal_places` (Integer): Erzwingt eine maximale Anzahl an Nachkommastellen für alle Beträge (z.B. `2` für Währungen, `8` für Krypto-Assets).
 
@@ -149,7 +150,7 @@ Steuert Aktionen und systemweites Verhalten.
 ```toml
 [validation.behavior_rules]
 allowed_t_types = ["init", "transfer"]
-issuance_minimum_validity_duration = "P6M"
+issuance_minimum_validity_duration = "P6M" # Ersteller darf Gutschein nur ausgeben, wenn er noch mind. 6 Monate gültig ist.
 amount_decimal_places = 2
 ```
 

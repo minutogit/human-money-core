@@ -4,7 +4,7 @@ use crate::models::voucher::{
 use crate::error::VoucherCoreError;
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::services::{decimal_utils, standard_manager};
-use crate::services::crypto_utils::{get_hash, sign_ed25519};
+use crate::services::crypto_utils::{get_hash, get_pubkey_from_user_id, sign_ed25519};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
 
 use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
@@ -128,14 +128,19 @@ pub fn create_voucher(
         .and_then(|v| v.behavior_rules.as_ref())
         .and_then(|b| b.issuance_minimum_validity_duration.as_ref());
 
+    // NEU: "Gatekeeper"-Prüfung bei Erstellung.
+    // Verhindert die Erstellung von Gutscheinen, die sofort gegen die "Firewall"-Regel
+    // verstoßen würden ("Dead-on-Arrival").
     if let Some(min_duration_str) = min_duration_opt {
-        let min_duration_dt = add_iso8601_duration(creation_dt, min_duration_str)?;
-        if initial_valid_until_dt < min_duration_dt {
-            return Err(VoucherManagerError::InvalidValidityDuration(format!(
-                "Initial validity ({}) is less than the required minimum ({}).",
-                initial_valid_until_dt.to_rfc3339(),
-                min_duration_dt.to_rfc3339()
-            )).into());
+        if !min_duration_str.is_empty() {
+            let required_end_dt = add_iso8601_duration(creation_dt, min_duration_str)?;
+            if initial_valid_until_dt < required_end_dt {
+                return Err(VoucherManagerError::InvalidValidityDuration(format!(
+                    "Initial validity ({}) is less than the required minimum standard validity ({}).",
+                    initial_valid_until_dt.to_rfc3339(),
+                    required_end_dt.to_rfc3339()
+                )).into());
+            }
         }
     }
 
@@ -319,6 +324,10 @@ pub fn create_transaction(
     amount_to_send_str: &str,
 ) -> Result<Voucher, VoucherCoreError> {
     crate::services::voucher_validation::validate_voucher_against_standard(voucher, standard)?;
+
+    // NEU: Prüfe die "Zirkulations-Firewall" (issuance_minimum_validity_duration).
+    validate_issuance_firewall(voucher, standard, sender_id, recipient_id)?;
+
     // KORREKTUR: Zugriff auf die neue, verschachtelte Validierungsstruktur mit Fallback
     let decimal_places = standard.validation.as_ref()
         .and_then(|v| v.behavior_rules.as_ref())
@@ -383,6 +392,61 @@ pub fn create_transaction(
     // Dies stellt sicher, dass keine Transaktion erstellt werden kann, die gegen die Regeln des Standards verstößt.
     crate::services::voucher_validation::validate_voucher_against_standard(&new_voucher, standard)?;
     Ok(new_voucher)
+}
+
+/// NEU: Prüft die "Zirkulations-Firewall" (`issuance_minimum_validity_duration`).
+///
+/// Diese Regel ist eine *Transaktions-Firewall*, die *nur* für den *Ersteller* gilt,
+/// wenn er an einen *Dritten* sendet.
+fn validate_issuance_firewall(
+    voucher: &Voucher,
+    standard: &VoucherStandardDefinition,
+    sender_id: &str,
+    recipient_id: &str,
+) -> Result<(), VoucherCoreError> {
+    // 1. Regel extrahieren
+    let min_duration_str = match standard.validation.as_ref()
+        .and_then(|v| v.behavior_rules.as_ref())
+        .and_then(|b| b.issuance_minimum_validity_duration.as_ref())
+    {
+        Some(duration) if !duration.is_empty() => duration,
+        _ => return Ok(()), // 3. Ausnahme: Regel nicht definiert
+    };
+
+    // 2. Ersteller-Prüfung
+    if sender_id != voucher.creator.id {
+        return Ok(()); // 1. Ausnahme: Sender ist nicht der Ersteller
+    }
+
+    // 3. SAI-Ausnahme-Prüfung (Einlösung / Transfer an sich selbst)
+    // Wir vergleichen die Basis-Public-Keys, nicht die vollen User-IDs
+    let sender_pk = get_pubkey_from_user_id(sender_id)?;
+    let recipient_pk = get_pubkey_from_user_id(recipient_id)?;
+
+    if sender_pk == recipient_pk {
+        return Ok(()); // 2. Ausnahme: Interne Übertragung
+    }
+
+    // 4. Zeit-Prüfung (Der Kern)
+    // Sender ist Ersteller, Empfänger ist Dritter, Regel existiert.
+    let now = Utc::now();
+    let valid_until_dt = DateTime::parse_from_rfc3339(&voucher.valid_until)
+        .map_err(|e| VoucherManagerError::Generic(format!("Failed to parse voucher valid_until date: {}", e)))?
+        .with_timezone(&Utc);
+
+    // Berechne das Datum, das *mindestens* erreicht werden muss (jetzt + P1Y)
+    let required_end_dt = add_iso8601_duration(now, min_duration_str)?;
+
+    if valid_until_dt < required_end_dt {
+        // Blockade: Die verbleibende Zeit ist zu kurz.
+        Err(VoucherManagerError::InvalidValidityDuration(format!(
+            "Issuance failed: Voucher validity ({}) is less than the required minimum remaining duration ({} from now).",
+            valid_until_dt.to_rfc3339(),
+            required_end_dt.to_rfc3339()
+        )).into())
+    } else {
+        Ok(())
+    }
 }
 
 /// Berechnet das ausgebbare Guthaben für einen bestimmten Benutzer.

@@ -248,27 +248,6 @@ pub fn validate_behavior_rules(voucher: &Voucher, rules: &BehaviorRules) -> Resu
         }
     }
 
-    // Check that the voucher's actual duration meets the minimum requirement
-    if let Some(min_duration_str) = &rules.issuance_minimum_validity_duration {
-        if !min_duration_str.is_empty() {
-            let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date)
-                .map_err(|_| ValidationError::InvalidDateLogic { creation: voucher.creation_date.clone(), valid_until: voucher.valid_until.clone() })?
-                .with_timezone(&chrono::Utc);
-            let valid_until_dt = chrono::DateTime::parse_from_rfc3339(&voucher.valid_until)
-                .map_err(|_| ValidationError::InvalidDateLogic { creation: voucher.creation_date.clone(), valid_until: voucher.valid_until.clone() })?
-                .with_timezone(&chrono::Utc);
-
-            let required_end_dt = add_iso8601_duration(creation_dt, min_duration_str).map_err(|e| {
-                ValidationError::InvalidTransaction(format!(
-                    "Failed to calculate required validity duration: {}",
-                    e
-                ))
-            })?;
-            if valid_until_dt < required_end_dt {
-                return Err(ValidationError::ValidityDurationTooShort.into());
-            }
-        }
-    }
     // NEU: Prüfung der maximal erlaubten Gültigkeitsdauer bei Erstellung.
     if let Some(max_duration_str) = &rules.max_creation_validity_duration {
         if !max_duration_str.is_empty() {
