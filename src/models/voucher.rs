@@ -105,48 +105,6 @@ pub struct Creator {
     pub coordinates: String,
 }
 
-/// Repräsentiert die Signatur eines Bürgen.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-pub struct GuarantorSignature {
-    /// Die eindeutige ID des Gutscheins, auf den sich diese Signatur bezieht.
-    pub voucher_id: String,
-    /// Die eindeutige ID dieser Signatur, generiert aus dem Hash ihrer eigenen Daten.
-    pub signature_id: String,
-    /// Eindeutige ID des Bürgen.
-    pub guarantor_id: String,
-    /// Vorname des Bürgen.
-    pub first_name: String,
-    /// Nachname des Bürgen.
-    pub last_name: String,
-    /// Organisation des Bürgen (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub organization: Option<String>,
-    /// Community des Bürgen (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub community: Option<String>,
-    /// Adresse des Bürgen (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub address: Option<Address>,
-    /// Geschlecht des Bürgen nach ISO 5218.
-    pub gender: String,
-    /// E-Mail des Bürgen (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
-    /// Telefonnummer des Bürgen (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub phone: Option<String>,
-    /// Geografische Koordinaten des Bürgen (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub coordinates: Option<String>,
-    /// URL des Bürgen (optional, von mir hinzugefügt für Konsistenz).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    /// Die digitale Signatur des Bürgen.
-    pub signature: String,
-    /// Zeitpunkt der Bürgen-Signatur im ISO 8601-Format.
-    pub signature_time: String,
-}
-
 /// Repräsentiert eine einzelne Transaktion in der Transaktionskette des Gutscheins.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct Transaction {
@@ -173,21 +131,56 @@ pub struct Transaction {
     pub prev_hash: String,
 }
 
-/// Repräsentiert eine zusätzliche, optionale Signatur, die an den Gutschein angehängt wird.
+/// Repräsentiert eine universelle Signatur (ehemals AdditionalSignature),
+/// die an den Gutschein angehängt wird. Sie kann durch das Feld `role` semantisch
+/// unterschieden werden (z.B. "guarantor").
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-pub struct AdditionalSignature {
+pub struct VoucherSignature {
     /// Die eindeutige ID des Gutscheins, auf den sich diese Signatur bezieht.
     pub voucher_id: String,
     /// Die eindeutige ID dieser Signatur, generiert aus dem Hash ihrer eigenen Daten.
     pub signature_id: String,
     /// Eindeutige ID des zusätzlichen Unterzeichners.
     pub signer_id: String,
+    
+    // --- Optionale Metadaten (primär für Bürgen/Guarantor-Rolle) ---
+    /// Vorname des Unterzeichners (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_name: Option<String>,
+    /// Nachname des Unterzeichners (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<String>,
+    /// Organisation des Unterzeichners (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    /// Community des Unterzeichners (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub community: Option<String>,
+    /// Adresse des Unterzeichners (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<Address>,
+    /// Geschlecht des Unterzeichners nach ISO 5218 (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gender: Option<String>,
+    /// E-Mail des Unterzeichners (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    /// Telefonnummer des Unterzeichners (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phone: Option<String>,
+    /// Geografische Koordinaten des Unterzeichners (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinates: Option<String>,
+    /// URL des Unterzeichners (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    
     /// Die digitale Signatur.
     pub signature: String,
     /// Zeitpunkt der Signatur im ISO 8601-Format.
     pub signature_time: String,
-    /// Eine Beschreibung, warum diese Signatur hinzugefügt wurde.
-    pub description: String,
+    /// Definiert die Rolle oder den Zweck dieser Signatur (z.B. "guarantor", "notary").
+    pub role: String,
 }
 
 /// Das Haupt-Struct, das den universellen Gutschein-Container repräsentiert.
@@ -224,12 +217,10 @@ pub struct Voucher {
     pub guarantor_requirements_description: String,
     /// Ein optionaler Fußnotentext, der vom Standard vorgegeben wird.
     pub footnote: String,
-    /// Ein Array von Signaturen der Bürgen.
-    pub guarantor_signatures: Vec<GuarantorSignature>,
     /// Die Anzahl der für diesen Gutschein benötigten Bürgen.
     pub needed_guarantors: i64,
     /// Eine chronologische Liste aller Transaktionen dieses Gutscheins.
     pub transactions: Vec<Transaction>,
-    /// Ein Array für zusätzliche, optionale Signaturen.
-    pub additional_signatures: Vec<AdditionalSignature>,
+    /// Ein Array für alle Signaturen (inkl. Bürgen).
+    pub signatures: Vec<VoucherSignature>,
 }

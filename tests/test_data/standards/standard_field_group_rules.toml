@@ -1,3 +1,5 @@
+# tests/test_data/standards/standard_field_group_rules.toml
+
 # Test-Standard zur isolierten Prüfung der `field_group_rules`.
 
 [metadata]
@@ -25,13 +27,12 @@ description = "Requires 1 'A' and 2 'B's."
 
 [validation]
 [validation.counts]
-# Die Gesamtzahl muss 3 sein.
-guarantor_signatures = { min = 3, max = 3 }
+# Veraltete Signatur-Zählung entfernt.
 
 [validation.field_group_rules]
-# Regel: Das Feld 'gender' in der Liste 'guarantor_signatures' muss
+# Regel: Das Feld 'gender' in der Liste 'signatures' muss
 # exakt einmal den Wert "A" und zweimal den Wert "B" enthalten.
-[validation.field_group_rules.guarantor_signatures]
+[validation.field_group_rules.signatures]
 field = "gender"
 value_counts = [
     { value = "A", min = 1, max = 1 },

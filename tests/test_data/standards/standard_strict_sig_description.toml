@@ -1,8 +1,8 @@
 # tests/test_data/standards/standard_strict_sig_description.toml
 #
-# Dieser Standard wird verwendet, um die Validierungsregel `required_signature_description` zu testen.
+# Dieser Standard wird verwendet, um die Validierungsregel `required_role` zu testen (ehemals `required_signature_description`).
 # Er verlangt eine zwingend erforderliche Signatur von einer bestimmten Partei (Bob),
-# die eine exakte Beschreibung enthalten muss.
+# die eine exakte Rolle (ehemals Beschreibung) enthalten muss.
 
 [metadata]
 name = "Signature Description Test Standard"
@@ -34,12 +34,24 @@ description = "No guarantors needed"
 # Mindestens eine Transaktion (die 'init'-Transaktion) muss existieren.
 [validation.counts]
 transactions = { min = 1, max = 10 }
-guarantor_signatures = { min = 0, max = 0 }
+# GEÄNDERT: Die Zählung von 'guarantor_signatures' wurde aus [validation.counts] entfernt.
+# guarantor_signatures = { min = 0, max = 0 } # <-- ENTFERNT
 
-# Eine Signatur von Bob ist erforderlich, und sie MUSS eine bestimmte Beschreibung haben.
+# NEU: Die 'guarantor_signatures'-Regel wird in 'field_group_rules' abgebildet.
+[validation.field_group_rules]
+[validation.field_group_rules.signatures]
+field = "role"
+value_counts = [
+    # Erzwingt, dass 0 Signaturen die Rolle "guarantor" haben dürfen.
+    { value = "guarantor", min = 0, max = 0 }
+]
+
+
+# Eine Signatur von Bob ist erforderlich, und sie MUSS eine bestimmte Rolle haben.
 # Die User-ID von Bob aus dem Test-Setup wird hier hartkodiert.
 [[validation.required_signatures]]
 role_description = "Official Approval by Bob"
 allowed_signer_ids = ["issuer-1oB@did:key:z6Mkoim7ZGcaKdoeD41USV5gmxfiVXXiPDeYt4T9rnEB5zfM"]
-required_signature_description = "Official Approval 2025"
+# GEÄNDERT: 'required_signature_description' wurde zu 'required_role' umbenannt.
+required_role = "Official Approval 2025"
 is_mandatory = true

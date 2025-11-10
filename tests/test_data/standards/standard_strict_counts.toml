@@ -1,3 +1,4 @@
+# tests/test_data/standards/standard_strict_counts.toml
 [metadata]
 name = "Strict Counts Test Standard"
 uuid = "TEST-STRICT-COUNTS-V1"
@@ -20,9 +21,29 @@ description = ""
 
 [validation]
 [validation.counts]
-guarantor_signatures = { min = 1, max = 1 }
-additional_signatures = { min = 0, max = 0 }
+# GEÄNDERT: 'guarantor_signatures' und 'additional_signatures' wurden
+# aus [validation.counts] entfernt, da sie nun über 'field_group_rules'
+# oder 'required_signatures' gehandhabt werden.
+#
+# guarantor_signatures = { min = 1, max = 1 } # <-- ENTFERNT
+# additional_signatures = { min = 0, max = 0 } # <-- ENTFERNT
 transactions = { min = 1, max = 2 }
+
+# NEU: Ersetzt die alte 'guarantor_signatures'-Regel.
+[validation.field_group_rules]
+[validation.field_group_rules.signatures]
+# Prüft das "role"-Feld in jedem Objekt des "signatures"-Arrays
+field = "role"
+value_counts = [
+    # Diese Regel ersetzt 'guarantor_signatures = { min = 1, max = 1 }'
+    { value = "guarantor", min = 1, max = 1 }
+
+    # HINWEIS: Die Regel 'additional_signatures = { min = 0, max = 0 }'
+    # wurde entfernt, da das Refactoring das Konzept einer separaten
+    # 'additional_signatures'-Liste beseitigt hat. Die Zählung
+    # erfolgt jetzt pro Rolle.
+]
+
 
 [signature]
 issuer_id = "did:key:z6Mkk7yqnGF3YwTrLpqrW6Hzt36gV5p82nL4s58gG4nEaG9e" # Dummy Key

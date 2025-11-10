@@ -121,16 +121,14 @@ impl Wallet {
         crate::services::signature_manager::validate_detached_signature(&signature)?;
 
         let voucher_id = match &signature {
-            DetachedSignature::Guarantor(s) => &s.voucher_id,
-            DetachedSignature::Additional(s) => &s.voucher_id,
+            DetachedSignature::Signature(s) => &s.voucher_id,
         };
 
         let target_instance = self.find_active_voucher_by_voucher_id(voucher_id)
             .ok_or_else(|| VoucherCoreError::VoucherNotFound(voucher_id.clone()))?;
 
         match signature {
-            DetachedSignature::Guarantor(s) => target_instance.voucher.guarantor_signatures.push(s),
-            DetachedSignature::Additional(s) => target_instance.voucher.additional_signatures.push(s),
+            DetachedSignature::Signature(s) => target_instance.voucher.signatures.push(s),
         }
 
         Ok(target_instance.local_instance_id.clone())

@@ -203,10 +203,9 @@ pub fn create_voucher(
         creator: data.creator,
         guarantor_requirements_description: verified_standard.template.fixed.guarantor_info.description.clone(),
         footnote: verified_standard.template.fixed.footnote.clone().unwrap_or_default(),
-        guarantor_signatures: vec![],
         needed_guarantors: verified_standard.template.fixed.guarantor_info.needed_count,
         transactions: vec![],
-        additional_signatures: vec![],
+        signatures: vec![],
     };
 
     let voucher_json_for_signing = to_canonical_json(&temp_voucher)?;

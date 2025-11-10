@@ -7,6 +7,8 @@ use super::{AppState, AppService};
 use crate::models::signature::DetachedSignature;
 use crate::models::voucher::Voucher;
 use crate::wallet::instance::VoucherStatus;
+use crate::{ValidationFailureReason, VoucherCoreError};
+use crate::services::voucher_validation;
 
 impl AppService {
     /// Erstellt ein Bundle, um einen Gutschein zur Unterzeichnung an einen Bürgen zu senden.
@@ -94,21 +96,37 @@ impl AppService {
                             Ok(updated_instance_id) => {
                                 // 2. Neuen Status basierend auf dem Ergebnis bestimmen.
                                 let instance = temp_wallet.get_voucher_instance(&updated_instance_id).cloned().unwrap(); // Muss existieren
-                                let operation_result = match self.determine_voucher_status(&instance.voucher, &verified_standard) {
-                                    Err(fatal_error_msg) => {
-                                        // Status auf der temporären Instanz aktualisieren.
+
+                                // --- START REPLACED LOGIC ---
+                                // Die alte Logik rief `self.determine_voucher_status` auf, was
+                                // fälschlicherweise Unvollständigkeit als fatalen Fehler behandelte.
+                                // Wir rufen nun die Validierung direkt auf und interpretieren das Ergebnis korrekt.
+
+                                let validation_result = voucher_validation::validate_voucher_against_standard(&instance.voucher, &verified_standard);
+
+                                let (operation_result, new_status) = match validation_result {
+                                    Ok(_) => {
+                                        // Validierung erfolgreich! Der Gutschein ist jetzt Active.
+                                        (Ok(()), VoucherStatus::Active)
+                                    },
+                                    Err(VoucherCoreError::Validation(validation_err)) => {
+                                        // Das ist KEIN fataler Fehler. Die Operation war erfolgreich,
+                                        // der Gutschein ist nur weiterhin unvollständig.
+                                        // Wir wandeln den ValidationError manuell in einen ValidationFailureReason um,
+                                        // da keine `From`-Implementierung existiert.
+                                        let reasons = vec![ValidationFailureReason::RequiredSignatureMissing { role_description: validation_err.to_string() }];
+                                        (Ok(()), VoucherStatus::Incomplete { reasons })
+                                    },
+                                    Err(fatal_error) => {
+                                        // DAS ist ein fataler Fehler (z.B. Standard-Mismatch, Crypto-Fehler).
                                         temp_wallet.update_voucher_status(&updated_instance_id, VoucherStatus::Quarantined {
-                                            reason: fatal_error_msg.clone(),
+                                            reason: fatal_error.to_string(),
                                         });
-                                        Err(format!("Voucher quarantined due to fatal validation error: {}", fatal_error_msg))
-                                    }
-                                    Ok(new_status) => {
-                                        // Status auf der temporären Instanz aktualisieren.
-                                        temp_wallet.update_voucher_status(&updated_instance_id, new_status);
-                                        Ok(())
+                                        (Err(format!("Voucher quarantined due to fatal validation error: {}", fatal_error)), VoucherStatus::Quarantined { reason: fatal_error.to_string() })
                                     }
                                 };
 
+                                temp_wallet.update_voucher_status(&updated_instance_id, new_status);
                                 // 3. Versuchen, die Änderungen zu speichern ("Commit").
                                 match temp_wallet.save(&mut storage, &identity, password) {
                                     Ok(_) => (

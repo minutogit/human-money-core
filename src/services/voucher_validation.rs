@@ -4,7 +4,7 @@
 //! gegen die Regeln eines `VoucherStandardDefinition`.
 
 use crate::error::{StandardDefinitionError, ValidationError, VoucherCoreError};
-use crate::models::voucher::{Transaction, Voucher};
+use crate::models::voucher::{Transaction, Voucher, VoucherSignature};
 use crate::models::voucher_standard_definition::{BehaviorRules, ContentRules, CountRules, FieldGroupRule,
     RequiredSignatureRule, VoucherStandardDefinition
 };
@@ -37,12 +37,17 @@ pub fn validate_voucher_against_standard(
     }
     verify_creator_signature(voucher)?;
 
+    // Die komplexen, zustandsbehafteten Prüfungen für Signaturen müssen VOR den
+    // datengesteuerten Regeln (z.B. field_group_rules) ausgeführt werden.
+    verify_signatures(voucher)?;
+
     // Führe die datengesteuerten Validierungsregeln aus, falls sie im Standard definiert sind.
     if let Some(rules) = &standard.validation {
         let voucher_json = serde_json::to_value(voucher)?;
 
         if let Some(count_rules) = &rules.counts {
-            validate_counts(voucher, count_rules)?;
+            // HINWEIS: Signaturen werden jetzt über FieldGroupRules gezählt.
+            validate_transaction_count(voucher, count_rules)?;
         }
         if let Some(signature_rules) = &rules.required_signatures {
             validate_required_signatures(voucher, signature_rules)?;
@@ -58,10 +63,6 @@ pub fn validate_voucher_against_standard(
         }
     }
 
-    // Die komplexen, zustandsbehafteten Prüfungen für Signaturen und Transaktionen
-    // werden weiterhin ausgeführt, da sie die Kernintegrität sichern.
-    verify_guarantor_signatures(voucher)?;
-    verify_additional_signatures(voucher)?;
     verify_transactions(voucher, standard)?;
 
     Ok(())
@@ -93,29 +94,8 @@ fn verify_standard_identity(
 }
 
 /// Prüft die quantitativen Regeln aus dem Standard (z.B. Anzahl der Signaturen).
-pub fn validate_counts(voucher: &Voucher, rules: &CountRules) -> Result<(), ValidationError> {
-    if let Some(rule) = &rules.guarantor_signatures {
-        let count = voucher.guarantor_signatures.len();
-        if count < rule.min as usize || count > rule.max as usize {
-            return Err(ValidationError::CountOutOfBounds {
-                field: "guarantor_signatures".to_string(),
-                min: rule.min,
-                max: rule.max,
-                found: count,
-            });
-        }
-    }
-    if let Some(rule) = &rules.additional_signatures {
-        let count = voucher.additional_signatures.len();
-        if count < rule.min as usize || count > rule.max as usize {
-            return Err(ValidationError::CountOutOfBounds {
-                field: "additional_signatures".to_string(),
-                min: rule.min,
-                max: rule.max,
-                found: count,
-            });
-        }
-    }
+pub fn validate_transaction_count(voucher: &Voucher, rules: &CountRules) -> Result<(), ValidationError> {
+    // HINWEIS: Signatur-Zählungen wurden entfernt und werden nun über FieldGroupRules gehandhabt.
     if let Some(rule) = &rules.transactions {
         let count = voucher.transactions.len();
         if count < rule.min as usize || count > rule.max as usize {
@@ -136,13 +116,13 @@ pub fn validate_required_signatures(
     rules: &[RequiredSignatureRule],
 ) -> Result<(), ValidationError> {
     // Sammle alle zusätzlichen Signaturen zur einfachen Suche.
-    let all_additional_signatures: Vec<_> = voucher
-        .additional_signatures
+    let all_signatures: Vec<_> = voucher
+        .signatures
         .iter()
         .map(|sig| (
             &sig.signer_id,
-            &sig.description,
-            is_additional_signature_valid(sig, &voucher.voucher_id),
+            &sig.role,
+            is_signature_valid(sig, &voucher.voucher_id),
         ))
         .collect();
 
@@ -151,20 +131,16 @@ pub fn validate_required_signatures(
             continue;
         }
 
-        let is_fulfilled = all_additional_signatures.iter().any(|(signer_id, description, is_valid)| {
+        let is_fulfilled = all_signatures.iter().any(|(signer_id, role, is_valid)| {
             let id_matches = rule.allowed_signer_ids.contains(signer_id);
-            let description_matches = rule
-                .required_signature_description
-                .as_ref()
-                .map_or(true, |req_desc| req_desc == *description);
+            let role_matches = &rule.required_role == *role;
 
-            id_matches && description_matches && *is_valid
+            id_matches && role_matches && is_valid.is_ok()
         });
 
         if !is_fulfilled {
-            println!("[DEBUG] Rule was NOT fulfilled. Returning MissingRequiredSignature error.");
             return Err(ValidationError::MissingRequiredSignature {
-                role: rule.role_description.clone(),
+                role: rule.required_role.clone(),
             });
         }
     }
@@ -359,32 +335,48 @@ fn get_value_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
 }
 
 /// Hilfsfunktion, die prüft, ob eine einzelne zusätzliche Signatur gültig ist. Gibt bool zurück.
-fn is_additional_signature_valid(
-    signature_obj: &crate::models::voucher::AdditionalSignature,
+fn is_signature_valid(
+    signature_obj: &VoucherSignature,
     voucher_id: &str,
-) -> bool {
-    if signature_obj.voucher_id != voucher_id { return false; }
+) -> Result<(), ValidationError> {
+    // Prüfung 1: Stimmt die Signatur mit dem Gutschein überein?
+    if signature_obj.voucher_id != voucher_id {
+        return Err(ValidationError::MismatchedVoucherIdInSignature {
+            expected: voucher_id.to_string(),
+            found: signature_obj.voucher_id.clone(),
+        });
+    }
 
     let mut obj_to_verify = signature_obj.clone();
     obj_to_verify.signature_id = "".to_string();
     obj_to_verify.signature = "".to_string();
     let calculated_id_hash = get_hash(to_canonical_json(&obj_to_verify).unwrap_or_default());
-    if calculated_id_hash != signature_obj.signature_id { return false; }
 
+    // Prüfung 2: (WIEDERHERGESTELLT) Wurden die Metadaten manipuliert?
+    // Passt der Hash der Metadaten zur gespeicherten signature_id?
+    if calculated_id_hash != signature_obj.signature_id {
+        return Err(ValidationError::InvalidSignatureId(signature_obj.signature_id.clone()));
+    }
+
+    // Prüfung 3: Ist die kryptographische Signatur selbst gültig?
     let public_key = match get_pubkey_from_user_id(&signature_obj.signer_id) {
         Ok(pk) => pk,
-        Err(_) => return false,
+        Err(e) => return Err(ValidationError::InvalidCreatorId(e)), // Wiederverwenden des Creator-ID-Fehlers
     };
     let signature_bytes = match bs58::decode(&signature_obj.signature).into_vec() {
         Ok(bytes) => bytes,
-        Err(_) => return false,
+        Err(e) => return Err(ValidationError::SignatureDecodeError(e.to_string())),
     };
     let signature = match Signature::from_slice(&signature_bytes) {
         Ok(sig) => sig,
-        Err(_) => return false,
+        Err(e) => return Err(ValidationError::SignatureDecodeError(e.to_string())),
     };
 
-    verify_ed25519(&public_key, signature_obj.signature_id.as_bytes(), &signature)
+    if !verify_ed25519(&public_key, signature_obj.signature_id.as_bytes(), &signature) {
+        return Err(ValidationError::InvalidSignature { signer_id: signature_obj.signer_id.clone() });
+    }
+
+    Ok(())
 }
 
 /// Verifiziert die Signatur des Erstellers. (Unverändert)
@@ -396,8 +388,7 @@ fn verify_creator_signature(voucher: &Voucher) -> Result<(), VoucherCoreError> {
     voucher_to_verify.creator.signature = "".to_string();
     voucher_to_verify.voucher_id = "".to_string();
     voucher_to_verify.transactions.clear();
-    voucher_to_verify.guarantor_signatures.clear();
-    voucher_to_verify.additional_signatures.clear();
+    voucher_to_verify.signatures.clear();
     let signature_bytes = bs58::decode(signature_b58).into_vec().map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
     let signature = Signature::from_slice(&signature_bytes).map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
     let voucher_json = to_canonical_json(&voucher_to_verify)?;
@@ -411,88 +402,56 @@ fn verify_creator_signature(voucher: &Voucher) -> Result<(), VoucherCoreError> {
     Ok(())
 }
 
-/// Verifiziert die kryptographische Gültigkeit aller Bürgen-Signaturen. (Angepasst)
-fn verify_guarantor_signatures(voucher: &Voucher) -> Result<(), VoucherCoreError> {
-    let mut seen_guarantors = HashSet::new();
+/// Verifiziert die kryptographische Gültigkeit, Einzigartigkeit und chronologische
+/// Korrektheit aller Signaturen in der `signatures`-Liste.
+fn verify_signatures(voucher: &Voucher) -> Result<(), VoucherCoreError> {
+    let mut seen_signers = HashSet::new();
 
-    for guarantor_signature in &voucher.guarantor_signatures {
-        // NEU: Sicherheitsprüfung, ob der Ersteller versucht, für sich selbst zu bürgen.
-        if guarantor_signature.guarantor_id == voucher.creator.id {
-            return Err(ValidationError::CreatorAsGuarantor {
+    for signature_obj in &voucher.signatures {
+        // Prüfung auf doppelte Unterzeichner
+        if !seen_signers.insert(&signature_obj.signer_id) {
+            return Err(ValidationError::DuplicateGuarantor { // TODO: Besser "DuplicateSigner"
+                guarantor_id: signature_obj.signer_id.clone(),
+            }
+            .into());
+        }
+
+        // Prüfung auf chronologische Korrektheit der Signatur.
+        // Eine Signatur kann nicht vor der Erstellung des Gutscheins existieren.
+        if signature_obj.signature_time < voucher.creation_date {
+            return Err(ValidationError::InvalidTimeOrder {
+                entity: "Signature".to_string(),
+                id: signature_obj.signature_id.clone(),
+                time1: voucher.creation_date.clone(),
+                time2: signature_obj.signature_time.clone(),
+            }.into());
+        }
+
+        // Sicherheitsprüfung, ob der Ersteller versucht, als Bürge zu agieren.
+        if signature_obj.role == "guarantor" && signature_obj.signer_id == voucher.creator.id {
+             return Err(ValidationError::CreatorAsGuarantor {
                 creator_id: voucher.creator.id.clone(),
             }
             .into());
         }
 
-        // NEU: Prüfung auf doppelte Bürgen
-        if !seen_guarantors.insert(&guarantor_signature.guarantor_id) {
-            return Err(ValidationError::DuplicateGuarantor {
-                guarantor_id: guarantor_signature.guarantor_id.clone(),
-            }.into());
-        }
-
-        // NEU: Prüfung auf chronologische Korrektheit der Signatur
-        if guarantor_signature.signature_time < voucher.creation_date {
-            return Err(ValidationError::InvalidTimeOrder {
-                entity: "GuarantorSignature".to_string(),
-                id: guarantor_signature.signature_id.clone(),
-                time1: voucher.creation_date.clone(),
-                time2: guarantor_signature.signature_time.clone(),
-            }.into());
-        }
-
-        if guarantor_signature.voucher_id != voucher.voucher_id {
-            return Err(ValidationError::MismatchedVoucherIdInSignature {
-                expected: voucher.voucher_id.clone(),
-                found: guarantor_signature.voucher_id.clone(),
-            }.into());
-        }
-        let mut signature_to_verify = guarantor_signature.clone();
-        signature_to_verify.signature_id = "".to_string();
-        signature_to_verify.signature = "".to_string();
-        let calculated_signature_id_hash = get_hash(to_canonical_json(&signature_to_verify)?);
-        if calculated_signature_id_hash != guarantor_signature.signature_id {
-            return Err(ValidationError::InvalidSignatureId(guarantor_signature.signature_id.clone()).into());
-        }
-        let public_key = get_pubkey_from_user_id(&guarantor_signature.guarantor_id)
-            .map_err(|_| ValidationError::InvalidSignature { signer_id: guarantor_signature.guarantor_id.clone() })?;
-        let signature_bytes = bs58::decode(&guarantor_signature.signature).into_vec().map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
-        let signature = Signature::from_slice(&signature_bytes).map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
-        if !verify_ed25519(&public_key, guarantor_signature.signature_id.as_bytes(), &signature) {
-            return Err(ValidationError::InvalidSignature { signer_id: guarantor_signature.guarantor_id.clone() }.into());
-        }
+        // Kryptographische Prüfung der Signatur selbst.
+        // HIER IST DIE ÄNDERUNG: Wir rufen die Funktion auf und leiten den
+        // spezifischen Fehler (z.B. InvalidSignatureId, MismatchedVoucherId,
+        // InvalidSignature) direkt per '?' weiter.
+        is_signature_valid(signature_obj, &voucher.voucher_id)?;
     }
+
     Ok(())
 }
 
-/// Verifiziert die kryptographische Gültigkeit aller zusätzlichen Signaturen. (Angepasst)
-fn verify_additional_signatures(voucher: &Voucher) -> Result<(), VoucherCoreError> {
-    for signature_obj in &voucher.additional_signatures {
-        // NEU: Prüfung auf chronologische Korrektheit der Signatur.
-        // Eine Signatur kann nicht vor der Erstellung des Gutscheins existieren.
-        if signature_obj.signature_time < voucher.creation_date {
-            return Err(ValidationError::InvalidTimeOrder {
-                entity: "AdditionalSignature".to_string(),
-                id: signature_obj.signature_id.clone(),
-                time1: voucher.creation_date.clone(),
-                time2: signature_obj.signature_time.clone(),
-            }
-            .into());
-        }
-
-        if !is_additional_signature_valid(signature_obj, &voucher.voucher_id) {
-            return Err(ValidationError::InvalidSignature { signer_id: signature_obj.signer_id.clone() }.into());
-        }
-    }
-    Ok(())
-}
 
 
 /// Verifiziert die Integrität, Signaturen und Geschäftslogik der Transaktionsliste. (Weitgehend unverändert)
 fn verify_transactions(voucher: &Voucher, _standard: &VoucherStandardDefinition) -> Result<(), VoucherCoreError> {
     if voucher.transactions.is_empty() {
         // This is caught by the data-driven `validate_counts` rule, which should require min=1.
-        return Ok(());
+        return Ok(()); // TODO: Sollte dies nicht ein Fehler sein? Oder wird es von `validate_transaction_count` abgefangen?
     }
 
     // --- Phase 1: Verify the 'init' transaction basics ---

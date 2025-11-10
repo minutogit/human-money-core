@@ -1,3 +1,4 @@
+# tests/test_data/standards/standard_content_rules.toml
 [metadata]
 name = "Content Rules Test Standard"
 uuid = "TEST-CONTENT-RULES-V1"

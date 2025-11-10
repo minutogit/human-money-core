@@ -179,23 +179,20 @@ impl AppService {
             Err(e) => {
                 if let VoucherCoreError::Validation(validation_error) = e {
                     let reason = match validation_error {
-                        ValidationError::CountOutOfBounds { ref field, min, max, found, .. } if field == "guarantor_signatures" => Some(
-                            ValidationFailureReason::GuarantorCountLow {
-                                required: min,
-                                max,
-                                current: found as u32,
-                            },
-                        ),
-                        ValidationError::CountOutOfBounds { ref field, min,  found, .. } if field == "additional_signatures" => Some(
-                            ValidationFailureReason::AdditionalSignatureCountLow {
-                                required: min,
-                                current: found as u32,
-                            },
+                        // NEU: Prüft auf fehlende Bürgen über die FieldGroupRule
+                        ValidationError::FieldValueCountOutOfBounds {
+                            ref path,
+                            ref field,
+                            ref value,
+                            min,
+                            max,
+                            found,
+                        } if path == "signatures" && field == "role" && value == "guarantor" => Some(
+                            ValidationFailureReason::GuarantorCountLow { required: min, max, current: found }
                         ),
                         ValidationError::MissingRequiredSignature {
                             ref role
                         } => Some(
-                            // KORREKTUR: Tippfehler `ValidationFailureFailureReason` behoben (E0433)
                             ValidationFailureReason::RequiredSignatureMissing {
                                 role_description: role.clone(),
                             },

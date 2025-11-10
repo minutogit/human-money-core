@@ -1,3 +1,5 @@
+# tests/test_data/standards/standard_required_signatures.toml
+
 # Test-Standard zur isolierten Prüfung der `required_signatures`.
 
 [metadata]
@@ -27,20 +29,28 @@ description = ""
 # Definiert eine zwingend erforderliche Signatur von einer "Behörde".
 [[validation.required_signatures]]
 role_description = "Official stamp from the authority"
-# is@did:key:z6MkewugjgTidpn3FHpFV2vSgvqSKYimMcdf6ezLKp8tMJCW (ACTORS.issuer)
-# did:key:z6Mkn8Gg3d2b3r1s4t5u6v7w8x9y0z1a2b3c4d5e6f7g8h9i (ACTORS.charlie)
+#
+# HINWEIS: Die IDs wurden auf das neue Format aktualisiert.
+# SIE MÜSSEN DIESE PLATZHALTER DURCH DIE TATSÄCHLICHEN USER-IDS
+# AUS IHRER `ACTORS`-STRUKTUR (z.B. ACTORS.issuer, ACTORS.charlie) ERSETZEN.
+#
+# ALT: "is@did:key:z6MkewugjgTidpn3FHpFV2vSgvqSKYimMcdf6ezLKp8tMJCW"
+# ALT: "did:key:z6Mkn8Gg3d2b3r1s4t5u6v7w8x9y0z1a2b3c4d5e6f7g8h9i"
+#
 allowed_signer_ids = [
-    "is@did:key:z6MkewugjgTidpn3FHpFV2vSgvqSKYimMcdf6ezLKp8tMJCW",
-    "did:key:z6Mkn8Gg3d2b3r1s4t5u6v7w8x9y0z1a2b3c4d5e6f7g8h9i"
+    "is-ABC@did:key:z...bitte-ersetzen-durch-ACTORS.issuer-id",
+    "ch-XYZ@did:key:z...bitte-ersetzen-durch-ACTORS.charlie-id"
 ]
-required_signature_description = "Approved for circulation 2025"
+# GEÄNDERT: 'required_signature_description' wurde zu 'required_role' umbenannt.
+required_role = "Official Approver"
 is_mandatory = true
 
 # Definiert eine optionale Signatur
 [[validation.required_signatures]]
 role_description = "Optional quality check"
-allowed_signer_ids = ["did:key:z6Mkf2a3b4c5d6e7f8g9h0i1j2k3l4m5n6o7p8q9r0s"] # Dummy-Key
-required_signature_description = "Checked by QA"
+allowed_signer_ids = ["dummy-123@did:key:z...dummy-key-fuer-optionalen-check"] # Dummy-Key
+# GEÄNDERT: 'required_signature_description' wurde zu 'required_role' umbenannt.
+required_role = "Quality Inspector"
 is_mandatory = false
 
 [signature]

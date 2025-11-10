@@ -86,8 +86,10 @@ fn test_full_creation_and_validation_cycle() {
     // 3. Erste Validierung: Muss fehlschlagen, da Bürgen fehlen.
     let initial_validation_result = validate_voucher_against_standard(&voucher, &minuto_standard_with_rounding);
     assert!(matches!(
-        initial_validation_result.unwrap_err(),
-        VoucherCoreError::Validation(ValidationError::CountOutOfBounds { field, .. }) if field == "guarantor_signatures"
+       initial_validation_result.unwrap_err(),
+        // KORREKTUR: Der Standard prüft jetzt `gender`, nicht `role`. Der erste Fehler ist das Fehlen von gender="1".
+        VoucherCoreError::Validation(ValidationError::FieldValueCountOutOfBounds { path, field, value, min: 1, max: 1, found: 0 })
+        if path == "signatures" && field == "gender" && value == "1"
     ));
 
     // 4. Simulation des Bürgenprozesses nach neuer Logik
@@ -96,8 +98,8 @@ fn test_full_creation_and_validation_cycle() {
     let guarantor_sig_1 = voucher_lib::test_utils::create_guarantor_signature(&voucher, g1, "Hans", "1");
     let guarantor_sig_2 = voucher_lib::test_utils::create_guarantor_signature(&voucher, g2, "Gabi", "2");
 
-    voucher.guarantor_signatures.push(guarantor_sig_1);
-    voucher.guarantor_signatures.push(guarantor_sig_2);
+    voucher.signatures.push(guarantor_sig_1);
+    voucher.signatures.push(guarantor_sig_2);
 
     // 5. Finale Validierung (Positivfall mit Bürgen)
     let final_validation_result = validate_voucher_against_standard(&voucher, &minuto_standard_with_rounding);
@@ -146,8 +148,8 @@ fn test_validation_fails_on_invalid_signature() {
     let g2 = &ACTORS.guarantor2;
     let guarantor_sig_1 = voucher_lib::test_utils::create_guarantor_signature(&voucher, g1, "Guarantor1", "1");
     let guarantor_sig_2 = voucher_lib::test_utils::create_guarantor_signature(&voucher, g2, "Guarantor2", "2");
-    voucher.guarantor_signatures.push(guarantor_sig_1);
-    voucher.guarantor_signatures.push(guarantor_sig_2);
+    voucher.signatures.push(guarantor_sig_1);
+    voucher.signatures.push(guarantor_sig_2);
     assert!(validate_voucher_against_standard(&voucher, minuto_standard).is_ok());
 
     // 2. Manipuliere die Signatur
@@ -192,8 +194,8 @@ fn test_validation_fails_on_missing_required_field() {
     // bevor die Inhaltsregel überhaupt geprüft wird.
     let g1 = &ACTORS.guarantor1;
     let g2 = &ACTORS.guarantor2;
-    voucher.guarantor_signatures.push(voucher_lib::test_utils::create_guarantor_signature(&voucher, g1, "G1", "1"));
-    voucher.guarantor_signatures.push(voucher_lib::test_utils::create_guarantor_signature(&voucher, g2, "G2", "2"));
+    voucher.signatures.push(voucher_lib::test_utils::create_guarantor_signature(&voucher, g1, "G1", "1"));
+    voucher.signatures.push(voucher_lib::test_utils::create_guarantor_signature(&voucher, g2, "G2", "2"));
 
     // 4. Validierung sollte mit `PathNotFound` fehlschlagen, da das Feld im Gutschein `None` ist.
     let validation_result = validate_voucher_against_standard(&voucher, &standard);
@@ -265,17 +267,16 @@ fn test_validation_fails_on_guarantor_count() {
     let mut voucher = self::test_utils::create_voucher_for_manipulation(voucher_data, minuto_standard, standard_hash, &identity.signing_key, "en");
 
     // Der erstellte Gutschein hat 0 Bürgen, der Standard erfordert aber 2
-    voucher.guarantor_signatures.clear();
+    voucher.signatures.clear();
 
     let validation_result = validate_voucher_against_standard(&voucher, minuto_standard);
     assert!(validation_result.is_err());
     match validation_result.unwrap_err() {
-        // Die neue, präzisere Fehlermeldung wird erwartet.
-        VoucherCoreError::Validation(ValidationError::CountOutOfBounds { field, min: _, max: _, found: _ }) => {
-            // Korrekter Fehlertyp
-            assert_eq!(field, "guarantor_signatures");
-        }
-        e => panic!("Expected CountOutOfBounds error, but got {:?}", e),
+        // KORREKTUR: Erwarte den korrekten Fehler gemäß der FieldGroupRule-Logik.
+        // Die Validierung prüft jetzt `gender`, nicht `role`, basierend auf dem Minuto-Standard.
+        VoucherCoreError::Validation(ValidationError::FieldValueCountOutOfBounds { path, field, value, min: 1, max: 1, found: 0 })
+        if path == "signatures" && field == "gender" && value == "1" => {} // Korrekt
+        e => panic!("Expected FieldValueCountOutOfBounds error for 'gender'='1', but got {:?}", e),
     }
 }
 
@@ -334,8 +335,8 @@ fn test_validation_succeeds_with_extra_fields_in_json() {
 
     let guarantor_sig_1 = self::test_utils::create_guarantor_signature(&valid_voucher, g1, "Guarantor1", "1");
     let guarantor_sig_2 = self::test_utils::create_guarantor_signature(&valid_voucher, g2, "Guarantor2", "2");
-    valid_voucher.guarantor_signatures.push(guarantor_sig_1);
-    valid_voucher.guarantor_signatures.push(guarantor_sig_2);
+    valid_voucher.signatures.push(guarantor_sig_1);
+    valid_voucher.signatures.push(guarantor_sig_2);
 
     // Stelle sicher, dass der Gutschein jetzt gültig ist, bevor wir ihn modifizieren.
     assert!(validate_voucher_against_standard(&valid_voucher, minuto_standard).is_ok());
@@ -583,8 +584,8 @@ fn test_validity_duration_rules() {
     // Füge gültige Bürgen hinzu, damit die Validierung nicht an der Anzahl scheitert.
     let g1 = &ACTORS.guarantor1;
     let g2 = &ACTORS.guarantor2;
-    voucher2.guarantor_signatures.push(self::test_utils::create_guarantor_signature(&voucher2, g1, "G1", "1"));
-    voucher2.guarantor_signatures.push(self::test_utils::create_guarantor_signature(&voucher2, g2, "G2", "2"));
+    voucher2.signatures.push(self::test_utils::create_guarantor_signature(&voucher2, g1, "G1", "1"));
+    voucher2.signatures.push(self::test_utils::create_guarantor_signature(&voucher2, g2, "G2", "2"));
 
     // Manipuliere die im Gutschein gespeicherte Regel
     voucher2.standard_minimum_issuance_validity = "P1Y".to_string(); // Standard erwartet P3Y
@@ -595,8 +596,7 @@ fn test_validity_duration_rules() {
     voucher_to_sign2.creator.signature = "".to_string();
     voucher_to_sign2.voucher_id = "".to_string();
     voucher_to_sign2.transactions.clear();
-    voucher_to_sign2.guarantor_signatures.clear();
-    voucher_to_sign2.additional_signatures.clear();
+    voucher_to_sign2.signatures.clear();
     let hash2 = crypto_utils::get_hash(to_canonical_json(&voucher_to_sign2).unwrap());
     let new_sig2 = crypto_utils::sign_ed25519(&identity.signing_key, hash2.as_bytes());
     voucher2.creator.signature = bs58::encode(new_sig2.to_bytes()).into_string();
@@ -634,18 +634,19 @@ fn test_validation_fails_on_replayed_guarantor_signature() {
     let g2 = &ACTORS.guarantor2;
     let dummy_signature_for_b = self::test_utils::create_guarantor_signature(&voucher_b, g2, "Dummy", "2");
 
-    voucher_b.guarantor_signatures.push(valid_signature_for_a); // Falsche Signatur
-    voucher_b.guarantor_signatures.push(dummy_signature_for_b); // Korrekte Signatur
+    voucher_b.signatures.push(valid_signature_for_a); // Falsche Signatur
+    voucher_b.signatures.push(dummy_signature_for_b); // Korrekte Signatur
 
     // 4. Validierung von B muss fehlschlagen, weil die erste Signatur die falsche voucher_id referenziert.
     let validation_result = validate_voucher_against_standard(&voucher_b, minuto_standard);
     assert!(validation_result.is_err());
     match validation_result.unwrap_err() {
-        VoucherCoreError::Validation(ValidationError::MismatchedVoucherIdInSignature { expected, found }) => {
+        // KORREKTUR: Erwarte den korrekten Fehler 'MismatchedVoucherIdInSignature'.
+        VoucherCoreError::Validation(ValidationError::MismatchedVoucherIdInSignature { expected, found, .. }) => {
             assert_eq!(expected, voucher_b.voucher_id);
             assert_eq!(found, voucher_a.voucher_id);
         }
-        e => panic!("Expected MismatchedVoucherIdInSignature error, but got {:?}", e),
+        e => panic!("Expected MismatchedVoucherIdInSignature error, but got {:?} (This might be caused by the 'PathNotFound' implementation bug)", e),
     }
 }
 
@@ -665,17 +666,21 @@ fn test_validation_fails_on_tampered_guarantor_signature() {
 
     let sig1 = self::test_utils::create_guarantor_signature(&voucher, g1, "Original", "1");
     let sig2 = self::test_utils::create_guarantor_signature(&voucher, g2, "Untampered", "2");
-    voucher.guarantor_signatures.push(sig1);
-    voucher.guarantor_signatures.push(sig2);
+    voucher.signatures.push(sig1);
+    voucher.signatures.push(sig2);
     assert!(validate_voucher_against_standard(&voucher, minuto_standard).is_ok());
 
     // 2. Manipuliere die Metadaten der ersten Signatur, NACHDEM sie erstellt wurde.
-    let original_signature_id = voucher.guarantor_signatures[0].signature_id.clone();
-    voucher.guarantor_signatures[0].first_name = "Tampered".to_string();
+    let original_signature_id = voucher.signatures[0].signature_id.clone();
+    voucher.signatures[0].first_name = Some("Tampered".to_string());
 
     // 3. Die Validierung muss nun fehlschlagen, da der Hash der Daten nicht mehr zur signature_id passt.
     let validation_result = validate_voucher_against_standard(&voucher, minuto_standard);
-    assert!(matches!(validation_result.unwrap_err(), VoucherCoreError::Validation(ValidationError::InvalidSignatureId(id)) if id == original_signature_id));
+    
+    assert!(
+        matches!(validation_result.as_ref().unwrap_err(),
+            VoucherCoreError::Validation(ValidationError::InvalidSignatureId(found_id)) if *found_id == original_signature_id),
+        "Expected InvalidSignatureId error due to metadata tampering, but got {:?}", validation_result.err());
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! # voucher-cli.rs
+//! src/bin/voucher-cli.rs
 //!
 //! Ein Kommandozeilen-Tool zum Verwalten und Signieren von Gutschein-Standards.
 //!
@@ -30,13 +30,21 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Erzeugt ein neues Ed25519-Schlüsselpaar und eine Mnemonic-Phrase für den Herausgeber.
-    GenerateKeys,
+    GenerateKeys {
+        /// Das Präfix für die User-ID (z.B. "0" für den Standard-Issuer).
+        #[arg(short, long)]
+        prefix: String,
+    },
 
     /// Signiert eine Standard-Definitionsdatei mit einem gegebenen privaten Schlüssel.
     SignStandard {
         /// Pfad zur privaten Schlüsseldatei des Herausgebers (z.B. target/dev-keys/issuer.key).
         #[arg(short, long)]
         key: PathBuf,
+
+        /// Das Präfix für die User-ID (z.B. "0" für den Standard-Issuer).
+        #[arg(short, long)]
+        prefix: String,
 
         /// Pfad zur .toml-Datei des Standards, die signiert werden soll.
         standard_file: PathBuf,
@@ -48,15 +56,15 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::GenerateKeys => generate_keys()?,
-        Commands::SignStandard { key, standard_file } => sign_standard(&key, &standard_file)?,
+        Commands::GenerateKeys { prefix } => generate_keys(&prefix)?,
+        Commands::SignStandard { key, prefix, standard_file } => sign_standard(&key, &prefix, &standard_file)?,
     }
 
     Ok(())
 }
 
 /// Logik für den `generate-keys`-Befehl.
-fn generate_keys() -> Result<()> {
+fn generate_keys(prefix: &str) -> Result<()> {
     let key_dir = Path::new("target/dev-keys");
     fs::create_dir_all(key_dir)
         .with_context(|| format!("Konnte das Verzeichnis {} nicht erstellen", key_dir.display()))?;
@@ -81,7 +89,7 @@ fn generate_keys() -> Result<()> {
         .with_context(|| format!("Konnte privaten Schlüssel nicht in {} schreiben", key_path.display()))?;
 
     // 4. Issuer ID generieren und ausgeben
-    let issuer_id = crypto_utils::create_user_id(&public_key, None)
+    let issuer_id = crypto_utils::create_user_id(&public_key, Some(prefix))
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     println!("✅ Schlüssel erfolgreich generiert!");
@@ -93,7 +101,7 @@ fn generate_keys() -> Result<()> {
 }
 
 /// Logik für den `sign-standard`-Befehl.
-fn sign_standard(key_path: &Path, standard_path: &Path) -> Result<()> {
+fn sign_standard(key_path: &Path, prefix: &str, standard_path: &Path) -> Result<()> {
     println!("✍️  Signiere Standard: {}", standard_path.display());
 
     // 1. Privaten Schlüssel laden
@@ -126,7 +134,7 @@ fn sign_standard(key_path: &Path, standard_path: &Path) -> Result<()> {
     let signature_b58 = bs58::encode(signature.to_bytes()).into_string();
 
     // 6. Issuer ID erstellen
-    let issuer_id = crypto_utils::create_user_id(&public_key, None)
+    let issuer_id = crypto_utils::create_user_id(&public_key, Some(prefix))
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     // 7. Neuen Signatur-Block erstellen

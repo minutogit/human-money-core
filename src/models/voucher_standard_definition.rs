@@ -107,8 +107,6 @@ pub struct MinMax {
 /// Bündelt alle Regeln zur Zählung von Elementen (z.B. Signaturen, Transaktionen).
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct CountRules {
-    pub guarantor_signatures: Option<MinMax>,
-    pub additional_signatures: Option<MinMax>,
     pub transactions: Option<MinMax>,
 }
 
@@ -117,7 +115,8 @@ pub struct CountRules {
 pub struct RequiredSignatureRule {
     pub role_description: String,
     pub allowed_signer_ids: Vec<String>,
-    pub required_signature_description: Option<String>,
+    /// Die Rolle (z.B. "guarantor"), die diese Signatur haben muss.
+    pub required_role: String,
     pub is_mandatory: bool,
 }
 

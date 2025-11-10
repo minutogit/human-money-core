@@ -19,7 +19,7 @@
 
 use voucher_lib::app_service::AppService;
 use voucher_lib::models::signature::DetachedSignature;
-use voucher_lib::models::voucher::{Creator, GuarantorSignature, NominalValue};
+use voucher_lib::models::voucher::{Creator, VoucherSignature, NominalValue};
 use voucher_lib::{verify_and_parse_standard, NewVoucherData, VoucherStatus};
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -85,10 +85,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  -> Bürge 1 empfängt die Anfrage, signiert und sendet die Signatur zurück...");
     // Der Bürge muss den Gutschein aus dem Bundle extrahieren, um ihn zu signieren.
     // In einer echten App würde die App des Bürgen das Bundle öffnen. Hier simulieren wir das.
-    let signature_data_g1 = DetachedSignature::Guarantor(GuarantorSignature {
+    let signature_data_g1 = DetachedSignature::Signature(VoucherSignature {
         voucher_id: created_voucher.voucher_id.clone(), // KORREKTUR: Die ID des Gutscheins muss hier gesetzt werden.
-        guarantor_id: g1_id.clone(),
-        first_name: "Hans".into(), last_name: "Bürge".into(), gender: "1".into(),
+        signer_id: g1_id.clone(),
+        role: "guarantor".to_string(),
+        first_name: Some("Hans".into()),
+        last_name: Some("Bürge".into()),
+        gender: Some("1".into()),
         ..Default::default()
     });
     let response_bundle_from_g1 = service_g1.create_detached_signature_response_bundle(&created_voucher, signature_data_g1, &creator_id)?;
@@ -104,10 +107,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _request_bundle_to_g2 = service_creator.create_signing_request_bundle(&local_id, &g2_id)?;
 
     println!("  -> Bürge 2 empfängt, signiert und sendet zurück...");
-    let signature_data_g2 = DetachedSignature::Guarantor(GuarantorSignature {
+    let signature_data_g2 = DetachedSignature::Signature(VoucherSignature {
         voucher_id: created_voucher.voucher_id.clone(), // KORREKTUR: Die ID des Gutscheins muss hier gesetzt werden.
-        guarantor_id: g2_id.clone(),
-        first_name: "Gabi".into(), last_name: "Bürgin".into(), gender: "2".into(),
+        signer_id: g2_id.clone(),
+        role: "guarantor".to_string(),
+        first_name: Some("Gabi".into()),
+        last_name: Some("Bürgin".into()),
+        gender: Some("2".into()),
         ..Default::default()
     });
     let response_bundle_from_g2 = service_g2.create_detached_signature_response_bundle(&created_voucher, signature_data_g2, &creator_id)?;

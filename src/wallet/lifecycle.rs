@@ -165,18 +165,19 @@ impl Wallet {
         ) {
             Ok(_) => VoucherStatus::Active,
             // Wenn Bürgen fehlen, ist der Status `Incomplete`.
-            Err(VoucherCoreError::Validation(ValidationError::CountOutOfBounds {
-                                                 field,
-                                                 min,
-                                                 max,
-                                                 found,
-                                             })) if field == "guarantor_signatures" => VoucherStatus::Incomplete {
-                reasons: vec![ValidationFailureReason::GuarantorCountLow {
-                    required: min,
-                    max: max,
-                    current: found as u32,
-                }],
-            },
+            // NEU: Prüft auf fehlende Bürgen über die FieldGroupRule
+            Err(VoucherCoreError::Validation(ValidationError::FieldValueCountOutOfBounds {
+                path,
+                field,
+                value,
+                min,
+                max,
+                found,
+            })) if path == "signatures" && field == "role" && value == "guarantor" => {
+                VoucherStatus::Incomplete {
+                    reasons: vec![ValidationFailureReason::GuarantorCountLow { required: min, max, current: found }],
+                }
+            }
             // Jeder andere Validierungsfehler bei der Erstellung ist ein fataler Fehler.
             Err(e) => return Err(e),
         };

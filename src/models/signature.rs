@@ -3,7 +3,7 @@
 //! Definiert eine generische Wrapper-Struktur für losgelöste Signaturen,
 //! die für den Signatur-Workflow benötigt wird.
 
-use crate::models::voucher::{AdditionalSignature, GuarantorSignature};
+use crate::models::voucher::VoucherSignature;
 use serde::{Deserialize, Serialize};
 
 /// Ein Enum, das eine der möglichen losgelösten Signaturen kapselt.
@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 /// kann die `Wallet`-Logik agnostisch gegenüber dem spezifischen Signaturtyp bleiben.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum DetachedSignature {
-    /// Kapselt eine `GuarantorSignature`.
-    Guarantor(GuarantorSignature),
-    /// Kapselt eine `AdditionalSignature`.
-    Additional(AdditionalSignature),
+    // HINWEIS: Dies repräsentiert eine Signatur *auf dem Transportweg*.
+    // Wir verwenden `VoucherSignature` als Container für die Daten,
+    // da die Struktur (z.B. `role`) identisch ist.
+    Signature(VoucherSignature),
 }

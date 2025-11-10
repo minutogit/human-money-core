@@ -7,7 +7,7 @@ use voucher_lib::{
 use voucher_lib::crypto_utils;
 use voucher_lib::models::profile::{TransactionBundle};
 use voucher_lib::{UserIdentity, VoucherStatus};
-use voucher_lib::models::voucher::{Collateral, Creator, GuarantorSignature, NominalValue, Transaction, Voucher, AdditionalSignature};
+use voucher_lib::models::voucher::{Collateral, Creator, NominalValue, Transaction, Voucher, VoucherSignature};
 use voucher_lib::services::crypto_utils::{get_hash, sign_ed25519};
 use voucher_lib::services::secure_container_manager::create_secure_container;
 use voucher_lib::services::utils::{get_current_timestamp};
@@ -87,19 +87,19 @@ fn mutate_init_to_wrong_position(voucher: &mut Voucher) -> String {
 }
 
 /// Nimmt eine `AdditionalSignature` und macht sie ungültig, indem die Signaturdaten manipuliert werden.
-fn mutate_invalidate_additional_signature(voucher: &mut Voucher) -> String {
-    if let Some(sig) = voucher.additional_signatures.get_mut(0) {
+fn mutate_invalidate_signature(voucher: &mut Voucher) -> String {
+    if let Some(sig) = voucher.signatures.get_mut(0) {
         sig.signature = "invalid_signature_data".to_string();
-        return "Invalidated signature of first AdditionalSignature".to_string();
+        return "Invalidated signature of first VoucherSignature".to_string();
     }
-    "No AdditionalSignature found to invalidate".to_string()
+    "No VoucherSignature found to invalidate".to_string()
 }
 
 /// Definiert die verschiedenen Angriffsstrategien für den Fuzzer.
 #[derive(Debug, Clone, Copy)]
 enum FuzzingStrategy {
-    /// Manipuliert eine `AdditionalSignature`, um die Validierung zu testen.
-    InvalidateAdditionalSignature,
+    /// Manipuliert eine `VoucherSignature`, um die Validierung zu testen.
+    InvalidateSignature,
     /// Setzt einen Transaktionsbetrag auf einen negativen Wert.
     SetNegativeTransactionAmount,
     /// Setzt den Restbetrag eines Splits auf einen negativen Wert.
@@ -132,15 +132,16 @@ fn create_guarantor_signature(
     guarantor_identity: &UserIdentity,
     organization: Option<&str>,
     gender: &str,
-) -> GuarantorSignature {
-    let mut sig_obj = GuarantorSignature {
+) -> VoucherSignature {
+    let mut sig_obj = VoucherSignature {
         voucher_id: voucher.voucher_id.clone(),
-        guarantor_id: guarantor_identity.user_id.clone(),
-        first_name: "Garant".to_string(),
-        last_name: "Test".to_string(),
+        signer_id: guarantor_identity.user_id.clone(),
+        role: "guarantor".to_string(),
+        first_name: Some("Garant".to_string()),
+        last_name: Some("Test".to_string()),
         signature_time: get_current_timestamp(),
         organization: organization.map(String::from),
-        gender: gender.to_string(),
+        gender: Some(gender.to_string()),
         ..Default::default()
     };
 
@@ -233,7 +234,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
 
     let mut valid_voucher = voucher_manager::create_voucher(voucher_data, standard, standard_hash, &ACTORS.issuer.signing_key, "en").unwrap();
     let guarantor_sig = create_guarantor_signature(&valid_voucher, &ACTORS.guarantor1, None, "0");
-    valid_voucher.guarantor_signatures.push(guarantor_sig);
+    valid_voucher.signatures.push(guarantor_sig);
     let local_id = Wallet::calculate_local_instance_id(&valid_voucher, &ACTORS.issuer.user_id).unwrap();
     let instance = VoucherInstance { voucher: valid_voucher, status: VoucherStatus::Active, local_instance_id: local_id.clone() };
     issuer_wallet.voucher_store.vouchers.insert(local_id.clone(), instance);
@@ -293,7 +294,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     // ### SZENARIO 4a: BÜRGEN-METADATEN MANIPULIEREN ###
     println!("--- Angriff 4a: Bürgen-Metadaten manipulieren ---");
     let mut tampered_guarantor_voucher = voucher_in_hacker_wallet.clone();
-    tampered_guarantor_voucher.guarantor_signatures[0].first_name = "Mallory".to_string();
+    tampered_guarantor_voucher.signatures[0].first_name = Some("Mallory".to_string());
 
     let mut final_tx_2 = Transaction {
         prev_hash: get_hash(to_canonical_json(tampered_guarantor_voucher.transactions.last().unwrap()).unwrap()),
@@ -314,7 +315,10 @@ fn test_attack_tamper_core_data_and_guarantors() {
     victim_wallet.process_encrypted_transaction_bundle(&ACTORS.victim, &hacked_container, None, &standards_for_victim).unwrap();
     let received_voucher = &victim_wallet.voucher_store.vouchers.iter().next().unwrap().1.voucher;
     let result = voucher_validation::validate_voucher_against_standard(received_voucher, standard);
-    assert!(matches!(result, Err(VoucherCoreError::Validation(ValidationError::InvalidSignatureId(_)))),
+    
+    // KORREKTUR: Die Validierung MUSS fehlschlagen, weil die Metadaten-Integrität
+    // (Hash(Metadaten) == signature_id) verletzt ist.
+    assert!(matches!(result, Err(VoucherCoreError::Validation(ValidationError::InvalidSignatureId { .. }))),
             "Validation must fail due to manipulated guarantor metadata (InvalidSignatureId).");
     victim_wallet.voucher_store.vouchers.clear();
 }
@@ -751,15 +755,15 @@ fn test_attack_fuzzing_random_mutations() {
     let mut master_voucher = voucher_manager::create_voucher(data, standard, standard_hash, &ACTORS.issuer.signing_key, "en").unwrap();
 
     // Füge Bürgen hinzu.
-    master_voucher.guarantor_signatures.push(create_guarantor_signature(&master_voucher, &ACTORS.guarantor1, None, "0"));
-    master_voucher.guarantor_signatures.push(create_guarantor_signature(&master_voucher, &ACTORS.guarantor2, None, "0"));
+    master_voucher.signatures.push(create_guarantor_signature(&master_voucher, &ACTORS.guarantor1, None, "0"));
+    master_voucher.signatures.push(create_guarantor_signature(&master_voucher, &ACTORS.guarantor2, None, "0"));
 
     // WICHTIG: Füge eine `AdditionalSignature` hinzu, damit der Fuzzer sie angreifen kann.
-    let mut additional_sig = AdditionalSignature {
+    let mut additional_sig = VoucherSignature {
         voucher_id: master_voucher.voucher_id.clone(),
         signer_id: ACTORS.victim.user_id.clone(),
         signature_time: get_current_timestamp(),
-        description: "A valid additional signature".to_string(),
+        role: "A valid additional signature".to_string(),
         ..Default::default()
     };
     let mut sig_obj_for_id = additional_sig.clone();
@@ -768,7 +772,7 @@ fn test_attack_fuzzing_random_mutations() {
     additional_sig.signature_id = get_hash(to_canonical_json(&sig_obj_for_id).unwrap());
     let signature = sign_ed25519(&ACTORS.victim.signing_key, additional_sig.signature_id.as_bytes());
     additional_sig.signature = bs58::encode(signature.to_bytes()).into_string();
-    master_voucher.additional_signatures.push(additional_sig);
+    master_voucher.signatures.push(additional_sig);
 
     // Erstelle eine Transaktionskette, die auch einen Split enthält.
     master_voucher = create_transaction(&master_voucher, standard, &ACTORS.issuer.user_id, &ACTORS.issuer.signing_key, &ACTORS.alice.user_id, "1000").unwrap();
@@ -780,7 +784,7 @@ fn test_attack_fuzzing_random_mutations() {
 
     // Definiere die intelligenten und zufälligen Angriffsstrategien.
     let strategies = [
-        FuzzingStrategy::InvalidateAdditionalSignature,
+        FuzzingStrategy::InvalidateSignature,
         FuzzingStrategy::SetNegativeTransactionAmount,
         FuzzingStrategy::SetNegativeRemainderAmount,
         FuzzingStrategy::SetInitTransactionInWrongPosition,
@@ -795,8 +799,8 @@ fn test_attack_fuzzing_random_mutations() {
 
         // Führe die gewählte Angriffsstrategie aus
         match strategy {
-            FuzzingStrategy::InvalidateAdditionalSignature => {
-                change_description = mutate_invalidate_additional_signature(&mut mutated_voucher);
+            FuzzingStrategy::InvalidateSignature => {
+                change_description = mutate_invalidate_signature(&mut mutated_voucher);
             }
             FuzzingStrategy::SetNegativeTransactionAmount => {
                 change_description = mutate_to_negative_amount(&mut mutated_voucher);

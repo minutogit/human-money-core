@@ -7,7 +7,7 @@ use voucher_lib::{
 };
 use voucher_lib::crypto_utils;
 use voucher_lib::{UserIdentity, VoucherStatus};
-use voucher_lib::models::voucher::{Collateral, Creator, GuarantorSignature, NominalValue, Voucher};
+use voucher_lib::models::voucher::{Collateral, Creator, NominalValue, Voucher, VoucherSignature};
 use voucher_lib::services::crypto_utils::{create_user_id, get_hash, sign_ed25519};
 use voucher_lib::services::utils::{get_current_timestamp};
 use voucher_lib::services::voucher_manager::{NewVoucherData};
@@ -222,14 +222,15 @@ fn test_serialization_roundtrip_with_special_chars() {
 
     // **KORRIGIERTER AUFRUF:** Metadaten werden jetzt bei der Erstellung übergeben.
     let guarantor_sig =
-        GuarantorSignature {
+        VoucherSignature {
             voucher_id: original_voucher.voucher_id.clone(),
-            guarantor_id: g1_identity.user_id.clone(),
-            first_name: "Garant".to_string(),
-            last_name: "Test".to_string(),
+            signer_id: g1_identity.user_id.clone(),
+            role: "guarantor".to_string(),
+            first_name: Some("Garant".to_string()),
+            last_name: Some("Test".to_string()),
             signature_time: get_current_timestamp(),
             organization: Some("Bürge & Co.".to_string()),
-            gender: "1".to_string(),
+            gender: Some("1".to_string()),
             ..Default::default()
         };
 
@@ -241,18 +242,19 @@ fn test_serialization_roundtrip_with_special_chars() {
     sig_obj.signature_id = get_hash(to_canonical_json(&sig_obj_for_id).unwrap());
     let signature = sign_ed25519(&g1_identity.signing_key, sig_obj.signature_id.as_bytes());
     sig_obj.signature = bs58::encode(signature.to_bytes()).into_string();
-    original_voucher.guarantor_signatures.push(sig_obj);
+    original_voucher.signatures.push(sig_obj);
 
     // FÜGE ZWEITEN BÜRGEN HINZU, UM DIE VALIDIERUNG ZU ERFÜLLEN
     // ÄNDERUNG: Gender auf "2" gesetzt, um die Regel des Minuto-Standards zu erfüllen.
     let second_guarantor_identity = &ACTORS.guarantor2;
-    let second_guarantor_sig = GuarantorSignature {
+    let second_guarantor_sig = VoucherSignature {
         voucher_id: original_voucher.voucher_id.clone(),
-        guarantor_id: second_guarantor_identity.user_id.clone(),
-        first_name: "Garantin".to_string(),
-        last_name: "Test".to_string(),
+        signer_id: second_guarantor_identity.user_id.clone(),
+        role: "guarantor".to_string(),
+        first_name: Some("Garantin".to_string()),
+        last_name: Some("Test".to_string()),
         signature_time: get_current_timestamp(),
-        gender: "2".to_string(),
+        gender: Some("2".to_string()),
         ..Default::default()
     };
     let mut sig_obj = second_guarantor_sig.clone();
@@ -262,7 +264,7 @@ fn test_serialization_roundtrip_with_special_chars() {
     sig_obj.signature_id = get_hash(to_canonical_json(&sig_obj_for_id).unwrap());
     let signature = sign_ed25519(&second_guarantor_identity.signing_key, sig_obj.signature_id.as_bytes());
     sig_obj.signature = bs58::encode(signature.to_bytes()).into_string();
-    original_voucher.guarantor_signatures.push(sig_obj);
+    original_voucher.signatures.push(sig_obj);
 
     original_voucher = create_transaction(
         &original_voucher,

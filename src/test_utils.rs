@@ -17,7 +17,7 @@ use crate::models::{
     profile::{BundleMetadataStore, UserProfile, VoucherStore},
     signature::DetachedSignature,
     voucher::{
-        Address, Collateral, Creator, GuarantorSignature, NominalValue, Transaction,
+        Address, Collateral, Creator, NominalValue, Transaction, VoucherSignature,
     },
     voucher_standard_definition::{SignatureBlock, VoucherStandardDefinition},
 };
@@ -208,34 +208,53 @@ lazy_static! {
 
     /// Lädt den `required_signatures`-Test-Standard und signiert ihn zur Laufzeit.
     pub static ref REQUIRED_SIG_STANDARD: (VoucherStandardDefinition, String) = {
-        let issuer = &TEST_ISSUER;
+        let issuer_for_signing = &TEST_ISSUER; // Dieser signiert nur die Standard-Datei selbst
         // HINWEIS: Pfad wurde angepasst, um von `src/` aus zu funktionieren.
         let toml_str = include_str!("../tests/test_data/standards/standard_required_signatures.toml");
 
-        let mut standard: VoucherStandardDefinition = toml::from_str(toml_str)
-            .expect("Failed to parse Required Sig TOML template for tests");
+        // --- DYNAMISCHE ID-INJEKTION (Ihre vorgeschlagene Lösung) ---
+        // 1. Parse als generischer TOML-Wert, nicht als finale Struktur
+        let mut standard_value: toml::Value = toml::from_str(toml_str)
+            .expect("Failed to parse Required Sig TOML as toml::Value");
 
-        // HINZUGEFÜGT: Korrigiere die hartkodierten, veralteten User-IDs in den Validierungsregeln.
-        // Die TOML-Datei enthält `did:key:...`-Strings ohne Prüfsumme. Wir ersetzen sie hier im Speicher
-        // durch die korrekte, zur Laufzeit generierte User-ID unseres Test-Herausgebers.
-        if let Some(validation) = standard.validation.as_mut() {
-            if let Some(sig_rules) = validation.required_signatures.as_mut() {
-                for rule in sig_rules.iter_mut() {
-                    // Wir aktualisieren alle Regeln, um sicherzustellen, dass sie die neue User-ID verwenden.
-                    // Dadurch wird der Vergleich in `validate_required_signatures` erfolgreich sein.
-                    rule.allowed_signer_ids = vec![issuer.identity.user_id.clone()];
+        // 2. Hole die korrekten, zur Laufzeit generierten IDs aus der ACTORS-Struktur
+        let correct_issuer_id = ACTORS.issuer.user_id.clone();
+        let correct_charlie_id = ACTORS.charlie.user_id.clone();
+
+        // 3. Durchsuche die TOML-Struktur und ersetze die IDs
+        if let Some(toml::Value::Table(validation)) = standard_value.get_mut("validation") {
+            if let Some(toml::Value::Array(sig_rules)) = validation.get_mut("required_signatures") {
+                for rule_value in sig_rules.iter_mut() {
+                    if let Some(rule) = rule_value.as_table_mut() {                        // Finde die spezifische Regel, die wir patchen wollen
+                        if let Some(toml::Value::String(desc)) = rule.get("role_description") {
+                            if desc == "Official stamp from the authority" {
+                                // 4. Ersetze die Platzhalter durch die echten, korrekten IDs
+                                let new_allowed_ids = toml::Value::Array(vec![
+                                    toml::Value::String(correct_issuer_id.clone()),
+                                    toml::Value::String(correct_charlie_id.clone()),
+                                ]);
+                                rule.insert("allowed_signer_ids".to_string(), new_allowed_ids);
+                                break; // Regel gefunden und gepatcht
+                            }
+                        }
+                    }
                 }
             }
         }
+        // --- ENDE DYNAMISCHE ID-INJEKTION ---
+
+        // 5. Konvertiere den *modifizierten* TOML-Wert in die finale Struktur
+        let mut standard: VoucherStandardDefinition = standard_value.try_into()
+            .expect("Failed to deserialize modified TOML value into VoucherStandardDefinition");
 
         standard.signature = None;
         let canonical_json_for_signing = to_canonical_json(&standard)
             .expect("Failed to create canonical JSON for Required Sig standard");
         let hash_to_sign = get_hash(canonical_json_for_signing.as_bytes());
 
-        let signature = sign_ed25519(&issuer.identity.signing_key, hash_to_sign.as_bytes());
+        let signature = sign_ed25519(&issuer_for_signing.identity.signing_key, hash_to_sign.as_bytes());
         let signature_block = SignatureBlock {
-            issuer_id: issuer.identity.user_id.clone(),
+            issuer_id: issuer_for_signing.identity.user_id.clone(),
             signature: bs58::encode(signature.to_bytes()).into_string(),
         };
         standard.signature = Some(signature_block);
@@ -426,12 +445,12 @@ pub fn add_voucher_to_wallet(
             &crate::test_utils::ACTORS.guarantor2.identity,
         )?;
 
-        if let DetachedSignature::Guarantor(s) = signed_sig1 {
-            voucher.guarantor_signatures.push(s);
-        }
-        if let DetachedSignature::Guarantor(s) = signed_sig2 {
-            voucher.guarantor_signatures.push(s);
-        }
+        // HINWEIS: Die 'if let' sind jetzt redundant, da DetachedSignature nur eine Variante hat.
+        // Wir verwenden `let` und ignorieren die Warnung oder strukturieren um.
+        let DetachedSignature::Signature(s1) = signed_sig1;
+        let DetachedSignature::Signature(s2) = signed_sig2;
+        voucher.signatures.push(s1);
+        voucher.signatures.push(s2);
     }
 
     let local_id = Wallet::calculate_local_instance_id(&voucher, &identity.user_id)?;
@@ -483,15 +502,16 @@ pub fn create_guarantor_signature_data(
     gender: &str,
     voucher_id: &str,
 ) -> DetachedSignature {
-    let data = GuarantorSignature {
-        guarantor_id: guarantor_identity.user_id.clone(),
-        first_name: "Guarantor".to_string(),
-        last_name: "Test".to_string(),
-        gender: gender.to_string(),
+    let data = VoucherSignature {
+        signer_id: guarantor_identity.user_id.clone(),
+        first_name: Some("Guarantor".to_string()),
+        last_name: Some("Test".to_string()),
+        gender: Some(gender.to_string()),
         voucher_id: voucher_id.to_string(),
         signature_id: String::new(),
         signature: String::new(),
         signature_time: String::new(),
+        role: "guarantor".to_string(),
         organization: None,
         community: None,
         address: None,
@@ -499,8 +519,10 @@ pub fn create_guarantor_signature_data(
         phone: None,
         coordinates: None,
         url: None,
+        ..Default::default() // Stellt sicher, dass alle optionalen Felder initialisiert sind
     };
-    DetachedSignature::Guarantor(data)
+    // KORREKTUR: Verwende den vereinheitlichten Enum-Typ
+    DetachedSignature::Signature(data)
 }
 
 #[allow(dead_code)]
@@ -509,15 +531,16 @@ pub fn create_additional_signature_data(
     voucher_id: &str,
     description: &str,
 ) -> DetachedSignature {
-    let data = crate::models::voucher::AdditionalSignature {
+    let data = crate::models::voucher::VoucherSignature {
         voucher_id: voucher_id.to_string(),
         signature_id: String::new(),
         signer_id: signer_identity.user_id.clone(),
         signature: String::new(),
         signature_time: String::new(),
-        description: description.to_string(),
+        role: description.to_string(), // description wird zu role
+        ..Default::default() // Stellt sicher, dass alle optionalen Felder (firstName, etc.) None sind
     };
-    DetachedSignature::Additional(data)
+    DetachedSignature::Signature(data)
 }
 
 #[allow(dead_code)]
@@ -622,14 +645,13 @@ pub fn create_voucher_for_manipulation(
         standard_minimum_issuance_validity: standard.validation.as_ref().and_then(|v| v.behavior_rules.as_ref()).and_then(|b| b.issuance_minimum_validity_duration.clone()).unwrap_or_default(),
         non_redeemable_test_voucher: false, nominal_value: final_nominal_value, collateral: final_collateral,
         creator: data.creator, guarantor_requirements_description: standard.template.fixed.guarantor_info.description.clone(), footnote: standard.template.fixed.footnote.clone().unwrap_or_default(),
-        guarantor_signatures: vec![], needed_guarantors: standard.template.fixed.guarantor_info.needed_count, transactions: vec![], additional_signatures: vec![],
+        needed_guarantors: standard.template.fixed.guarantor_info.needed_count, transactions: vec![], signatures: vec![],
     };
 
     let mut voucher_to_hash = voucher.clone();
     voucher_to_hash.creator.signature = "".to_string(); voucher_to_hash.voucher_id = "".to_string();
     voucher_to_hash.transactions.clear();
-    voucher_to_hash.guarantor_signatures.clear();
-    voucher_to_hash.additional_signatures.clear();
+    voucher_to_hash.signatures.clear(); // Korrigiert E0609
     let voucher_json = to_canonical_json(&voucher_to_hash).unwrap();
     let voucher_hash = crypto_utils::get_hash(voucher_json);
     voucher.voucher_id = voucher_hash.clone();
@@ -649,15 +671,16 @@ pub fn create_guarantor_signature_with_time(
     guarantor_first_name: &str,
     guarantor_gender: &str,
     signature_time: &str,
-) -> GuarantorSignature {
-    let mut signature_data = GuarantorSignature {
+) -> VoucherSignature {
+    let mut signature_data = VoucherSignature {
         voucher_id: voucher_id.to_string(),
         signature_id: "".to_string(),
-        guarantor_id: guarantor_identity.user_id.clone(),
-        first_name: guarantor_first_name.to_string(),
-        last_name: "Guarantor".to_string(),
-        gender: guarantor_gender.to_string(),
+        signer_id: guarantor_identity.user_id.clone(),
+        first_name: Some(guarantor_first_name.to_string()),
+        last_name: Some("Guarantor".to_string()),
+        gender: Some(guarantor_gender.to_string()),
         signature_time: signature_time.to_string(),
+        role: "guarantor".to_string(),
         ..Default::default()
     };
 
@@ -677,7 +700,7 @@ pub fn create_guarantor_signature(
     guarantor_identity: &UserIdentity,
     guarantor_first_name: &str,
     guarantor_gender: &str,
-) -> GuarantorSignature {
+) -> VoucherSignature {
     let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date).unwrap();
     let signature_time = (creation_dt + chrono::Duration::days(1)).to_rfc3339();
     create_guarantor_signature_with_time(
@@ -690,14 +713,14 @@ pub fn create_guarantor_signature(
 }
 
 #[allow(dead_code)]
-pub fn create_male_guarantor_signature(voucher: &Voucher) -> GuarantorSignature {
+pub fn create_male_guarantor_signature(voucher: &Voucher) -> VoucherSignature {
     let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date).unwrap();
     let signature_time = (creation_dt + chrono::Duration::days(1)).to_rfc3339();
     create_guarantor_signature_with_time(&voucher.voucher_id, &crate::test_utils::ACTORS.male_guarantor.identity, "Martin", "1", &signature_time)
 }
 
 #[allow(dead_code)]
-pub fn create_female_guarantor_signature(voucher: &Voucher) -> GuarantorSignature {
+pub fn create_female_guarantor_signature(voucher: &Voucher) -> VoucherSignature { // Korrigiert E0412
     let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date).unwrap();
     let signature_time = (creation_dt + chrono::Duration::days(2)).to_rfc3339();
     create_guarantor_signature_with_time(&voucher.voucher_id, &crate::test_utils::ACTORS.female_guarantor.identity, "Frida", "2", &signature_time)

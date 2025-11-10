@@ -29,11 +29,7 @@ pub fn complete_and_sign_detached_signature(
     signer_identity: &UserIdentity,
 ) -> Result<DetachedSignature, VoucherCoreError> {
     let (signature_voucher_id, signer_id) = match &mut signature_data {
-        DetachedSignature::Guarantor(sig) => {
-            sig.guarantor_id = signer_identity.user_id.clone();
-            (sig.voucher_id.clone(), sig.guarantor_id.clone())
-        }
-        DetachedSignature::Additional(sig) => {
+        DetachedSignature::Signature(sig) => {
             sig.signer_id = signer_identity.user_id.clone();
             (sig.voucher_id.clone(), sig.signer_id.clone())
         }
@@ -52,13 +48,7 @@ pub fn complete_and_sign_detached_signature(
 
     // Setze kryptographische Felder zurück, um einen deterministischen Hash zu gewährleisten
     let signature_json_for_id = match &mut signature_data {
-        DetachedSignature::Guarantor(sig) => {
-            sig.signature_id = "".to_string();
-            sig.signature = "".to_string();
-            sig.signature_time = get_current_timestamp();
-            to_canonical_json(sig)?
-        }
-        DetachedSignature::Additional(sig) => {
+        DetachedSignature::Signature(sig) => {
             sig.signature_id = "".to_string();
             sig.signature = "".to_string();
             sig.signature_time = get_current_timestamp();
@@ -72,11 +62,7 @@ pub fn complete_and_sign_detached_signature(
     let signature_str = bs58::encode(digital_signature.to_bytes()).into_string();
 
     match &mut signature_data {
-        DetachedSignature::Guarantor(sig) => {
-            sig.signature_id = signature_id;
-            sig.signature = signature_str;
-        }
-        DetachedSignature::Additional(sig) => {
+        DetachedSignature::Signature(sig) => {
             sig.signature_id = signature_id;
             sig.signature = signature_str;
         }
@@ -99,13 +85,7 @@ pub fn validate_detached_signature(
     signature_data: &DetachedSignature,
 ) -> Result<(), VoucherCoreError> {
     let (mut sig_obj_to_verify, signer_id, expected_sig_id, signature_b58) = match signature_data {
-        DetachedSignature::Guarantor(sig) => (
-            serde_json::to_value(sig)?,
-            sig.guarantor_id.clone(),
-            sig.signature_id.clone(),
-            sig.signature.clone(),
-        ),
-        DetachedSignature::Additional(sig) => (
+        DetachedSignature::Signature(sig) => (
             serde_json::to_value(sig)?,
             sig.signer_id.clone(),
             sig.signature_id.clone(),
@@ -139,7 +119,9 @@ pub fn validate_detached_signature(
     let signature = ed25519_dalek::Signature::from_bytes(&signature_array);
 
     if !verify_ed25519(&public_key, expected_sig_id.as_bytes(), &signature) {
-        return Err(VoucherCoreError::Validation(ValidationError::InvalidSignature { signer_id }));
+        return Err(VoucherCoreError::Validation(ValidationError::InvalidSignature {
+            signer_id: signer_id.to_string(), // KORREKTUR E0308
+        }));
     }
 
     Ok(())

@@ -7,7 +7,7 @@ use voucher_lib::{
     to_canonical_json, validate_voucher_against_standard,
     VoucherCoreError,
 };
-use voucher_lib::models::voucher::{Creator, NominalValue, Voucher};
+use voucher_lib::models::voucher::{Creator, NominalValue, Voucher, VoucherSignature};
 use voucher_lib::services::crypto_utils::{get_hash, sign_ed25519};
 use voucher_lib::services::utils::get_current_timestamp;
 use voucher_lib::services::voucher_manager::NewVoucherData;
@@ -20,7 +20,6 @@ use self::test_utils::{
 mod required_signatures_validation {
     use super::*;
     use self::test_utils::{create_guarantor_signature_with_time, create_male_guarantor_signature};
-    use voucher_lib::models::voucher::AdditionalSignature;
 
     fn load_required_sig_standard() -> (voucher_lib::VoucherStandardDefinition, String) {
         // Verwende die neue, robuste lazy_static-Variable
@@ -44,14 +43,14 @@ mod required_signatures_validation {
         create_voucher_for_manipulation(voucher_data, standard, standard_hash, &creator_identity.signing_key, "en")
     }
 
-    fn create_valid_approval_signature(voucher: &Voucher) -> AdditionalSignature {
-        // KORREKTUR: Wir müssen die Identität verwenden, die den Standard signiert hat (TEST_ISSUER),
-        // da dessen ID in den `allowed_signer_ids` steht.
-        let signer = &test_utils::TEST_ISSUER;
-        let mut sig = AdditionalSignature {
+    fn create_valid_approval_signature(voucher: &Voucher) -> VoucherSignature {
+        // KORREKTUR: Wir verwenden ACTORS.charlie, da die ID von ACTORS.issuer
+        // im Test-Setup nicht mit der in standard_required_signatures.toml übereinstimmt.
+        let signer = &ACTORS.charlie;
+        let mut sig = VoucherSignature {
             voucher_id: voucher.voucher_id.clone(),
             signer_id: signer.user_id.clone(),
-            description: "Approved for circulation 2025".to_string(),
+            role: "Official Approver".to_string(), // KORREKTUR: Semantisch bessere Rolle (muss mit TOML übereinstimmen)
             signature_time: get_current_timestamp(),
             ..Default::default()
         };
@@ -76,7 +75,7 @@ mod required_signatures_validation {
     fn test_required_signature_ok() {
         let (standard, standard_hash) = load_required_sig_standard();
         let mut voucher = create_base_voucher_for_sig_test(&standard, &standard_hash);
-        voucher.additional_signatures.push(create_valid_approval_signature(&voucher));
+        voucher.signatures.push(create_valid_approval_signature(&voucher));
 
         let result = validate_voucher_against_standard(&voucher, &standard);
         if let Err(e) = &result {
@@ -93,10 +92,15 @@ mod required_signatures_validation {
         let voucher = create_base_voucher_for_sig_test(&standard, &standard_hash); // Ohne Signatur
 
         let result = validate_voucher_against_standard(&voucher, &standard);
-        assert!(matches!(
-            result.unwrap_err(),
-            VoucherCoreError::Validation(ValidationError::MissingRequiredSignature { .. })
-        ));
+
+        // Aussagekräftigere Assertion für Debugging
+        let err = result.unwrap_err();
+        match err {
+            VoucherCoreError::Validation(ValidationError::MissingRequiredSignature { role, .. }) => {
+                assert_eq!(role, "Official Approver", "The role in the error did not match 'Official Approver'");
+            }
+            _ => panic!("Expected MissingRequiredSignature, but got {:?}", err),
+        }
     }
 
     #[test]
@@ -113,13 +117,18 @@ mod required_signatures_validation {
         wrong_sig.signature_id = get_hash(to_canonical_json(&obj_to_hash).unwrap());
         let digital_sig = sign_ed25519(&hacker_identity.signing_key, wrong_sig.signature_id.as_bytes());
         wrong_sig.signature = bs58::encode(digital_sig.to_bytes()).into_string();
-        voucher.additional_signatures.push(wrong_sig);
+        voucher.signatures.push(wrong_sig);
 
         let result = validate_voucher_against_standard(&voucher, &standard);
-        assert!(matches!(
-            result.unwrap_err(),
-            VoucherCoreError::Validation(ValidationError::MissingRequiredSignature { .. })
-        ));
+
+        // Aussagekräftigere Assertion für Debugging
+        let err = result.unwrap_err();
+        match err {
+            VoucherCoreError::Validation(ValidationError::MissingRequiredSignature { role, .. }) => {
+                assert_eq!(role, "Official Approver", "The role in the error did not match 'Official Approver'");
+            }
+            _ => panic!("Expected MissingRequiredSignature, but got {:?}", err),
+        }
     }
 
     #[test]
@@ -127,22 +136,27 @@ mod required_signatures_validation {
         let (standard, standard_hash) = load_required_sig_standard();
         let mut voucher = create_base_voucher_for_sig_test(&standard, &standard_hash);
         let mut wrong_desc_sig = create_valid_approval_signature(&voucher);
-        wrong_desc_sig.description = "Some other description".to_string();
+        wrong_desc_sig.role = "Some other description".to_string();
         // Muss neu signiert werden
-        let issuer_identity = &ACTORS.issuer;
+        let signer = &ACTORS.charlie; // Muss derselbe korrekte Signer sein
         let mut obj_to_hash = wrong_desc_sig.clone();
         obj_to_hash.signature_id = "".to_string();
         obj_to_hash.signature = "".to_string();
         wrong_desc_sig.signature_id = get_hash(to_canonical_json(&obj_to_hash).unwrap());
-        let digital_sig = sign_ed25519(&issuer_identity.signing_key, wrong_desc_sig.signature_id.as_bytes());
+        let digital_sig = sign_ed25519(&signer.signing_key, wrong_desc_sig.signature_id.as_bytes());
         wrong_desc_sig.signature = bs58::encode(digital_sig.to_bytes()).into_string();
-        voucher.additional_signatures.push(wrong_desc_sig);
+        voucher.signatures.push(wrong_desc_sig);
 
         let result = validate_voucher_against_standard(&voucher, &standard);
-        assert!(matches!(
-            result.unwrap_err(),
-            VoucherCoreError::Validation(ValidationError::MissingRequiredSignature { .. })
-        ));
+
+        // Aussagekräftigere Assertion für Debugging
+        let err = result.unwrap_err();
+        match err {
+            VoucherCoreError::Validation(ValidationError::MissingRequiredSignature { role, .. }) => {
+                assert_eq!(role, "Official Approver", "The role in the error did not match 'Official Approver'");
+            }
+            _ => panic!("Expected MissingRequiredSignature, but got {:?}", err),
+        }
     }
 
     #[test]
@@ -168,9 +182,9 @@ mod required_signatures_validation {
             "2026-08-01T10:00:00Z"
         );
 
-        voucher.guarantor_signatures.push(self_guarantor_sig);
+        voucher.signatures.push(self_guarantor_sig);
         // Füge einen zweiten, validen Bürgen hinzu, um die `CountOutOfBounds`-Regel zu umgehen
-        voucher.guarantor_signatures.push(create_male_guarantor_signature(&voucher));
+        voucher.signatures.push(create_male_guarantor_signature(&voucher));
 
         let validation_result = validate_voucher_against_standard(&voucher, standard);
 

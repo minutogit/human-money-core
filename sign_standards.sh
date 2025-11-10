@@ -12,7 +12,7 @@ echo "--- Standard Signatur-Skript ---"
 if [ ! -f "$KEY_FILE" ]; then
   echo "🔑 Schlüsseldatei unter '$KEY_FILE' nicht gefunden. Erzeuge ein neues Schlüsselpaar..."
   # Das Rust-CLI-Tool aufrufen, um die Schlüssel zu generieren.
-  cargo run --bin voucher-cli -- generate-keys
+  cargo run --bin voucher-cli -- generate-keys --prefix "0"
 else
   echo "🔑 Schlüsseldatei unter '$KEY_FILE' gefunden."
 fi
@@ -23,6 +23,6 @@ echo "✍️  Suche nach Standards zum Signieren..."
 for standard_file in voucher_standards/*/standard.toml; do
   echo ""
   # Das Rust-CLI-Tool aufrufen, um jede gefundene Datei zu signieren.
-  cargo run --bin voucher-cli -- sign-standard --key "$KEY_FILE" "$standard_file"
+  cargo run --bin voucher-cli -- sign-standard --key "$KEY_FILE" --prefix "0" "$standard_file"
 done
 

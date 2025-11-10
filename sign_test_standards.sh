@@ -31,7 +31,7 @@ for standard_file in tests/test_data/standards/*.toml; do
   if [ -f "$standard_file" ]; then
     echo ""
     # Das Rust-CLI-Tool aufrufen, um jede gefundene Datei zu signieren.
-    cargo run --bin voucher-cli -- sign-standard --key "$KEY_FILE" "$standard_file"
+    cargo run --bin voucher-cli -- sign-standard --key "$KEY_FILE" --prefix "0" "$standard_file"
   fi
 done
 

@@ -126,25 +126,29 @@ Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_
   },
   "guarantor_requirements_description": "STRING", // Eine menschenlesbare Beschreibung der Bürgenanforderungen, übernommen vom Standard.
   "footnote": "STRING", // Ein optionaler Fußnotentext, der vom Standard vorgegeben wird.
-  "guarantor_signatures": [ // Ein Array von Signaturen der Bürgen.
+  "signatures": [ // Ein Array für alle Signaturen (inkl. Bürgen).
     { // Jede Signatur ist ein in sich geschlossenes, überprüfbares Objekt.
       "voucher_id": "STRING",         // Die ID des Gutscheins, zu dem diese Signatur gehört.
       "signature_id": "STRING",       // Eine eindeutige ID für dieses Signatur-Objekt, erzeugt durch Hashing der eigenen Metadaten.
       // Die Metadaten (alles außer signature_id und signature) werden kanonisiert und gehasht, um die signature_id zu erzeugen.
-      "guarantor_id": "STRING",         // Eindeutige ID des Bürgen (aus Public Key).
-      "first_name": "STRING",
-      "last_name": "STRING",
+      "signer_id": "STRING",          // Eindeutige ID des Unterzeichners (aus Public Key).
+
+      // --- Optionale Metadaten (primär für Bürgen/Guarantor-Rolle) ---
+      "first_name": "STRING, optional",
+      "last_name": "STRING, optional",
       "organization": "STRING, optional",
       "community": "STRING, optional",
       "address": { // Vollständiges Adressobjekt, optional.
       },
-      "gender": "STRING", // ISO 5218
+      "gender": "STRING, optional", // ISO 5218
       "email": "STRING, optional",
       "phone": "STRING, optional",
       "coordinates": "STRING, optional",
       "url": "STRING, optional",
-      "signature": "STRING",            // Die digitale Signatur des Bürgen, die die `signature_id` dieses Objekts unterzeichnet.
-      "signature_time": "YYYY-MM-DDTHH:MM:SS.SSSSSSZ" // Zeitpunkt der Bürgen-Signatur.
+
+      "signature": "STRING",            // Die digitale Signatur, die die `signature_id` dieses Objekts unterzeichnet.
+      "signature_time": "YYYY-MM-DDTHH:MM:SS.SSSSSSZ", // Zeitpunkt der Signatur.
+      "role": "STRING"                  // Definiert die Rolle oder den Zweck dieser Signatur (z.B. "guarantor", "notary").
     }
   ],
   "needed_guarantors": "INTEGER", // Die Anzahl der für diesen Gutschein benötigten Bürgen.
@@ -159,16 +163,6 @@ Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_
       "amount": "STRING",               // Der Betrag, der bei dieser Transaktion bewegt wurde.
       "sender_remaining_amount": "STRING",// Der Restbetrag beim Sender. Dieses Feld existiert nur bei "split"-Transaktionen.
       "sender_signature": "STRING"      // Digitale Signatur des Senders. Signiert ein Objekt, das aus prev_hash + sender_id + t_id besteht.
-    }
-  ],
-  "additional_signatures": [ // Ein Array für zusätzliche, optionale Signaturen, die an den Gutschein angehängt werden können.
-    {
-      "voucher_id": "STRING",           // Die ID des Gutscheins, zu dem diese Signatur gehört.
-      "signature_id": "STRING",       // Eine eindeutige ID für dieses Signatur-Objekt, erzeugt durch Hashing der eigenen Metadaten.
-      "signer_id": "STRING",            // Eindeutige ID des zusätzlichen Unterzeichners (aus Public Key).
-      "signature": "STRING",            // Die digitale Signatur, die die `signature_id` dieses Objekts unterzeichnet.
-      "signature_time": "YYYY-MM-DDTHH:MM:SS.SSSSSSZ", // Zeitpunkt der Signatur.
-      "description": "STRING"           // Eine Beschreibung, warum diese Signatur hinzugefügt wurde.
     }
   ]
 }

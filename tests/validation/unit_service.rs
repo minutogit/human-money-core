@@ -5,7 +5,7 @@
 
 use voucher_lib::error::ValidationError;
 use voucher_lib::models::voucher::{
-    AdditionalSignature, GuarantorSignature, NominalValue, Transaction, Voucher,
+    NominalValue, Transaction, Voucher, VoucherSignature,
 };
 use voucher_lib::models::voucher_standard_definition::VoucherStandardDefinition;
 use voucher_lib::services::voucher_validation;
@@ -34,55 +34,35 @@ fn create_base_voucher() -> Voucher {
 }
 
 // --- Test-Module ---
-
-/// Prüft die `validate_counts`-Logik.
+/// Prüft die `validate_transaction_count`-Logik.
 #[cfg(test)]
-mod counts_validation {
+mod transaction_count_validation {
     use super::*;
 
     #[test]
-    fn test_validate_counts_when_counts_are_valid_then_succeeds() {
+    fn test_validate_transaction_count_when_valid_then_succeeds() {
         let standard = load_test_standard("standard_strict_counts.toml");
         let mut voucher = create_base_voucher();
-        voucher.guarantor_signatures.push(GuarantorSignature::default()); // 1 ist erlaubt
+        // standard_strict_counts.toml [validation.counts] transactions = { min = 1, max = 2 }
+        // create_base_voucher() fügt 1 Transaktion hinzu.
 
         let count_rules = standard.validation.as_ref().unwrap().counts.as_ref().unwrap();
-        let result = voucher_validation::validate_counts(&voucher, count_rules);
+        let result = voucher_validation::validate_transaction_count(&voucher, count_rules);
 
         assert!(result.is_ok());
-    }
 
-    #[test]
-    fn test_validate_counts_when_guarantor_count_is_below_min_then_fails() {
-        let standard = load_test_standard("standard_strict_counts.toml");
-        let voucher = create_base_voucher(); // Hat 0 Bürgen, Standard erfordert min 1
+        // Füge eine zweite Transaktion hinzu (max = 2)
+        voucher.transactions.push(Transaction::default());
+        let result_at_max = voucher_validation::validate_transaction_count(&voucher, count_rules);
+        assert!(result_at_max.is_ok());
 
-        let count_rules = standard.validation.as_ref().unwrap().counts.as_ref().unwrap();
-        let result = voucher_validation::validate_counts(&voucher, count_rules);
-
+        // Füge eine dritte Transaktion hinzu (verletzt max = 2)
+        voucher.transactions.push(Transaction::default());
+        let result_above_max = voucher_validation::validate_transaction_count(&voucher, count_rules);
         assert!(matches!(
-            result.err().unwrap(),
+            result_above_max.err().unwrap(),
             ValidationError::CountOutOfBounds { field, min, max, found }
-            if field == "guarantor_signatures" && min == 1 && max == 1 && found == 0
-        ));
-    }
-
-    #[test]
-    fn test_validate_counts_when_additional_signatures_are_above_max_then_fails() {
-        let standard = load_test_standard("standard_strict_counts.toml");
-        let mut voucher = create_base_voucher();
-        voucher.guarantor_signatures.push(GuarantorSignature::default());
-        voucher
-            .additional_signatures
-            .push(AdditionalSignature::default()); // Hat 1, max ist 0
-
-        let count_rules = standard.validation.as_ref().unwrap().counts.as_ref().unwrap();
-        let result = voucher_validation::validate_counts(&voucher, count_rules);
-
-        assert!(matches!(
-            result.err().unwrap(),
-            ValidationError::CountOutOfBounds { field, min, max, found }
-            if field == "additional_signatures" && min == 0 && max == 0 && found == 1
+            if field == "transactions" && min == 1 && max == 2 && found == 3
         ));
     }
 }
@@ -168,39 +148,46 @@ mod field_group_rules_validation {
     use super::*;
     use serde_json::json;
 
-    fn create_test_guarantor(gender: &str) -> GuarantorSignature {
-        let mut sig = GuarantorSignature::default();
-        sig.gender = gender.to_string();
+    /// Erstellt eine Test-Signatur mit einem Geschlecht (für Gender-Tests).
+    fn create_test_signature_with_gender(gender: &str) -> VoucherSignature {
+        let sig = VoucherSignature {
+            gender: Some(gender.to_string()),
+            role: "other_role".to_string(), // Rolle ist für diesen Test irrelevant
+            ..Default::default()
+        };
         sig
     }
 
     #[test]
     fn test_validate_field_group_rules_when_counts_are_correct_then_succeeds() {
+        // Dieser Test prüft `gender`-Regeln
         let standard = load_test_standard("standard_field_group_rules.toml");
         let mut voucher = create_base_voucher();
-        // Entspricht exakt der Regel: 1x "A", 2x "B"
-        voucher.guarantor_signatures = vec![
-            create_test_guarantor("A"),
-            create_test_guarantor("B"),
-            create_test_guarantor("B"),
+        // Regel: 1x "A", 2x "B"
+        voucher.signatures = vec![
+            create_test_signature_with_gender("A"),
+            create_test_signature_with_gender("B"),
+            create_test_signature_with_gender("B"),
         ];
 
         let voucher_json = serde_json::to_value(&voucher).unwrap();
         let rules = standard.validation.as_ref().unwrap().field_group_rules.as_ref().unwrap();
         let result = voucher_validation::validate_field_group_rules(&voucher_json, rules);
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Validation failed unexpectedly: {:?}", result.err());
     }
 
     #[test]
     fn test_validate_field_group_rules_when_value_count_is_wrong_then_fails() {
+        // Dieser Test prüft `gender`-Regeln
         let standard = load_test_standard("standard_field_group_rules.toml");
         let mut voucher = create_base_voucher();
-        // Falsch: 2x "A", 1x "B". Gesamtzahl 3 ist aber korrekt.
-        voucher.guarantor_signatures = vec![
-            create_test_guarantor("A"),
-            create_test_guarantor("A"),
-            create_test_guarantor("B"),
+        // Regel: 1x "A", 2x "B".
+        // Setup: 2x "A", 1x "B". (Beide Regeln sind verletzt)
+        voucher.signatures = vec![
+            create_test_signature_with_gender("A"),
+            create_test_signature_with_gender("A"),
+            create_test_signature_with_gender("B"),
         ];
 
         let voucher_json = serde_json::to_value(&voucher).unwrap();
@@ -210,27 +197,44 @@ mod field_group_rules_validation {
         let err = result.err().unwrap();
         assert!(matches!(
             err,
-            ValidationError::FieldValueCountOutOfBounds { path, field, .. } if path == "guarantor_signatures" && field == "gender"
+            // HÄRTUNG: Die erste Regel, die fehlschlägt, ist `value = "A"` (erwartet 1, gefunden 2).
+            ValidationError::FieldValueCountOutOfBounds { path, field, value, min, max, found }
+            if path == "signatures" && field == "gender" && value == "A" && min == 1 && max == 1 && found == 2
         ));
+    }
+
+    /// Erstellt eine Test-Signatur mit einer bestimmten Rolle.
+    fn create_test_signature_with_role(role: &str) -> VoucherSignature {
+        let sig = VoucherSignature {
+            role: role.to_string(),
+            gender: Some("0".to_string()), // Geschlecht ist für diesen Test irrelevant
+            ..Default::default()
+        };
+        sig
     }
 
     #[test]
     fn test_validate_field_group_rules_when_other_values_exist_but_required_are_met_then_succeeds() {
-        let standard = load_test_standard("standard_field_group_rules.toml");
+        // Lade den Standard, der `field="role"` prüft.
+        let standard = load_test_standard("standard_conflicting_rules.toml");
         let mut voucher = create_base_voucher();
-        // Enthält 1x "A" und 2x "B", aber auch ein "C".
-        voucher.guarantor_signatures = vec![
-            create_test_guarantor("A"),
-            create_test_guarantor("B"),
-            create_test_guarantor("B"),
-            create_test_guarantor("C"),
+        // Regeln: "guarantor": { min = 3, max = 3 }, "A": { min = 2, max = 2 }, "B": { min = 2, max = 2 }
+        // Dieses Setup erfüllt alle Regeln.
+        voucher.signatures = vec![
+            create_test_signature_with_role("A"),
+            create_test_signature_with_role("A"),
+            create_test_signature_with_role("B"),
+            create_test_signature_with_role("B"),
+            create_test_signature_with_role("guarantor"),
+            create_test_signature_with_role("guarantor"),
+            create_test_signature_with_role("guarantor"),
         ];
 
         let voucher_json = serde_json::to_value(&voucher).unwrap();
         let rules = standard.validation.as_ref().unwrap().field_group_rules.as_ref().unwrap();
         let result = voucher_validation::validate_field_group_rules(&voucher_json, rules);
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Validation failed unexpectedly: {:?}", result.err());
     }
 
     #[test]
@@ -249,9 +253,10 @@ mod field_group_rules_validation {
 
     #[test]
     fn test_validate_field_group_rules_when_path_is_not_an_array_then_fails() {
-        let standard = load_test_standard("standard_field_group_rules.toml");
+        // Lade einen beliebigen Standard, der 'signatures' prüft.
+        let standard = load_test_standard("standard_conflicting_rules.toml");
         let voucher_json = json!({
-            "guarantor_signatures": "this should be an array"
+            "signatures": "this should be an array"
         });
 
         let rules = standard.validation.as_ref().unwrap().field_group_rules.as_ref().unwrap();
@@ -260,7 +265,7 @@ mod field_group_rules_validation {
         assert!(matches!(
             result.err().unwrap(),
             ValidationError::InvalidDataType { path, expected }
-            if path == "guarantor_signatures" && expected == "Array"
+            if path == "signatures" && expected == "Array"
         ));
     }
 }

@@ -83,8 +83,7 @@ impl Wallet {
                     voucher_standard_uuid: voucher.voucher_standard.uuid.clone(),
                     // Zähle Transaktionen exkl. der initialen "init" Transaktion.
                     transaction_count: (voucher.transactions.len() as u32).saturating_sub(1),
-                    guarantor_signatures_count: voucher.guarantor_signatures.len() as u32,
-                    additional_signatures_count: voucher.additional_signatures.len() as u32,
+                    signatures_count: voucher.signatures.len() as u32,
                     // Ein Gutschein gilt als besichert, wenn das `type_`-Feld im `collateral`-Objekt nicht leer ist.
                     has_collateral: !voucher.collateral.type_.is_empty(),
                     creator_first_name: voucher.creator.first_name.clone(),

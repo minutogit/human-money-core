@@ -151,10 +151,8 @@ pub struct VoucherSummary {
     pub voucher_standard_uuid: String,
     /// Die Anzahl der Transaktionen, exklusive der initialen `init`-Transaktion.
     pub transaction_count: u32,
-    /// Die Anzahl der vorhandenen Bürgen-Signaturen.
-    pub guarantor_signatures_count: u32,
-    /// Die Anzahl der vorhandenen zusätzlichen, optionalen Signaturen.
-    pub additional_signatures_count: u32,
+    /// Die Gesamtzahl der vorhandenen Signaturen (inkl. Bürgen).
+    pub signatures_count: u32,
     /// Ein Flag, das anzeigt, ob der Gutschein besichert ist.
     pub has_collateral: bool,
     /// Der Vorname des ursprünglichen Erstellers.

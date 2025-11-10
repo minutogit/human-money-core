@@ -215,10 +215,9 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
         },
         guarantor_requirements_description: "".to_string(),
         footnote: "".to_string(),
-        guarantor_signatures: vec![],
         needed_guarantors: 0,
         transactions: vec![], // Wird im nächsten Schritt gefüllt
-        additional_signatures: vec![],
+        signatures: vec![],
     };
 
     let mut voucher = voucher;

@@ -249,7 +249,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
 
     let local_id = service_creator.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
     let details_before = service_creator.get_voucher_details(&local_id).unwrap();
-    assert_eq!(details_before.voucher.guarantor_signatures.len(), 0);
+    assert_eq!(details_before.voucher.signatures.len(), 0);
     assert!(matches!(
         details_before.status, // Der Gutschein sollte Active sein
         VoucherStatus::Active
@@ -289,9 +289,9 @@ fn test_attach_signature_is_transactional_on_save_failure() {
 
     let details_mid = service_creator.get_voucher_details(&local_id).unwrap();
         assert_eq!(
-        details_mid.voucher.additional_signatures.len(),
+        details_mid.voucher.signatures.len(),
         1,
-        "Should have 1 additional signature after first attachment"
+        "Should have 1 signature after first attachment"
     );
     assert!(matches!(
         details_mid.status,
@@ -330,9 +330,9 @@ fn test_attach_signature_is_transactional_on_save_failure() {
 
     let details_after = service_creator.get_voucher_details(&local_id).unwrap();
     assert_eq!(
-        details_after.voucher.additional_signatures.len(),
+        details_after.voucher.signatures.len(),
         1,
-        "Additional signature count should remain 1 after failed attachment"
+        "Signature count should remain 1 after failed attachment"
     );
     assert!(
         matches!(details_after.status, VoucherStatus::Active), // Muss Active bleiben

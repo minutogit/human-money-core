@@ -1,3 +1,4 @@
+# tests/test_data/standards/standard_conflicting_rules.toml
 # Test-Standard, dessen Regeln logisch miteinander in Konflikt stehen.
 
 [metadata]
@@ -22,15 +23,18 @@ description = ""
 
 [validation]
 # Regel 1: Es müssen exakt 3 Bürgen sein.
-[validation.counts]
-guarantor_signatures = { min = 3, max = 3 }
+# Veraltete Zählung entfernt.
 
-# Regel 2: Es müssen 2x "A" und 2x "B" sein (Summe 4).
-# Dies steht im direkten Widerspruch zur counts-Regel.
+# NEU: Regeln werden auf `signatures` mit `field = "role"` geprüft.
+# Diese Regeln werden von `tests/validation/unit_service.rs`
+# und `tests/validation/business_rules.rs` verwendet.
 [validation.field_group_rules]
-[validation.field_group_rules.guarantor_signatures]
-field = "gender"
+[validation.field_group_rules.signatures]
+field = "role"
 value_counts = [
+    # Erfordert exakt 3 Bürgen (für den business_rules-Test)
+    { value = "guarantor", min = 3, max = 3 },
+    # Erfordert exakt 2x "A" und 2x "B" (für den unit_service-Test)
     { value = "A", min = 2, max = 2 },
     { value = "B", min = 2, max = 2 },
 ]

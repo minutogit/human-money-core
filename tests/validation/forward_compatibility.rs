@@ -39,8 +39,8 @@ mod compatibility_scenarios {
         let sig_data2 = voucher_lib::test_utils::create_guarantor_signature_data(g2, "2", &valid_voucher.voucher_id);
         let signed_sig1 = voucher_lib::services::signature_manager::complete_and_sign_detached_signature(sig_data1, &valid_voucher.voucher_id, g1).unwrap();
         let signed_sig2 = voucher_lib::services::signature_manager::complete_and_sign_detached_signature(sig_data2, &valid_voucher.voucher_id, g2).unwrap();
-        if let voucher_lib::models::signature::DetachedSignature::Guarantor(s) = signed_sig1 { valid_voucher.guarantor_signatures.push(s); }
-        if let voucher_lib::models::signature::DetachedSignature::Guarantor(s) = signed_sig2 { valid_voucher.guarantor_signatures.push(s); }
+        let voucher_lib::models::signature::DetachedSignature::Signature(s1) = signed_sig1; valid_voucher.signatures.push(s1);
+        let voucher_lib::models::signature::DetachedSignature::Signature(s2) = signed_sig2; valid_voucher.signatures.push(s2);
         assert!(validate_voucher_against_standard(&valid_voucher, minuto_standard).is_ok());
 
         let mut voucher_as_value: serde_json::Value = serde_json::to_value(&valid_voucher).unwrap();
@@ -75,8 +75,8 @@ mod compatibility_scenarios {
         let sig_data2 = voucher_lib::test_utils::create_guarantor_signature_data(g2, "2", &voucher.voucher_id);
         let signed_sig1 = voucher_lib::services::signature_manager::complete_and_sign_detached_signature(sig_data1, &voucher.voucher_id, g1).unwrap();
         let signed_sig2 = voucher_lib::services::signature_manager::complete_and_sign_detached_signature(sig_data2, &voucher.voucher_id, g2).unwrap();
-        if let voucher_lib::models::signature::DetachedSignature::Guarantor(s) = signed_sig1 { voucher.guarantor_signatures.push(s); }
-        if let voucher_lib::models::signature::DetachedSignature::Guarantor(s) = signed_sig2 { voucher.guarantor_signatures.push(s); }
+        let voucher_lib::models::signature::DetachedSignature::Signature(s1) = signed_sig1; voucher.signatures.push(s1);
+        let voucher_lib::models::signature::DetachedSignature::Signature(s2) = signed_sig2; voucher.signatures.push(s2);
 
         let mut voucher_as_value: serde_json::Value = serde_json::to_value(&voucher).unwrap();
         let transactions = voucher_as_value.get_mut("transactions").unwrap().as_array_mut().unwrap();

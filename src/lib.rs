@@ -18,8 +18,8 @@ pub mod services;
 
 // Modelle
 pub use models::voucher::{
-    Address, AdditionalSignature, Collateral, Creator, GuarantorSignature, NominalValue, Transaction,
-    Voucher, VoucherStandard,
+    Address, Collateral, Creator, NominalValue, Transaction,
+    Voucher, VoucherSignature, VoucherStandard,
 };
 pub use models::voucher_standard_definition::{
     VoucherStandardDefinition,
