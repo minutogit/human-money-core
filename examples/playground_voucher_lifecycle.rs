@@ -159,12 +159,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // KORREKTUR: Suchen Sie den Saldo im Vec<AggregatedBalance> anhand der Einheit.
     let creator_balance_str = balance_creator
         .iter()
-        .find(|b| b.unit == "Min")
+        .find(|b| b.unit == "Minuto")
         .map(|b| b.total_amount.as_str())
         .unwrap_or("0");
     let recipient_balance_str = balance_recipient
         .iter()
-        .find(|b| b.unit == "Min")
+        .find(|b| b.unit == "Minuto")
         .map(|b| b.total_amount.as_str())
         .unwrap_or("0");
     assert_eq!(creator_balance_str, "35");
@@ -201,10 +201,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   -> Kontostand Charlie (neuer Empfänger): {:?}", balance_charlie);
 
     // KORREKTUR: Suchen Sie den Saldo im Vec<AggregatedBalance> anhand der Einheit.
-    let recipient_has_balance = balance_recipient_after_send.iter().any(|b| b.unit == "Min");
+    let recipient_has_balance = balance_recipient_after_send.iter().any(|b| b.unit == "Minuto");
     let charlie_balance_str = balance_charlie
         .iter()
-        .find(|b| b.unit == "Min")
+        .find(|b| b.unit == "Minuto")
         .map(|b| b.total_amount.as_str())
         .unwrap_or("0");
     assert!(!recipient_has_balance, "Nach einem vollen Transfer sollte der Sender keinen Minuto-Saldo mehr haben.");

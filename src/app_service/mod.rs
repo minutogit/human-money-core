@@ -52,13 +52,9 @@
 //! println!("Angemeldet als: {}", user_id);
 //! ```
 
-use crate::error::{ValidationError, VoucherCoreError};
 use crate::models::profile::UserIdentity;
-use crate::models::voucher::Voucher;
-use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::services::{bundle_processor, crypto_utils};
 use crate::storage::file_storage::FileStorage;
-use crate::wallet::instance::{ValidationFailureReason, VoucherStatus};
 use crate::wallet::Wallet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -163,59 +159,10 @@ impl AppService {
         }
         Ok(())
     }
-
-    /// Die zentrale Logik zur Bestimmung des Gutschein-Status.
-    /// Diese Methode wird von mehreren Handlern (`command_handler`, `signature_handler`)
-    /// verwendet und verbleibt daher hier.
-    fn determine_voucher_status(
-        &self,
-        voucher: &Voucher,
-        standard: &VoucherStandardDefinition,
-    ) -> Result<VoucherStatus, String> {
-        match crate::services::voucher_validation::validate_voucher_against_standard(
-            voucher, standard,
-        ) {
-            Ok(_) => Ok(VoucherStatus::Active),
-            Err(e) => {
-                if let VoucherCoreError::Validation(validation_error) = e {
-                    let reason = match validation_error {
-                        // NEU: Prüft auf fehlende Bürgen über die FieldGroupRule
-                        ValidationError::FieldValueCountOutOfBounds {
-                            ref path,
-                            ref field,
-                            ref value,
-                            min,
-                            max,
-                            found,
-                        } if path == "signatures" && field == "role" && value == "guarantor" => Some(
-                            ValidationFailureReason::GuarantorCountLow { required: min, max, current: found }
-                        ),
-                        ValidationError::MissingRequiredSignature {
-                            ref role
-                        } => Some(
-                            ValidationFailureReason::RequiredSignatureMissing {
-                                role_description: role.clone(),
-                            },
-                        ),
-                        _ => None,
-                    };
-
-                    if let Some(r) = reason{
-                        Ok(VoucherStatus::Incomplete { reasons: vec![r] })
-                    } else {
-                        Err(validation_error.to_string())
-                    }
-                } else {
-                    Err(e.to_string())
-                }
-            }
-        }
-    }
 }
 
 // --- Interne Hilfsmethoden für Tests ---
-// KORREKTUR: Geändert von `#[cfg(test)]` zu `#[cfg(debug_assertions)]`,
-// damit diese Funktionen für Integrationstests (z.B. in `tests/wallet_api/`)
+// #[cfg(debug_assertions)]`, damit diese Funktionen für Integrationstests (z.B. in `tests/wallet_api/`)
 // sichtbar sind, aber nicht in Release-Builds.
 #[cfg(debug_assertions)]
 impl AppService {

@@ -22,7 +22,7 @@ use voucher_lib::{
         create_voucher_for_manipulation, debug_open_container, generate_signed_standard_toml,
         setup_in_memory_wallet, ACTORS, MINUTO_STANDARD, SILVER_STANDARD,
     },
-    UserIdentity, ValidationFailureReason, VoucherCoreError, VoucherInstance, VoucherStatus, Wallet,
+    UserIdentity, VoucherCoreError, VoucherInstance, VoucherStatus, Wallet,
 };
 
 /// Hilfsfunktion, um einen Standard-Gutschein für Tests zu erstellen und
@@ -478,10 +478,7 @@ fn test_full_guarantor_workflow_via_app_service() {
     let g2_id = service_g2.get_user_id().unwrap();
 
     // --- 2. Schritt 1: Erstellung des unvollständigen Gutscheins ---
-    // KORREKTUR: `create_new_voucher` erzwingt sofortige Gültigkeit (wie in Panic 2 gesehen).
-    // Wir müssen einen (wissentlich) unvollständigen Gutschein manuell
-    // erstellen und in das Wallet des AppService einfügen, um den "Incomplete"-Workflow zu testen.
-    let (minuto_standard, minuto_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
+    // RUFE NUN DIE KORRIGIERTE API-FUNKTION AUF
     let voucher_data = NewVoucherData {
         creator: Creator {
             id: creator_id.clone(),
@@ -494,29 +491,18 @@ fn test_full_guarantor_workflow_via_app_service() {
         validity_duration: Some("P3Y".to_string()),
         ..Default::default()
     };
-    let incomplete_voucher = create_voucher_for_manipulation(
-        voucher_data,
-        minuto_standard,
-        minuto_hash,
-        &creator.signing_key,
-        "en",
-    );
 
-    let local_id = {
-        let (wallet, identity) = service_creator.get_unlocked_mut_for_test();
-        let local_id = Wallet::calculate_local_instance_id(&incomplete_voucher, &identity.user_id).unwrap();
-        wallet
-            .voucher_store
-            .vouchers
-            .insert(local_id.clone(), VoucherInstance {
-                voucher: incomplete_voucher.clone(),
-                status: VoucherStatus::Incomplete {
-                    reasons: vec![ValidationFailureReason::RequiredSignatureMissing { role_description: "Initial check pending".to_string() }]
-                },
-                local_instance_id: local_id.clone(),
-            });
-        local_id
-    };
+    // Diese Funktion sollte dank des Patches in `command_handler.rs` jetzt
+    // einen `Incomplete` Gutschein korrekt erstellen, anstatt zu paniken.
+    let _created_voucher = service_creator.create_new_voucher(
+        &minuto_standard_toml,
+        "en",
+        voucher_data,
+        password
+    ).expect("create_new_voucher should now succeed for incomplete vouchers");
+
+    let summary = service_creator.get_voucher_summaries(None, None).expect("Failed to get summaries").pop().expect("Wallet should contain one voucher");
+    let local_id = summary.local_instance_id;
 
     // --- 3. Assertion 1: Status ist `Incomplete` ---
     let details_before = service_creator

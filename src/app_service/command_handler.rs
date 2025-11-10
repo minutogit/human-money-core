@@ -7,6 +7,10 @@ use super::{AppState, AppService};
 use crate::archive::VoucherArchive;
 use crate::models::conflict::ResolutionEndorsement;
 use crate::models::voucher::{Voucher};
+use crate::services::voucher_validation;
+use crate::{ValidationFailureReason, VoucherCoreError};
+use crate::error::ValidationError; // Import the specific error type for matching
+use crate::wallet::instance::VoucherStatus;
 use crate::services::{standard_manager, voucher_manager::NewVoucherData};
 use crate::wallet::{CreateBundleResult, MultiTransferRequest, ProcessBundleResult};
 use std::collections::HashMap;
@@ -51,10 +55,42 @@ impl AppService {
                         ) {
                             Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity }),
                             Ok(new_voucher) => {
-                                match self.determine_voucher_status(&new_voucher, &verified_standard)
-                                {
-                                    Err(e) => (Err(e), AppState::Unlocked { storage, wallet, identity }),
-                                    Ok(initial_status) => {
+                                // --- START REPLACED LOGIC ---
+                                // Ersetze den Aufruf an das fehlerhafte `determine_voucher_status`.
+                                // Wir validieren hier inline und behandeln "Incomplete"-Fehler korrekt.
+                                let validation_result = voucher_validation::validate_voucher_against_standard(&new_voucher, &verified_standard);
+
+                                let (operation_result, initial_status) = match validation_result {
+                                    Ok(_) => {
+                                        // Der Gutschein ist (unerwartet) sofort gültig.
+                                        (Ok(new_voucher.clone()), VoucherStatus::Active)
+                                    },
+
+                                    //--- Selektive Fehlerbehandlung für "Incomplete" ---
+                                    // Fall 1: Ein *erwarteter* Validierungsfehler, der "Incomplete" bedeutet
+                                    // (z.B. fehlende Bürgen-Signaturen, die durch 'gender' oder 'role' Regeln geprüft werden).
+                                    Err(VoucherCoreError::Validation(ref validation_err @ ValidationError::FieldValueCountOutOfBounds { ref path, ref field, .. }))
+                                        if path == "signatures" && (field == "role" || field == "gender") =>
+                                    {
+                                        let reasons = vec![ValidationFailureReason::RequiredSignatureMissing { role_description: validation_err.to_string() }];
+                                        (Ok(new_voucher.clone()), VoucherStatus::Incomplete { reasons })
+                                    },
+                                    Err(VoucherCoreError::Validation(validation_err @ ValidationError::MissingRequiredSignature { .. })) =>
+                                    {
+                                        let reasons = vec![ValidationFailureReason::RequiredSignatureMissing { role_description: validation_err.to_string() }];
+                                        (Ok(new_voucher.clone()), VoucherStatus::Incomplete { reasons })
+                                    },
+
+                                    // Fall 2: Jeder *andere* Fehler (einschließlich anderer ValidationErrors
+                                    // wie `ValidityDurationTooLong`) ist ein fataler Erstellungsfehler.
+                                    Err(fatal_error) => {
+                                        (Err(fatal_error.to_string()), VoucherStatus::Quarantined { reason: fatal_error.to_string() })
+                                    }
+                                };
+                                
+                                match operation_result {
+                                    Err(e) => (Err(e), AppState::Unlocked { storage, wallet, identity }), // Fataler Fehler, brich ab.
+                                    Ok(voucher_to_return) => {
                                         // TRANSANKTIONALER ANSATZ:
                                         // 1. Erstelle eine temporäre Kopie des Wallets für die Änderungen.
                                         let mut temp_wallet = wallet.clone();
@@ -69,7 +105,7 @@ impl AppService {
                                                 match temp_wallet.save(&mut storage, &identity, password) {
                                                     Ok(_) => (
                                                         // 4a. Erfolg: Gib die modifizierte Kopie als neuen Zustand zurück.
-                                                        Ok(new_voucher),
+                                                        Ok(voucher_to_return),
                                                         AppState::Unlocked { storage, wallet: temp_wallet, identity },
                                                     ),
                                                     Err(e) => (
