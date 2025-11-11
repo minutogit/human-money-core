@@ -21,7 +21,7 @@
 
 use voucher_lib::{
     // Structs from specific modules
-    models::voucher::{Creator, NominalValue},
+    models::voucher::{NominalValue},
     services::voucher_manager::{create_transaction, create_voucher, VoucherManagerError, get_spendable_balance},
     services::voucher_validation::{validate_voucher_against_standard},
     // Structs/Enums from the crate root (or re-exported there)
@@ -46,9 +46,9 @@ fn test_chained_transaction_math_and_scaling() {
     let bob = &ACTORS.bob;
 
     // Erstelle einen initialen Gutschein für Alice mit dem Wert 100
-    let alice_creator_info = Creator { id: alice.user_id.clone(), ..Default::default() };
+    let alice_creator_info = voucher_lib::models::profile::PublicProfile { id: Some(alice.user_id.clone()), ..Default::default() };
     let voucher_data = NewVoucherData {
-        creator: alice_creator_info,
+        creator_profile: alice_creator_info,
         nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
         ..Default::default()
     };
@@ -234,9 +234,9 @@ fn test_transaction_fails_on_excess_precision() {
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
 
-    let alice_creator_info = Creator { id: alice.user_id.clone(), ..Default::default() };
+    let alice_creator_info = voucher_lib::models::profile::PublicProfile { id: Some(alice.user_id.clone()), ..Default::default() };
     let voucher_data = NewVoucherData {
-        creator: alice_creator_info,
+        creator_profile: alice_creator_info,
         nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
         ..Default::default()
     };

@@ -17,8 +17,8 @@ use tempfile::tempdir;
 use voucher_lib::{
     app_service::AppService,
     models::{
-        voucher::{Creator, NominalValue},
-        voucher_standard_definition::VoucherStandardDefinition,
+        voucher::{NominalValue},
+        voucher_standard_definition::VoucherStandardDefinition, profile::PublicProfile,
     },
     services::voucher_manager::NewVoucherData,
     storage::{AuthMethod},
@@ -78,8 +78,8 @@ fn api_app_service_full_lifecycle() {
                     amount: "100".to_string(),
                     ..Default::default()
                 },
-                creator: Creator {
-                    id: id_alice.clone(),
+                creator_profile: PublicProfile {
+                    id: Some(id_alice.clone()),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -648,8 +648,8 @@ fn api_wallet_create_voucher_and_get_id() {
     assert_eq!(wallet.get_user_id(), issuer.identity.user_id);
 
     let new_voucher_data = NewVoucherData {
-        creator: Creator {
-            id: issuer.identity.user_id.clone(),
+        creator_profile: PublicProfile {
+            id: Some(issuer.identity.user_id.clone()),
             ..Default::default()
         },
         nominal_value: NominalValue {
@@ -697,8 +697,8 @@ fn api_wallet_query_total_balance() {
     let mut add_voucher =
         |amount: &str, status: VoucherStatus, standard: &VoucherStandardDefinition| {
             let new_voucher_data = NewVoucherData {
-                creator: Creator {
-                    id: issuer.identity.user_id.clone(),
+                creator_profile: PublicProfile {
+                    id: Some(issuer.identity.user_id.clone()),
                     ..Default::default()
                 },
                 nominal_value: NominalValue {
@@ -783,8 +783,8 @@ fn api_wallet_rejects_invalid_bundle() {
     ];
 
     let voucher_data = NewVoucherData {
-        creator: Creator {
-            id: alice.identity.user_id.clone(),
+        creator_profile: PublicProfile {
+            id: Some(alice.identity.user_id.clone()),
             ..Default::default()
         },
         nominal_value: NominalValue {
@@ -882,8 +882,8 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
                     amount: "100".to_string(),
                     ..Default::default()
                 },
-                creator: Creator {
-                    id: id_alice.clone(),
+                creator_profile: PublicProfile {
+                    id: Some(id_alice.clone()),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -906,7 +906,7 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
     assert_eq!(details.status, VoucherStatus::Active, "Voucher should be active");
     assert_eq!(details.voucher.voucher_id, created_voucher.voucher_id, "Voucher ID should match");
     assert_eq!(details.voucher.nominal_value.amount, "100", "Nominal value should match");
-    assert_eq!(details.voucher.creator.id, id_alice, "Creator ID should match");
+    assert_eq!(details.voucher.creator_profile.id.as_ref().unwrap(), &id_alice, "Creator ID should match");
     assert!(!details.voucher.transactions.is_empty(), "Voucher should have at least one transaction");
     assert_eq!(details.voucher.transactions[0].t_type, "init", "First transaction should be init");
 }

@@ -14,10 +14,10 @@ use std::path::PathBuf;
 // HINWEIS: Alle `voucher_lib` Imports wurden zu `crate` geändert.
 use crate::models::{
     conflict::{CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, ProofStore},
-    profile::{BundleMetadataStore, UserProfile, VoucherStore},
+    profile::{BundleMetadataStore, PublicProfile, UserProfile, VoucherStore},
     signature::DetachedSignature,
     voucher::{
-        Address, Collateral, Creator, NominalValue, Transaction, VoucherSignature,
+        Address, Collateral, NominalValue, Transaction, VoucherSignature,
     },
     voucher_standard_definition::{SignatureBlock, VoucherStandardDefinition},
 };
@@ -331,7 +331,10 @@ pub fn setup_voucher_with_one_tx() -> (
     let recipient = &crate::test_utils::ACTORS.bob.identity;
 
     let voucher_data = NewVoucherData {
-        creator: Creator { id: creator.user_id.clone(), ..Default::default() },
+        creator_profile: PublicProfile { 
+            id: Some(creator.user_id.clone()), 
+            ..Default::default() 
+        },
         nominal_value: NominalValue { amount: "100.0000".to_string(), ..Default::default() },
         validity_duration: Some("P4Y".to_string()),
         ..Default::default()
@@ -424,11 +427,11 @@ pub fn add_voucher_to_wallet(
     standard: &VoucherStandardDefinition,
     with_valid_guarantors: bool,
 ) -> Result<String, VoucherCoreError> {
-    let creator_info = Creator {
-        id: identity.user_id.clone(),
-        first_name: "Test".to_string(),
-        last_name: "User".to_string(),
-        address: Address::default(),
+    let creator_info = PublicProfile {
+        id: Some(identity.user_id.clone()),
+        first_name: Some("Test".to_string()),
+        last_name: Some("User".to_string()),
+        address: Some(Address::default()),
         ..Default::default()
     };
 
@@ -438,7 +441,7 @@ pub fn add_voucher_to_wallet(
     };
 
     let new_voucher_data = NewVoucherData {
-        creator: creator_info,
+        creator_profile: creator_info,
         nominal_value: nominal_value_info,
         validity_duration: Some("P4Y".to_string()),
         ..Default::default()
@@ -456,20 +459,32 @@ pub fn add_voucher_to_wallet(
         let sig_data2 =
             create_guarantor_signature_data(&crate::test_utils::ACTORS.guarantor2.identity, "2", &voucher.voucher_id);
 
+        // --- KORREKTUR (Fix E0505): ---
+        // 1. Extrahiere die 'details' durch Borgen und sofortiges Klonen.
+        //    Dadurch wird der Borrow sofort beendet.
+        let details1 = match &sig_data1 {
+            DetachedSignature::Signature(s) => s.details.clone(),
+        };
+        let details2 = match &sig_data2 {
+            DetachedSignature::Signature(s) => s.details.clone(),
+        };
+
+        // 2. Jetzt können 'sig_data1' und 'sig_data2' sicher verschoben (moved) werden,
+        //    da keine aktiven Borrows mehr existieren.
         let signed_sig1 = signature_manager::complete_and_sign_detached_signature(
-            sig_data1,
-            &voucher.voucher_id,
+            sig_data1, // MOVE
             &crate::test_utils::ACTORS.guarantor1.identity,
-            None, // No public profile details in test
+            details1, // Verwende die geklonten Details
+            &voucher.voucher_id, // Pass the voucher_id
         )?;
         let signed_sig2 = signature_manager::complete_and_sign_detached_signature(
-            sig_data2,
-            &voucher.voucher_id,
+            sig_data2, // MOVE
             &crate::test_utils::ACTORS.guarantor2.identity,
-            None, // No public profile details in test
+            details2, // Verwende die geklonten Details
+            &voucher.voucher_id, // Pass the voucher_id
         )?;
 
-        // HINWEIS: Die 'if let' sind jetzt redundant, da DetachedSignature nur eine Variante hat.
+        // HINWEIS: Die 'if let' sind jetzt redundant, da DetachedSignature nur eine Variante hat (oder wir matchen oben).
         // Wir verwenden `let` und ignorieren die Warnung oder strukturieren um.
         let DetachedSignature::Signature(s1) = signed_sig1;
         let DetachedSignature::Signature(s2) = signed_sig2;
@@ -524,11 +539,11 @@ pub fn setup_service_with_profile(
 pub fn create_guarantor_signature_data(
     guarantor_identity: &UserIdentity,
     gender: &str,
-    voucher_id: &str,
+    voucher_id: &str, // Add voucher_id parameter
 ) -> DetachedSignature {
     let data = VoucherSignature {
+        voucher_id: voucher_id.to_string(), // Use the provided voucher_id
         signer_id: guarantor_identity.user_id.clone(),
-        voucher_id: voucher_id.to_string(),
         signature_id: String::new(),
         signature: String::new(),
         signature_time: String::new(),
@@ -549,11 +564,28 @@ pub fn create_guarantor_signature_data(
 #[allow(dead_code)]
 pub fn create_additional_signature_data(
     signer_identity: &UserIdentity,
-    voucher_id: &str,
     description: &str,
 ) -> DetachedSignature {
     let data = crate::models::voucher::VoucherSignature {
-        voucher_id: voucher_id.to_string(),
+        signature_id: String::new(),
+        signer_id: signer_identity.user_id.clone(),
+        signature: String::new(),
+        signature_time: String::new(),
+        role: description.to_string(), // description wird zu role
+        ..Default::default() // Stellt sicher, dass alle optionalen Felder (firstName, etc.) None sind
+    };
+    DetachedSignature::Signature(data)
+}
+
+/// Creates a signature with proper voucher_id for testing purposes
+#[allow(dead_code)]
+pub fn create_additional_signature_data_with_voucher_id(
+    signer_identity: &UserIdentity,
+    description: &str,
+    voucher_id: &str,
+) -> DetachedSignature {
+    let data = crate::models::voucher::VoucherSignature {
+        voucher_id: voucher_id.to_string(), // Add the voucher_id
         signature_id: String::new(),
         signer_id: signer_identity.user_id.clone(),
         signature: String::new(),
@@ -577,7 +609,7 @@ pub fn debug_open_container(
 }
 
 #[allow(dead_code)]
-pub fn create_minuto_voucher_data(creator: Creator) -> NewVoucherData {
+pub fn create_minuto_voucher_data(creator_profile: PublicProfile) -> NewVoucherData {
     NewVoucherData {
         validity_duration: Some("P4Y".to_string()),
         non_redeemable_test_voucher: true,
@@ -595,7 +627,7 @@ pub fn create_minuto_voucher_data(creator: Creator) -> NewVoucherData {
             description: "".to_string(),
             redeem_condition: "".to_string(),
         },
-        creator,
+        creator_profile,
     }
 }
 
@@ -612,7 +644,7 @@ pub fn create_voucher_for_manipulation(
     let duration_str = data.validity_duration.as_deref().unwrap_or_else(|| {
         panic!(
             "Test voucher creation requires a validity_duration. Voucher details: creator='{}', amount='{}'",
-            data.creator.id, data.nominal_value.amount
+            data.creator_profile.id.as_ref().unwrap_or(&"N/A".to_string()), data.nominal_value.amount
         )
     });
     let mut valid_until_dt = crate::services::voucher_manager::add_iso8601_duration(creation_dt.into(), duration_str)
@@ -675,41 +707,62 @@ pub fn create_voucher_for_manipulation(
         non_redeemable_test_voucher: false, 
         nominal_value: final_nominal_value, 
         collateral: final_collateral,
-        creator: data.creator, 
+        creator_profile: data.creator_profile, 
         transactions: vec![], 
         signatures: vec![],
     };
 
-    let mut voucher_to_hash = voucher.clone();
-    voucher_to_hash.creator.signature = "".to_string(); voucher_to_hash.voucher_id = "".to_string();
-    voucher_to_hash.transactions.clear();
-    voucher_to_hash.signatures.clear(); // Korrigiert E0609
-    let voucher_json = to_canonical_json(&voucher_to_hash).unwrap();
+    // Logik von create_voucher (Schritt 3) replizieren:
+    // 1. Hash des Gutscheins *ohne* ID und Signaturen
+    let voucher_json = to_canonical_json(&voucher).unwrap();
     let voucher_hash = crypto_utils::get_hash(voucher_json);
     voucher.voucher_id = voucher_hash.clone();
-    let signature = crypto_utils::sign_ed25519(signing_key, voucher_hash.as_bytes());
-    voucher.creator.signature = bs58::encode(signature.to_bytes()).into_string();
 
+    // 2. Ersteller-Signatur (role: "creator") erstellen
+    let mut creator_sig_obj = VoucherSignature {
+        voucher_id: voucher_hash.clone(), // Add the voucher_id
+        signature_id: "".to_string(),
+        signer_id: voucher.creator_profile.id.as_ref().unwrap().clone(),
+        signature: "".to_string(), // Placeholder
+        signature_time: creation_date_str.clone(),
+        role: "creator".to_string(),
+        details: None,
+    };
+    // Calculate signature_id from metadata (excluding signature_id and signature fields)
+    let mut sig_to_hash = creator_sig_obj.clone();
+    sig_to_hash.signature_id = "".to_string();
+    sig_to_hash.signature = "".to_string();
+    creator_sig_obj.signature_id = get_hash(to_canonical_json(&sig_to_hash).unwrap());
+    // Create the digital signature by signing the signature_id
+    let digital_signature = crypto_utils::sign_ed25519(signing_key, creator_sig_obj.signature_id.as_bytes());
+    creator_sig_obj.signature = bs58::encode(digital_signature.to_bytes()).into_string();
+    
+    // 3. Signatur dem Array hinzufügen
+    voucher.signatures.push(creator_sig_obj);
+
+    // 4. Init-Transaktion erstellen
     let prev_hash = crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher.voucher_nonce));
-    let init_tx = Transaction { t_id: "".to_string(), prev_hash, t_type: "init".to_string(), t_time: creation_date_str, sender_id: voucher.creator.id.clone(), recipient_id: voucher.creator.id.clone(), amount: voucher.nominal_value.amount.clone(), sender_remaining_amount: None, sender_signature: "".to_string() };
+    let init_tx = Transaction { t_id: "".to_string(), prev_hash, t_type: "init".to_string(), t_time: creation_date_str, sender_id: voucher.creator_profile.id.as_ref().unwrap().clone(), recipient_id: voucher.creator_profile.id.as_ref().unwrap().clone(), amount: voucher.nominal_value.amount.clone(), sender_remaining_amount: None, sender_signature: "".to_string() };
     voucher.transactions.push(resign_transaction(init_tx, signing_key));
     voucher
 }
 
 #[allow(dead_code)]
 pub fn create_guarantor_signature_with_time(
-    voucher_id: &str,
     guarantor_identity: &UserIdentity,
     guarantor_first_name: &str,
-    guarantor_gender: &str,
+    role: &str, // KORREKTUR: Dieser Parameter wurde fälschlicherweise als 'gender' behandelt
+    guarantor_gender: &str, // HINZUGEFÜGT: Der 'gender'-Parameter wird jetzt separat erwartet
     signature_time: &str,
 ) -> VoucherSignature {
+    // NOTE: This function is not provided with a voucher, so voucher_id remains empty
+    // It should not be used in validation contexts where voucher_id is required
     let mut signature_data = VoucherSignature {
-        voucher_id: voucher_id.to_string(),
+        voucher_id: String::new(), // Empty initially, will be filled in during signing
         signature_id: "".to_string(),
         signer_id: guarantor_identity.user_id.clone(),
         signature_time: signature_time.to_string(),
-        role: "guarantor".to_string(),
+        role: role.to_string(), // KORREKTUR: Verwende die übergebene Rolle
         details: Some(crate::models::profile::PublicProfile {
             id: None,
             first_name: Some(guarantor_first_name.to_string()),
@@ -735,31 +788,57 @@ pub fn create_guarantor_signature(
     voucher: &Voucher,
     guarantor_identity: &UserIdentity,
     guarantor_first_name: &str,
-    guarantor_gender: &str,
+    role: &str, // KORREKTUR: Fehlender Parameter 'role'
+    guarantor_gender: &str, // KORREKTUR: 'gender' ist jetzt der 4. Parameter
 ) -> VoucherSignature {
     let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date).unwrap();
     let signature_time = (creation_dt + chrono::Duration::days(1)).to_rfc3339();
-    create_guarantor_signature_with_time(
-        &voucher.voucher_id,
-        guarantor_identity,
-        guarantor_first_name,
-        guarantor_gender,
-        &signature_time,
-    )
+    let mut signature_data = VoucherSignature {
+        voucher_id: voucher.voucher_id.clone(), // Use the voucher's ID
+        signature_id: "".to_string(),
+        signer_id: guarantor_identity.user_id.clone(),
+        signature_time: signature_time.to_string(),
+        role: role.to_string(), // KORREKTUR: Verwende die übergebene Rolle
+        details: Some(crate::models::profile::PublicProfile {
+            id: None,
+            first_name: Some(guarantor_first_name.to_string()),
+            last_name: Some("Guarantor".to_string()),
+            gender: Some(guarantor_gender.to_string()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let mut data_for_id_hash = signature_data.clone();
+    data_for_id_hash.signature_id = "".to_string();
+    data_for_id_hash.signature = "".to_string();
+    signature_data.signature_id = get_hash(to_canonical_json(&data_for_id_hash).unwrap());
+
+    let digital_signature = sign_ed25519(&guarantor_identity.signing_key, signature_data.signature_id.as_bytes());
+    signature_data.signature = bs58::encode(digital_signature.to_bytes()).into_string();
+    signature_data
 }
 
 #[allow(dead_code)]
 pub fn create_male_guarantor_signature(voucher: &Voucher) -> VoucherSignature {
-    let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date).unwrap();
-    let signature_time = (creation_dt + chrono::Duration::days(1)).to_rfc3339();
-    create_guarantor_signature_with_time(&voucher.voucher_id, &crate::test_utils::ACTORS.male_guarantor.identity, "Martin", "1", &signature_time)
+    create_guarantor_signature(
+        voucher,
+        &crate::test_utils::ACTORS.male_guarantor.identity,
+        "Martin",
+        "guarantor", // KORREKTUR: Fehlendes 'role'-Argument
+        "1" // 'gender' ist jetzt das 5. Argument
+    )
 }
 
 #[allow(dead_code)]
 pub fn create_female_guarantor_signature(voucher: &Voucher) -> VoucherSignature { // Korrigiert E0412
-    let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date).unwrap();
-    let signature_time = (creation_dt + chrono::Duration::days(2)).to_rfc3339();
-    create_guarantor_signature_with_time(&voucher.voucher_id, &crate::test_utils::ACTORS.female_guarantor.identity, "Frida", "2", &signature_time)
+    create_guarantor_signature(
+        voucher,
+        &crate::test_utils::ACTORS.female_guarantor.identity,
+        "Frida",
+        "guarantor", // KORREKTUR: Fehlendes 'role'-Argument
+        "2" // 'gender' ist jetzt das 5. Argument
+    )
 }
 
 #[allow(dead_code)]

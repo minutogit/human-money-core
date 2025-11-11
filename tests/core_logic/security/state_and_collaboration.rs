@@ -7,7 +7,7 @@ use voucher_lib::{
 };
 use voucher_lib::crypto_utils;
 use voucher_lib::{UserIdentity, VoucherStatus};
-use voucher_lib::models::voucher::{Collateral, Creator, NominalValue, Voucher, VoucherSignature};
+use voucher_lib::models::voucher::{Collateral, NominalValue, Voucher, VoucherSignature};
 use voucher_lib::services::crypto_utils::{create_user_id, get_hash, sign_ed25519};
 use voucher_lib::services::utils::{get_current_timestamp};
 use voucher_lib::services::voucher_manager::{NewVoucherData};
@@ -34,20 +34,20 @@ fn setup_test_wallet(identity: &UserIdentity) -> Wallet {
 }
 
 /// **NEUER STUB:** Erstellt einen Test-Creator für die neuen Tests.
-fn setup_creator() -> (SigningKey, Creator) {
+fn setup_creator() -> (SigningKey, voucher_lib::models::profile::PublicProfile) {
     let (public_key, signing_key) = crypto_utils::generate_ed25519_keypair_for_tests(Some("creator_stub"));
     let user_id = create_user_id(&public_key, Some("cs")).unwrap();
-    let creator = Creator {
-        id: user_id,
-        first_name: "Stub".to_string(),
-        last_name: "Creator".to_string(),
+    let creator = voucher_lib::models::profile::PublicProfile {
+        id: Some(user_id),
+        first_name: Some("Stub".to_string()),
+        last_name: Some("Creator".to_string()),
         ..Default::default()
     };
     (signing_key, creator)
 }
 
 /// **NEUER STUB:** Erstellt Test-Voucher-Daten für die neuen Tests.
-fn create_test_voucher_data_with_amount(creator: Creator, amount: &str) -> NewVoucherData {
+fn create_test_voucher_data_with_amount(creator_profile: voucher_lib::models::profile::PublicProfile, amount: &str) -> NewVoucherData {
     NewVoucherData {
         validity_duration: Some("P5Y".to_string()),
         non_redeemable_test_voucher: false,
@@ -56,7 +56,7 @@ fn create_test_voucher_data_with_amount(creator: Creator, amount: &str) -> NewVo
             ..Default::default()
         },
         collateral: Collateral::default(),
-        creator,
+        creator_profile,
     }
 }
 
@@ -73,10 +73,10 @@ fn test_wallet_state_management_on_split() {
     let mut wallet_b = setup_test_wallet(b_identity);
 
     // 2. Erstelle einen Gutschein explizit und füge ihn zu Wallet A hinzu, um das Setup zu verdeutlichen.
-    let creator_data = Creator {
-        id: a_identity.user_id.clone(),
-        first_name: "Alice".to_string(),
-        last_name: "Test".to_string(),
+    let creator_data = voucher_lib::models::profile::PublicProfile {
+        id: Some(a_identity.user_id.clone()),
+        first_name: Some("Alice".to_string()),
+        last_name: Some("Test".to_string()),
         ..Default::default()
     };
     let voucher_data = create_test_voucher_data_with_amount(creator_data, "100.0000");
@@ -151,7 +151,8 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
     let mut eve_wallet = setup_test_wallet(eve_identity);
 
     // 2. Akt 1 (Double Spend)
-    let eve_creator = Creator { id: eve_identity.user_id.clone(), ..setup_creator().1 };
+    let mut eve_creator = setup_creator().1;
+    eve_creator.id = Some(eve_identity.user_id.clone());
     let voucher_data = create_test_voucher_data_with_amount(eve_creator, "100");
 
     let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
@@ -209,7 +210,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
 fn test_serialization_roundtrip_with_special_chars() {
     // 1. Setup
     let (signing_key, mut creator) = setup_creator();
-    creator.first_name = "Jörg-ẞtråße".to_string(); // Sonderzeichen
+    creator.first_name = Some("Jörg-ẞtråße".to_string()); // Sonderzeichen
 
     let voucher_data = create_test_voucher_data_with_amount(creator, "123");
 
@@ -223,7 +224,6 @@ fn test_serialization_roundtrip_with_special_chars() {
     // **KORRIGIERTER AUFRUF:** Metadaten werden jetzt bei der Erstellung übergeben.
     let guarantor_sig =
         VoucherSignature {
-            voucher_id: original_voucher.voucher_id.clone(),
             signer_id: g1_identity.user_id.clone(),
             role: "guarantor".to_string(),
             signature_time: get_current_timestamp(),
@@ -251,7 +251,6 @@ fn test_serialization_roundtrip_with_special_chars() {
     // ÄNDERUNG: Gender auf "2" gesetzt, um die Regel des Minuto-Standards zu erfüllen.
     let second_guarantor_identity = &ACTORS.guarantor2;
     let second_guarantor_sig = VoucherSignature {
-        voucher_id: original_voucher.voucher_id.clone(),
         signer_id: second_guarantor_identity.user_id.clone(),
         role: "guarantor".to_string(),
         signature_time: get_current_timestamp(),
@@ -275,7 +274,7 @@ fn test_serialization_roundtrip_with_special_chars() {
     original_voucher = create_transaction(
         &original_voucher,
         standard,
-        &original_voucher.creator.id,
+        &original_voucher.creator_profile.id.as_ref().unwrap(),
         &signing_key,
         "some_recipient_id",
         "23"

@@ -15,25 +15,24 @@ use crate::services::utils::{get_current_timestamp, to_canonical_json};
 /// Diese Funktion nimmt ein teilweise ausgefülltes `DetachedSignature`-Objekt,
 /// füllt die kryptographischen Felder (`signature_id`, `signature`, `signature_time`),
 /// und gibt das vollständige, signierte Objekt zurück.
-///
 /// # Arguments
 /// * `signature_data` - Das `DetachedSignature`-Enum mit den Metadaten des Unterzeichners.
-/// * `voucher_id_to_embed` - Die ID des Gutscheins, die in das Objekt geschrieben werden soll.
 /// * `signer_identity` - Die Identität des Unterzeichners.
 /// * `details` - Das optionale `PublicProfile` des Unterzeichners.
+/// * `voucher_id` - Die ID des Gutscheins, auf den sich die Signatur bezieht.
 ///
 /// # Returns
 /// Eine `Result` mit der vervollständigten `DetachedSignature`.
 pub fn complete_and_sign_detached_signature(
     mut signature_data: DetachedSignature,
-    voucher_id_to_embed: &str,
     signer_identity: &UserIdentity,
     details: Option<PublicProfile>,
+    voucher_id: &str, // <-- NEUER PARAMETER
 ) -> Result<DetachedSignature, VoucherCoreError> {
     let signer_id = match &mut signature_data {
         DetachedSignature::Signature(sig) => {
             sig.signer_id = signer_identity.user_id.clone();
-            sig.voucher_id = voucher_id_to_embed.to_string(); // Setze die ID für die Zuordnung
+            sig.voucher_id = voucher_id.to_string(); // <-- HINZUFÜGEN
             
             // If details parameter is Some, use it to complete the signature by merging
             // with existing details, giving priority to values in the details parameter.
@@ -138,6 +137,8 @@ pub fn validate_detached_signature(
     let obj = sig_obj_to_verify.as_object_mut().unwrap();
     obj.insert("signature_id".to_string(), "".into());
     obj.insert("signature".to_string(), "".into());
+    
+    // voucher_id ist nun Teil des Hashings und wird nicht entfernt
 
     let canonical_json = to_canonical_json(&obj)?;
     let calculated_sig_id = get_hash(canonical_json);

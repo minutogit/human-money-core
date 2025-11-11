@@ -148,6 +148,10 @@ pub enum ValidationError {
     #[error("Invalid transaction: {0}")]
     InvalidTransaction(String),
 
+    /// Der `voucher_id` (Hash der Stammdaten) passt nicht zu den Stammdaten.
+    #[error("Voucher hash mismatch: The voucher's data hash (voucher_id) does not match its content.")]
+    InvalidVoucherHash,
+
     /// Die Signatur einer Transaktion ist ungültig.
     #[error("Invalid signature for transaction '{t_id}' from sender '{sender_id}'")]
     InvalidTransactionSignature { t_id: String, sender_id: String },

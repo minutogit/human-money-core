@@ -68,46 +68,6 @@ pub struct Address {
     pub full_address: String,
 }
 
-/// Detaillierte Informationen zum Ersteller des Gutscheins.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-pub struct Creator {
-    /// Eindeutige ID des Erstellers (z.B. eine User ID, die aus dem Public Key generiert wird).
-    pub id: String,
-    /// Vorname des Erstellers.
-    pub first_name: String,
-    /// Nachname des Erstellers.
-    pub last_name: String,
-    /// Die Adresse des Erstellers.
-    pub address: Address,
-    /// Die Organisation des Erstellers (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub organization: Option<String>,
-    /// Die Gemeinschaft, zu der der Ersteller gehört (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub community: Option<String>,
-    /// Telefonnummer des Erstellers (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub phone: Option<String>,
-    /// E-Mail-Adresse des Erstellers (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
-    /// URL des Erstellers oder dessen Webseite (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    /// Geschlecht des Erstellers nach ISO 5218.
-    pub gender: String,
-    /// Beschreibung der Angebote oder Talente des Erstellers (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub service_offer: Option<String>,
-    /// Beschreibung der Gesuche oder Bedürfnisse des Erstellers (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub needs: Option<String>,
-    /// Die digitale Signatur des Erstellers, die den Gutschein authentifiziert.
-    pub signature: String,
-    /// Geografische Koordinaten des Erstellers (z.B. "Breitengrad, Längengrad").
-    pub coordinates: String,
-}
-
 /// Repräsentiert eine einzelne Transaktion in der Transaktionskette des Gutscheins.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct Transaction {
@@ -141,7 +101,7 @@ pub struct Transaction {
 pub struct VoucherSignature {
     /// Die eindeutige ID des Gutscheins, auf den sich diese Signatur bezieht.
     pub voucher_id: String,
-    /// Die eindeutige ID dieser Signatur, generiert aus dem Hash ihrer eigenen Daten.
+    /// Die eindeutige ID dieser Signatur.
     pub signature_id: String,
     /// Eindeutige ID des zusätzlichen Unterzeichners.
     pub signer_id: String,
@@ -196,7 +156,8 @@ pub struct Voucher {
     /// Informationen zur Besicherung des Gutscheins.
     pub collateral: Collateral,
     /// Detaillierte Informationen zum Ersteller des Gutscheins.
-    pub creator: Creator,
+    #[serde(rename = "creator")]
+    pub creator_profile: PublicProfile,
     /// Eine chronologische Liste aller Transaktionen dieses Gutscheins.
     pub transactions: Vec<Transaction>,
     /// Ein Array für alle Signaturen (inkl. Bürgen).

@@ -275,3 +275,38 @@ mod field_group_rules_validation {
         ));
     }
 }
+
+/// Dieser Test dient ausschließlich der Diagnose, um die exakte JSON-Struktur
+/// der `VoucherSignature` zu verifizieren, wie sie von `serde_json` erzeugt wird.
+/// Dies ist entscheidend, um die Pfad-Logik in `validate_field_group_rules` zu bestätigen.
+#[cfg(test)]
+mod diagnosis {
+    use voucher_lib::models::profile::PublicProfile;
+    use voucher_lib::models::voucher::VoucherSignature;
+    use voucher_lib::services::voucher_validation::get_value_by_path;
+
+    #[test]
+    fn test_diagnose_signature_json_structure() {
+        let signature = VoucherSignature {
+            role: "guarantor".to_string(),
+            details: Some(PublicProfile {
+                gender: Some("1".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let json_value = serde_json::to_value(&signature)
+            .expect("Failed to serialize VoucherSignature for diagnosis");
+
+        // Diese Ausgabe ist der primäre Zweck des Tests.
+        println!("[DIAGNOSIS JSON]: {}", serde_json::to_string_pretty(&json_value).unwrap());
+
+        // KORREKTUR: Bestätigen, dass der Pfad "details.gender" ist, wie das JSON zeigt.
+        let found_value = get_value_by_path(&json_value, "details.gender");
+        assert_eq!(found_value, Some(&serde_json::Value::String("1".to_string())), "Path 'details.gender' MUSS gefunden werden.");
+
+        let not_found_value = get_value_by_path(&json_value, "signer_details.gender");
+        assert_eq!(not_found_value, None, "Path 'signer_details.gender' darf NICHT gefunden werden.");
+    }
+}

@@ -1,3 +1,4 @@
+// examples/playground_wallet.rs
 // run with: cargo run --example playground_wallet
 //! # examples/playground_wallet.rs
 //!
@@ -10,7 +11,7 @@
 
 use voucher_lib::models::profile::UserIdentity;
 use voucher_lib::models::conflict::CanonicalMetadataStore;
-use voucher_lib::models::voucher::{Address, Collateral, Creator, NominalValue};
+use voucher_lib::models::voucher::{Address, Collateral, NominalValue};
 use voucher_lib::services::crypto_utils;
 use voucher_lib::{NewVoucherData, verify_and_parse_standard, VoucherStatus};
 use voucher_lib::wallet::Wallet;
@@ -73,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         non_redeemable_test_voucher: false,
         nominal_value: NominalValue { amount: "1.5".to_string(), ..Default::default() }, // 1.5 Unzen
         collateral: Collateral::default(),
-        creator: Creator { id: alice_identity.user_id.clone(), first_name: "Alice".into(), last_name: "Silversmith".into(), address: Address::default(), gender: "2".into(), signature: "".into(), ..Default::default() },
+        creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(alice_identity.user_id.clone()), first_name: Some("Alice".into()), last_name: Some("Silversmith".into()), address: Some(Address::default()), gender: Some("2".into()), ..Default::default() },
     };
     let initial_voucher = voucher_lib::create_voucher(voucher_data, &standard, &standard_hash, &alice_identity.signing_key, "en")?;
     let local_id = Wallet::calculate_local_instance_id(&initial_voucher, &alice_identity.user_id)?;

@@ -160,7 +160,7 @@ mod tests {
                 amount: "100".to_string(),
                 ..Default::default()
             },
-            creator: voucher_lib::models::voucher::Creator { id: ACTORS.alice.user_id.clone(), ..Default::default() }, ..Default::default()
+            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() }, ..Default::default()
         };
         service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, PASSWORD).unwrap();
         let wallet_path = dir.path().join(&profile.folder_name);
@@ -191,7 +191,7 @@ mod tests {
                 amount: "100".to_string(),
                 ..Default::default()
             },
-            creator: voucher_lib::models::voucher::Creator { id: ACTORS.alice.user_id.clone(), ..Default::default() }, ..Default::default()
+            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() }, ..Default::default()
         };
         service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, PASSWORD).unwrap();
         let wallet_path = dir.path().join(&profile.folder_name);
@@ -211,7 +211,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let ((mut alice_service, alice_profile), (mut bob_service, _)) = setup_test_environment(&dir);
         let new_voucher_data = NewVoucherData {
-            creator: voucher_lib::models::voucher::Creator { id: ACTORS.alice.user_id.clone(), ..Default::default() }, ..Default::default()
+            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() }, ..Default::default()
         };
         let _voucher_id = alice_service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", NewVoucherData { nominal_value: voucher_lib::models::voucher::NominalValue { amount: "100".to_string(), ..Default::default()}, ..new_voucher_data }, PASSWORD).unwrap().voucher_id;
         let local_id = alice_service.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
@@ -345,7 +345,7 @@ mod tests {
                 amount: "100".to_string(),
                 ..Default::default()
             },
-            creator: voucher_lib::models::voucher::Creator { id: ACTORS.alice.user_id.clone(), ..Default::default() }, ..Default::default()
+            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() }, ..Default::default()
         };
         alice_service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, PASSWORD).unwrap();
         let local_id = alice_service.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();

@@ -10,7 +10,7 @@ use voucher_lib::{
         create_test_bundle, generate_signed_standard_toml, resign_transaction, ACTORS,
         SILVER_STANDARD, setup_service_with_profile,
     }, UserIdentity,
-    models::voucher::{Creator, NominalValue}, services::voucher_manager::NewVoucherData,
+    models::{profile::PublicProfile, voucher::{NominalValue}}, services::voucher_manager::NewVoucherData,
     wallet::{instance::VoucherStatus, MultiTransferRequest, SourceTransfer},
 };
 use std::collections::HashMap;
@@ -53,8 +53,8 @@ fn test_rejection_of_broken_transaction_chain() {
             &silver_toml,
             "en",
             NewVoucherData {
-                creator: Creator {
-                    id: service_sender.get_user_id().unwrap(),
+                creator_profile: PublicProfile {
+                    id: Some(service_sender.get_user_id().unwrap()),
                     ..Default::default()
                 },
                 nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
@@ -108,8 +108,8 @@ fn test_rejection_of_inconsistent_split_math() {
             &silver_toml,
             "en", // Erstelle einen Gutschein mit 100
             NewVoucherData {
-                creator: Creator {
-                    id: service_sender.get_user_id().unwrap(),
+                creator_profile: PublicProfile {
+                    id: Some(service_sender.get_user_id().unwrap()),
                     ..Default::default()
                 },
                 nominal_value: NominalValue {
@@ -171,8 +171,8 @@ fn test_rejection_of_self_received_bundle() {
             &silver_toml,
             "en",
             NewVoucherData {
-                creator: Creator {
-                    id: service_sender.get_user_id().unwrap(),
+                creator_profile: PublicProfile {
+                    id: Some(service_sender.get_user_id().unwrap()),
                     ..Default::default()
                 },
                 nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
@@ -262,8 +262,8 @@ fn test_rejection_of_identical_bundle_replay() {
             &silver_toml,
             "en",
             NewVoucherData {
-                creator: Creator {
-                    id: service_sender.get_user_id().unwrap(),
+                creator_profile: PublicProfile {
+                    id: Some(service_sender.get_user_id().unwrap()),
                     ..Default::default()
                 },
                 nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
@@ -329,7 +329,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
     standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
 
     // Manuelles Erstellen von voucher_A (wie in Test 2.1)
-    let voucher_a = service_sender.create_new_voucher(&silver_toml, "en", NewVoucherData { creator: Creator { id: service_sender.get_user_id().unwrap(), ..Default::default() }, nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() }, ..Default::default() }, "pwd").unwrap();
+    let voucher_a = service_sender.create_new_voucher(&silver_toml, "en", NewVoucherData { creator_profile: PublicProfile { id: Some(service_sender.get_user_id().unwrap()), ..Default::default() }, nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() }, ..Default::default() }, "pwd").unwrap();
     let voucher_a_sent = voucher_lib::services::voucher_manager::create_transaction(&voucher_a, &SILVER_STANDARD.0, &identity_sender.user_id, &identity_sender.signing_key, &id_recipient, "50.0000").unwrap();
 
     // Bundle 1 (Das legitime Bundle)
@@ -414,7 +414,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
             &silver_toml,
             "en",
             NewVoucherData {
-                creator: Creator { id: service_sender.get_user_id().unwrap(), ..Default::default() },
+                creator_profile: PublicProfile { id: Some(service_sender.get_user_id().unwrap()), ..Default::default() },
                 nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
                 ..Default::default()
             },

@@ -6,9 +6,9 @@
 
 
 use serde_json::json;
-use voucher_lib::test_utils::{ACTORS, MINUTO_STANDARD};
+use voucher_lib::test_utils::{ACTORS, SILVER_STANDARD};
 use voucher_lib::{
-    from_json, validate_voucher_against_standard, Creator, NewVoucherData, Voucher,
+    from_json, validate_voucher_against_standard, NewVoucherData, Voucher,
     VoucherCoreError, NominalValue,
 };
 use voucher_lib::error::ValidationError;
@@ -24,26 +24,17 @@ mod compatibility_scenarios {
     #[test]
     fn test_validate_voucher_with_unknown_fields_in_json_then_succeeds() {
         let identity = &ACTORS.issuer;
-        let creator = Creator { id: identity.user_id.clone(), ..Default::default() };
         let voucher_data = NewVoucherData {
-            validity_duration: Some("P3Y".to_string()),
-            nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
-            creator, ..Default::default()
+            validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu Silver)
+            nominal_value: NominalValue { amount: "1.0000".to_string(), ..Default::default() }, // Verwende 1.0000 (passend zu Silver)
+            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() },
+            ..Default::default()
         };
-        let (minuto_standard, standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
-        let mut valid_voucher = voucher_lib::test_utils::create_voucher_for_manipulation(voucher_data, minuto_standard, standard_hash, &identity.signing_key, "en");
+        let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+        let valid_voucher = voucher_lib::test_utils::create_voucher_for_manipulation(voucher_data, silver_standard, standard_hash, &identity.signing_key, "en");
 
-        let g1 = &ACTORS.guarantor1;
-        let g2 = &ACTORS.guarantor2;
-        let sig_data1 = voucher_lib::test_utils::create_guarantor_signature_data(g1, "1", &valid_voucher.voucher_id);
-        let sig_data2 = voucher_lib::test_utils::create_guarantor_signature_data(g2, "2", &valid_voucher.voucher_id);
-        let signed_sig1 = voucher_lib::services::signature_manager::complete_and_sign_detached_signature(sig_data1, &valid_voucher.voucher_id, g1, None).unwrap();
-        let signed_sig2 = voucher_lib::services::signature_manager::complete_and_sign_detached_signature(sig_data2, &valid_voucher.voucher_id, g2, None).unwrap();
-        let voucher_lib::models::signature::DetachedSignature::Signature(s1) = signed_sig1; valid_voucher.signatures.push(s1);
-        let voucher_lib::models::signature::DetachedSignature::Signature(s2) = signed_sig2; valid_voucher.signatures.push(s2);
-        
         // The validation might fail due to signature requirements, let's check what the actual error is and handle it
-        let first_validation_result = validate_voucher_against_standard(&valid_voucher, minuto_standard);
+        let first_validation_result = validate_voucher_against_standard(&valid_voucher, silver_standard);
         // NOTE: If this assertion fails, we need to understand why the basic voucher with signatures fails validation
         assert!(first_validation_result.is_ok(), "Initial validation failed with error: {:?}", first_validation_result.err());
 
@@ -55,35 +46,26 @@ mod compatibility_scenarios {
         let deserialized_voucher: Voucher = from_json(&json_with_extra_fields).unwrap();
         assert_eq!(valid_voucher, deserialized_voucher);
 
-        let validation_result = validate_voucher_against_standard(&deserialized_voucher, minuto_standard);
+        let validation_result = validate_voucher_against_standard(&deserialized_voucher, silver_standard);
         assert!(validation_result.is_ok(), "Validation failed unexpectedly with extra fields: {:?}", validation_result.err());
     }
 
     #[test]
     fn test_validate_voucher_when_t_type_is_unknown_then_fails() {
         let identity = &ACTORS.issuer;
-        let (minuto_standard, standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
-        let mut voucher = voucher_lib::test_utils::create_voucher_for_manipulation(
+        let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+        let voucher = voucher_lib::test_utils::create_voucher_for_manipulation(
             NewVoucherData {
-                creator: Creator { id: identity.user_id.clone(), ..Default::default() },
-                validity_duration: Some("P3Y".to_string()),
-                nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+                creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() },
+                validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu Silver)
+                nominal_value: NominalValue { amount: "1.0000".to_string(), ..Default::default() }, // Verwende 1.0000 (passend zu Silver)
                 ..Default::default()
             },
-            minuto_standard, standard_hash, &identity.signing_key, "en",
+            silver_standard, standard_hash, &identity.signing_key, "en",
         );
 
-        let g1 = &ACTORS.guarantor1;
-        let g2 = &ACTORS.guarantor2;
-        let sig_data1 = voucher_lib::test_utils::create_guarantor_signature_data(g1, "1", &voucher.voucher_id);
-        let sig_data2 = voucher_lib::test_utils::create_guarantor_signature_data(g2, "2", &voucher.voucher_id);
-        let signed_sig1 = voucher_lib::services::signature_manager::complete_and_sign_detached_signature(sig_data1, &voucher.voucher_id, g1, None).unwrap();
-        let signed_sig2 = voucher_lib::services::signature_manager::complete_and_sign_detached_signature(sig_data2, &voucher.voucher_id, g2, None).unwrap();
-        let voucher_lib::models::signature::DetachedSignature::Signature(s1) = signed_sig1; voucher.signatures.push(s1);
-        let voucher_lib::models::signature::DetachedSignature::Signature(s2) = signed_sig2; voucher.signatures.push(s2);
-
         // First check that the original voucher with signatures validates correctly
-        let initial_validation = validate_voucher_against_standard(&voucher, minuto_standard);
+        let initial_validation = validate_voucher_against_standard(&voucher, silver_standard);
         assert!(initial_validation.is_ok(), "Initial voucher validation failed: {:?}", initial_validation.err());
 
         let mut voucher_as_value: serde_json::Value = serde_json::to_value(&voucher).unwrap();
@@ -105,7 +87,7 @@ mod compatibility_scenarios {
         let manipulated_json = serde_json::to_string(&voucher_as_value).unwrap();
         let deserialized_voucher: Voucher = from_json(&manipulated_json).unwrap();
 
-        let validation_result = validate_voucher_against_standard(&deserialized_voucher, minuto_standard);
+        let validation_result = validate_voucher_against_standard(&deserialized_voucher, silver_standard);
         assert!(validation_result.is_err(), "Expected validation to fail for 'merge' transaction type");
 
         // The expected error is TransactionTypeNotAllowed, but other validations might run first
@@ -126,7 +108,7 @@ mod compatibility_scenarios {
     #[test]
     fn test_parse_standard_with_unknown_fields_in_toml_then_succeeds() {
         // 1. Nimm einen zur Laufzeit gültig signierten Standard.
-        let (mut standard_struct, _) = MINUTO_STANDARD.clone();
+        let (mut standard_struct, _) = SILVER_STANDARD.clone(); // Verwende Silver zur Konsistenz
 
         // 2. Modifiziere ein EXISTIERENDES Feld. Dies ändert den Hash-Wert der Struktur,
         // aber die Signatur bleibt die alte. Dadurch wird die Signatur ungültig.

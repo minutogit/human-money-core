@@ -9,7 +9,7 @@ use voucher_lib::{
         conflict::{CanonicalMetadataStore},
         profile::UserProfile,
     },
-    models::voucher::{Creator, NominalValue}, services::voucher_manager, wallet::Wallet, VoucherStatus
+    models::voucher::{NominalValue}, services::voucher_manager, wallet::Wallet, VoucherStatus
 };
 use std::fs;
 use tempfile::tempdir;
@@ -57,11 +57,6 @@ fn test_voucher_archiving_on_full_spend() {
 
     // Alice erstellt einen Gutschein und fügt ihn ihrem Wallet hinzu.
     let voucher = {
-        let creator_data = Creator {
-            id: alice_identity.user_id.clone(),
-            // Fülle nur die nötigsten Felder für diesen Test.
-            ..Default::default()
-        };
         let nominal_value = NominalValue {
             amount: "100.0000".to_string(), // KORREKTUR: Vier Dezimalstellen für den Silber-Standard
             unit: "".to_string(),
@@ -70,7 +65,11 @@ fn test_voucher_archiving_on_full_spend() {
         };
         let voucher_data = voucher_manager::NewVoucherData {
             nominal_value,
-            creator: creator_data,
+            creator_profile: voucher_lib::models::profile::PublicProfile {
+                id: Some(alice_identity.user_id.clone()),
+                // Fülle nur die nötigsten Felder für diesen Test.
+                ..Default::default()
+            },
             ..Default::default()
         };
 

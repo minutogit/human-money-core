@@ -1,4 +1,4 @@
-//playground_crypto_utils.rs
+// examples/playground_crypto_utils.rs
 // run with: cargo run --example playground_crypto_utils
 // more playgrounds 
 

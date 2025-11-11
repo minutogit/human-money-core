@@ -77,15 +77,19 @@ Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_
     "name": "STRING", // Der Name des Standards, zu dem dieser Gutschein gehört (z.B. "Minuto-Gutschein", "Silber-Umlauf-Gutschein").
     "uuid": "STRING"  // Die eindeutige Kennung (UUID) des Standards, zu dem dieser Gutschein gehört.
     "standard_definition_hash": "STRING" // Der SHA3-256 Hash des kanonisierten Standard-TOML-Inhalts (ohne Signatur), um die Unveränderlichkeit zu gewährleisten.
+    "template": { // Die Template-Daten, die aus dem Standard-TOML kopiert wurden.
+      "description": "STRING", // Eine allgemeine, menschenlesbare Beschreibung des spezifischen Gutscheins.
+      "primary_redemption_type": "STRING", // Der primäre Einlösezweck, übernommen vom Standard (z.B. "goods_or_services").
+      "divisible": "BOOLEAN", // Gibt an, ob der Gutschein in kleinere Einheiten aufgeteilt werden kann (true/false).
+      "standard_minimum_issuance_validity": "STRING", // Die bei der Erstellung gültige Mindestgültigkeitsdauer aus dem Standard (ISO 8601 Duration).
+      "signature_requirements_description": "STRING", // Eine menschenlesbare Beschreibung der Signaturanforderungen (früher Bürgenanforderungen), übernommen vom Standard.
+      "footnote": "STRING" // Ein optionaler Fußnotentext, der vom Standard vorgegeben wird.
+    }
   },
   "voucher_id": "STRING", // Die eindeutige ID dieses spezifischen Gutscheins.
   "voucher_nonce": "STRING", // Ein zufälliges Nonce, um den ersten `prev_hash` unvorhersehbar zu machen.
-  "description": "STRING", // Eine allgemeine, menschenlesbare Beschreibung des Gutscheins (z.B. "Gutschein für 888 Minuten qualitativer Leistung").
-  "primary_redemption_type": "STRING", // Der primäre Einlösezweck, übernommen vom Standard (z.B. "goods_or_services").
-  "divisible": "BOOLEAN", // Gibt an, ob der Gutschein in kleinere Einheiten aufgeteilt werden kann (true/false).
   "creation_date": "YYYY-MM-DDTHH:MM:SS.SSSSSSZ", // Das Erstellungsdatum des Gutscheins im ISO 8601-Format.
   "valid_until": "YYYY-MM-DDTHH:MM:SS.SSSSSSZ",    // Das Gültigkeitsdatum des Gutscheins im ISO 8601-Format.
-  "standard_minimum_issuance_validity": "STRING", // Die bei der Erstellung gültige Mindestgültigkeitsdauer aus dem Standard (ISO 8601 Duration).
   "non_redeemable_test_voucher": "BOOLEAN", // Eine Markierung, ob es sich um einen nicht einlösbaren Testgutschein handelt (true/false).
   "nominal_value": { // Definiert den Wert, den der Gutschein repräsentiert.
     "unit": "STRING",     // Die Einheit des Gutscheinwerts (z.B. "Minuten", "Unzen", "Euro").
@@ -101,57 +105,54 @@ Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_
     "description": "STRING", // Eine detailliertere Beschreibung der Besicherung (z.B. "Edelmetall Silber, treuhänderisch verwahrt").
     "redeem_condition": "STRING" // **Extrem wichtig:** Bedingungen unter denen die Besicherung eingelöst/ausgezahlt werden kann (z.B. Notfallklausel).
   },
-  "creator": { // Detaillierte Informationen zum Ersteller des Gutscheins.
-    "id": "STRING",             // Eindeutige ID des Erstellers (oft ein Public Key).
-    "first_name": "STRING",     // Vorname des Erstellers.
-    "last_name": "STRING",      // Nachname des Erstellers.
+  "creator_profile": { // Detaillierte Informationen zum Ersteller des Gutscheins, als PublicProfile.
+    "id": "STRING, optional",             // Die User-ID (did:key) des Profilinhabers.
+    "first_name": "STRING, optional",     // Vorname des Erstellers.
+    "last_name": "STRING, optional",      // Nachname des Erstellers.
     "address": {                // Detaillierte Adressinformationen des Erstellers.
-      "street": "STRING",       // Straße.
-      "house_number": "STRING", // Hausnummer.
-      "zip_code": "STRING",     // Postleitzahl.
-      "city": "STRING",         // Stadt.
-      "country": "STRING",      // Land.
-      "full_address": "STRING"  // Vollständige, formatierte Adresse.
+      "street": "STRING, optional",       // Straße.
+      "house_number": "STRING, optional", // Hausnummer.
+      "zip_code": "STRING, optional",     // Postleitzahl.
+      "city": "STRING, optional",         // Stadt.
+      "country": "STRING, optional",      // Land.
+      "full_address": "STRING, optional"  // Vollständige, formatierte Adresse.
     },
     "organization": "STRING, optional",   // Die Organisation des Erstellers.
     "community": "STRING, optional",      // Beschreibung der Gemeinschaft, zu der der Ersteller gehört.
     "phone": "STRING, optional",          // Telefonnummer des Erstellers.
     "email": "STRING, optional",          // E-Mail-Adresse des Erstellers.
     "url": "STRING, optional",            // URL des Erstellers oder dessen Webseite.
-    "gender": "STRING",         // Geschlecht des Erstellers ISO 5218 (1 = male", 2 = female", 0 = not known, 9 = Not applicable).
-    "service_offer": "STRING, optional",  // Beschreibt die Angebote oder Talente des Erstellers.
-    "needs": "STRING, optional",          // Beschreibt die Gesuche oder Bedürfnisse des Erstellers.
-    "signature": "STRING",      // Die digitale Signatur des Erstellers. Sie signiert den Hash des initialen Gutschein-Objekts (ohne voucher_id, Signaturen und Transaktionen).
-    "coordinates": "STRING"     // Geografische Koordinaten des Erstellers (z.B. "Breitengrad, Längengrad").
+    "gender": "STRING, optional",         // Geschlecht des Erstellers ISO 5218 (1 = male", 2 = female", 0 = not known, 9 = Not applicable).
+    "coordinates": "STRING, optional"     // Geografische Koordinaten des Erstellers (z.B. "Breitengrad, Längengrad").
   },
-  "guarantor_requirements_description": "STRING", // Eine menschenlesbare Beschreibung der Bürgenanforderungen, übernommen vom Standard.
-  "footnote": "STRING", // Ein optionaler Fußnotentext, der vom Standard vorgegeben wird.
   "signatures": [ // Ein Array für alle Signaturen (inkl. Bürgen).
     { // Jede Signatur ist ein in sich geschlossenes, überprüfbares Objekt.
       "voucher_id": "STRING",         // Die ID des Gutscheins, zu dem diese Signatur gehört.
-      "signature_id": "STRING",       // Eine eindeutige ID für dieses Signatur-Objekt, erzeugt durch Hashing der eigenen Metadaten.
+      "signature_id": "STRING",       // Die eindeutige ID dieser Signatur.
       // Die Metadaten (alles außer signature_id und signature) werden kanonisiert und gehasht, um die signature_id zu erzeugen.
       "signer_id": "STRING",          // Eindeutige ID des Unterzeichners (aus Public Key).
 
-      // --- Optionale Metadaten (primär für Bürgen/Guarantor-Rolle) ---
-      "first_name": "STRING, optional",
-      "last_name": "STRING, optional",
-      "organization": "STRING, optional",
-      "community": "STRING, optional",
-      "address": { // Vollständiges Adressobjekt, optional.
+      // --- Optionale Metadaten ---
+      "details": { // Verschachtelte Details unter Verwendung des PublicProfile-Structs
+        "id": "STRING, optional", // Die User-ID (did:key) des Profilinhabers.
+        "first_name": "STRING, optional",
+        "last_name": "STRING, optional",
+        "organization": "STRING, optional",
+        "community": "STRING, optional",
+        "address": { // Vollständiges Adressobjekt, optional.
+        },
+        "gender": "STRING, optional", // ISO 5218
+        "email": "STRING, optional",
+        "phone": "STRING, optional",
+        "coordinates": "STRING, optional",
+        "url": "STRING, optional"
       },
-      "gender": "STRING, optional", // ISO 5218
-      "email": "STRING, optional",
-      "phone": "STRING, optional",
-      "coordinates": "STRING, optional",
-      "url": "STRING, optional",
 
       "signature": "STRING",            // Die digitale Signatur, die die `signature_id` dieses Objekts unterzeichnet.
       "signature_time": "YYYY-MM-DDTHH:MM:SS.SSSSSSZ", // Zeitpunkt der Signatur.
-      "role": "STRING"                  // Definiert die Rolle oder den Zweck dieser Signatur (z.B. "guarantor", "notary").
+      "role": "STRING"                  // Definiert die Rolle oder den Zweck dieser Signatur (z.B. "creator", "guarantor", "notary").
     }
   ],
-  "needed_guarantors": "INTEGER", // Die Anzahl der für diesen Gutschein benötigten Bürgen.
   "transactions": [ // Eine chronologische Liste aller Transaktionen dieses Gutscheins.
     { // Jede Transaktion ist ein in sich geschlossenes, signiertes Objekt.
       "t_id": "STRING",                 // Eindeutige ID der Transaktion, erzeugt durch Hashing der Transaktionsdaten (ohne t_id und Signatur).
@@ -228,7 +229,9 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
 
 - **Multi-Quellen-Transfers:** Guthaben kann aus mehreren Gutscheinen in einer einzigen Transaktion an einen Empfänger gebündelt werden. Dies wird durch die `MultiTransferRequest`-Struktur und die `execute_multi_transfer_and_bundle`-Methode ermöglicht.
 
-- **Zusätzliche Signaturen:** Möglichkeit, weitere Signaturen (z.B. von Bürgen/Garanten) in die Gutschein-Datei zu integrieren.
+- **Zusätzliche Signaturen:** Möglichkeit, weitere Signaturen (z.B. von Bürgen/Garanten) in die Gutschein-Datei zu integrieren. Alle Signaturen verwenden nun eine einheitliche Struktur mit verschachtelten `details`-Feldern gemäß dem `PublicProfile`-Struct und einer `role`-Angabe (z.B. "creator", "guarantor", "notary"). Die `creator`-Signatur ist nun eine Standard-`VoucherSignature` mit der Rolle "creator".
+  
+- **PublicProfile-Struktur:** Ein standardisiertes öffentliches Profil, das in Signaturen und im `creator_profile`-Feld wiederverwendet werden kann. Diese Struktur konsolidiert optionale öffentliche Details wie Name, Geschlecht, Organisation usw. unter einem verschachtelten `details`-Feld, was die Schema-Härtung und API-Vereinfachung ermöglicht.
 
 - **Verschlüsselung:** Die Übertragung von Daten (z.B. Transaktionsbündel) wird durch einen generischen, **anonymisierten** `SecureContainer` geschützt. Dieser implementiert **Forward Secrecy durch ephemere X25519-Schlüssel**. Ein "Double Key Wrapping"-Mechanismus stellt sicher, dass sowohl die Empfänger als auch der Sender selbst den Container entschlüsseln können. Alle binären Daten werden als Base64-Strings kodiert.
 
@@ -400,7 +403,7 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
 - `pub fn get_user_id(&self) -> Result<String, String>`
   - Gibt die User-ID des Wallet-Inhabers zurück.
 - `pub fn create_new_voucher(&mut self, standard_toml_content: &str, lang_preference: &str, data: NewVoucherData, password: &str) -> Result<Voucher, String>`
-  - Erstellt einen brandneuen Gutschein, validiert ihn gegen den bereitgestellten Standard, fügt ihn zum Wallet hinzu und speichert den Zustand.
+  - Erstellt einen brandneuen Gutschein. Wenn der Gutschein aufgrund fehlender erforderlicher Signaturen (z.B. Bürgen) zunächst nicht vollständig gültig ist, wird er mit dem Status `VoucherStatus::Incomplete` erstellt, anstatt einen fatalen Fehler auszulösen. Der Gutschein wird trotzdem zum Wallet hinzugefügt und der Zustand gespeichert.
 - `pub fn create_transfer_bundle(&mut self, request: MultiTransferRequest, standard_definitions_toml: &HashMap<String, String>, archive: Option<&dyn VoucherArchive>, password: &str) -> Result<CreateBundleResult, String>`
   - Erstellt eine(n oder mehrere) Transaktion(en) für einen oder mehrere Quell-Gutscheine, verpackt sie in ein `SecureContainer`-Bundle und speichert den neuen Wallet-Zustand. Akzeptiert eine `MultiTransferRequest`-Struktur, die eine Liste von Quell-Gutscheinen und Beträgen enthält. Gibt ein `CreateBundleResult` zurück, das detaillierte Informationen über die involvierten Quell-Gutscheine enthält.
   - Implementiert eine **Selbstheilungsfunktion**: Wenn ein interner Inkonsistenzfehler erkannt wird (z.B. ein 'Active'-Gutschein, der bereits versendet wurde), wird der inkonsistente Gutschein automatisch in den Quarantänezustand (`Quarantined`) verschoben und der Wallet-Zustand gespeichert, um zukünftige Verwendung des fehlerhaften Gutscheins zu verhindern.
@@ -408,8 +411,8 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
   - Verarbeitet ein empfangenes Transaktions-Bundle, validiert die enthaltenen Gutscheine gegen die bereitgestellten Standard-Definitionen und speichert den neuen Wallet-Zustand. Gibt ein `ProcessBundleResult` zurück, das auch detaillierte Informationen über die involvierten Gutscheine und Transfer-Zusammenfassungen enthält.
 - `pub fn create_signing_request_bundle(...) -> Result<Vec<u8>, String>`
   - Erstellt ein Bundle, um einen Gutschein zur Unterzeichnung an einen Bürgen zu senden.
-- `pub fn create_detached_signature_response_bundle(...) -> Result<Vec<u8>, String>`
-  - Erstellt eine losgelöste Signatur als Antwort auf eine Signaturanfrage.
+- `pub fn create_detached_signature_response_bundle(&self, voucher_to_sign: &Voucher, role: &str, include_details: bool, original_sender_id: &str) -> Result<Vec<u8>, String>`
+  - Erstellt eine losgelöste Signatur als Antwort auf eine Signaturanfrage. Die Funktion akzeptiert nun explizit die `role` (z.B. "guarantor", "notary"), und ein Flag `include_details`, das bestimmt, ob die öffentlichen Profildaten des Unterzeichners in die Signatur eingebettet werden sollen.
 - `pub fn process_and_attach_signature(&mut self, container_bytes: &[u8], standard_toml_content: &str, password: &str) -> Result<(), String>`
   - Verarbeitet eine empfangene losgelöste Signatur, validiert den Gutschein neu gegen den Standard, fügt die Signatur hinzu und speichert den Zustand.
 - `pub fn save_encrypted_data(...) -> Result<(), String>`
@@ -544,7 +547,7 @@ Stellt die Kernlogik für den **anonymisierten und weiterleitungs-sicheren** `Se
 
 Enthält die zustandslose Geschäftslogik für die Erstellung und kryptographische Validierung von losgelösten Signaturen (`DetachedSignature`).
 
-- `pub fn complete_and_sign_detached_signature(...)`: Nimmt unvollständige Signatur-Metadaten, berechnet die `signature_id` durch Hashing des kanonischen Inhalts und fügt die digitale Signatur des Unterzeichners hinzu.
+- `pub fn complete_and_sign_detached_signature(detached_signature: DetachedSignature, voucher_id: &str, identity: &UserIdentity, details: Option<PublicProfile>)`: Nimmt unvollständige Signatur-Metadaten, berechnet die `signature_id` durch Hashing des kanonischen Inhalts, fügt optionale öffentliche Profildaten hinzu und fügt die digitale Signatur des Unterzeichners hinzu.
 - `pub fn validate_detached_signature(...)`: Validiert eine losgelöste Signatur, indem die `signature_id` neu berechnet und die kryptographische Signatur gegen die ID und den Public Key des Unterzeichners geprüft wird.
 
 ### `services::standard_manager` Modul
@@ -586,7 +589,12 @@ Dieses Modul enthält die Logik zur Validierung eines `Voucher`-Objekts gegen di
 - Überprüft die **Konsistenz des eingebetteten Standard-Hashes** mit dem Hash des aktuellen Standard-Objekts, um sicherzustellen, dass der Gutschein immer gegen die exakte Version des Standards validiert wird, mit der er erstellt wurde.
 - Überprüft, ob der **Transaktionstyp** (`t_type`) laut Standard erlaubt ist.
 - Überprüft die Integrität und kryptographische Gültigkeit aller **zusätzlichen Signaturen** (`additional_signatures`).
+- Führt eine **Kern-Daten-Integritätsprüfung** durch: Validiert, dass der `voucher_id` (der Hash der Gutschein-Stammdaten) mit den tatsächlichen Inhalten des Gutscheins übereinstimmt. Diese Prüfung schützt gegen Manipulationen an den Kernstammdaten.
 - **Hinweis:** Die Validierung der `issuance_minimum_validity_duration` erfolgt nun nicht mehr in dieser Funktion, sondern wird als "Gatekeeper" in `create_voucher` (bei Erstellung) und als "Firewall" in `create_transaction` (bei Transfer) separat behandelt.
+
+Neue Validierungsfehler:
+- `ValidationError::InvalidVoucherHash` - Wird ausgelöst, wenn der `voucher_id` (Hash der Stammdaten) nicht mit den tatsächlichen Inhalten des Gutscheins übereinstimmt, was auf eine Manipulation der Kernstammdaten hindeutet.
+- Die `FieldGroupRules`-Validierung wurde angepasst, um die neuen verschachtelten Pfade für Signatur-Details zu unterstützen (z.B. `details.gender` statt `gender`). Dies ermöglicht eine präzisere Validierung der Signatur-Metadaten gemäß den Anforderungen im Standard.
 
 ### `src/wallet` Modul - Neue Sicherheitsfeatures
 

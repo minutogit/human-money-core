@@ -74,7 +74,7 @@ impl Wallet {
                 VoucherSummary {
                     local_instance_id: local_id.clone(),
                     status: instance.status.clone(),
-                    creator_id: voucher.creator.id.clone(),
+                    creator_id: voucher.creator_profile.id.clone().unwrap_or_default(),
                     valid_until: voucher.valid_until.clone(),
                     description: voucher.voucher_standard.template.description.clone(),
                     current_amount,
@@ -86,9 +86,9 @@ impl Wallet {
                     signatures_count: voucher.signatures.len() as u32,
                     // Ein Gutschein gilt als besichert, wenn das `type_`-Feld im `collateral`-Objekt nicht leer ist.
                     has_collateral: !voucher.collateral.type_.is_empty(),
-                    creator_first_name: voucher.creator.first_name.clone(),
-                    creator_last_name: voucher.creator.last_name.clone(),
-                    creator_coordinates: voucher.creator.coordinates.clone(),
+                    creator_first_name: voucher.creator_profile.first_name.clone().unwrap_or_default(),
+                    creator_last_name: voucher.creator_profile.last_name.clone().unwrap_or_default(),
+                    creator_coordinates: voucher.creator_profile.coordinates.clone().unwrap_or_default(),
                     non_redeemable_test_voucher: voucher.non_redeemable_test_voucher,
                 }
             })

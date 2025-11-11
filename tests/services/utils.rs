@@ -108,17 +108,16 @@ fn test_chronological_validation_with_timezones() {
     let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     let test_user = &ACTORS.test_user;
 
-    let creator_data = voucher_lib::Creator {
-        id: test_user.user_id.clone(),
-        ..Default::default()
-    };
     let voucher_data = NewVoucherData {
         validity_duration: Some("P3Y".to_string()),
         nominal_value: voucher_lib::models::voucher::NominalValue {
             amount: "100".to_string(),
             ..Default::default()
         },
-        creator: creator_data,
+        creator_profile: voucher_lib::models::profile::PublicProfile {
+            id: Some(test_user.user_id.clone()),
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -159,7 +158,7 @@ fn test_chronological_validation_with_timezones() {
 // --- Tests from test_local_instance_id.rs ---
 
 use voucher_lib::models::voucher::{
-    Address, Collateral, Creator, NominalValue, Transaction, Voucher, VoucherStandard, VoucherTemplateData,
+    Address, Collateral, NominalValue, Transaction, Voucher, VoucherStandard, VoucherTemplateData,
 };
 use voucher_lib::services::crypto_utils::get_hash;
 use voucher_lib::services::utils::get_current_timestamp;
@@ -201,21 +200,19 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
             description: "".to_string(),
             redeem_condition: "".to_string(),
         },
-        creator: Creator {
-            id: creator_id.to_string(),
-            first_name: "Test".to_string(),
-            last_name: "Creator".to_string(),
-            address: Address::default(), // Address leitet Default ab und kann so verwendet werden
+        creator_profile: voucher_lib::models::profile::PublicProfile {
+            id: Some(creator_id.to_string()),
+            first_name: Some("Test".to_string()),
+            last_name: Some("Creator".to_string()),
+            address: Some(Address::default()), // Address leitet Default ab und kann so verwendet werden
             organization: None,
             community: None,
             phone: None,
             email: None,
             url: None,
-            gender: "9".to_string(),
-            service_offer: None,
-            needs: None,
-            signature: "".to_string(),
-            coordinates: "0,0".to_string(),
+            gender: Some("9".to_string()),
+            coordinates: Some("0,0".to_string()),
+            ..Default::default()
         },
         transactions: vec![], // Wird im nächsten Schritt gefüllt
         signatures: vec![],

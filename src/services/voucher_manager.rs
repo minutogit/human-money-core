@@ -1,8 +1,9 @@
 use crate::models::voucher::{
-    Collateral, Creator, NominalValue, Transaction, Voucher, VoucherStandard,
+    Collateral, NominalValue, Transaction, Voucher, VoucherStandard, VoucherSignature,
 };
 use crate::error::VoucherCoreError;
-use crate::models::voucher_standard_definition::VoucherStandardDefinition;
+use crate::models::profile::PublicProfile;
+use crate::models::voucher_standard_definition::{VoucherStandardDefinition};
 use crate::services::{decimal_utils, standard_manager};
 use crate::services::crypto_utils::{get_hash, get_pubkey_from_user_id, sign_ed25519};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
@@ -77,7 +78,7 @@ pub struct NewVoucherData {
     pub non_redeemable_test_voucher: bool,
     pub nominal_value: NominalValue,
     pub collateral: Collateral,
-    pub creator: Creator,
+    pub creator_profile: PublicProfile,
 }
 
 /// Erstellt ein neues, signiertes `Voucher`-Struct.
@@ -201,17 +202,48 @@ pub fn create_voucher(
         non_redeemable_test_voucher: data.non_redeemable_test_voucher,
         nominal_value: final_nominal_value,
         collateral: final_collateral,
-        creator: data.creator,
+        creator_profile: data.creator_profile,
         transactions: vec![],
         signatures: vec![],
     };
+
+    // KORREKTUR: Holen Sie die ID und schlagen Sie früh fehl, wenn sie fehlt.
+    let creator_id = temp_voucher.creator_profile.id.as_ref()
+        .ok_or_else(|| VoucherManagerError::Generic("Creator profile must have an ID".to_string()))?
+        .clone();
 
     let voucher_json_for_signing = to_canonical_json(&temp_voucher)?;
     let voucher_hash = get_hash(voucher_json_for_signing);
 
     temp_voucher.voucher_id = voucher_hash.clone();
-    let creator_signature = sign_ed25519(creator_signing_key, voucher_hash.as_bytes());
-    temp_voucher.creator.signature = bs58::encode(creator_signature.to_bytes()).into_string();
+
+    // --- NEUE SIGNATUR-LOGIK (SCHRITT 3) ---
+    // Ersetzt die alte `creator.signature`-Logik.
+    // Die Signatur wird nun als `VoucherSignature` mit `role: "creator"`
+    // in das `signatures`-Array eingefügt.
+    // Sie signiert *exakt dieselben Daten* wie zuvor (den `voucher_hash`).
+    // KORREKTUR: Sie signiert ihre eigene `signature_id`.
+
+    let mut creator_sig_obj = VoucherSignature {
+        voucher_id: voucher_hash.clone(), // <-- HINZUFÜGEN
+        signature_id: "".to_string(), // Wird unten berechnet
+        signer_id: creator_id.clone(),
+        signature: "".to_string(), // Platzhalter, wird neu berechnet
+        signature_time: creation_date_str.clone(),
+        role: "creator".to_string(),
+        details: None, // Creator-Details sind bereits im Hauptobjekt
+    };
+
+    // Berechne die `signature_id` (Hash der Signatur-Metadaten)
+    let mut sig_to_hash = creator_sig_obj.clone();
+    sig_to_hash.signature_id = "".to_string();
+    sig_to_hash.signature = "".to_string();
+    // sig_to_hash.voucher_id ist bereits durch das Klonen vorhanden.
+    creator_sig_obj.signature_id = get_hash(to_canonical_json(&sig_to_hash)?);
+
+    // KORREKTUR: Signatur ERST JETZT erstellen, basierend auf der signature_id
+    let creator_signature = sign_ed25519(creator_signing_key, creator_sig_obj.signature_id.as_bytes());
+    creator_sig_obj.signature = bs58::encode(creator_signature.to_bytes()).into_string();
 
     // KORREKTUR: Zugriff auf die neue, verschachtelte Validierungsstruktur mit Fallback
     let decimal_places = verified_standard.validation.as_ref()
@@ -226,8 +258,8 @@ pub fn create_voucher(
         prev_hash: get_hash(format!("{}{}", &temp_voucher.voucher_id, &temp_voucher.voucher_nonce)),
         t_type: "init".to_string(),
         t_time: creation_date_str.clone(),
-        sender_id: temp_voucher.creator.id.clone(),
-        recipient_id: temp_voucher.creator.id.clone(),
+        sender_id: creator_id.clone(),
+        recipient_id: creator_id.clone(),
         amount: decimal_utils::format_for_storage(&initial_amount, decimal_places),
         sender_remaining_amount: None,
         sender_signature: "".to_string(),
@@ -248,6 +280,7 @@ pub fn create_voucher(
     let transaction_signature = sign_ed25519(creator_signing_key, signature_hash.as_bytes());
     init_transaction.sender_signature = bs58::encode(transaction_signature.to_bytes()).into_string();
 
+    temp_voucher.signatures.push(creator_sig_obj); // Füge die Creator-Signatur hinzu
     temp_voucher.transactions.push(init_transaction);
 
     Ok(temp_voucher)
@@ -411,7 +444,11 @@ fn validate_issuance_firewall(
     };
 
     // 2. Ersteller-Prüfung
-    if sender_id != voucher.creator.id {
+    let creator_id = match &voucher.creator_profile.id {
+        Some(id) => id,
+        None => return Ok(()), // Kein Creator-ID-Feld, kann nicht der Ersteller sein
+    };
+    if sender_id != creator_id {
         return Ok(()); // 1. Ausnahme: Sender ist nicht der Ersteller
     }
 

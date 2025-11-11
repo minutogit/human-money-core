@@ -8,7 +8,7 @@ use std::fs;
 use tempfile::tempdir;
 use voucher_lib::{VoucherStatus};
 use voucher_lib::{UserIdentity};
-use voucher_lib::models::voucher::{Creator, NominalValue, Voucher};
+use voucher_lib::models::voucher::{NominalValue, Voucher};
 use voucher_lib::services::voucher_manager::NewVoucherData;
 use voucher_lib::services::crypto_utils;
 use voucher_lib::services::voucher_manager;
@@ -22,21 +22,19 @@ use voucher_lib::test_utils::{add_voucher_to_wallet, setup_in_memory_wallet, ACT
 // --- Hilfsfunktionen ---
 fn create_test_voucher(identity: &UserIdentity) -> Voucher {
     let new_voucher_data = NewVoucherData {
-        creator: Creator {
-            id: identity.user_id.clone(),
-            first_name: "Test".to_string(),
-            last_name: "User".to_string(),
-            address: Default::default(),
+        creator_profile: voucher_lib::models::profile::PublicProfile {
+            id: Some(identity.user_id.clone()),
+            first_name: Some("Test".to_string()),
+            last_name: Some("User".to_string()),
+            address: Some(Default::default()),
             organization: None,
             community: None,
             phone: None,
             email: None,
             url: None,
-            gender: "9".to_string(),
-            service_offer: None,
-            needs: None,
-            signature: "".to_string(),
-            coordinates: "0,0".to_string(),
+            gender: Some("9".to_string()),
+            coordinates: Some("0,0".to_string()),
+            ..Default::default()
         },
         nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
         ..Default::default()

@@ -17,7 +17,7 @@ use std::{path::Path};
 use super::test_utils::{setup_in_memory_wallet, ACTORS, SILVER_STANDARD};
 use voucher_lib::{services::crypto_utils, UserIdentity, VoucherStatus};
 use voucher_lib::models::conflict::TransactionFingerprint;
-use voucher_lib::models::voucher::{Address, Collateral, Creator, NominalValue, Voucher};
+use voucher_lib::models::voucher::{Address, Collateral, NominalValue, Voucher};
 use voucher_lib::services::voucher_manager::{self, NewVoucherData};
 use voucher_lib::wallet::Wallet;
 
@@ -60,21 +60,19 @@ fn new_test_voucher_data(creator_id: String) -> NewVoucherData {
             description: String::new(),
         },
         collateral: Collateral::default(),
-        creator: Creator {
-            id: creator_id,
-            first_name: String::new(),
-            last_name: String::new(),
-            address: Address::default(),
+        creator_profile: voucher_lib::models::profile::PublicProfile {
+            id: Some(creator_id),
+            first_name: Some(String::new()),
+            last_name: Some(String::new()),
+            address: Some(Address::default()),
             organization: Some(String::new()),
             community: Some(String::new()),
             phone: Some(String::new()),
             email: Some(String::new()),
             url: Some(String::new()),
-            gender: String::new(),
-            service_offer: Some(String::new()),
-            needs: Some(String::new()),
-            signature: String::new(),
-            coordinates: String::new(),
+            gender: Some(String::new()),
+            coordinates: Some(String::new()),
+            ..Default::default()
         },
     }
 }

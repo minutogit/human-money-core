@@ -1,5 +1,6 @@
+// examples/playground_voucher_lifecycle.rs
 // run with: cargo run --example playground_voucher_lifecycle
-//! # playground_voucher_lifecycle.rs
+//!
 //!
 //! Demonstriert den gesamten Lebenszyklus eines Gutscheins unter Verwendung der
 //! High-Level `AppService`-Fassade, so wie es eine echte Client-Anwendung tun würde.
@@ -18,7 +19,7 @@
 //! 7.  **Rohdaten-Ausgabe:** Der finale Zustand des Gutscheins wird als JSON ausgegeben.
 
 use voucher_lib::app_service::AppService;
-use voucher_lib::models::voucher::{Creator, NominalValue};
+use voucher_lib::models::voucher::{NominalValue};
 use voucher_lib::{verify_and_parse_standard, NewVoucherData, VoucherStatus};
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -63,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let voucher_data = NewVoucherData {
         validity_duration: Some("P5Y".to_string()),
         nominal_value: NominalValue { amount: "60".to_string(), ..Default::default() },
-        creator: Creator { id: creator_id.clone(), first_name: "Max".into(), last_name: "Creator".into(), ..Default::default() },
+        creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(creator_id.clone()), first_name: Some("Max".into()), last_name: Some("Creator".into()), ..Default::default() },
         ..Default::default()
     };
     let created_voucher = service_creator.create_new_voucher(&standard_toml, "de", voucher_data, password)?;

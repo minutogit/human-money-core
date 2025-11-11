@@ -25,21 +25,29 @@ pub fn validate_voucher_against_standard(
     voucher: &Voucher,
     standard: &VoucherStandardDefinition,
 ) -> Result<(), VoucherCoreError> {
-    // Grundlegende Prüfungen, die immer gelten müssen.
+    // --- Grundlegende Identitäts- und Integritätsprüfungen (MUSS ZUERST ERFOLGEN) ---
+    // 1. Stelle sicher, dass der Gutschein zu diesem Standard gehört.
     verify_standard_identity(voucher, standard)?;
+    // 2. Stelle sicher, dass die Stammdaten des Gutscheins nicht manipuliert wurden.
+    //    (Prüft voucher.voucher_id gegen hash(voucher_stammdaten))
+    verify_voucher_hash(voucher)?;
 
-    // Logische Prüfung der Datenkonsistenz
-    if voucher.valid_until < voucher.creation_date {
+
+    // --- FIX (FEHLER 5): Datum-Parsing HÄRTEN ---
+    // Parsen der Zeitstempel MUSS vor dem Vergleich erfolgen.
+    let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date)
+        .map_err(|_| ValidationError::InvalidDateLogic { creation: voucher.creation_date.clone(), valid_until: voucher.valid_until.clone() })?
+        .with_timezone(&chrono::Utc);
+    let valid_until_dt = chrono::DateTime::parse_from_rfc3339(&voucher.valid_until)
+        .map_err(|_| ValidationError::InvalidDateLogic { creation: voucher.creation_date.clone(), valid_until: voucher.valid_until.clone() })?
+        .with_timezone(&chrono::Utc);
+
+    if valid_until_dt < creation_dt {
         return Err(ValidationError::InvalidDateLogic {
             creation: voucher.creation_date.clone(),
             valid_until: voucher.valid_until.clone(),
         }.into());
     }
-    verify_creator_signature(voucher)?;
-
-    // Die komplexen, zustandsbehafteten Prüfungen für Signaturen müssen VOR den
-    // datengesteuerten Regeln (z.B. field_group_rules) ausgeführt werden.
-    verify_signatures(voucher)?;
 
     // Führe die datengesteuerten Validierungsregeln aus, falls sie im Standard definiert sind.
     if let Some(rules) = &standard.validation {
@@ -56,7 +64,7 @@ pub fn validate_voucher_against_standard(
             validate_content_rules(&voucher_json, content_rules)?;
         }
         if let Some(behavior_rules) = &rules.behavior_rules {
-            validate_behavior_rules(voucher, behavior_rules)?;
+            validate_behavior_rules(voucher, behavior_rules, creation_dt, valid_until_dt)?;
         }
         if let Some(field_group_rules) = &rules.field_group_rules {
             validate_field_group_rules(&voucher_json, field_group_rules)?;
@@ -65,6 +73,8 @@ pub fn validate_voucher_against_standard(
 
     verify_transactions(voucher, standard)?;
 
+    // Signaturen als letztes prüfen, da sie auf den IDs/Hashes der anderen Komponenten basieren.
+    verify_signatures(voucher)?;
     Ok(())
 }
 
@@ -122,7 +132,7 @@ pub fn validate_required_signatures(
         .map(|sig| (
             &sig.signer_id,
             &sig.role,
-            is_signature_valid(sig, &voucher.voucher_id),
+            is_signature_valid(sig),
         ))
         .collect();
 
@@ -202,7 +212,12 @@ pub fn validate_content_rules(
 }
 
 /// Prüft Verhaltensregeln (erlaubte Transaktionstypen, Gültigkeitsdauer).
-pub fn validate_behavior_rules(voucher: &Voucher, rules: &BehaviorRules) -> Result<(), ValidationError> {
+pub fn validate_behavior_rules(
+    voucher: &Voucher,
+    rules: &BehaviorRules,
+    creation_dt: chrono::DateTime<chrono::Utc>,
+    valid_until_dt: chrono::DateTime<chrono::Utc>,
+) -> Result<(), ValidationError> {
     if let Some(allowed_types) = &rules.allowed_t_types {
         for tx in &voucher.transactions {
             if !allowed_types.contains(&tx.t_type) {
@@ -227,13 +242,6 @@ pub fn validate_behavior_rules(voucher: &Voucher, rules: &BehaviorRules) -> Resu
     // NEU: Prüfung der maximal erlaubten Gültigkeitsdauer bei Erstellung.
     if let Some(max_duration_str) = &rules.max_creation_validity_duration {
         if !max_duration_str.is_empty() {
-            let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date)
-                .map_err(|_| ValidationError::InvalidDateLogic { creation: voucher.creation_date.clone(), valid_until: voucher.valid_until.clone() })?
-                .with_timezone(&chrono::Utc);
-            let valid_until_dt = chrono::DateTime::parse_from_rfc3339(&voucher.valid_until)
-                .map_err(|_| ValidationError::InvalidDateLogic { creation: voucher.creation_date.clone(), valid_until: voucher.valid_until.clone() })?
-                .with_timezone(&chrono::Utc);
-
             let max_end_dt = add_iso8601_duration(creation_dt, max_duration_str).map_err(|e| {
                 ValidationError::InvalidTransaction(format!(
                     "Failed to calculate max allowed validity duration: {}",
@@ -282,8 +290,13 @@ pub fn validate_field_group_rules(
             expected: "Array".to_string(),
         })?;
 
+        // HINWEIS: Der 'effective_field_path' (z.B. "details.gender") kommt direkt
+        // aus der TOML-Regel. Der Diagnose-Test in `tests/validation/unit_service.rs`
+        // bestätigt, dass `serde` das Feld wie erwartet als "details" serialisiert.
+        let effective_field_path = rule.field.clone();
+
         // [DEBUG]
-        println!("[DEBUG VALIDATION] Checking field_group_rule for path: '{}', field: '{}'", path, rule.field);
+        println!("[DEBUG VALIDATION] Checking field_group_rule for path: '{}', field: '{}'", path, &effective_field_path);
 
         let mut value_occurrences: HashMap<String, u32> = HashMap::new();
 
@@ -291,10 +304,15 @@ pub fn validate_field_group_rules(
             // [DEBUG]
             // println!("[DEBUG VALIDATION]   Item: {:?}", item); // Kann sehr gesprächig sein, optional einkommentieren
 
+            // KORREKTUR: Der Pfad ist 'details.'. Die 'creator'-Signatur hat (absichtlich) keine 'details'.
+            if effective_field_path.starts_with("details.") && item.get("role").and_then(Value::as_str) == Some("creator") {
+                continue; // Die 'creator'-Signatur wird bei 'details'-Regeln übersprungen.
+                // [DEBUG]
+                // println!("[DEBUG VALIDATION]     Skipping rule for 'creator'.");
+            }
+
             // Wir extrahieren den Wert des relevanten Feldes als String, um ihn zu zählen.
-            // KORREKTUR: Verwende `get_value_by_path`, um verschachtelte Felder
-            // wie 'details.gender' zu unterstützen.
-            if let Some(value_node) = get_value_by_path(item, &rule.field) {
+            if let Some(value_node) = get_value_by_path(item, &effective_field_path) {
                 // [DEBUG]
                 println!("[DEBUG VALIDATION]     Found value_node: {:?}", value_node);
 
@@ -305,7 +323,11 @@ pub fn validate_field_group_rules(
                 }
             } else {
                 // [DEBUG]
-                println!("[DEBUG VALIDATION]     Field '{}' not found in item.", &rule.field);
+                // HINWEIS: Dies ist normal für den 'creator', wenn die Regel 'details.gender' ist.
+                println!(
+                    "[DEBUG VALIDATION]     Field '{}' not found in item (Role: {:?}).",
+                    &effective_field_path, item.get("role").and_then(Value::as_str).unwrap_or("N/A")
+                );
             }
         }
 
@@ -314,7 +336,7 @@ pub fn validate_field_group_rules(
             if found_count < count_rule.min || found_count > count_rule.max {
                 return Err(ValidationError::FieldValueCountOutOfBounds {
                     path: path.clone(),
-                    field: rule.field.clone(),
+                    field: rule.field.clone(), // Im Fehler den *Originalpfad* aus der TOML anzeigen
                     value: count_rule.value.clone(),
                     min: count_rule.min,
                     max: count_rule.max,
@@ -344,30 +366,19 @@ fn check_decimal_places(amount_str: &str, max_places: u8, field_path: &str) -> R
     Ok(())
 }
 /// Hilfsfunktion, um einen verschachtelten Wert aus einem `serde_json::Value` anhand eines Pfades zu extrahieren.
-fn get_value_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+pub fn get_value_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.').try_fold(value, |current, key| current.get(key)).filter(|v| !v.is_null())
 }
 
 /// Hilfsfunktion, die prüft, ob eine einzelne zusätzliche Signatur gültig ist. Gibt bool zurück.
 fn is_signature_valid(
     signature_obj: &VoucherSignature,
-    voucher_id: &str,
 ) -> Result<(), ValidationError> {
-    // Prüfung 1: Stimmt die Signatur mit dem Gutschein überein?
-    if signature_obj.voucher_id != voucher_id {
-        return Err(ValidationError::MismatchedVoucherIdInSignature {
-            expected: voucher_id.to_string(),
-            found: signature_obj.voucher_id.clone(),
-        });
-    }
-
     let mut obj_to_verify = signature_obj.clone();
     obj_to_verify.signature_id = "".to_string();
     obj_to_verify.signature = "".to_string();
     let calculated_id_hash = get_hash(to_canonical_json(&obj_to_verify).unwrap_or_default());
 
-    // Prüfung 2: (WIEDERHERGESTELLT) Wurden die Metadaten manipuliert?
-    // Passt der Hash der Metadaten zur gespeicherten signature_id?
     if calculated_id_hash != signature_obj.signature_id {
         return Err(ValidationError::InvalidSignatureId(signature_obj.signature_id.clone()));
     }
@@ -381,38 +392,21 @@ fn is_signature_valid(
         Ok(bytes) => bytes,
         Err(e) => return Err(ValidationError::SignatureDecodeError(e.to_string())),
     };
-    let signature = match Signature::from_slice(&signature_bytes) {
-        Ok(sig) => sig,
-        Err(e) => return Err(ValidationError::SignatureDecodeError(e.to_string())),
-    };
+
+    // KORREKTUR: Verwende die robustere Pars-Logik aus `signature_manager.rs`,
+    // um die 64-Byte-Länge explizit zu prüfen.
+    let signature_array: [u8; 64] = signature_bytes.try_into().map_err(|_| {
+        ValidationError::SignatureDecodeError(
+            "Invalid signature length: must be 64 bytes".to_string(),
+        )
+    })?;
+    // KORREKTUR: Verwende `from_bytes` statt `from_slice`
+    let signature = Signature::from_bytes(&signature_array);
 
     if !verify_ed25519(&public_key, signature_obj.signature_id.as_bytes(), &signature) {
         return Err(ValidationError::InvalidSignature { signer_id: signature_obj.signer_id.clone() });
     }
 
-    Ok(())
-}
-
-/// Verifiziert die Signatur des Erstellers. (Unverändert)
-fn verify_creator_signature(voucher: &Voucher) -> Result<(), VoucherCoreError> {
-    let public_key = get_pubkey_from_user_id(&voucher.creator.id)
-        .map_err(ValidationError::InvalidCreatorId)?;
-    let mut voucher_to_verify = voucher.clone();
-    let signature_b58 = voucher_to_verify.creator.signature.clone();
-    voucher_to_verify.creator.signature = "".to_string();
-    voucher_to_verify.voucher_id = "".to_string();
-    voucher_to_verify.transactions.clear();
-    voucher_to_verify.signatures.clear();
-    let signature_bytes = bs58::decode(signature_b58).into_vec().map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
-    let signature = Signature::from_slice(&signature_bytes).map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
-    let voucher_json = to_canonical_json(&voucher_to_verify)?;
-    let voucher_hash = get_hash(voucher_json);
-    if !verify_ed25519(&public_key, voucher_hash.as_bytes(), &signature) {
-        return Err(ValidationError::InvalidCreatorSignature {
-            creator_id: voucher.creator.id.clone(),
-            data_hash: voucher_hash,
-        }.into());
-    }
     Ok(())
 }
 
@@ -422,14 +416,22 @@ fn verify_signatures(voucher: &Voucher) -> Result<(), VoucherCoreError> {
     let mut seen_signers = HashSet::new();
 
     for signature_obj in &voucher.signatures {
-        // Prüfung auf doppelte Unterzeichner
-        if !seen_signers.insert(&signature_obj.signer_id) {
-            return Err(ValidationError::DuplicateGuarantor { // TODO: Besser "DuplicateSigner"
-                guarantor_id: signature_obj.signer_id.clone(),
+        // --- FIX (FEHLER 3): Reihenfolge geändert ---
+        // Sicherheitsprüfung, ob der Ersteller versucht, als Bürge zu agieren.
+        // Muss VOR der Duplikatsprüfung stattfinden.
+        if signature_obj.role == "guarantor" && Some(&signature_obj.signer_id) == voucher.creator_profile.id.as_ref() {
+            return Err(ValidationError::CreatorAsGuarantor {
+                creator_id: voucher.creator_profile.id.clone().unwrap_or_default(),
             }
                 .into());
         }
 
+        // Prüfung auf doppelte Unterzeichner
+        if !seen_signers.insert(&signature_obj.signer_id) {
+            return Err(ValidationError::DuplicateGuarantor {
+                guarantor_id: signature_obj.signer_id.clone(), // Behalte den Fehlertyp bei, auch wenn er "DuplicateSigner" sein sollte
+            }.into());
+        }
         // Prüfung auf chronologische Korrektheit der Signatur.
         // Eine Signatur kann nicht vor der Erstellung des Gutscheins existieren.
         if signature_obj.signature_time < voucher.creation_date {
@@ -441,25 +443,33 @@ fn verify_signatures(voucher: &Voucher) -> Result<(), VoucherCoreError> {
             }.into());
         }
 
-        // Sicherheitsprüfung, ob der Ersteller versucht, als Bürge zu agieren.
-        if signature_obj.role == "guarantor" && signature_obj.signer_id == voucher.creator.id {
-            return Err(ValidationError::CreatorAsGuarantor {
-                creator_id: voucher.creator.id.clone(),
-            }
-                .into());
-        }
-
         // Kryptographische Prüfung der Signatur selbst.
         // HIER IST DIE ÄNDERUNG: Wir rufen die Funktion auf und leiten den
         // spezifischen Fehler (z.B. InvalidSignatureId, MismatchedVoucherId,
         // InvalidSignature) direkt per '?' weiter.
-        is_signature_valid(signature_obj, &voucher.voucher_id)?;
+        is_signature_valid(signature_obj)?;
     }
-
     Ok(())
 }
 
+/// --- NEUE FUNKTION (FIX FÜR FEHLER 4) ---
+/// Verifiziert, dass der `voucher_id` (der Hash der Stammdaten) mit den
+/// tatsächlichen Stammdaten übereinstimmt.
+fn verify_voucher_hash(voucher: &Voucher) -> Result<(), VoucherCoreError> {
+    let mut voucher_to_hash = voucher.clone();
+    // Entferne die Felder, die nicht Teil des ursprünglichen Hashes sind.
+    voucher_to_hash.voucher_id = "".to_string();
+    voucher_to_hash.transactions.clear();
+    voucher_to_hash.signatures.clear();
 
+    let calculated_hash = get_hash(to_canonical_json(&voucher_to_hash)?);
+
+    if calculated_hash != voucher.voucher_id {
+        Err(ValidationError::InvalidVoucherHash.into())
+    } else {
+        Ok(())
+    }
+}
 
 /// Verifiziert die Integrität, Signaturen und Geschäftslogik der Transaktionsliste. (Weitgehend unverändert)
 fn verify_transactions(voucher: &Voucher, _standard: &VoucherStandardDefinition) -> Result<(), VoucherCoreError> {
@@ -567,8 +577,8 @@ fn verify_transaction_basics(tx: &Transaction, voucher: &Voucher, is_init: bool)
         if tx.t_type != "init" { return Err(ValidationError::InvalidTransaction("First transaction must be of type 'init'.".to_string()).into()); }
         let expected_prev_hash = get_hash(format!("{}{}", &voucher.voucher_id, &voucher.voucher_nonce));
         if tx.prev_hash != expected_prev_hash { return Err(ValidationError::InvalidTransaction("Initial transaction has invalid prev_hash.".to_string()).into()); }
-        if tx.sender_id != voucher.creator.id || tx.recipient_id != voucher.creator.id {
-            return Err(ValidationError::InitPartyMismatch { expected: voucher.creator.id.clone(), found: tx.sender_id.clone() }.into());
+        if Some(&tx.sender_id) != voucher.creator_profile.id.as_ref() || Some(&tx.recipient_id) != voucher.creator_profile.id.as_ref() {
+            return Err(ValidationError::InitPartyMismatch { expected: voucher.creator_profile.id.clone().unwrap_or_default(), found: tx.sender_id.clone() }.into());
         }
         let nominal_amount = Decimal::from_str(&voucher.nominal_value.amount)?;
         let init_amount = Decimal::from_str(&tx.amount)?;
@@ -615,7 +625,15 @@ fn verify_transaction_integrity_and_signature(transaction: &Transaction) -> Resu
     let signature_payload_hash = get_hash(to_canonical_json(&signature_payload)?);
     let sender_pub_key = get_pubkey_from_user_id(&transaction.sender_id)?;
     let signature_bytes = bs58::decode(&transaction.sender_signature).into_vec()?;
-    let signature = Signature::from_slice(&signature_bytes)?;
+
+    // KORREKTUR: Verwende die robuste Pars-Logik, um 64-Byte-Länge zu prüfen.
+    let signature_array: [u8; 64] = signature_bytes.try_into().map_err(|_| {
+        ValidationError::SignatureDecodeError(
+            "Invalid transaction signature length: must be 64 bytes".to_string(),
+        )
+    })?;
+    let signature = Signature::from_bytes(&signature_array);
+
     if !verify_ed25519(&sender_pub_key, signature_payload_hash.as_bytes(), &signature) {
         return Err(ValidationError::InvalidTransactionSignature {
             t_id: transaction.t_id.clone(),

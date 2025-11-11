@@ -251,7 +251,7 @@ mod instance_state_behavior {
 mod maintenance_logic {
     use super::*;
     use crate::wallet::Wallet;
-    use crate::models::voucher::Creator;
+
 
     /// **Test 3.1: Korrektes Löschen abgelaufener, archivierter Instanzen**
     ///
@@ -278,8 +278,8 @@ mod maintenance_logic {
         let voucher_data = crate::services::voucher_manager::NewVoucherData {
             validity_duration: Some("P1Y".to_string()),
             // FIX: Setze den Creator explizit, damit die Ownership-Prüfung erfolgreich ist.
-            creator: Creator {
-                id: user.user_id.clone(),
+            creator_profile: crate::models::profile::PublicProfile {
+                id: Some(user.user_id.clone()),
                 ..Default::default()
             },
             ..Default::default()

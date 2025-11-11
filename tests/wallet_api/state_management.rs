@@ -5,7 +5,7 @@
 
 use voucher_lib::{
     app_service::AppService,
-    models::{conflict::{ProofOfDoubleSpend, ResolutionEndorsement}, voucher::{Creator, NominalValue}},
+    models::{conflict::{ProofOfDoubleSpend, ResolutionEndorsement}, profile::PublicProfile, voucher::{NominalValue}},
     services::{crypto_utils, voucher_manager::NewVoucherData},
     test_utils::{
         create_test_bundle, generate_signed_standard_toml,
@@ -198,7 +198,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
             "en",
             NewVoucherData {
                 nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
-                creator: Creator { id: id_alice.clone(), ..Default::default() },
+                creator_profile: PublicProfile { id: Some(id_alice.clone()), ..Default::default() },
                 ..Default::default()
             },
             "pwd",
@@ -336,7 +336,7 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
             "en",
             NewVoucherData {
                 nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
-                creator: Creator { id: id_alice.clone(), ..Default::default() },
+                creator_profile: PublicProfile { id: Some(id_alice.clone()), ..Default::default() },
                 ..Default::default()
             },
             "pwd",
@@ -446,7 +446,7 @@ fn api_wallet_save_and_load_fidelity() {
                 // KORREKTUR: Testdaten explizit machen, um Mehrdeutigkeiten zu vermeiden.
                 // Wir geben die `NominalValue` vollständig an, wie sie im Standard erwartet wird.
                 NewVoucherData {
-                    creator: Creator { id: id_a.clone(), ..Default::default() },
+                    creator_profile: PublicProfile { id: Some(id_a.clone()), ..Default::default() },
                     nominal_value: NominalValue {
                         unit: "Unzen".to_string(),
                         amount: "10".to_string(),
@@ -496,7 +496,7 @@ fn api_wallet_save_and_load_fidelity() {
                     &silver_toml,
                     "en",
                     NewVoucherData {
-                        creator: Creator { id: id_bob, ..Default::default() },
+                        creator_profile: PublicProfile { id: Some(id_bob), ..Default::default() },
                         nominal_value: NominalValue { amount: "1".to_string(), ..Default::default() },
                         ..Default::default()
                     },
@@ -631,7 +631,7 @@ fn test_create_voucher_adds_exactly_one_instance() {
 
     // KORREKTUR: NewVoucherData um die obligatorische `validity_duration` ergänzt.
     let voucher_data = NewVoucherData {
-        creator: Creator { id: user_id, ..Default::default() },
+        creator_profile: PublicProfile { id: Some(user_id), ..Default::default() },
         nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
         // Die 'description' kommt aus dem Standard, nicht aus NewVoucherData.
         validity_duration: Some("P1Y".to_string()), // Gültigkeit von 1 Jahr hinzufügen
@@ -684,7 +684,7 @@ fn test_create_voucher_is_transactional_on_save_failure() {
 
     let standard_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let voucher_data = NewVoucherData {
-        creator: Creator { id: user_id, ..Default::default() },
+        creator_profile: PublicProfile { id: Some(user_id), ..Default::default() },
         nominal_value: NominalValue { amount: "50".to_string(), ..Default::default() },
         validity_duration: Some("P1Y".to_string()),
         ..Default::default()

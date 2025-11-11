@@ -4,7 +4,7 @@
 //! Gutschein-Standard-Definitionen härten.
 
 use voucher_lib::{
-    models::voucher::{Creator, NominalValue},
+    models::{profile::PublicProfile, voucher::{NominalValue}},
     services::voucher_manager::NewVoucherData,
     test_utils::{self, create_custom_standard, ACTORS, SILVER_STANDARD},
 };
@@ -34,7 +34,7 @@ fn test_disallowed_transaction_type() {
             &hostile_standard_toml,
             "en",
             NewVoucherData {
-                creator: Creator { id: user_id, ..Default::default() },
+                creator_profile: PublicProfile { id: Some(user_id), ..Default::default() },
                 nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
                 ..Default::default()
             },
@@ -104,7 +104,7 @@ fn test_violation_of_max_creation_validity() {
         &hostile_standard_toml,
         "en",
         NewVoucherData {
-            creator: Creator { id: user_id, ..Default::default() },
+            creator_profile: PublicProfile { id: Some(user_id), ..Default::default() },
             nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
             validity_duration: Some("P2Y".to_string()), // Länger als erlaubt
             ..Default::default()

@@ -11,8 +11,9 @@ use tempfile::tempdir;
 use voucher_lib::{
     models::{
         conflict::{ProofOfDoubleSpend, ResolutionEndorsement},
+        profile::PublicProfile,
         secure_container::SecureContainer,
-        voucher::{Creator, NominalValue},
+        voucher::{NominalValue},
     },
     services::{crypto_utils, voucher_manager::NewVoucherData},
     test_utils::{generate_signed_standard_toml, resign_transaction, ACTORS, SILVER_STANDARD},
@@ -62,7 +63,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
             &silver_toml,
             "en",
             NewVoucherData {
-                creator: Creator { id: user_id, ..Default::default() },
+                creator_profile: PublicProfile { id: Some(user_id), ..Default::default() },
                 nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
                 ..Default::default()
             },
@@ -149,7 +150,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
             &silver_toml,
             "en",
             NewVoucherData {
-                creator: Creator { id: id_sender, ..Default::default() },
+                creator_profile: PublicProfile { id: Some(id_sender), ..Default::default() },
                 nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
                 ..Default::default()
             },
@@ -235,10 +236,10 @@ fn test_attach_signature_is_transactional_on_save_failure() {
             &silver_toml,
             "en",
             NewVoucherData {
-                creator: Creator {
-                    id: id_creator.clone(),
-                    first_name: "Test".to_string(),
-                    last_name: "Creator".to_string(),
+                creator_profile: PublicProfile {
+                    id: Some(id_creator.clone()),
+                    first_name: Some("Test".to_string()),
+                    last_name: Some("Creator".to_string()),
                     ..Default::default() },
                 nominal_value: NominalValue { amount: "100".to_string(), unit: silver_standard.template.fixed.nominal_value.unit.clone(), ..Default::default() },
                 validity_duration: Some("P1Y".to_string()),
@@ -249,7 +250,10 @@ fn test_attach_signature_is_transactional_on_save_failure() {
 
     let local_id = service_creator.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
     let details_before = service_creator.get_voucher_details(&local_id).unwrap();
-    assert_eq!(details_before.voucher.signatures.len(), 0);
+    // KORREKTUR: Nach dem Refactoring enthält der Gutschein
+    // bei Erstellung bereits die Signatur des Erstellers (role: "creator").
+    //
+    assert_eq!(details_before.voucher.signatures.len(), 1);
     assert!(matches!(
         details_before.status, // Der Gutschein sollte Active sein
         VoucherStatus::Active
@@ -272,7 +276,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     // FIX: Argumente in der korrekten Reihenfolge übergeben (voucher_id, description).
     // 1. Signatur von externem Unterzeichner erstellen.
     let _sig_data1 = voucher_lib::test_utils::create_additional_signature_data(
-        &signer_identity, &voucher_from_request.voucher_id, "First validation",
+        &signer_identity, &voucher_from_request.voucher_id,
     );
 
     // 3. Bürge erstellt das Antwort-Bundle.
@@ -290,8 +294,8 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let details_mid = service_creator.get_voucher_details(&local_id).unwrap();
         assert_eq!(
         details_mid.voucher.signatures.len(),
-        1,
-        "Should have 1 signature after first attachment"
+        2, // creator + sig 1
+        "Should have 2 signatures (creator + signer 1) after first attachment"
     );
     assert!(matches!(
         details_mid.status,
@@ -314,7 +318,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
 
     // 2. Zweite Signatur erstellen.
     let _sig_data2 = voucher_lib::test_utils::create_additional_signature_data(
-        &signer_identity2, &voucher_from_request2.voucher_id, "Second validation",
+        &signer_identity2, &voucher_from_request2.voucher_id,
     );
 
     let detached_sig2 = service_signer
@@ -331,8 +335,8 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let details_after = service_creator.get_voucher_details(&local_id).unwrap();
     assert_eq!(
         details_after.voucher.signatures.len(),
-        1,
-        "Signature count should remain 1 after failed attachment"
+        2, // creator + sig 1
+        "Signature count should remain 2 (creator + signer 1) after failed attachment"
     );
     assert!(
         matches!(details_after.status, VoucherStatus::Active), // Muss Active bleiben
@@ -431,7 +435,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         &silver_toml,
         "en",
         NewVoucherData {
-            creator: Creator { id: id_alice.clone(), ..Default::default() },
+            creator_profile: PublicProfile { id: Some(id_alice.clone()), ..Default::default() },
             nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
             ..Default::default()
         },

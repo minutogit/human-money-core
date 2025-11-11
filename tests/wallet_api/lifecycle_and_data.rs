@@ -6,7 +6,7 @@
 
 #[cfg(test)]
 mod tests {
-    use voucher_lib::models::voucher::Creator;
+
     use voucher_lib::services::voucher_manager::{NewVoucherData};
     use voucher_lib::app_service::AppService;
     use voucher_lib::test_utils;
@@ -160,8 +160,8 @@ mod tests {
         let user_id = service.get_user_id().unwrap();
 
         let voucher_data = NewVoucherData {
-            creator: Creator {
-                id: user_id.clone(),
+            creator_profile: voucher_lib::models::profile::PublicProfile {
+                id: Some(user_id.clone()),
                 ..Default::default()
             },
             nominal_value: voucher_lib::models::voucher::NominalValue {

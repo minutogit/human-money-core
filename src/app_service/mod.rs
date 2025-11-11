@@ -20,7 +20,6 @@
 //! use voucher_lib::app_service::AppService;
 //! use std::path::Path;
 //! # use voucher_lib::services::voucher_manager::NewVoucherData;
-//! # use voucher_lib::models::voucher::Creator;
 //! # use voucher_lib::models::voucher_standard_definition::VoucherStandardDefinition;
 //!
 //! // 1. Initialisierung des Services mit einem Basis-Speicherpfad.

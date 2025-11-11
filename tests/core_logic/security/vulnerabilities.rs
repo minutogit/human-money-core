@@ -7,7 +7,7 @@ use voucher_lib::{
 use voucher_lib::crypto_utils;
 use voucher_lib::models::profile::{TransactionBundle};
 use voucher_lib::{UserIdentity, VoucherStatus};
-use voucher_lib::models::voucher::{Collateral, Creator, NominalValue, Transaction, Voucher, VoucherSignature};
+use voucher_lib::models::voucher::{Collateral, NominalValue, Transaction, Voucher, VoucherSignature};
 use voucher_lib::services::crypto_utils::{get_hash, sign_ed25519};
 use voucher_lib::services::secure_container_manager::create_secure_container;
 use voucher_lib::services::utils::{get_current_timestamp};
@@ -122,19 +122,18 @@ fn new_test_voucher_data(creator_id: String) -> NewVoucherData {
         non_redeemable_test_voucher: false,
         nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
         collateral: Collateral::default(),
-        creator: Creator { id: creator_id, ..Default::default() },
+        creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(creator_id), ..Default::default() },
     }
 }
 
 /// Erstellt eine gültige Bürgschaft für einen gegebenen Gutschein.
 fn create_guarantor_signature(
-    voucher: &Voucher,
+    _voucher: &Voucher,
     guarantor_identity: &UserIdentity,
     organization: Option<&str>,
     gender: &str,
 ) -> VoucherSignature {
     let mut sig_obj = VoucherSignature {
-        voucher_id: voucher.voucher_id.clone(),
         signer_id: guarantor_identity.user_id.clone(),
         role: "guarantor".to_string(),
         signature_time: get_current_timestamp(),
@@ -207,7 +206,7 @@ fn create_hacked_tx(signer_identity: &UserIdentity, mut hacked_tx: Transaction) 
 }
 
 /// **NEUER STUB:** Erstellt Test-Voucher-Daten für die neuen Tests.
-fn create_test_voucher_data_with_amount(creator: Creator, amount: &str) -> NewVoucherData {
+fn create_test_voucher_data_with_amount(creator_profile: voucher_lib::models::profile::PublicProfile, amount: &str) -> NewVoucherData {
     NewVoucherData {
         validity_duration: Some("P5Y".to_string()),
         non_redeemable_test_voucher: false,
@@ -216,7 +215,7 @@ fn create_test_voucher_data_with_amount(creator: Creator, amount: &str) -> NewVo
             ..Default::default()
         },
         collateral: Collateral::default(),
-        creator,
+        creator_profile,
     }
 }
 
@@ -290,17 +289,25 @@ fn test_attack_tamper_core_data_and_guarantors() {
     victim_wallet.process_encrypted_transaction_bundle(&ACTORS.victim, &hacked_container, None, &standards_for_victim).unwrap();
     let received_voucher = &victim_wallet.voucher_store.vouchers.iter().next().unwrap().1.voucher;
     let result = voucher_validation::validate_voucher_against_standard(received_voucher, standard);
-    assert!(matches!(result, Err(VoucherCoreError::Validation(ValidationError::InvalidCreatorSignature { .. }))),
-            "Validation must fail due to manipulated nominal value.");
+    // KORREKTUR: Die Validierung fängt den Fehler korrekterweise durch die
+    // `verify_voucher_hash`-Prüfung ab,
+    // die VOR der `InitAmountMismatch`-Prüfung läuft.
+    assert!(matches!(result, Err(VoucherCoreError::Validation(ValidationError::InvalidVoucherHash))),
+            "Validation must fail with InvalidVoucherHash due to manipulated nominal value.");
     victim_wallet.voucher_store.vouchers.clear(); // Reset for next test
 
     // ### SZENARIO 4a: BÜRGEN-METADATEN MANIPULIEREN ###
     println!("--- Angriff 4a: Bürgen-Metadaten manipulieren ---");
     let mut tampered_guarantor_voucher = voucher_in_hacker_wallet.clone();
-    if let Some(ref mut details) = tampered_guarantor_voucher.signatures[0].details {
-        details.first_name = Some("Mallory".to_string());
+    // KORREKTUR: signatures[0] ist jetzt der Ersteller (role: "creator").
+    // Der Bürge (role: "guarantor") ist an Index 1.
+    let guarantor_sig_to_tamper = tampered_guarantor_voucher.signatures.get_mut(1)
+        .expect("Test voucher must have a guarantor signature at index 1");
+
+    if let Some(ref mut details) = guarantor_sig_to_tamper.details {
+            details.first_name = Some("Mallory".to_string());
     } else {
-        tampered_guarantor_voucher.signatures[0].details = Some(voucher_lib::models::profile::PublicProfile {
+        guarantor_sig_to_tamper.details = Some(voucher_lib::models::profile::PublicProfile {
             first_name: Some("Mallory".to_string()),
             ..Default::default()
         });
@@ -611,10 +618,10 @@ fn test_attack_full_transfer_amount_mismatch() {
         public_key,
         user_id: user_id.clone(),
     };
-    let creator = Creator {
-        id: user_id,
-        first_name: "Stub".to_string(),
-        last_name: "Creator".to_string(),
+    let creator = voucher_lib::models::profile::PublicProfile {
+        id: Some(user_id),
+        first_name: Some("Stub".to_string()),
+        last_name: Some("Creator".to_string()),
         ..Default::default()
     };
     let voucher_data = create_test_voucher_data_with_amount(creator.clone(), "100");
@@ -627,10 +634,11 @@ fn test_attack_full_transfer_amount_mismatch() {
     // Wir erstellen die Transaktion explizit, anstatt die `init`-Transaktion zu klonen,
     // um Nebeneffekte zu vermeiden und den Test robuster zu machen.
     let malicious_tx = Transaction {
+        t_id: String::new(), // Wird später gesetzt
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_type: "transfer".to_string(),
         amount: "99.0000".to_string(), // Inkorrekt für einen 'transfer' bei einem Guthaben von 100
-        sender_id: creator.id.clone(),
+        sender_id: creator.id.clone().expect("Creator ID should exist"),
         recipient_id: ACTORS.bob.user_id.clone(),
         t_time: get_current_timestamp(),
         sender_remaining_amount: None,
@@ -659,10 +667,10 @@ fn test_attack_remainder_in_full_transfer() {
         public_key,
         user_id: user_id.clone(),
     };
-    let creator = Creator {
-        id: user_id,
-        first_name: "Stub".to_string(),
-        last_name: "Creator".to_string(),
+    let creator = voucher_lib::models::profile::PublicProfile {
+        id: Some(user_id),
+        first_name: Some("Stub".to_string()),
+        last_name: Some("Creator".to_string()),
         ..Default::default()
     };
     let voucher_data = create_test_voucher_data_with_amount(creator.clone(), "100");
@@ -674,11 +682,12 @@ fn test_attack_remainder_in_full_transfer() {
     // Erstelle eine 'transfer' Transaktion, die den vollen Betrag sendet,
     // aber fälschlicherweise auch einen Restbetrag enthält.
     let malicious_tx = Transaction {
+        t_id: String::new(), // Wird später gesetzt
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_type: "transfer".to_string(),
         amount: "100.0000".to_string(),
         sender_remaining_amount: Some("0.0001".to_string()), // Darf nicht vorhanden sein
-        sender_id: creator.id.clone(),
+        sender_id: creator.id.clone().expect("Creator ID should exist"),
         recipient_id: ACTORS.bob.user_id.clone(),
         t_time: get_current_timestamp(),
         ..Default::default()

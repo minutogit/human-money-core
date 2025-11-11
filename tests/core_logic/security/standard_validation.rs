@@ -7,7 +7,7 @@ use voucher_lib::{
     to_canonical_json, validate_voucher_against_standard,
     VoucherCoreError,
 };
-use voucher_lib::models::voucher::{Creator, NominalValue, Voucher, VoucherSignature};
+use voucher_lib::models::voucher::{NominalValue, Voucher, VoucherSignature};
 use voucher_lib::services::crypto_utils::{get_hash, sign_ed25519};
 use voucher_lib::services::utils::get_current_timestamp;
 use voucher_lib::services::voucher_manager::NewVoucherData;
@@ -29,7 +29,7 @@ mod required_signatures_validation {
     fn create_base_voucher_for_sig_test(standard: &voucher_lib::VoucherStandardDefinition, standard_hash: &str) -> Voucher {
         let creator_identity = &ACTORS.alice;
         let voucher_data = NewVoucherData {
-            creator: Creator { id: creator_identity.user_id.clone(), ..Default::default() },
+            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
             validity_duration: Some("P1Y".to_string()), // HINZUGEFÜGT: Gültigkeit explizit setzen
             // HINZUGEFÜGT: Nennwert explizit setzen, um "Invalid decimal: empty" zu vermeiden
             nominal_value: NominalValue {
@@ -48,7 +48,7 @@ mod required_signatures_validation {
         // im Test-Setup nicht mit der in standard_required_signatures.toml übereinstimmt.
         let signer = &ACTORS.charlie;
         let mut sig = VoucherSignature {
-            voucher_id: voucher.voucher_id.clone(),
+            voucher_id: voucher.voucher_id.clone(), // KORREKTUR: Setze die voucher_id vom Gutschein
             signer_id: signer.user_id.clone(),
             role: "Official Approver".to_string(), // KORREKTUR: Semantisch bessere Rolle (muss mit TOML übereinstimmen)
             signature_time: get_current_timestamp(),
@@ -164,7 +164,7 @@ mod required_signatures_validation {
         let (standard, standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
         let creator_identity = &ACTORS.alice;
         let voucher_data = NewVoucherData {
-            creator: Creator { id: creator_identity.user_id.clone(), ..Default::default() },
+            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
             nominal_value: NominalValue { amount: "60".to_string(), ..Default::default() },
             // KORREKTUR: Der Minuto-Standard erfordert eine Mindestgültigkeit (z.B. P3Y).
             // P1Y war zu kurz und löste `ValidityDurationTooShort` aus, bevor die eigentliche
@@ -176,9 +176,8 @@ mod required_signatures_validation {
 
         // Angriff: Der Ersteller (Alice) versucht, für sich selbst zu bürgen.
         let self_guarantor_sig = create_guarantor_signature_with_time(
-            &voucher.voucher_id,
             creator_identity, // Alice bürgt
-            "Alice", "2",
+            "Alice", "guarantor", "2",
             "2026-08-01T10:00:00Z"
         );
 

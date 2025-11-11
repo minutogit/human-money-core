@@ -63,8 +63,8 @@ mod tests {
                 amount: "100".to_string(),
                 ..Default::default()
             },
-            creator: voucher_lib::models::voucher::Creator {
-                id: ACTORS.alice.user_id.clone(),
+            creator_profile: voucher_lib::models::profile::PublicProfile {
+                id: Some(ACTORS.alice.user_id.clone()),
                 ..Default::default()
             }, ..Default::default()
         };

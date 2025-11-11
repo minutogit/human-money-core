@@ -6,7 +6,7 @@
 use super::Wallet;
 use crate::{error::VoucherCoreError, models::profile::PublicProfile};
 use crate::models::profile::UserIdentity;
-use crate::wallet::instance::{VoucherInstance, VoucherStatus};
+use crate::wallet::instance::VoucherStatus;
 use crate::models::secure_container::{PayloadType, SecureContainer};
 use crate::models::signature::DetachedSignature;
 use crate::models::voucher::Voucher;
@@ -101,9 +101,9 @@ impl Wallet {
         let signed_signature =
             crate::services::signature_manager::complete_and_sign_detached_signature(
                 signature_data,
-                &voucher_to_sign.voucher_id,
                 identity,
                 details,
+                &voucher_to_sign.voucher_id, // <-- HINZUFÜGEN
             )?;
 
         let payload = to_canonical_json(&signed_signature)?;
@@ -142,32 +142,35 @@ impl Wallet {
         let signature: DetachedSignature = serde_json::from_slice(&payload)?;
         crate::services::signature_manager::validate_detached_signature(&signature)?;
 
-        let voucher_id = match &signature {
-            DetachedSignature::Signature(s) => &s.voucher_id,
+        // Since the voucher_id field has been removed from VoucherSignature,
+        // we need to match the signature to a voucher differently.
+        // In the new design, the signature should be matched based on other identifying factors
+        // such as the context of which vouchers are expecting signatures.
+        
+        let signature_obj = match signature {
+            DetachedSignature::Signature(s) => s,
         };
 
-        let target_instance = self.find_active_voucher_by_voucher_id(voucher_id)
-            .ok_or_else(|| VoucherCoreError::VoucherNotFound(voucher_id.clone()))?;
+        // Find a voucher that is expecting this signature
+        // NEU: Finde den Gutschein direkt über die voucher_id
+        let target_instance = self.voucher_store.vouchers.values_mut()
+            .find(|instance| instance.voucher.voucher_id == signature_obj.voucher_id)
+            .ok_or_else(|| VoucherCoreError::VoucherNotFound(
+                format!("No voucher found matching signature's voucher_id: {}", signature_obj.voucher_id)
+            ))?;
 
-        match signature {
-            DetachedSignature::Signature(s) => target_instance.voucher.signatures.push(s),
+        // (Optional, aber empfohlen) Prüfen, ob die Signatur bereits vorhanden ist
+        if target_instance.voucher.signatures.iter().any(|sig| sig.signature_id == signature_obj.signature_id) {
+            // Stillschweigend ignorieren oder Fehler zurückgeben
+            return Err(VoucherCoreError::MismatchedSignatureData( // TODO: Besserer Fehlertyp
+                format!("Signature {} already attached to voucher {}", signature_obj.signature_id, signature_obj.voucher_id)
+            )); 
         }
+
+        target_instance.voucher.signatures.push(signature_obj);
 
         Ok(target_instance.local_instance_id.clone())
     }
 
-    /// Findet die aktive Instanz eines Gutscheins anhand seiner globalen `voucher_id`.
-    fn find_active_voucher_by_voucher_id(
-        &mut self,
-        voucher_id: &str,
-    ) -> Option<&mut VoucherInstance> {
-        self.voucher_store
-            .vouchers
-            .values_mut()
-            .find(|instance| { // KORREKTUR: Signaturen können an 'Active' oder 'Incomplete' Gutscheine angehängt werden.
-                instance.voucher.voucher_id == voucher_id
-                    && (matches!(instance.status, VoucherStatus::Active)
-                        || matches!(instance.status, VoucherStatus::Incomplete { .. }))
-            })
-    }
+
 }

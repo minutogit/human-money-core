@@ -106,7 +106,7 @@ mod parsing_and_verification {
 #[cfg(test)]
 mod integration_with_voucher {
     use super::*;
-    use voucher_lib::models::voucher::Creator;
+
     use voucher_lib::services::voucher_manager::NewVoucherData;
 
     #[test]
@@ -124,7 +124,7 @@ mod integration_with_voucher {
     #[test]
     fn test_create_voucher_when_lang_preference_is_set_then_uses_correct_localized_text() {
         let new_voucher_data_de = NewVoucherData {
-            creator: Creator { id: ACTORS.alice.user_id.clone(), ..Default::default() },
+            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
             nominal_value: voucher_lib::models::voucher::NominalValue { amount: "888".to_string(), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
@@ -134,7 +134,7 @@ mod integration_with_voucher {
         );
 
         let new_voucher_data_fr = NewVoucherData {
-            creator: Creator { id: ACTORS.alice.user_id.clone(), ..Default::default() },
+            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
             nominal_value: voucher_lib::models::voucher::NominalValue { amount: "888".to_string(), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
@@ -166,7 +166,7 @@ mod integration_with_voucher {
 mod security_hardening {
     use super::*;
     use voucher_lib::services::voucher_manager::NewVoucherData;
-    use voucher_lib::models::voucher::{Creator, NominalValue};
+    use voucher_lib::models::voucher::{NominalValue};
 
     #[test]
     fn test_verify_standard_when_signature_string_is_invalid_base58_then_fails() {
@@ -204,7 +204,7 @@ mod security_hardening {
             s.template.fixed.nominal_value.unit = "".to_string();
         });
         let new_voucher_data = NewVoucherData {
-            creator: Creator { id: ACTORS.alice.user_id.clone(), ..Default::default() },
+            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
             nominal_value: NominalValue { amount: "50".to_string(), ..Default::default() },
             ..Default::default()
         };
