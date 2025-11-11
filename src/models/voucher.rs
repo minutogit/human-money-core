@@ -4,6 +4,7 @@
 //! Diese Strukturen bilden das im `llm-context.md` definierte JSON-Schema exakt ab
 //! und verwenden `serde` für die Serialisierung und Deserialisierung.
 
+use crate::models::profile::PublicProfile;
 use serde::{Serialize, Deserialize};
 
 /// Definiert den Standard, zu dem ein Gutschein gehört.
@@ -144,45 +145,17 @@ pub struct VoucherSignature {
     pub signature_id: String,
     /// Eindeutige ID des zusätzlichen Unterzeichners.
     pub signer_id: String,
-    
-    // --- Optionale Metadaten (primär für Bürgen/Guarantor-Rolle) ---
-    /// Vorname des Unterzeichners (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub first_name: Option<String>,
-    /// Nachname des Unterzeichners (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_name: Option<String>,
-    /// Organisation des Unterzeichners (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub organization: Option<String>,
-    /// Community des Unterzeichners (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub community: Option<String>,
-    /// Adresse des Unterzeichners (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub address: Option<Address>,
-    /// Geschlecht des Unterzeichners nach ISO 5218 (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gender: Option<String>,
-    /// E-Mail des Unterzeichners (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
-    /// Telefonnummer des Unterzeichners (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub phone: Option<String>,
-    /// Geografische Koordinaten des Unterzeichners (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub coordinates: Option<String>,
-    /// URL des Unterzeichners (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    
+
     /// Die digitale Signatur.
     pub signature: String,
     /// Zeitpunkt der Signatur im ISO 8601-Format.
     pub signature_time: String,
     /// Definiert die Rolle oder den Zweck dieser Signatur (z.B. "guarantor", "notary").
     pub role: String,
+
+    /// Optionale, detaillierte Profil-Informationen über den Unterzeichner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<PublicProfile>,
 }
 
 /// Definiert die Template-Daten, die aus dem Standard-TOML kopiert wurden.

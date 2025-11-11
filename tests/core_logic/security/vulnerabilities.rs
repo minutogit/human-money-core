@@ -137,11 +137,14 @@ fn create_guarantor_signature(
         voucher_id: voucher.voucher_id.clone(),
         signer_id: guarantor_identity.user_id.clone(),
         role: "guarantor".to_string(),
-        first_name: Some("Garant".to_string()),
-        last_name: Some("Test".to_string()),
         signature_time: get_current_timestamp(),
-        organization: organization.map(String::from),
-        gender: Some(gender.to_string()),
+        details: Some(voucher_lib::models::profile::PublicProfile {
+            first_name: Some("Garant".to_string()),
+            last_name: Some("Test".to_string()),
+            organization: organization.map(String::from),
+            gender: Some(gender.to_string()),
+            ..Default::default()
+        }),
         ..Default::default()
     };
 
@@ -294,7 +297,14 @@ fn test_attack_tamper_core_data_and_guarantors() {
     // ### SZENARIO 4a: BÜRGEN-METADATEN MANIPULIEREN ###
     println!("--- Angriff 4a: Bürgen-Metadaten manipulieren ---");
     let mut tampered_guarantor_voucher = voucher_in_hacker_wallet.clone();
-    tampered_guarantor_voucher.signatures[0].first_name = Some("Mallory".to_string());
+    if let Some(ref mut details) = tampered_guarantor_voucher.signatures[0].details {
+        details.first_name = Some("Mallory".to_string());
+    } else {
+        tampered_guarantor_voucher.signatures[0].details = Some(voucher_lib::models::profile::PublicProfile {
+            first_name: Some("Mallory".to_string()),
+            ..Default::default()
+        });
+    }
 
     let mut final_tx_2 = Transaction {
         prev_hash: get_hash(to_canonical_json(tampered_guarantor_voucher.transactions.last().unwrap()).unwrap()),

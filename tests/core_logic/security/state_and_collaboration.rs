@@ -226,11 +226,14 @@ fn test_serialization_roundtrip_with_special_chars() {
             voucher_id: original_voucher.voucher_id.clone(),
             signer_id: g1_identity.user_id.clone(),
             role: "guarantor".to_string(),
-            first_name: Some("Garant".to_string()),
-            last_name: Some("Test".to_string()),
             signature_time: get_current_timestamp(),
-            organization: Some("Bürge & Co.".to_string()),
-            gender: Some("1".to_string()),
+            details: Some(voucher_lib::models::profile::PublicProfile {
+                first_name: Some("Garant".to_string()),
+                last_name: Some("Test".to_string()),
+                organization: Some("Bürge & Co.".to_string()),
+                gender: Some("1".to_string()),
+                ..Default::default()
+            }),
             ..Default::default()
         };
 
@@ -251,10 +254,13 @@ fn test_serialization_roundtrip_with_special_chars() {
         voucher_id: original_voucher.voucher_id.clone(),
         signer_id: second_guarantor_identity.user_id.clone(),
         role: "guarantor".to_string(),
-        first_name: Some("Garantin".to_string()),
-        last_name: Some("Test".to_string()),
         signature_time: get_current_timestamp(),
-        gender: Some("2".to_string()),
+        details: Some(voucher_lib::models::profile::PublicProfile {
+            first_name: Some("Garantin".to_string()),
+            last_name: Some("Test".to_string()),
+            gender: Some("2".to_string()),
+            ..Default::default()
+        }),
         ..Default::default()
     };
     let mut sig_obj = second_guarantor_sig.clone();

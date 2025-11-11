@@ -6,7 +6,7 @@
 use crate::error::{StandardDefinitionError, ValidationError, VoucherCoreError};
 use crate::models::voucher::{Transaction, Voucher, VoucherSignature};
 use crate::models::voucher_standard_definition::{BehaviorRules, ContentRules, CountRules, FieldGroupRule,
-    RequiredSignatureRule, VoucherStandardDefinition
+                                                 RequiredSignatureRule, VoucherStandardDefinition
 };
 use crate::services::crypto_utils::{get_hash, get_pubkey_from_user_id, verify_ed25519};
 use crate::services::utils::to_canonical_json;
@@ -282,16 +282,30 @@ pub fn validate_field_group_rules(
             expected: "Array".to_string(),
         })?;
 
+        // [DEBUG]
+        println!("[DEBUG VALIDATION] Checking field_group_rule for path: '{}', field: '{}'", path, rule.field);
+
         let mut value_occurrences: HashMap<String, u32> = HashMap::new();
 
         for item in array {
+            // [DEBUG]
+            // println!("[DEBUG VALIDATION]   Item: {:?}", item); // Kann sehr gesprächig sein, optional einkommentieren
+
             // Wir extrahieren den Wert des relevanten Feldes als String, um ihn zu zählen.
-            if let Some(value_node) = item.get(&rule.field) {
+            // KORREKTUR: Verwende `get_value_by_path`, um verschachtelte Felder
+            // wie 'details.gender' zu unterstützen.
+            if let Some(value_node) = get_value_by_path(item, &rule.field) {
+                // [DEBUG]
+                println!("[DEBUG VALIDATION]     Found value_node: {:?}", value_node);
+
                 if let Some(s) = value_node.as_str() {
                     *value_occurrences.entry(s.to_string()).or_insert(0) += 1;
                 } else if value_node.is_number() || value_node.is_boolean() {
-                     *value_occurrences.entry(value_node.to_string()).or_insert(0) += 1;
+                    *value_occurrences.entry(value_node.to_string()).or_insert(0) += 1;
                 }
+            } else {
+                // [DEBUG]
+                println!("[DEBUG VALIDATION]     Field '{}' not found in item.", &rule.field);
             }
         }
 
@@ -413,7 +427,7 @@ fn verify_signatures(voucher: &Voucher) -> Result<(), VoucherCoreError> {
             return Err(ValidationError::DuplicateGuarantor { // TODO: Besser "DuplicateSigner"
                 guarantor_id: signature_obj.signer_id.clone(),
             }
-            .into());
+                .into());
         }
 
         // Prüfung auf chronologische Korrektheit der Signatur.
@@ -429,10 +443,10 @@ fn verify_signatures(voucher: &Voucher) -> Result<(), VoucherCoreError> {
 
         // Sicherheitsprüfung, ob der Ersteller versucht, als Bürge zu agieren.
         if signature_obj.role == "guarantor" && signature_obj.signer_id == voucher.creator.id {
-             return Err(ValidationError::CreatorAsGuarantor {
+            return Err(ValidationError::CreatorAsGuarantor {
                 creator_id: voucher.creator.id.clone(),
             }
-            .into());
+                .into());
         }
 
         // Kryptographische Prüfung der Signatur selbst.
@@ -516,7 +530,7 @@ fn verify_transactions(voucher: &Voucher, _standard: &VoucherStandardDefinition)
             return Err(ValidationError::InvalidTransaction(
                 "A 'transfer' transaction must not have a sender_remaining_amount.".to_string(),
             )
-            .into());
+                .into());
         }
 
         // NEU: Zusätzliche Prüfung für Split-Transaktionen auf korrekte Bilanz.
@@ -528,7 +542,7 @@ fn verify_transactions(voucher: &Voucher, _standard: &VoucherStandardDefinition)
                     return Err(ValidationError::InvalidTransaction(
                         "Split transaction must have a sender_remaining_amount.".to_string(),
                     )
-                    .into())
+                        .into())
                 }
             };
 

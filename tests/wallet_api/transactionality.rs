@@ -271,15 +271,15 @@ fn test_attach_signature_is_transactional_on_save_failure() {
 
     // FIX: Argumente in der korrekten Reihenfolge übergeben (voucher_id, description).
     // 1. Signatur von externem Unterzeichner erstellen.
-    let sig_data1 = voucher_lib::test_utils::create_additional_signature_data(
+    let _sig_data1 = voucher_lib::test_utils::create_additional_signature_data(
         &signer_identity, &voucher_from_request.voucher_id, "First validation",
     );
 
     // 3. Bürge erstellt das Antwort-Bundle.
     // Signer erstellt das Antwort-Bundle.
-    // FIX: Das 3. Argument ist die Empfänger-ID der Antwort, nicht das Passwort.
+    // FIX: Das 4. Argument ist die Empfänger-ID der Antwort, und das 2. & 3. Argument sind die Rolle und include_details
     let detached_sig1 = service_signer
-        .create_detached_signature_response_bundle(&voucher_from_request, sig_data1, &id_creator)
+        .create_detached_signature_response_bundle(&voucher_from_request, "additional_signer", true, &id_creator)
         .unwrap();
     
     // FIX: Das 2. Argument ist der Standard-TOML, nicht die local_id.
@@ -313,12 +313,12 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let voucher_from_request2: voucher_lib::models::voucher::Voucher = serde_json::from_slice(&payload2).unwrap();
 
     // 2. Zweite Signatur erstellen.
-    let sig_data2 = voucher_lib::test_utils::create_additional_signature_data(
+    let _sig_data2 = voucher_lib::test_utils::create_additional_signature_data(
         &signer_identity2, &voucher_from_request2.voucher_id, "Second validation",
     );
 
     let detached_sig2 = service_signer
-        .create_detached_signature_response_bundle(&voucher_from_request2, sig_data2, &id_creator)
+        .create_detached_signature_response_bundle(&voucher_from_request2, "additional_signer", true, &id_creator)
         .unwrap();
 
     // 2. ACT: Versuche, die zweite Signatur mit falschem Passwort hinzuzufügen.

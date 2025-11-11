@@ -5,7 +5,7 @@
 
 use super::{AppState, AppService};
 use crate::models::signature::DetachedSignature;
-use crate::models::voucher::Voucher;
+use crate::models::voucher::{Voucher, VoucherSignature};
 use crate::wallet::instance::VoucherStatus;
 use crate::{ValidationFailureReason, VoucherCoreError};
 use crate::services::voucher_validation;
@@ -47,7 +47,8 @@ impl AppService {
     pub fn create_detached_signature_response_bundle(
         &self,
         voucher_to_sign: &Voucher,
-        signature_data: DetachedSignature,
+        role: &str,
+        include_details: bool,
         original_sender_id: &str,
     ) -> Result<Vec<u8>, String> {
         let identity = match &self.state {
@@ -55,11 +56,19 @@ impl AppService {
             AppState::Locked => return Err("Wallet is locked".to_string()),
         };
         let wallet = self.get_wallet()?;
+
+        // Erstelle das Wrapper-Objekt mit den Metadaten
+        let signature_data = DetachedSignature::Signature(VoucherSignature {
+            role: role.to_string(),
+            ..Default::default()
+        });
+
         wallet
             .create_detached_signature_response(
                 identity,
                 voucher_to_sign,
                 signature_data,
+                include_details,
                 original_sender_id,
             )
             .map_err(|e| e.to_string())

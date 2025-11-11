@@ -35,7 +35,19 @@ impl Wallet {
             user_id: user_id.clone(),
         };
 
-        let profile = UserProfile { user_id };
+        let profile = UserProfile { 
+            user_id,
+            first_name: None,
+            last_name: None,
+            organization: None,
+            community: None,
+            address: None,
+            gender: None,
+            email: None,
+            phone: None,
+            coordinates: None,
+            url: None,
+        };
 
         let voucher_store = VoucherStore::default();
         let bundle_meta_store = BundleMetadataStore::default();

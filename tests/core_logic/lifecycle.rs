@@ -87,9 +87,9 @@ fn test_full_creation_and_validation_cycle() {
     let initial_validation_result = validate_voucher_against_standard(&voucher, &minuto_standard_with_rounding);
     assert!(matches!(
        initial_validation_result.unwrap_err(),
-        // KORREKTUR: Der Standard prüft jetzt `gender`, nicht `role`. Der erste Fehler ist das Fehlen von gender="1".
+        // KORREKTUR: Der Standard prüft jetzt `details.gender`, nicht `gender`.
         VoucherCoreError::Validation(ValidationError::FieldValueCountOutOfBounds { path, field, value, min: 1, max: 1, found: 0 })
-        if path == "signatures" && field == "gender" && value == "1"
+        if path == "signatures" && field == "details.gender" && value == "1"
     ));
 
     // 4. Simulation des Bürgenprozesses nach neuer Logik
@@ -272,11 +272,10 @@ fn test_validation_fails_on_guarantor_count() {
     let validation_result = validate_voucher_against_standard(&voucher, minuto_standard);
     assert!(validation_result.is_err());
     match validation_result.unwrap_err() {
-        // KORREKTUR: Erwarte den korrekten Fehler gemäß der FieldGroupRule-Logik.
-        // Die Validierung prüft jetzt `gender`, nicht `role`, basierend auf dem Minuto-Standard.
+        // KORREKTUR: Erwarte den korrekten Fehler für `details.gender`.
         VoucherCoreError::Validation(ValidationError::FieldValueCountOutOfBounds { path, field, value, min: 1, max: 1, found: 0 })
-        if path == "signatures" && field == "gender" && value == "1" => {} // Korrekt
-        e => panic!("Expected FieldValueCountOutOfBounds error for 'gender'='1', but got {:?}", e),
+        if path == "signatures" && field == "details.gender" && value == "1" => {} // Korrekt
+        e => panic!("Expected FieldValueCountOutOfBounds error for 'details.gender'='1', but got {:?}", e),
     }
 }
 
@@ -672,11 +671,19 @@ fn test_validation_fails_on_tampered_guarantor_signature() {
 
     // 2. Manipuliere die Metadaten der ersten Signatur, NACHDEM sie erstellt wurde.
     let original_signature_id = voucher.signatures[0].signature_id.clone();
-    voucher.signatures[0].first_name = Some("Tampered".to_string());
+    if let Some(ref mut details) = voucher.signatures[0].details {
+        details.first_name = Some("Tampered".to_string());
+    } else {
+        // If there are no details, we create them
+        voucher.signatures[0].details = Some(voucher_lib::models::profile::PublicProfile {
+            first_name: Some("Tampered".to_string()),
+            ..Default::default()
+        });
+    }
 
     // 3. Die Validierung muss nun fehlschlagen, da der Hash der Daten nicht mehr zur signature_id passt.
     let validation_result = validate_voucher_against_standard(&voucher, minuto_standard);
-    
+
     assert!(
         matches!(validation_result.as_ref().unwrap_err(),
             VoucherCoreError::Validation(ValidationError::InvalidSignatureId(found_id)) if *found_id == original_signature_id),

@@ -115,6 +115,7 @@ fn api_wallet_full_signature_workflow() {
             &bob.identity,
             &voucher_from_alice,
             DetachedSignature::Signature(guarantor_metadata),
+            true, // include_details
             &alice.identity.user_id,
         )
         .unwrap();
@@ -129,6 +130,9 @@ fn api_wallet_full_signature_workflow() {
     let instance = alice_wallet.voucher_store.vouchers.get(&local_id).unwrap();
     assert_eq!(instance.voucher.signatures.len(), 1);
     assert_eq!(instance.voucher.signatures[0].signer_id, bob.user_id);
+    // Prüfe, ob die verschachtelten Details (via `include_details: true`) vorhanden sind
+    // (Das Wallet-Profil von Bob ist leer, daher sind die Felder None)
+    assert!(instance.voucher.signatures[0].details.is_some());
 
     let validation_result = voucher_validation::validate_voucher_against_standard(&instance.voucher, minuto_standard);
     dbg!(&validation_result);
@@ -140,7 +144,7 @@ fn api_wallet_full_signature_workflow() {
         // Bob hat eine Signatur mit `gender: None` (via Default) hinzugefügt.
         // Die erste Regel (`gender="1"`) schlägt fehl (erwartet 1, gefunden 0).
         VoucherCoreError::Validation(ValidationError::FieldValueCountOutOfBounds { path, field, value, min: 1, max: 1, found: 0 })
-        if path == "signatures" && field == "gender" && value == "1"
+        if path == "signatures" && field == "details.gender" && value == "1"
     ));
 }
 
@@ -197,6 +201,7 @@ fn api_wallet_signature_fail_tampered_container() {
             &bob.identity,
             &voucher,
             DetachedSignature::Signature(guarantor_metadata),
+            true, // include_details
             &alice.identity.user_id,
         )
         .unwrap();
@@ -269,6 +274,7 @@ fn api_wallet_signature_fail_mismatched_voucher_id() {
             &bob.identity,
             &voucher_b,
             DetachedSignature::Signature(guarantor_metadata),
+            true, // include_details
             &alice.identity.user_id,
         )
         .unwrap();
@@ -364,14 +370,19 @@ fn api_app_service_full_signature_workflow() {
         // Der Sender (creator) ist bekannt, wir brauchen ihn nicht aus dem Container.
         debug_open_container(&request_bytes, guarantor_identity).unwrap()
     };
-    let signature_data = create_additional_signature_data(
+    let _signature_data = create_additional_signature_data(
         service_guarantor.get_unlocked_mut_for_test().1,
         &voucher_to_sign.voucher_id,
         "Verified by external party.",
     );
 
     let response_bytes = service_guarantor
-        .create_detached_signature_response_bundle(&voucher_to_sign, signature_data, &service_creator.get_user_id().unwrap())
+        .create_detached_signature_response_bundle(
+            &voucher_to_sign,
+            "notary", // Role (basierend auf `create_additional_signature_data`)
+            true,     // include_details
+            &service_creator.get_user_id().unwrap()
+        )
         .unwrap();
 
     service_creator
@@ -400,7 +411,7 @@ fn api_wallet_signature_roundtrip_minuto_required() {
     let alice = &ACTORS.alice;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
     let bob = &ACTORS.bob;
-    let bob_wallet = setup_in_memory_wallet(&bob.identity); // Bobs Wallet für die Antwort
+    let mut bob_wallet = setup_in_memory_wallet(&bob.identity); // Bobs Wallet für die Antwort
     let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
     // Erstelle einen Minuto-Gutschein, der noch Bürgen braucht. `false` = nicht valide erstellen.
@@ -422,13 +433,17 @@ fn api_wallet_signature_roundtrip_minuto_required() {
     // Wir modifizieren die innere Struktur via Pattern Matching
     let DetachedSignature::Signature(guarantor_struct) = &mut signature_data_enum;
     assert_eq!(guarantor_struct.role, "guarantor");
-    guarantor_struct.first_name = Some("Bob".to_string());
-    guarantor_struct.last_name = Some("Builder".to_string());
-
+    // Das Setzen von `first_name` etc. ist nicht mehr nötig, da `create_detached_signature_response`
+    // die `details` (PublicProfile) aus dem Wallet (hier Bob) automatisch einfügt.
+    // Wir müssen Bobs Wallet-Profil füllen, damit die Details ankommen.
+    bob_wallet.profile.first_name = Some("Bob".to_string());
+    bob_wallet.profile.last_name = Some("Builder".to_string());
 
     // Bob erstellt die verschlüsselte Antwort mit der Signatur
     let response_bytes = bob_wallet
-        .create_detached_signature_response(&bob.identity, &voucher_for_signing, signature_data_enum, &alice.identity.user_id)
+        .create_detached_signature_response(
+            &bob.identity, &voucher_for_signing, signature_data_enum, true, &alice.identity.user_id
+        )
         .unwrap();
 
     // Alice verarbeitet die Signatur-Antwort
@@ -442,6 +457,10 @@ fn api_wallet_signature_roundtrip_minuto_required() {
     assert_eq!(
         final_instance.voucher.signatures[0].signer_id, bob.identity.user_id
     );
+    // Prüfe die verschachtelten Details
+    let details = final_instance.voucher.signatures[0].details.as_ref().unwrap();
+    assert_eq!(details.first_name.as_deref(), Some("Bob"));
+    assert_eq!(details.last_name.as_deref(), Some("Builder"));
 }
 
 /// Testet den vollständigen Bürgen-Workflow über die `AppService`-Fassade,
@@ -472,9 +491,9 @@ fn test_full_guarantor_workflow_via_app_service() {
     let creator = &ACTORS.alice;
     let (mut service_creator, _) = test_utils::setup_service_with_profile(dir_creator.path(), creator, "Creator", password);
     let creator_id = service_creator.get_user_id().unwrap();
-    let (service_g1, _) = test_utils::setup_service_with_profile(dir_g1.path(), &ACTORS.guarantor1, "Guarantor 1", password);
+    let (service_g1, _) = test_utils::setup_service_with_profile(dir_g1.path(), &ACTORS.male_guarantor, "Male Guarantor", password);
     let g1_id = service_g1.get_user_id().unwrap();
-    let (service_g2, _) = test_utils::setup_service_with_profile(dir_g2.path(), &ACTORS.guarantor2, "Guarantor 2", password);
+    let (service_g2, _) = test_utils::setup_service_with_profile(dir_g2.path(), &ACTORS.female_guarantor, "Female Guarantor", password);
     let g2_id = service_g2.get_user_id().unwrap();
 
     // --- 2. Schritt 1: Erstellung des unvollständigen Gutscheins ---
@@ -516,16 +535,14 @@ fn test_full_guarantor_workflow_via_app_service() {
     let _request_bundle_1 = service_creator
         .create_signing_request_bundle(&local_id, &g1_id)
         .expect("Failed to create signing request for G1");
-    let signature_data_1 = DetachedSignature::Signature(VoucherSignature {
-        voucher_id: details_before.voucher.voucher_id.clone(),
-        role: "guarantor".to_string(),
-        gender: Some("1".to_string()),
-        ..Default::default()
-    });
+    // Hinweis: In der neuen Struktur setzt create_detached_signature_response_bundle
+    // die Details nur, wenn include_details=true und der AppService das unterstützt.
+    // Hier müssen wir direkt eine Signatur mit Details erstellen.
     let response_bundle_1 = service_g1
         .create_detached_signature_response_bundle(
             &details_before.voucher,
-            signature_data_1,
+            "guarantor",
+            true, // include_details
             &service_creator.get_user_id().unwrap(),
         )
         .expect("Failed to create signature response from G1");
@@ -539,16 +556,13 @@ fn test_full_guarantor_workflow_via_app_service() {
     let _request_bundle_2 = service_creator
         .create_signing_request_bundle(&local_id, &g2_id)
         .expect("Failed to create signing request for G2");
-    let signature_data_2 = DetachedSignature::Signature(VoucherSignature {
-        voucher_id: details_mid.voucher.voucher_id.clone(),
-        role: "guarantor".to_string(),
-        gender: Some("2".to_string()),
-        ..Default::default()
-    });
+    // Hinweis: In der neuen Struktur setzt create_detached_signature_response_bundle
+    // die Details nur, wenn include_details=true und der AppService das unterstützt.
     let response_bundle_2 = service_g2
         .create_detached_signature_response_bundle(
             &details_mid.voucher,
-            signature_data_2,
+            "guarantor",
+            true, // include_details
             &service_creator.get_user_id().unwrap(),
         )
         .expect("Failed to create signature response from G2");
@@ -562,6 +576,11 @@ fn test_full_guarantor_workflow_via_app_service() {
         details_after.status,
         VoucherStatus::Active,
         "Final voucher status should be Active"
+    );
+    // Überprüfe die verschachtelten Gender-Daten
+    assert_eq!(
+        details_after.voucher.signatures[0].details.as_ref().unwrap().gender.as_deref(),
+        Some("1")
     );
 }
 
@@ -595,14 +614,15 @@ fn api_wallet_signature_roundtrip_silver_optional() {
         test_utils::create_guarantor_signature_data(&bob.identity, "1" , &voucher_for_signing.voucher_id);
     let DetachedSignature::Signature(guarantor_struct) = &mut signature_data_enum;
     assert_eq!(guarantor_struct.role, "guarantor");
-    guarantor_struct.first_name = Some("Bob".to_string());
-    guarantor_struct.last_name = Some("Builder".to_string());
+    // Das Setzen von `first_name` etc. ist nicht mehr nötig, da `create_detached_signature_response`
+    // die `details` (PublicProfile) aus dem Wallet (hier Bob) automatisch einfügt.
 
     let response_bytes = bob_wallet
         .create_detached_signature_response(
             &bob.identity,
             &voucher_for_signing,
             signature_data_enum,
+            false, // include_details
             &alice.identity.user_id,
         )
         .unwrap();
@@ -613,4 +633,6 @@ fn api_wallet_signature_roundtrip_silver_optional() {
 
     let final_instance = alice_wallet.voucher_store.vouchers.get(&voucher_id).unwrap();
     assert_eq!(final_instance.voucher.signatures.len(), 1);
+    // Details sollten `None` sein, da `include_details: false`
+    assert!(final_instance.voucher.signatures[0].details.is_none());
 }

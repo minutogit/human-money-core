@@ -59,7 +59,7 @@ issuance_minimum_validity_duration = "P3Y"
 # und einer weiblich ('2') sein muss, gemäß ISO 5218.
 [validation.field_group_rules]
 [validation.field_group_rules.signatures]
-field = "gender"
+field = "details.gender"
 value_counts = [
     # Erzwingt 1x Männlich (ISO 5218)
     { value = "1", min = 1, max = 1 },
@@ -72,4 +72,4 @@ value_counts = [
 issuer_id = "0-xXz@did:key:z6Mkoim7ZGcaKdoeD41USV5gmxfiVXXiPDeYt4T9rnEB5zfM"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "QqwwxkHvk4PNhR7yJXRuSWiKkB9C2oQrK2edjvXMiq3ED3ZBHnosUiCHns6CHvw2dGskxkwykSpKgiZ8wxGg7Sc"
+signature = "3ceXHE7eTpLAptURfcZnz8H4GPi3QtXfbpastT1ZPTxGZR3XMQgPAroTKHfi6XmXnh5EDPyb6wAt8FrC4RxFCrCq"

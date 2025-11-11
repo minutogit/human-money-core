@@ -4,7 +4,7 @@
 //! Signatur-Workflow zuständig sind (Anfragen, Erstellen, Verarbeiten).
 
 use super::Wallet;
-use crate::error::VoucherCoreError;
+use crate::{error::VoucherCoreError, models::profile::PublicProfile};
 use crate::models::profile::UserIdentity;
 use crate::wallet::instance::{VoucherInstance, VoucherStatus};
 use crate::models::secure_container::{PayloadType, SecureContainer};
@@ -66,6 +66,7 @@ impl Wallet {
     /// * `identity` - Die Identität des Unterzeichners.
     /// * `voucher_to_sign` - Der Gutschein, der unterzeichnet werden soll (vom Client validiert).
     /// * `signature_data` - Die vom Client vorbereiteten Metadaten der Signatur.
+    /// * `include_details` - Ob die `PublicProfile`-Daten des Unterzeichners eingebettet werden sollen.
     /// * `original_sender_id` - Die User ID des ursprünglichen Anfragers (Empfänger der Antwort).
     ///
     /// # Returns
@@ -75,13 +76,34 @@ impl Wallet {
         identity: &UserIdentity,
         voucher_to_sign: &Voucher,
         signature_data: DetachedSignature,
+        include_details: bool,
         original_sender_id: &str,
     ) -> Result<Vec<u8>, VoucherCoreError> {
+        // Stelle die optionalen Profil-Details zusammen
+        let details = if include_details {
+            Some(PublicProfile {
+                id: None, // `signer_id` ist bereits auf der Hauptebene vorhanden
+                first_name: self.profile.first_name.clone(),
+                last_name: self.profile.last_name.clone(),
+                organization: self.profile.organization.clone(),
+                community: self.profile.community.clone(),
+                address: self.profile.address.clone(),
+                gender: self.profile.gender.clone(),
+                email: self.profile.email.clone(),
+                phone: self.profile.phone.clone(),
+                coordinates: self.profile.coordinates.clone(),
+                url: self.profile.url.clone(),
+            })
+        } else {
+            None
+        };
+
         let signed_signature =
             crate::services::signature_manager::complete_and_sign_detached_signature(
                 signature_data,
                 &voucher_to_sign.voucher_id,
                 identity,
+                details,
             )?;
 
         let payload = to_canonical_json(&signed_signature)?;

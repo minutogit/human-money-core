@@ -352,6 +352,16 @@ pub fn setup_voucher_with_one_tx() -> (
 pub fn setup_in_memory_wallet(identity: &UserIdentity) -> Wallet {
     let profile = UserProfile {
         user_id: identity.user_id.clone(),
+        first_name: None,
+        last_name: None,
+        organization: None,
+        community: None,
+        address: None,
+        gender: None,
+        email: None,
+        phone: None,
+        coordinates: None,
+        url: None,
     };
     Wallet {
         profile,
@@ -379,7 +389,19 @@ pub fn create_test_wallet(
         user_id: user_id.clone(),
     };
 
-    let profile = UserProfile { user_id };
+    let profile = UserProfile { 
+        user_id,
+        first_name: None,
+        last_name: None,
+        organization: None,
+        community: None,
+        address: None,
+        gender: None,
+        email: None,
+        phone: None,
+        coordinates: None,
+        url: None,
+    };
 
     let wallet = Wallet {
         profile,
@@ -438,11 +460,13 @@ pub fn add_voucher_to_wallet(
             sig_data1,
             &voucher.voucher_id,
             &crate::test_utils::ACTORS.guarantor1.identity,
+            None, // No public profile details in test
         )?;
         let signed_sig2 = signature_manager::complete_and_sign_detached_signature(
             sig_data2,
             &voucher.voucher_id,
             &crate::test_utils::ACTORS.guarantor2.identity,
+            None, // No public profile details in test
         )?;
 
         // HINWEIS: Die 'if let' sind jetzt redundant, da DetachedSignature nur eine Variante hat.
@@ -504,21 +528,18 @@ pub fn create_guarantor_signature_data(
 ) -> DetachedSignature {
     let data = VoucherSignature {
         signer_id: guarantor_identity.user_id.clone(),
-        first_name: Some("Guarantor".to_string()),
-        last_name: Some("Test".to_string()),
-        gender: Some(gender.to_string()),
         voucher_id: voucher_id.to_string(),
         signature_id: String::new(),
         signature: String::new(),
         signature_time: String::new(),
         role: "guarantor".to_string(),
-        organization: None,
-        community: None,
-        address: None,
-        email: None,
-        phone: None,
-        coordinates: None,
-        url: None,
+        details: Some(crate::models::profile::PublicProfile {
+            id: None,
+            first_name: Some("Guarantor".to_string()),
+            last_name: Some("Test".to_string()),
+            gender: Some(gender.to_string()),
+            ..Default::default()
+        }),
         ..Default::default() // Stellt sicher, dass alle optionalen Felder initialisiert sind
     };
     // KORREKTUR: Verwende den vereinheitlichten Enum-Typ
@@ -687,11 +708,15 @@ pub fn create_guarantor_signature_with_time(
         voucher_id: voucher_id.to_string(),
         signature_id: "".to_string(),
         signer_id: guarantor_identity.user_id.clone(),
-        first_name: Some(guarantor_first_name.to_string()),
-        last_name: Some("Guarantor".to_string()),
-        gender: Some(guarantor_gender.to_string()),
         signature_time: signature_time.to_string(),
         role: "guarantor".to_string(),
+        details: Some(crate::models::profile::PublicProfile {
+            id: None,
+            first_name: Some(guarantor_first_name.to_string()),
+            last_name: Some("Guarantor".to_string()),
+            gender: Some(guarantor_gender.to_string()),
+            ..Default::default()
+        }),
         ..Default::default()
     };
 

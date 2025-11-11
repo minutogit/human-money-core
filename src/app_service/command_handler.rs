@@ -70,7 +70,7 @@ impl AppService {
                                     // Fall 1: Ein *erwarteter* Validierungsfehler, der "Incomplete" bedeutet
                                     // (z.B. fehlende Bürgen-Signaturen, die durch 'gender' oder 'role' Regeln geprüft werden).
                                     Err(VoucherCoreError::Validation(ref validation_err @ ValidationError::FieldValueCountOutOfBounds { ref path, ref field, .. }))
-                                        if path == "signatures" && (field == "role" || field == "gender") =>
+                                        if path == "signatures" && (field == "role" || field == "details.gender") =>
                                     {
                                         let reasons = vec![ValidationFailureReason::RequiredSignatureMissing { role_description: validation_err.to_string() }];
                                         (Ok(new_voucher.clone()), VoucherStatus::Incomplete { reasons })

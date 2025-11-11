@@ -5,6 +5,7 @@
 //! Diese Strukturen sind für die Verwaltung der "Wallet" eines Nutzers zuständig.
 
 use crate::models::voucher::Voucher;
+use crate::models::voucher::Address; // Importiert die Address-Struktur
 use crate::models::conflict::TransactionFingerprint;
 use crate::wallet::instance::VoucherInstance;
 use ed25519_dalek::{SigningKey, VerifyingKey as EdPublicKey};
@@ -137,6 +138,48 @@ pub struct BundleMetadataStore {
     pub history: HashMap<String, TransactionBundleHeader>,
 }
 
+/// Ein standardisiertes öffentliches Profil, das in Signaturen und
+/// im Creator-Feld wiederverwendet werden kann.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct PublicProfile {
+    /// Die User-ID (did:key) des Profilinhabers.
+    /// Optional, da es oft redundant zur übergeordneten ID (z.B. signer_id) ist.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_name: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub community: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<Address>,
+
+    /// Geschlecht des Erstellers ISO 5218 (1 = male, 2 = female, 0 = not known, 9 = Not applicable).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gender: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phone: Option<String>,
+
+    /// Geografische Koordinaten (z.B. "Breitengrad, Längengrad").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordinates: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
 /// Die Hauptstruktur, die den gesamten Zustand eines Nutzer-Wallets repräsentiert.
 /// Sie enthält die Identität, den Bestand an Gutscheinen und die Transaktionshistorie.
 /// Diese Struktur wird serialisiert und verschlüsselt auf der Festplatte gespeichert.
@@ -144,12 +187,45 @@ pub struct BundleMetadataStore {
 pub struct UserProfile {
     /// Die öffentliche User-ID. Wird aus `identity` abgeleitet und hier für einfachen Zugriff dupliziert.
     pub user_id: String,
+    // HINZUFÜGEN: Felder für die Profil-Details
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub community: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<Address>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gender: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phone: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordinates: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 // Implementiere `Default` für UserProfile, um eine leere Instanz zu erzeugen, die dann gefüllt wird.
 // Die `identity` wird nach der Erstellung separat hinzugefügt.
 impl Default for UserProfile {
     fn default() -> Self {
-        Self { user_id: String::new() }
+        Self { 
+            user_id: String::new(),
+            first_name: None,
+            last_name: None,
+            organization: None,
+            community: None,
+            address: None,
+            gender: None,
+            email: None,
+            phone: None,
+            coordinates: None,
+            url: None,
+        }
     }
 }

@@ -5,7 +5,7 @@
 use crate::error::ValidationError;
 
 use crate::error::VoucherCoreError;
-use crate::models::profile::UserIdentity;
+use crate::models::profile::{PublicProfile, UserIdentity};
 use crate::models::signature::DetachedSignature;
 use crate::services::crypto_utils::{get_hash, get_pubkey_from_user_id, sign_ed25519, verify_ed25519};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
@@ -18,41 +18,81 @@ use crate::services::utils::{get_current_timestamp, to_canonical_json};
 ///
 /// # Arguments
 /// * `signature_data` - Das `DetachedSignature`-Enum mit den Metadaten des Unterzeichners.
-/// * `voucher_id` - Die ID des Gutscheins, auf den sich die Signatur bezieht (zur Validierung).
+/// * `voucher_id_to_embed` - Die ID des Gutscheins, die in das Objekt geschrieben werden soll.
 /// * `signer_identity` - Die Identität des Unterzeichners.
+/// * `details` - Das optionale `PublicProfile` des Unterzeichners.
 ///
 /// # Returns
 /// Eine `Result` mit der vervollständigten `DetachedSignature`.
 pub fn complete_and_sign_detached_signature(
     mut signature_data: DetachedSignature,
-    voucher_id: &str,
+    voucher_id_to_embed: &str,
     signer_identity: &UserIdentity,
+    details: Option<PublicProfile>,
 ) -> Result<DetachedSignature, VoucherCoreError> {
-    let (signature_voucher_id, signer_id) = match &mut signature_data {
+    let signer_id = match &mut signature_data {
         DetachedSignature::Signature(sig) => {
             sig.signer_id = signer_identity.user_id.clone();
-            (sig.voucher_id.clone(), sig.signer_id.clone())
+            sig.voucher_id = voucher_id_to_embed.to_string(); // Setze die ID für die Zuordnung
+            
+            // If details parameter is Some, use it to complete the signature by merging
+            // with existing details, giving priority to values in the details parameter.
+            // If details parameter is None, explicitly clear the details (e.g., for include_details=false).
+            match &details {
+                Some(profile_details) => {
+                    // Details are provided - merge with existing details or use entirely
+                    match &sig.details {
+                        Some(sig_details) => {
+                            // Both signature and profile have details - merge giving priority to profile where it has values
+                            let mut merged_details = sig_details.clone();
+                            
+                            // Replace with profile values where they exist
+                            if profile_details.first_name.is_some() { merged_details.first_name = profile_details.first_name.clone(); }
+                            if profile_details.last_name.is_some() { merged_details.last_name = profile_details.last_name.clone(); }
+                            if profile_details.gender.is_some() { merged_details.gender = profile_details.gender.clone(); }
+                            if profile_details.organization.is_some() { merged_details.organization = profile_details.organization.clone(); }
+                            if profile_details.community.is_some() { merged_details.community = profile_details.community.clone(); }
+                            if profile_details.email.is_some() { merged_details.email = profile_details.email.clone(); }
+                            if profile_details.phone.is_some() { merged_details.phone = profile_details.phone.clone(); }
+                            if profile_details.url.is_some() { merged_details.url = profile_details.url.clone(); }
+                            if profile_details.coordinates.is_some() { merged_details.coordinates = profile_details.coordinates.clone(); }
+                            if profile_details.address.is_some() { merged_details.address = profile_details.address.clone(); }
+                            
+                            sig.details = Some(merged_details);
+                        }
+                        None => {
+                            // Signature has no details, use profile details entirely
+                            sig.details = Some(profile_details.clone());
+                        }
+                    }
+                }
+                None => {
+                    // No details should be included - explicitly set to None
+                    sig.details = None;
+                }
+            }
+            
+            sig.signer_id.clone()
         }
     };
 
-    if voucher_id != signature_voucher_id {
-        return Err(VoucherCoreError::MismatchedSignatureData(
-            "Voucher ID in signature does not match target voucher".to_string(),
-        ));
-    }
     if signer_identity.user_id != signer_id {
         return Err(VoucherCoreError::MismatchedSignatureData(
             "Signer ID in signature does not match signer identity".to_string(),
         ));
     }
 
-    // Setze kryptographische Felder zurück, um einen deterministischen Hash zu gewährleisten
+    // Setze kryptographische Felder zurück und bestimme den Zeitstempel einheitlich
+    let signature_time = get_current_timestamp(); // Einmaligen Zeitstempel ermitteln
     let signature_json_for_id = match &mut signature_data {
         DetachedSignature::Signature(sig) => {
-            sig.signature_id = "".to_string();
-            sig.signature = "".to_string();
-            sig.signature_time = get_current_timestamp();
-            to_canonical_json(sig)?
+            // Klonen und Modifizieren für den Hash
+            let mut sig_clone = sig.clone();
+            sig_clone.signature_id = "".to_string();
+            sig_clone.signature = "".to_string();
+            sig_clone.signature_time = signature_time.clone(); // Verwende denselben Zeitstempel
+
+            to_canonical_json(&sig_clone)?
         }
     };
 
@@ -65,6 +105,7 @@ pub fn complete_and_sign_detached_signature(
         DetachedSignature::Signature(sig) => {
             sig.signature_id = signature_id;
             sig.signature = signature_str;
+            sig.signature_time = signature_time; // Verwende denselben Zeitstempel
         }
     }
 

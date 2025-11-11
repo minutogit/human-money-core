@@ -151,8 +151,11 @@ mod field_group_rules_validation {
     /// Erstellt eine Test-Signatur mit einem Geschlecht (für Gender-Tests).
     fn create_test_signature_with_gender(gender: &str) -> VoucherSignature {
         let sig = VoucherSignature {
-            gender: Some(gender.to_string()),
             role: "other_role".to_string(), // Rolle ist für diesen Test irrelevant
+            details: Some(voucher_lib::models::profile::PublicProfile {
+                gender: Some(gender.to_string()),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         sig
@@ -199,7 +202,7 @@ mod field_group_rules_validation {
             err,
             // HÄRTUNG: Die erste Regel, die fehlschlägt, ist `value = "A"` (erwartet 1, gefunden 2).
             ValidationError::FieldValueCountOutOfBounds { path, field, value, min, max, found }
-            if path == "signatures" && field == "gender" && value == "A" && min == 1 && max == 1 && found == 2
+            if path == "signatures" && field == "details.gender" && value == "A" && min == 1 && max == 1 && found == 2
         ));
     }
 
@@ -207,7 +210,10 @@ mod field_group_rules_validation {
     fn create_test_signature_with_role(role: &str) -> VoucherSignature {
         let sig = VoucherSignature {
             role: role.to_string(),
-            gender: Some("0".to_string()), // Geschlecht ist für diesen Test irrelevant
+            details: Some(voucher_lib::models::profile::PublicProfile {
+                gender: Some("0".to_string()), // Geschlecht ist für diesen Test irrelevant
+                ..Default::default()
+            }),
             ..Default::default()
         };
         sig
