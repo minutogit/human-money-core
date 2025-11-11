@@ -809,7 +809,7 @@ fn api_wallet_rejects_invalid_bundle() {
     )
         .unwrap();
 
-    voucher.description = "BAD-FORMAT".to_string(); // Verstößt gegen Regex
+    voucher.voucher_standard.template.description = "BAD-FORMAT".to_string(); // Verstößt gegen Regex
 
     let (bundle_bytes, _header) = alice_wallet
         .create_and_encrypt_transaction_bundle(

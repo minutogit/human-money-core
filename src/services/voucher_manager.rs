@@ -149,14 +149,6 @@ pub fn create_voucher(
     } else {
         initial_valid_until_dt
     };
-    let valid_until_str = final_valid_until_dt.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
-
-    let voucher_standard = VoucherStandard {
-        name: verified_standard.metadata.name.clone(),
-        uuid: verified_standard.metadata.uuid.clone(),
-        standard_definition_hash: standard_hash.to_string(), // NEU: Hash einbetten
-    };
-
     let mut final_nominal_value = data.nominal_value;
     final_nominal_value.unit = verified_standard.template.fixed.nominal_value.unit.clone();
     final_nominal_value.abbreviation = verified_standard.metadata.abbreviation.clone();
@@ -183,27 +175,33 @@ pub fn create_voucher(
 
     let final_description = description_template.replace("{{amount}}", &final_nominal_value.amount);
 
+    let voucher_standard = VoucherStandard {
+        name: verified_standard.metadata.name.clone(),
+        uuid: verified_standard.metadata.uuid.clone(),
+        standard_definition_hash: standard_hash.to_string(), // NEU: Hash einbetten
+        template: crate::models::voucher::VoucherTemplateData {
+            description: final_description.clone(),
+            primary_redemption_type: verified_standard.template.fixed.primary_redemption_type.clone(),
+            divisible: verified_standard.template.fixed.is_divisible,
+            standard_minimum_issuance_validity: verified_standard.validation.as_ref()
+                .and_then(|v| v.behavior_rules.as_ref())
+                .and_then(|b| b.issuance_minimum_validity_duration.clone())
+                .unwrap_or_default(),
+            signature_requirements_description: verified_standard.template.fixed.guarantor_info.description.clone(),
+            footnote: verified_standard.template.fixed.footnote.clone().unwrap_or_default(),
+        },
+    };
+
     let mut temp_voucher = Voucher {
         voucher_standard,
         voucher_id: "".to_string(),
         voucher_nonce: nonce,
-        description: final_description,
-        primary_redemption_type: verified_standard.template.fixed.primary_redemption_type.clone(),
-        divisible: verified_standard.template.fixed.is_divisible,
         creation_date: creation_date_str.clone(),
-        valid_until: valid_until_str,
-        // KORREKTUR: Zugriff auf die neue, verschachtelte Validierungsstruktur
-        standard_minimum_issuance_validity: verified_standard.validation.as_ref()
-            .and_then(|v| v.behavior_rules.as_ref())
-            .and_then(|b| b.issuance_minimum_validity_duration.clone())
-            .unwrap_or_default(),
+        valid_until: final_valid_until_dt.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
         non_redeemable_test_voucher: data.non_redeemable_test_voucher,
         nominal_value: final_nominal_value,
         collateral: final_collateral,
         creator: data.creator,
-        guarantor_requirements_description: verified_standard.template.fixed.guarantor_info.description.clone(),
-        footnote: verified_standard.template.fixed.footnote.clone().unwrap_or_default(),
-        needed_guarantors: verified_standard.template.fixed.guarantor_info.needed_count,
         transactions: vec![],
         signatures: vec![],
     };
@@ -348,7 +346,7 @@ pub fn create_transaction(
     }
 
     let (t_type, sender_remaining_amount) = if amount_to_send < spendable_balance {
-        if !voucher.divisible {
+        if !voucher.voucher_standard.template.divisible {
             return Err(VoucherManagerError::VoucherNotDivisible.into());
         }
         let remaining = spendable_balance - amount_to_send;

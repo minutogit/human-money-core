@@ -655,7 +655,7 @@ fn test_create_voucher_adds_exactly_one_instance() {
 
     // KORREKTUR: Die erwartete Beschreibung muss nun zum Silber-Standard passen.
     let expected_description = "Dieser Gutschein dient als Zahlungsmittel für Waren oder Dienstleistungen im Wert von 100 Unzen Silber.";
-    assert_eq!(created_voucher.description, expected_description, "The description from the silver standard template was not applied correctly.");
+    assert_eq!(created_voucher.voucher_standard.template.description, expected_description, "The description from the silver standard template was not applied correctly.");
 }
 
 

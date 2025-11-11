@@ -143,8 +143,8 @@ mod integration_with_voucher {
             new_voucher_data_fr, &MINUTO_STANDARD.0, &MINUTO_STANDARD.1, &ACTORS.alice.signing_key, "fr"
         );
 
-        assert!(voucher_de.description.contains("Minuten qualitativer Leistung"));
-        assert!(voucher_fr.description.contains("minutes of quality performance"));
+        assert!(voucher_de.voucher_standard.template.description.contains("Minuten qualitativer Leistung"));
+        assert!(voucher_fr.voucher_standard.template.description.contains("minutes of quality performance"));
     }
 
     #[test]

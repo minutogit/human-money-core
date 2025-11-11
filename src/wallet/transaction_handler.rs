@@ -213,9 +213,9 @@ impl Wallet {
                 standard_name: standard.metadata.name.clone(),
                 unit: voucher.nominal_value.unit.clone(),
                 amount: last_tx.amount.clone(),
-                // HINWEIS: Wir verwenden voucher.divisible, da dies der korrekte
+                // HINWEIS: Wir verwenden voucher.voucher_standard.template.divisible, da dies der korrekte
                 // Pfad laut Gutschein-JSON-Struktur ist.
-                is_divisible: voucher.divisible,
+                is_divisible: voucher.voucher_standard.template.divisible,
             });
             // --- Ende TransferSummary-Logik ---
         }
@@ -469,9 +469,9 @@ impl Wallet {
                 standard_name: standard_definition.metadata.name.clone(),
                 unit: instance.voucher.nominal_value.unit.clone(),
                 amount: source.amount_to_send.clone(),
-                // HINWEIS: Wir verwenden voucher.divisible, da dies der korrekte
+                // HINWEIS: Wir verwenden voucher.voucher_standard.template.divisible, da dies der korrekte
                 // Pfad laut Gutschein-JSON-Struktur ist.
-                is_divisible: instance.voucher.divisible,
+                is_divisible: instance.voucher.voucher_standard.template.divisible,
             });
 
             // Führe die Kernoperation auf der temporären Wallet-Instanz aus.

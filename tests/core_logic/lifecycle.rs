@@ -71,7 +71,7 @@ fn test_full_creation_and_validation_cycle() {
     assert!(!voucher.voucher_id.is_empty());
     assert!(!voucher.creator.signature.is_empty());
     // Prüfe die neuen Werte, die aus dem geänderten Standard kommen.
-    assert_eq!(voucher.standard_minimum_issuance_validity, "P3Y");
+    assert_eq!(voucher.voucher_standard.template.standard_minimum_issuance_validity, "P3Y");
 
     // --- DEBUG-Ausgabe hinzugefügt ---
     println!("[DEBUG] Erwartetes Ende: -12-31T23:59:59");
@@ -81,7 +81,7 @@ fn test_full_creation_and_validation_cycle() {
     // Prüfe, ob das Gültigkeitsdatum korrekt auf das Jahresende gerundet wurde.
     assert!(voucher.valid_until.contains("-12-31T23:59:59"));
     let expected_description = "A voucher for goods or services worth 60 minutes of quality performance.";
-    assert_eq!(voucher.description.trim(), expected_description.trim());
+    assert_eq!(voucher.voucher_standard.template.description.trim(), expected_description.trim());
 
     // 3. Erste Validierung: Muss fehlschlagen, da Bürgen fehlen.
     let initial_validation_result = validate_voucher_against_standard(&voucher, &minuto_standard_with_rounding);
@@ -588,7 +588,7 @@ fn test_validity_duration_rules() {
     voucher2.signatures.push(self::test_utils::create_guarantor_signature(&voucher2, g2, "G2", "2"));
 
     // Manipuliere die im Gutschein gespeicherte Regel
-    voucher2.standard_minimum_issuance_validity = "P1Y".to_string(); // Standard erwartet P3Y
+    voucher2.voucher_standard.template.standard_minimum_issuance_validity = "P1Y".to_string(); // Standard erwartet P3Y
 
     // KORREKTUR: Wie im Fall davor, muss der Gutschein nach der Manipulation neu signiert werden,
     // um einen vorzeitigen Abbruch der Validierung wegen Signaturfehlers zu verhindern.

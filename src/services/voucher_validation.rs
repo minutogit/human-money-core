@@ -216,10 +216,10 @@ pub fn validate_behavior_rules(voucher: &Voucher, rules: &BehaviorRules) -> Resu
 
     // Check that the rule stored in the voucher matches the one in the standard
     if let Some(min_validity_rule) = &rules.issuance_minimum_validity_duration {
-        if &voucher.standard_minimum_issuance_validity != min_validity_rule {
+        if &voucher.voucher_standard.template.standard_minimum_issuance_validity != min_validity_rule {
             return Err(ValidationError::MismatchedMinimumValidity {
                 expected: min_validity_rule.clone(),
-                found: voucher.standard_minimum_issuance_validity.clone(),
+                found: voucher.voucher_standard.template.standard_minimum_issuance_validity.clone(),
             }.into());
         }
     }

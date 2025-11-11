@@ -159,7 +159,7 @@ fn test_chronological_validation_with_timezones() {
 // --- Tests from test_local_instance_id.rs ---
 
 use voucher_lib::models::voucher::{
-    Address, Collateral, Creator, NominalValue, Transaction, Voucher, VoucherStandard,
+    Address, Collateral, Creator, NominalValue, Transaction, Voucher, VoucherStandard, VoucherTemplateData,
 };
 use voucher_lib::services::crypto_utils::get_hash;
 use voucher_lib::services::utils::get_current_timestamp;
@@ -173,15 +173,19 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
             name: "Test Standard".to_string(),
             uuid: "uuid-test".to_string(),
             standard_definition_hash: "dummy-hash-for-test".to_string(),
+            template: VoucherTemplateData {
+                description: "A test voucher".to_string(),
+                primary_redemption_type: "SERVICE".to_string(),
+                divisible: true,
+                standard_minimum_issuance_validity: "P1Y".to_string(),
+                signature_requirements_description: "".to_string(),
+                footnote: "".to_string(),
+            },
         },
         voucher_id: "voucher-123".to_string(),
         voucher_nonce: "test-nonce".to_string(),
-        description: "A test voucher".to_string(),
-        primary_redemption_type: "SERVICE".to_string(),
-        divisible: true,
         creation_date: get_current_timestamp(),
         valid_until: get_current_timestamp(),
-        standard_minimum_issuance_validity: "P1Y".to_string(),
         non_redeemable_test_voucher: true,
         nominal_value: NominalValue {
             unit: "Minutes".to_string(),
@@ -213,9 +217,6 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
             signature: "".to_string(),
             coordinates: "0,0".to_string(),
         },
-        guarantor_requirements_description: "".to_string(),
-        footnote: "".to_string(),
-        needed_guarantors: 0,
         transactions: vec![], // Wird im nächsten Schritt gefüllt
         signatures: vec![],
     };

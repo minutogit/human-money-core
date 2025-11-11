@@ -15,6 +15,8 @@ pub struct VoucherStandard {
     pub uuid: String,
     /// Der Hash der kanonisierten Standard-Definition, der diesen Gutschein an eine spezifische Version bindet.
     pub standard_definition_hash: String,
+    /// Die Template-Daten, die aus dem Standard-TOML kopiert wurden.
+    pub template: VoucherTemplateData,
 }
 
 /// Definiert den Nennwert, den ein Gutschein repräsentiert.
@@ -183,6 +185,23 @@ pub struct VoucherSignature {
     pub role: String,
 }
 
+/// Definiert die Template-Daten, die aus dem Standard-TOML kopiert wurden.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct VoucherTemplateData {
+    /// Eine allgemeine, menschenlesbare Beschreibung des spezifischen Gutscheins.
+    pub description: String,
+    /// Der primäre Einlösezweck, übernommen vom Standard (z.B. "goods_or_services").
+    pub primary_redemption_type: String,
+    /// Gibt an, ob der Gutschein in kleinere Einheiten aufgeteilt werden kann.
+    pub divisible: bool,
+    /// Die bei der Erstellung gültige Mindestgültigkeitsdauer aus dem Standard (ISO 8601 Duration).
+    pub standard_minimum_issuance_validity: String,
+    /// Eine menschenlesbare Beschreibung der Signaturanforderungen (früher Bürgenanforderungen), übernommen vom Standard.
+    pub signature_requirements_description: String,
+    /// Ein optionaler Fußnotentext, der vom Standard vorgegeben wird.
+    pub footnote: String,
+}
+
 /// Das Haupt-Struct, das den universellen Gutschein-Container repräsentiert.
 /// Es fasst alle anderen Strukturen und Felder gemäß dem allgemeinen JSON-Schema zusammen.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
@@ -193,18 +212,10 @@ pub struct Voucher {
     pub voucher_id: String,
     /// Ein zufälliges Nonce, um den ersten `prev_hash` unvorhersehbar zu machen.
     pub voucher_nonce: String,
-    /// Eine allgemeine, menschenlesbare Beschreibung des spezifischen Gutscheins.
-    pub description: String,
-    /// Der primäre Einlösezweck, übernommen vom Standard (z.B. "goods_or_services").
-    pub primary_redemption_type: String,
-    /// Gibt an, ob der Gutschein in kleinere Einheiten aufgeteilt werden kann.
-    pub divisible: bool,
     /// Das Erstellungsdatum des Gutscheins im ISO 8601-Format.
     pub creation_date: String,
     /// Das Gültigkeitsdatum des Gutscheins im ISO 8601-Format.
     pub valid_until: String,
-    /// Die bei der Erstellung gültige Mindestgültigkeitsdauer aus dem Standard (ISO 8601 Duration).
-    pub standard_minimum_issuance_validity: String,
     /// Eine Markierung, ob es sich um einen nicht einlösbaren Testgutschein handelt.
     pub non_redeemable_test_voucher: bool,
     /// Definiert den Nennwert des Gutscheins.
@@ -213,12 +224,6 @@ pub struct Voucher {
     pub collateral: Collateral,
     /// Detaillierte Informationen zum Ersteller des Gutscheins.
     pub creator: Creator,
-    /// Eine menschenlesbare Beschreibung der Bürgenanforderungen, übernommen vom Standard.
-    pub guarantor_requirements_description: String,
-    /// Ein optionaler Fußnotentext, der vom Standard vorgegeben wird.
-    pub footnote: String,
-    /// Die Anzahl der für diesen Gutschein benötigten Bürgen.
-    pub needed_guarantors: i64,
     /// Eine chronologische Liste aller Transaktionen dieses Gutscheins.
     pub transactions: Vec<Transaction>,
     /// Ein Array für alle Signaturen (inkl. Bürgen).

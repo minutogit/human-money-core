@@ -76,7 +76,7 @@ impl Wallet {
                     status: instance.status.clone(),
                     creator_id: voucher.creator.id.clone(),
                     valid_until: voucher.valid_until.clone(),
-                    description: voucher.description.clone(),
+                    description: voucher.voucher_standard.template.description.clone(),
                     current_amount,
                     unit: voucher.nominal_value.abbreviation.clone(),
                     voucher_standard_name: voucher.voucher_standard.name.clone(),

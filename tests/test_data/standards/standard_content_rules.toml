@@ -22,7 +22,7 @@ description = ""
 [validation]
 [validation.content_rules]
 [validation.content_rules.fixed_fields]
-"divisible" = false
+"voucher_standard.template.divisible" = false
 "nominal_value.unit" = "EUR"
 
 [validation.content_rules.allowed_values]
@@ -30,7 +30,7 @@ description = ""
 
 [validation.content_rules.regex_patterns]
 # Muss mit "INV-" anfangen, gefolgt von 6 Ziffern
-"description" = '^INV-[0-9]{6}$'
+"voucher_standard.template.description" = '^INV-[0-9]{6}$'
 
 [signature]
 issuer_id = "did:key:z6Mkk7yqnGF3YwTrLpqrW6Hzt36gV5p82nL4s58gG4nEaG9e" # Dummy Key

@@ -28,7 +28,7 @@ fn create_base_voucher() -> Voucher {
         amount: "50.00".to_string(),
         ..Default::default()
     };
-    voucher.description = "INV-123456".to_string();
+    voucher.voucher_standard.template.description = "INV-123456".to_string();
     voucher.transactions.push(Transaction::default());
     voucher
 }
@@ -78,10 +78,10 @@ mod content_rules_validation {
         let standard = load_test_standard("standard_content_rules.toml");
         let mut voucher = create_base_voucher();
         // Werte entsprechen den Regeln in der TOML
-        voucher.divisible = false;
+        voucher.voucher_standard.template.divisible = false;
         voucher.nominal_value.unit = "EUR".to_string();
         voucher.nominal_value.amount = "50.00".to_string();
-        voucher.description = "INV-999888".to_string();
+        voucher.voucher_standard.template.description = "INV-999888".to_string();
 
         let voucher_json = serde_json::to_value(&voucher).unwrap();
         let content_rules = standard.validation.as_ref().unwrap().content_rules.as_ref().unwrap();
@@ -128,7 +128,7 @@ mod content_rules_validation {
     fn test_validate_content_rules_when_regex_mismatches_then_fails() {
         let standard = load_test_standard("standard_content_rules.toml");
         let mut voucher = create_base_voucher();
-        voucher.description = "INVALID-123".to_string(); // Passt nicht zum Regex-Muster
+        voucher.voucher_standard.template.description = "INVALID-123".to_string(); // Passt nicht zum Regex-Muster
 
         let voucher_json = serde_json::to_value(&voucher).unwrap();
         let content_rules = standard.validation.as_ref().unwrap().content_rules.as_ref().unwrap();
@@ -137,7 +137,7 @@ mod content_rules_validation {
         assert!(matches!(
             result.err().unwrap(),
             ValidationError::FieldRegexMismatch { field, pattern: _, found }
-            if field == "description" && found == "INVALID-123"
+            if field == "voucher_standard.template.description" && found == "INVALID-123"
         ));
     }
 }
