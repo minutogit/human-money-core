@@ -18,11 +18,23 @@
 //! 6.  **Verifizierung:** Die neuen Kontostände werden bei beiden Teilnehmern geprüft.
 //! 7.  **Rohdaten-Ausgabe:** Der finale Zustand des Gutscheins wird als JSON ausgegeben.
 
-use voucher_lib::app_service::AppService;
+use voucher_lib::app_service::{AppService};
 use voucher_lib::models::voucher::{NominalValue};
 use voucher_lib::{verify_and_parse_standard, NewVoucherData, VoucherStatus};
 use std::collections::HashMap;
 use tempfile::tempdir;
+
+// Helper function to update profile gender using the test helper
+// This is consistent with how it's done in the official tests
+fn update_profile_gender(service: &mut AppService, gender: &str, _password: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // Get the unlocked wallet and identity using the test helper
+    let (wallet, _identity) = service.get_unlocked_mut_for_test();
+    
+    // Update the gender in the profile
+    wallet.profile.gender = Some(gender.to_string());
+    
+    Ok(())
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- VOUCHER LIFECYCLE PLAYGROUND (AppService API) ---");
@@ -42,11 +54,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut service_charlie = AppService::new(dir_charlie.path())?;
 
     // Erstelle Profile für alle Teilnehmer
-    service_creator.create_profile("Creator", &AppService::generate_mnemonic(12)?, None, Some("creator"), password)?;
-    service_g1.create_profile("Guarantor 1", &AppService::generate_mnemonic(12)?, None, Some("g1"), password)?;
-    service_g2.create_profile("Guarantor 2", &AppService::generate_mnemonic(12)?, None, Some("g2"), password)?;
-    service_recipient.create_profile("Recipient", &AppService::generate_mnemonic(12)?, None, Some("rcp"), password)?;
-    service_charlie.create_profile("Charlie", &AppService::generate_mnemonic(12)?, None, Some("charlie"), password)?;
+    service_creator.create_profile("Creator", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("creator"), password)?;
+    service_g1.create_profile("Guarantor 1", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("g1"), password)?;
+    service_g2.create_profile("Guarantor 2", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("g2"), password)?;
+    service_recipient.create_profile("Recipient", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("rcp"), password)?;
+    service_charlie.create_profile("Charlie", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("charlie"), password)?;
+
+    // Update the profiles to include gender information for the guarantors (required by Minuto standard)
+    // We need to update the gender to satisfy the validation requirements: exactly one male ("1") and one female ("2")
+    update_profile_gender(&mut service_g1, "1", password)?;  // Male
+    update_profile_gender(&mut service_g2, "2", password)?;  // Female
 
     let creator_id = service_creator.get_user_id()?;
     let g1_id = service_g1.get_user_id()?;
@@ -64,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let voucher_data = NewVoucherData {
         validity_duration: Some("P5Y".to_string()),
         nominal_value: NominalValue { amount: "60".to_string(), ..Default::default() },
-        creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(creator_id.clone()), first_name: Some("Max".into()), last_name: Some("Creator".into()), ..Default::default() },
+        creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(creator_id.clone()), first_name: Some("Max".into()), last_name: Some("Creator".into()), gender: Some("2".to_string()), ..Default::default() },
         ..Default::default()
     };
     let created_voucher = service_creator.create_new_voucher(&standard_toml, "de", voucher_data, password)?;

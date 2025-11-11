@@ -40,14 +40,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // User ID generieren und ausgeben
     println!("\nGenerating User IDs...");
 
-    // 1. Ohne Prefix
-    let user_id_no_prefix = create_user_id(&ed_pub, None).unwrap();
-    println!("User ID (no prefix):   {}", user_id_no_prefix);
-
-    // 2. Mit Prefix "ID"
-    let prefix = "ID";
+    // 1. Mit Präfix "main" (da Präfix jetzt obligatorisch ist)
+    let prefix = "main";
     let user_id_with_prefix = create_user_id(&ed_pub, Some(prefix)).unwrap();
     println!("User ID (prefix '{}'): {}", prefix, user_id_with_prefix);
+
+    // 2. Mit Präfix "work" 
+    let prefix2 = "work";
+    let user_id_with_prefix2 = create_user_id(&ed_pub, Some(prefix2)).unwrap();
+    println!("User ID (prefix '{}'): {}", prefix2, user_id_with_prefix2);
 
     // Prüfe die Checksumme der generierten user_id
     let is_valid = validate_user_id(&user_id_with_prefix);
