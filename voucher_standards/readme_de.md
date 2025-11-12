@@ -1,13 +1,66 @@
-# Gutschein-Standards: Aufbau und Validierung
+voucher_standards/readme_de.md
+# Gutschein-Standards: Erstellung, Aufbau und Validierung
 
-Dieses Dokument beschreibt die Struktur und die Möglichkeiten der `standard.toml`-Dateien, die als Vorlage und Regelwerk für alle Gutscheine innerhalb des Systems dienen. Ein gut definierter Standard ist die Grundlage für ein sicheres und vertrauenswürdiges Gutschein-Netzwerk.
+Dieses Dokument beschreibt den vollständigen Prozess zur Erstellung eines Voucher-Standards, einschließlich der Struktur der `standard.toml`-Dateien, die als Vorlage und Regelwerk für alle Gutscheine innerhalb des Systems dienen. Ein gut definierter und signierter Standard ist die Grundlage für ein sicheres und vertrauenswürdiges Gutschein-Netzwerk.
 
-Jeder Standard ist eine digital signierte TOML-Datei, die vier Hauptbereiche definiert:
+## Erstellung eines Voucher-Standards
+
+### Schritt 1: Vorbereitung
+Bevor Sie einen Standard erstellen, benötigen Sie:
+- Eine eindeutige `did:key`-Identität für den Herausgeber (Issuer). Diese wird aus einem Ed25519-Public-Key abgeleitet.
+- Kenntnisse über die gewünschten Regeln für Gutscheine (z.B. Teilbarkeit, Gültigkeitsdauer, Signaturanforderungen).
+- Ein Verständnis der TOML-Syntax für die Konfiguration.
+
+### Schritt 2: Erstellen der `standard.toml`-Datei
+Jeder Standard ist eine TOML-Datei mit vier Hauptbereichen:
 
 1.  **`[metadata]`**: Wer ist der Herausgeber? Wie heißt der Standard?
 2.  **`[template]`**: Welche Werte werden in jeden neuen Gutschein kopiert?
 3.  **`[validation]`**: Welchen Regeln muss ein Gutschein entsprechen, um gültig zu sein?
-4.  **`[signature]`**: Die digitale Signatur, die die Echtheit des Standards beweist.
+4.  **`[signature]`**: Die digitale Signatur, die die Echtheit des Standards beweist (wird später hinzugefügt).
+
+Beginnen Sie mit den ersten drei Abschnitten. Verwenden Sie die Beispiele unten als Vorlage und passen Sie sie an Ihre Anforderungen an.
+
+### Schritt 3: Signierung des Standards
+Die Signierung stellt sicher, dass der Standard authentisch ist und nicht manipuliert wurde. Der Prozess basiert auf kryptographischen Hash-Funktionen und Ed25519-Signaturen:
+
+1. **Kanonisierung**: Der Standard (ohne Signatur-Block) wird in einen stabilen JSON-String umgewandelt.
+2. **Hash-Berechnung**: Ein SHA3-256-Hash (Konsistenz-Hash) wird aus dem kanonischen JSON berechnet.
+3. **Signierung**: Der Hash wird mit dem privaten Ed25519-Schlüssel des Herausgebers signiert.
+4. **Hinzufügen der Signatur**: Die Base58-kodierte Signatur und die Issuer-ID werden in den `[signature]`-Block eingetragen.
+
+Verwenden Sie das bereitgestellte Skript `sign_standards.sh` im Projektverzeichnis, um diesen Prozess zu automatisieren. Das Skript:
+- Parst die TOML-Datei.
+- Berechnet den Konsistenz-Hash.
+- Fordert den privaten Schlüssel an (oder verwendet eine Umgebungsvariable).
+- Signiert den Hash und fügt die Signatur hinzu.
+
+**Beispiel-Befehl:**
+```bash
+./sign_standards.sh voucher_standards/minuto_v1/standard.toml
+```
+
+Nach der Signierung enthält die Datei den vollständigen `[signature]`-Block.
+
+### Schritt 4: Validierung des Standards
+Überprüfen Sie die Integrität des signierten Standards mit dem Skript `validate_standards.sh`:
+```bash
+./validate_standards.sh voucher_standards/minuto_v1/standard.toml
+```
+
+Dieses Skript:
+- Parst die TOML-Datei.
+- Verifiziert die Signatur gegen den berechneten Konsistenz-Hash.
+- Stellt sicher, dass der Standard den erwarteten Strukturen entspricht.
+
+Bei Erfolg ist der Standard bereit zur Verwendung. Bei Fehlern (z.B. ungültige Signatur) müssen Sie die Datei korrigieren und erneut signieren.
+
+### Schritt 5: Integration und Verwendung
+- Platzieren Sie die signierte `standard.toml` im Verzeichnis `voucher_standards/`.
+- Verwenden Sie den Standard beim Erstellen neuer Gutscheine über die Wallet-Software.
+- Die Validierung erfolgt automatisch beim Laden des Standards und bei jeder Gutschein-Transaktion.
+
+**Hinweis:** Standards sind unveränderlich nach der Signierung. Änderungen erfordern eine neue Version mit aktualisierter UUID und erneuter Signierung.
 
 -----
 
@@ -39,12 +92,27 @@ Dieser Block definiert alle Werte, die bei der Erstellung eines neuen Gutscheins
 
 ```toml
 [template.fixed]
-# Definiert die Währungseinheit für alle Gutscheine
-[template.fixed.nominal_value]
-unit = "Muster-Taler"
+# Mehrsprachige Beschreibung des Gutscheins (Liste von lokalisierten Texten)
+description = [
+  { lang = "de", text = "Ein Gutschein für die lokale Wirtschaft." },
+  { lang = "en", text = "A voucher for the local economy." }
+]
+
+# Optionale Fußnote
+footnote = "Gültig nur in teilnehmenden Geschäften."
+
+# Primäre Einlösungsart (z.B. "cash", "goods")
+primary_redemption_type = "goods"
+
+# Gibt an, ob der Gutschein summierbar ist (für Stapelung)
+is_summable = true
 
 # Gibt an, ob der Gutschein teilbar ist
 is_divisible = true
+
+# Definiert die Währungseinheit für alle Gutscheine
+[template.fixed.nominal_value]
+unit = "Muster-Taler"
 
 # Informationen zur Besicherung werden fest vorgegeben
 [template.fixed.collateral]
@@ -56,6 +124,9 @@ redeem_condition = "Nicht zutreffend."
 [template.fixed.guarantor_info]
 needed_count = 2
 description = "Zwei Bürgen aus der Händlergemeinschaft sind erforderlich."
+
+# Optionale Rundung der Gültigkeitsdauer (z.B. "P1M" für Monatsende)
+round_up_validity_to = "P1M"
 
 [template.default]
 # Schlägt eine Gültigkeit von 5 Jahren vor, kann aber geändert werden
@@ -74,17 +145,13 @@ Hier legen Sie mit `min` und `max` exakte Grenzen für die Anzahl von Elementen 
 
 **Mögliche Schlüssel:**
 
-* `guarantor_signatures`: Steuert die Anzahl der Bürgen-Signaturen.
-* `additional_signatures`: Steuert die Anzahl zusätzlicher, optionaler Signaturen.
 * `transactions`: Steuert die Gesamtzahl der Transaktionen in der Kette.
 
-**Beispiel:** Ein Gutschein muss mindestens einen Bürgen haben (`min = 1`), darf aber nicht mehr als 100 Transaktionen enthalten, um die Dateigröße zu kontrollieren.
+**Beispiel:** Ein Gutschein muss mindestens eine Transaktion haben und darf nicht mehr als 100 Transaktionen enthalten, um die Dateigröße zu kontrollieren.
 
 ```toml
 [validation.counts]
-guarantor_signatures = { min = 1, max = 3 }
 transactions = { min = 1, max = 100 }
-additional_signatures = { min = 0, max = 5 }
 ```
 
 ### `[[validation.required_signatures]]` - Spezifische Signaturanforderungen
@@ -95,7 +162,7 @@ Erzwingt das Vorhandensein von Signaturen von bestimmten Parteien. Da es sich um
 
 * `role_description` (String): Eine menschenlesbare Beschreibung, wofür diese Signatur steht.
 * `allowed_signer_ids` (Array von Strings): Eine Liste von `did:key`-IDs. Mindestens eine Signatur muss von einer dieser IDs stammen.
-* `required_signature_description` (String, Optional): Falls angegeben, muss die `description` der Signatur exakt diesem Text entsprechen.
+* `required_role` (String): Die erforderliche Rolle der Signatur (z.B. "guarantor").
 * `is_mandatory` (Boolean): Wenn `true`, ist das Vorhandensein einer passenden Signatur zwingend erforderlich.
 
 **Beispiel:** Ein "offizieller" Gutschein muss eine Freigabe-Signatur von einer der beiden autorisierten Stellen der Stadtverwaltung enthalten.
@@ -104,7 +171,7 @@ Erzwingt das Vorhandensein von Signaturen von bestimmten Parteien. Da es sich um
 [[validation.required_signatures]]
 role_description = "Freigabe durch die Stadtkasse"
 allowed_signer_ids = ["did:key:z...Stadtkasse...", "did:key:z...Buergermeister..."]
-required_signature_description = "Offizielle Freigabe 2025"
+required_role = "guarantor"
 is_mandatory = true
 ```
 
@@ -166,14 +233,14 @@ Definiert komplexe Regeln für die Werteverteilung von Feldern innerhalb einer L
     * `min` (Integer): Wie oft dieser Wert mindestens vorkommen muss.
     * `max` (Integer): Wie oft dieser Wert maximal vorkommen darf.
 
-**Beispiel:** Um Diversität zu gewährleisten, muss ein Gutschein von **exakt einem Mann (`gender = "1"`) und exakt einer Frau (`gender = "2"`)** gebürgt werden. Um einen exakten Wert zu erzwingen, wird `min` und `max` auf denselben Wert gesetzt.
+**Beispiel:** Um Diversität zu gewährleisten, muss ein Gutschein von **exakt einem Mann (`gender = "1"`) und exakt einer Frau (`gender = "2"`)** gebürgt werden. Die Werte für `gender` entsprechen dem ISO 5218-Standard für die Darstellung von menschlichem Geschlecht (z.B. "1" = männlich, "2" = weiblich, "0" = nicht bekannt, "9" = nicht anwendbar). Um einen exakten Wert zu erzwingen, wird `min` und `max` auf denselben Wert gesetzt.
 
 ```toml
 [validation.field_group_rules.guarantor_signatures]
 field = "gender"
 value_counts = [
-  { value = "1", min = 1, max = 1 }, # Der Wert "1" muss genau 1x vorkommen.
-  { value = "2", min = 1, max = 1 }, # Der Wert "2" muss genau 1x vorkommen.
+  { value = "1", min = 1, max = 1 }, # Der Wert "1" muss genau 1x vorkommen (männlich).
+  { value = "2", min = 1, max = 1 }, # Der Wert "2" muss genau 1x vorkommen (weiblich).
 ]
 ```
 

@@ -394,17 +394,19 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
   - Verwaltet den Anwendungszustand (`Locked`/`Unlocked`).
   - Kapselt `UserIdentity` und `Storage`-Implementierung.
   - Stellt sicher, dass Zustandsänderungen im Wallet automatisch gespeichert werden.
-- `pub fn new(...) -> Result<Self, String>`
-  - Initialisiert einen neuen `AppService` im `Locked`-Zustand.
+- `pub fn new(base_storage_path: &Path) -> Result<Self, String>`
+  - Initialisiert einen neuen `AppService` im `Locked`-Zustand mit einem Basis-Speicherpfad.
+- `pub fn list_profiles(&self) -> Result<Vec<ProfileInfo>, String>`
+  - Listet alle verfügbaren Profile aus der zentralen `profiles.json`-Datei.
 - `pub fn generate_mnemonic(word_count: u32) -> Result<String, String>`
   - Generiert eine neue BIP-39 Mnemonic-Phrase.
 - `pub fn validate_mnemonic(mnemonic: &str) -> Result<(), String>`
   - Validiert eine vom Benutzer eingegebene BIP-39 Mnemonic-Phrase.
-- `pub fn create_profile(&mut self, mnemonic: &str, passphrase: Option<&str>, user_prefix: Option<&str>, password: &str) -> Result<(), String>`
-  - Erstellt ein komplett neues Wallet und Profil, speichert es und setzt den Service in den `Unlocked`-Zustand.
-- `pub fn login(&mut self, ..., cleanup_on_login: bool) -> Result<...>`
+- `pub fn create_profile(&mut self, profile_name: &str, mnemonic: &str, passphrase: Option<&str>, user_prefix: Option<&str>, password: &str) -> Result<(), String>`
+  - Erstellt ein komplett neues Wallet und Profil, speichert es und setzt den Service in den `Unlocked`-Zustand. Fügt einen Eintrag zur zentralen `profiles.json` hinzu.
+- `pub fn login(&mut self, folder_name: &str, password: &str, cleanup_on_login: bool) -> Result<(), String>`
   - Entsperrt ein existierendes Wallet. Benötigt die Geheimnisse, um den Speicherort zu finden. Bietet eine Option, beim Login eine Speicherbereinigung durchzuführen.
-- `pub fn recover_wallet_and_set_new_password(&mut self, mnemonic: &str, passphrase: Option<&str>, prefix: Option<&str>, new_password: &str) -> Result<(), String>`
+- `pub fn recover_wallet_and_set_new_password(&mut self, folder_name: &str, mnemonic: &str, passphrase: Option<&str>, new_password: &str) -> Result<(), String>`
   - Stellt ein Wallet wieder her und setzt ein neues Passwort. Benötigt ebenfalls die Geheimnisse (`mnemonic`, `passphrase`, `prefix`), um den Speicherort zu finden.
 - `pub fn logout(&mut self)`
   - Sperrt das Wallet und entfernt sensible Daten aus dem Speicher.
@@ -423,17 +425,17 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
   - Implementiert eine **Selbstheilungsfunktion**: Wenn ein interner Inkonsistenzfehler erkannt wird (z.B. ein 'Active'-Gutschein, der bereits versendet wurde), wird der inkonsistente Gutschein automatisch in den Quarantänezustand (`Quarantined`) verschoben und der Wallet-Zustand gespeichert, um zukünftige Verwendung des fehlerhaften Gutscheins zu verhindern.
 - `pub fn receive_bundle(&mut self, bundle_data: &[u8], standard_definitions_toml: &HashMap<String, String>, archive: Option<&dyn VoucherArchive>, password: &str) -> Result<ProcessBundleResult, String>`
   - Verarbeitet ein empfangenes Transaktions-Bundle, validiert die enthaltenen Gutscheine gegen die bereitgestellten Standard-Definitionen und speichert den neuen Wallet-Zustand. Gibt ein `ProcessBundleResult` zurück, das auch detaillierte Informationen über die involvierten Gutscheine und Transfer-Zusammenfassungen enthält.
-- `pub fn create_signing_request_bundle(...) -> Result<Vec<u8>, String>`
+- `pub fn create_signing_request_bundle(local_instance_id: &str, recipient_id: &str) -> Result<Vec<u8>, String>`
   - Erstellt ein Bundle, um einen Gutschein zur Unterzeichnung an einen Bürgen zu senden.
 - `pub fn create_detached_signature_response_bundle(&self, voucher_to_sign: &Voucher, role: &str, include_details: bool, original_sender_id: &str) -> Result<Vec<u8>, String>`
   - Erstellt eine losgelöste Signatur als Antwort auf eine Signaturanfrage. Die Funktion akzeptiert nun explizit die `role` (z.B. "guarantor", "notary"), und ein Flag `include_details`, das bestimmt, ob die öffentlichen Profildaten des Unterzeichners in die Signatur eingebettet werden sollen.
 - `pub fn process_and_attach_signature(&mut self, container_bytes: &[u8], standard_toml_content: &str, password: &str) -> Result<(), String>`
   - Verarbeitet eine empfangene losgelöste Signatur, validiert den Gutschein neu gegen den Standard, fügt die Signatur hinzu und speichert den Zustand.
-- `pub fn save_encrypted_data(...) -> Result<(), String>`
+- `pub fn save_encrypted_data(name: &str, data: &[u8], password: &str) -> Result<(), String>`
   - Speichert einen beliebigen Byte-Slice verschlüsselt auf der Festplatte.
 - `pub fn run_storage_cleanup(&mut self) -> Result<CleanupReport, VoucherCoreError>`
   - Führt die Speicherbereinigung für Fingerprints und deren Metadaten durch.
-- `pub fn load_encrypted_data(...) -> Result<Vec<u8>, String>`
+- `pub fn load_encrypted_data(name: &str, password: &str) -> Result<Vec<u8>, String>`
   - Lädt und entschlüsselt einen zuvor gespeicherten, beliebigen Datenblock.
 - `pub fn list_conflicts(&self) -> Result<Vec<ProofOfDoubleSpendSummary>, String>`
   - Gibt eine Liste von Zusammenfassungen aller bekannten Double-Spend-Konflikte zurück.
@@ -451,15 +453,20 @@ Das `wallet`-Modul wurde umfassend refaktorisiert, um die Komplexität zu reduzi
 - `pub struct Wallet` (`mod.rs`)
   - Hält `UserProfile`, `VoucherStore`, `BundleMetadataStore`, die getrennten `KnownFingerprints`, `OwnFingerprints`, `ProofStore` und den neuen `CanonicalMetadataStore` für Metadaten als In-Memory-Zustand.
   - Enthält neue Strukturen: `MultiTransferRequest` für die Anforderung von Transfers mit mehreren Quellen und `SourceTransfer` für die Definition einzelner Quellpositionen in einem Transfer.
+
 - **Lebenszyklus & Kernoperationen** (`lifecycle.rs`)
   - `pub fn new_from_mnemonic(...)`: Erstellt ein brandneues Wallet.
   - `pub fn load(...)`: Lädt ein existierendes Wallet aus dem Storage.
   - `pub fn save(...)`: Speichert den aktuellen Zustand des Wallets.
-  - `pub fn create_new_voucher(...)`: Erstellt einen neuen Gutschein und fügt ihn direkt zum Wallet hinzu.
+  - `pub fn reset_password(...)`: Setzt das Passwort für ein Wallet zurück.
+  - `pub fn create_new_voucher(...)`: Erstellt einen brandneuen Gutschein und fügt ihn direkt zum Wallet hinzu.
+
 - **Transaktionsverarbeitung** (`transaction_handler.rs`)
-  - `pub fn execute_multi_transfer_and_bundle(...)`: Führt einen Transfer durch, der Guthaben aus mehreren Quell-Gutscheinen kombinieren kann. Ersetzt die alte `create_transfer`-Methode. Akzeptiert eine `MultiTransferRequest`-Struktur mit einer Liste von Quellen und führt alle Transaktionen in einem einzigen Bundle durch. Managt den internen Zustand (Archivierung, Restbetrag) und wählt Fingerprints für das Gossip-Protokoll.
-  - `pub fn process_encrypted_transaction_bundle(...)`: Verarbeitet eingehende Gutscheine oder Signaturen, inkl. der Verarbeitung von empfangenen Fingerprints. Implementiert umfassenden Schutz gegen Replay-Angriffe durch zwei Schichten (Bundle-ID-Prüfung und Fingerprint-Prüfung) und weist eingehende Bundles zurück, die nicht explizit für den Wallet-Besitzer bestimmt sind.
   - `pub fn create_and_encrypt_transaction_bundle(...)`: Erstellt ein `TransactionBundle`, verpackt es und aktualisiert den Wallet-Zustand.
+  - `pub fn process_encrypted_transaction_bundle(...)`: Verarbeitet eingehende Gutscheine oder Signaturen, inkl. der Verarbeitung von empfangenen Fingerprints. Implementiert umfassenden Schutz gegen Replay-Angriffe durch zwei Schichten (Bundle-ID-Prüfung und Fingerprint-Prüfung) und weist eingehende Bundles zurück, die nicht explizit für den Wallet-Besitzer bestimmt sind.
+  - `pub fn execute_multi_transfer_and_bundle(...)`: Führt einen Transfer durch, der Guthaben aus mehreren Quell-Gutscheinen kombinieren kann. Ersetzt die alte `create_transfer`-Methode. Akzeptiert eine `MultiTransferRequest`-Struktur mit einer Liste von Quellen und führt alle Transaktionen in einem einzigen Bundle durch. Managt den internen Zustand (Archivierung, Restbetrag) und wählt Fingerprints für das Gossip-Protokoll.
+  - `fn _execute_single_transfer(...)`: Führt die Zustandsveränderung für EINEN Gutschein im Wallet durch. (Private Hilfsmethode)
+
 - **Wartung & Speicher-Management** (`maintenance.rs`)
   - `pub fn run_storage_cleanup(...)`: Führt eine mehrstufige Bereinigung der Fingerprint-Stores durch (abgelaufen, dann nach `depth`).
   - `pub fn cleanup_storage(...)`: Führt Wartungsarbeiten am Wallet-Speicher durch, um veraltete Daten zu entfernen.
@@ -468,29 +475,44 @@ Das `wallet`-Modul wurde umfassend refaktorisiert, um die Komplexität zu reduzi
   - `pub fn get_voucher_instance(...)`: Ruft eine Gutscheininstanz ab.
   - `pub fn update_voucher_status(...)`: Aktualisiert den Status einer Gutscheininstanz.
   - `pub fn calculate_local_instance_id(...)`: Berechnet eine deterministische ID für eine Gutscheininstanz.
+  - `pub(super) fn find_transaction_in_stores(...)`: Sucht eine Transaktion anhand ihrer ID zuerst im aktiven `voucher_store` und dann im `VoucherArchive`.
+  - `pub(super) fn find_voucher_for_transaction(...)`: Sucht einen Gutschein anhand einer enthaltenen Transaktions-ID.
+  - `pub(super) fn find_local_voucher_by_tx_id(...)`: Findet die lokale ID und den Status eines Gutscheins anhand einer enthaltenen Transaktions-ID.
+
 - **Abfragen & Ansichten** (`queries.rs`)
   - `pub fn list_vouchers(&self) -> Vec<VoucherSummary>`: Gibt eine vereinfachte Liste aller Gutscheine zurück.
   - `pub fn get_voucher_details(...) -> Result<VoucherDetails, ...>`: Gibt detaillierte Informationen zu einem Gutschein zurück.
   - `pub fn get_user_id(&self) -> &str`: Gibt die ID des Wallet-Inhabers zurück.
   - `pub fn get_total_balance_by_currency(&self) -> Vec<AggregatedBalance>`: Aggregiert alle Guthaben nach Währung.
+
 - **Signatur-Workflows** (`signature_handler.rs`)
   - `pub fn create_signing_request(...)`: Erstellt einen `SecureContainer` zur Anforderung einer Signatur.
   - `pub fn create_detached_signature_response(...)`: Erstellt eine signierte Antwort auf eine Anfrage.
   - `pub fn process_and_attach_signature(...)`: Verarbeitet eine empfangene Signatur und fügt sie dem passenden Gutschein hinzu.
+
 - **Konflikt-Management** (`conflict_handler.rs`)
-  - `pub fn scan_and_rebuild_fingerprints(...)`: Scannt das Wallet und baut die getrennten Fingerprint-Stores (`OwnFingerprints`, `KnownFingerprints`) neu auf.
+  - `pub fn scan_and_rebuild_fingerprints(...)`: Durchsucht alle eigenen Gutscheine und aktualisiert den `own_fingerprints`-Store.
   - `pub fn check_for_double_spend(&self) -> DoubleSpendCheckResult`: Prüft auf Double-Spending-Konflikte, indem es die verschiedenen Fingerprint-Stores zusammenführt.
-  - `pub fn export_own_fingerprints(...)` & `import_foreign_fingerprints(...)`: Ermöglichen den Austausch von Fingerprints zwischen Wallets.
-  - `pub fn verify_and_create_proof(...)`: Verifiziert einen Konflikt und erstellt einen Beweis.
-  - `pub fn check_bundle_fingerprints_against_history(...)`: Interne Hilfsfunktion für Layer-2-Replay-Schutz.
-  - `pub fn select_fingerprints_for_bundle(...)`: Wählt Fingerprints für die Weiterleitung in einem Bundle aus.
+  - `pub fn cleanup_expired_fingerprints(&mut self)`: Entfernt alle abgelaufenen Fingerprints aus dem Speicher.
+  - `pub fn export_own_fingerprints(&self) -> Result<Vec<u8>, VoucherCoreError>`: Serialisiert die Historie der eigenen gesendeten Transaktionen für den Export.
+  - `pub fn import_foreign_fingerprints(...) -> Result<usize, VoucherCoreError>`: Importiert und merged fremde Fingerprints in den Speicher.
+  - `pub fn list_conflicts(&self) -> Vec<ProofOfDoubleSpendSummary>`: Gibt eine Liste von Zusammenfassungen aller bekannten Double-Spend-Konflikte zurück.
+  - `pub fn get_proof_of_double_spend(...) -> Result<ProofOfDoubleSpend, VoucherCoreError>`: Ruft einen vollständigen `ProofOfDoubleSpend` anhand seiner ID ab.
+  - `pub fn create_resolution_endorsement(...) -> Result<ResolutionEndorsement, VoucherCoreError>`: Erstellt eine signierte Beilegungserklärung für einen Konflikt.
+  - `pub fn add_resolution_endorsement(...) -> Result<(), VoucherCoreError>`: Fügt eine (extern erhaltene) Beilegungserklärung zu einem bestehenden Konfliktbeweis hinzu.
+  - `pub(super) fn verify_and_create_proof(...)`: Verifiziert einen Konflikt und erstellt einen Beweis. Interne Methode.
+  - `pub(super) fn check_bundle_fingerprints_against_history(...)`: Interne Hilfsfunktion für Layer-2-Replay-Schutz.
+  - `pub fn select_fingerprints_for_bundle(...) -> Result<(Vec<TransactionFingerprint>, HashMap<String, u8>), VoucherCoreError>`: Wählt Fingerprints für die Weiterleitung in einem Bundle aus, basierend auf der Heuristik.
   - `pub fn process_received_fingerprints(...)`: Verarbeitet empfangene Fingerprints (aktiv und implizit) und aktualisiert die Metadaten.
+
 - **Voucher Instance Management** (`instance.rs`)
-  - `pub struct VoucherInstance`: Repräsentiert eine Instanz eines Gutscheins mit einem bestimmten Status.
+  - `pub enum ValidationFailureReason`: Erfasst den genauen, für den Nutzer behebbaren Grund, warum ein Gutschein als unvollständig (`Incomplete`) eingestuft wird.
   - `pub enum VoucherStatus`: Definiert den Status eines Gutscheins (z.B. `Incomplete`, `Active`, `Archived`, `Quarantined`).
-  - `pub fn calculate_local_instance_id(...)`: Berechnet eine deterministische ID für eine Gutscheininstanz.
+  - `pub struct VoucherInstance`: Repräsentiert eine Instanz eines Gutscheins mit einem bestimmten Status.
+
 - **Typdefinitionen** (`types.rs`)
   - Definiert öffentliche Datenstrukturen wie `MultiTransferRequest`, `SourceTransfer`, `TransferSummary`, `ProcessBundleResult`, `DoubleSpendCheckResult`, `InvolvedVoucherInfo`, `CreateBundleResult`, `CleanupReport`, `AggregatedBalance`, `VoucherSummary`, `ProofOfDoubleSpendSummary`, `VoucherDetails`.
+
 - **Tests** (`tests.rs`)
   - Enthält umfassende Unit-Tests für die Wallet-Logik.
 
@@ -498,9 +520,27 @@ Das `wallet`-Modul wurde umfassend refaktorisiert, um die Komplexität zu reduzi
 
 Definiert die Abstraktion für die persistente Speicherung und stellt eine Standardimplementierung für das Dateisystem bereit.
 
+- `pub enum StorageError`: Ein generischer Fehler-Typ für alle Speicheroperationen (z.B. `AuthenticationFailed`, `NotFound`, `InvalidFormat`, `Io`, `Generic`).
+- `pub enum AuthMethod`: Definiert die Authentifizierungsmethode für den Zugriff auf den Speicher (z.B. `Password`, `Mnemonic`, `RecoveryIdentity`).
 - `pub trait Storage`
-  - Definiert die Schnittstelle für Speicheroperationen, die nun für jeden Datenspeicher separat existieren (`load/save_wallet`, `load/save_bundle_metadata`, `load/save_known_fingerprints`, `load/save_own_fingerprints`, `load/save_fingerprint_metadata`, `load/save_proofs`).
+  - `load_wallet(...)`: Lädt und entschlüsselt das Kern-Wallet (Profil und VoucherStore).
+  - `save_wallet(...)`: Speichert und verschlüsselt das Kern-Wallet (Profil und VoucherStore).
+  - `reset_password(...)`: Setzt das Passwort zurück, indem es das Passwort-Schloss mit dem Wiederherstellungs-Schlüssel neu erstellt.
+  - `profile_exists()`: Prüft, ob bereits ein Profil am Speicherort existiert.
+  - `load_known_fingerprints(...)`: Lädt und entschlüsselt den `KnownFingerprints`-Store.
+  - `save_known_fingerprints(...)`: Speichert und verschlüsselt den `KnownFingerprints`-Store.
+  - `load_own_fingerprints(...)`: Lädt und entschlüsselt den kritischen `OwnFingerprints`-Store.
+  - `save_own_fingerprints(...)`: Speichert und verschlüsselt den kritischen `OwnFingerprints`-Store.
+  - `load_bundle_metadata(...)`: Lädt und entschlüsselt die Metadaten der Transaktionsbündel.
+  - `save_bundle_metadata(...)`: Speichert und verschlüsselt die Metadaten der Transaktionsbündel.
+  - `load_proofs(...)`: Lädt und entschlüsselt den ProofStore.
+  - `save_proofs(...)`: Speichert und verschlüsselt den ProofStore.
+  - `load_fingerprint_metadata(...)`: Lädt den kanonischen Speicher für Fingerprint-Metadaten.
+  - `save_fingerprint_metadata(...)`: Speichert den kanonischen Speicher für Fingerprint-Metadaten.
+  - `save_arbitrary_data(...)`: Speichert einen beliebigen, benannten Datenblock verschlüsselt.
+  - `load_arbitrary_data(...)`: Lädt einen beliebigen, benannten und verschlüsselten Datenblock.
 - `pub struct FileStorage`
+  - `new(...)`: Erstellt eine neue `FileStorage`-Instanz für ein spezifisches Benutzerverzeichnis.
   - Implementiert den `Storage`-Trait.
   - Speichert die Daten jedes Profils in einem eigenen **anonymen Unterverzeichnis**, um die Privatsphäre zu erhöhen.
   - Implementiert die "Zwei-Schloss"-Mechanik mit Key-Wrapping für den Passwort-Zugriff und die Mnemonic-Wiederherstellung.
@@ -511,7 +551,10 @@ Definiert die Abstraktion für die persistente Speicherung und stellt eine Stand
 Definiert die Abstraktion für ein persistentes Archiv von Gutschein-Zuständen.
 
 - `pub trait VoucherArchive`
-  - Definiert die Schnittstelle für ein Archiv, das dazu dient, **jeden jemals gesehenen Zustand** eines Gutscheins zu speichern (forensische Analyse). Die Archivierung erfolgt **unabhängig vom Guthaben**.
+  - `archive_voucher(...)`: Speichert eine Kopie des übergebenen Gutschein-Zustands bedingungslos im Archiv.
+  - `get_archived_voucher(...)`: Ruft einen archivierten Gutschein anhand seiner ID ab.
+  - `find_transaction_by_id(...)`: Findet einen Gutschein und die darin enthaltene Transaktion anhand der Transaktions-ID.
+  - `find_voucher_by_tx_id(...)`: Findet einen Gutschein anhand einer enthaltenen Transaktions-ID.
   - Wallet-Methoden, die ein Archiv verwenden, akzeptieren nun `&dyn VoucherArchive` (dynamic dispatch).
 - `pub struct FileVoucherArchive`
   - Eine Implementierung, die jeden archivierten Gutschein-Zustand als separate JSON-Datei in einer **hierarchischen Struktur** speichert: `{archive_dir}/{voucher_id}/{t_id}.json`.
@@ -520,86 +563,108 @@ Definiert die Abstraktion für ein persistentes Archiv von Gutschein-Zuständen.
 
 Kapselt die zustandslose Logik für das Erstellen, Verschlüsseln, Öffnen und Verifizieren von `TransactionBundle`-Objekten.
 
-- `pub fn create_and_encrypt_bundle(...)`: Erstellt ein `TransactionBundle`, signiert es, verpackt es in einen `SecureContainer` und serialisiert das Ergebnis.
-- `pub fn open_and_verify_bundle(...)`: Öffnet einen `SecureContainer`, validiert den Inhalt als `TransactionBundle` und verifiziert dessen digitale Signatur.
-
-### `services::crypto_utils` Modul
+- `pub fn create_and_encrypt_bundle(identity: &UserIdentity, vouchers: Vec<Voucher>, recipient_id: &str, notes: Option<String>, forwarded_fingerprints: Vec<TransactionFingerprint>, fingerprint_depths: HashMap<String, u8>, sender_profile_name: Option<String>) -> Result<(Vec<u8>, TransactionBundle), VoucherCoreError>`: Erstellt ein `TransactionBundle`, verpackt es in einen `SecureContainer` und serialisiert diesen.
+- `pub fn open_and_verify_bundle(identity: &UserIdentity, container_bytes: &[u8]) -> Result<TransactionBundle, VoucherCoreError>`: Öffnet einen `SecureContainer`, validiert den Inhalt als `TransactionBundle` und verifiziert dessen digitale Signatur.
 
 ### `services::conflict_manager` Modul
 
-Dieses Modul kapselt die Geschäftslogik zur Erkennung, Verifizierung und Verwaltung von Double-Spending-Konflikten.
+Dieses Modul kapselt die gesamte Geschäftslogik zur Erkennung, Verifizierung und Verwaltung von Double-Spending-Konflikten.
 
-- `pub fn create_fingerprint_for_transaction(...) -> Result<TransactionFingerprint, ...>`: Erstellt einen einzelnen, anonymisierten Fingerprint für eine Transaktion, inklusive des verschlüsselten Zeitstempels.
-- `pub fn scan_and_rebuild_fingerprints(...) -> Result<(OwnFingerprints, KnownFingerprints), ...>`: Baut die Fingerprint-Stores aus dem `VoucherStore` neu auf und partitioniert sie korrekt.
-- `pub fn check_for_double_spend(...) -> DoubleSpendCheckResult`: Führt eine Double-Spend-Prüfung durch, indem die nun getrennten `OwnFingerprints` und `KnownFingerprints` Stores kombiniert werden.
-- `pub fn create_proof_of_double_spend(...) -> Result<ProofOfDoubleSpend, ...>`: Erstellt einen fälschungssicheren, portablen Beweis für einen Double-Spend-Versuch mit deterministischer `proof_id`.
-- `pub fn create_and_sign_resolution_endorsement(...) -> Result<ResolutionEndorsement, ...>`: Erstellt eine signierte Beilegungserklärung für einen Konflikt.
-- `pub fn encrypt_transaction_timestamp(...) -> Result<u128, ...>`: Verschlüsselt einen Transaktionszeitstempel via XOR für die anonymisierte Analyse auf Layer 2.
+- `pub fn create_fingerprint_for_transaction(transaction: &Transaction, voucher: &Voucher) -> Result<TransactionFingerprint, VoucherCoreError>`: Erstellt einen einzelnen, anonymisierten Fingerprint für eine Transaktion, inklusive des verschlüsselten Zeitstempels.
+- `pub fn scan_and_rebuild_fingerprints(voucher_store: &VoucherStore, user_id: &str) -> Result<(OwnFingerprints, KnownFingerprints), VoucherCoreError>`: Baut die Fingerprint-Stores aus dem `VoucherStore` neu auf und partitioniert sie korrekt.
+- `pub fn check_for_double_spend(own_fingerprints: &OwnFingerprints, known_fingerprints: &KnownFingerprints) -> DoubleSpendCheckResult`: Führt eine Double-Spend-Prüfung durch, indem die nun getrennten `OwnFingerprints` und `KnownFingerprints` Stores kombiniert werden.
+- `pub fn create_proof_of_double_spend(offender_id: String, fork_point_prev_hash: String, conflicting_transactions: Vec<Transaction>, voucher_valid_until: String, reporter_identity: &UserIdentity) -> Result<ProofOfDoubleSpend, VoucherCoreError>`: Erstellt einen fälschungssicheren, portablen Beweis für einen Double-Spend-Versuch mit deterministischer `proof_id`.
+- `pub fn create_and_sign_resolution_endorsement(proof_id: &str, victim_identity: &UserIdentity, notes: Option<String>) -> Result<ResolutionEndorsement, VoucherCoreError>`: Erstellt eine signierte Beilegungserklärung für einen Konflikt.
+- `pub fn cleanup_known_fingerprints(known_fingerprints: &mut KnownFingerprints)`: Entfernt alle abgelaufenen Fingerprints aus den nicht-kritischen Speichern.
+- `pub fn cleanup_expired_histories(own_fingerprints: &mut OwnFingerprints, known_fingerprints: &mut KnownFingerprints, now: &DateTime<chrono::Utc>, grace_period: &chrono::Duration)`: Bereinigt die persistente Fingerprint-History basierend auf einer längeren Aufbewahrungsfrist.
+- `pub fn export_own_fingerprints(own_fingerprints: &OwnFingerprints) -> Result<Vec<u8>, VoucherCoreError>`: Serialisiert die Historie der eigenen gesendeten Transaktionen für den Export.
+- `pub fn import_foreign_fingerprints(known_fingerprints: &mut KnownFingerprints, data: &[u8]) -> Result<usize, VoucherCoreError>`: Importiert und merged fremde Fingerprints in den Speicher.
+- `pub fn encrypt_transaction_timestamp(transaction: &Transaction) -> Result<u128, VoucherCoreError>`: Verschlüsselt einen Transaktionszeitstempel via XOR für die anonymisierte Analyse auf Layer 2.
+- `pub fn decrypt_transaction_timestamp(transaction: &Transaction, encrypted_nanos: u128) -> Result<u128, VoucherCoreError>`: Entschlüsselt den Zeitstempel einer Transaktion.
 
-Dieses Modul enthält kryptographische Hilfsfunktionen für Schlüsselgenerierung, Hashing, Signaturen und User-ID-Verwaltung.
+### `services::crypto_utils` Modul
 
-- `pub fn get_hash(input: impl AsRef<[u8]>) -> String`
-  - Berechnet einen SHA3-256-Hash der Eingabe und gibt ihn als Base58-kodierten String zurück.
-- `pub fn derive_ed25519_keypair(mnemonic_phrase: &str, passphrase: Option<&str>) -> Result<(EdPublicKey, SigningKey), VoucherCoreError>`
-  - Leitet ein Ed25519-Schlüsselpaar aus einer mnemonischen Phrase ab. Die übergebene `passphrase` sollte bereits das `prefix` des Kontos enthalten, um kryptographisch getrennte Konten zu erzeugen.
-- `pub fn create_user_id(public_key: &EdPublicKey, user_prefix: Option<&str>) -> Result<String, UserIdError>`
-  - Generiert eine User ID konform zum **`did:key`-Standard** mit einer integrierten Prüfsumme. Das Format ist `[prefix-]checksum@did:key:z...`.
-- `pub fn get_pubkey_from_user_id(user_id: &str) -> Result<EdPublicKey, GetPubkeyError>`
-  - Extrahiert den Ed25519 Public Key aus einer `did:key`-basierten User ID-Zeichenkette.
-- `pub fn get_short_hash_from_user_id(user_id: &str) -> [u8; 4]`
-  - Erzeugt einen 4-Byte-Kurz-Hash aus der User ID für speichereffizientes Tracking von bekannten Peers im Gossip-Protokoll.
-- Bietet Funktionen zur Generierung und Validierung von BIP-39 Mnemonic-Phrasen (`generate_mnemonic`, `validate_mnemonic_phrase`).
+Enthält kryptographische Hilfsfunktionen für Schlüsselgenerierung, Hashing, Signaturen und User-ID-Verwaltung.
+
+- `pub fn generate_mnemonic(word_count: usize, language: Language) -> Result<String, Box<dyn std::error::Error>>`: Generiert eine mnemonic phrase mit angegebener Wortzahl.
+- `pub fn validate_mnemonic_phrase(phrase: &str) -> Result<(), String>`: Validiert eine BIP-39 mnemonic phrase.
+- `pub fn get_hash(input: impl AsRef<[u8]>) -> String`: Berechnet einen SHA3-256 Hash und gibt ihn als base58-kodierten String zurück.
+- `pub fn get_short_hash_from_user_id(user_id: &str) -> [u8; 4]`: Erzeugt einen 4-Byte-Kurz-Hash aus der User-ID für speichereffizientes Tracking.
+- `pub fn derive_ed25519_keypair(mnemonic_phrase: &str, passphrase: Option<&str>) -> Result<(EdPublicKey, SigningKey), VoucherCoreError>`: Leitet ein Ed25519-Schlüsselpaar aus einer mnemonic phrase ab.
+- `pub fn generate_ed25519_keypair_for_tests(seed: Option<&str>) -> (EdPublicKey, SigningKey)`: Erzeugt ein zufälliges oder deterministisches Ed25519-Schlüsselpaar für Tests.
+- `pub fn ed25519_pub_to_x25519(ed_pub: &EdPublicKey) -> X25519PublicKey`: Konvertiert einen Ed25519 Public Key zu X25519 für Diffie-Hellman.
+- `pub fn ed25519_sk_to_x25519_sk(ed_sk: &SigningKey) -> StaticSecret`: Konvertiert einen Ed25519 Signing Key zu X25519 StaticSecret.
+- `pub fn generate_ephemeral_x25519_keypair() -> (X25519PublicKey, EphemeralSecret)`: Generiert ein temporäres X25519-Schlüsselpaar für Forward Secrecy.
+- `pub fn perform_diffie_hellman(our_secret: EphemeralSecret, their_public: &X25519PublicKey) -> [u8; 32]`: Führt Diffie-Hellman-Schlüsselaustausch durch.
+- `pub fn create_user_id(public_key: &EdPublicKey, user_prefix: Option<&str>) -> Result<String, UserIdError>`: Generiert eine User-ID mit optionalem Präfix und Prüfsumme.
+- `pub fn get_pubkey_from_user_id(user_id: &str) -> Result<EdPublicKey, VoucherCoreError>`: Extrahiert den Ed25519 Public Key aus einer User-ID.
+- `pub fn sign_ed25519(signing_key: &SigningKey, message: &[u8]) -> Signature`: Signiert eine Nachricht mit Ed25519.
+- `pub fn verify_ed25519(public_key: &EdPublicKey, message: &[u8], signature: &Signature) -> bool`: Verifiziert eine Ed25519-Signatur.
+- `pub fn encode_base64(data: &[u8]) -> String`: Kodiert Daten in URL-safe Base64.
+- `pub fn decode_base64(encoded_data: &str) -> Result<Vec<u8>, VoucherCoreError>`: Dekodiert URL-safe Base64.
+- `pub fn encrypt_data(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, SymmetricEncryptionError>`: Symmetrisch verschlüsselt Daten mit ChaCha20-Poly1305.
+- `pub fn decrypt_data(key: &[u8; 32], encrypted_data_with_nonce: &[u8]) -> Result<Vec<u8>, SymmetricEncryptionError>`: Symmetrisch entschlüsselt Daten.
+
+### `services::decimal_utils` Modul
+
+Enthält Hilfsfunktionen zur konsistenten Validierung und Formatierung von `Decimal`-Werten.
+
+- `pub fn validate_precision(amount: &Decimal, allowed_places: u32) -> Result<(), VoucherCoreError>`: Validiert, dass ein Decimal-Wert die erlaubte Anzahl Nachkommastellen nicht überschreitet.
+- `pub fn format_for_storage(amount: &Decimal, places: u32) -> String`: Formatiert einen Decimal-Wert in das kanonische Speicherformat.
 
 ### `services::secure_container_manager` Modul
 
 Stellt die Kernlogik für den **anonymisierten und weiterleitungs-sicheren** `SecureContainer` bereit, der für den Austausch von Daten (z.B. Bundles, Signaturanfragen) verwendet wird.
 
-- `pub fn create_secure_container(...)`: Erstellt einen **anonymen, weiterleitungs-sicheren** `SecureContainer`. Ein symmetrischer Payload-Schlüssel wird für jeden Empfänger **und den Sender selbst** mittels eines **ephemeren Diffie-Hellman-Austauschs (X25519)** und Key-Wrapping verschlüsselt. Der Container enthält keine direkten Identifikatoren und wird als Ganzes signiert.
-- `pub fn open_secure_container(...)`: Entschlüsselt den Payload, indem es versucht, den Payload-Schlüssel mit dem privaten Schlüssel des Nutzers (als Sender oder Empfänger) und dem öffentlichen ephemeren Schlüssel des Containers zu entschlüsseln. Die Signatur des Containers muss vom Aufrufer separat verifiziert werden, da die `sender_id` erst nach der Entschlüsselung bekannt ist.
+- `pub fn create_secure_container(sender_identity: &UserIdentity, recipient_ids: &[String], payload: &[u8], content_type: PayloadType) -> Result<SecureContainer, VoucherCoreError>`: Erstellt einen **anonymen, weiterleitungs-sicheren** `SecureContainer`. Ein symmetrischer Payload-Schlüssel wird für jeden Empfänger **und den Sender selbst** mittels eines **ephemeren Diffie-Hellman-Austauschs (X25519)** und Key-Wrapping verschlüsselt. Der Container enthält keine direkten Identifikatoren und wird als Ganzes signiert.
+- `pub fn open_secure_container(container: &SecureContainer, recipient_identity: &UserIdentity) -> Result<Vec<u8>, VoucherCoreError>`: Entschlüsselt den Payload, indem es versucht, den Payload-Schlüssel mit dem privaten Schlüssel des Nutzers (als Sender oder Empfänger) und dem öffentlichen ephemeren Schlüssel des Containers zu entschlüsseln. Die Signatur des Containers muss vom Aufrufer separat verifiziert werden, da die `sender_id` erst nach der Entschlüsselung bekannt ist.
 
 ### `services::signature_manager` Modul
 
 Enthält die zustandslose Geschäftslogik für die Erstellung und kryptographische Validierung von losgelösten Signaturen (`DetachedSignature`).
 
-- `pub fn complete_and_sign_detached_signature(detached_signature: DetachedSignature, voucher_id: &str, identity: &UserIdentity, details: Option<PublicProfile>)`: Nimmt unvollständige Signatur-Metadaten, berechnet die `signature_id` durch Hashing des kanonischen Inhalts, fügt optionale öffentliche Profildaten hinzu und fügt die digitale Signatur des Unterzeichners hinzu.
-- `pub fn validate_detached_signature(...)`: Validiert eine losgelöste Signatur, indem die `signature_id` neu berechnet und die kryptographische Signatur gegen die ID und den Public Key des Unterzeichners geprüft wird.
+- `pub fn complete_and_sign_detached_signature(mut signature_data: DetachedSignature, signer_identity: &UserIdentity, details: Option<PublicProfile>, voucher_id: &str) -> Result<DetachedSignature, VoucherCoreError>`: Nimmt unvollständige Signatur-Metadaten, berechnet die `signature_id` durch Hashing des kanonischen Inhalts, fügt optionale öffentliche Profildaten hinzu und fügt die digitale Signatur des Unterzeichners hinzu.
+- `pub fn validate_detached_signature(signature_data: &DetachedSignature) -> Result<(), VoucherCoreError>`: Validiert eine losgelöste Signatur, indem die `signature_id` neu berechnet und die kryptographische Signatur gegen die ID und den Public Key des Unterzeichners geprüft wird.
 
 ### `services::standard_manager` Modul
 
 Dieses Modul enthält die Logik zur Verarbeitung und Verifizierung von Gutschein-Standard-Definitionen (TOML-Dateien).
 
-- `pub fn verify_and_parse_standard(toml_str: &str) -> Result<(VoucherStandardDefinition, String), VoucherCoreError>`
-  - Parst einen TOML-String in eine `VoucherStandardDefinition`.
-  - Kanonisiert die Definition (ohne Signatur) in einen stabilen JSON-String.
-  - Berechnet den SHA3-256 Hash des kanonischen JSON-Strings (dies ist der "Konsistenz-Hash").
-  - Verifiziert die im TOML enthaltene Ed25519-Signatur gegen den berechneten Hash.
-  - Gibt bei Erfolg die verifizierte Definition und den Konsistenz-Hash zurück.
-- `pub fn get_localized_text<'a>(texts: &'a [LocalizedText], lang_preference: &str) -> Option<&'a str>`
-  - Löst einen lokalisierten Text gemäß einer definierten Fallback-Logik auf.
+- `pub fn verify_and_parse_standard(toml_str: &str) -> Result<(VoucherStandardDefinition, String), VoucherCoreError>`: Parst einen TOML-String in eine `VoucherStandardDefinition`. Kanonisiert die Definition (ohne Signatur) in einen stabilen JSON-String. Berechnet den SHA3-256 Hash des kanonischen JSON-Strings (dies ist der "Konsistenz-Hash"). Verifiziert die im TOML enthaltene Ed25519-Signatur gegen den berechneten Hash. Gibt bei Erfolg die verifizierte Definition und den Konsistenz-Hash zurück.
+- `pub fn get_localized_text<'a>(texts: &'a [LocalizedText], lang_preference: &str) -> Option<&'a str>`: Löst einen lokalisierten Text gemäß einer definierten Fallback-Logik auf.
+
+### `services::utils` Modul
+
+Enthält allgemeine Hilfsfunktionen, z.B. für Zeitstempel und kanonische Serialisierung.
+
+- `pub fn to_canonical_json<T: Serialize>(value: &T) -> Result<String, serde_json::Error>`: Serialisiert in kanonischen JSON-String gemäß RFC 8785.
+- `pub fn get_timestamp(years_to_add: i32, end_of_year: bool) -> String`: Gibt einen Zeitstempel in ISO 8601-Format zurück, optional mit Jahren addiert und/oder am Jahresende.
+- `pub fn get_current_timestamp() -> String`: Gibt den aktuellen Zeitstempel in ISO 8601-Format zurück.
 
 ### `services::voucher_manager` Modul
 
 Dieses Modul stellt die Kernlogik für die Erstellung und Verarbeitung von Gutscheinen bereit.
 
-- `pub fn create_voucher(data: NewVoucherData, verified_standard: &VoucherStandardDefinition, standard_hash: &str, creator_signing_key: &SigningKey, lang_preference: &str) -> Result<Voucher, VoucherCoreError>`
-  - Orchestriert die Erstellung eines neuen, vollständigen Gutscheins.
-  - Erzeugt eine `voucher_nonce`, um den initialen `prev_hash` unvorhersehbar zu machen und so die Anonymität des Erstellers auf Layer 2 zu schützen.
-  - Nutzt eine korrigierte Logik zur Berechnung von Gültigkeitsdauern.
-  - Implementiert einen **"Gatekeeper"-Validierungsmechanismus** für `issuance_minimum_validity_duration`: Verhindert die Erstellung von Gutscheinen, deren Gültigkeitsdauer die im Standard definierte Mindestgültigkeit unterschreitet (z.B. bei Erstellung mit zu kurz gewählter Gültigkeitsdauer).
-  - Nimmt den **Konsistenz-Hash** des verifizierten Standards entgegen und bettet ihn in den Gutschein ein.
-  - Verwendet die Logik zur Auswahl des mehrsprachigen Beschreibungstextes aus dem Standard.
-- `pub fn create_transaction(voucher: &Voucher, standard: &VoucherStandardDefinition, sender_id: &str, sender_key: &SigningKey, recipient_id: &str, amount_to_send_str: &str) -> Result<Voucher, VoucherCoreError>`
-  - Erstellt eine Kopie des Gutscheins mit einer neuen Transaktion.
-  - Die Signatur der Transaktion sichert nun ein minimales Objekt (`{prev_hash, sender_id, t_id}`).
-  - Verwendet `decimal_utils` zur **strengen Validierung der Betragspräzision** und zur **kanonischen Formatierung** der Werte.
-  - Verwendet explizit den Transaktionstyp "transfer" für einen vollen Transfer.
-  - Implementiert eine **"Zirkulations-Firewall" (`issuance_minimum_validity_duration`)**: Verhindert, dass der *ursprüngliche Ersteller* einen Gutschein an einen *Dritten* sendet, wenn die *Restgültigkeit* des Gutscheins die im Standard definierte Mindestgültigkeit unterschreitet. Diese Prüfung gilt *nicht* für nicht-Ersteller oder interne SAI-Transfers (z.B. Creator zu sich selbst).
+- `pub fn from_json(json_str: &str) -> Result<Voucher, VoucherCoreError>`: Deserialisiert einen JSON-String in ein Voucher-Struct.
+- `pub fn to_json(voucher: &Voucher) -> Result<String, VoucherCoreError>`: Serialisiert ein Voucher-Struct in einen formatierten JSON-String.
+- `pub struct NewVoucherData`: Hilfsstruktur für die Erstellung eines neuen Gutscheins.
+- `pub fn create_voucher(data: NewVoucherData, verified_standard: &VoucherStandardDefinition, standard_hash: &str, creator_signing_key: &SigningKey, lang_preference: &str) -> Result<Voucher, VoucherCoreError>`: Orchestriert die Erstellung eines neuen, vollständigen Gutscheins. Erzeugt eine `voucher_nonce`, um den initialen `prev_hash` unvorhersehbar zu machen und so die Anonymität des Erstellers auf Layer 2 zu schützen. Nutzt eine korrigierte Logik zur Berechnung von Gültigkeitsdauern. Implementiert einen **"Gatekeeper"-Validierungsmechanismus** für `issuance_minimum_validity_duration`: Verhindert die Erstellung von Gutscheinen, deren Gültigkeitsdauer die im Standard definierte Mindestgültigkeit unterschreitet (z.B. bei Erstellung mit zu kurz gewählter Gültigkeitsdauer). Nimmt den **Konsistenz-Hash** des verifizierten Standards entgegen und bettet ihn in den Gutschein ein. Verwendet die Logik zur Auswahl des mehrsprachigen Beschreibungstextes aus dem Standard.
+- `pub fn add_iso8601_duration(start_date: DateTime<Utc>, duration_str: &str) -> Result<DateTime<Utc>, VoucherManagerError>`: Hilfsfunktion zum Parsen einer ISO 8601 Duration und Addieren zu einem Datum.
+- `pub fn round_up_date(date: DateTime<Utc>, rounding_str: &str) -> Result<DateTime<Utc>, VoucherManagerError>`: Hilfsfunktion, um ein Datum auf das Ende des Tages, Monats oder Jahres aufzurunden.
+- `pub fn validate_issuance_firewall(voucher: &Voucher, standard: &VoucherStandardDefinition, sender_id: &str, recipient_id: &str) -> Result<(), VoucherCoreError>`: Prüft die "Zirkulations-Firewall" (`issuance_minimum_validity_duration`).
+- `pub fn get_spendable_balance(voucher: &Voucher, user_id: &str, standard: &VoucherStandardDefinition) -> Result<Decimal, VoucherCoreError>`: Berechnet das ausgebbare Guthaben für einen bestimmten Benutzer.
+- `pub fn create_transaction(voucher: &Voucher, standard: &VoucherStandardDefinition, sender_id: &str, sender_key: &SigningKey, recipient_id: &str, amount_to_send_str: &str) -> Result<Voucher, VoucherCoreError>`: Erstellt eine Kopie des Gutscheins mit einer neuen Transaktion. Die Signatur der Transaktion sichert nun ein minimales Objekt (`{prev_hash, sender_id, t_id}`). Verwendet `decimal_utils` zur **strengen Validierung der Betragspräzision** und zur **kanonischen Formatierung** der Werte. Verwendet explizit den Transaktionstyp "transfer" für einen vollen Transfer. Implementiert eine **"Zirkulations-Firewall" (`issuance_minimum_validity_duration`)**: Verhindert, dass der *ursprüngliche Ersteller* einen Gutschein an einen *Dritten* sendet, wenn die *Restgültigkeit* des Gutscheins die im Standard definierte Mindestgültigkeit unterschreitet. Diese Prüfung gilt *nicht* für nicht-Ersteller oder interne SAI-Transfers (z.B. Creator zu sich selbst).
 
 ### `services::voucher_validation` Modul
 
 Dieses Modul enthält die Logik zur Validierung eines `Voucher`-Objekts gegen die Regeln seines Standards. **Die Validierungslogik wurde erheblich gehärtet.**
 
-- `pub fn validate_voucher_against_standard(voucher: &Voucher, standard: &VoucherStandardDefinition) -> Result<(), VoucherCoreError>`  - Führt eine umfassende Prüfung des Gutscheins durch, inklusive der korrekten Verkettung unter Einbeziehung des `voucher_nonce`, der Validierung der vereinfachten Transaktions-Signatur und neuer Geschäftsregeln (z.B. keine Transaktionen an sich selbst).
+- `pub fn validate_voucher_against_standard(voucher: &Voucher, standard: &VoucherStandardDefinition) -> Result<(), VoucherCoreError>`: Führt eine umfassende Prüfung des Gutscheins durch, inklusive der korrekten Verkettung unter Einbeziehung des `voucher_nonce`, der Validierung der vereinfachten Transaktions-Signatur und neuer Geschäftsregeln (z.B. keine Transaktionen an sich selbst).
+- `pub fn validate_transaction_count(voucher: &Voucher, rules: &CountRules) -> Result<(), ValidationError>`: Prüft die quantitativen Regeln aus dem Standard (z.B. Anzahl der Transaktionen).
+- `pub fn validate_required_signatures(voucher: &Voucher, rules: &[RequiredSignatureRule]) -> Result<(), ValidationError>`: Prüft, ob alle im Standard geforderten Signaturen vorhanden und kryptographisch gültig sind.
+- `pub fn validate_content_rules(voucher_json: &Value, rules: &ContentRules) -> Result<(), ValidationError>`: Prüft die Inhaltsregeln (feste Werte, erlaubte Werte, Regex-Muster).
+- `pub fn validate_behavior_rules(voucher: &Voucher, rules: &BehaviorRules, creation_dt: chrono::DateTime<chrono::Utc>, valid_until_dt: chrono::DateTime<chrono::Utc>) -> Result<(), ValidationError>`: Prüft Verhaltensregeln (erlaubte Transaktionstypen, Gültigkeitsdauer).
+- `pub fn validate_field_group_rules(voucher_json: &Value, rules: &HashMap<String, FieldGroupRule>) -> Result<(), ValidationError>`: Prüft Regeln, die sich auf die Werteverteilung von Feldern in einer Liste von Objekten beziehen.
 - Überprüft die **Konsistenz des eingebetteten Standard-Hashes** mit dem Hash des aktuellen Standard-Objekts, um sicherzustellen, dass der Gutschein immer gegen die exakte Version des Standards validiert wird, mit der er erstellt wurde.
 - Überprüft, ob der **Transaktionstyp** (`t_type`) laut Standard erlaubt ist.
 - Überprüft die Integrität und kryptographische Gültigkeit aller **zusätzlichen Signaturen** (`additional_signatures`).
@@ -631,3 +696,46 @@ Das Wallet-Modul und die AppService-Schnittstelle wurden um neue Informationsstr
 - `CreateBundleResult`: Das Ergebnis der `create_transfer_bundle`-Methode, das neben den Bundle-Daten auch detaillierte Informationen über die involvierten Quell-Gutscheine (`involved_sources_details`) enthält.
 
 - `ProcessBundleResult`: Das Ergebnis der `receive_bundle`-Methode, das neben den Header-Informationen auch `transfer_summary` und `involved_vouchers_details` enthält, um eine umfassende Übersicht über den empfangenen Transfer zu bieten.
+
+### Zusätzliche Datenstrukturen in `src/models`
+
+- **profile.rs**:
+  - `UserIdentity`: Kryptographische Identität eines Nutzers mit privatem/öffentlichem Schlüssel und User-ID.
+  - `TransactionDirection`: Enum für Transaktionsrichtung (Sent/Received).
+  - `TransactionBundleHeader`: Leichtgewichtige Zusammenfassung eines `TransactionBundle`.
+  - `TransactionBundle`: Vollständiges, signiertes Bündel für Gutschein-Austausch, inkl. Fingerprints für Double-Spend-Erkennung.
+  - `VoucherStore`: Persistenter Speicher für Gutscheine.
+  - `BundleMetadataStore`: Speicher für Transaktionsbündel-Metadaten.
+  - `PublicProfile`: Standardisiertes öffentliches Profil für Signaturen und Creator-Feld.
+  - `UserProfile`: Hauptstruktur für den Nutzer-Wallet-Zustand.
+
+- **secure_container.rs**:
+  - `PayloadType`: Enum für Inhaltsart (TransactionBundle, VoucherForSigning, etc.).
+  - `WrappedKey`: Verschlüsselter Payload-Schlüssel für Empfänger/Sender.
+  - `SecureContainer`: Anonymer, sicherer Container für Datenaustausch mit Forward Secrecy.
+
+- **conflict.rs**:
+  - `TransactionFingerprint`: Anonymisierter Fingerprint einer Transaktion für Double-Spend-Erkennung.
+  - `KnownFingerprints`: Speicher für bekannte Fingerprints (lokal und fremd).
+  - `OwnFingerprints`: Kritischer Speicher für eigene Fingerprints.
+  - `FingerprintMetadata`: Dynamische Metadaten für Fingerprints (depth, known_by_peers).
+  - `CanonicalMetadataStore`: Zentraler Speicher für Fingerprint-Metadaten.
+  - `ProofOfDoubleSpend`: Kryptographischer Beweis für Double-Spend.
+  - `ResolutionEndorsement`: Bestätigung einer Konfliktbeilegung.
+  - `ProofStore`: Speicher für Konfliktbeweise.
+  - `Layer2Verdict`: Signiertes Urteil eines Layer-2-Servers.
+
+- **signature.rs**:
+  - `DetachedSignature`: Wrapper für losgelöste Signaturen im Signatur-Workflow.
+
+- **voucher_standard_definition.rs** (Erweiterungen):
+  - `LocalizedText`: Sprachabhängiger Text.
+  - `StandardMetadata`: Metadaten des Standards.
+  - `TemplateNominalValue`, `TemplateCollateral`, `TemplateGuarantorInfo`: Vorlagen für Gutscheinfeld.
+  - `TemplateFixed`, `TemplateDefault`: Feste und standardmäßige Vorlagen.
+  - `VoucherTemplate`: Vorlage für neue Gutscheine.
+  - `SignatureBlock`: Kryptographische Signatur des Standards.
+  - `MinMax`, `CountRules`, `RequiredSignatureRule`: Validierungsregeln.
+  - `ContentRules`, `BehaviorRules`: Inhalts- und Verhaltensregeln.
+  - `ValueCountRule`, `FieldGroupRule`: Gruppenprüfungen.
+  - `Validation`: Hauptstruktur für Validierungsregeln.
