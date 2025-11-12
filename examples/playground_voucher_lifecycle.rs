@@ -24,17 +24,6 @@ use voucher_lib::{verify_and_parse_standard, NewVoucherData, VoucherStatus};
 use std::collections::HashMap;
 use tempfile::tempdir;
 
-// Helper function to update profile gender using the test helper
-// This is consistent with how it's done in the official tests
-fn update_profile_gender(service: &mut AppService, gender: &str, _password: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // Get the unlocked wallet and identity using the test helper
-    let (wallet, _identity) = service.get_unlocked_mut_for_test();
-    
-    // Update the gender in the profile
-    wallet.profile.gender = Some(gender.to_string());
-    
-    Ok(())
-}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- VOUCHER LIFECYCLE PLAYGROUND (AppService API) ---");
@@ -60,10 +49,88 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     service_recipient.create_profile("Recipient", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("rcp"), password)?;
     service_charlie.create_profile("Charlie", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("charlie"), password)?;
 
-    // Update the profiles to include gender information for the guarantors (required by Minuto standard)
-    // We need to update the gender to satisfy the validation requirements: exactly one male ("1") and one female ("2")
-    update_profile_gender(&mut service_g1, "1", password)?;  // Male
-    update_profile_gender(&mut service_g2, "2", password)?;  // Female
+    let g1_id = service_g1.get_user_id()?;
+    let g2_id = service_g2.get_user_id()?;
+
+    // Erstellen einer vollständigen Address-Struktur für Bürge 1
+    let g1_address = voucher_lib::models::voucher::Address {
+        street: "Bürgenstraße".to_string(),
+        house_number: "789".to_string(),
+        zip_code: "98765".to_string(),
+        city: "Bürgenstadt".to_string(),
+        country: "Deutschland".to_string(),
+        full_address: "Bürgenstraße 789, 98765 Bürgenstadt, Deutschland".to_string(),
+    };
+    
+    // Erstellen eines vollständigen PublicProfile für Bürge 1 mit Beispielwerten
+    let g1_profile = voucher_lib::models::profile::PublicProfile {
+        id: Some(g1_id.clone()),
+        first_name: Some("Max".to_string()),
+        last_name: Some("Bürger".to_string()),
+        organization: Some("Bürgschaft GmbH".to_string()),
+        community: Some("Bürgergemeinschaft Musterstadt".to_string()),
+        address: Some(g1_address),
+        gender: Some("1".to_string()), // ISO 5218: 1 = male
+        email: Some("max@buergen.de".to_string()),
+        phone: Some("+49 123 987654".to_string()),
+        coordinates: Some("50.1109, 8.6821".to_string()), // Frankfurt
+        url: Some("https://www.buergen.de".to_string()),
+    };
+    
+    // Aktualisieren des Profils für Bürge 1
+    {
+        let (wallet, _identity) = service_g1.get_unlocked_mut_for_test();
+        wallet.profile.first_name = g1_profile.first_name.clone();
+        wallet.profile.last_name = g1_profile.last_name.clone();
+        wallet.profile.organization = g1_profile.organization.clone();
+        wallet.profile.community = g1_profile.community.clone();
+        wallet.profile.address = g1_profile.address.clone();
+        wallet.profile.gender = g1_profile.gender.clone();
+        wallet.profile.email = g1_profile.email.clone();
+        wallet.profile.phone = g1_profile.phone.clone();
+        wallet.profile.coordinates = g1_profile.coordinates.clone();
+        wallet.profile.url = g1_profile.url.clone();
+    }
+    
+    // Erstellen einer vollständigen Address-Struktur für Bürge 2
+    let g2_address = voucher_lib::models::voucher::Address {
+        street: "Bürgenstraße".to_string(),
+        house_number: "456".to_string(),
+        zip_code: "54321".to_string(),
+        city: "Bürgenstadt".to_string(),
+        country: "Deutschland".to_string(),
+        full_address: "Bürgenstraße 456, 54321 Bürgenstadt, Deutschland".to_string(),
+    };
+    
+    // Erstellen eines vollständigen PublicProfile für Bürge 2 mit Beispielwerten
+    let g2_profile = voucher_lib::models::profile::PublicProfile {
+        id: Some(g2_id.clone()),
+        first_name: Some("Erika".to_string()),
+        last_name: Some("Bürgin".to_string()),
+        organization: Some("Bürgschaft GmbH".to_string()),
+        community: Some("Bürgergemeinschaft Musterstadt".to_string()),
+        address: Some(g2_address),
+        gender: Some("2".to_string()), // ISO 5218: 2 = female
+        email: Some("erika@buergin.de".to_string()),
+        phone: Some("+49 987 654321".to_string()),
+        coordinates: Some("48.1351, 11.5820".to_string()), // München
+        url: Some("https://www.buergin.de".to_string()),
+    };
+    
+    // Aktualisieren des Profils für Bürge 2
+    {
+        let (wallet, _identity) = service_g2.get_unlocked_mut_for_test();
+        wallet.profile.first_name = g2_profile.first_name.clone();
+        wallet.profile.last_name = g2_profile.last_name.clone();
+        wallet.profile.organization = g2_profile.organization.clone();
+        wallet.profile.community = g2_profile.community.clone();
+        wallet.profile.address = g2_profile.address.clone();
+        wallet.profile.gender = g2_profile.gender.clone();
+        wallet.profile.email = g2_profile.email.clone();
+        wallet.profile.phone = g2_profile.phone.clone();
+        wallet.profile.coordinates = g2_profile.coordinates.clone();
+        wallet.profile.url = g2_profile.url.clone();
+    }
 
     let creator_id = service_creator.get_user_id()?;
     let g1_id = service_g1.get_user_id()?;
@@ -78,10 +145,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- 2. Gutschein-Erstellung durch den Ersteller ---
     println!("\n--- SCHRITT 2: Ersteller legt einen neuen (unvollständigen) Gutschein an ---");
+    
+    // Erstellen einer vollständigen Address-Struktur mit Beispielwerten
+    let address = voucher_lib::models::voucher::Address {
+        street: "Musterstraße".to_string(),
+        house_number: "123".to_string(),
+        zip_code: "12345".to_string(),
+        city: "Musterstadt".to_string(),
+        country: "Deutschland".to_string(),
+        full_address: "Musterstraße 123, 12345 Musterstadt, Deutschland".to_string(),
+    };
+    
+    // Erstellen eines vollständigen PublicProfile mit Beispielwerten
+    let complete_creator_profile = voucher_lib::models::profile::PublicProfile {
+        id: Some(creator_id.clone()),
+        first_name: Some("Max".to_string()),
+        last_name: Some("Mustermann".to_string()),
+        organization: Some("Musterfirma GmbH".to_string()),
+        community: Some("Bürgergemeinschaft Musterstadt".to_string()),
+        address: Some(address),
+        gender: Some("2".to_string()), // ISO 5218: 2 = female
+        email: Some("max@mustermann.de".to_string()),
+        phone: Some("+49 123 456789".to_string()),
+        coordinates: Some("52.5200, 13.4050".to_string()), // Berlin
+        url: Some("https://www.mustermann.de".to_string()),
+    };
+    
+
+    
     let voucher_data = NewVoucherData {
         validity_duration: Some("P5Y".to_string()),
-        nominal_value: NominalValue { amount: "60".to_string(), ..Default::default() },
-        creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(creator_id.clone()), first_name: Some("Max".into()), last_name: Some("Creator".into()), gender: Some("2".to_string()), ..Default::default() },
+        nominal_value: NominalValue {
+            unit: "Minuto".to_string(),
+            amount: "60".to_string(),
+            abbreviation: "m".to_string(),
+            description: "Objektive Zeit".to_string(),
+        },
+        creator_profile: complete_creator_profile,
         ..Default::default()
     };
     let created_voucher = service_creator.create_new_voucher(&standard_toml, "de", voucher_data, password)?;
