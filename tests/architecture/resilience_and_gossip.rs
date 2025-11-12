@@ -156,7 +156,7 @@ mod tests {
             test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", PASSWORD);
         service.login(&profile.folder_name, PASSWORD, false).unwrap();
         let new_voucher_data = NewVoucherData {
-            nominal_value: voucher_lib::models::voucher::NominalValue {
+            nominal_value: voucher_lib::models::voucher::ValueDefinition {
                 amount: "100".to_string(),
                 ..Default::default()
             },
@@ -187,7 +187,7 @@ mod tests {
             test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", PASSWORD);
         service.login(&profile.folder_name, PASSWORD, false).unwrap();
         let new_voucher_data = NewVoucherData {
-            nominal_value: voucher_lib::models::voucher::NominalValue {
+            nominal_value: voucher_lib::models::voucher::ValueDefinition {
                 amount: "100".to_string(),
                 ..Default::default()
             },
@@ -213,7 +213,7 @@ mod tests {
         let new_voucher_data = NewVoucherData {
             creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() }, ..Default::default()
         };
-        let _voucher_id = alice_service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", NewVoucherData { nominal_value: voucher_lib::models::voucher::NominalValue { amount: "100".to_string(), ..Default::default()}, ..new_voucher_data }, PASSWORD).unwrap().voucher_id;
+        let _voucher_id = alice_service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", NewVoucherData { nominal_value: voucher_lib::models::voucher::ValueDefinition { amount: "100".to_string(), ..Default::default()}, ..new_voucher_data }, PASSWORD).unwrap().voucher_id;
         let local_id = alice_service.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
 
         // Tx 2: Alice -> Bob
@@ -341,7 +341,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let ((mut alice_service, _), (bob_service, _)) = setup_test_environment(&dir);
         let new_voucher_data = NewVoucherData {
-            nominal_value: voucher_lib::models::voucher::NominalValue {
+            nominal_value: voucher_lib::models::voucher::ValueDefinition {
                 amount: "100".to_string(),
                 ..Default::default()
             },

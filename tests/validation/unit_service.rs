@@ -5,7 +5,7 @@
 
 use voucher_lib::error::ValidationError;
 use voucher_lib::models::voucher::{
-    NominalValue, Transaction, Voucher, VoucherSignature,
+    ValueDefinition, Transaction, Voucher, VoucherSignature,
 };
 use voucher_lib::models::voucher_standard_definition::VoucherStandardDefinition;
 use voucher_lib::services::voucher_validation;
@@ -23,7 +23,7 @@ fn load_test_standard(file_name: &str) -> VoucherStandardDefinition {
 /// Erstellt einen minimalen, leeren Gutschein für Testzwecke.
 fn create_base_voucher() -> Voucher {
     let mut voucher = Voucher::default();
-    voucher.nominal_value = NominalValue {
+    voucher.nominal_value = ValueDefinition {
         unit: "EUR".to_string(),
         amount: "50.00".to_string(),
         ..Default::default()

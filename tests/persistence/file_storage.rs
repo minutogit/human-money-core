@@ -8,7 +8,7 @@ use std::fs;
 use tempfile::tempdir;
 use voucher_lib::{VoucherStatus};
 use voucher_lib::{UserIdentity};
-use voucher_lib::models::voucher::{NominalValue, Voucher};
+use voucher_lib::models::voucher::{ValueDefinition, Voucher};
 use voucher_lib::services::voucher_manager::NewVoucherData;
 use voucher_lib::services::crypto_utils;
 use voucher_lib::services::voucher_manager;
@@ -36,7 +36,7 @@ fn create_test_voucher(identity: &UserIdentity) -> Voucher {
             coordinates: Some("0,0".to_string()),
             ..Default::default()
         },
-        nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+        nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
         ..Default::default()
     };
     // KORREKTUR: Passe den Aufruf an die neue 5-parametrige Signatur an.

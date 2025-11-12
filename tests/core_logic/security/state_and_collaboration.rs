@@ -7,7 +7,7 @@ use voucher_lib::{
 };
 use voucher_lib::crypto_utils;
 use voucher_lib::{UserIdentity, VoucherStatus};
-use voucher_lib::models::voucher::{Collateral, NominalValue, Voucher, VoucherSignature};
+use voucher_lib::models::voucher::{Collateral, ValueDefinition, Voucher, VoucherSignature};
 use voucher_lib::services::crypto_utils::{create_user_id, get_hash, sign_ed25519};
 use voucher_lib::services::utils::{get_current_timestamp};
 use voucher_lib::services::voucher_manager::{NewVoucherData};
@@ -51,11 +51,11 @@ fn create_test_voucher_data_with_amount(creator_profile: voucher_lib::models::pr
     NewVoucherData {
         validity_duration: Some("P5Y".to_string()),
         non_redeemable_test_voucher: false,
-        nominal_value: NominalValue {
+        nominal_value: ValueDefinition {
             amount: amount.to_string(),
             ..Default::default()
         },
-        collateral: Collateral::default(),
+        collateral: Some(Collateral::default()),
         creator_profile,
     }
 }

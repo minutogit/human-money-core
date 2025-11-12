@@ -47,6 +47,8 @@ impl Wallet {
             phone: None,
             coordinates: None,
             url: None,
+            service_offer: None,
+            needs: None,
         };
 
         let voucher_store = VoucherStore::default();

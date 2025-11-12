@@ -164,7 +164,7 @@ mod tests {
                 id: Some(user_id.clone()),
                 ..Default::default()
             },
-            nominal_value: voucher_lib::models::voucher::NominalValue {
+            nominal_value: voucher_lib::models::voucher::ValueDefinition {
                 amount: "100.0000".to_string(),
                 ..Default::default()
             },

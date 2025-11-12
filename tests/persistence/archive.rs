@@ -9,7 +9,7 @@ use voucher_lib::{
         conflict::{CanonicalMetadataStore},
         profile::UserProfile,
     },
-    models::voucher::{NominalValue}, services::voucher_manager, wallet::Wallet, VoucherStatus
+    models::voucher::{ValueDefinition}, services::voucher_manager, wallet::Wallet, VoucherStatus
 };
 use std::fs;
 use tempfile::tempdir;
@@ -40,6 +40,8 @@ fn test_voucher_archiving_on_full_spend() {
             phone: None,
             coordinates: None,
             url: None,
+            service_offer: None,
+            needs: None,
         },
         voucher_store: Default::default(),
         bundle_meta_store: Default::default(),
@@ -57,11 +59,11 @@ fn test_voucher_archiving_on_full_spend() {
 
     // Alice erstellt einen Gutschein und fügt ihn ihrem Wallet hinzu.
     let voucher = {
-        let nominal_value = NominalValue {
+        let nominal_value = ValueDefinition {
             amount: "100.0000".to_string(), // KORREKTUR: Vier Dezimalstellen für den Silber-Standard
             unit: "".to_string(),
-            abbreviation: "".to_string(),
-            description: "".to_string(),
+            abbreviation: Some("".to_string()),
+            description: Some("".to_string()),
         };
         let voucher_data = voucher_manager::NewVoucherData {
             nominal_value,

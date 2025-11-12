@@ -1,5 +1,5 @@
 use crate::models::voucher::{
-    Collateral, NominalValue, Transaction, Voucher, VoucherStandard, VoucherSignature,
+    Collateral, ValueDefinition, Transaction, Voucher, VoucherStandard, VoucherSignature,
 };
 use crate::error::VoucherCoreError;
 use crate::models::profile::PublicProfile;
@@ -76,8 +76,8 @@ pub fn to_json(voucher: &Voucher) -> Result<String, VoucherCoreError> {
 pub struct NewVoucherData {
     pub validity_duration: Option<String>,
     pub non_redeemable_test_voucher: bool,
-    pub nominal_value: NominalValue,
-    pub collateral: Collateral,
+    pub nominal_value: ValueDefinition,
+    pub collateral: Option<Collateral>,
     pub creator_profile: PublicProfile,
 }
 
@@ -152,20 +152,27 @@ pub fn create_voucher(
     };
     let mut final_nominal_value = data.nominal_value;
     final_nominal_value.unit = verified_standard.template.fixed.nominal_value.unit.clone();
-    final_nominal_value.abbreviation = verified_standard.metadata.abbreviation.clone();
 
-    // KORRIGIERT: Collateral wird nur befüllt, wenn `type_` im Standard nicht leer ist.
-    // Ansonsten wird sichergestellt, dass es leer ist, um das Injizieren von nicht-standard-konformen
-    // Sicherheiten zu verhindern.
+    // Prioritize user-defined abbreviation. Fallback to standard's metadata abbreviation.
+    if final_nominal_value.abbreviation.is_none() {
+        final_nominal_value.abbreviation = Some(verified_standard.metadata.abbreviation.clone());
+    }
+
+    // KORRIGIERT: Collateral wird NUR befüllt, wenn der Standard es erlaubt
+    // UND der Benutzer (data) es bereitstellt.
     let final_collateral = if !verified_standard.template.fixed.collateral.type_.is_empty() {
-        Collateral {
-            type_: verified_standard.template.fixed.collateral.type_.clone(),
-            description: verified_standard.template.fixed.collateral.description.clone(),
-            redeem_condition: verified_standard.template.fixed.collateral.redeem_condition.clone(),
-            ..data.collateral // Übernimmt `amount`, etc. aus den Eingabedaten
-        }
+        // Standard allows it. Now check if user provided it.
+        data.collateral.map(|user_collateral| {
+            // User provided it. Use their values but enforce standard's type/condition.
+            Collateral {
+                value: user_collateral.value, // Take the user's value block directly
+                // Enforce standard's type and condition
+                collateral_type: Some(verified_standard.template.fixed.collateral.type_.clone()),
+                redeem_condition: Some(verified_standard.template.fixed.collateral.redeem_condition.clone()),
+            }
+        }) // .map() gracefully handles None -> None
     } else {
-        Collateral::default() // Stellt sicher, dass keine Sicherheit eingetragen wird.
+        None // Standard forbids it.
     };
 
     // NEU: Logik zur Auswahl des mehrsprachigen Beschreibungstextes

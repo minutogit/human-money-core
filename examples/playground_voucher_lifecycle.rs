@@ -19,7 +19,7 @@
 //! 7.  **Rohdaten-Ausgabe:** Der finale Zustand des Gutscheins wird als JSON ausgegeben.
 
 use voucher_lib::app_service::{AppService};
-use voucher_lib::models::voucher::{NominalValue};
+use voucher_lib::models::voucher::{ValueDefinition};
 use voucher_lib::{verify_and_parse_standard, NewVoucherData, VoucherStatus};
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -75,6 +75,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         phone: Some("+49 123 987654".to_string()),
         coordinates: Some("50.1109, 8.6821".to_string()), // Frankfurt
         url: Some("https://www.buergen.de".to_string()),
+        service_offer: None,
+        needs: None,
     };
     
     // Aktualisieren des Profils für Bürge 1
@@ -115,6 +117,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         phone: Some("+49 987 654321".to_string()),
         coordinates: Some("48.1351, 11.5820".to_string()), // München
         url: Some("https://www.buergin.de".to_string()),
+        service_offer: None,
+        needs: None,
     };
     
     // Aktualisieren des Profils für Bürge 2
@@ -169,17 +173,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         phone: Some("+49 123 456789".to_string()),
         coordinates: Some("52.5200, 13.4050".to_string()), // Berlin
         url: Some("https://www.mustermann.de".to_string()),
+        service_offer: Some("Biete Webdesign und Beratung".to_string()),
+        needs: Some("Suche Minuto-Gutscheine".to_string()),
     };
     
 
     
     let voucher_data = NewVoucherData {
         validity_duration: Some("P5Y".to_string()),
-        nominal_value: NominalValue {
+        nominal_value: ValueDefinition {
             unit: "Minuto".to_string(),
             amount: "60".to_string(),
-            abbreviation: "m".to_string(),
-            description: "Objektive Zeit".to_string(),
+            abbreviation: Some("m".to_string()),
+            description: Some("Objektive Zeit".to_string()),
         },
         creator_profile: complete_creator_profile,
         ..Default::default()
@@ -258,12 +264,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // KORREKTUR: Suchen Sie den Saldo im Vec<AggregatedBalance> anhand der Einheit.
     let creator_balance_str = balance_creator
         .iter()
-        .find(|b| b.unit == "Minuto")
+        .find(|b| b.unit == "m") // Suchen nach Abkürzung 'm', nicht 'Minuto'
         .map(|b| b.total_amount.as_str())
         .unwrap_or("0");
     let recipient_balance_str = balance_recipient
         .iter()
-        .find(|b| b.unit == "Minuto")
+        .find(|b| b.unit == "m") // Suchen nach Abkürzung 'm', nicht 'Minuto'
         .map(|b| b.total_amount.as_str())
         .unwrap_or("0");
     assert_eq!(creator_balance_str, "35");
@@ -300,10 +306,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   -> Kontostand Charlie (neuer Empfänger): {:?}", balance_charlie);
 
     // KORREKTUR: Suchen Sie den Saldo im Vec<AggregatedBalance> anhand der Einheit.
-    let recipient_has_balance = balance_recipient_after_send.iter().any(|b| b.unit == "Minuto");
+    let recipient_has_balance = balance_recipient_after_send.iter().any(|b| b.unit == "m");
     let charlie_balance_str = balance_charlie
         .iter()
-        .find(|b| b.unit == "Minuto")
+        .find(|b| b.unit == "m") // Suchen nach Abkürzung 'm', nicht 'Minuto'
         .map(|b| b.total_amount.as_str())
         .unwrap_or("0");
     assert!(!recipient_has_balance, "Nach einem vollen Transfer sollte der Sender keinen Minuto-Saldo mehr haben.");

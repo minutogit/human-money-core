@@ -12,7 +12,7 @@ use voucher_lib::{
     error::ValidationError, models::{
         profile::PublicProfile,
         secure_container::SecureContainer, signature::DetachedSignature, voucher::{
-            VoucherSignature, NominalValue, Voucher
+            VoucherSignature, ValueDefinition, Voucher
         }
     },
     services::{
@@ -40,7 +40,7 @@ fn setup_voucher_for_alice(
             ..Default::default()
         },
         // KORREKTUR: Fehlender Betrag (verursachte InvalidAmountFormat)
-        nominal_value: NominalValue {
+        nominal_value: ValueDefinition {
             amount: "60".to_string(),
             ..Default::default()
         },
@@ -250,7 +250,7 @@ fn api_wallet_signature_fail_mismatched_voucher_id() {
             id: Some(alice.user_id.clone()),
             ..Default::default()
         },
-        nominal_value: NominalValue {
+        nominal_value: ValueDefinition {
             amount: "120".to_string(),
             ..Default::default()
         },
@@ -348,7 +348,7 @@ fn api_app_service_full_signature_workflow() {
                 id: Some(service_creator.get_user_id().unwrap()),
                 ..Default::default()
             },
-            nominal_value: NominalValue {
+            nominal_value: ValueDefinition {
                 amount: "50".to_string(),
                 ..Default::default()
             },
@@ -510,7 +510,7 @@ fn test_full_guarantor_workflow_via_app_service() {
             id: Some(creator_id.clone()),
             ..Default::default()
         },
-        nominal_value: NominalValue {
+        nominal_value: ValueDefinition {
             amount: "60".to_string(),
             ..Default::default()
         },
@@ -548,6 +548,8 @@ fn test_full_guarantor_workflow_via_app_service() {
     service_g1.login(&profile_g1.folder_name, password, false).unwrap();
     let (wallet_g1, _) = service_g1.get_unlocked_mut_for_test();
     wallet_g1.profile.gender = Some("1".to_string());
+    wallet_g1.profile.service_offer = Some("Test Service Offer".to_string());
+    wallet_g1.profile.needs = Some("Test Needs".to_string());
 
     // Hinweis: In der neuen Struktur setzt create_detached_signature_response_bundle
     // die Details nur, wenn include_details=true und der AppService das unterstützt.
@@ -605,6 +607,14 @@ fn test_full_guarantor_workflow_via_app_service() {
         g1_sig.details.as_ref().unwrap().gender.as_deref(),
         Some("1")
     );
+    // Überprüfe die neuen Felder
+    assert_eq!(
+        g1_sig.details.as_ref().unwrap().service_offer.as_deref(),
+        Some("Test Service Offer")
+    );
+    assert_eq!(g1_sig.details.as_ref().unwrap().needs.as_deref(), Some("Test Needs"));
+
+    // Überprüfe Bürge 2
     let g2_sig = details_after.voucher.signatures.iter().find(|s| s.signer_id == g2_id).unwrap();
     assert_eq!(
         g2_sig.details.as_ref().unwrap().gender.as_deref(),

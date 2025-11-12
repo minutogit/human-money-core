@@ -5,7 +5,7 @@
 
 // Wir importieren die oeffentlichen Typen, die in lib.rs re-exportiert wurden.
 use voucher_lib::{
-    create_transaction, create_voucher, crypto_utils, to_canonical_json, validate_voucher_against_standard, NewVoucherData, NominalValue,
+    create_transaction, create_voucher, crypto_utils, to_canonical_json, validate_voucher_against_standard, NewVoucherData, ValueDefinition,
     Transaction, VoucherCoreError, models::profile::PublicProfile,
 };
 use voucher_lib::crypto_utils::get_hash;
@@ -43,7 +43,7 @@ mod structural_integrity {
         let creator_identity = &ACTORS.alice;
         let voucher_data = NewVoucherData {
             creator_profile: PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
-            nominal_value: NominalValue { amount: "60".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "60".to_string(), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
         };
@@ -66,7 +66,7 @@ mod structural_integrity {
         let creator_identity = &ACTORS.alice;
         let voucher_data = NewVoucherData {
             creator_profile: PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
-            nominal_value: NominalValue { amount: "60".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "60".to_string(), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
         };
@@ -143,7 +143,7 @@ mod structural_integrity {
         let creator_identity = &ACTORS.alice;
         let voucher_data = NewVoucherData {
             creator_profile: PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
-            nominal_value: NominalValue { amount: "60".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "60".to_string(), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
         };
@@ -168,7 +168,7 @@ mod structural_integrity {
         let recipient = &ACTORS.recipient1;
         let voucher_data = NewVoucherData {
             creator_profile: PublicProfile { id: Some(sender.user_id.clone()), ..Default::default() },
-            nominal_value: NominalValue { amount: "60.0000".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "60.0000".to_string(), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
         };
@@ -215,7 +215,7 @@ mod counts_and_group_rules {
         let voucher_data = NewVoucherData {
             creator_profile: PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
-            nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
             ..Default::default()
         };
 
@@ -245,7 +245,7 @@ mod counts_and_group_rules {
         let voucher_data = NewVoucherData {
             creator_profile: PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
-            nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
             ..Default::default()
         };
         let base_voucher = create_voucher_for_manipulation(voucher_data, &standard, &standard_hash, &creator_identity.signing_key, "en");
@@ -347,7 +347,7 @@ mod signature_requirements {
         let voucher_data = NewVoucherData {
             creator_profile: PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
-            nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
             ..Default::default()
         };
         let voucher = create_voucher(voucher_data, &standard, &standard_hash, &creator_identity.signing_key, "en").unwrap();
@@ -369,7 +369,7 @@ mod signature_requirements {
         let voucher_data = NewVoucherData {
             creator_profile: PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
-            nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
             ..Default::default()
         };
         let mut voucher = create_voucher_for_manipulation(
@@ -407,7 +407,7 @@ mod signature_requirements {
         let voucher_data = NewVoucherData {
             creator_profile: PublicProfile { id: Some(creator.user_id.clone()), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
-            nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
             ..Default::default()
         };
         let mut voucher = create_voucher_for_manipulation(voucher_data, &custom_standard, &custom_hash, &creator.signing_key, "en");
@@ -447,7 +447,7 @@ mod behavioral_rules {
         let voucher_data = NewVoucherData {
             creator_profile: PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
-            nominal_value: NominalValue { amount: "100.00".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "100.00".to_string(), ..Default::default() },
             ..Default::default()
         };
         let mut voucher = create_voucher_for_manipulation(voucher_data, &standard, &standard_hash, &creator_identity.signing_key, "en");
@@ -527,7 +527,7 @@ mod behavioral_rules {
         let voucher_data = NewVoucherData {
             creator_profile: PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
-            nominal_value: NominalValue { amount: "100.123".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "100.123".to_string(), ..Default::default() },
             ..Default::default()
         };
         let voucher_bad_nominal = create_voucher_for_manipulation(voucher_data, &standard, &standard_hash, &creator_identity.signing_key, "en");
@@ -540,7 +540,7 @@ mod behavioral_rules {
         let mut voucher = create_voucher(NewVoucherData {
             creator_profile: PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
-            nominal_value: NominalValue { amount: "100.00".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "100.00".to_string(), ..Default::default() },
             ..Default::default()
         }, &standard, &standard_hash, &creator_identity.signing_key, "en").unwrap();
         voucher.transactions[0].amount = "100.123".to_string();
@@ -584,7 +584,7 @@ mod behavioral_rules {
         let voucher = create_voucher(NewVoucherData {
             creator_profile: PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() },
             validity_duration: Some("P3Y".to_string()),
-            nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
             ..Default::default()
         }, &non_divisible_standard, &hash, &identity.signing_key, "en").unwrap();
 
@@ -615,7 +615,7 @@ mod behavioral_rules {
         let mut voucher = create_voucher_for_manipulation(NewVoucherData {
             creator_profile: PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() },
             validity_duration: Some("P3Y".to_string()),
-            nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
             ..Default::default()
         }, &restricted_standard, &hash, &identity.signing_key, "en");
 
@@ -685,7 +685,7 @@ mod behavioral_rules {
         fn create_voucher_data(creator: &test_utils::TestUser, duration: &str) -> NewVoucherData {
             NewVoucherData {
                 creator_profile: PublicProfile { id: Some(creator.user_id.clone()), ..Default::default() },
-                nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+                nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
                 validity_duration: Some(duration.to_string()),
                 ..Default::default()
             }

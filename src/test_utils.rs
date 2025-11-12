@@ -17,7 +17,7 @@ use crate::models::{
     profile::{BundleMetadataStore, PublicProfile, UserProfile, VoucherStore},
     signature::DetachedSignature,
     voucher::{
-        Address, Collateral, NominalValue, Transaction, VoucherSignature,
+        Address, Collateral, ValueDefinition, Transaction, VoucherSignature,
     },
     voucher_standard_definition::{SignatureBlock, VoucherStandardDefinition},
 };
@@ -335,7 +335,7 @@ pub fn setup_voucher_with_one_tx() -> (
             id: Some(creator.user_id.clone()), 
             ..Default::default() 
         },
-        nominal_value: NominalValue { amount: "100.0000".to_string(), ..Default::default() },
+        nominal_value: ValueDefinition { amount: "100.0000".to_string(), ..Default::default() },
         validity_duration: Some("P4Y".to_string()),
         ..Default::default()
     };
@@ -365,6 +365,8 @@ pub fn setup_in_memory_wallet(identity: &UserIdentity) -> Wallet {
         phone: None,
         coordinates: None,
         url: None,
+        service_offer: None,
+        needs: None,
     };
     Wallet {
         profile,
@@ -404,6 +406,8 @@ pub fn create_test_wallet(
         phone: None,
         coordinates: None,
         url: None,
+        service_offer: None,
+        needs: None,
     };
 
     let wallet = Wallet {
@@ -435,7 +439,7 @@ pub fn add_voucher_to_wallet(
         ..Default::default()
     };
 
-    let nominal_value_info = NominalValue {
+    let nominal_value_info = ValueDefinition {
         amount: amount.to_string(),
         ..Default::default()
     };
@@ -613,20 +617,22 @@ pub fn create_minuto_voucher_data(creator_profile: PublicProfile) -> NewVoucherD
     NewVoucherData {
         validity_duration: Some("P4Y".to_string()),
         non_redeemable_test_voucher: true,
-        nominal_value: NominalValue {
+        nominal_value: ValueDefinition {
             unit: "".to_string(),
             amount: "60".to_string(),
-            abbreviation: "".to_string(),
-            description: "Qualitative Leistung".to_string(),
+            abbreviation: Some("".to_string()),
+            description: Some("Qualitative Leistung".to_string()),
         },
-        collateral: Collateral {
-            type_: "".to_string(),
-            unit: "".to_string(),
-            amount: "".to_string(),
-            abbreviation: "".to_string(),
-            description: "".to_string(),
-            redeem_condition: "".to_string(),
-        },
+        collateral: Some(Collateral {
+            value: ValueDefinition {
+                unit: "".to_string(),
+                amount: "".to_string(),
+                abbreviation: Some("".to_string()),
+                description: Some("".to_string()),
+            },
+            collateral_type: Some("".to_string()),
+            redeem_condition: Some("".to_string()),
+        }),
         creator_profile,
     }
 }
@@ -673,17 +679,21 @@ pub fn create_voucher_for_manipulation(
 
     let mut final_nominal_value = data.nominal_value;
     final_nominal_value.unit = standard.template.fixed.nominal_value.unit.clone();
-    final_nominal_value.abbreviation = standard.metadata.abbreviation.clone();
+    final_nominal_value.abbreviation = Some(standard.metadata.abbreviation.clone());
 
     let final_collateral = if !standard.template.fixed.collateral.type_.is_empty() {
-        crate::models::voucher::Collateral {
-            type_: standard.template.fixed.collateral.type_.clone(),
-            description: standard.template.fixed.collateral.description.clone(),
-            redeem_condition: standard.template.fixed.collateral.redeem_condition.clone(),
-            ..data.collateral
-        }
+        Some(Collateral {
+            value: ValueDefinition {
+                unit: data.collateral.as_ref().map_or(String::new(), |c| c.value.unit.clone()),
+                amount: data.collateral.as_ref().map_or(String::new(), |c| c.value.amount.clone()),
+                abbreviation: data.collateral.as_ref().and_then(|c| c.value.abbreviation.clone()),
+                description: data.collateral.as_ref().and_then(|c| c.value.description.clone()),
+            },
+            collateral_type: Some(standard.template.fixed.collateral.type_.clone()),
+            redeem_condition: Some(standard.template.fixed.collateral.redeem_condition.clone()),
+        })
     } else {
-        crate::models::voucher::Collateral::default()
+        None
     };
 
     let mut voucher = Voucher {

@@ -17,7 +17,7 @@ use tempfile::tempdir;
 use voucher_lib::{
     app_service::AppService,
     models::{
-        voucher::{NominalValue},
+        voucher::{ValueDefinition},
         voucher_standard_definition::VoucherStandardDefinition, profile::PublicProfile,
     },
     services::voucher_manager::NewVoucherData,
@@ -74,7 +74,7 @@ fn api_app_service_full_lifecycle() {
             &silver_standard_toml,
             "en",
             NewVoucherData {
-                nominal_value: NominalValue {
+                nominal_value: ValueDefinition {
                     amount: "100".to_string(),
                     ..Default::default()
                 },
@@ -652,7 +652,7 @@ fn api_wallet_create_voucher_and_get_id() {
             id: Some(issuer.identity.user_id.clone()),
             ..Default::default()
         },
-        nominal_value: NominalValue {
+        nominal_value: ValueDefinition {
             amount: "500".to_string(),
             ..Default::default()
         },
@@ -701,7 +701,7 @@ fn api_wallet_query_total_balance() {
                     id: Some(issuer.identity.user_id.clone()),
                     ..Default::default()
                 },
-                nominal_value: NominalValue {
+                nominal_value: ValueDefinition {
                     amount: amount.to_string(),
                     ..Default::default()
                 },
@@ -787,7 +787,7 @@ fn api_wallet_rejects_invalid_bundle() {
             id: Some(alice.identity.user_id.clone()),
             ..Default::default()
         },
-        nominal_value: NominalValue {
+        nominal_value: ValueDefinition {
             amount: "50.00".to_string(),
             ..Default::default()
         },
@@ -878,7 +878,7 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
             &silver_standard_toml,
             "en",
             NewVoucherData {
-                nominal_value: NominalValue {
+                nominal_value: ValueDefinition {
                     amount: "100".to_string(),
                     ..Default::default()
                 },

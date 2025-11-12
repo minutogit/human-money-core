@@ -17,7 +17,7 @@ use std::{path::Path};
 use super::test_utils::{setup_in_memory_wallet, ACTORS, SILVER_STANDARD};
 use voucher_lib::{services::crypto_utils, UserIdentity, VoucherStatus};
 use voucher_lib::models::conflict::TransactionFingerprint;
-use voucher_lib::models::voucher::{Address, Collateral, NominalValue, Voucher};
+use voucher_lib::models::voucher::{Address, Collateral, ValueDefinition, Voucher};
 use voucher_lib::services::voucher_manager::{self, NewVoucherData};
 use voucher_lib::wallet::Wallet;
 
@@ -53,13 +53,13 @@ fn new_test_voucher_data(creator_id: String) -> NewVoucherData {
     NewVoucherData {
         validity_duration: Some("P5Y".to_string()),
         non_redeemable_test_voucher: false,
-        nominal_value: NominalValue {
+        nominal_value: ValueDefinition {
             amount: "100".to_string(),
             unit: String::new(),
-            abbreviation: String::new(),
-            description: String::new(),
+            abbreviation: Some(String::new()),
+            description: Some(String::new()),
         },
-        collateral: Collateral::default(),
+        collateral: Some(Collateral::default()),
         creator_profile: voucher_lib::models::profile::PublicProfile {
             id: Some(creator_id),
             first_name: Some(String::new()),

@@ -59,7 +59,7 @@ mod tests {
 
         // Erstelle einen Gutschein mit 100 Einheiten
         let new_voucher_data = NewVoucherData {
-            nominal_value: voucher_lib::models::voucher::NominalValue {
+            nominal_value: voucher_lib::models::voucher::ValueDefinition {
                 amount: "100".to_string(),
                 ..Default::default()
             },

@@ -125,7 +125,7 @@ mod integration_with_voucher {
     fn test_create_voucher_when_lang_preference_is_set_then_uses_correct_localized_text() {
         let new_voucher_data_de = NewVoucherData {
             creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
-            nominal_value: voucher_lib::models::voucher::NominalValue { amount: "888".to_string(), ..Default::default() },
+            nominal_value: voucher_lib::models::voucher::ValueDefinition { amount: "888".to_string(), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
         };
@@ -135,7 +135,7 @@ mod integration_with_voucher {
 
         let new_voucher_data_fr = NewVoucherData {
             creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
-            nominal_value: voucher_lib::models::voucher::NominalValue { amount: "888".to_string(), ..Default::default() },
+            nominal_value: voucher_lib::models::voucher::ValueDefinition { amount: "888".to_string(), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
         };
@@ -166,7 +166,7 @@ mod integration_with_voucher {
 mod security_hardening {
     use super::*;
     use voucher_lib::services::voucher_manager::NewVoucherData;
-    use voucher_lib::models::voucher::{NominalValue};
+    use voucher_lib::models::voucher::{ValueDefinition};
 
     #[test]
     fn test_verify_standard_when_signature_string_is_invalid_base58_then_fails() {
@@ -205,7 +205,7 @@ mod security_hardening {
         });
         let new_voucher_data = NewVoucherData {
             creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
-            nominal_value: NominalValue { amount: "50".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "50".to_string(), ..Default::default() },
             ..Default::default()
         };
         let result = voucher_manager::create_voucher(new_voucher_data, &incomplete_standard, &hash, &ACTORS.alice.signing_key, "en");

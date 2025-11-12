@@ -13,7 +13,7 @@ use voucher_lib::{
         conflict::{ProofOfDoubleSpend, ResolutionEndorsement},
         profile::PublicProfile,
         secure_container::SecureContainer,
-        voucher::{NominalValue},
+        voucher::{ValueDefinition},
     },
     services::{crypto_utils, voucher_manager::NewVoucherData},
     test_utils::{generate_signed_standard_toml, resign_transaction, ACTORS, SILVER_STANDARD},
@@ -64,7 +64,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
             "en",
             NewVoucherData {
                 creator_profile: PublicProfile { id: Some(user_id), ..Default::default() },
-                nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+                nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
                 ..Default::default()
             },
             correct_password,
@@ -151,7 +151,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
             "en",
             NewVoucherData {
                 creator_profile: PublicProfile { id: Some(id_sender), ..Default::default() },
-                nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+                nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
                 ..Default::default()
             },
             "pwd",
@@ -241,7 +241,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
                     first_name: Some("Test".to_string()),
                     last_name: Some("Creator".to_string()),
                     ..Default::default() },
-                nominal_value: NominalValue { amount: "100".to_string(), unit: silver_standard.template.fixed.nominal_value.unit.clone(), ..Default::default() },
+                nominal_value: ValueDefinition { amount: "100".to_string(), unit: silver_standard.template.fixed.nominal_value.unit.clone(), ..Default::default() },
                 validity_duration: Some("P1Y".to_string()),
                 ..Default::default()
             },
@@ -436,7 +436,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         "en",
         NewVoucherData {
             creator_profile: PublicProfile { id: Some(id_alice.clone()), ..Default::default() },
-            nominal_value: NominalValue { amount: "100".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
             ..Default::default()
         },
         "pwd"

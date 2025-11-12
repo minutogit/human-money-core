@@ -178,6 +178,14 @@ pub struct PublicProfile {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+
+    /// Eine textuelle Beschreibung der angebotenen Dienstleistungen oder Waren.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_offer: Option<String>,
+
+    /// Eine textuelle Beschreibung der gesuchten Dienstleistungen oder Waren.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub needs: Option<String>,
 }
 
 /// Die Hauptstruktur, die den gesamten Zustand eines Nutzer-Wallets repräsentiert.
@@ -208,6 +216,10 @@ pub struct UserProfile {
     pub coordinates: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_offer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub needs: Option<String>,
 }
 
 // Implementiere `Default` für UserProfile, um eine leere Instanz zu erzeugen, die dann gefüllt wird.
@@ -226,6 +238,8 @@ impl Default for UserProfile {
             phone: None,
             coordinates: None,
             url: None,
+            service_offer: None,
+            needs: None,
         }
     }
 }

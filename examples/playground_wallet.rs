@@ -11,7 +11,7 @@
 
 use voucher_lib::models::profile::UserIdentity;
 use voucher_lib::models::conflict::CanonicalMetadataStore;
-use voucher_lib::models::voucher::{Address, Collateral, NominalValue};
+use voucher_lib::models::voucher::{Address, Collateral, ValueDefinition};
 use voucher_lib::services::crypto_utils;
 use voucher_lib::{NewVoucherData, verify_and_parse_standard, VoucherStatus};
 use voucher_lib::wallet::Wallet;
@@ -58,6 +58,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             phone: None,
             coordinates: None,
             url: None,
+            service_offer: None,
+            needs: None,
         },
         voucher_store: Default::default(),
         bundle_meta_store: Default::default(),
@@ -72,8 +74,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let voucher_data = NewVoucherData {
         validity_duration: Some("P5Y".to_string()), // 5 Jahre, entspricht dem Standard-Default
         non_redeemable_test_voucher: false,
-        nominal_value: NominalValue { amount: "1.5".to_string(), ..Default::default() }, // 1.5 Unzen
-        collateral: Collateral::default(),
+        nominal_value: ValueDefinition { amount: "1.5".to_string(), ..Default::default() }, // 1.5 Unzen
+        collateral: Some(Collateral::default()),
         creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(alice_identity.user_id.clone()), first_name: Some("Alice".into()), last_name: Some("Silversmith".into()), address: Some(Address::default()), gender: Some("2".into()), ..Default::default() },
     };
     let initial_voucher = voucher_lib::create_voucher(voucher_data, &standard, &standard_hash, &alice_identity.signing_key, "en")?;

@@ -9,7 +9,7 @@ use serde_json::json;
 use voucher_lib::test_utils::{ACTORS, SILVER_STANDARD};
 use voucher_lib::{
     from_json, validate_voucher_against_standard, NewVoucherData, Voucher,
-    VoucherCoreError, NominalValue,
+    VoucherCoreError, ValueDefinition,
 };
 use voucher_lib::error::ValidationError;
 use voucher_lib::error::StandardDefinitionError;
@@ -26,7 +26,7 @@ mod compatibility_scenarios {
         let identity = &ACTORS.issuer;
         let voucher_data = NewVoucherData {
             validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu Silver)
-            nominal_value: NominalValue { amount: "1.0000".to_string(), ..Default::default() }, // Verwende 1.0000 (passend zu Silver)
+            nominal_value: ValueDefinition { amount: "1.0000".to_string(), ..Default::default() }, // Verwende 1.0000 (passend zu Silver)
             creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() },
             ..Default::default()
         };
@@ -58,7 +58,7 @@ mod compatibility_scenarios {
             NewVoucherData {
                 creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() },
                 validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu Silver)
-                nominal_value: NominalValue { amount: "1.0000".to_string(), ..Default::default() }, // Verwende 1.0000 (passend zu Silver)
+                nominal_value: ValueDefinition { amount: "1.0000".to_string(), ..Default::default() }, // Verwende 1.0000 (passend zu Silver)
                 ..Default::default()
             },
             silver_standard, standard_hash, &identity.signing_key, "en",

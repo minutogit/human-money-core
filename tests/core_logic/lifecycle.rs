@@ -39,7 +39,7 @@ use voucher_lib::test_utils;
 use voucher_lib::{
     create_transaction, create_voucher, crypto_utils, from_json, get_spendable_balance,
     to_canonical_json, to_json, validate_voucher_against_standard, Collateral,
-    NewVoucherData, NominalValue, Transaction, Voucher, VoucherCoreError, VoucherStatus, VoucherInstance, models::profile::PublicProfile,
+    NewVoucherData, ValueDefinition, Transaction, Voucher, VoucherCoreError, VoucherStatus, VoucherInstance, models::profile::PublicProfile,
 };
 use voucher_lib::services::crypto_utils::get_hash;
 use voucher_lib::error::ValidationError;
@@ -830,8 +830,8 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     let voucher_data = NewVoucherData {
         validity_duration: Some("P3Y".to_string()),
         non_redeemable_test_voucher: false,
-        nominal_value: NominalValue { amount: "500".to_string(), ..Default::default() },
-        collateral: Collateral::default(),
+        nominal_value: ValueDefinition { amount: "500".to_string(), ..Default::default() },
+        collateral: Some(Collateral::default()),
         creator_profile: alice_creator,
     };
 

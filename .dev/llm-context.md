@@ -94,16 +94,16 @@ Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_
   "nominal_value": { // Definiert den Wert, den der Gutschein repräsentiert.
     "unit": "STRING",     // Die Einheit des Gutscheinwerts (z.B. "Minuten", "Unzen", "Euro").
     "amount": "STRING",   // Die genaue Menge des Werts (z.B. "888", "1", "50"). Als String für Flexibilität bei Einheiten.
-    "abbreviation": "STRING", // Eine gängige Abkürzung der Einheit (z.B. "m", "oz", "€").
-    "description": "STRING" // Eine Beschreibung des Werts (z.B. "Objektive Zeit", "Physisches Silber", "Nationale Währung").
+    "abbreviation": "OPTIONAL STRING", // Eine optionale gängige Abkürzung der Einheit (z.B. "m", "oz", "€"). Wird bei Serialisierung weggelassen, wenn nicht gesetzt. Bei Gutscheinerstellung wird eine benutzerdefinierte Abkürzung bevorzugt; falls keine angegeben ist, wird die aus den Standard-Metadaten verwendet.
+    "description": "OPTIONAL STRING" // Eine optionale Beschreibung des Werts (z.B. "Objektive Zeit", "Physisches Silber", "Nationale Währung"). Wird bei Serialisierung weggelassen, wenn nicht gesetzt.
   },
-  "collateral": { // Informationen zur Besicherung des Gutscheins.
-    "type": "STRING",         // Die Art der Besicherung (z.B. "Physisches Edelmetall", "Community-Besicherung", "Fiat-Währung").
-    "unit": "STRING",         // Die Einheit der Besicherung (z.B. "Unzen", "Euro").
-    "amount": "STRING",       // Die Menge der Besicherung (z.B. "entspricht dem Nennwert", "200").
-    "abbreviation": "STRING",// Eine gängige Abkürzung für die Besicherung (z.B. "oz", "€").
-    "description": "STRING", // Eine detailliertere Beschreibung der Besicherung (z.B. "Edelmetall Silber, treuhänderisch verwahrt").
-    "redeem_condition": "STRING" // **Extrem wichtig:** Bedingungen unter denen die Besicherung eingelöst/ausgezahlt werden kann (z.B. Notfallklausel).
+  "collateral": { // Informationen zur Besicherung des Gutscheins. Optional und wird bei Serialisierung weggelassen, wenn nicht gesetzt.
+    "unit": "STRING",         // Die Einheit der Besicherung (z.B. "Unzen", "Euro"). Teil von ValueDefinition, eingebettet via #[serde(flatten)].
+    "amount": "STRING",       // Die Menge der Besicherung (z.B. "entspricht dem Nennwert", "200"). Teil von ValueDefinition, eingebettet via #[serde(flatten)].
+    "abbreviation": "OPTIONAL STRING",// Eine optionale gängige Abkürzung für die Besicherung (z.B. "oz", "€"). Teil von ValueDefinition, eingebettet via #[serde(flatten)]. Wird bei Serialisierung weggelassen, wenn nicht gesetzt. Bei Gutscheinerstellung wird eine benutzerdefinierte Abkürzung bevorzugt; falls keine angegeben ist, wird die aus den Standard-Metadaten verwendet.
+    "description": "OPTIONAL STRING", // Eine optionale detailliertere Beschreibung der Besicherung (z.B. "Edelmetall Silber, treuhänderisch verwahrt"). Teil von ValueDefinition, eingebettet via #[serde(flatten)]. Wird bei Serialisierung weggelassen, wenn nicht gesetzt.
+    "type": "OPTIONAL STRING",         // Die optionale Art der Besicherung (z.B. "Physisches Edelmetall", "Community-Besicherung", "Fiat-Währung"). Wird bei Serialisierung weggelassen, wenn nicht gesetzt.
+    "redeem_condition": "OPTIONAL STRING" // **Extrem wichtig:** Optionale Bedingungen unter denen die Besicherung eingelöst/ausgezahlt werden kann (z.B. Notfallklausel). Wird bei Serialisierung weggelassen, wenn nicht gesetzt.
   },
   "creator_profile": { // Detaillierte Informationen zum Ersteller des Gutscheins, als PublicProfile.
     "id": "STRING, optional",             // Die User-ID (did:key) des Profilinhabers.
@@ -125,7 +125,9 @@ Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_
     "gender": "STRING, optional",         // Geschlecht des Erstellers ISO 5218 (1 = male", 2 = female", 0 = not known, 9 = Not applicable).
     "coordinates": "STRING, optional"     // Geografische Koordinaten des Erstellers (z.B. "Breitengrad, Längengrad").
   },
-  "signatures": [ // Ein Array für alle Signaturen (inkl. Bürgen).
+    "service_offer": "STRING, optional", // Neu: Angebotene Dienstleistungen/Waren.
+    "needs": "STRING, optional"          // Neu: Gesuchte Dienstleistungen/Waren.
+  },  "signatures": [ // Ein Array für alle Signaturen (inkl. Bürgen).
     { // Jede Signatur ist ein in sich geschlossenes, überprüfbares Objekt.
       "voucher_id": "STRING",         // Die ID des Gutscheins, zu dem diese Signatur gehört.
       "signature_id": "STRING",       // Die eindeutige ID dieser Signatur.
@@ -145,7 +147,9 @@ Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_
         "email": "STRING, optional",
         "phone": "STRING, optional",
         "coordinates": "STRING, optional",
-        "url": "STRING, optional"
+        "url": "STRING, optional",
+        "service_offer": "STRING, optional", // Neu: Angebotene Dienstleistungen/Waren.
+        "needs": "STRING, optional"          // Neu: Gesuchte Dienstleistungen/Waren.
       },
 
       "signature": "STRING",            // Die digitale Signatur, die die `signature_id` dieses Objekts unterzeichnet.
@@ -168,6 +172,16 @@ Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_
   ]
 }
 ```
+
+### NeueVoucherData Struktur
+
+Diese Struktur bündelt alle notwendigen Daten zur Erstellung eines neuen Gutscheins:
+
+- `validity_duration` (Option<String>): Optionaler String, der die Gültigkeitsdauer des Gutscheins angibt (z.B. "P5Y" für 5 Jahre). Wenn nicht angegeben, wird der Standardwert aus der Gutschein-Standard-Definition verwendet.
+- `non_redeemable_test_voucher` (bool): Ein Boolean-Wert, das angibt, ob es sich um einen nicht einlösbaren Testgutschein handelt (true/false).
+- `nominal_value` (ValueDefinition): Definiert den Wert, den der Gutschein repräsentiert. Verwendet die neue ValueDefinition-Struktur mit optionalen Feldern für Einheit, Betrag, Abkürzung und Beschreibung. Bei Gutscheinerstellung wird eine benutzerdefinierte Abkürzung bevorzugt; falls keine angegeben ist, wird die aus den Standard-Metadaten verwendet.
+- `collateral` (Option<Collateral>): Optionale Informationen zur Besicherung des Gutscheins. Wird nur erstellt, wenn sowohl der Standard dies erlaubt als auch der Benutzer Angaben macht. Kann None sein, wenn keine Besicherung notwendig ist oder keine Angaben gemacht wurden.
+- `creator_profile` (PublicProfile): Enthält detaillierte Informationen zum Ersteller des Gutscheins, wie Name, Adresse usw.
 
 ### Transaktionskette
 

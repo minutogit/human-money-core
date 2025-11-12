@@ -110,7 +110,7 @@ fn test_chronological_validation_with_timezones() {
 
     let voucher_data = NewVoucherData {
         validity_duration: Some("P3Y".to_string()),
-        nominal_value: voucher_lib::models::voucher::NominalValue {
+        nominal_value: voucher_lib::models::voucher::ValueDefinition {
             amount: "100".to_string(),
             ..Default::default()
         },
@@ -158,7 +158,7 @@ fn test_chronological_validation_with_timezones() {
 // --- Tests from test_local_instance_id.rs ---
 
 use voucher_lib::models::voucher::{
-    Address, Collateral, NominalValue, Transaction, Voucher, VoucherStandard, VoucherTemplateData,
+    Address, Collateral, ValueDefinition, Transaction, Voucher, VoucherStandard, VoucherTemplateData,
 };
 use voucher_lib::services::crypto_utils::get_hash;
 use voucher_lib::services::utils::get_current_timestamp;
@@ -186,20 +186,22 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
         creation_date: get_current_timestamp(),
         valid_until: get_current_timestamp(),
         non_redeemable_test_voucher: true,
-        nominal_value: NominalValue {
+        nominal_value: ValueDefinition {
             unit: "Minutes".to_string(),
             amount: amount.to_string(),
-            abbreviation: "m".to_string(),
-            description: "Test".to_string(),
+            abbreviation: Some("m".to_string()),
+            description: Some("Test".to_string()),
         },
-        collateral: Collateral {
-            type_: "".to_string(),
-            unit: "".to_string(),
-            amount: "".to_string(),
-            abbreviation: "".to_string(),
-            description: "".to_string(),
-            redeem_condition: "".to_string(),
-        },
+        collateral: Some(Collateral {
+            value: ValueDefinition {
+                unit: "".to_string(),
+                amount: "".to_string(),
+                abbreviation: Some("".to_string()),
+                description: Some("".to_string()),
+            },
+            collateral_type: Some("".to_string()),
+            redeem_condition: Some("".to_string()),
+        }),
         creator_profile: voucher_lib::models::profile::PublicProfile {
             id: Some(creator_id.to_string()),
             first_name: Some("Test".to_string()),

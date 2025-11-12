@@ -20,35 +20,33 @@ pub struct VoucherStandard {
     pub template: VoucherTemplateData,
 }
 
-/// Definiert den Nennwert, den ein Gutschein repräsentiert.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-pub struct NominalValue {
-    /// Die Einheit des Gutscheinwerts (z.B. "Minuten", "Unzen").
+/// Definiert einen Wert (Betrag und Einheit), 
+/// der für Nennwerte oder Besicherungen verwendet wird.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct ValueDefinition {
     pub unit: String,
-    /// Die genaue Menge des Werts, als String für maximale Flexibilität.
     pub amount: String,
-    /// Eine gängige Abkürzung der Einheit (z.B. "m", "oz").
-    pub abbreviation: String,
-    /// Eine Beschreibung des Werts (z.B. "Objektive Zeit").
-    pub description: String,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub abbreviation: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
-/// Enthält Informationen zur Besicherung des Gutscheins.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+/// Definiert die (optionale) Besicherung eines Gutscheins.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct Collateral {
-    /// Die Art der Besicherung (z.B. "Physisches Edelmetall").
-    #[serde(rename = "type")]
-    pub type_: String,
-    /// Die Einheit der Besicherung (z.B. "Unzen").
-    pub unit: String,
-    /// Die Menge der Besicherung.
-    pub amount: String,
-    /// Eine gängige Abkürzung für die Besicherungseinheit.
-    pub abbreviation: String,
-    /// Eine detailliertere Beschreibung der Besicherung.
-    pub description: String,
-    /// **Extrem wichtig:** Bedingungen, unter denen die Besicherung eingelöst werden kann.
-    pub redeem_condition: String,
+    /// Die Felder 'unit', 'amount', 'abbreviation', 'description' 
+    /// werden direkt von ValueDefinition hier eingebettet.
+    #[serde(flatten)]
+    pub value: ValueDefinition,
+
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub collateral_type: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redeem_condition: Option<String>,
 }
 
 /// Detaillierte Adressinformationen.
@@ -152,9 +150,10 @@ pub struct Voucher {
     /// Eine Markierung, ob es sich um einen nicht einlösbaren Testgutschein handelt.
     pub non_redeemable_test_voucher: bool,
     /// Definiert den Nennwert des Gutscheins.
-    pub nominal_value: NominalValue,
+    pub nominal_value: ValueDefinition,
     /// Informationen zur Besicherung des Gutscheins.
-    pub collateral: Collateral,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collateral: Option<Collateral>,
     /// Detaillierte Informationen zum Ersteller des Gutscheins.
     #[serde(rename = "creator")]
     pub creator_profile: PublicProfile,

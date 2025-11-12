@@ -7,7 +7,7 @@ use voucher_lib::{
     to_canonical_json, validate_voucher_against_standard,
     VoucherCoreError,
 };
-use voucher_lib::models::voucher::{NominalValue, Voucher, VoucherSignature};
+use voucher_lib::models::voucher::{ValueDefinition, Voucher, VoucherSignature};
 use voucher_lib::services::crypto_utils::{get_hash, sign_ed25519};
 use voucher_lib::services::utils::get_current_timestamp;
 use voucher_lib::services::voucher_manager::NewVoucherData;
@@ -32,7 +32,7 @@ mod required_signatures_validation {
             creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
             validity_duration: Some("P1Y".to_string()), // HINZUGEFÜGT: Gültigkeit explizit setzen
             // HINZUGEFÜGT: Nennwert explizit setzen, um "Invalid decimal: empty" zu vermeiden
-            nominal_value: NominalValue {
+            nominal_value: ValueDefinition {
                 amount: "100".to_string(),
                 ..Default::default()
             },
@@ -165,7 +165,7 @@ mod required_signatures_validation {
         let creator_identity = &ACTORS.alice;
         let voucher_data = NewVoucherData {
             creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
-            nominal_value: NominalValue { amount: "60".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "60".to_string(), ..Default::default() },
             // KORREKTUR: Der Minuto-Standard erfordert eine Mindestgültigkeit (z.B. P3Y).
             // P1Y war zu kurz und löste `ValidityDurationTooShort` aus, bevor die eigentliche
             // Angriffslogik (`CreatorAsGuarantor`) geprüft werden konnte.

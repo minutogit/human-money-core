@@ -78,14 +78,14 @@ impl Wallet {
                     valid_until: voucher.valid_until.clone(),
                     description: voucher.voucher_standard.template.description.clone(),
                     current_amount,
-                    unit: voucher.nominal_value.abbreviation.clone(),
+                    unit: voucher.nominal_value.abbreviation.clone().unwrap_or_default(),
                     voucher_standard_name: voucher.voucher_standard.name.clone(),
                     voucher_standard_uuid: voucher.voucher_standard.uuid.clone(),
                     // Zähle Transaktionen exkl. der initialen "init" Transaktion.
                     transaction_count: (voucher.transactions.len() as u32).saturating_sub(1),
                     signatures_count: voucher.signatures.len() as u32,
-                    // Ein Gutschein gilt als besichert, wenn das `type_`-Feld im `collateral`-Objekt nicht leer ist.
-                    has_collateral: !voucher.collateral.type_.is_empty(),
+                    // Ein Gutschein gilt als besichert, wenn das `collateral`-Objekt existiert und eine `collateral_type` hat.
+                    has_collateral: voucher.collateral.is_some(),
                     creator_first_name: voucher.creator_profile.first_name.clone().unwrap_or_default(),
                     creator_last_name: voucher.creator_profile.last_name.clone().unwrap_or_default(),
                     creator_coordinates: voucher.creator_profile.coordinates.clone().unwrap_or_default(),
@@ -162,7 +162,7 @@ impl Wallet {
 
                     let key = (
                         voucher.voucher_standard.uuid.clone(),
-                        voucher.nominal_value.abbreviation.clone(),
+                        voucher.nominal_value.abbreviation.clone().unwrap_or_default(),
                     );
 
                     let entry = balances.entry(key)
@@ -170,7 +170,7 @@ impl Wallet {
                             (
                                 Decimal::zero(),
                                 voucher.voucher_standard.name.clone(),
-                                voucher.nominal_value.abbreviation.clone(),
+                                voucher.nominal_value.abbreviation.clone().unwrap_or_default(),
                             )
                         });
                     // Addiere den Betrag zum ersten Element des Tupels (dem Decimal-Wert).

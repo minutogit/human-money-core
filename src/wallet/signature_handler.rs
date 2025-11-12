@@ -93,6 +93,8 @@ impl Wallet {
                 phone: self.profile.phone.clone(),
                 coordinates: self.profile.coordinates.clone(),
                 url: self.profile.url.clone(),
+                service_offer: self.profile.service_offer.clone(),
+                needs: self.profile.needs.clone(),
             })
         } else {
             None
