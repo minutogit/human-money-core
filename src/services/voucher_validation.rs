@@ -1,4 +1,4 @@
-//! # voucher_validation.rs
+//! # src/services/voucher_validation.rs
 //!
 //! Dieses Modul enthält die Logik zur Validierung eines `Voucher`-Objekts
 //! gegen die Regeln eines `VoucherStandardDefinition`.

@@ -1,3 +1,4 @@
+//! # src/services/crypto_utils.rs
 // Zufallszahlengenerierung
 use rand::Rng;
 use rand_core::RngCore;

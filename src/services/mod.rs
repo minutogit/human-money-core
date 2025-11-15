@@ -1,3 +1,4 @@
+//! # src/services/mod.rs
 pub mod crypto_utils;
 pub mod utils;
 pub mod voucher_validation;

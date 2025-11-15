@@ -1,3 +1,4 @@
+//! # src/services/voucher_manager.rs
 use crate::models::voucher::{
     Collateral, ValueDefinition, Transaction, Voucher, VoucherStandard, VoucherSignature,
 };
@@ -124,12 +125,10 @@ pub fn create_voucher(
 
     let initial_valid_until_dt = add_iso8601_duration(creation_dt, duration_str)?;
 
-    // KORREKTUR: Zugriff auf die neue, verschachtelte Validierungsstruktur
     let min_duration_opt = verified_standard.validation.as_ref()
         .and_then(|v| v.behavior_rules.as_ref())
         .and_then(|b| b.issuance_minimum_validity_duration.as_ref());
 
-    // NEU: "Gatekeeper"-Prüfung bei Erstellung.
     // Verhindert die Erstellung von Gutscheinen, die sofort gegen die "Firewall"-Regel
     // verstoßen würden ("Dead-on-Arrival").
     if let Some(min_duration_str) = min_duration_opt {
@@ -175,7 +174,6 @@ pub fn create_voucher(
         None // Standard forbids it.
     };
 
-    // NEU: Logik zur Auswahl des mehrsprachigen Beschreibungstextes
     let description_template = standard_manager::get_localized_text(
         &verified_standard.template.fixed.description,
         lang_preference
@@ -186,7 +184,7 @@ pub fn create_voucher(
     let voucher_standard = VoucherStandard {
         name: verified_standard.metadata.name.clone(),
         uuid: verified_standard.metadata.uuid.clone(),
-        standard_definition_hash: standard_hash.to_string(), // NEU: Hash einbetten
+        standard_definition_hash: standard_hash.to_string(),
         template: crate::models::voucher::VoucherTemplateData {
             description: final_description.clone(),
             primary_redemption_type: verified_standard.template.fixed.primary_redemption_type.clone(),
@@ -252,7 +250,6 @@ pub fn create_voucher(
     let creator_signature = sign_ed25519(creator_signing_key, creator_sig_obj.signature_id.as_bytes());
     creator_sig_obj.signature = bs58::encode(creator_signature.to_bytes()).into_string();
 
-    // KORREKTUR: Zugriff auf die neue, verschachtelte Validierungsstruktur mit Fallback
     let decimal_places = verified_standard.validation.as_ref()
         .and_then(|v| v.behavior_rules.as_ref())
         .and_then(|b| b.amount_decimal_places)
@@ -362,10 +359,8 @@ pub fn create_transaction(
 ) -> Result<Voucher, VoucherCoreError> {
     crate::services::voucher_validation::validate_voucher_against_standard(voucher, standard)?;
 
-    // NEU: Prüfe die "Zirkulations-Firewall" (issuance_minimum_validity_duration).
     validate_issuance_firewall(voucher, standard, sender_id, recipient_id)?;
 
-    // KORREKTUR: Zugriff auf die neue, verschachtelte Validierungsstruktur mit Fallback
     let decimal_places = standard.validation.as_ref()
         .and_then(|v| v.behavior_rules.as_ref())
         .and_then(|b| b.amount_decimal_places)

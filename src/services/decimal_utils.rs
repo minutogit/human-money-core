@@ -1,6 +1,4 @@
-// src/services/decimal_utils.rs
-
-//! # decimal_utils.rs
+//! # src/services/decimal_utils.rs
 //!
 //! Enthält zentrale Hilfsfunktionen zur konsistenten Validierung und Formatierung
 //! von `Decimal`-Werten. Die hier definierten Funktionen stellen sicher, dass

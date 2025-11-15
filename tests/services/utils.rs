@@ -348,7 +348,7 @@ fn test_local_id_for_non_owner() {
     );
 }
 
-/// **NEUER TEST:** Stellt sicher, dass sich die `local_instance_id` ändert, wenn ein Gutschein
+/// Stellt sicher, dass sich die `local_instance_id` ändert, wenn ein Gutschein
 /// erst weggeschickt und dann wieder zurückempfangen wird.
 #[test]
 fn test_local_id_changes_on_round_trip() {

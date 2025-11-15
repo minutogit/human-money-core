@@ -179,7 +179,6 @@ impl Wallet {
         ) {
             Ok(_) => VoucherStatus::Active,
             // Wenn Bürgen fehlen, ist der Status `Incomplete`.
-            // NEU: Prüft auf fehlende Bürgen über die FieldGroupRule
             Err(VoucherCoreError::Validation(ValidationError::FieldValueCountOutOfBounds {
                 path,
                 field,

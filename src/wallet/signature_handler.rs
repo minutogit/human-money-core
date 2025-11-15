@@ -154,7 +154,6 @@ impl Wallet {
         };
 
         // Find a voucher that is expecting this signature
-        // NEU: Finde den Gutschein direkt über die voucher_id
         let target_instance = self.voucher_store.vouchers.values_mut()
             .find(|instance| instance.voucher.voucher_id == signature_obj.voucher_id)
             .ok_or_else(|| VoucherCoreError::VoucherNotFound(

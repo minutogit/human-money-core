@@ -1,4 +1,4 @@
-//! # voucher_core
+//! # src/lib.rs
 //!
 //! Die Kernlogik eines dezentralen, vertrauensbasierten elektronischen Gutschein-Zahlungssystems.
 //! Diese Bibliothek stellt die Datenstrukturen und Funktionen zur Erstellung, Verwaltung

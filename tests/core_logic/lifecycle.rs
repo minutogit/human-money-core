@@ -651,12 +651,10 @@ fn test_validity_duration_rules() {
 // (Entfernung der `voucher_id`) obsolet. Eine Signatur ist jetzt
 // ein eigenständiger, kryptographischer Beweis, dass "Unterzeichner X
 // die Rolle Y zur Zeit Z übernommen hat".
-//
 // Eine "wiederverwendete" Signatur ist kryptographisch nicht von einer
 // "neuen" Signatur zu unterscheiden. Der Schutz vor "falschen" Bürgen
 // erfolgt nun ausschließlich über die `field_group_rules` und
 // `required_signatures`-Regeln im Standard (z.B. "erlaube nur signer_id Z").
-//
 // Das alte Verhalten (Bindung an voucher_id) wurde entfernt.
 
 #[test]

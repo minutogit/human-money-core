@@ -1,4 +1,4 @@
-//! # utils.rs
+//! # src/services/utils.rs
 //!
 //! Enthält allgemeine Hilfsfunktionen, z.B. für Zeitstempel und kanonische Serialisierung.
 

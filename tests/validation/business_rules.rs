@@ -89,7 +89,6 @@ mod structural_integrity {
         voucher_to_sign.transactions.clear();
         voucher_to_sign.signatures.clear(); // Clear all sigs for voucher hash
 
-        // --- KORREKTUR (FIX FÜR KASKADENFEHLER) ---
         // 1. Berechne den neuen Hash der Stammdaten (die neue voucher_id)
         let new_hash = crypto_utils::get_hash(to_canonical_json(&voucher_to_sign).unwrap());
         // 2. Aktualisiere die voucher_id auf dem Gutschein selbst und auf der Creator-Signatur
@@ -112,9 +111,8 @@ mod structural_integrity {
         creator_sig.signature_id = get_hash(to_canonical_json(&sig_to_hash).unwrap());
 
         voucher.signatures = other_signatures; // Setze die alten Bürgen-Signaturen wieder ein
-        voucher.signatures.push(creator_sig); // Füge die NEUE Creator-Signatur hinzu
+        voucher.signatures.push(creator_sig); // Füge die Creator-Signatur hinzu
 
-        // --- KORREKTUR FÜR FEHLER #2 ---
         // Der 'init'-Hash (tx 0) muss ebenfalls aktualisiert werden, da
         // er von der (jetzt geänderten) voucher_id abhängt.
         if !voucher.transactions.is_empty() {
@@ -484,10 +482,9 @@ mod behavioral_rules {
         creator_sig.signature = bs58::encode(new_sig.to_bytes()).into_string();
 
         voucher.signatures = other_signatures; // Setze die alten Bürgen-Signaturen wieder ein
-        voucher.signatures.push(creator_sig); // Füge die NEUE Creator-Signatur hinzu
+        voucher.signatures.push(creator_sig); // Füge die Creator-Signatur hinzu
 
-        // 5. KORREKTUR: Aktualisiere auch die init-Transaktion
-        // --- BEGINN KORREKTUR (FIX FÜR KASKADENFEHLER) ---
+        // 5. Aktualisiere auch die init-Transaktion
         // Wir müssen die *gesamte* Kette neu aufbauen, nicht nur die init-Transaktion.
         
         let original_transactions = voucher.transactions.clone();
@@ -723,7 +720,7 @@ mod behavioral_rules {
             creator_sig.signature = bs58::encode(new_sig.to_bytes()).into_string();
 
             voucher.signatures = other_signatures; // Setze die alten Bürgen-Signaturen wieder ein
-            voucher.signatures.push(creator_sig); // Füge die NEUE Creator-Signatur hinzu
+        voucher.signatures.push(creator_sig); // Füge die Creator-Signatur hinzu
 
             // 5. KORREKTUR: Aktualisiere auch die init-Transaktion
             // --- BEGINN KORREKTUR (FIX FÜR KASKADENFEHLER) ---

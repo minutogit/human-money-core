@@ -1,7 +1,7 @@
 //! # voucher_standard_definition.rs
 //!
 //! Definiert die Rust-Datenstrukturen für die Gutschein-Standards.
-//! Diese neue Struktur trennt klar zwischen Metadaten, Kopiervorlagen und Validierungsregeln
+//! Diese Struktur trennt klar zwischen Metadaten, Kopiervorlagen und Validierungsregeln
 //! und fügt die Unterstützung für kryptographische Signaturen und Mehrsprachigkeit hinzu.
 
 use serde::{Serialize, Deserialize};
@@ -159,7 +159,7 @@ pub struct FieldGroupRule {
     pub value_counts: Vec<ValueCountRule>,
 }
 
-/// Die neue Hauptstruktur für alle Validierungsregeln.
+/// Die Hauptstruktur für alle Validierungsregeln.
 /// Alle Felder sind optional, um eine flexible Definition zu ermöglichen.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct Validation {
@@ -177,7 +177,7 @@ pub struct Validation {
 pub struct VoucherStandardDefinition {
     pub metadata: StandardMetadata,
     pub template: VoucherTemplate,
-    // Ersetzt die alte `ValidationRules` durch die neue, flexible Struktur.
+    // Ersetzt die alte `ValidationRules` durch die flexible Struktur.
     pub validation: Option<Validation>,
     // Die Signatur ist optional, da sie für die Kanonisierung temporär entfernt wird.
     #[serde(default, skip_serializing_if = "Option::is_none")]

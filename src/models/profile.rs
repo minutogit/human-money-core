@@ -89,11 +89,11 @@ pub struct TransactionBundle {
     /// gesamte Bündel fälschungssicher macht.
     pub sender_signature: String,
 
-    /// NEU: Die Liste der weitergeleiteten Fingerprints zur Unterstützung der Double-Spend-Erkennung.
+    /// Die Liste der weitergeleiteten Fingerprints zur Unterstützung der Double-Spend-Erkennung.
     #[serde(default)]
     pub forwarded_fingerprints: Vec<TransactionFingerprint>,
 
-    /// NEU: Die zugehörigen 'depth'-Werte für die weitergeleiteten Fingerprints.
+    /// Die zugehörigen 'depth'-Werte für die weitergeleiteten Fingerprints.
     /// Key: prvhash_senderid_hash des Fingerprints.
     #[serde(default)]
     pub fingerprint_depths: HashMap<String, u8>,

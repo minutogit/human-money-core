@@ -39,6 +39,7 @@ use voucher_lib::{
 /// 6.  Alice transferiert den gesamten Gutschein an Bob.
 /// 7.  Der alte Gutschein-Zustand bei Alice wird als archiviert verifiziert.
 /// 8.  Bob empfängt das Bundle und verifiziert seinen neuen Kontostand.
+/// Testet den vollständigen Lebenszyklus von Gutscheinen über AppService.
 #[test]
 fn api_app_service_full_lifecycle() {
     // --- 1. Setup ---

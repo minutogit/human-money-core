@@ -275,7 +275,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(creator_balance_str, "35");
     assert_eq!(recipient_balance_str, "25");
 
-    // --- (NEU) SCHRITT 7: Zweiter Transfer in der Kette ---
+    // --- SCHRITT 7: Zweiter Transfer in der Kette ---
     println!("\n--- SCHRITT 7: Empfänger sendet 10 Minuto an einen neuen Teilnehmer (Charlie) ---");
 
     // Finde die local_id des Gutscheins im Wallet des ersten Empfängers
