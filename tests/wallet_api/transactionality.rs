@@ -51,7 +51,6 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
     // 1. ARRANGE: Wallet mit einem aktiven Gutschein über 100 Einheiten vorbereiten.
     let dir = tempdir().unwrap();
     let correct_password = "correct_password";
-    let wrong_password = "wrong_password";
     let test_user = &ACTORS.test_user;
     let (mut service, _) = test_utils::setup_service_with_profile(dir.path(), test_user, "Test User", correct_password);
 
@@ -67,7 +66,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
                 nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
                 ..Default::default()
             },
-            correct_password,
+            Some(correct_password)
         )
         .unwrap();
 
@@ -93,20 +92,33 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
         silver_toml.clone() // Use the silver_toml from earlier in the test
     );
 
-    let result = service.create_transfer_bundle(
+    // --- KORREKTUR: Der Test war fehlerhaft. ---
+    // Der Test soll die Transaktionalität bei einem *Speicherfehler* prüfen.
+    // Ein Speicherfehler wird am besten durch die Übergabe eines FALSCHEN Passworts
+    // an die *speichernde* Funktion (hier `create_transfer_bundle`) simuliert.
+
+    let result_fail = service.create_transfer_bundle(
         request,
         &standards_toml,
         None,
-        wrong_password, // Falsches Passwort, um Speicherfehler auszulösen
+        Some("WRONG_PASSWORD_TO_FORCE_SAVE_FAILURE")
     );
 
     // 3. ASSERT: Operation ist fehlgeschlagen und der Zustand ist unverändert.
     assert!(
-        result.is_err(),
+        result_fail.is_err(),
         "Operation should fail due to wrong password"
     );
-    // HINWEIS: Wir prüfen nicht mehr den genauen Fehlertext, da dieser vom internen Ablauf abhängt.
+    
+    // HINWEIS: Der Fehler kann "Authentication failed" oder "Wallet is locked" sein,
+    // je nachdem, wie die Implementierung das falsche Passwort im Modus A behandelt.
     // Wichtig ist nur, DASS ein Fehler auftritt und der Zustand danach korrekt ist.
+    let error_msg = result_fail.unwrap_err();
+    assert!(
+        error_msg.contains("Authentication failed") || error_msg.contains("Wallet is locked") || error_msg.contains("User ID or Key Error"),
+        "Unexpected error message: {}",
+        error_msg
+    );
 
     // HINWEIS: Dieser Test schlägt weiterhin fehl, weil er einen echten Bug aufdeckt.
     // Die `create_transfer_bundle` Operation ist nicht atomar. Der Zustand im Speicher
@@ -135,7 +147,6 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
     let dir_recipient = tempdir().unwrap();
     let recipient = &ACTORS.recipient1;
     let correct_password = "correct_password";
-    let wrong_password = "wrong_password";
     let (mut service_sender, _) = test_utils::setup_service_with_profile(dir_sender.path(), sender, "Sender", "pwd");
     let (mut service_recipient, _) = test_utils::setup_service_with_profile(dir_recipient.path(), recipient, "Recipient", correct_password);
 
@@ -154,7 +165,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
                 nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
                 ..Default::default()
             },
-            "pwd",
+            Some("pwd")
         )
         .unwrap();
     let voucher_id = service_sender.get_voucher_summaries(None, None).unwrap()[0]
@@ -181,7 +192,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
             request,
             &standards_toml,
             None,
-            "pwd",
+            Some("pwd")
         )
         .unwrap();
 
@@ -193,11 +204,19 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         &bundle,
         &standards_map,
         None,
-        wrong_password, // Falsches Passwort
+        Some("WRONG_PASSWORD_TO_FORCE_SAVE_FAILURE") // Falsches Passwort
     );
 
     // 3. ASSERT: Operation ist fehlgeschlagen und Wallet ist immer noch leer.
     assert!(result.is_err(), "Receive operation should fail");
+    
+    let error_msg = result.unwrap_err();
+    assert!(
+        error_msg.contains("Authentication failed") || error_msg.contains("Wallet is locked"),
+        "Unexpected error message: {}",
+        error_msg
+    );
+
     let summaries_after = service_recipient
         .get_voucher_summaries(None, None)
         .unwrap();
@@ -214,7 +233,6 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     // 1. ARRANGE: Wallet mit einem Gutschein (Silber-Standard, benötigt keine Bürgen) vorbereiten.
     let dir_creator = tempdir().unwrap();
     let correct_password = "correct_password";
-    let wrong_password = "wrong_password";
     let creator = &ACTORS.alice;
     let (mut service_creator, _) = test_utils::setup_service_with_profile(dir_creator.path(), creator, "Creator", correct_password);
     let id_creator = service_creator.get_user_id().unwrap();
@@ -227,7 +245,6 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let signer = &ACTORS.guarantor1;
     let (mut service_signer, _) = test_utils::setup_service_with_profile(tempdir().unwrap().path(), signer, "Signer", "pwd");
     let id_signer = service_signer.get_user_id().unwrap();
-
 
     // Gutschein erstellen -> Status: Active (da keine Bürgen erforderlich)
     // FIX: Explizite Voucher-Daten anstelle von Default::default() verwenden, um Panic zu vermeiden.
@@ -242,11 +259,11 @@ fn test_attach_signature_is_transactional_on_save_failure() {
                     last_name: Some("Creator".to_string()),
                     ..Default::default() },
                 nominal_value: ValueDefinition { amount: "100".to_string(), unit: silver_standard.template.fixed.nominal_value.unit.clone(), ..Default::default() },
-                validity_duration: Some("P1Y".to_string()),
-                ..Default::default()
-            },
-            correct_password,
-        ).unwrap();
+                 validity_duration: Some("P1Y".to_string()),
+                 ..Default::default()
+             },
+             Some(correct_password)
+         ).unwrap();
 
     let local_id = service_creator.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
     let details_before = service_creator.get_voucher_details(&local_id).unwrap();
@@ -288,7 +305,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     
     // FIX: Das 2. Argument ist der Standard-TOML, nicht die local_id.
     service_creator
-        .process_and_attach_signature(&detached_sig1, &silver_toml, correct_password)
+        .process_and_attach_signature(&detached_sig1, &silver_toml, Some(correct_password))
         .expect("First signature attachment failed. The utility logic should now be correct.");
 
     let details_mid = service_creator.get_voucher_details(&local_id).unwrap();
@@ -327,7 +344,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
 
     // 2. ACT: Versuche, die zweite Signatur mit falschem Passwort hinzuzufügen.
     let result =
-        service_creator.process_and_attach_signature(&detached_sig2, &silver_toml, wrong_password);
+        service_creator.process_and_attach_signature(&detached_sig2, &silver_toml, Some("WRONG_PASSWORD"));
 
     // 3. ASSERT: Operation schlägt fehl, Zustand bleibt unverändert.
     assert!(result.is_err(), "Signature attachment should fail");
@@ -351,7 +368,6 @@ fn test_import_endorsement_is_transactional_on_save_failure() {
     // 1. ARRANGE: Wallet mit einem ungelösten Konfliktbeweis vorbereiten.
     let dir_reporter = tempdir().unwrap();
     let correct_password = "correct_password";
-    let wrong_password = "wrong_password";
     let reporter = &ACTORS.reporter;
     let dir_victim = tempdir().unwrap();
     let victim = &ACTORS.victim;
@@ -370,8 +386,8 @@ fn test_import_endorsement_is_transactional_on_save_failure() {
             .insert(proof.proof_id.clone(), proof);
     }
     // FIX: `wallet.save` ist nicht direkt nutzbar. Führe eine andere `AppService`-Aktion
-    // aus, um den Zustand (inklusive des manuell hinzugefügten Beweises) zu speichern.
-    service_reporter.save_encrypted_data("dummy", b"data", correct_password).unwrap();
+    // aus, um den Zustand (inklusive des manuell hinzugefügten Beweises) zu speichern. (Modus A)
+    service_reporter.save_encrypted_data("dummy", b"data", Some(correct_password)).unwrap();
 
     let conflicts_before = service_reporter.list_conflicts().unwrap();
     assert!(!conflicts_before[0].is_resolved, "Conflict should initially be unresolved");
@@ -389,7 +405,7 @@ fn test_import_endorsement_is_transactional_on_save_failure() {
 
     // 2. ACT: Versuche, die Beilegung mit falschem Passwort zu importieren.
     let result =
-        service_reporter.import_resolution_endorsement(endorsement, wrong_password);
+        service_reporter.import_resolution_endorsement(endorsement, Some("WRONG_PASSWORD"));
 
     // 3. ASSERT: Operation schlägt fehl, Konflikt bleibt ungelöst.
     assert!(result.is_err(), "Endorsement import should fail");
@@ -418,7 +434,6 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
     let dir_david = tempdir().unwrap();
     let alice = &ACTORS.alice;
     let correct_password = "correct_password";
-    let wrong_password = "wrong_password";
     let david = &ACTORS.david;
     let (mut service_alice, _) = test_utils::setup_service_with_profile(dir_alice.path(), alice, "Alice", "pwd");
     let (mut service_david, _) = test_utils::setup_service_with_profile(dir_david.path(), david, "David", correct_password);
@@ -439,7 +454,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
             nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
             ..Default::default()
         },
-        "pwd"
+        Some("pwd")
     ).unwrap();
 
     // Zwei konkurrierende Transaktionen aus V1 erstellen
@@ -475,12 +490,12 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
     let bundle_b = voucher_lib::test_utils::create_test_bundle(&identity_alice, vec![voucher_path_b], &id_david, None).unwrap();
 
     // David empfängt Pfad A erfolgreich
-    service_david.receive_bundle(&bundle_a, &standards_map, None, correct_password).unwrap();
+    service_david.receive_bundle(&bundle_a, &standards_map, None, Some(correct_password)).unwrap();
     assert_eq!(service_david.get_voucher_summaries(None, None).unwrap().len(), 1);
     assert!(service_david.list_conflicts().unwrap().is_empty());
 
     // 2. ACT: David versucht, das konfliktreiche Bundle B mit falschem Passwort zu empfangen.
-    let result = service_david.receive_bundle(&bundle_b, &standards_map, None, wrong_password);
+    let result = service_david.receive_bundle(&bundle_b, &standards_map, None, Some("WRONG_PASSWORD"));
 
     // 3. ASSERT: Operation schlägt fehl, Zustand wird komplett zurückgesetzt.
     assert!(result.is_err(), "Receive should fail on conflict + save error");

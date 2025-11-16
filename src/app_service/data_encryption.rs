@@ -26,14 +26,35 @@ impl AppService {
         &mut self,
         name: &str,
         data: &[u8],
-        password: &str,
+        password: Option<&str>,
     ) -> Result<(), String> {
-        match &mut self.state {
-            AppState::Unlocked { storage, identity, .. } => storage
-                .save_arbitrary_data(&identity.user_id, password, name, data)
-                .map_err(|e| e.to_string()),
-            AppState::Locked => Err("Wallet is locked.".to_string()),
-        }
+        println!("[DEBUG DATA] save_encrypted_data called for '{}'", name);
+        return match password {
+            Some(pwd_str) => {
+                println!("[DEBUG DATA] Mode A (Some(password)) detected.");
+                match &mut self.state {
+                    AppState::Unlocked { storage, identity, .. } => {
+                        // KORREKTUR: Modus A verwendet AuthMethod::Password
+                        let auth_method = AuthMethod::Password(pwd_str);
+                        storage
+                            .save_arbitrary_data(&identity.user_id, &auth_method, name, data)
+                            .map_err(|e| e.to_string())
+                    },
+                    AppState::Locked => Err("Wallet is locked.".to_string()),
+                }
+            },
+            None => {
+                println!("[DEBUG DATA] Mode B (None) detected.");
+                let session_key = self.get_session_key()?;
+                let auth_method = AuthMethod::SessionKey(session_key);
+                match &mut self.state {
+                    AppState::Unlocked { storage, identity, .. } => storage
+                        .save_arbitrary_data(&identity.user_id, &auth_method, name, data)
+                        .map_err(|e| { println!("[DEBUG DATA] Mode B: save_arbitrary_data FAILED: {}", e); e.to_string() }),
+                    AppState::Locked => Err("Wallet is locked.".to_string()),
+                }
+            }
+        };
     }
 
     /// Lädt und entschlüsselt einen zuvor gespeicherten, beliebigen Datenblock.
@@ -48,17 +69,37 @@ impl AppService {
     ///
     /// # Errors
     /// Schlägt fehl, wenn das Wallet gesperrt ist, das Passwort falsch ist oder die Daten nicht gefunden werden können.
-    pub fn load_encrypted_data(&self, name: &str, password: &str) -> Result<Vec<u8>, String> {
-        match &self.state {
-            AppState::Unlocked { storage, identity, .. } => {
-                let auth_method = AuthMethod::Password(password);
-                storage
-                    .load_arbitrary_data(&identity.user_id, &auth_method, name)
-                    .map_err(|e| e.to_string())
+    pub fn load_encrypted_data(
+        &mut self,
+        name: &str,
+        password: Option<&str>,
+    ) -> Result<Vec<u8>, String> {
+        println!("[DEBUG DATA] load_encrypted_data called for '{}'", name);
+        return match password {
+            Some(pwd_str) => {
+                println!("[DEBUG DATA] Mode A (Some(password)) detected.");
+                match &mut self.state {
+                    AppState::Unlocked { storage, identity, .. } => {
+                        // KORREKTUR: Modus A verwendet AuthMethod::Password
+                        let auth_method = AuthMethod::Password(pwd_str);
+                        storage
+                            .load_arbitrary_data(&identity.user_id, &auth_method, name)
+                            .map_err(|e| { println!("[DEBUG DATA] Mode A: load_arbitrary_data FAILED: {}", e); e.to_string() })
+                    },
+                    AppState::Locked => Err("Wallet is locked.".to_string()),
+                }
+            },
+            None => {
+                println!("[DEBUG DATA] Mode B (None) detected.");
+                let session_key = self.get_session_key()?;
+                let auth_method = AuthMethod::SessionKey(session_key);
+                match &mut self.state {
+                    AppState::Unlocked { storage, identity, .. } => storage
+                        .load_arbitrary_data(&identity.user_id, &auth_method, name)
+                        .map_err(|e| { println!("[DEBUG DATA] Mode B: load_arbitrary_data FAILED: {}", e); e.to_string() }),
+                    AppState::Locked => Err("Wallet is locked.".to_string()),
+                }
             }
-            AppState::Locked => {
-                Err("Cannot load data while wallet is locked. Please log in first.".to_string())
-            }
-        }
+        };
     }
 }

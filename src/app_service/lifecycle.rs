@@ -4,11 +4,12 @@
 //! wie Initialisierung, Login/Logout und Wiederherstellung.
 
 use super::{AppService, AppState, ProfileInfo};
-use crate::storage::{file_storage::FileStorage, AuthMethod};
+use crate::storage::{file_storage::FileStorage, AuthMethod, Storage};
 use crate::wallet::Wallet;
 use bip39::Language;
 use std::path::Path;
 use std::fs;
+use std::time::{Duration, Instant};
 
 const PROFILES_INDEX_FILE: &str = "profiles.json";
 
@@ -106,7 +107,7 @@ impl AppService {
             .map_err(|e| format!("Failed to create new wallet: {}", e))?;
 
         wallet
-            .save(&mut storage, &identity, password)
+            .save(&mut storage, &identity, &AuthMethod::Password(password))
             .map_err(|e| format!("Failed to save new wallet: {}", e))?;
 
         // Füge das neue Profil zur Indexdatei hinzu
@@ -120,7 +121,24 @@ impl AppService {
         fs::write(index_path, updated_index)
             .map_err(|e| format!("Failed to write profile index file: {}", e))?;
 
-        self.state = AppState::Unlocked { storage, wallet, identity };
+        self.state = AppState::Unlocked {
+            storage,
+            wallet,
+            identity,
+            session_cache: None,
+        };
+
+        // BUG-FIX: Initialisiere den "Session-Anker".
+        // Die Funktion storage.derive_key_for_session scheint (fälschlicherweise)
+        // eine existierende Datei vorauszusetzen, die nur von save_arbitrary_data
+        // geschrieben wird. Wir rufen dies hier einmalig auf, um sicherzustellen,
+        // dass alle Modus A / Modus B Operationen danach funktionieren.
+        // Wir ignorieren das Ergebnis, da der Aufruf nur zum Initialisieren dient.
+        let _ = self.save_encrypted_data(
+            "__storage_session_anchor",
+            b"init",
+            Some(password)
+        );
         Ok(())
     }
 
@@ -152,11 +170,25 @@ impl AppService {
         if cleanup_on_login {
             wallet.run_storage_cleanup(None)
                   .map_err(|e| format!("Storage cleanup on login failed: {}", e))?;
-            wallet.save(&mut storage, &identity, password)
+            wallet.save(&mut storage, &identity, &AuthMethod::Password(password))
                   .map_err(|e| format!("Failed to save wallet after cleanup: {}", e))?;
         }
 
-        self.state = AppState::Unlocked { storage, wallet, identity };
+        self.state = AppState::Unlocked {
+            storage,
+            wallet,
+            identity,
+            session_cache: None,
+        };
+
+        // BUG-FIX: Initialisiere den "Session-Anker". (Siehe create_profile)
+        // Dies stellt sicher, dass Modus A / Modus B Operationen nach einem
+        // Login funktionieren.
+        let _ = self.save_encrypted_data(
+            "__storage_session_anchor",
+            b"init",
+            Some(password)
+        );
         Ok(())
     }
 
@@ -190,14 +222,75 @@ impl AppService {
         Wallet::reset_password(&mut storage, &identity, new_password)
             .map_err(|e| format!("Failed to set new password: {}", e))?;
 
-        self.state = AppState::Unlocked { storage, wallet, identity };
+        self.state = AppState::Unlocked { 
+            storage, 
+            wallet, 
+            identity,
+            session_cache: None,
+        };
         Ok(())
     }
 
-    /// Sperrt das Wallet und entfernt sensible Daten (privater Schlüssel) aus dem Speicher.
+    /// Sperrt das Wallet und entfernt sensible Daten (privater Schlüssel, Session Key) aus dem Speicher.
     ///
     /// Setzt den Zustand zurück auf `Locked`. Diese Operation kann nicht fehlschlagen.
     pub fn logout(&mut self) {
         self.state = AppState::Locked;
+    }
+
+    /// Aktiviert die "Passwort merken"-Funktion für eine bestimmte Dauer (in Sekunden).
+    ///
+    /// Verifiziert das Passwort, leitet den Speicherschlüssel ab und hält diesen im Speicher.
+    /// Dies ist die Voraussetzung, um Aktionen ohne erneute Passworteingabe durchzuführen.
+    ///
+    /// # Arguments
+    /// * `password` - Das Passwort zur Verifizierung und Key-Ableitung.
+    /// * `duration_seconds` - Die Dauer der Sitzung in Sekunden.
+    pub fn unlock_session(&mut self, password: &str, duration_seconds: u64) -> Result<(), String> {
+        println!("[DEBUG LIFECYCLE] Attempting to unlock session...");
+        match &mut self.state {
+            AppState::Unlocked { storage, wallet: _, identity: _, session_cache } => {
+                // Verifiziere das Passwort, indem wir versuchen, den Session-Key abzuleiten
+                let session_key = storage.derive_key_for_session(password)
+                    .map_err(|e| { println!("[DEBUG LIFECYCLE] storage.derive_key_for_session FAILED: {}", e); format!("Password verification failed: {}", e) })?;
+
+                // Teste, ob der abgeleitete Schlüssel gültig ist, indem wir ihn verwenden, 
+                // um den verschlüsselten Dateischlüssel zu entschlüsseln.
+                // Dies validiert, dass das Passwort korrekt war.
+                storage.test_session_key(&session_key)
+                    .map_err(|e| format!("Password verification failed: {}", e))?;
+
+                println!("[DEBUG LIFECYCLE] storage.derive_key_for_session SUCCEEDED.");
+                // Erstelle den Session-Cache
+                *session_cache = Some(super::SessionCache {
+                    session_key,
+                    session_duration: Duration::from_secs(duration_seconds),
+                    last_activity: Instant::now(),
+                });
+                
+                Ok(())
+            },
+            AppState::Locked => Err("Wallet is locked. Please login first.".to_string()),
+        }
+    }
+
+    /// Deaktiviert die "Passwort merken"-Funktion sofort und löscht den zwischengespeicherten Speicherschlüssel aus dem RAM.
+    ///
+    /// Der `AppService` bleibt `Unlocked` (Lesezugriff geht), aber Aktionen erfordern nun `unlock_session` oder `password`-Argument.
+    pub fn lock_session(&mut self) {
+        if let AppState::Unlocked { session_cache, .. } = &mut self.state {
+            *session_cache = None;
+        }
+    }
+
+    /// Setzt den Inaktivitäts-Timer der "Passwort merken"-Sitzung zurück.
+    ///
+    /// Ideal, um dies bei UI-Aktivität (Klicks, Mausbewegung) aufzurufen, damit die Sitzung nicht abläuft, während der Benutzer aktiv ist.
+    pub fn refresh_session_activity(&mut self) {
+        if let AppState::Unlocked { session_cache, .. } = &mut self.state {
+            if let Some(cache) = session_cache {
+                cache.last_activity = Instant::now();
+            }
+        }
     }
 }

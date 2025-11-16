@@ -48,9 +48,7 @@ test-utils = []
 name = "voucher-cli"
 path = "src/bin/voucher-cli.rs"
 
-[[bin]]
-name = "validate-standard"
-path = "src/bin/validate-standard.rs"
+
 
 [dev-dependencies]
 rand = "0.8"

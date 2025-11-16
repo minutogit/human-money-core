@@ -50,13 +50,13 @@ fn api_app_service_full_lifecycle() {
     let dir_bob = tempdir().expect("Failed to create temp dir for Bob");
     let actor_alice = &ACTORS.alice;
     let actor_bob = &ACTORS.bob;
-    let password = "password123";
+    let password = "password";
 
     // --- 2. Profile erstellen ---
     let (mut service_alice, profile_info_alice) =
-        setup_service_with_profile(dir_alice.path(), actor_alice, "Alice", password);
+        setup_service_with_profile(dir_alice.path(), actor_alice, "Alice", "password");
     let (mut service_bob, _) =
-        setup_service_with_profile(dir_bob.path(), actor_bob, "Bob", password);
+        setup_service_with_profile(dir_bob.path(), actor_bob, "Bob", "password");
 
     let id_alice = service_alice.get_user_id().unwrap();
     let id_bob = service_bob.get_user_id().unwrap();
@@ -65,11 +65,12 @@ fn api_app_service_full_lifecycle() {
     service_alice.logout();
     assert!(service_alice.get_user_id().is_err(), "Service should be locked after logout");
     service_alice
-        .login(&profile_info_alice.folder_name, password, false)
+        .login(&profile_info_alice.folder_name, "password", false)
         .expect("Login with correct password should succeed");
     assert_eq!(service_alice.get_user_id().unwrap(), id_alice);
 
     // --- 4. Alice erstellt einen Gutschein ---
+    service_alice.unlock_session("password", 60).unwrap();
     service_alice
         .create_new_voucher(
             &silver_standard_toml,
@@ -85,7 +86,7 @@ fn api_app_service_full_lifecycle() {
                 },
                 ..Default::default()
             },
-            password,
+            Some("password")
         )
         .expect("Voucher creation failed");
     let summaries_alice = service_alice.get_voucher_summaries(None, None).unwrap();
@@ -103,12 +104,13 @@ fn api_app_service_full_lifecycle() {
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.metadata.uuid.clone(), silver_standard_toml.clone());
+    service_alice.unlock_session("password", 60).unwrap();
     let voucher_lib::wallet::CreateBundleResult { bundle_bytes: transfer_bundle, .. } = service_alice
         .create_transfer_bundle(
             request,
             &standards_toml,
             None,
-            password,
+            Some("password")
         )
         .expect("Transfer failed");
     let summary = service_alice
@@ -117,11 +119,12 @@ fn api_app_service_full_lifecycle() {
     assert!(summary.to_lowercase().contains("not found"));
 
     // --- 6. Bob empfängt den Gutschein ---
+    service_bob.unlock_session(password, 60).unwrap();
     let mut standards = std::collections::HashMap::new();
     standards.insert(standard.metadata.uuid.clone(), silver_standard_toml);
     service_bob
-        .receive_bundle(&transfer_bundle, &standards, None, password)
-        .expect("Receive failed");
+        .receive_bundle(&transfer_bundle, &standards, None, Some("password"))
+        .unwrap();
     let balance_bob = service_bob.get_total_balance_by_currency().unwrap();
     // KORREKTUR: Die Bilanz wird jetzt nach der Abkürzung der Währung gruppiert, nicht nach der Einheit.
     let silver_abbreviation = "Oz"; // Korrigierte, statische Abkürzung für den Silber-Standard.
@@ -145,10 +148,9 @@ fn api_app_service_lifecycle_with_passphrase() {
     // --- 1. Setup ---
     let actor_with_passphrase = &ACTORS.test_user; // Dieser Aktor ist mit einer Passphrase konfiguriert.
     let dir = tempdir().expect("Failed to create temp dir");
-    let password = "password123";
 
     // --- 2. Profil mit Passphrase erstellen und Service entsperren ---
-    let (mut service, profile_info) = setup_service_with_profile(dir.path(), actor_with_passphrase, "Test User", password);
+    let (mut service, profile_info) = setup_service_with_profile(dir.path(), actor_with_passphrase, "Test User", "password");
     let original_user_id = service.get_user_id().unwrap();
     assert!(original_user_id.starts_with(actor_with_passphrase.prefix.unwrap()));
     service.logout();
@@ -326,7 +328,7 @@ fn api_wallet_lifecycle() {
 
 
     wallet_a
-        .save(&mut storage, &identity_a, "password123")
+        .save(&mut storage, &identity_a, &AuthMethod::Password("password123"))
         .expect("Saving wallet failed");
 
     let auth = AuthMethod::Password("password123");
@@ -861,19 +863,20 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
     let silver_standard_toml =
         generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let dir_alice = tempdir().expect("Failed to create temp dir for Alice");
-    let password = "password123";
+    let _password = "password123";
     let mut service_alice =
         AppService::new(dir_alice.path()).expect("Failed to create service for Alice");
     let mnemonic = generate_valid_mnemonic();
 
     // 1. Profile erstellen
     service_alice
-        .create_profile("Alice Details", &mnemonic, None, Some("alice"), password)
+        .create_profile("Alice Details", &mnemonic, None, Some("alice"), "password")
         .expect("Alice profile creation failed");
 
     let id_alice = service_alice.get_user_id().unwrap();
 
     // 2. Alice erstellt einen Gutschein
+    service_alice.unlock_session("password", 60).unwrap();
     let created_voucher = service_alice
         .create_new_voucher(
             &silver_standard_toml,
@@ -889,7 +892,7 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
                 },
                 ..Default::default()
             },
-            password,
+            Some("password")
         )
         .expect("Voucher creation failed");
 

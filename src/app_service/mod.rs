@@ -58,6 +58,7 @@ use crate::wallet::Wallet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 // Deklaration der neuen Handler als öffentliche Sub-Module.
 // Jede Datei enthält einen `impl AppService`-Block für ihren spezifischen Bereich.
@@ -80,6 +81,16 @@ pub struct ProfileInfo {
     pub folder_name: String,
 }
 
+/// Cache für die "Passwort merken"-Funktion.
+pub struct SessionCache {
+    /// Der abgeleitete Speicherschlüssel.
+    session_key: [u8; 32],
+    /// Die konfigurierte Dauer der Inaktivität (z.B. 900 Sek).
+    session_duration: Duration,
+    /// Der Zeitpunkt der letzten erkannten Aktivität (für "Sliding Window").
+    last_activity: Instant,
+}
+
 /// Repräsentiert den Kernzustand der Anwendung.
 pub enum AppState {
     /// Es ist kein Wallet geladen und keine `UserIdentity` im Speicher.
@@ -90,6 +101,9 @@ pub enum AppState {
         storage: FileStorage,
         wallet: Wallet,
         identity: UserIdentity,
+        /// Der Cache für die "Passwort merken"-Funktion.
+        /// Wenn Some(...), sind Aktionen ohne Passworteingabe möglich.
+        session_cache: Option<SessionCache>,
     },
 }
 
@@ -157,6 +171,30 @@ impl AppService {
                 .map_err(|e| e.to_string())?;
         }
         Ok(())
+    }
+
+    /// Prüft die "Passwort merken"-Sitzung, verwaltet den Timeout
+    /// und das "Sliding Window" (setzt 'last_activity' neu).
+    pub fn get_session_key(&mut self) -> Result<[u8; 32], String> {
+        match &mut self.state {
+            AppState::Unlocked { storage: _, wallet: _, identity: _, session_cache } => {
+                if let Some(cache) = session_cache {
+                    let now = Instant::now();
+                    if now > cache.last_activity + cache.session_duration {
+                        // --- Timeout! ---
+                        *session_cache = None; // Key löschen
+                        Err("Session timed out. Please provide password.".to_string())
+                    } else {
+                        // --- OK, Aktivität erkannt ---
+                        cache.last_activity = now; // "Sliding Window"
+                        Ok(cache.session_key)
+                    }
+                } else {
+                    Err("Password required. Please use 'unlock_session'.".to_string())
+                }
+            },
+            AppState::Locked => Err("Wallet is locked.".to_string()),
+        }
     }
 }
 

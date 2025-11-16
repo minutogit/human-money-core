@@ -182,22 +182,7 @@ impl FileStorage {
     }
 
     /// Holt den Master-Dateischlüssel unter Verwendung eines Passworts.
-    /// Diese Logik wird von allen `save_*`-Methoden benötigt.
-    fn get_master_key(&self, password: &str) -> Result<[u8; KEY_SIZE], StorageError> {
-        let profile_container = self.load_profile_container()?;
 
-        let password_key =
-            derive_key_from_password(password, &profile_container.password_kdf_salt)?;
-        let file_key_bytes = crypto_utils::decrypt_data(
-            &password_key,
-            &profile_container.password_wrapped_key_with_nonce,
-        )
-            .map_err(|_| StorageError::AuthenticationFailed)?;
-
-        file_key_bytes
-            .try_into()
-            .map_err(|_| StorageError::InvalidFormat("Invalid file key length".to_string()))
-    }
 
     /// Holt den Master-Dateischlüssel unter Verwendung einer beliebigen `AuthMethod`.
     /// Diese Logik wird von allen `load_*`-Methoden benötigt.
@@ -212,6 +197,11 @@ impl FileStorage {
 }
 
 impl Storage for FileStorage {
+    fn derive_key_for_session(&self, password: &str) -> Result<[u8; 32], StorageError> {
+        let profile_container = self.load_profile_container()?;
+        derive_key_from_password(password, &profile_container.password_kdf_salt)
+    }
+
     fn profile_exists(&self) -> bool {
         self.user_storage_path.join(PROFILE_FILE_NAME).exists()
     }
@@ -281,7 +271,7 @@ impl Storage for FileStorage {
         profile: &UserProfile,
         store: &VoucherStore,
         identity: &UserIdentity,
-        password: &str,
+        auth: &AuthMethod,
     ) -> Result<(), StorageError> {
         fs::create_dir_all(&self.user_storage_path)?; // Erstellt den Ordner, falls nicht vorhanden
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
@@ -303,7 +293,10 @@ impl Storage for FileStorage {
 
             let mut pw_salt = [0u8; SALT_SIZE];
             OsRng.fill_bytes(&mut pw_salt);
-            let password_key = derive_key_from_password(password, &pw_salt)?;
+            let password_key = match auth {
+                AuthMethod::Password(p) => derive_key_from_password(p, &pw_salt)?,
+                _ => return Err(StorageError::Generic("Only Password auth supported for initial save".to_string())),
+            };
             let pw_wrapped_key = crypto_utils::encrypt_data(&password_key, &file_key)
                 .map_err(|e| StorageError::Generic(e.to_string()))?;
 
@@ -330,13 +323,7 @@ impl Storage for FileStorage {
                 serde_json::from_slice(&existing_container_bytes)
                     .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
-            let password_key =
-                derive_key_from_password(password, &existing_container.password_kdf_salt)?;
-            let decrypted_file_key = crypto_utils::decrypt_data(
-                &password_key,
-                &existing_container.password_wrapped_key_with_nonce,
-            )
-                .map_err(|_| StorageError::AuthenticationFailed)?;
+            let decrypted_file_key = get_file_key(auth, &existing_container)?;
 
             file_key = decrypted_file_key
                 .try_into()
@@ -428,12 +415,12 @@ impl Storage for FileStorage {
     fn save_known_fingerprints(
         &mut self,
         _user_id: &str,
-        password: &str,
+        auth: &AuthMethod,
         fingerprints: &KnownFingerprints,
     ) -> Result<(), StorageError> {
         let fingerprint_path = self.user_storage_path.join(KNOWN_FINGERPRINTS_FILE_NAME);
 
-        let file_key = self.get_master_key(password)?;
+        let file_key = self.get_master_key_from_auth(auth)?;
 
         let store_payload = crypto_utils::encrypt_data(&file_key, &serde_json::to_vec(fingerprints).unwrap())
             .map_err(|e| StorageError::Generic(e.to_string()))?;
@@ -471,12 +458,12 @@ impl Storage for FileStorage {
     fn save_own_fingerprints(
         &mut self,
         _user_id: &str,
-        password: &str,
+        auth: &AuthMethod,
         fingerprints: &OwnFingerprints,
     ) -> Result<(), StorageError> {
         let fingerprint_path = self.user_storage_path.join(OWN_FINGERPRINTS_FILE_NAME);
 
-        let file_key = self.get_master_key(password)?;
+        let file_key = self.get_master_key_from_auth(auth)?;
 
         let store_payload = crypto_utils::encrypt_data(&file_key, &serde_json::to_vec(fingerprints).unwrap())
             .map_err(|e| StorageError::Generic(e.to_string()))?;
@@ -532,7 +519,7 @@ impl Storage for FileStorage {
     fn save_bundle_metadata(
         &mut self,
         _user_id: &str,
-        password: &str,
+        auth: &AuthMethod,
         metadata: &BundleMetadataStore,
     ) -> Result<(), StorageError> {
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
@@ -547,12 +534,7 @@ impl Storage for FileStorage {
             serde_json::from_slice(&profile_container_bytes)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
-        let password_key =
-            derive_key_from_password(password, &profile_container.password_kdf_salt)?;
-        let file_key_bytes = crypto_utils::decrypt_data(
-            &password_key,
-            &profile_container.password_wrapped_key_with_nonce,
-        ).map_err(|_| StorageError::AuthenticationFailed)?;
+        let file_key_bytes = get_file_key(auth, &profile_container)?;
 
         let file_key: [u8; KEY_SIZE] = file_key_bytes
             .try_into()
@@ -608,7 +590,7 @@ impl Storage for FileStorage {
     fn save_proofs(
         &mut self,
         _user_id: &str,
-        password: &str,
+        auth: &AuthMethod,
         proof_store: &ProofStore,
     ) -> Result<(), StorageError> {
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
@@ -623,12 +605,7 @@ impl Storage for FileStorage {
             serde_json::from_slice(&profile_container_bytes)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
-        let password_key =
-            derive_key_from_password(password, &profile_container.password_kdf_salt)?;
-        let file_key_bytes = crypto_utils::decrypt_data(
-            &password_key,
-            &profile_container.password_wrapped_key_with_nonce,
-        ).map_err(|_| StorageError::AuthenticationFailed)?;
+        let file_key_bytes = get_file_key(auth, &profile_container)?;
 
         let file_key: [u8; KEY_SIZE] = file_key_bytes
             .try_into()
@@ -677,12 +654,12 @@ impl Storage for FileStorage {
     fn save_fingerprint_metadata(
         &mut self,
         _user_id: &str,
-        password: &str,
+        auth: &AuthMethod,
         metadata: &CanonicalMetadataStore,
     ) -> Result<(), StorageError> {
         let metadata_path = self.user_storage_path.join(FINGERPRINT_METADATA_FILE_NAME);
 
-        let file_key = self.get_master_key(password)?;
+        let file_key = self.get_master_key_from_auth(auth)?;
 
         // Wenn der Store leer ist, löschen wir die Datei, falls sie existiert.
         if metadata.is_empty() {
@@ -714,12 +691,12 @@ impl Storage for FileStorage {
     fn save_arbitrary_data(
         &mut self,
         user_id: &str,
-        password: &str,
+        auth: &AuthMethod,
         name: &str,
         data: &[u8],
     ) -> Result<(), StorageError> {
         // 1. Hole den Master-Schlüssel, der für alle Operationen dieses Wallets verwendet wird.
-        let master_key = self.get_master_key(password)?;
+        let master_key = self.get_master_key_from_auth(auth)?;
 
         // 2. Erstelle einen sicheren, benutzerspezifischen Dateipfad.
         let user_hash = Self::get_user_hash(user_id);
@@ -758,6 +735,21 @@ impl Storage for FileStorage {
         // 3. Lese und entschlüssele die Daten.
         let ciphertext = fs::read(&path).map_err(StorageError::Io)?;
         crypto_utils::decrypt_data(&master_key, &ciphertext).map_err(|_| StorageError::AuthenticationFailed)    }
+
+    fn test_session_key(&self, session_key: &[u8; 32]) -> Result<(), StorageError> {
+        // Lade den Profil-Container
+        let profile_container = self.load_profile_container()?;
+        
+        // Versuche, den verschlüsselten Dateischlüssel mit dem gegebenen Session-Key zu entschlüsseln
+        // Dies wird fehlschlagen, wenn der Session-Key nicht mit dem richtigen Passwort abgeleitet wurde
+        let _decrypted = crate::services::crypto_utils::decrypt_data(
+            session_key,
+            &profile_container.password_wrapped_key_with_nonce,
+        )
+        .map_err(|_| StorageError::AuthenticationFailed)?;
+        
+        Ok(())
+    }
 }
 
 // --- Private Hilfsfunktionen ---
@@ -773,6 +765,13 @@ fn get_file_key(
                 derive_key_from_password(password, &container.password_kdf_salt)?;
             crypto_utils::decrypt_data(
                 &password_key,
+                &container.password_wrapped_key_with_nonce,
+            )
+                .map_err(|_| StorageError::AuthenticationFailed)
+        }
+        AuthMethod::SessionKey(session_key) => {
+            crypto_utils::decrypt_data(
+                session_key,
                 &container.password_wrapped_key_with_nonce,
             )
                 .map_err(|_| StorageError::AuthenticationFailed)

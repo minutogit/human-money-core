@@ -7,8 +7,9 @@ use super::{AppState, AppService};
 use crate::models::signature::DetachedSignature;
 use crate::models::voucher::{Voucher, VoucherSignature};
 use crate::wallet::instance::VoucherStatus;
-use crate::{ValidationFailureReason, VoucherCoreError};
+use crate::{AuthMethod, ValidationFailureReason, VoucherCoreError};
 use crate::services::voucher_validation;
+
 
 impl AppService {
     /// Erstellt ein Bundle, um einen Gutschein zur Unterzeichnung an einen Bürgen zu senden.
@@ -87,21 +88,37 @@ impl AppService {
         &mut self,
         container_bytes: &[u8],
         standard_toml_content: &str,
-        password: &str,
+        password: Option<&str>,
     ) -> Result<(), String> {
+        println!("[DEBUG SIG] process_and_attach_signature called.");
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
         let (result, new_state) = match current_state {
-            AppState::Unlocked { mut storage, wallet, identity } => {
+            AppState::Unlocked { mut storage, wallet, identity, session_cache } => {
                 match crate::services::standard_manager::verify_and_parse_standard(standard_toml_content) {
-                    Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity }),
-                    Ok((verified_standard, _)) => {
+                    Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity, session_cache }),
+                     Ok((verified_standard, _)) => {
+                         let auth_method;
+
+                         match password {
+                            Some(pwd_str) => {
+                                println!("[DEBUG SIG] process_and_attach: Mode A (Some(password)) detected.");
+                                // KORREKTUR: Modus A verwendet AuthMethod::Password
+                                auth_method = AuthMethod::Password(pwd_str);
+                            },
+                             None => {
+                                println!("[DEBUG SIG] process_and_attach: Mode B (None) detected.");
+                                let session_key = self.get_session_key()
+                                    .map_err(|e| { println!("[DEBUG SIG] process_and_attach: Mode B: get_session_key FAILED: {}", e); e })?;
+                                auth_method = AuthMethod::SessionKey(session_key);
+                            }
+                         }
                         // --- BEGINN DER TRANSAKTION ---
                         let mut temp_wallet = wallet.clone();
 
                         // 1. Signatur an die temporäre Wallet-Instanz anhängen.
                         match temp_wallet.process_and_attach_signature(&identity, container_bytes) {
-                            Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity }),
+                            Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity, session_cache }),
                             Ok(updated_instance_id) => {
                                 // 2. Neuen Status basierend auf dem Ergebnis bestimmen.
                                 let instance = temp_wallet.get_voucher_instance(&updated_instance_id).cloned().unwrap(); // Muss existieren
@@ -137,16 +154,16 @@ impl AppService {
 
                                 temp_wallet.update_voucher_status(&updated_instance_id, new_status);
                                 // 3. Versuchen, die Änderungen zu speichern ("Commit").
-                                match temp_wallet.save(&mut storage, &identity, password) {
+                                match temp_wallet.save(&mut storage, &identity, &auth_method) {
                                     Ok(_) => (
                                         // Erfolg: Gib das Ergebnis der Operation zurück und setze die neue Wallet-Instanz.
                                         operation_result,
-                                        AppState::Unlocked { storage, wallet: temp_wallet, identity },
+                                        AppState::Unlocked { storage, wallet: temp_wallet, identity, session_cache },
                                     ),
                                     Err(e) => (
                                         // Fehler: Verwirf die Änderungen und gib den Speicherfehler zurück.
                                         Err(e.to_string()),
-                                        AppState::Unlocked { storage, wallet, identity },
+                                        AppState::Unlocked { storage, wallet, identity, session_cache },
                                     ),
                                 }
                             }

@@ -27,10 +27,12 @@ pub enum StorageError {
     Generic(String),
 }
 
-/// Definiert die Authentifizierungsmethode für den Zugriff auf den Speicher.
+/// Authentifizierungsmethode für den Speicherzugriff
 pub enum AuthMethod<'a> {
-    /// Authentifizierung mittels eines Passworts.
+    /// Das Passwort des Benutzers (wird zur Key-Ableitung verwendet)
     Password(&'a str),
+    /// Ein bereits abgeleiteter Session-Key (überspringt die Key-Ableitung)
+    SessionKey([u8; 32]),
     /// Authentifizierung mittels einer Mnemonic-Phrase (für die Wiederherstellung).
     Mnemonic(&'a str, Option<&'a str>),
     /// Authentifizierung mittels der kryptographischen Identität (für die Wiederherstellung).
@@ -45,11 +47,22 @@ impl<'a> AuthMethod<'a> {
             _ => Err(StorageError::Generic("Password not available for this auth method".to_string())),
         }
     }
+    
+    /// Extrahiert den Session-Key, wenn die Methode `SessionKey` ist.
+    pub fn get_session_key(&self) -> Result<[u8; 32], StorageError> {
+        match self {
+            AuthMethod::SessionKey(key) => Ok(*key),
+            _ => Err(StorageError::Generic("Session key not available for this auth method".to_string())),
+        }
+    }
 }
 
 /// Die Schnittstelle für persistente Speicherung.
 /// Jede Methode ist eine atomare Operation für ein komplettes Wallet.
 pub trait Storage {
+    /// Leitet den Speicherschlüssel (SessionKey) aus dem Passwort ab.
+    fn derive_key_for_session(&self, password: &str) -> Result<[u8; 32], StorageError>;
+
     /// Lädt und entschlüsselt das Kern-Wallet (Profil und VoucherStore).
     fn load_wallet(
         &self,
@@ -63,7 +76,7 @@ pub trait Storage {
         profile: &UserProfile,
         store: &VoucherStore,
         identity: &UserIdentity,
-        password: &str,
+        auth: &AuthMethod,
     ) -> Result<(), StorageError>;
 
     /// Setzt das Passwort zurück, indem es das Passwort-Schloss mit dem Wiederherstellungs-Schlüssel neu erstellt.
@@ -83,7 +96,7 @@ pub trait Storage {
     fn save_known_fingerprints(
         &mut self,
         user_id: &str,
-        password: &str,
+        auth: &AuthMethod,
         fingerprints: &KnownFingerprints,
     ) -> Result<(), StorageError>;
 
@@ -94,7 +107,7 @@ pub trait Storage {
     fn save_own_fingerprints(
         &mut self,
         user_id: &str,
-        password: &str,
+        auth: &AuthMethod,
         fingerprints: &OwnFingerprints,
     ) -> Result<(), StorageError>;
 
@@ -109,7 +122,7 @@ pub trait Storage {
     fn save_bundle_metadata(
         &mut self,
         user_id: &str,
-        password: &str,
+        auth: &AuthMethod,
         metadata: &BundleMetadataStore,
     ) -> Result<(), StorageError>;
 
@@ -121,7 +134,7 @@ pub trait Storage {
     fn save_proofs(
         &mut self,
         user_id: &str,
-        password: &str,
+        auth: &AuthMethod,
         proof_store: &ProofStore,
     ) -> Result<(), StorageError>;
 
@@ -137,7 +150,7 @@ pub trait Storage {
     fn save_fingerprint_metadata(
         &mut self,
         user_id: &str,
-        password: &str,
+        auth: &AuthMethod,
         metadata: &CanonicalMetadataStore,
     ) -> Result<(), StorageError>;
 
@@ -148,10 +161,10 @@ pub trait Storage {
     ///
     /// # Arguments
     /// * `user_id` - Die ID des Benutzers, dem die Daten zugeordnet sind.
-    /// * `password` - Das Passwort zum Ableiten des Verschlüsselungsschlüssels.
+    /// * `auth` - Die Authentifizierungsmethode zum Verschlüsseln.
     /// * `name` - Ein eindeutiger Name für den Datenblock (z.B. "app_settings").
     /// * `data` - Die zu verschlüsselnden Rohdaten.
-    fn save_arbitrary_data(&mut self, user_id: &str, password: &str, name: &str, data: &[u8]) -> Result<(), StorageError>;
+    fn save_arbitrary_data(&mut self, user_id: &str, auth: &AuthMethod, name: &str, data: &[u8]) -> Result<(), StorageError>;
 
     /// Lädt einen beliebigen, benannten und verschlüsselten Datenblock.
     ///
@@ -160,4 +173,8 @@ pub trait Storage {
     /// * `auth` - Die Authentifizierungsmethode zum Entschlüsseln.
     /// * `name` - Der Name des zu ladenden Datenblocks.
     fn load_arbitrary_data(&self, user_id: &str, auth: &AuthMethod, name: &str) -> Result<Vec<u8>, StorageError>;
+
+    /// Überprüft, ob ein abgeleiteter Session-Key gültig ist, indem versucht wird, 
+    /// damit auf verschlüsselte Daten zuzugreifen.
+    fn test_session_key(&self, session_key: &[u8; 32]) -> Result<(), StorageError>;
 }

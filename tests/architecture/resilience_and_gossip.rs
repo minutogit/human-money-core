@@ -28,12 +28,12 @@ mod tests {
             "Alice",
             PASSWORD,
         );
-        alice_service.login(&alice_profile.folder_name, PASSWORD, false).unwrap();
+        alice_service.login(&alice_profile.folder_name, PASSWORD, false).unwrap(); // Alice uses const PASSWORD
 
         // Bob erstellen
         let (mut bob_service, bob_profile) =
-            test_utils::setup_service_with_profile(dir.path(), &ACTORS.bob, "Bob", PASSWORD);
-        bob_service.login(&bob_profile.folder_name, PASSWORD, false).unwrap();
+            test_utils::setup_service_with_profile(dir.path(), &ACTORS.bob, "Bob", "password");
+        bob_service.login(&bob_profile.folder_name, "password", false).unwrap(); // Bob uses "password"
 
         ((alice_service, alice_profile), (bob_service, bob_profile))
     }
@@ -73,8 +73,8 @@ mod tests {
     fn test_cleanup_phase1_removes_expired_fingerprints() {
         let dir = tempdir().unwrap();
         let (mut service, profile) =
-            test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", PASSWORD);
-        service.login(&profile.folder_name, PASSWORD, false).unwrap();
+            test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", "password");
+        service.login(&profile.folder_name, "password", false).unwrap();
         let wallet_state = service.get_unlocked_mut_for_test().0;
         let now = Utc::now();
         let expired_date = (now - Duration::days(1)).to_rfc3339();
@@ -112,8 +112,8 @@ mod tests {
     fn test_cleanup_phase2_removes_by_depth_and_tie_breaker() {
         let dir = tempdir().unwrap();
         let (mut service, profile) =
-            test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", PASSWORD);
-        service.login(&profile.folder_name, PASSWORD, false).unwrap();
+            test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", "password");
+        service.login(&profile.folder_name, "password", false).unwrap();
         let wallet = service.get_unlocked_mut_for_test().0;
         for i in 0..12 {
             let key = format!("key_{}", i);
@@ -158,11 +158,16 @@ mod tests {
         let new_voucher_data = NewVoucherData {
             nominal_value: voucher_lib::models::voucher::ValueDefinition {
                 amount: "100".to_string(),
+                unit: "EUR".to_string(),
                 ..Default::default()
             },
-            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() }, ..Default::default()
+            creator_profile: voucher_lib::models::profile::PublicProfile {
+                id: Some(ACTORS.alice.user_id.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
         };
-        service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, PASSWORD).unwrap();
+        service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, Some(PASSWORD)).unwrap();
         let wallet_path = dir.path().join(&profile.folder_name);
         service.logout();
 
@@ -193,7 +198,7 @@ mod tests {
             },
             creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() }, ..Default::default()
         };
-        service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, PASSWORD).unwrap();
+        service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, Some(PASSWORD)).unwrap();
         let wallet_path = dir.path().join(&profile.folder_name);
         service.logout();
         std::fs::remove_file(wallet_path.join("own_fingerprints.enc")).unwrap();
@@ -209,11 +214,17 @@ mod tests {
     fn test_recovery_initializes_depth_correctly() {
         // GIVEN: Ein Wallet mit einem Gutschein mit 3 Transaktionen wird gespeichert.
         let dir = tempdir().unwrap();
-        let ((mut alice_service, alice_profile), (mut bob_service, _)) = setup_test_environment(&dir);
+        let ((mut alice_service, alice_profile), (mut bob_service, bob_profile)) = setup_test_environment(&dir);
+        // FIX: Provide a valid nominal_value
         let new_voucher_data = NewVoucherData {
-            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() }, ..Default::default()
+            nominal_value: voucher_lib::models::voucher::ValueDefinition {
+                amount: "100".to_string(),
+                ..Default::default()
+            },
+            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
+            ..Default::default()
         };
-        let _voucher_id = alice_service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", NewVoucherData { nominal_value: voucher_lib::models::voucher::ValueDefinition { amount: "100".to_string(), ..Default::default()}, ..new_voucher_data }, PASSWORD).unwrap().voucher_id;
+        let _voucher_id = alice_service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, Some(PASSWORD)).unwrap().voucher_id;
         let local_id = alice_service.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
 
         // Tx 2: Alice -> Bob
@@ -232,12 +243,12 @@ mod tests {
             let mut standards_toml = std::collections::HashMap::new();
             standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
 
-            let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle1_result, .. } = alice_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD).unwrap();
+            let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle1_result, .. } = alice_service.create_transfer_bundle(request, &standards_toml, None, Some(PASSWORD)).unwrap();
             bundle1_result
         };
         let mut standards = HashMap::new();
         standards.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
-        bob_service.receive_bundle(&bundle1, &standards, None, PASSWORD).unwrap();
+        bob_service.receive_bundle(&bundle1, &standards, None, Some("password")).unwrap();
         let bob_local_id = bob_service.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
 
         // Tx 3: Bob -> Alice
@@ -253,9 +264,9 @@ mod tests {
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
-        let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle2, .. } = bob_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD).unwrap();
+        let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle2, .. } = bob_service.create_transfer_bundle(request, &standards_toml, None, Some("password")).unwrap();
         // Erneute Bereitstellung der Standard-Definition für den Empfang.
-        alice_service.receive_bundle(&bundle2, &standards, None, PASSWORD).unwrap();
+        alice_service.receive_bundle(&bundle2, &standards, None, Some(PASSWORD)).unwrap();
 
         // DEBUG: Check Alice's voucher store state before logout
         let (wallet_before_logout, _) = alice_service.get_unlocked_mut_for_test();
@@ -306,7 +317,7 @@ mod tests {
         let (_, bob_identity) = bob_service.get_unlocked_mut_for_test();
         println!("[Debug Test] Bob's identity user_id for lookup: '{}'", bob_identity.user_id);
 
-        bob_service.receive_bundle(&bundle_bytes, &HashMap::new(), None, PASSWORD).unwrap();
+        bob_service.receive_bundle(&bundle_bytes, &HashMap::new(), None, Some("password")).unwrap();
 
         let (bob_wallet, _) = bob_service.get_unlocked_mut_for_test();
         let meta = bob_wallet.fingerprint_metadata.get(&fp_key).unwrap();
@@ -329,7 +340,7 @@ mod tests {
 
         let bob_id = bob_service.get_user_id().unwrap();
         let bundle_bytes = create_and_send_fingerprint_bundle(&mut alice_service, &bob_id, vec![(fingerprint, 5)]); // sender_depth + 1 = 6
-        bob_service.receive_bundle(&bundle_bytes, &HashMap::new(), None, PASSWORD).unwrap();
+        bob_service.receive_bundle(&bundle_bytes, &HashMap::new(), None, Some("password")).unwrap();
 
         let (bob_wallet, _) = bob_service.get_unlocked_mut_for_test();
         let meta = bob_wallet.fingerprint_metadata.get(&fp_key).unwrap();
@@ -347,7 +358,7 @@ mod tests {
             },
             creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() }, ..Default::default()
         };
-        alice_service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, PASSWORD).unwrap();
+        alice_service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, Some(PASSWORD)).unwrap();
         let local_id = alice_service.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
         let init_tx_fp_key = alice_service.get_unlocked_mut_for_test().0.fingerprint_metadata.keys().next().unwrap().clone();
 
@@ -367,7 +378,7 @@ mod tests {
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
-        alice_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD).unwrap();
+        alice_service.create_transfer_bundle(request, &standards_toml, None, Some(PASSWORD)).unwrap();
 
         let (alice_wallet, _) = alice_service.get_unlocked_mut_for_test();
         let meta = alice_wallet.fingerprint_metadata.get(&init_tx_fp_key).unwrap();

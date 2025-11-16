@@ -9,11 +9,12 @@ use tempfile::tempdir;
 use voucher_lib::{VoucherStatus};
 use voucher_lib::{UserIdentity};
 use voucher_lib::models::voucher::{ValueDefinition, Voucher};
+use voucher_lib::storage::AuthMethod;
 use voucher_lib::services::voucher_manager::NewVoucherData;
 use voucher_lib::services::crypto_utils;
 use voucher_lib::services::voucher_manager;
 use voucher_lib::error::VoucherCoreError;
-use voucher_lib::{AuthMethod, FileStorage, Storage, StorageError, Wallet};
+use voucher_lib::{FileStorage, Storage, StorageError, Wallet};
 
 // Lade die Test-Hilfsfunktionen aus dem übergeordneten Verzeichnis.
 
@@ -63,7 +64,7 @@ fn test_wallet_creation_save_and_load() {
     let wallet = setup_in_memory_wallet(identity);
 
     // 2. Speichern
-    wallet.save(&mut storage, identity, password).expect("Failed to save wallet");
+    wallet.save(&mut storage, &identity, &AuthMethod::Password(password)).expect("Failed to save wallet");
 
     // 3. Laden und Verifizieren
     let (loaded_wallet, loaded_identity) =
@@ -98,7 +99,7 @@ fn test_password_recovery_and_reset_with_data() {
         .add_voucher_instance(local_id.clone(), voucher, VoucherStatus::Active);
     assert_eq!(wallet.voucher_store.vouchers.len(), 1);
 
-    wallet.save(&mut storage, identity, initial_password).expect("Initial save failed");
+    wallet.save(&mut storage, &identity, &AuthMethod::Password(initial_password)).expect("Initial save failed");
 
     // 2. Wiederherstellung mit der Mnemonic-Phrase (Identität).
     // Erzeuge eine Identität für die Referenz (borrow) und eine zweite für die Wertübergabe (move).
@@ -150,7 +151,7 @@ fn test_load_with_missing_voucher_store() {
     let mut storage = FileStorage::new(user_storage_path);
 
     let wallet = setup_in_memory_wallet(identity);
-    wallet.save(&mut storage, identity, password).unwrap();
+    wallet.save(&mut storage, &identity, &AuthMethod::Password(password)).unwrap();
 
     // Lösche die Gutschein-Datei
     fs::remove_file(storage.user_storage_path.join("vouchers.enc")).unwrap();
@@ -176,7 +177,7 @@ fn test_load_from_corrupted_profile_file() {
     let mut storage = FileStorage::new(user_storage_path);
 
     let wallet = setup_in_memory_wallet(identity);
-    wallet.save(&mut storage, identity, password).unwrap();
+    wallet.save(&mut storage, &identity, &AuthMethod::Password(password)).unwrap();
 
     // Beschädige die Profil-Datei
     // KORREKTUR: Pfad muss auf den User-Unterordner zeigen
@@ -205,7 +206,7 @@ fn test_empty_password_handling() {
     let wallet = setup_in_memory_wallet(identity);
 
     // Speichern mit leerem Passwort sollte funktionieren
-    wallet.save(&mut storage, identity, empty_password).expect("Saving with empty password should succeed");
+    wallet.save(&mut storage, &identity, &AuthMethod::Password(empty_password)).expect("Saving with empty password should succeed");
 
     // Laden mit leerem Passwort sollte funktionieren
     let (loaded_wallet, _) = Wallet::load(&storage, &AuthMethod::Password(empty_password))
@@ -276,7 +277,7 @@ fn test_save_and_load_with_bundle_history() {
 
     // 3. Speichern
     alice_wallet
-        .save(&mut storage, alice_identity, password)
+        .save(&mut storage, &alice_identity, &AuthMethod::Password(password))
         .expect("Failed to save wallet with history");
 
     // Überprüfe, ob die neue Metadaten-Datei erstellt wurde
@@ -330,7 +331,7 @@ fn test_save_and_load_arbitrary_data() {
     // WICHTIG: Zuerst das Wallet speichern, damit die Schlüssel-Infrastruktur
     // (master_key.enc, recovery_key.enc) für die Verschlüsselung initialisiert wird.
     wallet
-        .save(&mut storage, identity, password)
+        .save(&mut storage, identity, &AuthMethod::Password(password))
         .expect("Initial wallet save failed");
 
     // 2. Erstelle Testdaten (einfach und komplex)
@@ -348,11 +349,11 @@ fn test_save_and_load_arbitrary_data() {
     // 3. Speichern der Daten
     println!("--> Saving blobs to storage...");
     storage
-        .save_arbitrary_data(&identity.user_id, password, blob_name1, &simple_data)
+        .save_arbitrary_data(&identity.user_id, &AuthMethod::Password(password), blob_name1, &simple_data)
         .expect("Saving simple blob should succeed");
 
     storage
-        .save_arbitrary_data(&identity.user_id, password, blob_name2, &complex_data_bytes)
+        .save_arbitrary_data(&identity.user_id, &AuthMethod::Password(password), blob_name2, &complex_data_bytes)
         .expect("Saving complex blob should succeed");
 
     println!("--> Blobs saved successfully.");
@@ -398,7 +399,7 @@ fn test_save_and_load_arbitrary_data() {
     // 6. Überschreiben testen
     let new_simple_data = b"this is updated data".to_vec();
     storage
-        .save_arbitrary_data(&identity.user_id, password, blob_name1, &new_simple_data)
+        .save_arbitrary_data(&identity.user_id, &AuthMethod::Password(password), blob_name1, &new_simple_data)
         .expect("Overwriting blob should succeed");
 
     let reloaded_data = storage

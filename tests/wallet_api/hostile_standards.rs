@@ -38,7 +38,7 @@ fn test_disallowed_transaction_type() {
                 nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
                 ..Default::default()
             },
-            password,
+            Some(password)
         )
         .unwrap();
     let local_id = service.get_voucher_summaries(None, None).unwrap()[0]
@@ -67,7 +67,7 @@ fn test_disallowed_transaction_type() {
         request,
         &standards_toml,
         None,
-        password,
+        Some(password)
     );
 
     // 3. ASSERT: Operation muss fehlschlagen
@@ -109,7 +109,7 @@ fn test_violation_of_max_creation_validity() {
             validity_duration: Some("P2Y".to_string()), // Länger als erlaubt
             ..Default::default()
         },
-        password,
+        Some(password)
     );
 
     // 3. ASSERT: Operation muss fehlschlagen

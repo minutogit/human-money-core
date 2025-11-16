@@ -43,11 +43,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut service_charlie = AppService::new(dir_charlie.path())?;
 
     // Erstelle Profile für alle Teilnehmer
-    service_creator.create_profile("Creator", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("creator"), password)?;
-    service_g1.create_profile("Guarantor 1", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("g1"), password)?;
-    service_g2.create_profile("Guarantor 2", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("g2"), password)?;
-    service_recipient.create_profile("Recipient", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("rcp"), password)?;
-    service_charlie.create_profile("Charlie", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("charlie"), password)?;
+    service_creator.create_profile("Creator", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("creator"), "password")?;
+    service_g1.create_profile("Guarantor 1", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("g1"), "password")?;
+    service_g2.create_profile("Guarantor 2", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("g2"), "password")?;
+    service_recipient.create_profile("Recipient", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("rcp"), "password")?;
+    service_charlie.create_profile("Charlie", &AppService::generate_mnemonic(12)?, Some("Test".into()), Some("charlie"), "password")?;
 
     let g1_id = service_g1.get_user_id()?;
     let g2_id = service_g2.get_user_id()?;
@@ -189,8 +189,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         creator_profile: complete_creator_profile,
         ..Default::default()
-    };
-    let created_voucher = service_creator.create_new_voucher(&standard_toml, "de", voucher_data, password)?;
+     };
+      service_creator.unlock_session(password, 60).unwrap();
+      let created_voucher = service_creator.create_new_voucher(&standard_toml, "de", voucher_data, None)?;
 
     let summary = service_creator.get_voucher_summaries(None, None)?.pop().unwrap();
     let local_id = summary.local_instance_id;
@@ -211,7 +212,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let response_bundle_from_g1 = service_g1.create_detached_signature_response_bundle(&created_voucher, "guarantor", true, &creator_id)?;
 
     println!("  -> Ersteller empfängt die Signatur von Bürge 1 und fügt sie an...");
-    service_creator.process_and_attach_signature(&response_bundle_from_g1, &standard_toml, password)?;
+    service_creator.process_and_attach_signature(&response_bundle_from_g1, &standard_toml, None)?;
     let details_after_g1 = service_creator.get_voucher_details(&local_id)?;
     println!("     -> Status nach 1. Signatur: {:?}", details_after_g1.status);
     assert!(matches!(details_after_g1.status, VoucherStatus::Incomplete {..}));
@@ -224,7 +225,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let response_bundle_from_g2 = service_g2.create_detached_signature_response_bundle(&created_voucher, "guarantor", true, &creator_id)?;
 
     println!("  -> Ersteller empfängt die Signatur von Bürge 2 und fügt sie an...");
-    service_creator.process_and_attach_signature(&response_bundle_from_g2, &standard_toml, password)?;
+    service_creator.process_and_attach_signature(&response_bundle_from_g2, &standard_toml, None)?;
 
     // --- 4. Aktivierung des Gutscheins ---
     println!("\n--- SCHRITT 4: Gutschein wird automatisch aktiviert ---");
@@ -249,11 +250,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.metadata.uuid.clone(), standard_toml.clone());
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: transfer_bundle, .. } = service_creator.create_transfer_bundle(request, &standards_toml, None, password)?;
+    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: transfer_bundle, .. } = service_creator.create_transfer_bundle(request, &standards_toml, None, None)?;
 
     // --- 6. Verifizierung der Kontostände ---
     println!("\n--- SCHRITT 6: Empfänger erhält das Bundle und Kontostände werden geprüft ---");
-    service_recipient.receive_bundle(&transfer_bundle, &standards_map, None, password)?;
+    service_recipient.receive_bundle(&transfer_bundle, &standards_map, None, None)?;
 
     let balance_creator = service_creator.get_total_balance_by_currency()?;
     let balance_recipient = service_recipient.get_total_balance_by_currency()?;
@@ -294,10 +295,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.metadata.uuid.clone(), standard_toml.clone());
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: transfer_bundle_to_charlie, .. } = service_recipient.create_transfer_bundle(request, &standards_toml, None, password)?;
+    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: transfer_bundle_to_charlie, .. } = service_recipient.create_transfer_bundle(request, &standards_toml, None, None)?;
 
     // Charlie empfängt das Bundle
-    service_charlie.receive_bundle(&transfer_bundle_to_charlie, &standards_map, None, password)?;
+    service_charlie.receive_bundle(&transfer_bundle_to_charlie, &standards_map, None, None)?;
 
     // Überprüfe die finalen Kontostände
     let balance_recipient_after_send = service_recipient.get_total_balance_by_currency()?;

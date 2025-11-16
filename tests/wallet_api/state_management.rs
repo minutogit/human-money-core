@@ -68,7 +68,9 @@ fn api_app_service_full_conflict_resolution_workflow() {
     let victim = &ACTORS.victim;
 
     let (mut service_reporter, profile_reporter) = test_utils::setup_service_with_profile(dir_reporter.path(), reporter, "Reporter", password);
+    service_reporter.unlock_session(password, 60).unwrap(); 
     let (mut service_victim, _) = test_utils::setup_service_with_profile(dir_victim.path(), victim, "Victim", password);
+    service_victim.unlock_session(password, 60).unwrap(); 
     let id_victim = service_victim.get_user_id().unwrap();
 
     // --- 2. Beweis im Reporter-Wallet anlegen ---
@@ -101,7 +103,7 @@ fn api_app_service_full_conflict_resolution_workflow() {
 
     // --- 5. Aktion 3 (Reporter): Beilegung importieren ---
     service_reporter
-        .import_resolution_endorsement(endorsement, password)
+        .import_resolution_endorsement(endorsement, Some(password))
         .unwrap();
 
     // --- 6. Aktion 4 (Finale Prüfung): Persistenz verifizieren ---
@@ -127,6 +129,7 @@ fn api_app_service_conflict_api_fails_when_locked() {
     // FIX: `service` muss mutable sein, da `import_resolution_endorsement` `&mut self` erfordert.
     let mut service = AppService::new(dir.path()).unwrap();
     let fake_proof_id = "proof-123";
+    let password = "dummy_password";
 
     // Act & Assert: Jeder Aufruf muss mit "Wallet is locked" fehlschlagen.
     let res_list = service.list_conflicts();
@@ -150,7 +153,7 @@ fn api_app_service_conflict_api_fails_when_locked() {
         resolution_timestamp: Utc::now().to_rfc3339(),
         notes: None,
     };
-    let res_import = service.import_resolution_endorsement(dummy_endorsement, "pwd");
+    let res_import = service.import_resolution_endorsement(dummy_endorsement, Some(password));
     assert!(res_import.is_err());
     assert!(res_import.unwrap_err().contains("Wallet is locked"));
 }
@@ -181,7 +184,9 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     let alice = &ACTORS.alice;
     let david = &ACTORS.david;
     let (mut service_alice, _) = test_utils::setup_service_with_profile(dir_alice.path(), alice, "Alice", "pwd");
+    service_alice.unlock_session("pwd", 60).unwrap(); 
     let (mut service_david, _) = test_utils::setup_service_with_profile(dir_david.path(), david, "David", "pwd");
+    service_david.unlock_session("pwd", 60).unwrap(); 
     let id_alice = service_alice.get_user_id().unwrap();
     let id_david = service_david.get_user_id().unwrap();
     let identity_alice = alice.identity.clone();
@@ -201,7 +206,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
                 creator_profile: PublicProfile { id: Some(id_alice.clone()), ..Default::default() },
                 ..Default::default()
             },
-            "pwd",
+            Some("pwd")
         )
         .unwrap();
 
@@ -253,7 +258,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
 
     // --- 4. David empfängt zuerst das spätere Bundle (Charlie) ---
     service_david
-        .receive_bundle(&bundle_charlie, &standards_map, None, "pwd")
+        .receive_bundle(&bundle_charlie, &standards_map, None, Some("pwd"))
         .unwrap();
     let summaries_before = service_david.get_voucher_summaries(None, None).unwrap();
     assert_eq!(summaries_before.len(), 1);
@@ -265,7 +270,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     dbg!(service_david.get_voucher_summaries(None, None).unwrap());
 
     service_david
-        .receive_bundle(&bundle_bob, &standards_map, None, "pwd")
+        .receive_bundle(&bundle_bob, &standards_map, None, Some("pwd"))
         .unwrap();
 
     println!("\n[Debug] Wallet-Zustand NACH dem zweiten Empfang:");
@@ -320,7 +325,9 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     let david = &ACTORS.david;
 
     let (mut service_alice, _) = test_utils::setup_service_with_profile(dir_alice.path(), alice, "Alice", "pwd");
+    service_alice.unlock_session("pwd", 60).unwrap(); 
     let (mut service_david, _) = test_utils::setup_service_with_profile(dir_david.path(), david, "David", "pwd");
+    service_david.unlock_session("pwd", 60).unwrap(); 
     let id_alice = service_alice.get_user_id().unwrap();
     let id_david = service_david.get_user_id().unwrap();
     let identity_alice = alice.identity.clone();
@@ -339,7 +346,7 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
                 creator_profile: PublicProfile { id: Some(id_alice.clone()), ..Default::default() },
                 ..Default::default()
             },
-            "pwd",
+            Some("pwd")
         )
         .unwrap();
 
@@ -383,10 +390,10 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     assert_ne!(tx_a.t_id, tx_b.t_id, "Conflicting transactions must have different t_ids");
 
     // --- 3. David empfängt beide Bundles ---
-    service_david.receive_bundle(&bundle_a, &standards_map, None, "pwd").unwrap();
+    service_david.receive_bundle(&bundle_a, &standards_map, None, Some("pwd")).unwrap();
 
     service_david
-        .receive_bundle(&bundle_b, &standards_map, None, "pwd")
+        .receive_bundle(&bundle_b, &standards_map, None, Some("pwd"))
         .unwrap();
 
     // --- 4. Assertions ---
@@ -436,9 +443,8 @@ fn api_wallet_save_and_load_fidelity() {
     // --- 2. Wallet A in komplexen Zustand versetzen ---
     {
         let (mut service_a, _) = test_utils::setup_service_with_profile(dir.path(), test_user, "Test User A", password);
+        service_a.unlock_session(password, 60).unwrap(); 
         let id_a = service_a.get_user_id().unwrap();
-
-        // Aktive Gutscheine erstellen
         service_a
             .create_new_voucher(
                 &silver_toml,
@@ -455,7 +461,7 @@ fn api_wallet_save_and_load_fidelity() {
                     },
                     ..Default::default()
                 },
-                password,
+                Some(password)
             )
             .unwrap();
 
@@ -483,13 +489,14 @@ fn api_wallet_save_and_load_fidelity() {
             silver_standard.metadata.uuid.clone(),
             silver_toml.clone()
         );
-        service_a.create_transfer_bundle(request, &standards_toml, None, password).unwrap();
+        service_a.create_transfer_bundle(request, &standards_toml, None, Some(password)).unwrap();
 
         // Bundle-Metadaten durch Empfang erzeugen
         let transfer_back_bundle = {
             let dir_bob = tempdir().unwrap();
             let bob = &ACTORS.bob;
             let (mut service_bob, _) = test_utils::setup_service_with_profile(dir_bob.path(), bob, "Bob", "pwd");
+            service_bob.unlock_session("pwd", 60).unwrap(); 
             let id_bob = service_bob.get_user_id().unwrap();
             service_bob
                 .create_new_voucher(
@@ -500,7 +507,7 @@ fn api_wallet_save_and_load_fidelity() {
                         nominal_value: ValueDefinition { amount: "1".to_string(), ..Default::default() },
                         ..Default::default()
                     },
-                    "pwd",
+                    Some("pwd")
                 )
                 .unwrap();
             let local_id = service_bob.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
@@ -521,10 +528,10 @@ fn api_wallet_save_and_load_fidelity() {
                 silver_toml.clone()
             );
 
-            let voucher_lib::wallet::CreateBundleResult { bundle_bytes, .. } = service_bob.create_transfer_bundle(request, &standards_toml, None, "pwd").unwrap();
+            let voucher_lib::wallet::CreateBundleResult { bundle_bytes, .. } = service_bob.create_transfer_bundle(request, &standards_toml, None, Some("pwd")).unwrap();
             bundle_bytes
         };
-        service_a.receive_bundle(&transfer_back_bundle, &standards_map, None, password).unwrap();
+        service_a.receive_bundle(&transfer_back_bundle, &standards_map, None, Some(password)).unwrap();
 
         // --- Schritt B: Vollständiger Transfer ---
         // Nun senden wir die verbleibenden 7 Unzen, um die Archivierungslogik zu testen.
@@ -548,8 +555,8 @@ fn api_wallet_save_and_load_fidelity() {
         standards_toml.insert( 
             silver_standard.metadata.uuid.clone(), 
             silver_toml.clone() 
-        ); 
-        service_a.create_transfer_bundle(request, &standards_toml, None, password).unwrap();
+        );
+        service_a.create_transfer_bundle(request, &standards_toml, None, Some(password)).unwrap();
     } // service_a geht out of scope, Wallet wird aus dem Speicher entfernt
 
     // --- 3. Wallet B aus demselben Verzeichnis laden ---
@@ -620,6 +627,7 @@ fn test_create_voucher_adds_exactly_one_instance() {
     let password = "test_password_123";
     let dir = tempdir().expect("Failed to create temp dir");
     let (mut app_service, _) = test_utils::setup_service_with_profile(dir.path(), test_user, "Test User", password);
+    app_service.unlock_session(password, 60).unwrap(); 
     let user_id = app_service.get_user_id().unwrap();
 
     // Assertion Zero: Sicherstellen, dass das Wallet initial leer ist.
@@ -640,8 +648,8 @@ fn test_create_voucher_adds_exactly_one_instance() {
 
     // 2. ACT: Die Ziel-Funktion ausführen
     let created_voucher = app_service
-        .create_new_voucher(&standard_toml, "de", voucher_data.clone(), password)
-        .expect("Voucher creation failed");
+        .create_new_voucher(&standard_toml, "de", voucher_data.clone(), None)
+        .expect("Voucher creation failed"); // HINWEIS: Dieser Test wird fehlschlagen, bis Modus B / unlock_session funktioniert
 
     // 3. ASSERT: Das Ergebnis und den neuen Zustand überprüfen
     let final_summaries = app_service.get_voucher_summaries(None, None).unwrap();
@@ -677,9 +685,9 @@ fn test_create_voucher_is_transactional_on_save_failure() {
     // 1. ARRANGE
     let test_user = &ACTORS.test_user;
     let correct_password = "correct_password";
-    let wrong_password = "wrong_password";
     let dir = tempdir().expect("Failed to create temp dir");
     let (mut app_service, _) = test_utils::setup_service_with_profile(dir.path(), test_user, "Test User", correct_password);
+    app_service.unlock_session(correct_password, 60).unwrap(); 
     let user_id = app_service.get_user_id().unwrap();
 
     let standard_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
@@ -692,7 +700,7 @@ fn test_create_voucher_is_transactional_on_save_failure() {
 
     // 2. ACT 1: Versuche, mit falschem Passwort zu erstellen
     let creation_result_fail = app_service
-        .create_new_voucher(&standard_toml, "de", voucher_data.clone(), wrong_password);
+        .create_new_voucher(&standard_toml, "de", voucher_data.clone(), Some("WRONG_PASSWORD"));
 
     // 3. ASSERT 1: Operation ist fehlgeschlagen und Wallet ist immer noch leer
     assert!(creation_result_fail.is_err(), "Creation with wrong password should fail");
@@ -701,7 +709,7 @@ fn test_create_voucher_is_transactional_on_save_failure() {
 
     // 4. ACT 2: Erstelle einen Gutschein mit dem korrekten Passwort
     app_service
-        .create_new_voucher(&standard_toml, "de", voucher_data.clone(), correct_password)
+        .create_new_voucher(&standard_toml, "de", voucher_data.clone(), Some(correct_password))
         .expect("Voucher creation with correct password should succeed");
 
     // 5. ASSERT 2 (FINAL): Es befindet sich nur EIN Gutschein im Wallet

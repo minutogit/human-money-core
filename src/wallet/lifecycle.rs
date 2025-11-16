@@ -114,16 +114,16 @@ impl Wallet {
         &self,
         storage: &mut S,
         identity: &UserIdentity,
-        password: &str,
+        auth: &AuthMethod,
     ) -> Result<(), StorageError> {
-        storage.save_wallet(&self.profile, &self.voucher_store, identity, password)?;
-        storage.save_bundle_metadata(&identity.user_id, password, &self.bundle_meta_store)?;
-        storage.save_known_fingerprints(&identity.user_id, password, &self.known_fingerprints)?;
-        storage.save_own_fingerprints(&identity.user_id, password, &self.own_fingerprints)?;
-        storage.save_proofs(&identity.user_id, password, &self.proof_store)?;
+        storage.save_wallet(&self.profile, &self.voucher_store, identity, auth)?;
+        storage.save_bundle_metadata(&identity.user_id, auth, &self.bundle_meta_store)?;
+        storage.save_known_fingerprints(&identity.user_id, auth, &self.known_fingerprints)?;
+        storage.save_own_fingerprints(&identity.user_id, auth, &self.own_fingerprints)?;
+        storage.save_proofs(&identity.user_id, auth, &self.proof_store)?;
         storage.save_fingerprint_metadata(
             &identity.user_id,
-            password,
+            auth,
             &self.fingerprint_metadata,
         )?;
         Ok(())

@@ -354,7 +354,7 @@ fn api_app_service_full_signature_workflow() {
             },
             ..Default::default()
         },
-        password,
+        Some(password)
     )
         .unwrap();
     let local_id = service_creator.get_voucher_summaries(None, None).unwrap()[0]
@@ -386,7 +386,7 @@ fn api_app_service_full_signature_workflow() {
         .unwrap();
 
     service_creator
-        .process_and_attach_signature(&response_bytes, &silver_standard_toml, password)
+        .process_and_attach_signature(&response_bytes, &silver_standard_toml, Some(password))
         .unwrap();
 
     let details = service_creator.get_voucher_details(&local_id).unwrap();
@@ -524,7 +524,7 @@ fn test_full_guarantor_workflow_via_app_service() {
         &minuto_standard_toml,
         "en",
         voucher_data,
-        password
+        Some(password)
     ).expect("create_new_voucher should now succeed for incomplete vouchers");
 
     let summary = service_creator.get_voucher_summaries(None, None).expect("Failed to get summaries").pop().expect("Wallet should contain one voucher");
@@ -563,7 +563,7 @@ fn test_full_guarantor_workflow_via_app_service() {
         )
         .expect("Failed to create signature response from G1");
     service_creator
-        .process_and_attach_signature(&response_bundle_1, &minuto_standard_toml, password)
+        .process_and_attach_signature(&response_bundle_1, &minuto_standard_toml, Some(password))
         .expect("Failed to attach G1's signature");
     let details_mid = service_creator.get_voucher_details(&local_id).unwrap();
     assert!(matches!(details_mid.status, VoucherStatus::Incomplete { .. }));
@@ -590,7 +590,7 @@ fn test_full_guarantor_workflow_via_app_service() {
         )
         .expect("Failed to create signature response from G2");
     service_creator
-        .process_and_attach_signature(&response_bundle_2, &minuto_standard_toml, password)
+        .process_and_attach_signature(&response_bundle_2, &minuto_standard_toml, Some(password))
         .expect("Failed to attach G2's signature");
 
     // --- 5. Assertion 3: Überprüfung des finalen `Active`-Zustands ---

@@ -68,7 +68,7 @@ mod tests {
                 ..Default::default()
             }, ..Default::default()
         };
-        let voucher = alice_service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, PASSWORD).unwrap();
+        let voucher = alice_service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, Some(PASSWORD)).unwrap();
         let local_id = alice_service.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
 
         // Führe einen Split durch ( sende 40 an Bob, behalte 60)
@@ -83,7 +83,7 @@ mod tests {
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
-        alice_service.create_transfer_bundle(request, &standards_toml, None, PASSWORD).unwrap();
+        alice_service.create_transfer_bundle(request, &standards_toml, None, Some(PASSWORD)).unwrap();
 
         let wallet_path = dir.path().join(&alice_profile.folder_name);
         alice_service.logout(); // Speichert den Zustand mit 2 Transaktionen

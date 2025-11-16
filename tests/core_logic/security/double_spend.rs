@@ -8,6 +8,7 @@
 // ===================================================================================
 
 use voucher_lib::archive::file_archive::FileVoucherArchive;
+use voucher_lib::storage::AuthMethod;
 // NEU: AppService und Storage importieren
 use voucher_lib::app_service::AppService; // KORREKTUR: Falscher Import E0432
 use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat};
@@ -248,7 +249,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         silver_toml_str, // KORREKTUR (Panic-Fix): Übergebe den TOML-Inhalt, nicht den Hash
         "en",
         voucher_data,
-        "password123"
+        Some("password123")
     ).unwrap();
 
     // Merke dir die lokale ID des Gutscheins
@@ -271,7 +272,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         request,
         &standards_map,
         None,
-        "password123"
+        Some("password123")
     );
     assert!(transfer1_result.is_ok(), "Die erste Transaktion sollte erfolgreich sein.");
 
@@ -309,7 +310,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
     let user_id = identity.user_id.clone();
     let local_id_2 = Wallet::calculate_local_instance_id(&original_voucher_state_for_attack, &user_id).unwrap();
     wallet.add_voucher_instance(local_id_2, original_voucher_state_for_attack, VoucherStatus::Active);
-    wallet.save(&mut storage, &identity, "password123").unwrap();
+    wallet.save(&mut storage, &identity, &AuthMethod::Password("password123")).unwrap();
 
     // AppService neu laden (simuliert App-Neustart nach "Restore")
     let mut app_service = AppService::new(storage_path).unwrap();
@@ -335,7 +336,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         request_2,
         &standards_map, // standards_map existiert bereits von oben
         None,
-        "password123"
+        Some("password123")
     );
 
     assert!(transfer2_result.is_err(), "Die zweite Transaktion von demselben Zustand aus muss fehlschlagen.");
