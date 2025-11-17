@@ -25,6 +25,12 @@ pub enum StorageError {
 
     #[error("An unexpected error occurred: {0}")]
     Generic(String),
+
+    #[error("Wallet-Sperre fehlgeschlagen: {0}")]
+    LockFailed(String),
+
+    #[error("Veraltete Sperre (Stale Lock) gefunden und entfernt: {0}")]
+    StaleLock(String),
 }
 
 /// Authentifizierungsmethode für den Speicherzugriff
@@ -174,7 +180,56 @@ pub trait Storage {
     /// * `name` - Der Name des zu ladenden Datenblocks.
     fn load_arbitrary_data(&self, user_id: &str, auth: &AuthMethod, name: &str) -> Result<Vec<u8>, StorageError>;
 
-    /// Überprüft, ob ein abgeleiteter Session-Key gültig ist, indem versucht wird, 
+    /// Überprüft, ob ein abgeleiteter Session-Key gültig ist, indem versucht wird,
     /// damit auf verschlüsselte Daten zuzugreifen.
     fn test_session_key(&self, session_key: &[u8; 32]) -> Result<(), StorageError>;
+
+    /// Versucht, eine exklusive, prozessweite Sperre für den Wallet-Speicher zu erlangen.
+    /// Muss die "Stale Lock"-Prüfung (z.B. PID) implementieren.
+    ///
+    /// Gibt `Ok(())` zurück, wenn die Sperre erfolgreich erlangt wurde.
+    /// Gibt `Err(StorageError::LockFailed)` zurück, wenn die Sperre aktiv von einem
+    /// *anderen lebenden* Prozess gehalten wird.
+    fn lock(&self) -> Result<(), StorageError>;
+
+    /// Gibt die exklusive Sperre wieder frei.
+    /// Diese Methode sollte nur bei einem sauberen Logout aufgerufen werden.
+    /// Für Operationen sollte der `WalletLockGuard` verwendet werden.
+    fn unlock(&self) -> Result<(), StorageError>;
+
+    /// Gibt den Pfad zur Sperrdatei zurück (für den RAII Guard).
+    fn get_lock_file_path(&self) -> &std::path::PathBuf;
+}
+
+// --- RAII Lock Guard ---
+
+/// Ein RAII-Guard, der sicherstellt, dass eine Sperre automatisch
+/// freigegeben wird, wenn der Guard aus dem Geltungsbereich (Scope) fällt.
+///
+/// Dieser Guard sollte für *transaktionale* Operationen wie `create_transfer_bundle`
+/// oder `receive_bundle` verwendet werden.
+pub struct WalletLockGuard {
+    lock_file_path: std::path::PathBuf,
+}
+
+impl WalletLockGuard {
+    /// Erstellt einen neuen Guard und versucht sofort, die Sperre zu erlangen.
+    pub fn new(storage: &dyn Storage) -> Result<Self, StorageError> {
+        storage.lock()?; // Sperre beim Erstellen erlangen
+        let lock_file_path = storage.get_lock_file_path().clone();
+        Ok(Self { lock_file_path })
+    }
+}
+
+/// Wird automatisch aufgerufen, wenn die Variable `_lock_guard` den Scope verlässt.
+impl Drop for WalletLockGuard {
+    fn drop(&mut self) {
+        use std::fs;
+        if self.lock_file_path.exists() {
+            if let Err(e) = fs::remove_file(&self.lock_file_path) {
+                // WICHTIG: In `drop` niemals paniken!
+                eprintln!("Schwerwiegender Fehler: Wallet-Sperre konnte nicht freigegeben werden: {:?}", e);
+            }
+        }
+    }
 }

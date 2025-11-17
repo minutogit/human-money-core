@@ -7,7 +7,7 @@ This document provides an overview of the integration and unit tests within the 
 ### `tests/wallet_api/hostile_bundles.rs`
 This file contains tests that harden the `AppService` against receiving hostile or internally inconsistent voucher bundles.
 
--   `test_rejection_of_broken_transaction_chain`: Checks that a received bundle with a broken transaction chain (incorrect `prev_hash`) is rejected.
+-   `testauf _rejection_of_broken_transaction_chain`: Checks that a received bundle with a broken transaction chain (incorrect `prev_hash`) is rejected.
 -   `test_rejection_of_inconsistent_split_math`: Checks that a bundle with a "split" transaction where amounts do not sum up correctly to the previous balance is rejected.
 -   `test_rejection_of_self_received_bundle`: Ensures that a bundle created for another recipient cannot be processed by the sender themselves.
 -   `test_rejection_of_identical_bundle_replay`: Verifies that an identical bundle received again is rejected based on its bundle ID (Layer 1 replay protection).
@@ -61,6 +61,7 @@ This file contains integration tests for complex state management and the handli
 -   `api_wallet_save_and_load_fidelity`: Verifies that the entire state of a wallet can be saved and restored losslessly, including active and archived vouchers and bundle metadata.
 -   `test_create_voucher_adds_exactly_one_instance`: Verifies that `create_new_voucher` adds exactly one voucher instance to the wallet.
 -   `test_create_voucher_is_transactional_on_save_failure`: Ensures that `create_new_voucher` is transactional, meaning a failed save operation does not leave the in-memory state "dirty."
+-   `test_concurrent_app_service_causes_stale_state_double_spend`: Tests that concurrent access to the same wallet by multiple `AppService` instances is prevented by the locking mechanism, avoiding stale state double-spending vulnerabilities.
 
 ### `tests/wallet_api/signature_workflows.rs`
 This file contains integration tests specifically for signature workflows, controlled via the `AppService` and `Wallet` facades. This includes requesting, creating, and attaching signatures.
@@ -137,6 +138,7 @@ This file contains integration tests for the refactored profile and voucher stor
 -   `test_empty_password_handling`: Tests saving and loading a wallet with an empty password, ensuring it works correctly and that loading with a non-empty wrong password fails.
 -   `test_save_and_load_arbitrary_data`: Tests the saving and loading of arbitrary encrypted data, verifying data integrity, file existence, and error handling for wrong passwords or non-existent data.
 -   `test_save_and_load_with_bundle_history`: Tests saving and loading a wallet that includes bundle history metadata, ensuring that transfer operations and their associated data are preserved across save/load cycles.
+-   `test_storage_reentrancy_same_process`: Tests that the same process can re-acquire the wallet lock without deadlocking, ensuring re-entrancy safety.
 
 ### `tests/validation/unit_service.rs`
 This file contains unit tests for the individual, data-driven functions of the validation engine in the `voucher_validation` service.

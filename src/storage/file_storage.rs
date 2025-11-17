@@ -12,13 +12,15 @@ use argon2::Argon2;
 use ed25519_dalek::SigningKey;
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, io::Write};
+use sysinfo::{System, Pid};
 use super::{AuthMethod, Storage, StorageError};
 
 // --- Interne Konstanten und Strukturen ---
 
 const SALT_SIZE: usize = 16;
 const KEY_SIZE: usize = 32;
+const LOCK_FILE_NAME: &str = ".wallet.lock";
 const PROFILE_FILE_NAME: &str = "profile.enc";
 const VOUCHER_STORE_FILE_NAME: &str = "vouchers.enc";
 const BUNDLE_META_FILE_NAME: &str = "bundles.meta.enc";
@@ -148,6 +150,8 @@ struct FingerprintMetadataContainer {
 pub struct FileStorage {
     /// Der Pfad zum spezifischen, anonymen Unterordner des Benutzers.
     pub user_storage_path: PathBuf,
+    /// Der Pfad zur Sperrdatei für dieses Wallet.
+    lock_file_path: PathBuf,
 }
 
 impl FileStorage {
@@ -160,8 +164,10 @@ impl FileStorage {
     /// * `user_storage_path` - Der vollständige Pfad zum Verzeichnis, in dem die
     ///   verschlüsselten Wallet-Dateien dieses Profils gespeichert sind oder werden sollen.
     pub fn new(user_storage_path: impl Into<PathBuf>) -> Self {
+        let path_buf = user_storage_path.into();
         FileStorage {
-            user_storage_path: user_storage_path.into(),
+            lock_file_path: path_buf.join(LOCK_FILE_NAME),
+            user_storage_path: path_buf,
         }
     }
 
@@ -210,12 +216,14 @@ impl Storage for FileStorage {
         &self,
         auth: &AuthMethod,
     ) -> Result<(UserProfile, VoucherStore, UserIdentity), StorageError> {
-        let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
-        let store_path = self.user_storage_path.join(VOUCHER_STORE_FILE_NAME);
-
-        if !profile_path.exists() {
+        // Stelle sicher, dass der Ordner existiert, bevor wir lesen.
+        // Das Erstellen ist Aufgabe von `save_wallet` oder `create_profile`.
+        if !self.user_storage_path.exists() {
             return Err(StorageError::NotFound);
         }
+
+        let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
+        let store_path = self.user_storage_path.join(VOUCHER_STORE_FILE_NAME);
 
         let profile_container_bytes = fs::read(profile_path)?;
         let profile_container: ProfileStorageContainer =
@@ -749,6 +757,66 @@ impl Storage for FileStorage {
         .map_err(|_| StorageError::AuthenticationFailed)?;
         
         Ok(())
+    }
+
+    // --- Implementierung der Sperrlogik ---
+
+    fn lock(&self) -> Result<(), StorageError> {
+        // Stelle sicher, dass das Verzeichnis existiert.
+        fs::create_dir_all(&self.user_storage_path)?;
+
+        let current_pid = std::process::id();
+
+        if self.lock_file_path.exists() {
+            let pid_str = fs::read_to_string(&self.lock_file_path)
+                .map_err(|e| StorageError::Generic(format!("Konnte Lock-Datei nicht lesen: {}", e)))?;
+
+            let pid_val = pid_str.trim().parse::<u32>().map_err(|_| {
+                StorageError::Generic(format!("Ungültige PID in Lock-Datei: {}", pid_str))
+            })?;
+
+            // --- RE-ENTRANCY CHECK ---
+            // Wenn die PID in der Datei UNSERE ist, haben wir den Lock schon. Alles gut.
+            if pid_val == current_pid {
+                return Ok(());
+            }
+
+            // Prüfe, ob der Prozess noch läuft
+            let mut s = System::new();
+            s.refresh_processes();
+
+            if s.process(Pid::from_u32(pid_val)).is_some() {
+                // Prozess läuft noch -> Fehler!
+                return Err(StorageError::LockFailed(format!(
+                    "Wallet wird bereits von einem anderen Prozess (PID: {}) verwendet.",
+                    pid_val // FIX: Hier fehlte das Argument
+                )));
+            } else {
+                // Prozess tot -> Stale Lock
+                eprintln!("Veraltete Sperre (Stale Lock) von PID {} gefunden und entfernt.", pid_val); // FIX: Variable pid -> pid_val
+            }
+        }
+
+        // Sperre erlangen: Eigene PID in die Lock-Datei schreiben.
+        let mut file = fs::File::create(&self.lock_file_path)?;
+        file.write_all(current_pid.to_string().as_bytes())?;
+
+        Ok(())
+    }
+
+    fn unlock(&self) -> Result<(), StorageError> {
+        if self.lock_file_path.exists() {
+            // Wir sollten prüfen, ob WIR der Besitzer sind, aber für RAII
+            // gehen wir davon aus, dass `unlock` nur aufgerufen wird, wenn `lock`
+            // erfolgreich war. Ein einfaches Löschen ist hier ausreichend.
+            fs::remove_file(&self.lock_file_path)?;
+        }
+        // Wenn die Datei nicht existiert, ist das auch "unlocked".
+        Ok(())
+    }
+
+    fn get_lock_file_path(&self) -> &std::path::PathBuf {
+        &self.lock_file_path
     }
 }
 

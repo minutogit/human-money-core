@@ -110,6 +110,9 @@ impl AppService {
             .save(&mut storage, &identity, &AuthMethod::Password(password))
             .map_err(|e| format!("Failed to save new wallet: {}", e))?;
 
+        // Sperre erlangen
+        storage.lock().map_err(|e| format!("Failed to lock wallet: {}", e))?;
+
         // Füge das neue Profil zur Indexdatei hinzu
         profiles.push(ProfileInfo {
             profile_name: profile_name.to_string(),
@@ -174,6 +177,9 @@ impl AppService {
                   .map_err(|e| format!("Failed to save wallet after cleanup: {}", e))?;
         }
 
+        // Sperre erlangen
+        storage.lock().map_err(|e| format!("Failed to lock wallet: {}", e))?;
+
         self.state = AppState::Unlocked {
             storage,
             wallet,
@@ -222,6 +228,9 @@ impl AppService {
         Wallet::reset_password(&mut storage, &identity, new_password)
             .map_err(|e| format!("Failed to set new password: {}", e))?;
 
+        // Sperre erlangen
+        storage.lock().map_err(|e| format!("Failed to lock wallet: {}", e))?;
+
         self.state = AppState::Unlocked { 
             storage, 
             wallet, 
@@ -235,6 +244,9 @@ impl AppService {
     ///
     /// Setzt den Zustand zurück auf `Locked`. Diese Operation kann nicht fehlschlagen.
     pub fn logout(&mut self) {
+        if let AppState::Unlocked { storage, .. } = &self.state {
+            let _ = storage.unlock(); // Ignoriere Fehler beim Unlock
+        }
         self.state = AppState::Locked;
     }
 

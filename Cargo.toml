@@ -36,6 +36,7 @@ clap = { version = "4.5", features = ["derive"] }
 regex = "1.10.4"
 uuid = { version = "1.8.0", features = ["v4", "serde"] }
 lazy_static = "1.4.0"
+sysinfo = "0.30"
 
 [lib]
 name = "voucher_lib"

@@ -409,3 +409,49 @@ fn test_save_and_load_arbitrary_data() {
     assert_eq!(new_simple_data, reloaded_data);
     assert_ne!(simple_data, reloaded_data);
 }
+
+/// Testet den "Re-entrancy"-Schutz (Wiedereintrittsschutz).
+/// Szenario: Ein Prozess (PID X) hält bereits eine Sperre (simuliert durch manuelles Erstellen der .lock Datei).
+/// Derselbe Prozess versucht über eine zweite Storage-Instanz erneut zu schreiben.
+/// Erwartung: Der Lock-Mechanismus erkennt, dass die PID in der Datei die eigene ist, und erlaubt den Zugriff.
+#[test]
+fn test_storage_reentrancy_same_process() {
+    // 1. Setup
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+    let password = "reentrancy_check";
+    let identity = &ACTORS.alice;
+    
+    // Pfad-Berechnung analog zu anderen Tests
+    let folder_name = {
+        let secret_string = format!("{}{}{}", &identity.mnemonic, identity.passphrase.unwrap_or(""), identity.prefix.unwrap_or(""));
+        crypto_utils::get_hash(secret_string.as_bytes())
+    };
+    let user_storage_path = temp_dir.path().join(folder_name);
+    
+    // Instanz 1: Initialisieren, um Keys anzulegen (damit save_arbitrary_data später nicht an Auth scheitert)
+    let mut storage1 = FileStorage::new(user_storage_path.clone());
+    let wallet = setup_in_memory_wallet(identity);
+    wallet.save(&mut storage1, identity, &AuthMethod::Password(password)).expect("Initial setup save failed");
+
+    // 2. SIMULATION: Wir injizieren manuell eine Lock-Datei mit UNSERER aktuellen PID.
+    // Das simuliert, dass wir (oder ein anderer Thread in diesem Prozess) den Lock halten.
+    let lock_path = user_storage_path.join(".wallet.lock");
+    let current_pid = std::process::id();
+    fs::write(&lock_path, current_pid.to_string()).expect("Failed to inject fake lock file");
+
+    // 3. Instanz 2: Zugriff auf denselben Pfad
+    let mut storage2 = FileStorage::new(user_storage_path);
+
+    // 4. ACT: Versuch, Daten zu speichern.
+    // Dies ruft intern lock() auf. Wenn der Re-entrancy-Fix fehlt, würde er die Lock-Datei sehen,
+    // die PID lesen und einen LockFailed werfen, weil er "denkt", er sei blockiert.
+    let res = storage2.save_arbitrary_data(
+        &identity.user_id, 
+        &AuthMethod::Password(password), 
+        "reentrancy_blob", 
+        b"data"
+    );
+
+    // 5. ASSERT
+    assert!(res.is_ok(), "Re-entrancy Check failed! Prozess hat sich selbst ausgesperrt. Error: {:?}", res.err());
+}

@@ -467,6 +467,10 @@ Zwei Modi der Operation:
 - **Modus A (Immer fragen):** Übergabe von `Some(password)` verwendet das Passwort direkt für diese einzelne Operation. Alle bestehenden Tests wurden auf diesen Modus aktualisiert.
 - **Modus B (Session):** Ein Benutzer kann einmal `AppService::unlock_session(password, duration)` aufrufen. Nachfolgende Aufrufe von Operationen mit `password: None` verwenden einen zwischengespeicherten, zeitlich begrenzten Session-Schlüssel.
 
+#### Thread-Sicherheit und Locking
+
+Das `AppService` integriert einen **pessimistischen Locking-Mechanismus** zur Verhinderung von "stale state" Double-Spending. Alle zustandsändernden Operationen (`create_new_voucher`, `create_transfer_bundle`, `receive_bundle`, `process_and_attach_signature`, `import_resolution_endorsement`, `save_encrypted_data`, `load_encrypted_data`) verwenden einen `WalletLockGuard` (RAII), der automatisch eine exklusive Sperre auf dem Wallet-Verzeichnis erlangt und freigibt. Dies verhindert, dass gleichzeitige Prozesse (z.B. mehrere Instanzen einer App) dasselbe Wallet modifizieren und so inkonsistente Zustände erzeugen.
+
 Implementierungsdetails:
 - Fügt `SessionCache` zum `AppState::Unlocked`-Zustand hinzu, um den abgeleiteten Schlüssel zu halten.
 - Einführung eines `AuthMethod`-Enums (`Password` | `SessionKey`) auf der `Storage`-Trait-Ebene.
@@ -548,7 +552,7 @@ Das `wallet`-Modul wurde umfassend refaktorisiert, um die Komplexität zu reduzi
 
 Definiert die Abstraktion für die persistente Speicherung und stellt eine Standardimplementierung für das Dateisystem bereit.
 
-- `pub enum StorageError`: Ein generischer Fehler-Typ für alle Speicheroperationen (z.B. `AuthenticationFailed`, `NotFound`, `InvalidFormat`, `Io`, `Generic`).
+- `pub enum StorageError`: Ein generischer Fehler-Typ für alle Speicheroperationen (z.B. `AuthenticationFailed`, `NotFound`, `InvalidFormat`, `Io`, `Generic`, `LockFailed`).
 - `pub enum AuthMethod`: Definiert die Authentifizierungsmethode für den Zugriff auf den Speicher (z.B. `Password`, `Mnemonic`, `RecoveryIdentity`, `SessionKey`).
 - `pub trait Storage`
   - `load_wallet(...)`: Lädt und entschlüsselt das Kern-Wallet (Profil und VoucherStore).
@@ -567,12 +571,17 @@ Definiert die Abstraktion für die persistente Speicherung und stellt eine Stand
   - `save_fingerprint_metadata(...)`: Speichert den kanonischen Speicher für Fingerprint-Metadaten.
   - `save_arbitrary_data(...)`: Speichert einen beliebigen, benannten Datenblock verschlüsselt.
   - `load_arbitrary_data(...)`: Lädt einen beliebigen, benannten und verschlüsselten Datenblock.
+  - `lock()`: Erlangt eine exklusive Sperre für das Wallet-Verzeichnis, um gleichzeitige Modifikationen zu verhindern.
+  - `unlock()`: Gibt die exklusive Sperre frei.
+  - `get_lock_file_path()`: Gibt den Pfad zur Sperrdatei zurück.
+- `pub struct WalletLockGuard`: Ein RAII-Guard, der sicherstellt, dass eine Sperre automatisch freigegeben wird, wenn der Guard aus dem Geltungsbereich fällt. Wird für transaktionale Operationen wie `create_transfer_bundle` oder `receive_bundle` verwendet.
 - `pub struct FileStorage`
   - `new(...)`: Erstellt eine neue `FileStorage`-Instanz für ein spezifisches Benutzerverzeichnis.
   - Implementiert den `Storage`-Trait.
   - Speichert die Daten jedes Profils in einem eigenen **anonymen Unterverzeichnis**, um die Privatsphäre zu erhöhen.
   - Implementiert die "Zwei-Schloss"-Mechanik mit Key-Wrapping für den Passwort-Zugriff und die Mnemonic-Wiederherstellung.
   - Bietet eine Funktion (`reset_password`) zum Zurücksetzen des Passworts, wenn der Benutzer sein Passwort vergessen hat.
+  - Implementiert ein **pessimistisches Locking-Mechanismus** mit einer `.wallet.lock`-Datei, die die PID des besitzenden Prozesses enthält. Verwendet `sysinfo`, um veraltete Sperren von abgestürzten Prozessen zu erkennen und zu entfernen. Beinhaltet einen Re-entrancy-Check, um zu verhindern, dass derselbe Prozess sich selbst blockiert.
 
 ### `src/archive` Modul (`mod.rs`, `file_archive.rs`)
 

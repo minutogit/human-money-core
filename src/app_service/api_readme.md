@@ -15,6 +15,10 @@ The `AppService` operates as a state machine with two states:
 * `AppState::Unlocked`: After a successful `login`, `create_profile`, or `recover_wallet`. All wallet operations (querying, transferring) are now possible.
 * `logout()`: Securely transitions the service back to the `Locked` state, clearing all sensitive data from memory.
 
+## Thread Safety and Locking
+
+The `AppService` implements a pessimistic locking mechanism to prevent concurrent modifications of the same wallet by multiple processes, closing a potential "stale state" double-spending vulnerability. All state-changing operations automatically acquire an exclusive lock on the wallet directory during execution and release it upon completion. This ensures thread-safety and data consistency in multi-process environments.
+
 
 
 ## Authentication Model

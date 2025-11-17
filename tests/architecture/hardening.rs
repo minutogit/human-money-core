@@ -19,7 +19,13 @@ mod tests {
         // GIVEN: Ein Wallet mit einem abgelaufenen Fingerprint, der in beiden Stores vorhanden ist.
         let dir = tempdir().unwrap();
         let (mut service, profile) =
-            test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", PASSWORD);
+            test_utils::setup_service_with_profile(dir.path(), &ACTORS.bob, "HardeningTest1", PASSWORD);
+        // Clean up any existing lock file
+        let wallet_path = dir.path().join(&profile.folder_name);
+        let lock_file = wallet_path.join(".wallet.lock");
+        if lock_file.exists() {
+            std::fs::remove_file(&lock_file).unwrap();
+        }
         service.login(&profile.folder_name, PASSWORD, false).unwrap();
 
         let wallet = service.get_unlocked_mut_for_test().0;
@@ -48,6 +54,8 @@ mod tests {
         let final_wallet = service.get_unlocked_mut_for_test().0;
         assert!(!final_wallet.known_fingerprints.local_history.contains_key(&key), "Fingerprint should be removed from history");
         assert!(!final_wallet.fingerprint_metadata.contains_key(&key), "Metadata should be removed simultaneously");
+
+        service.logout();
     }
 
     #[test]
@@ -55,7 +63,13 @@ mod tests {
         // GIVEN: Ein Wallet mit einem Gutschein, der geteilt (split) wurde.
         let dir = tempdir().unwrap();
         let (mut alice_service, alice_profile) =
-            test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", PASSWORD);
+            test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "RecoveryTest3", PASSWORD);
+        // Clean up any existing lock file
+        let wallet_path = dir.path().join(&alice_profile.folder_name);
+        let lock_file = wallet_path.join(".wallet.lock");
+        if lock_file.exists() {
+            std::fs::remove_file(&lock_file).unwrap();
+        }
         alice_service.login(&alice_profile.folder_name, PASSWORD, false).unwrap();
 
         // Erstelle einen Gutschein mit 100 Einheiten
@@ -72,7 +86,16 @@ mod tests {
         let voucher = alice_service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, Some(PASSWORD)).unwrap();
         let local_id = alice_service.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
 
+        let wallet_path = dir.path().join(&alice_profile.folder_name);
+        alice_service.logout(); // Speichert den Zustand
+        // Manually remove lock file
+        let lock_file = wallet_path.join(".wallet.lock");
+        if lock_file.exists() {
+            std::fs::remove_file(&lock_file).unwrap();
+        }
+
         // Führe einen Split durch ( sende 40 an Bob, behalte 60)
+        alice_service.login(&alice_profile.folder_name, PASSWORD, false).unwrap();
         let request = voucher_lib::wallet::MultiTransferRequest {
             recipient_id: ACTORS.bob.user_id.clone(),
             sources: vec![voucher_lib::wallet::SourceTransfer {
@@ -86,8 +109,11 @@ mod tests {
         standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
         alice_service.create_transfer_bundle(request, &standards_toml, None, Some(PASSWORD)).unwrap();
 
-        let wallet_path = dir.path().join(&alice_profile.folder_name);
         alice_service.logout(); // Speichert den Zustand mit 2 Transaktionen
+        // Manually remove lock file
+        if lock_file.exists() {
+            std::fs::remove_file(&lock_file).unwrap();
+        }
 
         // WHEN: Die Metadaten werden gelöscht und das Wallet wiederhergestellt.
         let metadata_path = wallet_path.join("fingerprint_metadata.enc");
@@ -126,7 +152,13 @@ mod tests {
         // GIVEN: Ein brandneues, leeres Wallet.
         let dir = tempdir().unwrap();
         let (mut service, profile) =
-            test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Empty Wallet User", PASSWORD);
+            test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "EmptyWalletTest", PASSWORD);
+        // Clean up any existing lock file
+        let wallet_path = dir.path().join(&profile.folder_name);
+        let lock_file = wallet_path.join(".wallet.lock");
+        if lock_file.exists() {
+            std::fs::remove_file(&lock_file).unwrap();
+        }
         service.login(&profile.folder_name, PASSWORD, false).unwrap();
 
         assert!(service.get_unlocked_mut_for_test().0.voucher_store.vouchers.is_empty(), "Pre-condition: Wallet must be empty");
@@ -145,5 +177,7 @@ mod tests {
         let final_wallet = service.get_unlocked_mut_for_test().0;
         assert!(final_wallet.fingerprint_metadata.is_empty());
         assert!(final_wallet.own_fingerprints.history.is_empty());
+
+        service.logout();
     }
 }
