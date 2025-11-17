@@ -1,4 +1,5 @@
-//! # tests/architecture/resilience_and_gossip.rs
+// tests/architecture/resilience_and_gossip.rs
+// cargo test --test architecture_tests
 //!
 //! Testet die Kernfunktionen der neuen Architektur:
 //! - Resilienz: Speicherbereinigung (Cleanup) und Wiederherstellung (Recovery).

@@ -1,4 +1,5 @@
-//! tests/services/utils.rs
+// tests/services/utils.rs
+// cargo test --test services_tests
 //!
 //! Bündelt Tests für verschiedene Hilfsfunktionen und Low-Level-Services,
 //! wie Datumsberechnungen und die Generierung von lokalen Instanz-IDs.

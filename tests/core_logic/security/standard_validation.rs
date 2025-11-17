@@ -1,4 +1,5 @@
 // tests/core_logic/security/standard_validation.rs
+// cargo test --test core_logic_tests
 
 //! Tests für die Einhaltung und Umgehung der im Standard definierten Validierungsregeln.
 

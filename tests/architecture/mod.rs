@@ -1,4 +1,5 @@
-//! # tests/architecture/mod.rs
+// tests/architecture/mod.rs
+// cargo test --test architecture_tests
 //!
 //! Deklariert die einzelnen Test-Dateien innerhalb des `architecture`-Moduls.
 

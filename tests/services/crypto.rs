@@ -1,4 +1,5 @@
-//! tests/services/crypto.rs
+// tests/services/crypto.rs
+// cargo test --test services_tests
 //!
 //! Bündelt alle kryptographischen Tests, inklusive der Logik für
 //! den Secure Container und allgemeine Krypto-Hilfsfunktionen.

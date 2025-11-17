@@ -258,128 +258,140 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
 ```
 ├── Cargo.lock
 ├── Cargo.toml
+├── docs
+│   └── de
+│       ├── konliktmanagement.md
+│       ├── standard-konzepte.md
+│       └── zustands-management.md
+├── examples
+│   ├── playground_crypto_utils.rs
+│   ├── playground_utils.rs
+│   ├── playground_voucher_lifecycle.rs
+│   └── playground_wallet.rs
 ├── README.md
 ├── sign_standards.sh
 ├── sign_test_standards.sh
 ├── src
-│   ├── app_service
-│   │   ├── app_queries.rs
-│   │   ├── app_signature_handler.rs
-│   │   ├── command_handler.rs
-│   │   ├── conflict_handler.rs
-│   │   ├── data_encryption.rs
-│   │   ├── lifecycle.rs
-│   │   └── mod.rs
-│   ├── archive
-│   │   ├── file_archive.rs
-│   │   └── mod.rs
-│   ├── bin
-│   │   ├── validate-standard.rs
-│   │   └── voucher-cli.rs
-│   ├── error.rs
-│   ├── lib.rs
-│   ├── main.rs
-│   ├── models
-│   │   ├── conflict.rs
-│   │   ├── mod.rs
-│   │   ├── profile.rs
-│   │   ├── readme_de.md
-│   │   ├── secure_container.rs
-│   │   ├── signature.rs
-│   │   ├── voucher.rs
-│   │   └── voucher_standard_definition.rs
-│   ├── services
-│   │   ├── bundle_processor.rs
-│   │   ├── conflict_manager.rs
-│   │   ├── crypto_utils.rs
-│   │   ├── decimal_utils.rs
-│   │   ├── mod.rs
-│   │   ├── secure_container_manager.rs
-│   │   ├── signature_manager.rs
-│   │   ├── standard_manager.rs
-│   │   ├── utils.rs
-│   │   ├── voucher_manager.rs
-│   │   └── voucher_validation.rs
-│   ├── storage
-│   │   ├── file_storage.rs
-│   │   └── mod.rs
-│   ├── test_utils.rs
-│   └── wallet
-│       ├── conflict_handler.rs
-│       ├── instance.rs
-│       ├── lifecycle.rs
-│       ├── maintenance.rs
-│       ├── mod.rs
-│       ├── queries.rs
-│       ├── signature_handler.rs
-│       ├── tests.rs
-│       ├── transaction_handler.rs
-│       └── types.rs
-├── test_plan.txt
+│   ├── app_service
+│   │   ├── api_readme.md
+│   │   ├── app_queries.rs
+│   │   ├── app_signature_handler.rs
+│   │   ├── command_handler.rs
+│   │   ├── conflict_handler.rs
+│   │   ├── data_encryption.rs
+│   │   ├── lifecycle.rs
+│   │   └── mod.rs
+│   ├── archive
+│   │   ├── file_archive.rs
+│   │   └── mod.rs
+│   ├── bin
+│   │   └── voucher-cli.rs
+│   ├── error.rs
+│   ├── lib.rs
+│   ├── main.rs
+│   ├── models
+│   │   ├── conflict.rs
+│   │   ├── mod.rs
+│   │   ├── profile.rs
+│   │   ├── readme_de.md
+│   │   ├── secure_container.rs
+│   │   ├── signature.rs
+│   │   ├── voucher.rs
+│   │   └── voucher_standard_definition.rs
+│   ├── services
+│   │   ├── bundle_processor.rs
+│   │   ├── conflict_manager.rs
+│   │   ├── crypto_utils.rs
+│   │   ├── decimal_utils.rs
+│   │   ├── mod.rs
+│   │   ├── secure_container_manager.rs
+│   │   ├── signature_manager.rs
+│   │   ├── standard_manager.rs
+│   │   ├── utils.rs
+│   │   ├── voucher_manager.rs
+│   │   └── voucher_validation.rs
+│   ├── storage
+│   │   ├── file_storage.rs
+│   │   └── mod.rs
+│   ├── test_utils.rs
+│   └── wallet
+│       ├── conflict_handler.rs
+│       ├── instance.rs
+│       ├── lifecycle.rs
+│       ├── maintenance.rs
+│       ├── mod.rs
+│       ├── queries.rs
+│       ├── signature_handler.rs
+│       ├── tests.rs
+│       ├── transaction_handler.rs
+│       └── types.rs
 ├── tests
-│   ├── architecture
-│   │   ├── hardening.rs
-│   │   ├── mod.rs
-│   │   └── resilience_and_gossip.rs
-│   ├── architecture_tests.rs
-│   ├── core_logic
-│   │   ├── lifecycle.rs
-│   │   ├── math.rs
-│   │   ├── mod.rs
-│   │   └── security
-│   │   ├── double_spend.rs
-│   │   ├── mod.rs
-│   │   ├── standard_validation.rs
-│   │   ├── state_and_collaboration.rs
-│   │   └── vulnerabilities.rs
-│   ├── core_logic_tests.rs
-│   ├── persistence
-│   │   ├── archive.rs
-│   │   ├── file_storage.rs
-│   │   └── mod.rs
-│   ├── persistence_tests.rs
-│   ├── services
-│   │   ├── crypto.rs
-│   │   ├── mod.rs
-│   │   └── utils.rs
-│   ├── services_tests.rs
-│   ├── test_data
-│   │   └── standards
-│   │   ├── standard_behavior_rules.toml
-│   │   ├── standard_conflicting_rules.toml
-│   │   ├── standard_content_rules.toml
-│   │   ├── standard_field_group_rules.toml
-│   │   ├── standard_no_split.toml
-│   │   ├── standard_path_not_found.toml
-│   │   ├── standard_required_signatures.toml
-│   │   ├── standard_strict_counts.toml
-│   │   └── standard_strict_sig_description.toml
-│   ├── validation
-│   │   ├── business_rules.rs
-│   │   ├── forward_compatibility.rs
-│   │   ├── mod.rs
-│   │   ├── standard_definition.rs
-│   │   └── unit_service.rs
-│   ├── validation_tests.rs
-│   ├── wallet_api
-│   │   ├── general_workflows.rs
-│   │   ├── hostile_bundles.rs
-│   │   ├── hostile_standards.rs
-│   │   ├── lifecycle_and_data.rs
-│   │   ├── mod.rs
-│   │   ├── signature_workflows.rs
-│   │   ├── state_management.rs
-│   │   └── transactionality.rs
-│   └── wallet_api_tests.rs
+│   ├── architecture
+│   │   ├── hardening.rs
+│   │   ├── mod.rs
+│   │   └── resilience_and_gossip.rs
+│   ├── architecture_tests.rs
+│   ├── core_logic
+│   │   ├── lifecycle.rs
+│   │   ├── math.rs
+│   │   ├── mod.rs
+│   │   └── security
+│   │       ├── double_spend.rs
+│   │       ├── mod.rs
+│   │       ├── standard_validation.rs
+│   │       ├── state_and_collaboration.rs
+│   │       └── vulnerabilities.rs
+│   ├── core_logic_tests.rs
+│   ├── persistence
+│   │   ├── archive.rs
+│   │   ├── file_storage.rs
+│   │   └── mod.rs
+│   ├── persistence_tests.rs
+│   ├── README.md
+│   ├── services
+│   │   ├── crypto.rs
+│   │   ├── mod.rs
+│   │   └── utils.rs
+│   ├── services_tests.rs
+│   ├── test_data
+│   │   └── standards
+│   │       ├── standard_behavior_rules.toml
+│   │       ├── standard_conflicting_rules.toml
+│   │       ├── standard_content_rules.toml
+│   │       ├── standard_field_group_rules.toml
+│   │       ├── standard_no_split.toml
+│   │       ├── standard_path_not_found.toml
+│   │       ├── standard_required_signatures.toml
+│   │       ├── standard_strict_counts.toml
+│   │       └── standard_strict_sig_description.toml
+│   ├── validation
+│   │   ├── business_rules.rs
+│   │   ├── forward_compatibility.rs
+│   │   ├── mod.rs
+│   │   ├── standard_definition.rs
+│   │   └── unit_service.rs
+│   ├── validation_tests.rs
+│   ├── wallet_api
+│   │   ├── general_workflows.rs
+│   │   ├── hostile_bundles.rs
+│   │   ├── hostile_standards.rs
+│   │   ├── lifecycle_and_data.rs
+│   │   ├── mod.rs
+│   │   ├── signature_workflows.rs
+│   │   ├── state_management.rs
+│   │   └── transactionality.rs
+│   └── wallet_api_tests.rs
 ├── update-docs.sh
 ├── validate_standards.sh
 └── voucher_standards
     ├── minuto_v1
-    │   └── standard.toml
+    │   └── standard.toml
     ├── readme_de.md
     ├── silver_v1
-    │   └── standard.toml
+    │   └── standard.toml
     └── standard_template.toml
+
+24 directories, 110 files
 ```
 
 ## 7\. Implementierte Kernfunktionen
@@ -402,11 +414,11 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
   - Generiert eine neue BIP-39 Mnemonic-Phrase.
 - `pub fn validate_mnemonic(mnemonic: &str) -> Result<(), String>`
   - Validiert eine vom Benutzer eingegebene BIP-39 Mnemonic-Phrase.
-- `pub fn create_profile(&mut self, profile_name: &str, mnemonic: &str, passphrase: Option<&str>, user_prefix: Option<&str>, password: &str) -> Result<(), String>`
+- `pub fn create_profile(&mut self, profile_name: &str, mnemonic: &str, passphrase: Option<&str>, user_prefix: Option<&str>, password: Option<&str>) -> Result<(), String>`
   - Erstellt ein komplett neues Wallet und Profil, speichert es und setzt den Service in den `Unlocked`-Zustand. Fügt einen Eintrag zur zentralen `profiles.json` hinzu.
-- `pub fn login(&mut self, folder_name: &str, password: &str, cleanup_on_login: bool) -> Result<(), String>`
+- `pub fn login(&mut self, folder_name: &str, password: Option<&str>, cleanup_on_login: bool) -> Result<(), String>`
   - Entsperrt ein existierendes Wallet. Benötigt die Geheimnisse, um den Speicherort zu finden. Bietet eine Option, beim Login eine Speicherbereinigung durchzuführen.
-- `pub fn recover_wallet_and_set_new_password(&mut self, folder_name: &str, mnemonic: &str, passphrase: Option<&str>, new_password: &str) -> Result<(), String>`
+- `pub fn recover_wallet_and_set_new_password(&mut self, folder_name: &str, mnemonic: &str, passphrase: Option<&str>, new_password: Option<&str>) -> Result<(), String>`
   - Stellt ein Wallet wieder her und setzt ein neues Passwort. Benötigt ebenfalls die Geheimnisse (`mnemonic`, `passphrase`, `prefix`), um den Speicherort zu finden.
 - `pub fn logout(&mut self)`
   - Sperrt das Wallet und entfernt sensible Daten aus dem Speicher.
@@ -418,24 +430,24 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
   - Ruft eine detaillierte Ansicht für einen einzelnen Gutschein ab.
 - `pub fn get_user_id(&self) -> Result<String, String>`
   - Gibt die User-ID des Wallet-Inhabers zurück.
-- `pub fn create_new_voucher(&mut self, standard_toml_content: &str, lang_preference: &str, data: NewVoucherData, password: &str) -> Result<Voucher, String>`
+- `pub fn create_new_voucher(&mut self, standard_toml_content: &str, lang_preference: &str, data: NewVoucherData, password: Option<&str>) -> Result<Voucher, String>`
   - Erstellt einen brandneuen Gutschein. Wenn der Gutschein aufgrund fehlender erforderlicher Signaturen (z.B. Bürgen) zunächst nicht vollständig gültig ist, wird er mit dem Status `VoucherStatus::Incomplete` erstellt, anstatt einen fatalen Fehler auszulösen. Der Gutschein wird trotzdem zum Wallet hinzugefügt und der Zustand gespeichert.
-- `pub fn create_transfer_bundle(&mut self, request: MultiTransferRequest, standard_definitions_toml: &HashMap<String, String>, archive: Option<&dyn VoucherArchive>, password: &str) -> Result<CreateBundleResult, String>`
+- `pub fn create_transfer_bundle(&mut self, request: MultiTransferRequest, standard_definitions_toml: &HashMap<String, String>, archive: Option<&dyn VoucherArchive>, password: Option<&str>) -> Result<CreateBundleResult, String>`
   - Erstellt eine(n oder mehrere) Transaktion(en) für einen oder mehrere Quell-Gutscheine, verpackt sie in ein `SecureContainer`-Bundle und speichert den neuen Wallet-Zustand. Akzeptiert eine `MultiTransferRequest`-Struktur, die eine Liste von Quell-Gutscheinen und Beträgen enthält. Gibt ein `CreateBundleResult` zurück, das detaillierte Informationen über die involvierten Quell-Gutscheine enthält.
   - Implementiert eine **Selbstheilungsfunktion**: Wenn ein interner Inkonsistenzfehler erkannt wird (z.B. ein 'Active'-Gutschein, der bereits versendet wurde), wird der inkonsistente Gutschein automatisch in den Quarantänezustand (`Quarantined`) verschoben und der Wallet-Zustand gespeichert, um zukünftige Verwendung des fehlerhaften Gutscheins zu verhindern.
-- `pub fn receive_bundle(&mut self, bundle_data: &[u8], standard_definitions_toml: &HashMap<String, String>, archive: Option<&dyn VoucherArchive>, password: &str) -> Result<ProcessBundleResult, String>`
+- `pub fn receive_bundle(&mut self, bundle_data: &[u8], standard_definitions_toml: &HashMap<String, String>, archive: Option<&dyn VoucherArchive>, password: Option<&str>) -> Result<ProcessBundleResult, String>`
   - Verarbeitet ein empfangenes Transaktions-Bundle, validiert die enthaltenen Gutscheine gegen die bereitgestellten Standard-Definitionen und speichert den neuen Wallet-Zustand. Gibt ein `ProcessBundleResult` zurück, das auch detaillierte Informationen über die involvierten Gutscheine und Transfer-Zusammenfassungen enthält.
 - `pub fn create_signing_request_bundle(local_instance_id: &str, recipient_id: &str) -> Result<Vec<u8>, String>`
   - Erstellt ein Bundle, um einen Gutschein zur Unterzeichnung an einen Bürgen zu senden.
 - `pub fn create_detached_signature_response_bundle(&self, voucher_to_sign: &Voucher, role: &str, include_details: bool, original_sender_id: &str) -> Result<Vec<u8>, String>`
   - Erstellt eine losgelöste Signatur als Antwort auf eine Signaturanfrage. Die Funktion akzeptiert nun explizit die `role` (z.B. "guarantor", "notary"), und ein Flag `include_details`, das bestimmt, ob die öffentlichen Profildaten des Unterzeichners in die Signatur eingebettet werden sollen.
-- `pub fn process_and_attach_signature(&mut self, container_bytes: &[u8], standard_toml_content: &str, password: &str) -> Result<(), String>`
+- `pub fn process_and_attach_signature(&mut self, container_bytes: &[u8], standard_toml_content: &str, password: Option<&str>) -> Result<(), String>`
   - Verarbeitet eine empfangene losgelöste Signatur, validiert den Gutschein neu gegen den Standard, fügt die Signatur hinzu und speichert den Zustand.
-- `pub fn save_encrypted_data(name: &str, data: &[u8], password: &str) -> Result<(), String>`
+- `pub fn save_encrypted_data(name: &str, data: &[u8], password: Option<&str>) -> Result<(), String>`
   - Speichert einen beliebigen Byte-Slice verschlüsselt auf der Festplatte.
 - `pub fn run_storage_cleanup(&mut self) -> Result<CleanupReport, VoucherCoreError>`
   - Führt die Speicherbereinigung für Fingerprints und deren Metadaten durch.
-- `pub fn load_encrypted_data(name: &str, password: &str) -> Result<Vec<u8>, String>`
+- `pub fn load_encrypted_data(name: &str, password: Option<&str>) -> Result<Vec<u8>, String>`
   - Lädt und entschlüsselt einen zuvor gespeicherten, beliebigen Datenblock.
 - `pub fn list_conflicts(&self) -> Result<Vec<ProofOfDoubleSpendSummary>, String>`
   - Gibt eine Liste von Zusammenfassungen aller bekannten Double-Spend-Konflikte zurück.
@@ -443,8 +455,24 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
   - Ruft einen vollständigen `ProofOfDoubleSpend` anhand seiner ID ab.
 - `pub fn create_resolution_endorsement(&self, proof_id: &str, notes: Option<String>) -> Result<ResolutionEndorsement, String>`
   - Erstellt eine signierte Beilegungserklärung für einen Konflikt.
-- `pub fn import_resolution_endorsement(&mut self, endorsement: ResolutionEndorsement, password: &str) -> Result<(), String>`
+- `pub fn import_resolution_endorsement(&mut self, endorsement: ResolutionEndorsement, password: Option<&str>) -> Result<(), String>`
   - Importiert eine Beilegungserklärung, fügt sie dem entsprechenden Konfliktbeweis hinzu und speichert den Wallet-Zustand.
+- `pub fn unlock_session(&mut self, password: &str, duration: chrono::Duration) -> Result<(), String>`: Sperrt eine Session für den angegebenen Zeitraum, um wiederholte Passwort-Eingaben zu vermeiden. Ermöglicht "Remember Password" Funktionalität in Client-Anwendungen.
+
+#### Authentifizierungsmodell
+
+Das `AppService` implementiert ein flexibles Authentifizierungsmodell, um "Remember Password"-Funktionalität in Client-Anwendungen zu unterstützen. Zustandsändernde Operationen (wie `create_transfer_bundle`, `save_encrypted_data`, `process_and_attach_signature` usw.) akzeptieren `password: Option<&str>`.
+
+Zwei Modi der Operation:
+- **Modus A (Immer fragen):** Übergabe von `Some(password)` verwendet das Passwort direkt für diese einzelne Operation. Alle bestehenden Tests wurden auf diesen Modus aktualisiert.
+- **Modus B (Session):** Ein Benutzer kann einmal `AppService::unlock_session(password, duration)` aufrufen. Nachfolgende Aufrufe von Operationen mit `password: None` verwenden einen zwischengespeicherten, zeitlich begrenzten Session-Schlüssel.
+
+Implementierungsdetails:
+- Fügt `SessionCache` zum `AppState::Unlocked`-Zustand hinzu, um den abgeleiteten Schlüssel zu halten.
+- Einführung eines `AuthMethod`-Enums (`Password` | `SessionKey`) auf der `Storage`-Trait-Ebene.
+- `FileStorage` und `Wallet::save` wurden aktualisiert, um `AuthMethod` zu akzeptieren.
+- Implementiert Session-Timeout und "Sliding Window"-Logik via `get_session_key` und `refresh_session_activity`.
+- Fügt einen "Storage Anchor"-Fix beim Login/Create_Profile hinzu, um sicherzustellen, dass die Session-Schlüssel-Ableitung für neue Wallets funktioniert.
 
 ### `src/wallet` Modul
 
@@ -521,7 +549,7 @@ Das `wallet`-Modul wurde umfassend refaktorisiert, um die Komplexität zu reduzi
 Definiert die Abstraktion für die persistente Speicherung und stellt eine Standardimplementierung für das Dateisystem bereit.
 
 - `pub enum StorageError`: Ein generischer Fehler-Typ für alle Speicheroperationen (z.B. `AuthenticationFailed`, `NotFound`, `InvalidFormat`, `Io`, `Generic`).
-- `pub enum AuthMethod`: Definiert die Authentifizierungsmethode für den Zugriff auf den Speicher (z.B. `Password`, `Mnemonic`, `RecoveryIdentity`).
+- `pub enum AuthMethod`: Definiert die Authentifizierungsmethode für den Zugriff auf den Speicher (z.B. `Password`, `Mnemonic`, `RecoveryIdentity`, `SessionKey`).
 - `pub trait Storage`
   - `load_wallet(...)`: Lädt und entschlüsselt das Kern-Wallet (Profil und VoucherStore).
   - `save_wallet(...)`: Speichert und verschlüsselt das Kern-Wallet (Profil und VoucherStore).

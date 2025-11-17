@@ -1,4 +1,5 @@
-//! # tests/validation/forward_compatibility.rs
+// tests/validation/forward_compatibility.rs
+// cargo test --test validation_tests
 //!
 //! Stellt sicher, dass die Bibliothek robust gegenüber zukünftigen Änderungen
 //! an den Datenstrukturen ist (Vorwärtskompatibilität).

@@ -1,4 +1,5 @@
-//! # tests/wallet_api/transactionality.rs
+// tests/wallet_api/transactionality.rs
+// cargo test --test wallet_api_tests
 //!
 //! Enthält Integrationstests, die sicherstellen, dass alle zustandsändernden
 //! Operationen des `AppService` atomar sind. Eine Operation muss entweder

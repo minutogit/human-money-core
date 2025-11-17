@@ -1,4 +1,5 @@
-//! # tests/wallet_api/state_management.rs
+// tests/wallet_api/state_management.rs
+// cargo test --test wallet_api_tests
 //!
 //! Enthält Integrationstests für komplexes State-Management und die
 //! Handhabung von Konflikten wie Double-Spending.

@@ -1,4 +1,5 @@
 // tests/core_logic/security/double_spend.rs
+// cargo test --test core_logic_tests
 
 // HINWEIS: Dieser `use` importiert das Modul, das im `mod.rs` bereitgestellt wird.
 

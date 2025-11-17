@@ -1,4 +1,5 @@
-//! # tests/wallet_api_tests.rs
+// tests/wallet_api_tests.rs
+// cargo test --test wallet_api_tests
 //!
 //! Dieses Modul dient als Einstiegspunkt für alle Integrationstests,
 //! die die öffentliche High-Level-API der `voucher_lib` betreffen.

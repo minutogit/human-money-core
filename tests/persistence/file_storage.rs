@@ -1,4 +1,5 @@
-//! tests/persistence/file_storage.rs
+// tests/persistence/file_storage.rs
+// cargo test --test persistence_tests
 //!
 //! Enthält Integrationstests für das refaktorierte Profil- und VoucherStore-Management,
 //! inklusive der Passwort-Wiederherstellungslogik und Randbedingungen.

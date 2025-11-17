@@ -1,4 +1,5 @@
 // tests/core_logic_tests.rs
+// cargo test --test core_logic_tests
 
 //! # Test-Runner für die Kernlogik und Sicherheit
 //!

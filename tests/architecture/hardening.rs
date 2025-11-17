@@ -1,4 +1,5 @@
-//! # tests/architecture/hardening.rs
+// tests/architecture/hardening.rs
+// cargo test --test architecture_tests
 //!
 //! Enthält "Härtungstests", die die Robustheit der Architektur in
 //! Randfällen und bei Konsistenzprüfungen verifizieren.

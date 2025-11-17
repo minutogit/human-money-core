@@ -1,4 +1,5 @@
-//! # tests/wallet_api/lifecycle_and_data.rs
+// tests/wallet_api/lifecycle_and_data.rs
+// cargo test --test wallet_api_tests
 //!
 //! Enthält Robustheitstests für die kritischen `AppService`-Funktionen
 //! in den Bereichen Lebenszyklus (Erstellung, Login, Wiederherstellung) und

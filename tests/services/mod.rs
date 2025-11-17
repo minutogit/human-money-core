@@ -1,4 +1,5 @@
-//! tests/services/mod.rs
+// tests/services/mod.rs
+// cargo test --test services_tests
 //!
 //! Deklariert die Sub-Module für die Service-Tests.
 //! Diese Struktur hilft, die Tests thematisch zu gruppieren.

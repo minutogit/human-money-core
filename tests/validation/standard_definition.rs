@@ -1,4 +1,5 @@
-//! # tests/validation/standard_definition.rs
+// tests/validation/standard_definition.rs
+// cargo test --test validation_tests
 //!
 //! Enthält alle Tests zur Verifizierung der Gutschein-Standard-Definitionen (TOML),
 //! deren korrekte Integration in den Gutschein und Härtungstests.

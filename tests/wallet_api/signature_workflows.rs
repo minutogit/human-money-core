@@ -1,4 +1,5 @@
-//! # tests/wallet_api/signature_workflows.rs
+// tests/wallet_api/signature_workflows.rs
+// cargo test --test wallet_api_tests
 //!
 //! Enthält Integrationstests speziell für die Signatur-Workflows,
 //! die über die `AppService`- und `Wallet`-Fassaden gesteuert werden.

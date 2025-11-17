@@ -1,4 +1,5 @@
-//! # tests/persistence/archive.rs
+// tests/persistence/archive.rs
+// cargo test --test persistence_tests
 //!
 //! Testet die Funktionalität des `VoucherArchive`-Traits und der `FileVoucherArchive`-Implementierung.
 //! Ursprünglich in `tests/test_archive.rs`.

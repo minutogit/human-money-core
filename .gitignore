@@ -4,3 +4,5 @@ todo.md
 .idea/workspace.xml
 .idea/vcs.xml
 /.qwen
+/.opencode/
+/.opencode/agent/

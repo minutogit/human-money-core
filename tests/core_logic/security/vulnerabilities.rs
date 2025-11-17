@@ -1,4 +1,5 @@
 // tests/core_logic/security/vulnerabilities.rs
+// cargo test --test core_logic_tests
 
 use super::test_utils;
 use voucher_lib::{

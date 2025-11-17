@@ -1,4 +1,5 @@
-//! # tests/wallet_api/mod.rs
+// tests/wallet_api/mod.rs
+// cargo test --test wallet_api_tests
 //!
 //! Deklariert die Sub-Module für die API-Integrationstests.
 

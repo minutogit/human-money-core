@@ -1,4 +1,5 @@
-//! # tests/wallet_api/hostile_bundles.rs
+// tests/wallet_api/hostile_bundles.rs
+// cargo test --test wallet_api_tests
 //!
 // HINWEIS: Tests 2.1 und 2.2 wurden auf die öffentliche `AppService::create_new_voucher` API umgestellt.
 //! Enthält Tests, die den `AppService` gegen den Empfang von feindseligen,

@@ -1,4 +1,5 @@
-//! # tests/validation_tests.rs
+// tests/validation_tests.rs
+// cargo test --test validation_tests
 //!
 //! Haupt-Einstiegspunkt für alle Tests, die sich auf die Validierung
 //! und Integrität von Gutscheinen und Standards beziehen.

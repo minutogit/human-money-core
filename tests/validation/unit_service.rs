@@ -1,4 +1,5 @@
-//! # tests/validation/unit_service.rs
+// tests/validation/unit_service.rs
+// cargo test --test validation_tests
 //!
 //! Unit-Tests für die einzelnen, datengesteuerten Funktionen
 //! der Validierungs-Engine im `voucher_validation`-Service.

@@ -1,4 +1,5 @@
 // tests/core_logic/security/mod.rs
+// cargo test --test core_logic_tests
 
 //! # Test-Suite für Sicherheitsaspekte und Betrugserkennung
 //!

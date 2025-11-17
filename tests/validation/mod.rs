@@ -1,4 +1,5 @@
-//! # tests/validation/mod.rs
+// tests/validation/mod.rs
+// cargo test --test validation_tests
 //!
 //! Deklariert die einzelnen Test-Dateien innerhalb des `validation`-Moduls,
 //! damit sie vom Test-Runner gefunden werden.

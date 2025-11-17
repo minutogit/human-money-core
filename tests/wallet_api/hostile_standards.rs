@@ -1,4 +1,5 @@
-//! # tests/validation/hostile_standards.rs
+// tests/wallet_api/hostile_standards.rs
+// cargo test --test wallet_api_tests
 //!
 //! Enthält Tests, die das System gegen feindselige oder logisch inkonsistente
 //! Gutschein-Standard-Definitionen härten.

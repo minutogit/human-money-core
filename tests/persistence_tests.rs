@@ -1,4 +1,5 @@
-//! tests/persistence_tests.rs
+// tests/persistence_tests.rs
+// cargo test --test persistence_tests
 //!
 //! Haupt-Einstiegspunkt für die Ausführung aller Persistenz-Tests.
 //!

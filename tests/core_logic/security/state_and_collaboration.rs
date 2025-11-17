@@ -1,4 +1,5 @@
 // tests/core_logic/security/state_and_collaboration.rs
+// cargo test --test core_logic_tests
 
 // HINWEIS: Importiert das Modul, das im `mod.rs` bereitgestellt wird.
 use super::test_utils;

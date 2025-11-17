@@ -1,6 +1,6 @@
 // tests/core_logic/lifecycle.rs
 
-// cargo test --test test_voucher_lifecycle
+// cargo test --test core_logic_tests
 //! # Integrationstests für den Gutschein-Lebenszyklus und die Sicherheit
 //!
 //! Diese Test-Suite deckt den gesamten Lebenszyklus eines `Voucher`-Objekts ab,

@@ -1,4 +1,5 @@
-//! # tests/validation/business_rules.rs
+// tests/validation/business_rules.rs
+// cargo test --test validation_tests
 //!
 //! Integrationstests, die die korrekte Anwendung von komplexen Geschäftsregeln
 //! und die logische Konsistenz eines `Voucher`-Objekts verifizieren.

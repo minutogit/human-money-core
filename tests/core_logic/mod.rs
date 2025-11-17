@@ -1,4 +1,5 @@
 // tests/core_logic/mod.rs
+// cargo test --test core_logic_tests
 
 //! # Test-Modul für die Kernlogik
 //!

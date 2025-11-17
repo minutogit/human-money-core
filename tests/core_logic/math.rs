@@ -1,4 +1,5 @@
 // tests/core_logic/math.rs
+// cargo test --test core_logic_tests
 
 //! # Integrationstest für die numerische Robustheit von Transaktionen
 //!
