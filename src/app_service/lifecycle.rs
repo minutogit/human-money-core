@@ -298,11 +298,27 @@ impl AppService {
     /// Setzt den Inaktivitäts-Timer der "Passwort merken"-Sitzung zurück.
     ///
     /// Ideal, um dies bei UI-Aktivität (Klicks, Mausbewegung) aufzurufen, damit die Sitzung nicht abläuft, während der Benutzer aktiv ist.
-    pub fn refresh_session_activity(&mut self) {
+    ///
+    /// # Returns
+    /// * `Ok(())` - Wenn die Session aktiv war und erfolgreich verlängert wurde.
+    /// * `Err(String)` - Wenn die Session bereits abgelaufen war (wird gesperrt), keine Session aktiv ist oder das Wallet gesperrt ist.
+    pub fn refresh_session_activity(&mut self) -> Result<(), String> {
         if let AppState::Unlocked { session_cache, .. } = &mut self.state {
+            // Prüfen, ob überhaupt eine Session existiert
             if let Some(cache) = session_cache {
-                cache.last_activity = Instant::now();
+                // BUGFIX: Validieren, ob die Session physisch abgelaufen ist
+                if cache.last_activity.elapsed() > cache.session_duration {
+                    // Session ist abgelaufen: Cache löschen und Fehler zurückgeben
+                    *session_cache = None;
+                    return Err("Session expired.".to_string());
+                } else {
+                    // Session gültig: Timer erneuern.
+                    cache.last_activity = Instant::now();
+                    return Ok(());
+                }
             }
+            return Err("No active session to refresh.".to_string());
         }
+        Err("Wallet is locked.".to_string())
     }
 }

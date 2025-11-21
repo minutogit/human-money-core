@@ -361,7 +361,7 @@ mod tests {
         // Session explizit für diesen Test entsperren
         service.unlock_session(PASSWORD, 3).unwrap(); // 3 Sekunden Timeout
         std::thread::sleep(std::time::Duration::from_secs(2));
-        service.refresh_session_activity(); // Timer zurücksetzen
+        service.refresh_session_activity().expect("Refresh should succeed within timeout"); // Timer zurücksetzen
         std::thread::sleep(std::time::Duration::from_secs(2)); // Gesamt 4s vergangen
         let request = create_dummy_transfer_request(&mut service);
         
@@ -372,6 +372,49 @@ mod tests {
         
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
         assert!(result.is_ok(), "Session should have been refreshed by refresh_session_activity");
+    }
+
+    #[test]
+    fn test_refresh_fails_on_expired_session() {
+        let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
+        
+        // 1. Session mit kurzem Timeout (1 Sekunde) starten
+        service.unlock_session(PASSWORD, 1).unwrap();
+        
+        // 2. Warten, bis die Session physisch abgelaufen ist (2 Sekunden)
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        
+        // 3. Versuchen, die abgelaufene Session zu aktualisieren.
+        // Dies muss nun fehlschlagen, da der Core den Timeout validiert.
+        let refresh_result = service.refresh_session_activity();
+        assert!(refresh_result.is_err(), "Refresh must fail for expired sessions");
+        assert_eq!(refresh_result.unwrap_err(), "Session expired.");
+
+        // 4. Verifizieren, dass die Session nun auch gesperrt ist (Cache geleert).
+        // Zugriff ohne Passwort (Modus B) muss fehlschlagen.
+        let load_result = service.load_encrypted_data("test_data", None);
+        assert!(load_result.is_err());
+        assert!(load_result.unwrap_err().contains("Password required"), "Session cache should have been cleared");
+    }
+
+    #[test]
+    fn test_logout_clears_active_session_immediately() {
+        let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
+        
+        // 1. Session starten (Modus B aktivieren)
+        service.unlock_session(PASSWORD, 60).unwrap();
+        
+        // 2. Verify: Aktion ohne Passwort klappt
+        service.save_encrypted_data("pre_logout", b"data", None).expect("Session should work");
+
+        // 3. Logout durchführen (Hard Reset)
+        service.logout();
+
+        // 4. Verify: Zugriff muss komplett verweigert werden (Wallet is locked), 
+        // nicht nur "Password required". Der Status ist jetzt Locked, nicht mehr Unlocked.
+        let result = service.load_encrypted_data("pre_logout", None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Wallet is locked"));
     }
 
     #[test]

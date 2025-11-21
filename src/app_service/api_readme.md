@@ -56,6 +56,10 @@ These methods manage the application state and user profiles.
 * **Description:** Unlocks an existing wallet using its `folder_name` and `password`.
 * **State:** Transitions from `Locked` -> `Unlocked`.
 
+#### `pub fn recover_wallet_and_set_new_password(...) -> Result<(), String>`
+* **Description:** Recovers an existing wallet using its mnemonic phrase and sets a new password.
+* **State:** Transitions from `Locked` -> `Unlocked`.
+
 #### `pub fn logout(&mut self)`
 * **Description:** Locks the wallet and clears all sensitive data (like private keys and session keys) from memory.
 * **State:** Transitions from `Unlocked` -> `Locked`.
@@ -72,6 +76,10 @@ These methods control the "Remember Password" feature (Mode B).
 
 #### `pub fn lock_session(&mut self)`
 * **Description:** Immediately clears the cached session key from memory, forcing Mode A for the next operation.
+
+#### `pub fn refresh_session_activity(&mut self)`
+* **Description:** Resets the inactivity timer of the "Remember Password" session.
+* **Usage:** Call this on UI activity (clicks, mouse movements) to keep the session alive while the user is active.
 
 ---
 
@@ -136,6 +144,14 @@ Methods for handling double-spend conflicts.
 
 #### `pub fn list_conflicts(&self) -> Result<Vec<ProofOfDoubleSpendSummary>, String>`
 * **Description:** Lists summaries of all known double-spend conflicts in the wallet.
+* **Auth:** Read-only, no password needed.
+
+#### `pub fn get_proof_of_double_spend(&self, proof_id: &str) -> Result<ProofOfDoubleSpend, String>`
+* **Description:** Retrieves the full details of a specific double-spend proof by its ID.
+* **Auth:** Read-only, no password needed.
+
+#### `pub fn create_resolution_endorsement(...) -> Result<ResolutionEndorsement, String>`
+* **Description:** Creates a signed resolution endorsement for a conflict, indicating that the conflict is resolved from the wallet owner's perspective.
 * **Auth:** Read-only, no password needed.
 
 #### `pub fn import_resolution_endorsement(...) -> Result<(), String>`

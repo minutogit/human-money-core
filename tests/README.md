@@ -39,8 +39,10 @@ This file contains robustness tests for critical `AppService` functions related 
 -   `test_session_mode_b_refresh_activity_sliding_window`: Tests that session activity refreshes the timeout using a sliding window.
 -   `test_session_mode_b_action_refreshes_session`: Tests that performing actions refreshes the session timeout.
 -   `test_session_mode_b_lock_session_works`: Tests that locking the session manually prevents mode B actions.
--   `test_session_mode_a_overrides_mode_b_succeeds`: Tests that mode A overrides mode B when both are possible.
--   `test_session_mode_a_wrong_password_fails_even_if_mode_b_is_active`: Tests that wrong password in mode A fails even if a mode B session is active.
+ -   `test_session_mode_a_overrides_mode_b_succeeds`: Tests that mode A overrides mode B when both are possible.
+ -   `test_session_mode_a_wrong_password_fails_even_if_mode_b_is_active`: Tests that wrong password in mode A fails even if a mode B session is active.
+ -   `test_refresh_fails_on_expired_session`: Tests that attempting to refresh an expired session fails and clears the session cache.
+ -   `test_logout_clears_active_session_immediately`: Tests that logging out immediately clears the active session and locks the wallet.
 
 ### `tests/wallet_api/transactionality.rs`
 This file contains integration tests that ensure all state-changing operations of the `AppService` are atomic. An operation must either be fully successful (including saving) or leave the in-memory state as if it had never been executed.
@@ -61,7 +63,7 @@ This file contains integration tests for complex state management and the handli
 -   `api_wallet_save_and_load_fidelity`: Verifies that the entire state of a wallet can be saved and restored losslessly, including active and archived vouchers and bundle metadata.
 -   `test_create_voucher_adds_exactly_one_instance`: Verifies that `create_new_voucher` adds exactly one voucher instance to the wallet.
 -   `test_create_voucher_is_transactional_on_save_failure`: Ensures that `create_new_voucher` is transactional, meaning a failed save operation does not leave the in-memory state "dirty."
--   `test_concurrent_app_service_causes_stale_state_double_spend`: Tests that concurrent access to the same wallet by multiple `AppService` instances is prevented by the locking mechanism, avoiding stale state double-spending vulnerabilities.
+-   `test_concurrent_app_service_causes_stale_state_double_spend`: Tests that concurrent access to the same wallet by multiple `AppService` instances is prevented by the pessimistic file-based locking mechanism using PID checking, avoiding stale state double-spending vulnerabilities. This test was previously ignored due to the security gap and has been re-enabled after implementing the locking.
 
 ### `tests/wallet_api/signature_workflows.rs`
 This file contains integration tests specifically for signature workflows, controlled via the `AppService` and `Wallet` facades. This includes requesting, creating, and attaching signatures.
