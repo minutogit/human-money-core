@@ -114,7 +114,7 @@ pub fn create_voucher(
     }
 
     let creation_date_str = get_current_timestamp();
-    let nonce_bytes = rand::thread_rng().gen::<[u8; 16]>();
+    let nonce_bytes = rand::thread_rng().r#gen::<[u8; 16]>();
     let nonce = bs58::encode(nonce_bytes).into_string();
     let creation_dt = DateTime::parse_from_rfc3339(&creation_date_str).unwrap().with_timezone(&Utc);
 

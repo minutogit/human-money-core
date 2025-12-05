@@ -61,7 +61,7 @@ pub fn generate_mnemonic(word_count: usize, language: Language) -> Result<String
         _  => return Err("Invalid entropy length".into()),
     };
     let mut rng = rand::thread_rng();
-    let entropy: Vec<u8> = (0..entropy_length).map(|_| rng.gen()).collect();
+    let entropy: Vec<u8> = (0..entropy_length).map(|_| rng.r#gen()).collect();
     let mnemonic = Mnemonic::from_entropy_in(language, &entropy)?;
     Ok(mnemonic.to_string())
 }
