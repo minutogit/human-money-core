@@ -3,7 +3,7 @@
 name = "Strict Counts Test Standard"
 uuid = "TEST-STRICT-COUNTS-V1"
 abbreviation = "SCT"
-issuer_name = "Voucher-Core Test Suite"
+issuer_name = "Human-Money-Core Test Suite"
 
 [template.fixed]
 primary_redemption_type = "goods_or_services"

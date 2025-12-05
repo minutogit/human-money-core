@@ -6,7 +6,7 @@ Das Kernprinzip des Systems ist nicht die Unmöglichkeit von Betrug (was in eine
 
 ## 1. Technische Erkennung und automatische Lösung (Offline-First)
 
-Die technische Handhabung eines Konflikts findet vollständig innerhalb der voucher_core-Bibliothek statt, sobald ein Nutzer ein neues Transaktions-Bundle empfängt.
+Die technische Handhabung eines Konflikts findet vollständig innerhalb der human_money_core-Bibliothek statt, sobald ein Nutzer ein neues Transaktions-Bundle empfängt.
 
 ### 1.1. Der Prozess im Wallet
 

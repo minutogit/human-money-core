@@ -1,6 +1,6 @@
 //! # src/error.rs
 //!
-//! Definiert den zentralen Fehlertyp für die gesamte voucher_core-Bibliothek.
+//! Definiert den zentralen Fehlertyp für die gesamte human_money_core-Bibliothek.
 //! Verwendet `thiserror` zur einfachen Erstellung von aussagekräftigen Fehlern
 //! und zur automatischen Konvertierung von untergeordneten Fehlertypen.
 
@@ -247,7 +247,7 @@ pub enum ValidationError {
 }
 
 
-/// Der zentrale Fehlertyp für alle Operationen in der `voucher_core`-Bibliothek.
+/// Der zentrale Fehlertyp für alle Operationen in der `human_money_core`-Bibliothek.
 #[derive(Error, Debug)]
 pub enum VoucherCoreError {
     #[error("Validation Error: {0}")]

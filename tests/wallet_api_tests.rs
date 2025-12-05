@@ -2,7 +2,7 @@
 // cargo test --test wallet_api_tests
 //!
 //! Dieses Modul dient als Einstiegspunkt für alle Integrationstests,
-//! die die öffentliche High-Level-API der `voucher_lib` betreffen.
+//! die die öffentliche High-Level-API der `human_money_core` betreffen.
 //! Es bindet die untergeordneten Testmodule für allgemeine Workflows
 //! und Signatur-Workflows ein.
 

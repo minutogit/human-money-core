@@ -7,10 +7,10 @@
 #[cfg(test)]
 mod tests {
     use tempfile::tempdir;
-    use voucher_lib::test_utils::{self, ACTORS, SILVER_STANDARD};
-    use voucher_lib::models::conflict::TransactionFingerprint;
+    use human_money_core::test_utils::{self, ACTORS, SILVER_STANDARD};
+    use human_money_core::models::conflict::TransactionFingerprint;
     use chrono::{Utc, Duration};
-    use voucher_lib::services::voucher_manager::NewVoucherData;
+    use human_money_core::services::voucher_manager::NewVoucherData;
 
     const PASSWORD: &str = "test-password-123";
 
@@ -74,11 +74,11 @@ mod tests {
 
         // Erstelle einen Gutschein mit 100 Einheiten
         let new_voucher_data = NewVoucherData {
-            nominal_value: voucher_lib::models::voucher::ValueDefinition {
+            nominal_value: human_money_core::models::voucher::ValueDefinition {
                 amount: "100".to_string(),
                 ..Default::default()
             },
-            creator_profile: voucher_lib::models::profile::PublicProfile {
+            creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(ACTORS.alice.user_id.clone()),
                 ..Default::default()
             }, ..Default::default()
@@ -96,9 +96,9 @@ mod tests {
 
         // Führe einen Split durch ( sende 40 an Bob, behalte 60)
         alice_service.login(&alice_profile.folder_name, PASSWORD, false).unwrap();
-        let request = voucher_lib::wallet::MultiTransferRequest {
+        let request = human_money_core::wallet::MultiTransferRequest {
             recipient_id: ACTORS.bob.user_id.clone(),
-            sources: vec![voucher_lib::wallet::SourceTransfer {
+            sources: vec![human_money_core::wallet::SourceTransfer {
                 local_instance_id: local_id.clone(),
                 amount_to_send: "40".to_string(),
             }],

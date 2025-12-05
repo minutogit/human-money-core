@@ -4,12 +4,12 @@
 //! Unit-Tests für die einzelnen, datengesteuerten Funktionen
 //! der Validierungs-Engine im `voucher_validation`-Service.
 
-use voucher_lib::error::ValidationError;
-use voucher_lib::models::voucher::{
+use human_money_core::error::ValidationError;
+use human_money_core::models::voucher::{
     ValueDefinition, Transaction, Voucher, VoucherSignature,
 };
-use voucher_lib::models::voucher_standard_definition::VoucherStandardDefinition;
-use voucher_lib::services::voucher_validation;
+use human_money_core::models::voucher_standard_definition::VoucherStandardDefinition;
+use human_money_core::services::voucher_validation;
 use std::fs;
 
 // --- Test-Hilfsfunktionen ---
@@ -153,7 +153,7 @@ mod field_group_rules_validation {
     fn create_test_signature_with_gender(gender: &str) -> VoucherSignature {
         let sig = VoucherSignature {
             role: "other_role".to_string(), // Rolle ist für diesen Test irrelevant
-            details: Some(voucher_lib::models::profile::PublicProfile {
+            details: Some(human_money_core::models::profile::PublicProfile {
                 gender: Some(gender.to_string()),
                 ..Default::default()
             }),
@@ -211,7 +211,7 @@ mod field_group_rules_validation {
     fn create_test_signature_with_role(role: &str) -> VoucherSignature {
         let sig = VoucherSignature {
             role: role.to_string(),
-            details: Some(voucher_lib::models::profile::PublicProfile {
+            details: Some(human_money_core::models::profile::PublicProfile {
                 gender: Some("0".to_string()), // Geschlecht ist für diesen Test irrelevant
                 ..Default::default()
             }),
@@ -282,9 +282,9 @@ mod field_group_rules_validation {
 /// Dies ist entscheidend, um die Pfad-Logik in `validate_field_group_rules` zu bestätigen.
 #[cfg(test)]
 mod diagnosis {
-    use voucher_lib::models::profile::PublicProfile;
-    use voucher_lib::models::voucher::VoucherSignature;
-    use voucher_lib::services::voucher_validation::get_value_by_path;
+    use human_money_core::models::profile::PublicProfile;
+    use human_money_core::models::voucher::VoucherSignature;
+    use human_money_core::services::voucher_validation::get_value_by_path;
 
     #[test]
     fn test_diagnose_signature_json_structure() {

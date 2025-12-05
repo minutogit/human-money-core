@@ -2,28 +2,28 @@
 // cargo test --test core_logic_tests
 
 use super::test_utils;
-use voucher_lib::{
+use human_money_core::{
     create_transaction, create_voucher, to_canonical_json, VoucherCoreError,
 };
-use voucher_lib::crypto_utils;
-use voucher_lib::models::profile::{TransactionBundle};
-use voucher_lib::{UserIdentity, VoucherStatus};
-use voucher_lib::models::voucher::{Collateral, ValueDefinition, Transaction, Voucher, VoucherSignature};
-use voucher_lib::services::crypto_utils::{get_hash, sign_ed25519};
-use voucher_lib::services::secure_container_manager::create_secure_container;
-use voucher_lib::services::utils::{get_current_timestamp};
-use voucher_lib::services::voucher_manager::{self, NewVoucherData};
-use voucher_lib::error::ValidationError;
-use voucher_lib::services::voucher_validation::{self};
-use voucher_lib::{VoucherInstance};
+use human_money_core::crypto_utils;
+use human_money_core::models::profile::{TransactionBundle};
+use human_money_core::{UserIdentity, VoucherStatus};
+use human_money_core::models::voucher::{Collateral, ValueDefinition, Transaction, Voucher, VoucherSignature};
+use human_money_core::services::crypto_utils::{get_hash, sign_ed25519};
+use human_money_core::services::secure_container_manager::create_secure_container;
+use human_money_core::services::utils::{get_current_timestamp};
+use human_money_core::services::voucher_manager::{self, NewVoucherData};
+use human_money_core::error::ValidationError;
+use human_money_core::services::voucher_validation::{self};
+use human_money_core::{VoucherInstance};
 use serde_json::Value;
 use self::test_utils::{
     setup_in_memory_wallet, ACTORS, SILVER_STANDARD,
 };
 use rand::{Rng, thread_rng};
 use rand::seq::SliceRandom;
-use voucher_lib::models::secure_container::PayloadType;
-use voucher_lib::wallet::Wallet;
+use human_money_core::models::secure_container::PayloadType;
+use human_money_core::wallet::Wallet;
 use rust_decimal::Decimal;
 use std::{str::FromStr};
 
@@ -123,7 +123,7 @@ fn new_test_voucher_data(creator_id: String) -> NewVoucherData {
         non_redeemable_test_voucher: false,
         nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
         collateral: Some(Collateral::default()),
-        creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(creator_id), ..Default::default() },
+        creator_profile: human_money_core::models::profile::PublicProfile { id: Some(creator_id), ..Default::default() },
     }
 }
 
@@ -138,7 +138,7 @@ fn create_guarantor_signature(
         signer_id: guarantor_identity.user_id.clone(),
         role: "guarantor".to_string(),
         signature_time: get_current_timestamp(),
-        details: Some(voucher_lib::models::profile::PublicProfile {
+        details: Some(human_money_core::models::profile::PublicProfile {
             first_name: Some("Garant".to_string()),
             last_name: Some("Test".to_string()),
             organization: organization.map(String::from),
@@ -207,7 +207,7 @@ fn create_hacked_tx(signer_identity: &UserIdentity, mut hacked_tx: Transaction) 
 }
 
 /// **NEUER STUB:** Erstellt Test-Voucher-Daten für die neuen Tests.
-fn create_test_voucher_data_with_amount(creator_profile: voucher_lib::models::profile::PublicProfile, amount: &str) -> NewVoucherData {
+fn create_test_voucher_data_with_amount(creator_profile: human_money_core::models::profile::PublicProfile, amount: &str) -> NewVoucherData {
     NewVoucherData {
         validity_duration: Some("P5Y".to_string()),
         non_redeemable_test_voucher: false,
@@ -243,9 +243,9 @@ fn test_attack_tamper_core_data_and_guarantors() {
     issuer_wallet.voucher_store.vouchers.insert(local_id.clone(), instance);
 
     // Issuer sendet den Gutschein an den Hacker, der ihn nun für Angriffe besitzt.
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: ACTORS.hacker.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_id.clone(),
             amount_to_send: "100".to_string(),
         }],
@@ -256,7 +256,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: container_to_hacker, .. } = issuer_wallet.execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None).unwrap();
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes: container_to_hacker, .. } = issuer_wallet.execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None).unwrap();
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_hacker = std::collections::HashMap::new();
     standards_for_hacker.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
@@ -308,7 +308,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     if let Some(ref mut details) = guarantor_sig_to_tamper.details {
             details.first_name = Some("Mallory".to_string());
     } else {
-        guarantor_sig_to_tamper.details = Some(voucher_lib::models::profile::PublicProfile {
+        guarantor_sig_to_tamper.details = Some(human_money_core::models::profile::PublicProfile {
             first_name: Some("Mallory".to_string()),
             ..Default::default()
         });
@@ -358,9 +358,9 @@ fn test_attack_tamper_transaction_history() {
     let local_id_a = Wallet::calculate_local_instance_id(&voucher_a, &ACTORS.alice.user_id).unwrap();
     let instance_a = VoucherInstance { voucher: voucher_a, status: VoucherStatus::Active, local_instance_id: local_id_a.clone() };
     alice_wallet.voucher_store.vouchers.insert(local_id_a.clone(), instance_a);
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: ACTORS.bob.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_id_a.clone(),
             amount_to_send: "100".to_string(),
         }],
@@ -371,7 +371,7 @@ fn test_attack_tamper_transaction_history() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: container_to_bob, .. } = alice_wallet.execute_multi_transfer_and_bundle(&ACTORS.alice, &standards, request, None).unwrap();
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes: container_to_bob, .. } = alice_wallet.execute_multi_transfer_and_bundle(&ACTORS.alice, &standards, request, None).unwrap();
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
@@ -409,9 +409,9 @@ fn test_attack_create_inconsistent_transaction() {
     let local_id_issuer = Wallet::calculate_local_instance_id(&initial_voucher, &ACTORS.issuer.user_id).unwrap();
     let instance_i = VoucherInstance { voucher: initial_voucher, status: VoucherStatus::Active, local_instance_id: local_id_issuer.clone() };
     issuer_wallet.voucher_store.vouchers.insert(local_id_issuer.clone(), instance_i);
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: ACTORS.hacker.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_id_issuer.clone(),
             amount_to_send: "100".to_string(),
         }],
@@ -422,7 +422,7 @@ fn test_attack_create_inconsistent_transaction() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: container_to_hacker, .. } = issuer_wallet.execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None).unwrap();
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes: container_to_hacker, .. } = issuer_wallet.execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None).unwrap();
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_hacker = std::collections::HashMap::new();
     standards_for_hacker.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
@@ -619,7 +619,7 @@ fn test_attack_full_transfer_amount_mismatch() {
         public_key,
         user_id: user_id.clone(),
     };
-    let creator = voucher_lib::models::profile::PublicProfile {
+    let creator = human_money_core::models::profile::PublicProfile {
         id: Some(user_id),
         first_name: Some("Stub".to_string()),
         last_name: Some("Creator".to_string()),
@@ -668,7 +668,7 @@ fn test_attack_remainder_in_full_transfer() {
         public_key,
         user_id: user_id.clone(),
     };
-    let creator = voucher_lib::models::profile::PublicProfile {
+    let creator = human_money_core::models::profile::PublicProfile {
         id: Some(user_id),
         first_name: Some("Stub".to_string()),
         last_name: Some("Creator".to_string()),

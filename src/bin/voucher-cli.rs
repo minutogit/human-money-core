@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand};
 use ed25519_dalek::SigningKey;
 use std::fs;
 use std::path::{Path, PathBuf};
-use voucher_lib::{
+use human_money_core::{
     crypto_utils::{self, get_hash},
     models::voucher_standard_definition::VoucherStandardDefinition,
     to_canonical_json,

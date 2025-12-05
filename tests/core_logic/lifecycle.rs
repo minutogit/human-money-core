@@ -34,19 +34,19 @@
 
 // Wir importieren die öffentlichen Typen, die in lib.rs re-exportiert wurden.
 
-use voucher_lib::test_utils;
+use human_money_core::test_utils;
 
-use voucher_lib::{
+use human_money_core::{
     create_transaction, create_voucher, crypto_utils, from_json, get_spendable_balance,
     to_canonical_json, to_json, validate_voucher_against_standard, Collateral,
     NewVoucherData, ValueDefinition, Transaction, Voucher, VoucherCoreError, VoucherStatus, VoucherInstance, models::profile::PublicProfile,
 };
-use voucher_lib::services::crypto_utils::get_hash;
-use voucher_lib::error::ValidationError;
-use voucher_lib::services::voucher_manager::VoucherManagerError;
+use human_money_core::services::crypto_utils::get_hash;
+use human_money_core::error::ValidationError;
+use human_money_core::services::voucher_manager::VoucherManagerError;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use voucher_lib::test_utils::{create_custom_standard, setup_in_memory_wallet, ACTORS, MINUTO_STANDARD, SILVER_STANDARD};
+use human_money_core::test_utils::{create_custom_standard, setup_in_memory_wallet, ACTORS, MINUTO_STANDARD, SILVER_STANDARD};
 
 // --- HELPER-FUNKTIONEN UND TESTDATEN ---
 
@@ -67,7 +67,7 @@ fn test_full_creation_and_validation_cycle() {
 
 
     // 2. Erstellung
-    let mut voucher = voucher_lib::test_utils::create_voucher_for_manipulation(voucher_data, &minuto_standard_with_rounding, &standard_hash, &identity.signing_key, "en");
+    let mut voucher = human_money_core::test_utils::create_voucher_for_manipulation(voucher_data, &minuto_standard_with_rounding, &standard_hash, &identity.signing_key, "en");
     assert!(!voucher.voucher_id.is_empty());
     // PRÜFE: Die Creator-Signatur muss jetzt im Array sein.
     assert!(voucher.signatures.iter().any(|s| s.role == "creator"));
@@ -96,8 +96,8 @@ fn test_full_creation_and_validation_cycle() {
     // 4. Simulation des Bürgenprozesses nach neuer Logik
     let g1 = &ACTORS.guarantor1;
     let g2 = &ACTORS.guarantor2;
-    let guarantor_sig_1 = voucher_lib::test_utils::create_guarantor_signature(&voucher, g1, "Hans", "guarantor", "1");
-    let guarantor_sig_2 = voucher_lib::test_utils::create_guarantor_signature(&voucher, g2, "Gabi", "guarantor", "2");
+    let guarantor_sig_1 = human_money_core::test_utils::create_guarantor_signature(&voucher, g1, "Hans", "guarantor", "1");
+    let guarantor_sig_2 = human_money_core::test_utils::create_guarantor_signature(&voucher, g2, "Gabi", "guarantor", "2");
 
     // Die creator-Signatur ist bereits von `create_voucher_for_manipulation` hinzugefügt worden.
     voucher.signatures.push(guarantor_sig_1);
@@ -117,11 +117,11 @@ fn test_serialization_deserialization() {
     // 1. Erstelle einen Gutschein
     let identity = &ACTORS.issuer;
     let creator = PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
-    let voucher_data = voucher_lib::test_utils::create_minuto_voucher_data(creator);
+    let voucher_data = human_money_core::test_utils::create_minuto_voucher_data(creator);
 
     let (minuto_standard, standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
-    let original_voucher = voucher_lib::test_utils::create_voucher_for_manipulation(voucher_data, minuto_standard, standard_hash, &identity.signing_key, "en");
+    let original_voucher = human_money_core::test_utils::create_voucher_for_manipulation(voucher_data, minuto_standard, standard_hash, &identity.signing_key, "en");
 
     // 2. Serialisiere zu JSON
     let json_string = to_json(&original_voucher).unwrap();
@@ -138,18 +138,18 @@ fn test_validation_fails_on_invalid_signature() {
     // 1. Erstelle einen gültigen Gutschein
     let identity = &ACTORS.issuer;
     let creator = PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
-    let voucher_data = voucher_lib::test_utils::create_minuto_voucher_data(creator);
+    let voucher_data = human_money_core::test_utils::create_minuto_voucher_data(creator);
 
     let (minuto_standard, standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
-    let mut voucher = voucher_lib::test_utils::create_voucher_for_manipulation(voucher_data, minuto_standard, standard_hash, &identity.signing_key, "en");
+    let mut voucher = human_money_core::test_utils::create_voucher_for_manipulation(voucher_data, minuto_standard, standard_hash, &identity.signing_key, "en");
 
     // Füge die benötigten Bürgen hinzu, um den Gutschein valide zu machen, BEVOR wir ihn manipulieren.
     // Ansonsten würde die Validierung bereits an den fehlenden Bürgen scheitern.
     let g1 = &ACTORS.guarantor1;
     let g2 = &ACTORS.guarantor2;
-    let guarantor_sig_1 = voucher_lib::test_utils::create_guarantor_signature(&voucher, g1, "Guarantor1", "guarantor", "1");
-    let guarantor_sig_2 = voucher_lib::test_utils::create_guarantor_signature(&voucher, g2, "Guarantor2", "guarantor", "2");
+    let guarantor_sig_1 = human_money_core::test_utils::create_guarantor_signature(&voucher, g1, "Guarantor1", "guarantor", "1");
+    let guarantor_sig_2 = human_money_core::test_utils::create_guarantor_signature(&voucher, g2, "Guarantor2", "guarantor", "2");
     voucher.signatures.push(guarantor_sig_1);
     voucher.signatures.push(guarantor_sig_2);
     assert!(validate_voucher_against_standard(&voucher, minuto_standard).is_ok());
@@ -172,7 +172,7 @@ fn test_validation_fails_on_invalid_signature() {
 fn test_validation_fails_on_missing_required_field() {
     let identity = &ACTORS.issuer;
     let creator = PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
-    let voucher_data = voucher_lib::test_utils::create_minuto_voucher_data(creator);
+    let voucher_data = human_money_core::test_utils::create_minuto_voucher_data(creator);
 
     let (minuto_standard, _standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
@@ -193,14 +193,14 @@ fn test_validation_fails_on_missing_required_field() {
     standard_to_hash.signature = None;
     let new_hash = get_hash(to_canonical_json(&standard_to_hash).unwrap());
 
-    let mut voucher = voucher_lib::test_utils::create_voucher_for_manipulation(voucher_data, &standard, &new_hash, &identity.signing_key, "en");
+    let mut voucher = human_money_core::test_utils::create_voucher_for_manipulation(voucher_data, &standard, &new_hash, &identity.signing_key, "en");
 
     // Füge gültige Bürgen hinzu, damit die Validierung nicht an der Anzahl scheitert,
     // bevor die Inhaltsregel überhaupt geprüft wird.
     let g1 = &ACTORS.guarantor1;
     let g2 = &ACTORS.guarantor2;
-    voucher.signatures.push(voucher_lib::test_utils::create_guarantor_signature(&voucher, g1, "G1", "guarantor", "1"));
-    voucher.signatures.push(voucher_lib::test_utils::create_guarantor_signature(&voucher, g2, "G2", "guarantor", "2"));
+    voucher.signatures.push(human_money_core::test_utils::create_guarantor_signature(&voucher, g1, "G1", "guarantor", "1"));
+    voucher.signatures.push(human_money_core::test_utils::create_guarantor_signature(&voucher, g2, "G2", "guarantor", "2"));
 
     // 4. Validierung sollte mit `PathNotFound` fehlschlagen, da das Feld im Gutschein `None` ist.
     let validation_result = validate_voucher_against_standard(&voucher, &standard);
@@ -216,7 +216,7 @@ fn test_validation_fails_on_inconsistent_unit() {
     // Erstelle einen initial gültigen Gutschein nach dem Silber-Standard.
     let identity = &ACTORS.issuer;
     let creator = PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
-    let voucher_data = voucher_lib::test_utils::create_minuto_voucher_data(creator);
+    let voucher_data = human_money_core::test_utils::create_minuto_voucher_data(creator);
 
     let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
 
@@ -499,7 +499,7 @@ fn test_split_fails_on_insufficient_funds() {
 fn test_fails_to_create_forbidden_transaction_type() {
     // 1. Setup: Lade den neuen Test-Standard, der "split" verbietet.
     let toml_str = include_str!("../../tests/test_data/standards/standard_no_split.toml");
-    let standard: voucher_lib::models::voucher_standard_definition::VoucherStandardDefinition =
+    let standard: human_money_core::models::voucher_standard_definition::VoucherStandardDefinition =
         toml::from_str(toml_str).unwrap();
 
     // Da der Standard zur Laufzeit geladen wird, müssen wir den Hash für die Erstellung manuell berechnen.
@@ -661,7 +661,7 @@ fn test_validity_duration_rules() {
 fn test_validation_fails_on_tampered_guarantor_signature() {
     // 1. Erstelle einen vollständig gültigen Gutschein
     let identity = &ACTORS.issuer;
-    let creator = voucher_lib::models::profile::PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
+    let creator = human_money_core::models::profile::PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
     let (minuto_standard, standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
     let mut voucher = self::test_utils::create_voucher_for_manipulation(
@@ -689,7 +689,7 @@ fn test_validation_fails_on_tampered_guarantor_signature() {
         details.first_name = Some("Tampered".to_string());
     } else {
         // If there are no details, we create them
-        guarantor_sig.details = Some(voucher_lib::models::profile::PublicProfile {
+        guarantor_sig.details = Some(human_money_core::models::profile::PublicProfile {
             first_name: Some("Tampered".to_string()),
             ..Default::default()
         });
@@ -849,9 +849,9 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     // --- 3. SECURE TRANSFER from Alice to Bob ---
     // Anstatt die Transaktion manuell zu erstellen und zu bündeln, verwenden wir die
     // öffentliche `create_transfer`-Methode, die die Zustandsverwaltung (Archivierung) korrekt durchführt.
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_id.clone(),
             amount_to_send: "500".to_string(), // Sende den vollen Betrag
         }],
@@ -862,11 +862,11 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
 
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: encrypted_bundle_for_bob, .. } = alice_wallet.execute_multi_transfer_and_bundle(
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes: encrypted_bundle_for_bob, .. } = alice_wallet.execute_multi_transfer_and_bundle(
         &alice_identity,
         &standards,
         request,
-        None::<&dyn voucher_lib::archive::VoucherArchive>,
+        None::<&dyn human_money_core::archive::VoucherArchive>,
     ).unwrap();
 
     // NACH ÄNDERUNG: Die alte Instanz wird gelöscht. Es sollte nur noch eine neue, archivierte Instanz im Wallet sein.
@@ -884,7 +884,7 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
     bob_wallet
-        .process_encrypted_transaction_bundle(&bob_identity, &encrypted_bundle_for_bob, None::<&dyn voucher_lib::archive::VoucherArchive>, &standards_for_bob)
+        .process_encrypted_transaction_bundle(&bob_identity, &encrypted_bundle_for_bob, None::<&dyn human_money_core::archive::VoucherArchive>, &standards_for_bob)
         .unwrap();
 
     // --- 5. VERIFICATION ---

@@ -5,7 +5,7 @@
 //! Enthält Tests, die den `AppService` gegen den Empfang von feindseligen,
 //! intern inkonsistenten Gutscheinen härten.
 
-    use voucher_lib::{
+    use human_money_core::{
         app_service::AppService,
         test_utils::{
             create_test_bundle, generate_signed_standard_toml, resign_transaction, ACTORS,
@@ -92,7 +92,7 @@ fn test_rejection_of_broken_transaction_chain() {
     // --- Test-Modifikation ---
     // 1. Erstelle eine gültige Transfer-Transaktion von Alice an Bob.
     //    Wir müssen das `VoucherStandardDefinition`-Objekt (nicht den TOML-String) verwenden.
-    let valid_tx = voucher_lib::services::voucher_manager::create_transaction(
+    let valid_tx = human_money_core::services::voucher_manager::create_transaction(
         &voucher,
         &SILVER_STANDARD.0, // Das Objekt aus test_utils
         &identity_sender.user_id,
@@ -172,8 +172,8 @@ fn test_rejection_of_inconsistent_split_math() {
             Some("pwd"))
         .unwrap();
 
-    let prev_tx_hash = voucher_lib::services::crypto_utils::get_hash(
-        voucher_lib::services::utils::to_canonical_json(voucher.transactions.last().unwrap())
+    let prev_tx_hash = human_money_core::services::crypto_utils::get_hash(
+        human_money_core::services::utils::to_canonical_json(voucher.transactions.last().unwrap())
             .unwrap(),
     );
 
@@ -381,7 +381,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
 
     // Manuelles Erstellen von voucher_A (wie in Test 2.1)
     let voucher_a = service_sender.create_new_voucher(&silver_toml, "en", NewVoucherData { creator_profile: PublicProfile { id: Some(service_sender.get_user_id().unwrap()), ..Default::default() }, nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() }, ..Default::default() }, Some("pwd")).unwrap();
-    let voucher_a_sent = voucher_lib::services::voucher_manager::create_transaction(&voucher_a, &SILVER_STANDARD.0, &identity_sender.user_id, &identity_sender.signing_key, &id_recipient, "50.0000").unwrap();
+    let voucher_a_sent = human_money_core::services::voucher_manager::create_transaction(&voucher_a, &SILVER_STANDARD.0, &identity_sender.user_id, &identity_sender.signing_key, &id_recipient, "50.0000").unwrap();
 
     // Bundle 1 (Das legitime Bundle)
     let bundle_1_bytes = create_test_bundle(&identity_sender, vec![voucher_a_sent.clone()], &id_recipient, Some("Bundle 1")).unwrap();
@@ -455,8 +455,8 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
 
     // Sanity Check: Sicherstellen, dass die Public Keys gleich sind,
     // aber die vollen User-IDs (Adressen) unterschiedlich.
-    let pk_pc = voucher_lib::services::crypto_utils::get_pubkey_from_user_id(&id_recipient_pc).unwrap();
-    let pk_mobil = voucher_lib::services::crypto_utils::get_pubkey_from_user_id(&id_recipient_mobil).unwrap();
+    let pk_pc = human_money_core::services::crypto_utils::get_pubkey_from_user_id(&id_recipient_pc).unwrap();
+    let pk_mobil = human_money_core::services::crypto_utils::get_pubkey_from_user_id(&id_recipient_mobil).unwrap();
     assert_eq!(pk_pc, pk_mobil, "Public keys must be identical for this test.");
     assert_ne!(id_recipient_pc, id_recipient_mobil, "Full User IDs (addresses) must be different.");
     assert!(id_recipient_pc.starts_with("bo-")); // Präfix von ACTORS.bob

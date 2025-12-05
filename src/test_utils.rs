@@ -11,7 +11,7 @@ use ed25519_dalek::Signer;
 use std::path::Path;
 use std::path::PathBuf;
 
-// HINWEIS: Alle `voucher_lib` Imports wurden zu `crate` geändert.
+// HINWEIS: Alle `human_money_core` Imports wurden zu `crate` geändert.
 use crate::models::{
     conflict::{CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, ProofStore},
     profile::{BundleMetadataStore, PublicProfile, UserProfile, VoucherStore},

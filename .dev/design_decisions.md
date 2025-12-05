@@ -2,7 +2,7 @@
 
 **Abbildung des Geschlechts im `Creator` Struct:**
     * **Entscheidung:** Das `gender`-Feld im `Creator`-Struct wird als `Int definiert. eschlecht des Erstellers ISO 5218 (1 = male", 2 = female", 0 = not known, 9 = Not applicable)
-    * **Begründung:** Diese Wahl ist pragmatisch und universell einsetzbar, ohne sich auf spezifische kulturelle oder rechtliche Definitionen von Geschlecht zu beschränken, die vorwiegend in westlichen Ländern verbreitet sind. Sie bietet eine einfache und ausreichende Abbildung für die Zwecke der Core-Bibliothek (z.B. für Bürgen-Anforderungen des Minuto-Standards) und überlässt komplexere oder sensiblere Abbildungen den höheren Anwendungsschichten, die `voucher_core` nutzen.
+    * **Begründung:** Diese Wahl ist pragmatisch und universell einsetzbar, ohne sich auf spezifische kulturelle oder rechtliche Definitionen von Geschlecht zu beschränken, die vorwiegend in westlichen Ländern verbreitet sind. Sie bietet eine einfache und ausreichende Abbildung für die Zwecke der Core-Bibliothek (z.B. für Bürgen-Anforderungen des Minuto-Standards) und überlässt komplexere oder sensiblere Abbildungen den höheren Anwendungsschichten, die `human_money_core` nutzen.
 ---
 ** Für Gutschein Standard wird toml verwendet **
     * damit lassen sich kommentare nutzen damit der standart auch besser lesbar wird. Bei Json keine Kommentare möglich.
@@ -22,7 +22,7 @@ Die Komplexität entsteht, weil die Logik zwischen zwei Zuständen eines Gutsche
 Um dies zu erreichen, kann die Berechnung nicht einfach die letzte Transaktion des Gutscheins nehmen. Stattdessen muss sie die Transaktionshistorie **rückwärts durchsuchen**, um den letzten Zeitpunkt zu finden, an dem der Profilinhaber tatsächlich ein Guthaben besaß. Dieser gezielte Suchvorgang macht die Berechnung scheinbar komplex, ist aber die Grundlage für eine konsistente und sichere Zustandsverwaltung.
 
 
-# Architekturentscheidung: Identitäts- und Schlüsselmanagement in voucher_core
+# Architekturentscheidung: Identitäts- und Schlüsselmanagement in human_money_core
 Zur Verwaltung von Benutzerkonten auf mehreren Geräten (z.B. PC und Handy) wurde eine Architektur für Separated Account Identity (SAI) gewählt. Sie kombiniert die Anforderung eines einheitlichen "Web of Trust" mit der Notwendigkeit einer strikt getrennten Kontoführung, um Double Spending durch Zustands-Inkonsistenzen zu verhindern.
 
 ## Das entschiedene Separated Account Identity (SAI) Modell

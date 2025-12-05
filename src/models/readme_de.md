@@ -2,7 +2,7 @@
 
 ## 1\. Motivation und Designziele
 
-Die Transaktionsstruktur in `voucher_core` wurde entwickelt, um zwei Hauptziele zu erreichen:
+Die Transaktionsstruktur in `human_money_core` wurde entwickelt, um zwei Hauptziele zu erreichen:
 
 - **Interne Integrität:** Die Historie innerhalb einer einzelnen Gutschein-Datei muss fälschungssicher und kryptographisch nachvollziehbar sein.
 
@@ -48,7 +48,7 @@ Die Signatur wurde bewusst vereinfacht, um Redundanz zu vermeiden und die Effizi
 
 ## 4\. Layer 2: Anonymisierte Double-Spending-Erkennung
 
-Die `voucher_core`-Bibliothek ist so optimiert, dass eine übergeordnete Anwendung eine globale Datenbank zur Betrugserkennung nutzen kann, ohne sensible Daten preiszugeben.
+Die `human_money_core`-Bibliothek ist so optimiert, dass eine übergeordnete Anwendung eine globale Datenbank zur Betrugserkennung nutzen kann, ohne sensible Daten preiszugeben.
 
 ### Das Konzept des "Anonymen Fingerabdrucks"
 

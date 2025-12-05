@@ -8,9 +8,9 @@
 
 // --- Tests from test_date_utils.rs ---
 
-use voucher_lib::test_utils::{ACTORS, SILVER_STANDARD};
+use human_money_core::test_utils::{ACTORS, SILVER_STANDARD};
 use chrono::{DateTime, Utc};
-use voucher_lib::{
+use human_money_core::{
     error::ValidationError,
     services::{
         crypto_utils,
@@ -111,11 +111,11 @@ fn test_chronological_validation_with_timezones() {
 
     let voucher_data = NewVoucherData {
         validity_duration: Some("P3Y".to_string()),
-        nominal_value: voucher_lib::models::voucher::ValueDefinition {
+        nominal_value: human_money_core::models::voucher::ValueDefinition {
             amount: "100".to_string(),
             ..Default::default()
         },
-        creator_profile: voucher_lib::models::profile::PublicProfile {
+        creator_profile: human_money_core::models::profile::PublicProfile {
             id: Some(test_user.user_id.clone()),
             ..Default::default()
         },
@@ -158,12 +158,12 @@ fn test_chronological_validation_with_timezones() {
 
 // --- Tests from test_local_instance_id.rs ---
 
-use voucher_lib::models::voucher::{
+use human_money_core::models::voucher::{
     Address, Collateral, ValueDefinition, Transaction, Voucher, VoucherStandard, VoucherTemplateData,
 };
-use voucher_lib::services::crypto_utils::get_hash;
-use voucher_lib::services::utils::get_current_timestamp;
-use voucher_lib::wallet::Wallet;
+use human_money_core::services::crypto_utils::get_hash;
+use human_money_core::services::utils::get_current_timestamp;
+use human_money_core::wallet::Wallet;
 
 /// Hilfsfunktion, um einen einfachen Test-Gutschein zu erstellen.
 /// Initialisiert alle Felder manuell, um die fehlende `Default`-Implementierung zu umgehen.
@@ -203,7 +203,7 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
             collateral_type: Some("".to_string()),
             redeem_condition: Some("".to_string()),
         }),
-        creator_profile: voucher_lib::models::profile::PublicProfile {
+        creator_profile: human_money_core::models::profile::PublicProfile {
             id: Some(creator_id.to_string()),
             first_name: Some("Test".to_string()),
             last_name: Some("Creator".to_string()),

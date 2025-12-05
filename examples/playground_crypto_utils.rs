@@ -2,7 +2,7 @@
 // run with: cargo run --example playground_crypto_utils
 // more playgrounds 
 
-use voucher_lib::services::crypto_utils::{
+use human_money_core::services::crypto_utils::{
     generate_mnemonic, 
     derive_ed25519_keypair,
     generate_ephemeral_x25519_keypair,

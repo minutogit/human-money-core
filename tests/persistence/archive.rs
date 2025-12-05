@@ -4,7 +4,7 @@
 //! Testet die Funktionalität des `VoucherArchive`-Traits und der `FileVoucherArchive`-Implementierung.
 //! Ursprünglich in `tests/test_archive.rs`.
 
-use voucher_lib::{
+use human_money_core::{
     archive::file_archive::FileVoucherArchive,
     models::{
         conflict::{CanonicalMetadataStore},
@@ -17,7 +17,7 @@ use tempfile::tempdir;
 
 // Lade die Test-Hilfsfunktionen aus dem übergeordneten Verzeichnis.
 
-use voucher_lib::test_utils::{ACTORS, SILVER_STANDARD};
+use human_money_core::test_utils::{ACTORS, SILVER_STANDARD};
 
 // --- Haupttest ---
 
@@ -68,7 +68,7 @@ fn test_voucher_archiving_on_full_spend() {
         };
         let voucher_data = voucher_manager::NewVoucherData {
             nominal_value,
-            creator_profile: voucher_lib::models::profile::PublicProfile {
+            creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(alice_identity.user_id.clone()),
                 // Fülle nur die nötigsten Felder für diesen Test.
                 ..Default::default()
@@ -88,9 +88,9 @@ fn test_voucher_archiving_on_full_spend() {
 
     // 2. AKTION
     // Alice sendet ihr GESAMTES Guthaben ("100") an Bob und übergibt dabei ihr Archiv.
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_id.clone(),
             amount_to_send: "100.0000".to_string(), // KORREKTUR: Betrag muss ebenfalls das korrekte Format haben.
         }],
@@ -101,7 +101,7 @@ fn test_voucher_archiving_on_full_spend() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
         .execute_multi_transfer_and_bundle(
             &alice_identity,
             &standards,
@@ -114,7 +114,7 @@ fn test_voucher_archiving_on_full_spend() {
     // it from the bundle to maintain the test functionality
     let transferred_voucher_state = {
         // To get the transferred voucher state, we need to open the bundle
-        let bundle_result = voucher_lib::services::bundle_processor::open_and_verify_bundle(&bob_identity, &bundle_bytes).unwrap();
+        let bundle_result = human_money_core::services::bundle_processor::open_and_verify_bundle(&bob_identity, &bundle_bytes).unwrap();
         bundle_result.vouchers.into_iter().next().unwrap()
     };
 
@@ -130,7 +130,7 @@ fn test_voucher_archiving_on_full_spend() {
 
     // Lade den Inhalt der archivierten Datei und vergleiche ihn.
     let archived_content = fs::read(expected_file_path).unwrap();
-    let archived_voucher: voucher_lib::models::voucher::Voucher =
+    let archived_voucher: human_money_core::models::voucher::Voucher =
         serde_json::from_slice(&archived_content).unwrap();
 
     // Der archivierte Gutschein muss exakt dem Zustand entsprechen, den die `create_transfer`-Funktion zurückgegeben hat.

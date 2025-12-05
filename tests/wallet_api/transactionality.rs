@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use tempfile::tempdir;
 
-use voucher_lib::{
+use human_money_core::{
     models::{
         conflict::{ProofOfDoubleSpend, ResolutionEndorsement},
         profile::PublicProfile,
@@ -20,7 +20,7 @@ use voucher_lib::{
     test_utils::{generate_signed_standard_toml, resign_transaction, ACTORS, SILVER_STANDARD},
     VoucherStatus,
 };
-use voucher_lib::test_utils;
+use human_money_core::test_utils;
 use chrono::{Duration, Utc};
 
 /// Lokale Test-Hilfsfunktion, um einen mock `ProofOfDoubleSpend` zu erzeugen.
@@ -29,7 +29,7 @@ fn create_mock_proof_of_double_spend(
     offender_id: &str,
     victim_id: &str,
     resolutions: Option<Vec<ResolutionEndorsement>>,
-    verdict: Option<voucher_lib::models::conflict::Layer2Verdict>,
+    verdict: Option<human_money_core::models::conflict::Layer2Verdict>,
 ) -> ProofOfDoubleSpend {
     ProofOfDoubleSpend {
         proof_id: crypto_utils::get_hash(offender_id),
@@ -77,9 +77,9 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
     // 2. ACT: Versuche, einen Transfer mit falschem Passwort zu erstellen.
     let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: "bob-recipient-id".to_string(), // Kann ein Dummy sein, da die Operation fehlschlägt
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: voucher_to_split_id.clone(),
             amount_to_send: "40".to_string(),
         }],
@@ -172,9 +172,9 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
     let voucher_id = service_sender.get_voucher_summaries(None, None).unwrap()[0]
         .local_instance_id
         .clone();
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: id_recipient.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: voucher_id.clone(),
             amount_to_send: "100".to_string(),
         }],
@@ -188,7 +188,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         silver_toml.clone() // Use the silver_toml from earlier in the test
     );
 
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle, .. } = service_sender
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes: bundle, .. } = service_sender
         .create_transfer_bundle(
             request,
             &standards_toml,
@@ -288,12 +288,12 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let (_, signer_identity_ref) = service_signer.get_unlocked_mut_for_test();
     let signer_identity = signer_identity_ref.clone();
     let request_container: SecureContainer = serde_json::from_slice(&bundle_req).unwrap();
-    let payload = voucher_lib::services::secure_container_manager::open_secure_container(&request_container, &signer_identity).unwrap();
-    let voucher_from_request: voucher_lib::models::voucher::Voucher = serde_json::from_slice(&payload).unwrap();
+    let payload = human_money_core::services::secure_container_manager::open_secure_container(&request_container, &signer_identity).unwrap();
+    let voucher_from_request: human_money_core::models::voucher::Voucher = serde_json::from_slice(&payload).unwrap();
 
     // FIX: Argumente in der korrekten Reihenfolge übergeben (voucher_id, description).
     // 1. Signatur von externem Unterzeichner erstellen.
-    let _sig_data1 = voucher_lib::test_utils::create_additional_signature_data(
+    let _sig_data1 = human_money_core::test_utils::create_additional_signature_data(
         &signer_identity, &voucher_from_request.voucher_id,
     );
 
@@ -331,11 +331,11 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let (_, signer_identity_ref2) = service_signer.get_unlocked_mut_for_test();
     let signer_identity2 = signer_identity_ref2.clone();
     let request_container2: SecureContainer = serde_json::from_slice(&bundle_req2).unwrap();
-    let payload2 = voucher_lib::services::secure_container_manager::open_secure_container(&request_container2, &signer_identity2).unwrap();
-    let voucher_from_request2: voucher_lib::models::voucher::Voucher = serde_json::from_slice(&payload2).unwrap();
+    let payload2 = human_money_core::services::secure_container_manager::open_secure_container(&request_container2, &signer_identity2).unwrap();
+    let voucher_from_request2: human_money_core::models::voucher::Voucher = serde_json::from_slice(&payload2).unwrap();
 
     // 2. Zweite Signatur erstellen.
-    let _sig_data2 = voucher_lib::test_utils::create_additional_signature_data(
+    let _sig_data2 = human_money_core::test_utils::create_additional_signature_data(
         &signer_identity2, &voucher_from_request2.voucher_id,
     );
 
@@ -460,8 +460,8 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
 
     // Zwei konkurrierende Transaktionen aus V1 erstellen
     let prev_tx = voucher_v1.transactions.last().unwrap();
-    let prev_tx_hash = voucher_lib::services::crypto_utils::get_hash(
-        voucher_lib::services::utils::to_canonical_json(prev_tx).unwrap(),
+    let prev_tx_hash = human_money_core::services::crypto_utils::get_hash(
+        human_money_core::services::utils::to_canonical_json(prev_tx).unwrap(),
     );
     // FIX: Zeitstempel müssen garantiert nach der Erstellung des Gutscheins liegen.
     let prev_tx_time = chrono::DateTime::parse_from_rfc3339(&prev_tx.t_time)
@@ -471,24 +471,24 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
     let time_b = (prev_tx_time + Duration::seconds(2)).to_rfc3339();
 
     // Pfad A (wird zuerst erfolgreich empfangen)
-    let mut tx_a = voucher_lib::models::voucher::Transaction {
+    let mut tx_a = human_money_core::models::voucher::Transaction {
         prev_hash: prev_tx_hash.clone(), t_type: "transfer".to_string(), t_time: time_a,
         sender_id: id_alice.clone(), recipient_id: id_david.clone(), amount: "100".to_string(), ..Default::default()
     };
     tx_a = resign_transaction(tx_a, &identity_alice.signing_key);
     let mut voucher_path_a = voucher_v1.clone();
     voucher_path_a.transactions.push(tx_a);
-    let bundle_a = voucher_lib::test_utils::create_test_bundle(&identity_alice, vec![voucher_path_a], &id_david, None).unwrap();
+    let bundle_a = human_money_core::test_utils::create_test_bundle(&identity_alice, vec![voucher_path_a], &id_david, None).unwrap();
 
     // Pfad B (löst den Konflikt aus)
-    let mut tx_b = voucher_lib::models::voucher::Transaction {
+    let mut tx_b = human_money_core::models::voucher::Transaction {
         prev_hash: prev_tx_hash, t_type: "transfer".to_string(), t_time: time_b,
         sender_id: id_alice.clone(), recipient_id: id_david.clone(), amount: "100".to_string(), ..Default::default()
     };
     tx_b = resign_transaction(tx_b, &identity_alice.signing_key);
     let mut voucher_path_b = voucher_v1.clone();
     voucher_path_b.transactions.push(tx_b);
-    let bundle_b = voucher_lib::test_utils::create_test_bundle(&identity_alice, vec![voucher_path_b], &id_david, None).unwrap();
+    let bundle_b = human_money_core::test_utils::create_test_bundle(&identity_alice, vec![voucher_path_b], &id_david, None).unwrap();
 
     // David empfängt Pfad A erfolgreich
     service_david.receive_bundle(&bundle_a, &standards_map, None, Some(correct_password)).unwrap();

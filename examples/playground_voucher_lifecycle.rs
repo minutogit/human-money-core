@@ -18,9 +18,9 @@
 //! 6.  **Verifizierung:** Die neuen Kontostände werden bei beiden Teilnehmern geprüft.
 //! 7.  **Rohdaten-Ausgabe:** Der finale Zustand des Gutscheins wird als JSON ausgegeben.
 
-use voucher_lib::app_service::{AppService};
-use voucher_lib::models::voucher::{ValueDefinition};
-use voucher_lib::{verify_and_parse_standard, NewVoucherData, VoucherStatus};
+use human_money_core::app_service::{AppService};
+use human_money_core::models::voucher::{ValueDefinition};
+use human_money_core::{verify_and_parse_standard, NewVoucherData, VoucherStatus};
 use std::collections::HashMap;
 use tempfile::tempdir;
 
@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let g2_id = service_g2.get_user_id()?;
 
     // Erstellen einer vollständigen Address-Struktur für Bürge 1
-    let g1_address = voucher_lib::models::voucher::Address {
+    let g1_address = human_money_core::models::voucher::Address {
         street: "Bürgenstraße".to_string(),
         house_number: "789".to_string(),
         zip_code: "98765".to_string(),
@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     
     // Erstellen eines vollständigen PublicProfile für Bürge 1 mit Beispielwerten
-    let g1_profile = voucher_lib::models::profile::PublicProfile {
+    let g1_profile = human_money_core::models::profile::PublicProfile {
         id: Some(g1_id.clone()),
         first_name: Some("Max".to_string()),
         last_name: Some("Bürger".to_string()),
@@ -95,7 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     
     // Erstellen einer vollständigen Address-Struktur für Bürge 2
-    let g2_address = voucher_lib::models::voucher::Address {
+    let g2_address = human_money_core::models::voucher::Address {
         street: "Bürgenstraße".to_string(),
         house_number: "456".to_string(),
         zip_code: "54321".to_string(),
@@ -105,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     
     // Erstellen eines vollständigen PublicProfile für Bürge 2 mit Beispielwerten
-    let g2_profile = voucher_lib::models::profile::PublicProfile {
+    let g2_profile = human_money_core::models::profile::PublicProfile {
         id: Some(g2_id.clone()),
         first_name: Some("Erika".to_string()),
         last_name: Some("Bürgin".to_string()),
@@ -151,7 +151,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n--- SCHRITT 2: Ersteller legt einen neuen (unvollständigen) Gutschein an ---");
     
     // Erstellen einer vollständigen Address-Struktur mit Beispielwerten
-    let address = voucher_lib::models::voucher::Address {
+    let address = human_money_core::models::voucher::Address {
         street: "Musterstraße".to_string(),
         house_number: "123".to_string(),
         zip_code: "12345".to_string(),
@@ -161,7 +161,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     
     // Erstellen eines vollständigen PublicProfile mit Beispielwerten
-    let complete_creator_profile = voucher_lib::models::profile::PublicProfile {
+    let complete_creator_profile = human_money_core::models::profile::PublicProfile {
         id: Some(creator_id.clone()),
         first_name: Some("Max".to_string()),
         last_name: Some("Mustermann".to_string()),
@@ -239,9 +239,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut standards_map = HashMap::new();
     standards_map.insert(standard.metadata.uuid.clone(), standard_toml.clone());
 
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: recipient_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_id.clone(),
             amount_to_send: "25".to_string(),
         }],
@@ -250,7 +250,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.metadata.uuid.clone(), standard_toml.clone());
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: transfer_bundle, .. } = service_creator.create_transfer_bundle(request, &standards_toml, None, None)?;
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes: transfer_bundle, .. } = service_creator.create_transfer_bundle(request, &standards_toml, None, None)?;
 
     // --- 6. Verifizierung der Kontostände ---
     println!("\n--- SCHRITT 6: Empfänger erhält das Bundle und Kontostände werden geprüft ---");
@@ -284,9 +284,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let recipient_local_id = recipient_summary.local_instance_id;
 
     // Der erste Empfänger erstellt jetzt das Transfer-Bundle für Charlie
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: charlie_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: recipient_local_id.clone(),
             amount_to_send: "25".to_string(), // (ÄNDERUNG) Sende den vollen Restbetrag
         }],
@@ -295,7 +295,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.metadata.uuid.clone(), standard_toml.clone());
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: transfer_bundle_to_charlie, .. } = service_recipient.create_transfer_bundle(request, &standards_toml, None, None)?;
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes: transfer_bundle_to_charlie, .. } = service_recipient.create_transfer_bundle(request, &standards_toml, None, None)?;
 
     // Charlie empfängt das Bundle
     service_charlie.receive_bundle(&transfer_bundle_to_charlie, &standards_map, None, None)?;

@@ -3,7 +3,7 @@
 name = "No Split Test Standard"
 uuid = "TEST-NO-SPLIT-V1"
 abbreviation = "NST"
-issuer_name = "Voucher-Core Test Suite"
+issuer_name = "Human-Money-Core Test Suite"
 
 [template.fixed]
 primary_redemption_type = "goods_or_services"

@@ -8,12 +8,12 @@
 
 
 // --- Tests from test_secure_container.rs ---
-use voucher_lib::test_utils::ACTORS;
-use voucher_lib::models::secure_container::PayloadType;
-use voucher_lib::services::secure_container_manager::{
+use human_money_core::test_utils::ACTORS;
+use human_money_core::models::secure_container::PayloadType;
+use human_money_core::services::secure_container_manager::{
     create_secure_container, open_secure_container, ContainerManagerError,
 };
-use voucher_lib::VoucherCoreError;
+use human_money_core::VoucherCoreError;
 
 #[test]
 fn test_multi_recipient_secure_container() {
@@ -111,7 +111,7 @@ fn test_sender_can_reopen_container() {
 // --- Tests from test_crypto_utils.rs ---
 
 use bip39::Language;
-use voucher_lib::services::crypto_utils::{
+use human_money_core::services::crypto_utils::{
     create_user_id, decrypt_data, derive_ed25519_keypair, ed25519_pub_to_x25519,
     ed25519_sk_to_x25519_sk, encrypt_data, generate_ed25519_keypair_for_tests, UserIdError,
     generate_ephemeral_x25519_keypair, generate_mnemonic, get_pubkey_from_user_id,

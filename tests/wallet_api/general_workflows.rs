@@ -8,14 +8,14 @@
 // Binde das `test_utils` Modul explizit über seinen Dateipfad ein.
 
 
-use voucher_lib::test_utils::{
+use human_money_core::test_utils::{
     add_voucher_to_wallet, create_voucher_for_manipulation, generate_signed_standard_toml,
     generate_valid_mnemonic, setup_in_memory_wallet, setup_service_with_profile, ACTORS, MINUTO_STANDARD, SILVER_STANDARD,
 };
 use rust_decimal::Decimal;
 use std::str::FromStr;
 use tempfile::tempdir;
-use voucher_lib::{
+use human_money_core::{
     app_service::AppService,
     models::{
         voucher::{ValueDefinition},
@@ -94,9 +94,9 @@ fn api_app_service_full_lifecycle() {
     let local_id_alice = summaries_alice[0].local_instance_id.clone();
 
     // --- 5. Alice sendet den Gutschein an Bob ---
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: id_bob.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_id_alice.clone(),
             amount_to_send: "100".to_string(),
         }],
@@ -106,7 +106,7 @@ fn api_app_service_full_lifecycle() {
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.metadata.uuid.clone(), silver_standard_toml.clone());
     service_alice.unlock_session("password", 60).unwrap();
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: transfer_bundle, .. } = service_alice
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes: transfer_bundle, .. } = service_alice
         .create_transfer_bundle(
             request,
             &standards_toml,
@@ -322,10 +322,10 @@ fn api_wallet_lifecycle() {
     let original_user_id = wallet_a.profile.user_id.clone();
     let folder_name = {
         let secret_string = format!("{}{}{}", &test_user.mnemonic, test_user.passphrase.unwrap_or(""), test_user.prefix.unwrap_or(""));
-        voucher_lib::services::crypto_utils::get_hash(secret_string.as_bytes())
+        human_money_core::services::crypto_utils::get_hash(secret_string.as_bytes())
     };
     let user_storage_path = dir.path().join(folder_name);
-    let mut storage = voucher_lib::storage::file_storage::FileStorage::new(user_storage_path);
+    let mut storage = human_money_core::storage::file_storage::FileStorage::new(user_storage_path);
 
 
     wallet_a
@@ -359,9 +359,9 @@ fn api_wallet_transfer_full_amount() {
     let bob = &ACTORS.bob;
     let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
 
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob.identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: voucher_id.clone(),
             amount_to_send: "100".to_string(),
         }],
@@ -372,7 +372,7 @@ fn api_wallet_transfer_full_amount() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
 
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
         .execute_multi_transfer_and_bundle(
             &alice.identity,
             &standards,
@@ -419,9 +419,9 @@ fn api_wallet_transfer_split_amount() {
     let bob = &ACTORS.bob;
     let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
 
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob.identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: voucher_id.clone(),
             amount_to_send: "30".to_string(),
         }],
@@ -432,7 +432,7 @@ fn api_wallet_transfer_split_amount() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
 
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
         .execute_multi_transfer_and_bundle(
             &alice.identity,
             &standards,
@@ -474,9 +474,9 @@ fn api_wallet_transfer_invalid_amount() {
             .unwrap();
     let bob = &ACTORS.bob;
 
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob.identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: voucher_id.clone(),
             amount_to_send: "-50".to_string(),
         }],
@@ -498,9 +498,9 @@ fn api_wallet_transfer_invalid_amount() {
         Err(VoucherCoreError::Manager(_))
     ));
 
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob.identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: voucher_id.clone(),
             amount_to_send: "50.5".to_string(),
         }],
@@ -546,9 +546,9 @@ fn api_wallet_transfer_inactive_voucher() {
         .unwrap();
     instance.status = VoucherStatus::Quarantined { reason: "test".to_string() };
 
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob.identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: voucher_id.clone(),
             amount_to_send: "50".to_string(),
         }],
@@ -590,9 +590,9 @@ fn api_wallet_proactive_double_spend_prevention() {
             .unwrap();
     let bob = &ACTORS.bob;
 
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob.identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: voucher_id.clone(),
             amount_to_send: "100".to_string(),
         }],
@@ -612,9 +612,9 @@ fn api_wallet_proactive_double_spend_prevention() {
         )
         .expect("First transfer should succeed");
 
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: ACTORS.charlie.identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: voucher_id.clone(),
             amount_to_send: "100".to_string(),
         }],
@@ -714,8 +714,8 @@ fn api_wallet_query_total_balance() {
             };
             let mut standard_to_hash = standard.clone();
             standard_to_hash.signature = None;
-            let correct_hash = voucher_lib::services::crypto_utils::get_hash(
-                voucher_lib::services::utils::to_canonical_json(&standard_to_hash).unwrap(),
+            let correct_hash = human_money_core::services::crypto_utils::get_hash(
+                human_money_core::services::utils::to_canonical_json(&standard_to_hash).unwrap(),
             );
             let voucher = create_voucher_for_manipulation(
                 new_voucher_data,
@@ -780,7 +780,7 @@ fn api_wallet_rejects_invalid_bundle() {
     let mut standard: VoucherStandardDefinition = toml::from_str(toml_str).unwrap();
     standard.template.fixed.nominal_value.unit = "EUR".to_string();
     standard.template.fixed.description = vec![
-        voucher_lib::models::voucher_standard_definition::LocalizedText {
+        human_money_core::models::voucher_standard_definition::LocalizedText {
             lang: "en".to_string(),
             text: "INV-123456".to_string(),
         },
@@ -801,10 +801,10 @@ fn api_wallet_rejects_invalid_bundle() {
 
     let mut standard_to_hash = standard.clone();
     standard_to_hash.signature = None;
-    let standard_hash = voucher_lib::services::crypto_utils::get_hash(
-        voucher_lib::services::utils::to_canonical_json(&standard_to_hash).unwrap(),
+    let standard_hash = human_money_core::services::crypto_utils::get_hash(
+        human_money_core::services::utils::to_canonical_json(&standard_to_hash).unwrap(),
     );
-    let mut voucher = voucher_lib::services::voucher_manager::create_voucher(
+    let mut voucher = human_money_core::services::voucher_manager::create_voucher(
         voucher_data,
         &standard,
         &standard_hash,
@@ -828,11 +828,11 @@ fn api_wallet_rejects_invalid_bundle() {
         .unwrap();
 
     let decrypted_bundle =
-        voucher_lib::services::bundle_processor::open_and_verify_bundle(&bob.identity, &bundle_bytes)
+        human_money_core::services::bundle_processor::open_and_verify_bundle(&bob.identity, &bundle_bytes)
             .unwrap();
     let received_voucher = decrypted_bundle.vouchers.first().unwrap();
 
-    let validation_result = voucher_lib::services::voucher_validation::validate_voucher_against_standard(
+    let validation_result = human_money_core::services::voucher_validation::validate_voucher_against_standard(
         received_voucher,
         &standard,
     );
@@ -944,14 +944,14 @@ fn api_wallet_transfer_multi_source() {
     let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
 
     // 2. AKTION: Erstelle eine Anfrage, die 20 vom ersten und 30 vom zweiten Gutschein sendet.
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob.identity.user_id.clone(),
         sources: vec![
-            voucher_lib::wallet::SourceTransfer {
+            human_money_core::wallet::SourceTransfer {
                 local_instance_id: voucher_id_1.clone(),
                 amount_to_send: "20".to_string(),
             },
-            voucher_lib::wallet::SourceTransfer {
+            human_money_core::wallet::SourceTransfer {
                 local_instance_id: voucher_id_2.clone(),
                 amount_to_send: "30".to_string(),
             },
@@ -963,7 +963,7 @@ fn api_wallet_transfer_multi_source() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
 
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
         .execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None)
         .unwrap();
 

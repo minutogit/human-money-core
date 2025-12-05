@@ -7,14 +7,14 @@
 
 #[cfg(test)]
 mod tests {
-    use voucher_lib::services::bundle_processor;
+    use human_money_core::services::bundle_processor;
     use tempfile::{tempdir, TempDir};
-    use voucher_lib::app_service::{AppService, ProfileInfo};
-    use voucher_lib::test_utils::{self, ACTORS, SILVER_STANDARD};
-    use voucher_lib::models::conflict::{TransactionFingerprint, FingerprintMetadata};
+    use human_money_core::app_service::{AppService, ProfileInfo};
+    use human_money_core::test_utils::{self, ACTORS, SILVER_STANDARD};
+    use human_money_core::models::conflict::{TransactionFingerprint, FingerprintMetadata};
     use std::collections::HashMap;
     use chrono::{Utc, Duration};
-    use voucher_lib::services::voucher_manager::NewVoucherData;
+    use human_money_core::services::voucher_manager::NewVoucherData;
 
     const PASSWORD: &str = "test-password-123";
 
@@ -178,12 +178,12 @@ mod tests {
         }
         service.login(&profile.folder_name, PASSWORD, false).unwrap();
         let new_voucher_data = NewVoucherData {
-            nominal_value: voucher_lib::models::voucher::ValueDefinition {
+            nominal_value: human_money_core::models::voucher::ValueDefinition {
                 amount: "100".to_string(),
                 unit: "EUR".to_string(),
                 ..Default::default()
             },
-            creator_profile: voucher_lib::models::profile::PublicProfile {
+            creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(ACTORS.alice.user_id.clone()),
                 ..Default::default()
             },
@@ -220,11 +220,11 @@ mod tests {
         }
         service.login(&profile.folder_name, PASSWORD, false).unwrap();
         let new_voucher_data = NewVoucherData {
-            nominal_value: voucher_lib::models::voucher::ValueDefinition {
+            nominal_value: human_money_core::models::voucher::ValueDefinition {
                 amount: "100".to_string(),
                 ..Default::default()
             },
-            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() }, ..Default::default()
+            creator_profile: human_money_core::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() }, ..Default::default()
         };
         service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, Some(PASSWORD)).unwrap();
         let wallet_path = dir.path().join(&profile.folder_name);
@@ -261,11 +261,11 @@ mod tests {
 
         // FIX: Provide a valid nominal_value
         let new_voucher_data = NewVoucherData {
-            nominal_value: voucher_lib::models::voucher::ValueDefinition {
+            nominal_value: human_money_core::models::voucher::ValueDefinition {
                 amount: "100".to_string(),
                 ..Default::default()
             },
-            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
+            creator_profile: human_money_core::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
             ..Default::default()
         };
         let _voucher_id = alice_service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, Some(PASSWORD)).unwrap().voucher_id;
@@ -280,9 +280,9 @@ mod tests {
         let bob_id = bob_service.get_user_id().unwrap();
         bob_service.logout();
         let bundle1 = {
-            let request = voucher_lib::wallet::MultiTransferRequest {
+            let request = human_money_core::wallet::MultiTransferRequest {
                 recipient_id: bob_id.clone(),
-                sources: vec![voucher_lib::wallet::SourceTransfer {
+                sources: vec![human_money_core::wallet::SourceTransfer {
                     local_instance_id: local_id.clone(),
                     amount_to_send: "10".to_string(),
                 }],
@@ -293,7 +293,7 @@ mod tests {
             let mut standards_toml = std::collections::HashMap::new();
             standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
 
-            let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle1_result, .. } = alice_service.create_transfer_bundle(request, &standards_toml, None, Some(PASSWORD)).unwrap();
+            let human_money_core::wallet::CreateBundleResult { bundle_bytes: bundle1_result, .. } = alice_service.create_transfer_bundle(request, &standards_toml, None, Some(PASSWORD)).unwrap();
             bundle1_result
         };
 
@@ -313,9 +313,9 @@ mod tests {
         let alice_id = alice_service.get_user_id().unwrap();
         alice_service.logout();
 
-        let request = voucher_lib::wallet::MultiTransferRequest {
+        let request = human_money_core::wallet::MultiTransferRequest {
             recipient_id: alice_id.clone(),
-            sources: vec![voucher_lib::wallet::SourceTransfer {
+            sources: vec![human_money_core::wallet::SourceTransfer {
                 local_instance_id: bob_local_id.clone(),
                 amount_to_send: "5".to_string(),
             }],
@@ -324,7 +324,7 @@ mod tests {
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
-        let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle2, .. } = bob_service.create_transfer_bundle(request, &standards_toml, None, Some("password")).unwrap();
+        let human_money_core::wallet::CreateBundleResult { bundle_bytes: bundle2, .. } = bob_service.create_transfer_bundle(request, &standards_toml, None, Some("password")).unwrap();
 
         // Bob ausloggen
         bob_service.logout();
@@ -499,11 +499,11 @@ mod tests {
         alice_service.login(&alice_profile.folder_name, PASSWORD, false).unwrap();
 
         let new_voucher_data = NewVoucherData {
-            nominal_value: voucher_lib::models::voucher::ValueDefinition {
+            nominal_value: human_money_core::models::voucher::ValueDefinition {
                 amount: "100".to_string(),
                 ..Default::default()
             },
-            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() }, ..Default::default()
+            creator_profile: human_money_core::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() }, ..Default::default()
         };
         alice_service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, Some(PASSWORD)).unwrap();
         let local_id = alice_service.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
@@ -512,11 +512,11 @@ mod tests {
         let bob_id = ACTORS.bob.user_id.clone(); // Verwende bekannte ID
 
         // NEU: Berechne den erwarteten Kurz-Hash für die Assertion
-        let bob_short_hash = voucher_lib::crypto_utils::get_short_hash_from_user_id(&bob_id);
+        let bob_short_hash = human_money_core::crypto_utils::get_short_hash_from_user_id(&bob_id);
 
-        let request = voucher_lib::wallet::MultiTransferRequest {
+        let request = human_money_core::wallet::MultiTransferRequest {
             recipient_id: bob_id.clone(),
-            sources: vec![voucher_lib::wallet::SourceTransfer {
+            sources: vec![human_money_core::wallet::SourceTransfer {
                 local_instance_id: local_id.clone(),
                 amount_to_send: "10".to_string(),
             }],
@@ -636,7 +636,7 @@ mod tests {
             sender_signature: String::new(),
             valid_until: String::new(),
         };        let mut meta = FingerprintMetadata { depth: 0, ..Default::default() };
-        meta.known_by_peers.insert(voucher_lib::crypto_utils::get_short_hash_from_user_id(&bob_id));
+        meta.known_by_peers.insert(human_money_core::crypto_utils::get_short_hash_from_user_id(&bob_id));
         wallet.fingerprint_metadata.insert(key.clone(), meta);
         wallet.known_fingerprints.local_history.insert(key, vec![fp]);
 

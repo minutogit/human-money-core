@@ -2,7 +2,7 @@
 // run with: cargo run --example playground_utils
 // demonstrates the timestamp utility functions
 
-use voucher_lib::services::utils::{get_timestamp, get_current_timestamp};
+use human_money_core::services::utils::{get_timestamp, get_current_timestamp};
 
 fn main() {
     println!("Timestamp Utility Functions Demo\n");

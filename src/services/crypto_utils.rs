@@ -156,7 +156,7 @@ pub fn derive_ed25519_keypair(
     let mut stretched_key = [0u8; 32];
     pbkdf2::<Hmac<Sha512>>(
         &bip39_seed,
-        b"voucher-core-stretch-v1",
+        b"human-money-core",
         100_000,
         &mut stretched_key,
     ).map_err(|e| VoucherCoreError::Crypto(
@@ -167,7 +167,7 @@ pub fn derive_ed25519_keypair(
     // This is a cryptographic best practice to separate keys for different purposes
     let hkdf = Hkdf::<Sha256>::new(None, &stretched_key);
     let mut ed_signing_key_seed = [0u8; 32];
-    hkdf.expand(b"voucher-core/ed25519", &mut ed_signing_key_seed)
+    hkdf.expand(b"human-money-core/ed25519", &mut ed_signing_key_seed)
         .map_err(|_| VoucherCoreError::Crypto(
             "HKDF expansion failed".to_string()
         ))?;

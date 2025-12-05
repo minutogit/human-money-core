@@ -7,24 +7,24 @@
 
 use std::fs;
 use tempfile::tempdir;
-use voucher_lib::{VoucherStatus};
-use voucher_lib::{UserIdentity};
-use voucher_lib::models::voucher::{ValueDefinition, Voucher};
-use voucher_lib::storage::AuthMethod;
-use voucher_lib::services::voucher_manager::NewVoucherData;
-use voucher_lib::services::crypto_utils;
-use voucher_lib::services::voucher_manager;
-use voucher_lib::error::VoucherCoreError;
-use voucher_lib::{FileStorage, Storage, StorageError, Wallet};
+use human_money_core::{VoucherStatus};
+use human_money_core::{UserIdentity};
+use human_money_core::models::voucher::{ValueDefinition, Voucher};
+use human_money_core::storage::AuthMethod;
+use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::services::crypto_utils;
+use human_money_core::services::voucher_manager;
+use human_money_core::error::VoucherCoreError;
+use human_money_core::{FileStorage, Storage, StorageError, Wallet};
 
 // Lade die Test-Hilfsfunktionen aus dem übergeordneten Verzeichnis.
 
-use voucher_lib::test_utils::{add_voucher_to_wallet, setup_in_memory_wallet, ACTORS, SILVER_STANDARD};
+use human_money_core::test_utils::{add_voucher_to_wallet, setup_in_memory_wallet, ACTORS, SILVER_STANDARD};
 
 // --- Hilfsfunktionen ---
 fn create_test_voucher(identity: &UserIdentity) -> Voucher {
     let new_voucher_data = NewVoucherData {
-        creator_profile: voucher_lib::models::profile::PublicProfile {
+        creator_profile: human_money_core::models::profile::PublicProfile {
             id: Some(identity.user_id.clone()),
             first_name: Some("Test".to_string()),
             last_name: Some("User".to_string()),
@@ -244,9 +244,9 @@ fn test_save_and_load_with_bundle_history() {
             .unwrap();
 
     // 2. Aktion: Führe eine Transaktion durch, um Bundle-Metadaten zu erzeugen.
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_id.clone(),
             amount_to_send: "100".to_string(), // Sende den vollen Betrag
         }],
@@ -262,7 +262,7 @@ fn test_save_and_load_with_bundle_history() {
             alice_identity,
             &standards,
             request,
-            None::<&dyn voucher_lib::archive::VoucherArchive>,
+            None::<&dyn human_money_core::archive::VoucherArchive>,
         )
         .expect("Transfer failed");
 

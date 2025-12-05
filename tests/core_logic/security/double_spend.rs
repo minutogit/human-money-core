@@ -8,20 +8,20 @@
 // (Ursprünglich in `test_local_double_spend_detection.rs`)
 // ===================================================================================
 
-use voucher_lib::archive::file_archive::FileVoucherArchive;
-use voucher_lib::storage::AuthMethod;
+use human_money_core::archive::file_archive::FileVoucherArchive;
+use human_money_core::storage::AuthMethod;
 // NEU: AppService und Storage importieren
-use voucher_lib::app_service::AppService; // KORREKTUR: Falscher Import E0432
+use human_money_core::app_service::AppService; // KORREKTUR: Falscher Import E0432
 use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat};
 use std::collections::HashMap;
 use std::{path::Path};
 // HINWEIS: Dieser `use` wurde auf `super::` umgestellt.
 use super::test_utils::{setup_in_memory_wallet, ACTORS, SILVER_STANDARD};
-use voucher_lib::{services::crypto_utils, UserIdentity, VoucherStatus};
-use voucher_lib::models::conflict::TransactionFingerprint;
-use voucher_lib::models::voucher::{Address, Collateral, ValueDefinition, Voucher};
-use voucher_lib::services::voucher_manager::{self, NewVoucherData};
-use voucher_lib::wallet::Wallet;
+use human_money_core::{services::crypto_utils, UserIdentity, VoucherStatus};
+use human_money_core::models::conflict::TransactionFingerprint;
+use human_money_core::models::voucher::{Address, Collateral, ValueDefinition, Voucher};
+use human_money_core::services::voucher_manager::{self, NewVoucherData};
+use human_money_core::wallet::Wallet;
 
 // ===================================================================================
 // HILFSFUNKTIONEN
@@ -62,7 +62,7 @@ fn new_test_voucher_data(creator_id: String) -> NewVoucherData {
             description: Some(String::new()),
         },
         collateral: Some(Collateral::default()),
-        creator_profile: voucher_lib::models::profile::PublicProfile {
+        creator_profile: human_money_core::models::profile::PublicProfile {
             id: Some(creator_id),
             first_name: Some(String::new()),
             last_name: Some(String::new()),
@@ -259,9 +259,9 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
 
     // ### Akt 1: Legitime Transaktion ###
     // Sender sendet den Gutschein an Empfänger 1.
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: recipient1_identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: initial_local_id.clone(),
             amount_to_send: "100".to_string(),
         }],
@@ -302,9 +302,9 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
     // Pfad zum Profil-Ordner (den wir aus Akt 1 kennen) initialisieren,
     // nicht nur mit dem Basis-Speicherpfad.
     let profile_storage_path = storage_path.join(&sender_folder_name);
-    let mut storage = voucher_lib::storage::file_storage::FileStorage::new(&profile_storage_path);
+    let mut storage = human_money_core::storage::file_storage::FileStorage::new(&profile_storage_path);
     // KORREKTUR: E0609 Verwende die korrekte AuthMethod
-    let auth = voucher_lib::storage::AuthMethod::Password("password123");
+    let auth = human_money_core::storage::AuthMethod::Password("password123");
     let (mut wallet, identity) = Wallet::load(&storage, &auth).unwrap();
 
     // HIER IST DER ANGRIFF: Füge den alten, ausgegebenen Gutschein wieder als 'Active' hinzu.
@@ -322,9 +322,9 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
     // ### Akt 3: Der blockierte Double-Spend-Versuch ###
     // Sender versucht, den wiederhergestellten, ursprünglichen Gutschein an Empfänger 2 zu senden.
     // Dies MUSS fehlschlagen UND die Selbstheilung auslösen.
-    let request_2 = voucher_lib::wallet::MultiTransferRequest {
+    let request_2 = human_money_core::wallet::MultiTransferRequest {
         recipient_id: recipient2_identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: initial_local_id.clone(), // KORREKTUR: E0063
             amount_to_send: "100".to_string(),
         }],
@@ -384,9 +384,9 @@ fn test_local_double_spend_detection_lifecycle() {
     // Wir klonen die ID, um den immutable borrow auf alice_wallet sofort zu beenden.
     let alice_initial_local_id = alice_wallet.voucher_store.vouchers.keys().next().unwrap().clone();
 
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: alice_initial_local_id.clone(),
             amount_to_send: "100".to_string(),
         }],
@@ -397,7 +397,7 @@ fn test_local_double_spend_detection_lifecycle() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle_to_bob, .. } = alice_wallet.execute_multi_transfer_and_bundle(
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes: bundle_to_bob, .. } = alice_wallet.execute_multi_transfer_and_bundle(
         alice_identity,
         &standards,
         request,
@@ -460,9 +460,9 @@ fn test_local_double_spend_detection_lifecycle() {
     // Wir klonen die ID, um den immutable borrow auf charlie_wallet sofort zu beenden.
     let charlie_local_id = charlie_wallet.voucher_store.vouchers.keys().next().unwrap().clone();
 
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: alice_identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: charlie_local_id.clone(),
             amount_to_send: "100".to_string(),
         }],
@@ -473,7 +473,7 @@ fn test_local_double_spend_detection_lifecycle() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle_to_alice_1, .. } = charlie_wallet.execute_multi_transfer_and_bundle(
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes: bundle_to_alice_1, .. } = charlie_wallet.execute_multi_transfer_and_bundle(
         charlie_identity,
         &standards,
         request,
@@ -502,9 +502,9 @@ fn test_local_double_spend_detection_lifecycle() {
     // Wir klonen die ID, um den immutable borrow auf david_wallet sofort zu beenden.
     let david_local_id = david_wallet.voucher_store.vouchers.keys().next().unwrap().clone();
 
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: alice_identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: david_local_id.clone(),
             amount_to_send: "100".to_string(),
         }],
@@ -515,7 +515,7 @@ fn test_local_double_spend_detection_lifecycle() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle_to_alice_2, .. } = david_wallet.execute_multi_transfer_and_bundle(
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes: bundle_to_alice_2, .. } = david_wallet.execute_multi_transfer_and_bundle(
         david_identity,
         &standards,
         request,
@@ -561,9 +561,9 @@ fn test_local_double_spend_detection_lifecycle() {
     );
 
     // Der Versuch, den unter Quarantäne stehenden Gutschein (die 'Verlierer'-Instanz) auszugeben, muss fehlschlagen.
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: loser_local_id.unwrap(),
             amount_to_send: "100".to_string(),
         }],

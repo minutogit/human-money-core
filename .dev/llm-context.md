@@ -1,10 +1,10 @@
-# llm-context.md für decentral-voucher-system-core
+# llm-context.md für human-money-core
 
-Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `voucher_core`. Sie dient als "README für die KI", um ein umfassendes Verständnis des Projekts und seiner Anforderungen zu gewährleisten.
+Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `human_money_core`. Sie dient als "README für die KI", um ein umfassendes Verständnis des Projekts und seiner Anforderungen zu gewährleisten.
 
 ## 1\. Projekt & Zweck
 
-- **Projektname:** `voucher_core`
+- **Projektname:** `human_money_core`
 
 - **Zweck:** Implementierung der Kernlogik eines dezentralen, vertrauensbasierten elektronischen Gutschein-Zahlungssystems.
 
@@ -55,7 +55,7 @@ Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `voucher
 
 - **Testen:** Umfassende Unit- und Integrationstests.
 
-- **Keine externen Netzwerkaufrufe:** Die Core-Bibliothek soll keine direkten Netzwerkaufrufe für die Layer-2-Funktionalität enthalten. Diese Interaktionen werden von den übergeordneten Anwendungen gehandhabt, die `voucher_lib` nutzen.
+- **Keine externen Netzwerkaufrufe:** Die Core-Bibliothek soll keine direkten Netzwerkaufrufe für die Layer-2-Funktionalität enthalten. Diese Interaktionen werden von den übergeordneten Anwendungen gehandhabt, die `human_money_core` nutzen.
 
 ## 5\. Kernkonzepte aus dem Paper (Zusammenfassung)
 

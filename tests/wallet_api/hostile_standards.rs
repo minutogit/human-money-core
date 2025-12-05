@@ -4,7 +4,7 @@
 //! Enthält Tests, die das System gegen feindselige oder logisch inkonsistente
 //! Gutschein-Standard-Definitionen härten.
 
-use voucher_lib::{
+use human_money_core::{
     models::{profile::PublicProfile, voucher::{ValueDefinition}},
     services::voucher_manager::NewVoucherData,
     test_utils::{self, create_custom_standard, ACTORS, SILVER_STANDARD},
@@ -48,9 +48,9 @@ fn test_disallowed_transaction_type() {
     assert_eq!(voucher.voucher_standard.uuid, hostile_standard.metadata.uuid);
 
     // 2. ACT: Versuche einen Split-Transfer
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: "recipient-id".to_string(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_id.clone(),
             amount_to_send: "40".to_string(), // Teilbetrag -> "split"
         }],

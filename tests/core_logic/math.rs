@@ -20,7 +20,7 @@
 //!   wenn das gesamte Guthaben überwiesen wird.
 
 
-use voucher_lib::{
+use human_money_core::{
     // Structs from specific modules
     models::voucher::{ValueDefinition},
     services::voucher_manager::{create_transaction, create_voucher, VoucherManagerError, get_spendable_balance},
@@ -29,7 +29,7 @@ use voucher_lib::{
     NewVoucherData, VoucherCoreError,
 };
 use rust_decimal_macros::dec;
-use voucher_lib::test_utils::{ACTORS, SILVER_STANDARD};
+use human_money_core::test_utils::{ACTORS, SILVER_STANDARD};
 
 // --- TESTFÄLLE ---
 
@@ -47,7 +47,7 @@ fn test_chained_transaction_math_and_scaling() {
     let bob = &ACTORS.bob;
 
     // Erstelle einen initialen Gutschein für Alice mit dem Wert 100
-    let alice_creator_info = voucher_lib::models::profile::PublicProfile { id: Some(alice.user_id.clone()), ..Default::default() };
+    let alice_creator_info = human_money_core::models::profile::PublicProfile { id: Some(alice.user_id.clone()), ..Default::default() };
     let voucher_data = NewVoucherData {
         creator_profile: alice_creator_info,
         nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
@@ -235,7 +235,7 @@ fn test_transaction_fails_on_excess_precision() {
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
 
-    let alice_creator_info = voucher_lib::models::profile::PublicProfile { id: Some(alice.user_id.clone()), ..Default::default() };
+    let alice_creator_info = human_money_core::models::profile::PublicProfile { id: Some(alice.user_id.clone()), ..Default::default() };
     let voucher_data = NewVoucherData {
         creator_profile: alice_creator_info,
         nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },

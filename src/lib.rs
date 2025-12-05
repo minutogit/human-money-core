@@ -14,7 +14,7 @@ pub mod wallet;
 pub mod services;
 
 // Re-exportiert die wichtigsten öffentlichen Typen für eine einfachere Nutzung.
-// Anstatt `voucher_core::models::voucher::Voucher` können Benutzer nun `voucher_core::Voucher` schreiben.
+// Anstatt `human_money_core::models::voucher::Voucher` können Benutzer nun `human_money_core::Voucher` schreiben.
 
 // Modelle
 pub use models::voucher::{

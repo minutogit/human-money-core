@@ -5,15 +5,15 @@
 //! und die logische Konsistenz eines `Voucher`-Objekts verifizieren.
 
 // Wir importieren die oeffentlichen Typen, die in lib.rs re-exportiert wurden.
-use voucher_lib::{
+use human_money_core::{
     create_transaction, create_voucher, crypto_utils, to_canonical_json, validate_voucher_against_standard, NewVoucherData, ValueDefinition,
     Transaction, VoucherCoreError, models::profile::PublicProfile,
 };
-use voucher_lib::crypto_utils::get_hash;
-use voucher_lib::error::ValidationError;
-use voucher_lib::test_utils;
+use human_money_core::crypto_utils::get_hash;
+use human_money_core::error::ValidationError;
+use human_money_core::test_utils;
 
-use voucher_lib::test_utils::{
+use human_money_core::test_utils::{
     create_female_guarantor_signature,
     create_male_guarantor_signature, create_voucher_for_manipulation, resign_transaction, ACTORS,
     MINUTO_STANDARD, SILVER_STANDARD,
@@ -195,9 +195,9 @@ mod counts_and_group_rules {
     use super::*;
     use test_utils::generate_signed_standard_toml;
     use test_utils::create_guarantor_signature_with_time;
-    use voucher_lib::services::standard_manager::verify_and_parse_standard;
+    use human_money_core::services::standard_manager::verify_and_parse_standard;
 
-    fn load_toml_standard(path: &str) -> (voucher_lib::VoucherStandardDefinition, String) {
+    fn load_toml_standard(path: &str) -> (human_money_core::VoucherStandardDefinition, String) {
         let toml_str = generate_signed_standard_toml(path);
         verify_and_parse_standard(&toml_str).unwrap()
     }
@@ -305,18 +305,18 @@ mod counts_and_group_rules {
 mod signature_requirements {
     use super::*;
     use test_utils::generate_signed_standard_toml;
-    use voucher_lib::services::standard_manager::verify_and_parse_standard;
-    use voucher_lib::error::ValidationError;
+    use human_money_core::services::standard_manager::verify_and_parse_standard;
+    use human_money_core::error::ValidationError;
 
-    fn load_toml_standard(path: &str) -> (voucher_lib::VoucherStandardDefinition, String) {
+    fn load_toml_standard(path: &str) -> (human_money_core::VoucherStandardDefinition, String) {
         let toml_str = generate_signed_standard_toml(path);        verify_and_parse_standard(&toml_str).unwrap()
     }
     fn create_additional_signature(
-        signer: &voucher_lib::UserIdentity, description: &str,
-    ) -> voucher_lib::models::voucher::VoucherSignature {
+        signer: &human_money_core::UserIdentity, description: &str,
+    ) -> human_money_core::models::voucher::VoucherSignature {
         use ed25519_dalek::Signer;
-        use voucher_lib::services::{crypto_utils, utils};
-        let mut signature_obj = voucher_lib::models::voucher::VoucherSignature {
+        use human_money_core::services::{crypto_utils, utils};
+        let mut signature_obj = human_money_core::models::voucher::VoucherSignature {
             signer_id: signer.user_id.clone(),
             signature_time: utils::get_current_timestamp(),
             role: description.to_string(),
@@ -421,10 +421,10 @@ mod signature_requirements {
 mod behavioral_rules {
     use super::*;
     use test_utils::generate_signed_standard_toml;
-    use voucher_lib::services::standard_manager::verify_and_parse_standard;
-    use voucher_lib::services::voucher_manager::VoucherManagerError;
+    use human_money_core::services::standard_manager::verify_and_parse_standard;
+    use human_money_core::services::voucher_manager::VoucherManagerError;
 
-    fn load_toml_standard(path: &str) -> (voucher_lib::VoucherStandardDefinition, String) {
+    fn load_toml_standard(path: &str) -> (human_money_core::VoucherStandardDefinition, String) {
         let toml_str = generate_signed_standard_toml(path);
         verify_and_parse_standard(&toml_str).unwrap()
     }
@@ -559,7 +559,7 @@ mod behavioral_rules {
         let prev_hash = crypto_utils::get_hash(to_canonical_json(last_valid_tx).unwrap());
         let invalid_transfer_tx = Transaction {
             t_id: "".to_string(), prev_hash, t_type: "transfer".to_string(),
-            t_time: voucher_lib::services::utils::get_current_timestamp(),
+            t_time: human_money_core::services::utils::get_current_timestamp(),
             sender_id: recipient.user_id.clone(), recipient_id: ACTORS.charlie.user_id.clone(),
             amount: "10.0000".to_string(), sender_remaining_amount: None, sender_signature: "".to_string(),
         };
@@ -605,7 +605,7 @@ mod behavioral_rules {
 
             // 2. Entschärfe die 'max=1' Transaktions-Regel des Minuto-Standards
             let count_rules = validation.counts.get_or_insert_with(Default::default);
-            count_rules.transactions = Some(voucher_lib::models::voucher_standard_definition::MinMax { min: 1, max: 2 });
+            count_rules.transactions = Some(human_money_core::models::voucher_standard_definition::MinMax { min: 1, max: 2 });
         });
         let identity = &ACTORS.alice;
         
@@ -637,8 +637,8 @@ mod behavioral_rules {
     #[cfg(test)]
     mod issuance_firewall {
         use super::*;
-        use voucher_lib::test_utils::{create_custom_standard, SILVER_STANDARD};
-        use voucher_lib::services::voucher_manager::VoucherManagerError;
+        use human_money_core::test_utils::{create_custom_standard, SILVER_STANDARD};
+        use human_money_core::services::voucher_manager::VoucherManagerError;
 
         /// Erstellt eine Testumgebung mit den benötigten Akteuren und Standards.
         struct TestSetup {
@@ -646,8 +646,8 @@ mod behavioral_rules {
             creator_mobil: test_utils::TestUser,
             user_b: &'static test_utils::TestUser,
             user_c: &'static test_utils::TestUser,
-            standard_a: (voucher_lib::VoucherStandardDefinition, String), // P1Y Firewall
-            standard_b: (&'static voucher_lib::VoucherStandardDefinition, &'static String), // Keine Firewall
+            standard_a: (human_money_core::VoucherStandardDefinition, String), // P1Y Firewall
+            standard_b: (&'static human_money_core::VoucherStandardDefinition, &'static String), // Keine Firewall
         }
 
         fn setup() -> TestSetup {
@@ -690,7 +690,7 @@ mod behavioral_rules {
         }
 
         /// Hilfsfunktion, um einen Gutschein nach Manipulation neu zu signieren (Creator-Signatur).
-        fn resign_voucher_creator_signature(mut voucher: voucher_lib::Voucher, signer_key: &ed25519_dalek::SigningKey) -> voucher_lib::Voucher {
+        fn resign_voucher_creator_signature(mut voucher: human_money_core::Voucher, signer_key: &ed25519_dalek::SigningKey) -> human_money_core::Voucher {
             // Resign the creator signature
             let creator_sig_index = voucher.signatures.iter().position(|s| s.role == "creator").unwrap();
             let mut creator_sig = voucher.signatures.remove(creator_sig_index);
@@ -788,7 +788,7 @@ mod behavioral_rules {
 
             // 2. Simuliere Zeitablauf: Manipuliere valid_until auf 6 Monate in der Zukunft
             let now = chrono::Utc::now();
-            let six_months_from_now = voucher_lib::services::voucher_manager::add_iso8601_duration(now, "P6M").unwrap();
+            let six_months_from_now = human_money_core::services::voucher_manager::add_iso8601_duration(now, "P6M").unwrap();
             voucher.valid_until = six_months_from_now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
             voucher = resign_voucher_creator_signature(voucher, &setup.creator_pc.signing_key);
 
@@ -815,7 +815,7 @@ mod behavioral_rules {
 
             // Simuliere Zeitablauf
             let now = chrono::Utc::now();
-            let six_months_from_now = voucher_lib::services::voucher_manager::add_iso8601_duration(now, "P6M").unwrap();
+            let six_months_from_now = human_money_core::services::voucher_manager::add_iso8601_duration(now, "P6M").unwrap();
             voucher.valid_until = six_months_from_now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
             voucher = resign_voucher_creator_signature(voucher, &setup.creator_pc.signing_key);
 
@@ -840,7 +840,7 @@ mod behavioral_rules {
             // Simuliere Zeitablauf
             let mut voucher_at_b_expired = voucher_at_b.clone();
             let now = chrono::Utc::now();
-            let six_months_from_now = voucher_lib::services::voucher_manager::add_iso8601_duration(now, "P6M").unwrap();
+            let six_months_from_now = human_money_core::services::voucher_manager::add_iso8601_duration(now, "P6M").unwrap();
             voucher_at_b_expired.valid_until = six_months_from_now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
             voucher_at_b_expired = resign_voucher_creator_signature(voucher_at_b_expired, &setup.creator_pc.signing_key);
 

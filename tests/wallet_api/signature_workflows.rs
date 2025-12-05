@@ -9,7 +9,7 @@
 
 use std::{fs, path::PathBuf};
 use tempfile::tempdir;
-use voucher_lib::{
+use human_money_core::{
     error::ValidationError, models::{
         profile::PublicProfile,
         secure_container::SecureContainer, signature::DetachedSignature, voucher::{
@@ -36,7 +36,7 @@ fn setup_voucher_for_alice(
     let voucher_data = NewVoucherData {
         validity_duration: Some("P3Y".to_string()),
         non_redeemable_test_voucher: true,
-        creator_profile: voucher_lib::models::profile::PublicProfile {
+        creator_profile: human_money_core::models::profile::PublicProfile {
             id: Some(alice_identity.user_id.clone()),
             ..Default::default()
         },
@@ -247,7 +247,7 @@ fn api_wallet_signature_fail_mismatched_voucher_id() {
     let (_voucher_a, _) = setup_voucher_for_alice(&mut alice_wallet, &alice.identity);
 
     let voucher_data_b = NewVoucherData {
-        creator_profile: voucher_lib::models::profile::PublicProfile {
+        creator_profile: human_money_core::models::profile::PublicProfile {
             id: Some(alice.user_id.clone()),
             ..Default::default()
         },
@@ -507,7 +507,7 @@ fn test_full_guarantor_workflow_via_app_service() {
     // --- 2. Schritt 1: Erstellung des unvollständigen Gutscheins ---
     // RUFE NUN DIE KORRIGIERTE API-FUNKTION AUF
     let voucher_data = NewVoucherData {
-        creator_profile: voucher_lib::models::profile::PublicProfile {
+        creator_profile: human_money_core::models::profile::PublicProfile {
             id: Some(creator_id.clone()),
             ..Default::default()
         },

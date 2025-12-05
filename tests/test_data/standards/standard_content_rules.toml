@@ -3,7 +3,7 @@
 name = "Content Rules Test Standard"
 uuid = "TEST-CONTENT-RULES-V1"
 abbreviation = "CRT"
-issuer_name = "Voucher-Core Test Suite"
+issuer_name = "Human-Money-Core Test Suite"
 
 [template.fixed]
 primary_redemption_type = "goods_or_services"

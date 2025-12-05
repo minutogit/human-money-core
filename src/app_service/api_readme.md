@@ -1,6 +1,6 @@
 # AppService: Public API Facade
 
-This directory contains the `AppService`, which is the primary public-facing API for the `voucher_lib`. It is designed as a high-level **facade** to simplify all interactions for client applications (e.g., Tauri, mobile apps).
+This directory contains the `AppService`, which is the primary public-facing API for the `human_money_core`. It is designed as a high-level **facade** to simplify all interactions for client applications (e.g., Tauri, mobile apps).
 
 **Key Responsibilities:**
 * Manages the wallet state (`Locked` vs. `Unlocked`).

@@ -6,13 +6,13 @@
 
 
 
-use voucher_lib::test_utils::{generate_signed_standard_toml, setup_in_memory_wallet, ACTORS, MINUTO_STANDARD, TEST_ISSUER, add_voucher_to_wallet, SILVER_STANDARD};
-use voucher_lib::error::StandardDefinitionError;
-use voucher_lib::models::voucher_standard_definition::LocalizedText;
-use voucher_lib::services::standard_manager::{get_localized_text, verify_and_parse_standard};
-use voucher_lib::services::{voucher_manager, crypto_utils, utils};
-use voucher_lib::services::voucher_validation::validate_voucher_against_standard;
-use voucher_lib::VoucherCoreError;
+use human_money_core::test_utils::{generate_signed_standard_toml, setup_in_memory_wallet, ACTORS, MINUTO_STANDARD, TEST_ISSUER, add_voucher_to_wallet, SILVER_STANDARD};
+use human_money_core::error::StandardDefinitionError;
+use human_money_core::models::voucher_standard_definition::LocalizedText;
+use human_money_core::services::standard_manager::{get_localized_text, verify_and_parse_standard};
+use human_money_core::services::{voucher_manager, crypto_utils, utils};
+use human_money_core::services::voucher_validation::validate_voucher_against_standard;
+use human_money_core::VoucherCoreError;
 use ed25519_dalek::Signer;
 
 /// Prüft das Parsen und die kryptographische Verifizierung von Standard-Dateien.
@@ -56,7 +56,7 @@ mod parsing_and_verification {
         let hash_to_sign = crypto_utils::get_hash(utils::to_canonical_json(&standard).unwrap());
         let hacker_signature = ACTORS.hacker.signing_key.sign(hash_to_sign.as_bytes());
 
-        standard.signature = Some(voucher_lib::models::voucher_standard_definition::SignatureBlock {
+        standard.signature = Some(human_money_core::models::voucher_standard_definition::SignatureBlock {
             issuer_id: TEST_ISSUER.user_id.clone(),
             signature: bs58::encode(hacker_signature.to_bytes()).into_string(),
         });
@@ -108,7 +108,7 @@ mod parsing_and_verification {
 mod integration_with_voucher {
     use super::*;
 
-    use voucher_lib::services::voucher_manager::NewVoucherData;
+    use human_money_core::services::voucher_manager::NewVoucherData;
 
     #[test]
     fn test_validate_voucher_when_standard_hash_mismatches_then_fails() {
@@ -125,22 +125,22 @@ mod integration_with_voucher {
     #[test]
     fn test_create_voucher_when_lang_preference_is_set_then_uses_correct_localized_text() {
         let new_voucher_data_de = NewVoucherData {
-            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
-            nominal_value: voucher_lib::models::voucher::ValueDefinition { amount: "888".to_string(), ..Default::default() },
+            creator_profile: human_money_core::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
+            nominal_value: human_money_core::models::voucher::ValueDefinition { amount: "888".to_string(), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
         };
-        let voucher_de = voucher_lib::test_utils::create_voucher_for_manipulation(
+        let voucher_de = human_money_core::test_utils::create_voucher_for_manipulation(
             new_voucher_data_de, &MINUTO_STANDARD.0, &MINUTO_STANDARD.1, &ACTORS.alice.signing_key, "de"
         );
 
         let new_voucher_data_fr = NewVoucherData {
-            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
-            nominal_value: voucher_lib::models::voucher::ValueDefinition { amount: "888".to_string(), ..Default::default() },
+            creator_profile: human_money_core::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
+            nominal_value: human_money_core::models::voucher::ValueDefinition { amount: "888".to_string(), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
         };
-        let voucher_fr = voucher_lib::test_utils::create_voucher_for_manipulation(
+        let voucher_fr = human_money_core::test_utils::create_voucher_for_manipulation(
             new_voucher_data_fr, &MINUTO_STANDARD.0, &MINUTO_STANDARD.1, &ACTORS.alice.signing_key, "fr"
         );
 
@@ -152,7 +152,7 @@ mod integration_with_voucher {
     fn test_create_transaction_when_standard_is_wrong_then_fails() {
         let identity = &ACTORS.alice;
         let mut wallet = setup_in_memory_wallet(identity);
-        add_voucher_to_wallet(&mut wallet, identity, "5", &voucher_lib::test_utils::SILVER_STANDARD.0, false).unwrap();
+        add_voucher_to_wallet(&mut wallet, identity, "5", &human_money_core::test_utils::SILVER_STANDARD.0, false).unwrap();
         let instance = wallet.voucher_store.vouchers.values().next().unwrap().clone();
         let silver_voucher = instance.voucher;
 
@@ -166,8 +166,8 @@ mod integration_with_voucher {
 #[cfg(test)]
 mod security_hardening {
     use super::*;
-    use voucher_lib::services::voucher_manager::NewVoucherData;
-    use voucher_lib::models::voucher::{ValueDefinition};
+    use human_money_core::services::voucher_manager::NewVoucherData;
+    use human_money_core::models::voucher::{ValueDefinition};
 
     #[test]
     fn test_verify_standard_when_signature_string_is_invalid_base58_then_fails() {
@@ -201,11 +201,11 @@ mod security_hardening {
 
     #[test]
     fn test_create_voucher_when_standard_template_is_incomplete_then_fails() {
-        let (incomplete_standard, hash) = voucher_lib::test_utils::create_custom_standard(&MINUTO_STANDARD.0, |s| {
+        let (incomplete_standard, hash) = human_money_core::test_utils::create_custom_standard(&MINUTO_STANDARD.0, |s| {
             s.template.fixed.nominal_value.unit = "".to_string();
         });
         let new_voucher_data = NewVoucherData {
-            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
+            creator_profile: human_money_core::models::profile::PublicProfile { id: Some(ACTORS.alice.user_id.clone()), ..Default::default() },
             nominal_value: ValueDefinition { amount: "50".to_string(), ..Default::default() },
             ..Default::default()
         };

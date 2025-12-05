@@ -7,15 +7,15 @@
 
 
 use serde_json::json;
-use voucher_lib::test_utils::{ACTORS, SILVER_STANDARD};
-use voucher_lib::{
+use human_money_core::test_utils::{ACTORS, SILVER_STANDARD};
+use human_money_core::{
     from_json, validate_voucher_against_standard, NewVoucherData, Voucher,
     VoucherCoreError, ValueDefinition,
 };
-use voucher_lib::error::ValidationError;
-use voucher_lib::error::StandardDefinitionError;
-use voucher_lib::services::standard_manager;
-use voucher_lib::services::utils::to_canonical_json;
+use human_money_core::error::ValidationError;
+use human_money_core::error::StandardDefinitionError;
+use human_money_core::services::standard_manager;
+use human_money_core::services::utils::to_canonical_json;
 
 /// Prüft Szenarien zur Vorwärtskompatibilität.
 #[cfg(test)]
@@ -28,11 +28,11 @@ mod compatibility_scenarios {
         let voucher_data = NewVoucherData {
             validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu Silver)
             nominal_value: ValueDefinition { amount: "1.0000".to_string(), ..Default::default() }, // Verwende 1.0000 (passend zu Silver)
-            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() },
+            creator_profile: human_money_core::models::profile::PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() },
             ..Default::default()
         };
         let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
-        let valid_voucher = voucher_lib::test_utils::create_voucher_for_manipulation(voucher_data, silver_standard, standard_hash, &identity.signing_key, "en");
+        let valid_voucher = human_money_core::test_utils::create_voucher_for_manipulation(voucher_data, silver_standard, standard_hash, &identity.signing_key, "en");
 
         // The validation might fail due to signature requirements, let's check what the actual error is and handle it
         let first_validation_result = validate_voucher_against_standard(&valid_voucher, silver_standard);
@@ -55,9 +55,9 @@ mod compatibility_scenarios {
     fn test_validate_voucher_when_t_type_is_unknown_then_fails() {
         let identity = &ACTORS.issuer;
         let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
-        let voucher = voucher_lib::test_utils::create_voucher_for_manipulation(
+        let voucher = human_money_core::test_utils::create_voucher_for_manipulation(
             NewVoucherData {
-                creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() },
+                creator_profile: human_money_core::models::profile::PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() },
                 validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu Silver)
                 nominal_value: ValueDefinition { amount: "1.0000".to_string(), ..Default::default() }, // Verwende 1.0000 (passend zu Silver)
                 ..Default::default()
@@ -74,15 +74,15 @@ mod compatibility_scenarios {
         let init_transaction = transactions[0].as_object_mut().unwrap();
         init_transaction.insert("t_type".to_string(), json!("merge"));
 
-        let mut temp_tx: voucher_lib::models::voucher::Transaction = serde_json::from_value(serde_json::Value::Object(init_transaction.clone())).unwrap();
+        let mut temp_tx: human_money_core::models::voucher::Transaction = serde_json::from_value(serde_json::Value::Object(init_transaction.clone())).unwrap();
         temp_tx.t_id = "".to_string();
         temp_tx.sender_signature = "".to_string();
-        let new_tid = voucher_lib::services::crypto_utils::get_hash(to_canonical_json(&temp_tx).unwrap());
+        let new_tid = human_money_core::services::crypto_utils::get_hash(to_canonical_json(&temp_tx).unwrap());
         init_transaction.insert("t_id".to_string(), json!(new_tid));
 
         let signature_payload = json!({ "prev_hash": &temp_tx.prev_hash, "sender_id": &temp_tx.sender_id, "t_id": new_tid });
-        let signature_payload_hash = voucher_lib::services::crypto_utils::get_hash(to_canonical_json(&signature_payload).unwrap());
-        let new_signature = voucher_lib::services::crypto_utils::sign_ed25519(&identity.signing_key, signature_payload_hash.as_bytes());
+        let signature_payload_hash = human_money_core::services::crypto_utils::get_hash(to_canonical_json(&signature_payload).unwrap());
+        let new_signature = human_money_core::services::crypto_utils::sign_ed25519(&identity.signing_key, signature_payload_hash.as_bytes());
         init_transaction.insert("sender_signature".to_string(), json!(bs58::encode(new_signature.to_bytes()).into_string()));
 
         let manipulated_json = serde_json::to_string(&voucher_as_value).unwrap();
@@ -129,7 +129,7 @@ mod compatibility_scenarios {
         //    unbekannte Felder hinzu und parsen ohne Signaturprüfung.
         let mut toml_with_unknown_fields = toml_str_with_invalid_sig;
         toml_with_unknown_fields.push_str("\n[metadata.new_future_field]\ninfo = 'some data'\n");
-        let parse_only_result: Result<voucher_lib::models::voucher_standard_definition::VoucherStandardDefinition, _> = toml::from_str(&toml_with_unknown_fields);
+        let parse_only_result: Result<human_money_core::models::voucher_standard_definition::VoucherStandardDefinition, _> = toml::from_str(&toml_with_unknown_fields);
         assert!(parse_only_result.is_ok(), "Raw TOML parsing should succeed even with unknown fields.");
     }
 }

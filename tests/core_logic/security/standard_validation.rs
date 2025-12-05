@@ -4,15 +4,15 @@
 //! Tests für die Einhaltung und Umgehung der im Standard definierten Validierungsregeln.
 
 use super::test_utils;
-use voucher_lib::{
+use human_money_core::{
     to_canonical_json, validate_voucher_against_standard,
     VoucherCoreError,
 };
-use voucher_lib::models::voucher::{ValueDefinition, Voucher, VoucherSignature};
-use voucher_lib::services::crypto_utils::{get_hash, sign_ed25519};
-use voucher_lib::services::utils::get_current_timestamp;
-use voucher_lib::services::voucher_manager::NewVoucherData;
-use voucher_lib::error::ValidationError;
+use human_money_core::models::voucher::{ValueDefinition, Voucher, VoucherSignature};
+use human_money_core::services::crypto_utils::{get_hash, sign_ed25519};
+use human_money_core::services::utils::get_current_timestamp;
+use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::error::ValidationError;
 use self::test_utils::{
     create_voucher_for_manipulation, ACTORS, MINUTO_STANDARD,
 };
@@ -22,15 +22,15 @@ mod required_signatures_validation {
     use super::*;
     use self::test_utils::{create_guarantor_signature_with_time, create_male_guarantor_signature};
 
-    fn load_required_sig_standard() -> (voucher_lib::VoucherStandardDefinition, String) {
+    fn load_required_sig_standard() -> (human_money_core::VoucherStandardDefinition, String) {
         // Verwende die neue, robuste lazy_static-Variable
         (test_utils::REQUIRED_SIG_STANDARD.0.clone(), test_utils::REQUIRED_SIG_STANDARD.1.clone())
     }
 
-    fn create_base_voucher_for_sig_test(standard: &voucher_lib::VoucherStandardDefinition, standard_hash: &str) -> Voucher {
+    fn create_base_voucher_for_sig_test(standard: &human_money_core::VoucherStandardDefinition, standard_hash: &str) -> Voucher {
         let creator_identity = &ACTORS.alice;
         let voucher_data = NewVoucherData {
-            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
+            creator_profile: human_money_core::models::profile::PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
             validity_duration: Some("P1Y".to_string()), // HINZUGEFÜGT: Gültigkeit explizit setzen
             // HINZUGEFÜGT: Nennwert explizit setzen, um "Invalid decimal: empty" zu vermeiden
             nominal_value: ValueDefinition {
@@ -165,7 +165,7 @@ mod required_signatures_validation {
         let (standard, standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
         let creator_identity = &ACTORS.alice;
         let voucher_data = NewVoucherData {
-            creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
+            creator_profile: human_money_core::models::profile::PublicProfile { id: Some(creator_identity.user_id.clone()), ..Default::default() },
             nominal_value: ValueDefinition { amount: "60".to_string(), ..Default::default() },
             // KORREKTUR: Der Minuto-Standard erfordert eine Mindestgültigkeit (z.B. P3Y).
             // P1Y war zu kurz und löste `ValidityDurationTooShort` aus, bevor die eigentliche

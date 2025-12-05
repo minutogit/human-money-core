@@ -4,7 +4,7 @@
 //! Enthält Integrationstests für komplexes State-Management und die
 //! Handhabung von Konflikten wie Double-Spending.
 
-use voucher_lib::{
+use human_money_core::{
     app_service::AppService,
     models::{conflict::{ProofOfDoubleSpend, ResolutionEndorsement}, profile::PublicProfile, voucher::{ValueDefinition}},
     services::{crypto_utils, voucher_manager::NewVoucherData},
@@ -18,16 +18,16 @@ use voucher_lib::{
 use chrono::DateTime;
 use chrono::{Duration, Utc};
 use std::{collections::HashMap};
-use voucher_lib::test_utils;
+use human_money_core::test_utils;
 use tempfile::tempdir;
-use voucher_lib::{models::voucher::Transaction, services::utils};
+use human_money_core::{models::voucher::Transaction, services::utils};
 
 /// Lokale Test-Hilfsfunktion, um einen mock `ProofOfDoubleSpend` zu erzeugen.
 fn create_mock_proof_of_double_spend(
     offender_id: &str,
     victim_id: &str,
     resolutions: Option<Vec<ResolutionEndorsement>>,
-    verdict: Option<voucher_lib::models::conflict::Layer2Verdict>,
+    verdict: Option<human_money_core::models::conflict::Layer2Verdict>,
 ) -> ProofOfDoubleSpend {
     ProofOfDoubleSpend {
         proof_id: crypto_utils::get_hash(offender_id), // Dummy-ID für den Test
@@ -383,9 +383,9 @@ fn api_wallet_save_and_load_fidelity() {
             .local_instance_id
             .clone();
 
-        let request = voucher_lib::wallet::MultiTransferRequest {
+        let request = human_money_core::wallet::MultiTransferRequest {
             recipient_id: ACTORS.bob.identity.user_id.clone(),
-            sources: vec![voucher_lib::wallet::SourceTransfer {
+            sources: vec![human_money_core::wallet::SourceTransfer {
                 local_instance_id: silver_voucher_id_10oz.clone(),
                 amount_to_send: "3".to_string(),
             }],
@@ -420,9 +420,9 @@ fn api_wallet_save_and_load_fidelity() {
                 .unwrap();
             let local_id = service_bob.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
 
-            let request = voucher_lib::wallet::MultiTransferRequest {
+            let request = human_money_core::wallet::MultiTransferRequest {
                 recipient_id: id_a.clone(),
-                sources: vec![voucher_lib::wallet::SourceTransfer {
+                sources: vec![human_money_core::wallet::SourceTransfer {
                     local_instance_id: local_id.clone(),
                     amount_to_send: "1".to_string(),
                 }],
@@ -436,7 +436,7 @@ fn api_wallet_save_and_load_fidelity() {
                 silver_toml.clone()
             );
 
-            let voucher_lib::wallet::CreateBundleResult { bundle_bytes, .. } = service_bob.create_transfer_bundle(request, &standards_toml, None, Some("pwd")).unwrap();
+            let human_money_core::wallet::CreateBundleResult { bundle_bytes, .. } = service_bob.create_transfer_bundle(request, &standards_toml, None, Some("pwd")).unwrap();
             bundle_bytes
         };
         service_a.receive_bundle(&transfer_back_bundle, &standards_map, None, Some(password)).unwrap();
@@ -449,9 +449,9 @@ fn api_wallet_save_and_load_fidelity() {
             .expect("7oz silver voucher for full transfer not found")
             .local_instance_id
             .clone();
-        let request = voucher_lib::wallet::MultiTransferRequest {
+        let request = human_money_core::wallet::MultiTransferRequest {
             recipient_id: ACTORS.charlie.identity.user_id.clone(),
-            sources: vec![voucher_lib::wallet::SourceTransfer {
+            sources: vec![human_money_core::wallet::SourceTransfer {
                 local_instance_id: silver_voucher_id_7oz.clone(),
                 amount_to_send: "7".to_string(),
             }],
@@ -650,9 +650,9 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
         .unwrap();
 
     // --- 3. Race Condition: Actor handelt zuerst ---
-    let request_bob = voucher_lib::wallet::MultiTransferRequest {
+    let request_bob = human_money_core::wallet::MultiTransferRequest {
         recipient_id: ACTORS.bob.identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: voucher_to_spend_id.clone(),
             amount_to_send: "100".to_string(),
         }],
@@ -675,9 +675,9 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
     std::fs::write(&lock_path, "1").expect("Failed to create fake lock file");
 
     // --- 4. Stale Instanz handelt (basierend auf altem Speicherstand) ---
-    let request_charlie = voucher_lib::wallet::MultiTransferRequest {
+    let request_charlie = human_money_core::wallet::MultiTransferRequest {
         recipient_id: ACTORS.charlie.identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: voucher_to_spend_id.clone(),
             amount_to_send: "100".to_string(),
         }],

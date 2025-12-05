@@ -17,10 +17,10 @@
 //! ## Beispiel: Typischer Lebenszyklus
 //!
 //! ```no_run
-//! use voucher_lib::app_service::AppService;
+//! use human_money_core::app_service::AppService;
 //! use std::path::Path;
-//! # use voucher_lib::services::voucher_manager::NewVoucherData;
-//! # use voucher_lib::models::voucher_standard_definition::VoucherStandardDefinition;
+//! # use human_money_core::services::voucher_manager::NewVoucherData;
+//! # use human_money_core::models::voucher_standard_definition::VoucherStandardDefinition;
 //!
 //! // 1. Initialisierung des Services mit einem Basis-Speicherpfad.
 //! let storage_path = Path::new("/tmp/my_wallets");
@@ -110,7 +110,7 @@ pub enum AppState {
 /// Die `AppService`-Fassade.
 ///
 /// Dient als primäre Schnittstelle für Client-Anwendungen. Sie vereinfacht die
-/// Interaktion mit der `voucher_core`-Bibliothek, indem sie das Zustandsmanagement
+/// Interaktion mit der `human_money_core`-Bibliothek, indem sie das Zustandsmanagement
 /// und die Persistenzabläufe kapselt.
 pub struct AppService {
     /// Der Basispfad, in dem die anonymen Wallet-Verzeichnisse gespeichert werden.

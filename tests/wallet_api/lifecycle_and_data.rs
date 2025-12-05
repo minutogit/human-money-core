@@ -8,15 +8,15 @@
 #[cfg(test)]
 mod tests {
 
-    use voucher_lib::services::voucher_manager::{NewVoucherData};
-    use voucher_lib::app_service::AppService;
-    use voucher_lib::test_utils;
-    use voucher_lib::app_service::ProfileInfo;
-    use voucher_lib::test_utils::{generate_signed_standard_toml, ACTORS};
+    use human_money_core::services::voucher_manager::{NewVoucherData};
+    use human_money_core::app_service::AppService;
+    use human_money_core::test_utils;
+    use human_money_core::app_service::ProfileInfo;
+    use human_money_core::test_utils::{generate_signed_standard_toml, ACTORS};
     use tempfile::tempdir;
     // HINZUGEFÜGT: Imports für den neuen Testplan
     use std::collections::HashMap;
-    use voucher_lib::wallet::MultiTransferRequest;
+    use human_money_core::wallet::MultiTransferRequest;
 
     const PASSWORD: &str = "correct-password-123";
     const WRONG_PASSWORD: &str = "wrong-password-!@#";
@@ -30,7 +30,7 @@ mod tests {
         MultiTransferRequest {
             recipient_id: "did:key:z6MkhXrm1Rvwj3veuaDtiN2o22uVQdWKkXEkK84vEgJtB7Ti".to_string(),
             sources: vec![
-                voucher_lib::wallet::SourceTransfer {
+                human_money_core::wallet::SourceTransfer {
                     local_instance_id: summary.local_instance_id,
                     amount_to_send: "1.0".to_string(),
                 }
@@ -49,11 +49,11 @@ mod tests {
 
 
         let voucher_data = NewVoucherData {
-            creator_profile: voucher_lib::models::profile::PublicProfile {
+            creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(service.get_user_id().unwrap()),
                 ..Default::default()
             },
-            nominal_value: voucher_lib::models::voucher::ValueDefinition {
+            nominal_value: human_money_core::models::voucher::ValueDefinition {
                 amount: "100.0000".to_string(),
                 ..Default::default()
             },
@@ -199,11 +199,11 @@ mod tests {
         let user_id = service.get_user_id().unwrap();
 
         let voucher_data = NewVoucherData {
-            creator_profile: voucher_lib::models::profile::PublicProfile {
+            creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(user_id.clone()),
                 ..Default::default()
             },
-            nominal_value: voucher_lib::models::voucher::ValueDefinition {
+            nominal_value: human_money_core::models::voucher::ValueDefinition {
                 amount: "100.0000".to_string(),
                 ..Default::default()
             },

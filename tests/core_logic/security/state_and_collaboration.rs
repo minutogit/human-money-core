@@ -3,20 +3,20 @@
 
 // HINWEIS: Importiert das Modul, das im `mod.rs` bereitgestellt wird.
 use super::test_utils;
-use voucher_lib::{
+use human_money_core::{
     create_transaction, create_voucher, to_canonical_json,
 };
-use voucher_lib::crypto_utils;
-use voucher_lib::{UserIdentity, VoucherStatus};
-use voucher_lib::models::voucher::{Collateral, ValueDefinition, Voucher, VoucherSignature};
-use voucher_lib::services::crypto_utils::{create_user_id, get_hash, sign_ed25519};
-use voucher_lib::services::utils::{get_current_timestamp};
-use voucher_lib::services::voucher_manager::{NewVoucherData};
-use voucher_lib::{services::voucher_manager::get_spendable_balance};
+use human_money_core::crypto_utils;
+use human_money_core::{UserIdentity, VoucherStatus};
+use human_money_core::models::voucher::{Collateral, ValueDefinition, Voucher, VoucherSignature};
+use human_money_core::services::crypto_utils::{create_user_id, get_hash, sign_ed25519};
+use human_money_core::services::utils::{get_current_timestamp};
+use human_money_core::services::voucher_manager::{NewVoucherData};
+use human_money_core::{services::voucher_manager::get_spendable_balance};
 use self::test_utils::{
     setup_in_memory_wallet, ACTORS, SILVER_STANDARD,
 };
-use voucher_lib::wallet::Wallet;
+use human_money_core::wallet::Wallet;
 use rust_decimal_macros::dec;
 use ed25519_dalek::SigningKey;
 
@@ -35,10 +35,10 @@ fn setup_test_wallet(identity: &UserIdentity) -> Wallet {
 }
 
 /// **NEUER STUB:** Erstellt einen Test-Creator für die neuen Tests.
-fn setup_creator() -> (SigningKey, voucher_lib::models::profile::PublicProfile) {
+fn setup_creator() -> (SigningKey, human_money_core::models::profile::PublicProfile) {
     let (public_key, signing_key) = crypto_utils::generate_ed25519_keypair_for_tests(Some("creator_stub"));
     let user_id = create_user_id(&public_key, Some("cs")).unwrap();
-    let creator = voucher_lib::models::profile::PublicProfile {
+    let creator = human_money_core::models::profile::PublicProfile {
         id: Some(user_id),
         first_name: Some("Stub".to_string()),
         last_name: Some("Creator".to_string()),
@@ -48,7 +48,7 @@ fn setup_creator() -> (SigningKey, voucher_lib::models::profile::PublicProfile) 
 }
 
 /// **NEUER STUB:** Erstellt Test-Voucher-Daten für die neuen Tests.
-fn create_test_voucher_data_with_amount(creator_profile: voucher_lib::models::profile::PublicProfile, amount: &str) -> NewVoucherData {
+fn create_test_voucher_data_with_amount(creator_profile: human_money_core::models::profile::PublicProfile, amount: &str) -> NewVoucherData {
     NewVoucherData {
         validity_duration: Some("P5Y".to_string()),
         non_redeemable_test_voucher: false,
@@ -74,7 +74,7 @@ fn test_wallet_state_management_on_split() {
     let mut wallet_b = setup_test_wallet(b_identity);
 
     // 2. Erstelle einen Gutschein explizit und füge ihn zu Wallet A hinzu, um das Setup zu verdeutlichen.
-    let creator_data = voucher_lib::models::profile::PublicProfile {
+    let creator_data = human_money_core::models::profile::PublicProfile {
         id: Some(a_identity.user_id.clone()),
         first_name: Some("Alice".to_string()),
         last_name: Some("Test".to_string()),
@@ -91,9 +91,9 @@ fn test_wallet_state_management_on_split() {
     let original_local_id = wallet_a.voucher_store.vouchers.keys().next().unwrap().clone();
 
     // 3. Aktion: Wallet A sendet 40 an Wallet B
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: b_identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: original_local_id.clone(),
             amount_to_send: "40".to_string(),
         }],
@@ -104,7 +104,7 @@ fn test_wallet_state_management_on_split() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(standard.metadata.uuid.clone(), standard.clone());
 
-    let voucher_lib::wallet::CreateBundleResult { bundle_bytes: bundle_to_b, .. } = wallet_a.execute_multi_transfer_and_bundle(
+    let human_money_core::wallet::CreateBundleResult { bundle_bytes: bundle_to_b, .. } = wallet_a.execute_multi_transfer_and_bundle(
         &a_identity,
         &standards,
         request,
@@ -228,7 +228,7 @@ fn test_serialization_roundtrip_with_special_chars() {
             signer_id: g1_identity.user_id.clone(),
             role: "guarantor".to_string(),
             signature_time: get_current_timestamp(),
-            details: Some(voucher_lib::models::profile::PublicProfile {
+            details: Some(human_money_core::models::profile::PublicProfile {
                 first_name: Some("Garant".to_string()),
                 last_name: Some("Test".to_string()),
                 organization: Some("Bürge & Co.".to_string()),
@@ -255,7 +255,7 @@ fn test_serialization_roundtrip_with_special_chars() {
         signer_id: second_guarantor_identity.user_id.clone(),
         role: "guarantor".to_string(),
         signature_time: get_current_timestamp(),
-        details: Some(voucher_lib::models::profile::PublicProfile {
+        details: Some(human_money_core::models::profile::PublicProfile {
             first_name: Some("Garantin".to_string()),
             last_name: Some("Test".to_string()),
             gender: Some("2".to_string()),

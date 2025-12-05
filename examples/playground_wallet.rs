@@ -9,12 +9,12 @@
 //! 4. Gibt den finalen Gutschein-Zustand und den dabei erzeugten
 //!    anonymen Transaktions-Fingerprint im Terminal aus.
 
-use voucher_lib::models::profile::UserIdentity;
-use voucher_lib::models::conflict::CanonicalMetadataStore;
-use voucher_lib::models::voucher::{Address, Collateral, ValueDefinition};
-use voucher_lib::services::crypto_utils;
-use voucher_lib::{NewVoucherData, verify_and_parse_standard, VoucherStatus};
-use voucher_lib::wallet::Wallet;
+use human_money_core::models::profile::UserIdentity;
+use human_money_core::models::conflict::CanonicalMetadataStore;
+use human_money_core::models::voucher::{Address, Collateral, ValueDefinition};
+use human_money_core::services::crypto_utils;
+use human_money_core::{NewVoucherData, verify_and_parse_standard, VoucherStatus};
+use human_money_core::wallet::Wallet;
 
 /// Hilfsfunktion, um eine deterministische UserIdentity für Tests zu erstellen.
 fn create_test_identity(seed: &str, prefix: &str) -> UserIdentity {
@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Erstelle eine neue, leere Wallet für Alice
     let mut alice_wallet = Wallet {
-        profile: voucher_lib::models::profile::UserProfile { 
+        profile: human_money_core::models::profile::UserProfile {
             user_id: alice_identity.user_id.clone(),
             first_name: None,
             last_name: None,
@@ -76,9 +76,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         non_redeemable_test_voucher: false,
         nominal_value: ValueDefinition { amount: "1.5".to_string(), ..Default::default() }, // 1.5 Unzen
         collateral: Some(Collateral::default()),
-        creator_profile: voucher_lib::models::profile::PublicProfile { id: Some(alice_identity.user_id.clone()), first_name: Some("Alice".into()), last_name: Some("Silversmith".into()), address: Some(Address::default()), gender: Some("2".into()), ..Default::default() },
+        creator_profile: human_money_core::models::profile::PublicProfile { id: Some(alice_identity.user_id.clone()), first_name: Some("Alice".into()), last_name: Some("Silversmith".into()), address: Some(Address::default()), gender: Some("2".into()), ..Default::default() },
     };
-    let initial_voucher = voucher_lib::create_voucher(voucher_data, &standard, &standard_hash, &alice_identity.signing_key, "en")?;
+    let initial_voucher = human_money_core::create_voucher(voucher_data, &standard, &standard_hash, &alice_identity.signing_key, "en")?;
     let local_id = Wallet::calculate_local_instance_id(&initial_voucher, &alice_identity.user_id)?;
     alice_wallet.add_voucher_instance(local_id, initial_voucher, VoucherStatus::Active);
     println!("✅ Initialen Gutschein erstellt und zu Alices Wallet hinzugefügt.");
@@ -91,9 +91,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let local_instance_id = alice_wallet.voucher_store.vouchers.keys().next().unwrap().clone();
 
     // Erstelle eine MultiTransferRequest und rufe die neue Methode auf
-    let request = voucher_lib::wallet::MultiTransferRequest {
+    let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_identity.user_id.clone(),
-        sources: vec![voucher_lib::wallet::SourceTransfer {
+        sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_instance_id.clone(),
             amount_to_send: "0.5".to_string(),
         }],
@@ -110,7 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &alice_identity,
         &standards_map,
         request,
-        None::<&dyn voucher_lib::archive::VoucherArchive>, // Kein Archiv
+        None::<&dyn human_money_core::archive::VoucherArchive>, // Kein Archiv
     )?;
     
     println!("✅ Transaktion erfolgreich durchgeführt. Wallet-Zustand wurde aktualisiert.");

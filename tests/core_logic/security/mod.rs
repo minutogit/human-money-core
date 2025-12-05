@@ -16,7 +16,7 @@
 
 // Importiert die Hilfsfunktionen, damit sie für die Submodule
 // als `super::test_utils` verfügbar sind.
-use voucher_lib::test_utils;
+use human_money_core::test_utils;
 
 // Deklariert die beiden getrennten Test-Dateien als Module.
 mod double_spend;
