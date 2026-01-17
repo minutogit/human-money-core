@@ -65,8 +65,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Schlüsselaustausch durchführen
     println!("\nPerforming Diffie-Hellman...");
-    let alice_shared = perform_diffie_hellman(alice_dh_priv, &bob_dh_pub);
-    let bob_shared = perform_diffie_hellman(bob_dh_priv, &alice_dh_pub);
+    let alice_shared = perform_diffie_hellman(alice_dh_priv, &bob_dh_pub)?;
+    let bob_shared = perform_diffie_hellman(bob_dh_priv, &alice_dh_pub)?;
 
     println!("Alice's shared secret: {}", hex::encode(alice_shared));
     println!("Bob's shared secret: {}", hex::encode(bob_shared));

@@ -253,8 +253,8 @@ fn test_ephemeral_dh_key_generation() {
         hex::encode(bob_dh_pub.to_bytes())
     );
 
-    let alice_shared = perform_diffie_hellman(alice_dh_priv, &bob_dh_pub);
-    let bob_shared = perform_diffie_hellman(bob_dh_priv, &alice_dh_pub);
+    let alice_shared = perform_diffie_hellman(alice_dh_priv, &bob_dh_pub).unwrap();
+    let bob_shared = perform_diffie_hellman(bob_dh_priv, &alice_dh_pub).unwrap();
     assert_eq!(alice_shared.len(), 32);
     assert_eq!(bob_shared.len(), 32);
     println!("Alice's shared secret: {}", hex::encode(alice_shared));

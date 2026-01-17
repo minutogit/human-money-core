@@ -279,21 +279,72 @@ pub fn generate_ephemeral_x25519_keypair() -> (X25519PublicKey, EphemeralSecret)
 /// This function performs Diffie-Hellman key exchange using our ephemeral secret
 /// and the other party's public key.
 ///
-/// # Arguments
+/// # Security Note
 ///
-/// * `our_secret` - Our ephemeral secret.
-/// * `their_public` - The other party's public key.
+/// This function provides **Confidentiality** and **Sender Forward Secrecy**, but:
+/// * **No Authentication:** Without an additional authentication layer (like signing the resulting container), this exchange is vulnerable to Man-in-the-Middle (MITM) attacks.
+/// * **Recipient Compromise:** Since the recipient uses a static key (asynchronous protocol), a compromise of the recipient's private key allows decryption of PAST messages.
+/// * **Replay/Key-Substitution:** The protocol layer must ensure protection against replay attacks and key substitution (e.g., by binding the container signature to the keys).
 ///
 /// # Returns
 ///
-/// The shared secret.
+/// The derived 32-byte shared symmetric key, or an error if the exchange was non-contributory.
 pub fn perform_diffie_hellman(
     our_secret: EphemeralSecret,
     their_public: &X25519PublicKey,
-) -> [u8; 32] {
-    // X25519 liefert bereits ein sicheres, 32-Byte Shared Secret.
-    // Eine zusätzliche HKDF-Expansion ist in diesem Fall unnötig.
-    our_secret.diffie_hellman(their_public).to_bytes()
+) -> Result<[u8; 32], VoucherCoreError> {
+    // 1. Eigenen Public Key ableiten (für Kontext-Bindung)
+    let our_public = X25519PublicKey::from(&our_secret);
+
+    // 2. Rohes Shared Secret berechnen
+    let shared_secret = our_secret.diffie_hellman(their_public);
+
+    // SICHERHEIT: Prüfen auf "non-contributory" Verhalten (z.B. Punkt im Unendlichen/Null).
+    // Dies verhindert Angriffe durch schwache Schlüssel oder manipulierte Public Keys.
+    if !shared_secret.was_contributory() {
+        return Err(VoucherCoreError::Crypto(
+            "Diffie-Hellman exchange was non-contributory (weak key).".to_string(),
+        ));
+    }
+
+    // 3. HKDF-Expansion
+    // Salt is None because we are an asynchronous offline protocol without an interactive session handshake.
+    //
+    // DESIGN DECISION ON KEY SPLITTING:
+    // We derive only a single 32-byte key here because it serves exclusively as a KEK for
+    // ChaCha20Poly1305 (AEAD) in a unidirectional context.
+    // - AEAD does not require separate Enc/MAC keys.
+    // - Unidirectionality does not require separation into Send/Receive keys.
+    let hkdf = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
+
+    // KANONISIERUNG: Lexikographische Sortierung der Public Keys für Interoperabilität.
+    // Damit generieren Sender und Empfänger garantiert denselben Info-String.
+    let (key_a, key_b) = if our_public.as_bytes() < their_public.as_bytes() {
+        (our_public.as_bytes(), their_public.as_bytes())
+    } else {
+        (their_public.as_bytes(), our_public.as_bytes())
+    };
+
+    // KONSTANTE BUFFER-GRÖSSE: Wir berechnen die exakte Länge zur Kompilierzeit.
+    // Das verhindert Buffer-Overflows und Panics ohne Laufzeitkosten.
+    const LABEL: &[u8] = b"human-money-core/x25519-exchange";
+    const KEY_LEN: usize = 32;
+    const INFO_LEN: usize = LABEL.len() + KEY_LEN + KEY_LEN;
+
+    let mut info = [0u8; INFO_LEN];
+
+    // Sicherer Aufbau des Info-Strings (keine Panics möglich, da Größen exakt passen)
+    info[..LABEL.len()].copy_from_slice(LABEL);
+    info[LABEL.len()..LABEL.len() + KEY_LEN].copy_from_slice(key_a);
+    info[LABEL.len() + KEY_LEN..].copy_from_slice(key_b);
+
+    // Ableitung des Schlüssels
+    let mut symmetric_key = [0u8; 32];
+    // expand sollte hier niemals fehlschlagen, da die Ausgabelänge fix ist.
+    hkdf.expand(&info, &mut symmetric_key)
+        .expect("HKDF expansion with valid length should not fail");
+
+    Ok(symmetric_key)
 }
 
 /// Custom error type for symmetric encryption/decryption functions.
