@@ -20,6 +20,6 @@ use human_money_core::test_utils;
 
 // Deklariert die beiden getrennten Test-Dateien als Module.
 mod double_spend;
-mod vulnerabilities;
-mod state_and_collaboration;
 mod standard_validation;
+mod state_and_collaboration;
+mod vulnerabilities;

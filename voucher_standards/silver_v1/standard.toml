@@ -53,7 +53,7 @@ amount_decimal_places = 4
 
 [signature]
 # Die `did:key` des Herausgebers, die seinen öffentlichen Schlüssel enthält.
-issuer_id = "0-xXz@did:key:z6Mkoim7ZGcaKdoeD41USV5gmxfiVXXiPDeYt4T9rnEB5zfM"
+issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "3qDAyeqA6iY9qXQMmTRvkh36YSrtPcrAE4M7UM44eo8QcUSBH9iUR1MD6P3QGntwgjugQEARxp4ZdkL6gar1gG7X"
+signature = "39cTSkJuzJFCzivVDjUxHPFXwhScCaZQ56cXh4CWEDjR4DyUfyaAnsbJ1HAVxAro6xW1ot4AwNNWX2cvrtJCcUvz"

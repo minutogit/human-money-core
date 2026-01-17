@@ -10,13 +10,13 @@ use anyhow::{Context, Result};
 use bip39::Language;
 use clap::{Parser, Subcommand};
 use ed25519_dalek::SigningKey;
-use std::fs;
-use std::path::{Path, PathBuf};
 use human_money_core::{
     crypto_utils::{self, get_hash},
     models::voucher_standard_definition::VoucherStandardDefinition,
     to_canonical_json,
 };
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Das Haupt-Struct für das CLI-Tool, das von `clap` geparst wird.
 #[derive(Parser, Debug)]
@@ -57,7 +57,11 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::GenerateKeys { prefix } => generate_keys(&prefix)?,
-        Commands::SignStandard { key, prefix, standard_file } => sign_standard(&key, &prefix, &standard_file)?,
+        Commands::SignStandard {
+            key,
+            prefix,
+            standard_file,
+        } => sign_standard(&key, &prefix, &standard_file)?,
     }
 
     Ok(())
@@ -66,8 +70,12 @@ fn main() -> Result<()> {
 /// Logik für den `generate-keys`-Befehl.
 fn generate_keys(prefix: &str) -> Result<()> {
     let key_dir = Path::new("target/dev-keys");
-    fs::create_dir_all(key_dir)
-        .with_context(|| format!("Konnte das Verzeichnis {} nicht erstellen", key_dir.display()))?;
+    fs::create_dir_all(key_dir).with_context(|| {
+        format!(
+            "Konnte das Verzeichnis {} nicht erstellen",
+            key_dir.display()
+        )
+    })?;
 
     let mnemonic_path = key_dir.join("issuer.mnemonic");
     let key_path = key_dir.join("issuer.key");
@@ -78,15 +86,23 @@ fn generate_keys(prefix: &str) -> Result<()> {
     let mnemonic = crypto_utils::generate_mnemonic(12, Language::English)
         .map_err(|e| anyhow::anyhow!(e.to_string()))
         .context("Mnemonic konnte nicht generiert werden")?;
-    fs::write(&mnemonic_path, &mnemonic)
-        .with_context(|| format!("Konnte Mnemonic nicht in {} schreiben", mnemonic_path.display()))?;
+    fs::write(&mnemonic_path, &mnemonic).with_context(|| {
+        format!(
+            "Konnte Mnemonic nicht in {} schreiben",
+            mnemonic_path.display()
+        )
+    })?;
 
     // 2. Schlüsselpaar aus Mnemonic ableiten
     let (public_key, signing_key) = crypto_utils::derive_ed25519_keypair(&mnemonic, None)?;
 
     // 3. Privaten Schlüssel speichern
-    fs::write(&key_path, signing_key.to_bytes())
-        .with_context(|| format!("Konnte privaten Schlüssel nicht in {} schreiben", key_path.display()))?;
+    fs::write(&key_path, signing_key.to_bytes()).with_context(|| {
+        format!(
+            "Konnte privaten Schlüssel nicht in {} schreiben",
+            key_path.display()
+        )
+    })?;
 
     // 4. Issuer ID generieren und ausgeben
     let issuer_id = crypto_utils::create_user_id(&public_key, Some(prefix))
@@ -94,7 +110,10 @@ fn generate_keys(prefix: &str) -> Result<()> {
 
     println!("✅ Schlüssel erfolgreich generiert!");
     println!("   - Mnemonic gespeichert in: {}", mnemonic_path.display());
-    println!("   - Privater Schlüssel gespeichert in: {}", key_path.display());
+    println!(
+        "   - Privater Schlüssel gespeichert in: {}",
+        key_path.display()
+    );
     println!("   - Ihre Issuer ID (did:key) lautet: {}", issuer_id);
 
     Ok(())
@@ -106,24 +125,34 @@ fn sign_standard(key_path: &Path, prefix: &str, standard_path: &Path) -> Result<
 
     // 1. Privaten Schlüssel laden
     let key_bytes: [u8; 32] = fs::read(key_path)
-        .with_context(|| format!("Konnte privaten Schlüssel aus {} nicht laden", key_path.display()))?
+        .with_context(|| {
+            format!(
+                "Konnte privaten Schlüssel aus {} nicht laden",
+                key_path.display()
+            )
+        })?
         .try_into()
         .map_err(|_| anyhow::anyhow!("Schlüsseldatei hat eine ungültige Länge"))?;
     let signing_key = SigningKey::from_bytes(&key_bytes);
     let public_key = signing_key.verifying_key();
 
     // 2. Standard-Datei laden
-    let toml_content = fs::read_to_string(standard_path)
-        .with_context(|| format!("Konnte Standard-Datei {} nicht laden", standard_path.display()))?;
-    
+    let toml_content = fs::read_to_string(standard_path).with_context(|| {
+        format!(
+            "Konnte Standard-Datei {} nicht laden",
+            standard_path.display()
+        )
+    })?;
+
     // 3. Alten Signatur-Block entfernen und kanonischen Inhalt für die Signatur erstellen
     let mut toml_value: toml::Value = toml::from_str(&toml_content)?;
     if let Some(table) = toml_value.as_table_mut() {
         table.remove("signature");
     }
-    
+
     // 4. Kanonische Form für die Signatur erstellen
-    let mut standard_def: VoucherStandardDefinition = toml::from_str(&toml::to_string(&toml_value)?)?;
+    let mut standard_def: VoucherStandardDefinition =
+        toml::from_str(&toml::to_string(&toml_value)?)?;
     standard_def.signature = None; // Sicherstellen, dass die Signatur für die Kanonisierung leer ist
     let canonical_json = to_canonical_json(&standard_def)
         .context("Kanonisches JSON konnte nicht erstellt werden")?;
@@ -140,16 +169,19 @@ fn sign_standard(key_path: &Path, prefix: &str, standard_path: &Path) -> Result<
     // 7. Neuen Signatur-Block erstellen
     let signature_block = format!(
         "\n[signature]\n# Die `did:key` des Herausgebers, die seinen öffentlichen Schlüssel enthält.\nissuer_id = \"{}\"\n\n# Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).\nsignature = \"{}\"\n",
-        issuer_id,
-        signature_b58
+        issuer_id, signature_b58
     );
 
     // 8. Signatur in die ursprüngliche Datei einfügen, ohne die Formatierung zu verändern
     let final_toml_content = update_signature_in_toml(&toml_content, &signature_block);
 
     // 9. Datei überschreiben
-    fs::write(standard_path, final_toml_content)
-        .with_context(|| format!("Konnte signierten Standard nicht in {} schreiben", standard_path.display()))?;
+    fs::write(standard_path, final_toml_content).with_context(|| {
+        format!(
+            "Konnte signierten Standard nicht in {} schreiben",
+            standard_path.display()
+        )
+    })?;
 
     println!("✅ Standard erfolgreich signiert.");
     Ok(())
@@ -160,7 +192,7 @@ fn sign_standard(key_path: &Path, prefix: &str, standard_path: &Path) -> Result<
 fn update_signature_in_toml(original_content: &str, new_signature_block: &str) -> String {
     // Suchen des Signaturblocks in der Datei
     let signature_start = original_content.find("\n[signature]");
-    
+
     if let Some(pos) = signature_start {
         // Wenn ein Signaturblock gefunden wurde, ersetzen wir ihn
         // Wir behalten die Leerzeile vor dem [signature] Block bei

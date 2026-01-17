@@ -107,7 +107,8 @@ pub fn create_secure_container(
     container.i = get_hash(container_json_for_id);
 
     // 7. Die `container_id` signieren und dem Container hinzufügen.
-    let signature = crypto_utils::sign_ed25519(&sender_identity.signing_key, container.i.as_bytes());
+    let signature =
+        crypto_utils::sign_ed25519(&sender_identity.signing_key, container.i.as_bytes());
     container.t = encode_base64(&signature.to_bytes());
 
     Ok(container)
@@ -154,12 +155,19 @@ pub fn open_secure_container(
             let shared_secret = recipient_x25519_sk.diffie_hellman(&esk_pub);
             let kek = derive_kek(shared_secret.as_bytes())?;
 
-            if let Ok(payload_key_bytes) = crypto_utils::decrypt_data(&kek, &encrypted_payload_key) {
-                let payload_key: [u8; 32] = payload_key_bytes.try_into()
-                    .map_err(|_| VoucherCoreError::Crypto("Decrypted payload key has incorrect length".to_string()))?;
+            if let Ok(payload_key_bytes) = crypto_utils::decrypt_data(&kek, &encrypted_payload_key)
+            {
+                let payload_key: [u8; 32] = payload_key_bytes.try_into().map_err(|_| {
+                    VoucherCoreError::Crypto(
+                        "Decrypted payload key has incorrect length".to_string(),
+                    )
+                })?;
 
                 let encrypted_payload = decode_base64(&container.p)?;
-                return Ok(crypto_utils::decrypt_data(&payload_key, &encrypted_payload)?);
+                return Ok(crypto_utils::decrypt_data(
+                    &payload_key,
+                    &encrypted_payload,
+                )?);
             }
         }
     }

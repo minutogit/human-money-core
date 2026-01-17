@@ -4,34 +4,35 @@
 //! Zentrale Hilfsfunktionen für alle Tests (intern und extern).
 
 // HINWEIS: Absoluter Pfad zu externen Crates für mehr Robustheit
-use lazy_static::lazy_static;
-use toml;
-use bip39::{Language};
+use bip39::Language;
 use ed25519_dalek::Signer;
+use lazy_static::lazy_static;
 use std::path::Path;
 use std::path::PathBuf;
+use toml;
 
 // HINWEIS: Alle `human_money_core` Imports wurden zu `crate` geändert.
+use crate::app_service::{AppService, ProfileInfo};
 use crate::models::{
     conflict::{CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, ProofStore},
     profile::{BundleMetadataStore, PublicProfile, UserProfile, VoucherStore},
     signature::DetachedSignature,
-    voucher::{
-        Address, Collateral, ValueDefinition, Transaction, VoucherSignature,
-    },
+    voucher::{Address, Collateral, Transaction, ValueDefinition, VoucherSignature},
     voucher_standard_definition::{SignatureBlock, VoucherStandardDefinition},
 };
 use crate::services::{
     bundle_processor,
-    crypto_utils::{self, create_user_id, get_hash, generate_ed25519_keypair_for_tests, sign_ed25519},
-    secure_container_manager,
-    signature_manager,
+    crypto_utils::{
+        self, create_user_id, generate_ed25519_keypair_for_tests, get_hash, sign_ed25519,
+    },
+    secure_container_manager, signature_manager,
     utils::to_canonical_json,
-    voucher_manager::{create_transaction, create_voucher, NewVoucherData},
+    voucher_manager::{NewVoucherData, create_transaction, create_voucher},
 };
 use crate::wallet::Wallet;
-use crate::{models::voucher::Voucher, UserIdentity, VoucherCoreError, VoucherInstance, VoucherStatus};
-use crate::app_service::{AppService, ProfileInfo};
+use crate::{
+    UserIdentity, VoucherCoreError, VoucherInstance, VoucherStatus, models::voucher::Voucher,
+};
 use std::ops::Deref;
 
 /// Bündelt alle Informationen eines Test-Benutzers.
@@ -105,12 +106,17 @@ fn user_from_mnemonic_fast(mnemonic: &str, prefix: Option<&'static str>) -> Test
 /// Feste, deterministische Mnemonics für reproduzierbare Tests.
 mod mnemonics {
     pub const ALICE: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-    pub const BOB: &str = "legal winner thank year wave sausage worth useful legal winner thank yellow";
-    pub const CHARLIE: &str = "letter advice cage absurd amount doctor acoustic avoid letter advice cage above";
-    pub const DAVID: &str = "brother offer escape switch virtual school pet quiz point hurdle boil popular";
-    pub const HACKER: &str = "clog cloud attitude around people thought sad will cute police feature junior";
+    pub const BOB: &str =
+        "legal winner thank year wave sausage worth useful legal winner thank yellow";
+    pub const CHARLIE: &str =
+        "letter advice cage absurd amount doctor acoustic avoid letter advice cage above";
+    pub const DAVID: &str =
+        "brother offer escape switch virtual school pet quiz point hurdle boil popular";
+    pub const HACKER: &str =
+        "clog cloud attitude around people thought sad will cute police feature junior";
     // HINZUGEFÜGT: Fehlende Mnemonics für Konsistenz
-    pub const REPORTER: &str = "travel shell spy arctic clarify velvet wrist cigar jewel vintage life head";
+    pub const REPORTER: &str =
+        "travel shell spy arctic clarify velvet wrist cigar jewel vintage life head";
 }
 
 /// Eine Struktur, die alle für Tests benötigten, einmalig erstellten Identitäten enthält.
@@ -275,15 +281,19 @@ pub fn generate_signed_standard_toml(template_path: &str) -> String {
     absolute_path.push(template_path);
 
     let issuer = &crate::test_utils::TEST_ISSUER;
-    let toml_str = std::fs::read_to_string(&absolute_path)
-        .unwrap_or_else(|e| panic!("Failed to read TOML template at '{:?}': {}", absolute_path, e));
+    let toml_str = std::fs::read_to_string(&absolute_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read TOML template at '{:?}': {}",
+            absolute_path, e
+        )
+    });
 
-    let mut standard: VoucherStandardDefinition = toml::from_str(&toml_str)
-        .expect("Failed to parse TOML template for signing");
+    let mut standard: VoucherStandardDefinition =
+        toml::from_str(&toml_str).expect("Failed to parse TOML template for signing");
 
     standard.signature = None;
-    let canonical_json_for_signing = to_canonical_json(&standard)
-        .expect("Failed to create canonical JSON for standard");
+    let canonical_json_for_signing =
+        to_canonical_json(&standard).expect("Failed to create canonical JSON for standard");
     let hash_to_sign = get_hash(canonical_json_for_signing.as_bytes());
 
     let signature = sign_ed25519(&issuer.identity.signing_key, hash_to_sign.as_bytes());
@@ -308,7 +318,10 @@ pub fn create_custom_standard(
     let canonical_json = to_canonical_json(&standard).unwrap();
     let hash = get_hash(canonical_json.as_bytes());
 
-    let signature = crate::test_utils::TEST_ISSUER.identity.signing_key.sign(hash.as_bytes());
+    let signature = crate::test_utils::TEST_ISSUER
+        .identity
+        .signing_key
+        .sign(hash.as_bytes());
 
     standard.signature = Some(crate::models::voucher_standard_definition::SignatureBlock {
         issuer_id: crate::test_utils::TEST_ISSUER.identity.user_id.clone(),
@@ -326,29 +339,52 @@ pub fn setup_voucher_with_one_tx() -> (
     &'static UserIdentity,
     Voucher,
 ) {
-    let (standard, standard_hash) = (&crate::test_utils::SILVER_STANDARD.0, &crate::test_utils::SILVER_STANDARD.1);
+    let (standard, standard_hash) = (
+        &crate::test_utils::SILVER_STANDARD.0,
+        &crate::test_utils::SILVER_STANDARD.1,
+    );
     let creator = &crate::test_utils::ACTORS.alice.identity;
     let recipient = &crate::test_utils::ACTORS.bob.identity;
 
     let voucher_data = NewVoucherData {
-        creator_profile: PublicProfile { 
-            id: Some(creator.user_id.clone()), 
-            ..Default::default() 
+        creator_profile: PublicProfile {
+            id: Some(creator.user_id.clone()),
+            ..Default::default()
         },
-        nominal_value: ValueDefinition { amount: "100.0000".to_string(), ..Default::default() },
+        nominal_value: ValueDefinition {
+            amount: "100.0000".to_string(),
+            ..Default::default()
+        },
         validity_duration: Some("P4Y".to_string()),
         ..Default::default()
     };
 
-    let initial_voucher = create_voucher(voucher_data, standard, standard_hash, &creator.signing_key, "en").unwrap();
+    let initial_voucher = create_voucher(
+        voucher_data,
+        standard,
+        standard_hash,
+        &creator.signing_key,
+        "en",
+    )
+    .unwrap();
 
     let voucher_after_tx1 = create_transaction(
-        &initial_voucher, standard, &creator.user_id, &creator.signing_key,
-        &recipient.user_id, "40.0000",
+        &initial_voucher,
+        standard,
+        &creator.user_id,
+        &creator.signing_key,
+        &recipient.user_id,
+        "40.0000",
     )
-        .unwrap();
+    .unwrap();
 
-    (standard, standard_hash.to_string(), creator, recipient, voucher_after_tx1)
+    (
+        standard,
+        standard_hash.to_string(),
+        creator,
+        recipient,
+        voucher_after_tx1,
+    )
 }
 
 #[allow(dead_code)]
@@ -383,8 +419,7 @@ pub fn setup_in_memory_wallet(identity: &UserIdentity) -> Wallet {
 pub fn create_test_wallet(
     seed_phrase_extra: &str,
 ) -> Result<(Wallet, UserIdentity), VoucherCoreError> {
-    let (public_key, signing_key) =
-        generate_ed25519_keypair_for_tests(Some(seed_phrase_extra));
+    let (public_key, signing_key) = generate_ed25519_keypair_for_tests(Some(seed_phrase_extra));
     let user_id = create_user_id(&public_key, Some("test"))
         .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
 
@@ -394,7 +429,7 @@ pub fn create_test_wallet(
         user_id: user_id.clone(),
     };
 
-    let profile = UserProfile { 
+    let profile = UserProfile {
         user_id,
         first_name: None,
         last_name: None,
@@ -455,13 +490,25 @@ pub fn add_voucher_to_wallet(
     standard_to_hash.signature = None;
     let standard_hash = get_hash(to_canonical_json(&standard_to_hash)?);
 
-    let mut voucher = create_voucher_for_manipulation(new_voucher_data, standard, &standard_hash, &identity.signing_key, "en");
+    let mut voucher = create_voucher_for_manipulation(
+        new_voucher_data,
+        standard,
+        &standard_hash,
+        &identity.signing_key,
+        "en",
+    );
 
     if with_valid_guarantors {
-        let sig_data1 =
-            create_guarantor_signature_data(&crate::test_utils::ACTORS.guarantor1.identity, "1", &voucher.voucher_id);
-        let sig_data2 =
-            create_guarantor_signature_data(&crate::test_utils::ACTORS.guarantor2.identity, "2", &voucher.voucher_id);
+        let sig_data1 = create_guarantor_signature_data(
+            &crate::test_utils::ACTORS.guarantor1.identity,
+            "1",
+            &voucher.voucher_id,
+        );
+        let sig_data2 = create_guarantor_signature_data(
+            &crate::test_utils::ACTORS.guarantor2.identity,
+            "2",
+            &voucher.voucher_id,
+        );
 
         // --- KORREKTUR (Fix E0505): ---
         // 1. Extrahiere die 'details' durch Borgen und sofortiges Klonen.
@@ -478,13 +525,13 @@ pub fn add_voucher_to_wallet(
         let signed_sig1 = signature_manager::complete_and_sign_detached_signature(
             sig_data1, // MOVE
             &crate::test_utils::ACTORS.guarantor1.identity,
-            details1, // Verwende die geklonten Details
+            details1,            // Verwende die geklonten Details
             &voucher.voucher_id, // Pass the voucher_id
         )?;
         let signed_sig2 = signature_manager::complete_and_sign_detached_signature(
             sig_data2, // MOVE
             &crate::test_utils::ACTORS.guarantor2.identity,
-            details2, // Verwende die geklonten Details
+            details2,            // Verwende die geklonten Details
             &voucher.voucher_id, // Pass the voucher_id
         )?;
 
@@ -497,15 +544,14 @@ pub fn add_voucher_to_wallet(
     }
 
     let local_id = Wallet::calculate_local_instance_id(&voucher, &identity.user_id)?;
-    wallet
-        .voucher_store
-        .vouchers
-        .insert(local_id.clone(), VoucherInstance {
+    wallet.voucher_store.vouchers.insert(
+        local_id.clone(),
+        VoucherInstance {
             voucher: voucher.clone(),
             status: VoucherStatus::Active,
             local_instance_id: local_id.clone(),
-        });
-
+        },
+    );
 
     Ok(local_id.clone())
 }
@@ -527,14 +573,29 @@ pub fn setup_service_with_profile(
     profile_name: &str,
     password: &str,
 ) -> (AppService, ProfileInfo) {
-    let mut service = AppService::new(base_path).expect("Failed to create AppService in test setup");
+    let mut service =
+        AppService::new(base_path).expect("Failed to create AppService in test setup");
 
     service
-        .create_profile(profile_name, &user.mnemonic, user.passphrase, user.prefix, password)
-        .unwrap_or_else(|e| panic!("Failed to create profile '{}' in test setup: {}", profile_name, e));
+        .create_profile(
+            profile_name,
+            &user.mnemonic,
+            user.passphrase,
+            user.prefix,
+            password,
+        )
+        .unwrap_or_else(|e| {
+            panic!(
+                "Failed to create profile '{}' in test setup: {}",
+                profile_name, e
+            )
+        });
 
-    let profile_info = service.list_profiles().expect("Failed to list profiles after creation")
-        .into_iter().find(|p| p.profile_name == profile_name)
+    let profile_info = service
+        .list_profiles()
+        .expect("Failed to list profiles after creation")
+        .into_iter()
+        .find(|p| p.profile_name == profile_name)
         .expect("Could not find freshly created profile in index");
 
     (service, profile_info)
@@ -653,13 +714,15 @@ pub fn create_voucher_for_manipulation(
             data.creator_profile.id.as_ref().unwrap_or(&"N/A".to_string()), data.nominal_value.amount
         )
     });
-    let mut valid_until_dt = crate::services::voucher_manager::add_iso8601_duration(creation_dt.into(), duration_str)
-        .expect("Failed to calculate validity in test helper");
+    let mut valid_until_dt =
+        crate::services::voucher_manager::add_iso8601_duration(creation_dt.into(), duration_str)
+            .expect("Failed to calculate validity in test helper");
 
     if let Some(rule) = &standard.template.fixed.round_up_validity_to {
         if rule == "end_of_year" {
             use chrono::{Datelike, TimeZone};
-            let rounded_date = chrono::NaiveDate::from_ymd_opt(valid_until_dt.year(), 12, 31).unwrap();
+            let rounded_date =
+                chrono::NaiveDate::from_ymd_opt(valid_until_dt.year(), 12, 31).unwrap();
             let rounded_time = chrono::NaiveTime::from_hms_micro_opt(23, 59, 59, 999_999).unwrap();
             valid_until_dt = chrono::Utc.from_utc_datetime(&rounded_date.and_time(rounded_time));
         }
@@ -674,7 +737,8 @@ pub fn create_voucher_for_manipulation(
     let description_template = crate::services::standard_manager::get_localized_text(
         &standard.template.fixed.description,
         lang_preference,
-    ).unwrap_or("");
+    )
+    .unwrap_or("");
     let final_description = description_template.replace("{{amount}}", &data.nominal_value.amount);
 
     let mut final_nominal_value = data.nominal_value;
@@ -684,10 +748,22 @@ pub fn create_voucher_for_manipulation(
     let final_collateral = if !standard.template.fixed.collateral.type_.is_empty() {
         Some(Collateral {
             value: ValueDefinition {
-                unit: data.collateral.as_ref().map_or(String::new(), |c| c.value.unit.clone()),
-                amount: data.collateral.as_ref().map_or(String::new(), |c| c.value.amount.clone()),
-                abbreviation: data.collateral.as_ref().and_then(|c| c.value.abbreviation.clone()),
-                description: data.collateral.as_ref().and_then(|c| c.value.description.clone()),
+                unit: data
+                    .collateral
+                    .as_ref()
+                    .map_or(String::new(), |c| c.value.unit.clone()),
+                amount: data
+                    .collateral
+                    .as_ref()
+                    .map_or(String::new(), |c| c.value.amount.clone()),
+                abbreviation: data
+                    .collateral
+                    .as_ref()
+                    .and_then(|c| c.value.abbreviation.clone()),
+                description: data
+                    .collateral
+                    .as_ref()
+                    .and_then(|c| c.value.description.clone()),
             },
             collateral_type: Some(standard.template.fixed.collateral.type_.clone()),
             redeem_condition: Some(standard.template.fixed.collateral.redeem_condition.clone()),
@@ -705,20 +781,30 @@ pub fn create_voucher_for_manipulation(
                 description: final_description,
                 primary_redemption_type: "goods_or_services".to_string(),
                 divisible: standard.template.fixed.is_divisible,
-                standard_minimum_issuance_validity: standard.validation.as_ref().and_then(|v| v.behavior_rules.as_ref()).and_then(|b| b.issuance_minimum_validity_duration.clone()).unwrap_or_default(),
-                signature_requirements_description: standard.template.fixed.guarantor_info.description.clone(),
+                standard_minimum_issuance_validity: standard
+                    .validation
+                    .as_ref()
+                    .and_then(|v| v.behavior_rules.as_ref())
+                    .and_then(|b| b.issuance_minimum_validity_duration.clone())
+                    .unwrap_or_default(),
+                signature_requirements_description: standard
+                    .template
+                    .fixed
+                    .guarantor_info
+                    .description
+                    .clone(),
                 footnote: standard.template.fixed.footnote.clone().unwrap_or_default(),
             },
         },
-        voucher_id: "".to_string(), 
-        voucher_nonce, 
-        creation_date: creation_date_str.clone(), 
+        voucher_id: "".to_string(),
+        voucher_nonce,
+        creation_date: creation_date_str.clone(),
         valid_until,
-        non_redeemable_test_voucher: false, 
-        nominal_value: final_nominal_value, 
+        non_redeemable_test_voucher: false,
+        nominal_value: final_nominal_value,
         collateral: final_collateral,
-        creator_profile: data.creator_profile, 
-        transactions: vec![], 
+        creator_profile: data.creator_profile,
+        transactions: vec![],
         signatures: vec![],
     };
 
@@ -744,16 +830,30 @@ pub fn create_voucher_for_manipulation(
     sig_to_hash.signature = "".to_string();
     creator_sig_obj.signature_id = get_hash(to_canonical_json(&sig_to_hash).unwrap());
     // Create the digital signature by signing the signature_id
-    let digital_signature = crypto_utils::sign_ed25519(signing_key, creator_sig_obj.signature_id.as_bytes());
+    let digital_signature =
+        crypto_utils::sign_ed25519(signing_key, creator_sig_obj.signature_id.as_bytes());
     creator_sig_obj.signature = bs58::encode(digital_signature.to_bytes()).into_string();
-    
+
     // 3. Signatur dem Array hinzufügen
     voucher.signatures.push(creator_sig_obj);
 
     // 4. Init-Transaktion erstellen
-    let prev_hash = crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher.voucher_nonce));
-    let init_tx = Transaction { t_id: "".to_string(), prev_hash, t_type: "init".to_string(), t_time: creation_date_str, sender_id: voucher.creator_profile.id.as_ref().unwrap().clone(), recipient_id: voucher.creator_profile.id.as_ref().unwrap().clone(), amount: voucher.nominal_value.amount.clone(), sender_remaining_amount: None, sender_signature: "".to_string() };
-    voucher.transactions.push(resign_transaction(init_tx, signing_key));
+    let prev_hash =
+        crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher.voucher_nonce));
+    let init_tx = Transaction {
+        t_id: "".to_string(),
+        prev_hash,
+        t_type: "init".to_string(),
+        t_time: creation_date_str,
+        sender_id: voucher.creator_profile.id.as_ref().unwrap().clone(),
+        recipient_id: voucher.creator_profile.id.as_ref().unwrap().clone(),
+        amount: voucher.nominal_value.amount.clone(),
+        sender_remaining_amount: None,
+        sender_signature: "".to_string(),
+    };
+    voucher
+        .transactions
+        .push(resign_transaction(init_tx, signing_key));
     voucher
 }
 
@@ -788,7 +888,10 @@ pub fn create_guarantor_signature_with_time(
     data_for_id_hash.signature = "".to_string();
     signature_data.signature_id = get_hash(to_canonical_json(&data_for_id_hash).unwrap());
 
-    let digital_signature = sign_ed25519(&guarantor_identity.signing_key, signature_data.signature_id.as_bytes());
+    let digital_signature = sign_ed25519(
+        &guarantor_identity.signing_key,
+        signature_data.signature_id.as_bytes(),
+    );
     signature_data.signature = bs58::encode(digital_signature.to_bytes()).into_string();
     signature_data
 }
@@ -798,7 +901,7 @@ pub fn create_guarantor_signature(
     voucher: &Voucher,
     guarantor_identity: &UserIdentity,
     guarantor_first_name: &str,
-    role: &str, // KORREKTUR: Fehlender Parameter 'role'
+    role: &str,             // KORREKTUR: Fehlender Parameter 'role'
     guarantor_gender: &str, // KORREKTUR: 'gender' ist jetzt der 4. Parameter
 ) -> VoucherSignature {
     let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date).unwrap();
@@ -824,7 +927,10 @@ pub fn create_guarantor_signature(
     data_for_id_hash.signature = "".to_string();
     signature_data.signature_id = get_hash(to_canonical_json(&data_for_id_hash).unwrap());
 
-    let digital_signature = sign_ed25519(&guarantor_identity.signing_key, signature_data.signature_id.as_bytes());
+    let digital_signature = sign_ed25519(
+        &guarantor_identity.signing_key,
+        signature_data.signature_id.as_bytes(),
+    );
     signature_data.signature = bs58::encode(digital_signature.to_bytes()).into_string();
     signature_data
 }
@@ -836,18 +942,19 @@ pub fn create_male_guarantor_signature(voucher: &Voucher) -> VoucherSignature {
         &crate::test_utils::ACTORS.male_guarantor.identity,
         "Martin",
         "guarantor", // KORREKTUR: Fehlendes 'role'-Argument
-        "1" // 'gender' ist jetzt das 5. Argument
+        "1",         // 'gender' ist jetzt das 5. Argument
     )
 }
 
 #[allow(dead_code)]
-pub fn create_female_guarantor_signature(voucher: &Voucher) -> VoucherSignature { // Korrigiert E0412
+pub fn create_female_guarantor_signature(voucher: &Voucher) -> VoucherSignature {
+    // Korrigiert E0412
     create_guarantor_signature(
         voucher,
         &crate::test_utils::ACTORS.female_guarantor.identity,
         "Frida",
         "guarantor", // KORREKTUR: Fehlendes 'role'-Argument
-        "2" // 'gender' ist jetzt das 5. Argument
+        "2",         // 'gender' ist jetzt das 5. Argument
     )
 }
 
@@ -865,10 +972,9 @@ pub fn resign_transaction(
         "t_id": tx.t_id
     });
     let signature_hash = crypto_utils::get_hash(to_canonical_json(&payload).unwrap());
-    tx.sender_signature = bs58::encode(
-        crypto_utils::sign_ed25519(signer_key, signature_hash.as_bytes()).to_bytes(),
-    )
-        .into_string();
+    tx.sender_signature =
+        bs58::encode(crypto_utils::sign_ed25519(signer_key, signature_hash.as_bytes()).to_bytes())
+            .into_string();
     tx
 }
 
@@ -894,15 +1000,18 @@ pub fn create_test_bundle(
 
 #[cfg(test)]
 mod tests {
+    use crate::services::utils::{get_current_timestamp, get_timestamp};
     use chrono::{DateTime, Datelike, Timelike, Utc};
     use regex::Regex;
-    use crate::services::utils::{get_current_timestamp, get_timestamp};
 
     // Helper function to parse the timestamp string and check basic format
     fn parse_and_validate_format(timestamp_str: &str) -> Result<DateTime<Utc>, String> {
         let re = Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$").unwrap();
         if !re.is_match(timestamp_str) {
-            return Err(format!("Timestamp '{}' does not match expected format YYYY-MM-DDTHH:MM:SS.ffffffZ", timestamp_str));
+            return Err(format!(
+                "Timestamp '{}' does not match expected format YYYY-MM-DDTHH:MM:SS.ffffffZ",
+                timestamp_str
+            ));
         }
 
         DateTime::parse_from_rfc3339(timestamp_str)
@@ -927,7 +1036,11 @@ mod tests {
         println!("Timestamp (+{} years): {}", years_to_add, timestamp);
         let parsed_dt = parse_and_validate_format(&timestamp).expect("Timestamp should be valid");
 
-        assert_eq!(parsed_dt.year(), expected_year, "Year should be incremented correctly");
+        assert_eq!(
+            parsed_dt.year(),
+            expected_year,
+            "Year should be incremented correctly"
+        );
     }
 
     #[test]
@@ -936,16 +1049,27 @@ mod tests {
         let current_year = now.year();
 
         let timestamp = get_timestamp(0, true);
-        println!("Timestamp (End of Current Year {}): {}", current_year, timestamp);
+        println!(
+            "Timestamp (End of Current Year {}): {}",
+            current_year, timestamp
+        );
         let parsed_dt = parse_and_validate_format(&timestamp).expect("Timestamp should be valid");
 
-        assert_eq!(parsed_dt.year(), current_year, "Year should be the current year");
+        assert_eq!(
+            parsed_dt.year(),
+            current_year,
+            "Year should be the current year"
+        );
         assert_eq!(parsed_dt.month(), 12, "Month should be December");
         assert_eq!(parsed_dt.day(), 31, "Day should be 31st");
         assert_eq!(parsed_dt.hour(), 23, "Hour should be 23");
         assert_eq!(parsed_dt.minute(), 59, "Minute should be 59");
         assert_eq!(parsed_dt.second(), 59, "Second should be 59");
-        assert_eq!(parsed_dt.nanosecond(), 999_999_000, "Nanoseconds should indicate the last microsecond");
+        assert_eq!(
+            parsed_dt.nanosecond(),
+            999_999_000,
+            "Nanoseconds should indicate the last microsecond"
+        );
     }
 
     #[test]
@@ -955,16 +1079,27 @@ mod tests {
         let expected_year = now.year() + years_to_add;
 
         let timestamp = get_timestamp(years_to_add, true);
-        println!("Timestamp (End of Future Year {}): {}", expected_year, timestamp);
+        println!(
+            "Timestamp (End of Future Year {}): {}",
+            expected_year, timestamp
+        );
         let parsed_dt = parse_and_validate_format(&timestamp).expect("Timestamp should be valid");
 
-        assert_eq!(parsed_dt.year(), expected_year, "Year should be the future year");
+        assert_eq!(
+            parsed_dt.year(),
+            expected_year,
+            "Year should be the future year"
+        );
         assert_eq!(parsed_dt.month(), 12, "Month should be December");
         assert_eq!(parsed_dt.day(), 31, "Day should be 31st");
         assert_eq!(parsed_dt.hour(), 23, "Hour should be 23");
         assert_eq!(parsed_dt.minute(), 59, "Minute should be 59");
         assert_eq!(parsed_dt.second(), 59, "Second should be 59");
-        assert_eq!(parsed_dt.nanosecond(), 999_999_000, "Nanoseconds should indicate the last microsecond");
+        assert_eq!(
+            parsed_dt.nanosecond(),
+            999_999_000,
+            "Nanoseconds should indicate the last microsecond"
+        );
     }
 
     #[test]
@@ -988,7 +1123,11 @@ mod tests {
         let timestamp = get_timestamp(years_to_add, true);
         let parsed_dt = parse_and_validate_format(&timestamp).expect("Timestamp should be valid");
 
-        assert_eq!(parsed_dt.year(), leap_year, "Year should be the target leap year");
+        assert_eq!(
+            parsed_dt.year(),
+            leap_year,
+            "Year should be the target leap year"
+        );
         assert_eq!(parsed_dt.month(), 12, "Month should be December");
         assert_eq!(parsed_dt.day(), 31, "Day should be 31st");
     }
@@ -1016,6 +1155,10 @@ mod tests {
         let timestamp = get_timestamp(years_to_add, false);
         let parsed_dt = parse_and_validate_format(&timestamp).expect("Timestamp should be valid");
 
-        assert_eq!(parsed_dt.year(), target_leap_year, "Year should be the target leap year");
+        assert_eq!(
+            parsed_dt.year(),
+            target_leap_year,
+            "Year should be the target leap year"
+        );
     }
 }

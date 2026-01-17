@@ -78,7 +78,11 @@ impl Wallet {
                     valid_until: voucher.valid_until.clone(),
                     description: voucher.voucher_standard.template.description.clone(),
                     current_amount,
-                    unit: voucher.nominal_value.abbreviation.clone().unwrap_or_default(),
+                    unit: voucher
+                        .nominal_value
+                        .abbreviation
+                        .clone()
+                        .unwrap_or_default(),
                     voucher_standard_name: voucher.voucher_standard.name.clone(),
                     voucher_standard_uuid: voucher.voucher_standard.uuid.clone(),
                     // Zähle Transaktionen exkl. der initialen "init" Transaktion.
@@ -86,9 +90,21 @@ impl Wallet {
                     signatures_count: voucher.signatures.len() as u32,
                     // Ein Gutschein gilt als besichert, wenn das `collateral`-Objekt existiert und eine `collateral_type` hat.
                     has_collateral: voucher.collateral.is_some(),
-                    creator_first_name: voucher.creator_profile.first_name.clone().unwrap_or_default(),
-                    creator_last_name: voucher.creator_profile.last_name.clone().unwrap_or_default(),
-                    creator_coordinates: voucher.creator_profile.coordinates.clone().unwrap_or_default(),
+                    creator_first_name: voucher
+                        .creator_profile
+                        .first_name
+                        .clone()
+                        .unwrap_or_default(),
+                    creator_last_name: voucher
+                        .creator_profile
+                        .last_name
+                        .clone()
+                        .unwrap_or_default(),
+                    creator_coordinates: voucher
+                        .creator_profile
+                        .coordinates
+                        .clone()
+                        .unwrap_or_default(),
                     non_redeemable_test_voucher: voucher.non_redeemable_test_voucher,
                 }
             })
@@ -143,7 +159,9 @@ impl Wallet {
                     .map(|tx| {
                         // Wenn wir der Sender sind und ein Restbetrag existiert (Split-Transaktion),
                         // ist dies unser aktuelles Guthaben.
-                        if tx.sender_id == self.profile.user_id && tx.sender_remaining_amount.is_some() {
+                        if tx.sender_id == self.profile.user_id
+                            && tx.sender_remaining_amount.is_some()
+                        {
                             tx.sender_remaining_amount
                                 .clone()
                                 .unwrap_or_else(|| "0".to_string())
@@ -162,17 +180,24 @@ impl Wallet {
 
                     let key = (
                         voucher.voucher_standard.uuid.clone(),
-                        voucher.nominal_value.abbreviation.clone().unwrap_or_default(),
+                        voucher
+                            .nominal_value
+                            .abbreviation
+                            .clone()
+                            .unwrap_or_default(),
                     );
 
-                    let entry = balances.entry(key)
-                        .or_insert_with(|| {
-                            (
-                                Decimal::zero(),
-                                voucher.voucher_standard.name.clone(),
-                                voucher.nominal_value.abbreviation.clone().unwrap_or_default(),
-                            )
-                        });
+                    let entry = balances.entry(key).or_insert_with(|| {
+                        (
+                            Decimal::zero(),
+                            voucher.voucher_standard.name.clone(),
+                            voucher
+                                .nominal_value
+                                .abbreviation
+                                .clone()
+                                .unwrap_or_default(),
+                        )
+                    });
                     // Addiere den Betrag zum ersten Element des Tupels (dem Decimal-Wert).
                     entry.0 += amount;
                 }
@@ -191,7 +216,6 @@ impl Wallet {
             )
             .collect()
     }
-
 
     /// Gibt die User-ID des Wallet-Inhabers zurück.
     ///

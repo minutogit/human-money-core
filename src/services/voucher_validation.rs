@@ -5,8 +5,9 @@
 
 use crate::error::{StandardDefinitionError, ValidationError, VoucherCoreError};
 use crate::models::voucher::{Transaction, Voucher, VoucherSignature};
-use crate::models::voucher_standard_definition::{BehaviorRules, ContentRules, CountRules, FieldGroupRule,
-                                                 RequiredSignatureRule, VoucherStandardDefinition
+use crate::models::voucher_standard_definition::{
+    BehaviorRules, ContentRules, CountRules, FieldGroupRule, RequiredSignatureRule,
+    VoucherStandardDefinition,
 };
 use crate::services::crypto_utils::{get_hash, get_pubkey_from_user_id, verify_ed25519};
 use crate::services::utils::to_canonical_json;
@@ -15,7 +16,7 @@ use crate::services::voucher_manager::add_iso8601_duration;
 use ed25519_dalek::Signature;
 use regex::Regex;
 use rust_decimal::Decimal;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
@@ -32,21 +33,27 @@ pub fn validate_voucher_against_standard(
     //    (Prüft voucher.voucher_id gegen hash(voucher_stammdaten))
     verify_voucher_hash(voucher)?;
 
-
     // --- FIX (FEHLER 5): Datum-Parsing HÄRTEN ---
     // Parsen der Zeitstempel MUSS vor dem Vergleich erfolgen.
     let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date)
-        .map_err(|_| ValidationError::InvalidDateLogic { creation: voucher.creation_date.clone(), valid_until: voucher.valid_until.clone() })?
+        .map_err(|_| ValidationError::InvalidDateLogic {
+            creation: voucher.creation_date.clone(),
+            valid_until: voucher.valid_until.clone(),
+        })?
         .with_timezone(&chrono::Utc);
     let valid_until_dt = chrono::DateTime::parse_from_rfc3339(&voucher.valid_until)
-        .map_err(|_| ValidationError::InvalidDateLogic { creation: voucher.creation_date.clone(), valid_until: voucher.valid_until.clone() })?
+        .map_err(|_| ValidationError::InvalidDateLogic {
+            creation: voucher.creation_date.clone(),
+            valid_until: voucher.valid_until.clone(),
+        })?
         .with_timezone(&chrono::Utc);
 
     if valid_until_dt < creation_dt {
         return Err(ValidationError::InvalidDateLogic {
             creation: voucher.creation_date.clone(),
             valid_until: voucher.valid_until.clone(),
-        }.into());
+        }
+        .into());
     }
 
     // Führe die datengesteuerten Validierungsregeln aus, falls sie im Standard definiert sind.
@@ -88,7 +95,7 @@ fn verify_standard_identity(
             expected: standard.metadata.uuid.clone(),
             found: voucher.voucher_standard.uuid.clone(),
         }
-            .into());
+        .into());
     }
 
     let mut standard_to_hash = standard.clone();
@@ -104,7 +111,10 @@ fn verify_standard_identity(
 }
 
 /// Prüft die quantitativen Regeln aus dem Standard (z.B. Anzahl der Signaturen).
-pub fn validate_transaction_count(voucher: &Voucher, rules: &CountRules) -> Result<(), ValidationError> {
+pub fn validate_transaction_count(
+    voucher: &Voucher,
+    rules: &CountRules,
+) -> Result<(), ValidationError> {
     // HINWEIS: Signatur-Zählungen wurden entfernt und werden nun über FieldGroupRules gehandhabt.
     if let Some(rule) = &rules.transactions {
         let count = voucher.transactions.len();
@@ -129,11 +139,7 @@ pub fn validate_required_signatures(
     let all_signatures: Vec<_> = voucher
         .signatures
         .iter()
-        .map(|sig| (
-            &sig.signer_id,
-            &sig.role,
-            is_signature_valid(sig),
-        ))
+        .map(|sig| (&sig.signer_id, &sig.role, is_signature_valid(sig)))
         .collect();
 
     for rule in rules {
@@ -164,8 +170,8 @@ pub fn validate_content_rules(
 ) -> Result<(), ValidationError> {
     if let Some(fixed_fields) = &rules.fixed_fields {
         for (path, expected_value) in fixed_fields {
-            let found_value =
-                get_value_by_path(voucher_json, path).ok_or_else(|| ValidationError::PathNotFound { path: path.clone() })?;
+            let found_value = get_value_by_path(voucher_json, path)
+                .ok_or_else(|| ValidationError::PathNotFound { path: path.clone() })?;
             if found_value != expected_value {
                 return Err(ValidationError::FieldValueMismatch {
                     field: path.clone(),
@@ -178,8 +184,8 @@ pub fn validate_content_rules(
 
     if let Some(allowed_values) = &rules.allowed_values {
         for (path, allowed_list) in allowed_values {
-            let found_value =
-                get_value_by_path(voucher_json, path).ok_or_else(|| ValidationError::PathNotFound { path: path.clone() })?;
+            let found_value = get_value_by_path(voucher_json, path)
+                .ok_or_else(|| ValidationError::PathNotFound { path: path.clone() })?;
             if !allowed_list.contains(found_value) {
                 return Err(ValidationError::FieldValueNotAllowed {
                     field: path.clone(),
@@ -192,11 +198,13 @@ pub fn validate_content_rules(
 
     if let Some(regex_patterns) = &rules.regex_patterns {
         for (path, pattern) in regex_patterns {
-            let found_value =
-                get_value_by_path(voucher_json, path).ok_or_else(|| ValidationError::PathNotFound { path: path.clone() })?;
+            let found_value = get_value_by_path(voucher_json, path)
+                .ok_or_else(|| ValidationError::PathNotFound { path: path.clone() })?;
             let found_str = found_value.as_str().unwrap_or_default();
             let re = Regex::new(pattern).map_err(|e| ValidationError::FieldRegexMismatch {
-                field: path.clone(), pattern: pattern.clone(), found: e.to_string()
+                field: path.clone(),
+                pattern: pattern.clone(),
+                found: e.to_string(),
             })?;
             if !re.is_match(found_str) {
                 return Err(ValidationError::FieldRegexMismatch {
@@ -231,11 +239,21 @@ pub fn validate_behavior_rules(
 
     // Check that the rule stored in the voucher matches the one in the standard
     if let Some(min_validity_rule) = &rules.issuance_minimum_validity_duration {
-        if &voucher.voucher_standard.template.standard_minimum_issuance_validity != min_validity_rule {
+        if &voucher
+            .voucher_standard
+            .template
+            .standard_minimum_issuance_validity
+            != min_validity_rule
+        {
             return Err(ValidationError::MismatchedMinimumValidity {
                 expected: min_validity_rule.clone(),
-                found: voucher.voucher_standard.template.standard_minimum_issuance_validity.clone(),
-            }.into());
+                found: voucher
+                    .voucher_standard
+                    .template
+                    .standard_minimum_issuance_validity
+                    .clone(),
+            }
+            .into());
         }
     }
 
@@ -252,14 +270,19 @@ pub fn validate_behavior_rules(
             if valid_until_dt > max_end_dt {
                 return Err(ValidationError::ValidityDurationTooLong {
                     max_allowed: max_duration_str.clone(),
-                }.into());
+                }
+                .into());
             }
         }
     }
     // NEU: Prüfung der maximal erlaubten Nachkommastellen für alle Beträge.
     if let Some(max_places) = rules.amount_decimal_places {
         // Prüfe den Nennwert des Gutscheins
-        check_decimal_places(&voucher.nominal_value.amount, max_places, "nominal_value.amount")?;
+        check_decimal_places(
+            &voucher.nominal_value.amount,
+            max_places,
+            "nominal_value.amount",
+        )?;
 
         // Prüfe alle Transaktionen
         for (i, tx) in voucher.transactions.iter().enumerate() {
@@ -282,13 +305,15 @@ pub fn validate_field_group_rules(
     rules: &HashMap<String, FieldGroupRule>,
 ) -> Result<(), ValidationError> {
     for (path, rule) in rules {
-        let array_value =
-            get_value_by_path(voucher_json, path).ok_or_else(|| ValidationError::PathNotFound { path: path.clone() })?;
+        let array_value = get_value_by_path(voucher_json, path)
+            .ok_or_else(|| ValidationError::PathNotFound { path: path.clone() })?;
 
-        let array = array_value.as_array().ok_or_else(|| ValidationError::InvalidDataType {
-            path: path.clone(),
-            expected: "Array".to_string(),
-        })?;
+        let array = array_value
+            .as_array()
+            .ok_or_else(|| ValidationError::InvalidDataType {
+                path: path.clone(),
+                expected: "Array".to_string(),
+            })?;
 
         // HINWEIS: Der 'effective_field_path' (z.B. "details.gender") kommt direkt
         // aus der TOML-Regel. Der Diagnose-Test in `tests/validation/unit_service.rs`
@@ -296,7 +321,10 @@ pub fn validate_field_group_rules(
         let effective_field_path = rule.field.clone();
 
         // [DEBUG]
-        println!("[DEBUG VALIDATION] Checking field_group_rule for path: '{}', field: '{}'", path, &effective_field_path);
+        println!(
+            "[DEBUG VALIDATION] Checking field_group_rule for path: '{}', field: '{}'",
+            path, &effective_field_path
+        );
 
         let mut value_occurrences: HashMap<String, u32> = HashMap::new();
 
@@ -305,7 +333,9 @@ pub fn validate_field_group_rules(
             // println!("[DEBUG VALIDATION]   Item: {:?}", item); // Kann sehr gesprächig sein, optional einkommentieren
 
             // KORREKTUR: Der Pfad ist 'details.'. Die 'creator'-Signatur hat (absichtlich) keine 'details'.
-            if effective_field_path.starts_with("details.") && item.get("role").and_then(Value::as_str) == Some("creator") {
+            if effective_field_path.starts_with("details.")
+                && item.get("role").and_then(Value::as_str) == Some("creator")
+            {
                 continue; // Die 'creator'-Signatur wird bei 'details'-Regeln übersprungen.
                 // [DEBUG]
                 // println!("[DEBUG VALIDATION]     Skipping rule for 'creator'.");
@@ -326,13 +356,17 @@ pub fn validate_field_group_rules(
                 // HINWEIS: Dies ist normal für den 'creator', wenn die Regel 'details.gender' ist.
                 println!(
                     "[DEBUG VALIDATION]     Field '{}' not found in item (Role: {:?}).",
-                    &effective_field_path, item.get("role").and_then(Value::as_str).unwrap_or("N/A")
+                    &effective_field_path,
+                    item.get("role").and_then(Value::as_str).unwrap_or("N/A")
                 );
             }
         }
 
         for count_rule in &rule.value_counts {
-            let found_count = value_occurrences.get(&count_rule.value).copied().unwrap_or(0);
+            let found_count = value_occurrences
+                .get(&count_rule.value)
+                .copied()
+                .unwrap_or(0);
             if found_count < count_rule.min || found_count > count_rule.max {
                 return Err(ValidationError::FieldValueCountOutOfBounds {
                     path: path.clone(),
@@ -351,7 +385,11 @@ pub fn validate_field_group_rules(
 // --- HILFSFUNKTIONEN UND BESTEHENDE KRYPTO-PRÜFUNGEN (leicht angepasst) ---
 
 /// Private Hilfsfunktion zur Überprüfung der Nachkommastellen eines Betrags.
-fn check_decimal_places(amount_str: &str, max_places: u8, field_path: &str) -> Result<(), ValidationError> {
+fn check_decimal_places(
+    amount_str: &str,
+    max_places: u8,
+    field_path: &str,
+) -> Result<(), ValidationError> {
     let dec = Decimal::from_str(amount_str).map_err(|_| ValidationError::InvalidAmountFormat {
         path: field_path.to_string(),
         found: amount_str.to_string(),
@@ -367,20 +405,22 @@ fn check_decimal_places(amount_str: &str, max_places: u8, field_path: &str) -> R
 }
 /// Hilfsfunktion, um einen verschachtelten Wert aus einem `serde_json::Value` anhand eines Pfades zu extrahieren.
 pub fn get_value_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
-    path.split('.').try_fold(value, |current, key| current.get(key)).filter(|v| !v.is_null())
+    path.split('.')
+        .try_fold(value, |current, key| current.get(key))
+        .filter(|v| !v.is_null())
 }
 
 /// Hilfsfunktion, die prüft, ob eine einzelne zusätzliche Signatur gültig ist. Gibt bool zurück.
-fn is_signature_valid(
-    signature_obj: &VoucherSignature,
-) -> Result<(), ValidationError> {
+fn is_signature_valid(signature_obj: &VoucherSignature) -> Result<(), ValidationError> {
     let mut obj_to_verify = signature_obj.clone();
     obj_to_verify.signature_id = "".to_string();
     obj_to_verify.signature = "".to_string();
     let calculated_id_hash = get_hash(to_canonical_json(&obj_to_verify).unwrap_or_default());
 
     if calculated_id_hash != signature_obj.signature_id {
-        return Err(ValidationError::InvalidSignatureId(signature_obj.signature_id.clone()));
+        return Err(ValidationError::InvalidSignatureId(
+            signature_obj.signature_id.clone(),
+        ));
     }
 
     // Prüfung 3: Ist die kryptographische Signatur selbst gültig?
@@ -403,8 +443,14 @@ fn is_signature_valid(
     // KORREKTUR: Verwende `from_bytes` statt `from_slice`
     let signature = Signature::from_bytes(&signature_array);
 
-    if !verify_ed25519(&public_key, signature_obj.signature_id.as_bytes(), &signature) {
-        return Err(ValidationError::InvalidSignature { signer_id: signature_obj.signer_id.clone() });
+    if !verify_ed25519(
+        &public_key,
+        signature_obj.signature_id.as_bytes(),
+        &signature,
+    ) {
+        return Err(ValidationError::InvalidSignature {
+            signer_id: signature_obj.signer_id.clone(),
+        });
     }
 
     Ok(())
@@ -419,18 +465,21 @@ fn verify_signatures(voucher: &Voucher) -> Result<(), VoucherCoreError> {
         // --- FIX (FEHLER 3): Reihenfolge geändert ---
         // Sicherheitsprüfung, ob der Ersteller versucht, als Bürge zu agieren.
         // Muss VOR der Duplikatsprüfung stattfinden.
-        if signature_obj.role == "guarantor" && Some(&signature_obj.signer_id) == voucher.creator_profile.id.as_ref() {
+        if signature_obj.role == "guarantor"
+            && Some(&signature_obj.signer_id) == voucher.creator_profile.id.as_ref()
+        {
             return Err(ValidationError::CreatorAsGuarantor {
                 creator_id: voucher.creator_profile.id.clone().unwrap_or_default(),
             }
-                .into());
+            .into());
         }
 
         // Prüfung auf doppelte Unterzeichner
         if !seen_signers.insert(&signature_obj.signer_id) {
             return Err(ValidationError::DuplicateGuarantor {
                 guarantor_id: signature_obj.signer_id.clone(), // Behalte den Fehlertyp bei, auch wenn er "DuplicateSigner" sein sollte
-            }.into());
+            }
+            .into());
         }
         // Prüfung auf chronologische Korrektheit der Signatur.
         // Eine Signatur kann nicht vor der Erstellung des Gutscheins existieren.
@@ -440,7 +489,8 @@ fn verify_signatures(voucher: &Voucher) -> Result<(), VoucherCoreError> {
                 id: signature_obj.signature_id.clone(),
                 time1: voucher.creation_date.clone(),
                 time2: signature_obj.signature_time.clone(),
-            }.into());
+            }
+            .into());
         }
 
         // Kryptographische Prüfung der Signatur selbst.
@@ -472,7 +522,10 @@ fn verify_voucher_hash(voucher: &Voucher) -> Result<(), VoucherCoreError> {
 }
 
 /// Verifiziert die Integrität, Signaturen und Geschäftslogik der Transaktionsliste. (Weitgehend unverändert)
-fn verify_transactions(voucher: &Voucher, _standard: &VoucherStandardDefinition) -> Result<(), VoucherCoreError> {
+fn verify_transactions(
+    voucher: &Voucher,
+    _standard: &VoucherStandardDefinition,
+) -> Result<(), VoucherCoreError> {
     if voucher.transactions.is_empty() {
         // This is caught by the data-driven `validate_counts` rule, which should require min=1.
         return Ok(()); // TODO: Sollte dies nicht ein Fehler sein? Oder wird es von `validate_transaction_count` abgefangen?
@@ -496,7 +549,11 @@ fn verify_transactions(voucher: &Voucher, _standard: &VoucherStandardDefinition)
 
         // Chain integrity checks
         if tx.prev_hash != last_tx_hash {
-            return Err(ValidationError::InvalidTransaction("Transaction chain broken: prev_hash does not match hash of previous transaction.".to_string()).into());
+            return Err(ValidationError::InvalidTransaction(
+                "Transaction chain broken: prev_hash does not match hash of previous transaction."
+                    .to_string(),
+            )
+            .into());
         }
         // Prüfe chronologische Reihenfolge
         if tx.t_time < last_tx_time {
@@ -505,7 +562,8 @@ fn verify_transactions(voucher: &Voucher, _standard: &VoucherStandardDefinition)
                 id: tx.t_id.clone(),
                 time1: last_tx_time,
                 time2: tx.t_time.clone(),
-            }.into());
+            }
+            .into());
         }
 
         // --- Financial Consistency Check (Look-behind-by-one) ---
@@ -525,14 +583,16 @@ fn verify_transactions(voucher: &Voucher, _standard: &VoucherStandardDefinition)
                 user_id: tx.sender_id.clone(),
                 needed: amount_to_send.to_string(),
                 available: sender_balance_before_tx.to_string(),
-            }.into());
+            }
+            .into());
         }
 
         if tx.t_type == "transfer" && sender_balance_before_tx != amount_to_send {
             return Err(ValidationError::FullTransferAmountMismatch {
                 expected: sender_balance_before_tx.to_string(),
                 found: amount_to_send.to_string(),
-            }.into());
+            }
+            .into());
         }
 
         // HÄRTUNG: Ein 'transfer' darf keinen Restbetrag haben. Dies verhindert mehrdeutige Zustände.
@@ -540,7 +600,7 @@ fn verify_transactions(voucher: &Voucher, _standard: &VoucherStandardDefinition)
             return Err(ValidationError::InvalidTransaction(
                 "A 'transfer' transaction must not have a sender_remaining_amount.".to_string(),
             )
-                .into());
+            .into());
         }
 
         // NEU: Zusätzliche Prüfung für Split-Transaktionen auf korrekte Bilanz.
@@ -552,7 +612,7 @@ fn verify_transactions(voucher: &Voucher, _standard: &VoucherStandardDefinition)
                     return Err(ValidationError::InvalidTransaction(
                         "Split transaction must have a sender_remaining_amount.".to_string(),
                     )
-                        .into())
+                    .into());
                 }
             };
 
@@ -572,18 +632,43 @@ fn verify_transactions(voucher: &Voucher, _standard: &VoucherStandardDefinition)
     Ok(())
 }
 /// Hilfsfunktion, die grundlegende, zustandslose Prüfungen für eine einzelne Transaktion durchführt.
-fn verify_transaction_basics(tx: &Transaction, voucher: &Voucher, is_init: bool) -> Result<(), VoucherCoreError> {
+fn verify_transaction_basics(
+    tx: &Transaction,
+    voucher: &Voucher,
+    is_init: bool,
+) -> Result<(), VoucherCoreError> {
     if is_init {
-        if tx.t_type != "init" { return Err(ValidationError::InvalidTransaction("First transaction must be of type 'init'.".to_string()).into()); }
-        let expected_prev_hash = get_hash(format!("{}{}", &voucher.voucher_id, &voucher.voucher_nonce));
-        if tx.prev_hash != expected_prev_hash { return Err(ValidationError::InvalidTransaction("Initial transaction has invalid prev_hash.".to_string()).into()); }
-        if Some(&tx.sender_id) != voucher.creator_profile.id.as_ref() || Some(&tx.recipient_id) != voucher.creator_profile.id.as_ref() {
-            return Err(ValidationError::InitPartyMismatch { expected: voucher.creator_profile.id.clone().unwrap_or_default(), found: tx.sender_id.clone() }.into());
+        if tx.t_type != "init" {
+            return Err(ValidationError::InvalidTransaction(
+                "First transaction must be of type 'init'.".to_string(),
+            )
+            .into());
+        }
+        let expected_prev_hash =
+            get_hash(format!("{}{}", &voucher.voucher_id, &voucher.voucher_nonce));
+        if tx.prev_hash != expected_prev_hash {
+            return Err(ValidationError::InvalidTransaction(
+                "Initial transaction has invalid prev_hash.".to_string(),
+            )
+            .into());
+        }
+        if Some(&tx.sender_id) != voucher.creator_profile.id.as_ref()
+            || Some(&tx.recipient_id) != voucher.creator_profile.id.as_ref()
+        {
+            return Err(ValidationError::InitPartyMismatch {
+                expected: voucher.creator_profile.id.clone().unwrap_or_default(),
+                found: tx.sender_id.clone(),
+            }
+            .into());
         }
         let nominal_amount = Decimal::from_str(&voucher.nominal_value.amount)?;
         let init_amount = Decimal::from_str(&tx.amount)?;
         if init_amount.normalize() != nominal_amount.normalize() {
-            return Err(ValidationError::InitAmountMismatch { expected: nominal_amount.to_string(), found: init_amount.to_string() }.into());
+            return Err(ValidationError::InitAmountMismatch {
+                expected: nominal_amount.to_string(),
+                found: init_amount.to_string(),
+            }
+            .into());
         }
         if tx.t_time < voucher.creation_date {
             return Err(ValidationError::InvalidTimeOrder {
@@ -591,22 +676,38 @@ fn verify_transaction_basics(tx: &Transaction, voucher: &Voucher, is_init: bool)
                 id: tx.t_id.clone(),
                 time1: voucher.creation_date.clone(),
                 time2: tx.t_time.clone(),
-            }.into());
+            }
+            .into());
         }
     } else {
-        if tx.t_type == "init" { return Err(ValidationError::InvalidTransaction("Found subsequent transaction with invalid type 'init'.".to_string()).into()); }
-        if tx.sender_id == tx.recipient_id { return Err(ValidationError::InvalidTransaction("Sender and recipient cannot be the same in a non-init transaction.".to_string()).into()); }
+        if tx.t_type == "init" {
+            return Err(ValidationError::InvalidTransaction(
+                "Found subsequent transaction with invalid type 'init'.".to_string(),
+            )
+            .into());
+        }
+        if tx.sender_id == tx.recipient_id {
+            return Err(ValidationError::InvalidTransaction(
+                "Sender and recipient cannot be the same in a non-init transaction.".to_string(),
+            )
+            .into());
+        }
     }
 
     if Decimal::from_str(&tx.amount)? <= Decimal::ZERO {
-        return Err(ValidationError::NegativeOrZeroAmount { amount: tx.amount.clone() }.into());
+        return Err(ValidationError::NegativeOrZeroAmount {
+            amount: tx.amount.clone(),
+        }
+        .into());
     }
 
     Ok(())
 }
 
 /// Hilfsfunktion zur Überprüfung der internen Integrität und Signatur einer Transaktion. (Unverändert)
-fn verify_transaction_integrity_and_signature(transaction: &Transaction) -> Result<(), VoucherCoreError> {
+fn verify_transaction_integrity_and_signature(
+    transaction: &Transaction,
+) -> Result<(), VoucherCoreError> {
     let mut tx_for_tid_calc = transaction.clone();
     tx_for_tid_calc.t_id = "".to_string();
     tx_for_tid_calc.sender_signature = "".to_string();
@@ -614,7 +715,8 @@ fn verify_transaction_integrity_and_signature(transaction: &Transaction) -> Resu
     if transaction.t_id != calculated_tid {
         return Err(ValidationError::MismatchedTransactionId {
             t_id: transaction.t_id.clone(),
-        }.into());
+        }
+        .into());
     }
 
     let signature_payload = json!({
@@ -634,11 +736,16 @@ fn verify_transaction_integrity_and_signature(transaction: &Transaction) -> Resu
     })?;
     let signature = Signature::from_bytes(&signature_array);
 
-    if !verify_ed25519(&sender_pub_key, signature_payload_hash.as_bytes(), &signature) {
+    if !verify_ed25519(
+        &sender_pub_key,
+        signature_payload_hash.as_bytes(),
+        &signature,
+    ) {
         return Err(ValidationError::InvalidTransactionSignature {
             t_id: transaction.t_id.clone(),
             sender_id: transaction.sender_id.clone(),
-        }.into());
+        }
+        .into());
     }
     Ok(())
 }

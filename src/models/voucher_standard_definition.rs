@@ -4,7 +4,7 @@
 //! Diese Struktur trennt klar zwischen Metadaten, Kopiervorlagen und Validierungsregeln
 //! und fügt die Unterstützung für kryptographische Signaturen und Mehrsprachigkeit hinzu.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // --- Bestehende Strukturen (unverändert) ---

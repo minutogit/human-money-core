@@ -5,7 +5,7 @@
 //! und verwenden `serde` für die Serialisierung und Deserialisierung.
 
 use crate::models::profile::PublicProfile;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Definiert den Standard, zu dem ein Gutschein gehört.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
@@ -20,7 +20,7 @@ pub struct VoucherStandard {
     pub template: VoucherTemplateData,
 }
 
-/// Definiert einen Wert (Betrag und Einheit), 
+/// Definiert einen Wert (Betrag und Einheit),
 /// der für Nennwerte oder Besicherungen verwendet wird.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct ValueDefinition {
@@ -37,7 +37,7 @@ pub struct ValueDefinition {
 /// Definiert die (optionale) Besicherung eines Gutscheins.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct Collateral {
-    /// Die Felder 'unit', 'amount', 'abbreviation', 'description' 
+    /// Die Felder 'unit', 'amount', 'abbreviation', 'description'
     /// werden direkt von ValueDefinition hier eingebettet.
     #[serde(flatten)]
     pub value: ValueDefinition,

@@ -4,17 +4,17 @@
 //! (Erstellung, Laden, Speichern) und der Erstellung neuer Gutscheine befassen.
 
 use crate::error::{ValidationError, VoucherCoreError};
+use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::models::{
     conflict::{CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, ProofStore},
     profile::{BundleMetadataStore, UserIdentity, UserProfile, VoucherStore},
 };
-use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::services::crypto_utils::create_user_id;
 use crate::services::voucher_manager::NewVoucherData;
 use crate::services::{voucher_manager, voucher_validation};
 use crate::storage::{AuthMethod, Storage, StorageError};
-use crate::wallet::instance::{ValidationFailureReason, VoucherStatus};
 use crate::wallet::Wallet;
+use crate::wallet::instance::{ValidationFailureReason, VoucherStatus};
 
 impl Wallet {
     /// Erstellt ein brandneues, leeres Wallet aus einer Mnemonic-Phrase.
@@ -35,7 +35,7 @@ impl Wallet {
             user_id: user_id.clone(),
         };
 
-        let profile = UserProfile { 
+        let profile = UserProfile {
             user_id,
             first_name: None,
             last_name: None,
@@ -80,7 +80,10 @@ impl Wallet {
         let (profile, voucher_store, identity) = storage.load_wallet(auth)?;
 
         if let AuthMethod::Mnemonic(..) = auth {
-            println!("[Debug Wallet::load] Recovery successful! Decrypted identity with Mnemonic. User ID: {}", identity.user_id);
+            println!(
+                "[Debug Wallet::load] Recovery successful! Decrypted identity with Mnemonic. User ID: {}",
+                identity.user_id
+            );
         }
 
         let bundle_meta_store = storage.load_bundle_metadata(&identity.user_id, auth)?;
@@ -121,11 +124,7 @@ impl Wallet {
         storage.save_known_fingerprints(&identity.user_id, auth, &self.known_fingerprints)?;
         storage.save_own_fingerprints(&identity.user_id, auth, &self.own_fingerprints)?;
         storage.save_proofs(&identity.user_id, auth, &self.proof_store)?;
-        storage.save_fingerprint_metadata(
-            &identity.user_id,
-            auth,
-            &self.fingerprint_metadata,
-        )?;
+        storage.save_fingerprint_metadata(&identity.user_id, auth, &self.fingerprint_metadata)?;
         Ok(())
     }
 
@@ -188,7 +187,11 @@ impl Wallet {
                 found,
             })) if path == "signatures" && field == "role" && value == "guarantor" => {
                 VoucherStatus::Incomplete {
-                    reasons: vec![ValidationFailureReason::GuarantorCountLow { required: min, max, current: found }],
+                    reasons: vec![ValidationFailureReason::GuarantorCountLow {
+                        required: min,
+                        max,
+                        current: found,
+                    }],
                 }
             }
             // Jeder andere Validierungsfehler bei der Erstellung ist ein fataler Fehler.

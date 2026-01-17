@@ -9,19 +9,19 @@
 use std::collections::HashMap;
 use tempfile::tempdir;
 
+use chrono::{Duration, Utc};
+use human_money_core::test_utils;
 use human_money_core::{
+    VoucherStatus,
     models::{
         conflict::{ProofOfDoubleSpend, ResolutionEndorsement},
         profile::PublicProfile,
         secure_container::SecureContainer,
-        voucher::{ValueDefinition},
+        voucher::ValueDefinition,
     },
     services::{crypto_utils, voucher_manager::NewVoucherData},
-    test_utils::{generate_signed_standard_toml, resign_transaction, ACTORS, SILVER_STANDARD},
-    VoucherStatus,
+    test_utils::{ACTORS, SILVER_STANDARD, generate_signed_standard_toml, resign_transaction},
 };
-use human_money_core::test_utils;
-use chrono::{Duration, Utc};
 
 /// Lokale Test-Hilfsfunktion, um einen mock `ProofOfDoubleSpend` zu erzeugen.
 /// HINWEIS: Aus `state_management.rs` kopiert, um Importprobleme zu vermeiden.
@@ -53,7 +53,12 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
     let dir = tempdir().unwrap();
     let correct_password = "correct_password";
     let test_user = &ACTORS.test_user;
-    let (mut service, _) = test_utils::setup_service_with_profile(dir.path(), test_user, "Test User", correct_password);
+    let (mut service, _) = test_utils::setup_service_with_profile(
+        dir.path(),
+        test_user,
+        "Test User",
+        correct_password,
+    );
 
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let user_id = service.get_user_id().unwrap();
@@ -63,11 +68,17 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
             &silver_toml,
             "en",
             NewVoucherData {
-                creator_profile: PublicProfile { id: Some(user_id), ..Default::default() },
-                nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
+                creator_profile: PublicProfile {
+                    id: Some(user_id),
+                    ..Default::default()
+                },
+                nominal_value: ValueDefinition {
+                    amount: "100".to_string(),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            Some(correct_password)
+            Some(correct_password),
         )
         .unwrap();
 
@@ -76,7 +87,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
 
     // 2. ACT: Versuche, einen Transfer mit falschem Passwort zu erstellen.
     let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
-    
+
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: "bob-recipient-id".to_string(), // Kann ein Dummy sein, da die Operation fehlschlägt
         sources: vec![human_money_core::wallet::SourceTransfer {
@@ -90,7 +101,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(
         silver_standard.metadata.uuid.clone(),
-        silver_toml.clone() // Use the silver_toml from earlier in the test
+        silver_toml.clone(), // Use the silver_toml from earlier in the test
     );
 
     // --- KORREKTUR: Der Test war fehlerhaft. ---
@@ -102,7 +113,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
         request,
         &standards_toml,
         None,
-        Some("WRONG_PASSWORD_TO_FORCE_SAVE_FAILURE")
+        Some("WRONG_PASSWORD_TO_FORCE_SAVE_FAILURE"),
     );
 
     // 3. ASSERT: Operation ist fehlgeschlagen und der Zustand ist unverändert.
@@ -110,13 +121,15 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
         result_fail.is_err(),
         "Operation should fail due to wrong password"
     );
-    
+
     // HINWEIS: Der Fehler kann "Authentication failed" oder "Wallet is locked" sein,
     // je nachdem, wie die Implementierung das falsche Passwort im Modus A behandelt.
     // Wichtig ist nur, DASS ein Fehler auftritt und der Zustand danach korrekt ist.
     let error_msg = result_fail.unwrap_err();
     assert!(
-        error_msg.contains("Authentication failed") || error_msg.contains("Wallet is locked") || error_msg.contains("User ID or Key Error"),
+        error_msg.contains("Authentication failed")
+            || error_msg.contains("Wallet is locked")
+            || error_msg.contains("User ID or Key Error"),
         "Unexpected error message: {}",
         error_msg
     );
@@ -148,8 +161,14 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
     let dir_recipient = tempdir().unwrap();
     let recipient = &ACTORS.recipient1;
     let correct_password = "correct_password";
-    let (mut service_sender, _) = test_utils::setup_service_with_profile(dir_sender.path(), sender, "Sender", "pwd");
-    let (mut service_recipient, _) = test_utils::setup_service_with_profile(dir_recipient.path(), recipient, "Recipient", correct_password);
+    let (mut service_sender, _) =
+        test_utils::setup_service_with_profile(dir_sender.path(), sender, "Sender", "pwd");
+    let (mut service_recipient, _) = test_utils::setup_service_with_profile(
+        dir_recipient.path(),
+        recipient,
+        "Recipient",
+        correct_password,
+    );
 
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
@@ -162,11 +181,17 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
             &silver_toml,
             "en",
             NewVoucherData {
-                creator_profile: PublicProfile { id: Some(id_sender), ..Default::default() },
-                nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
+                creator_profile: PublicProfile {
+                    id: Some(id_sender),
+                    ..Default::default()
+                },
+                nominal_value: ValueDefinition {
+                    amount: "100".to_string(),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            Some("pwd")
+            Some("pwd"),
         )
         .unwrap();
     let voucher_id = service_sender.get_voucher_summaries(None, None).unwrap()[0]
@@ -185,16 +210,14 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(
         silver_standard.metadata.uuid.clone(),
-        silver_toml.clone() // Use the silver_toml from earlier in the test
+        silver_toml.clone(), // Use the silver_toml from earlier in the test
     );
 
-    let human_money_core::wallet::CreateBundleResult { bundle_bytes: bundle, .. } = service_sender
-        .create_transfer_bundle(
-            request,
-            &standards_toml,
-            None,
-            Some("pwd")
-        )
+    let human_money_core::wallet::CreateBundleResult {
+        bundle_bytes: bundle,
+        ..
+    } = service_sender
+        .create_transfer_bundle(request, &standards_toml, None, Some("pwd"))
         .unwrap();
 
     let mut standards_map = HashMap::new();
@@ -205,12 +228,12 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         &bundle,
         &standards_map,
         None,
-        Some("WRONG_PASSWORD_TO_FORCE_SAVE_FAILURE") // Falsches Passwort
+        Some("WRONG_PASSWORD_TO_FORCE_SAVE_FAILURE"), // Falsches Passwort
     );
 
     // 3. ASSERT: Operation ist fehlgeschlagen und Wallet ist immer noch leer.
     assert!(result.is_err(), "Receive operation should fail");
-    
+
     let error_msg = result.unwrap_err();
     assert!(
         error_msg.contains("Authentication failed") || error_msg.contains("Wallet is locked"),
@@ -218,9 +241,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         error_msg
     );
 
-    let summaries_after = service_recipient
-        .get_voucher_summaries(None, None)
-        .unwrap();
+    let summaries_after = service_recipient.get_voucher_summaries(None, None).unwrap();
     assert!(
         summaries_after.is_empty(),
         "Recipient's wallet should remain empty after a failed receive"
@@ -235,7 +256,12 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let dir_creator = tempdir().unwrap();
     let correct_password = "correct_password";
     let creator = &ACTORS.alice;
-    let (mut service_creator, _) = test_utils::setup_service_with_profile(dir_creator.path(), creator, "Creator", correct_password);
+    let (mut service_creator, _) = test_utils::setup_service_with_profile(
+        dir_creator.path(),
+        creator,
+        "Creator",
+        correct_password,
+    );
     let id_creator = service_creator.get_user_id().unwrap();
 
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
@@ -244,7 +270,8 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     standards_map.insert(silver_standard.metadata.uuid.clone(), silver_toml.clone());
 
     let signer = &ACTORS.guarantor1;
-    let (mut service_signer, _) = test_utils::setup_service_with_profile(tempdir().unwrap().path(), signer, "Signer", "pwd");
+    let (mut service_signer, _) =
+        test_utils::setup_service_with_profile(tempdir().unwrap().path(), signer, "Signer", "pwd");
     let id_signer = service_signer.get_user_id().unwrap();
 
     // Gutschein erstellen -> Status: Active (da keine Bürgen erforderlich)
@@ -258,15 +285,23 @@ fn test_attach_signature_is_transactional_on_save_failure() {
                     id: Some(id_creator.clone()),
                     first_name: Some("Test".to_string()),
                     last_name: Some("Creator".to_string()),
-                    ..Default::default() },
-                nominal_value: ValueDefinition { amount: "100".to_string(), unit: silver_standard.template.fixed.nominal_value.unit.clone(), ..Default::default() },
-                 validity_duration: Some("P1Y".to_string()),
-                 ..Default::default()
-             },
-             Some(correct_password)
-         ).unwrap();
+                    ..Default::default()
+                },
+                nominal_value: ValueDefinition {
+                    amount: "100".to_string(),
+                    unit: silver_standard.template.fixed.nominal_value.unit.clone(),
+                    ..Default::default()
+                },
+                validity_duration: Some("P1Y".to_string()),
+                ..Default::default()
+            },
+            Some(correct_password),
+        )
+        .unwrap();
 
-    let local_id = service_creator.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
+    let local_id = service_creator.get_voucher_summaries(None, None).unwrap()[0]
+        .local_instance_id
+        .clone();
     let details_before = service_creator.get_voucher_details(&local_id).unwrap();
     // KORREKTUR: Nach dem Refactoring enthält der Gutschein
     // bei Erstellung bereits die Signatur des Erstellers (role: "creator").
@@ -279,46 +314,51 @@ fn test_attach_signature_is_transactional_on_save_failure() {
 
     // 1. Signatur von externem Unterzeichner vorbereiten (Additional Signature)
     let bundle_req = service_creator
-        .create_signing_request_bundle(
-            &local_id,
-            &id_signer,
-        )
+        .create_signing_request_bundle(&local_id, &id_signer)
         .unwrap();
 
     let (_, signer_identity_ref) = service_signer.get_unlocked_mut_for_test();
     let signer_identity = signer_identity_ref.clone();
     let request_container: SecureContainer = serde_json::from_slice(&bundle_req).unwrap();
-    let payload = human_money_core::services::secure_container_manager::open_secure_container(&request_container, &signer_identity).unwrap();
-    let voucher_from_request: human_money_core::models::voucher::Voucher = serde_json::from_slice(&payload).unwrap();
+    let payload = human_money_core::services::secure_container_manager::open_secure_container(
+        &request_container,
+        &signer_identity,
+    )
+    .unwrap();
+    let voucher_from_request: human_money_core::models::voucher::Voucher =
+        serde_json::from_slice(&payload).unwrap();
 
     // FIX: Argumente in der korrekten Reihenfolge übergeben (voucher_id, description).
     // 1. Signatur von externem Unterzeichner erstellen.
     let _sig_data1 = human_money_core::test_utils::create_additional_signature_data(
-        &signer_identity, &voucher_from_request.voucher_id,
+        &signer_identity,
+        &voucher_from_request.voucher_id,
     );
 
     // 3. Bürge erstellt das Antwort-Bundle.
     // Signer erstellt das Antwort-Bundle.
     // FIX: Das 4. Argument ist die Empfänger-ID der Antwort, und das 2. & 3. Argument sind die Rolle und include_details
     let detached_sig1 = service_signer
-        .create_detached_signature_response_bundle(&voucher_from_request, "additional_signer", true, &id_creator)
+        .create_detached_signature_response_bundle(
+            &voucher_from_request,
+            "additional_signer",
+            true,
+            &id_creator,
+        )
         .unwrap();
-    
+
     // FIX: Das 2. Argument ist der Standard-TOML, nicht die local_id.
     service_creator
         .process_and_attach_signature(&detached_sig1, &silver_toml, Some(correct_password))
         .expect("First signature attachment failed. The utility logic should now be correct.");
 
     let details_mid = service_creator.get_voucher_details(&local_id).unwrap();
-        assert_eq!(
+    assert_eq!(
         details_mid.voucher.signatures.len(),
         2, // creator + sig 1
         "Should have 2 signatures (creator + signer 1) after first attachment"
     );
-    assert!(matches!(
-        details_mid.status,
-        VoucherStatus::Active
-    ));
+    assert!(matches!(details_mid.status, VoucherStatus::Active));
 
     // 2. Zweite Signatur von externem Unterzeichner vorbereiten
     let bundle_req2 = service_creator
@@ -331,21 +371,35 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let (_, signer_identity_ref2) = service_signer.get_unlocked_mut_for_test();
     let signer_identity2 = signer_identity_ref2.clone();
     let request_container2: SecureContainer = serde_json::from_slice(&bundle_req2).unwrap();
-    let payload2 = human_money_core::services::secure_container_manager::open_secure_container(&request_container2, &signer_identity2).unwrap();
-    let voucher_from_request2: human_money_core::models::voucher::Voucher = serde_json::from_slice(&payload2).unwrap();
+    let payload2 = human_money_core::services::secure_container_manager::open_secure_container(
+        &request_container2,
+        &signer_identity2,
+    )
+    .unwrap();
+    let voucher_from_request2: human_money_core::models::voucher::Voucher =
+        serde_json::from_slice(&payload2).unwrap();
 
     // 2. Zweite Signatur erstellen.
     let _sig_data2 = human_money_core::test_utils::create_additional_signature_data(
-        &signer_identity2, &voucher_from_request2.voucher_id,
+        &signer_identity2,
+        &voucher_from_request2.voucher_id,
     );
 
     let detached_sig2 = service_signer
-        .create_detached_signature_response_bundle(&voucher_from_request2, "additional_signer", true, &id_creator)
+        .create_detached_signature_response_bundle(
+            &voucher_from_request2,
+            "additional_signer",
+            true,
+            &id_creator,
+        )
         .unwrap();
 
     // 2. ACT: Versuche, die zweite Signatur mit falschem Passwort hinzuzufügen.
-    let result =
-        service_creator.process_and_attach_signature(&detached_sig2, &silver_toml, Some("WRONG_PASSWORD"));
+    let result = service_creator.process_and_attach_signature(
+        &detached_sig2,
+        &silver_toml,
+        Some("WRONG_PASSWORD"),
+    );
 
     // 3. ASSERT: Operation schlägt fehl, Zustand bleibt unverändert.
     assert!(result.is_err(), "Signature attachment should fail");
@@ -372,8 +426,14 @@ fn test_import_endorsement_is_transactional_on_save_failure() {
     let reporter = &ACTORS.reporter;
     let dir_victim = tempdir().unwrap();
     let victim = &ACTORS.victim;
-    let (mut service_reporter, _) = test_utils::setup_service_with_profile(dir_reporter.path(), reporter, "Reporter", correct_password);
-    let (mut service_victim, _) = test_utils::setup_service_with_profile(dir_victim.path(), victim, "Victim", "pwd");
+    let (mut service_reporter, _) = test_utils::setup_service_with_profile(
+        dir_reporter.path(),
+        reporter,
+        "Reporter",
+        correct_password,
+    );
+    let (mut service_victim, _) =
+        test_utils::setup_service_with_profile(dir_victim.path(), victim, "Victim", "pwd");
     let id_victim = service_victim.get_user_id().unwrap();
 
     // Beweis manuell hinzufügen und durch eine andere Operation speichern
@@ -388,14 +448,20 @@ fn test_import_endorsement_is_transactional_on_save_failure() {
     }
     // FIX: `wallet.save` ist nicht direkt nutzbar. Führe eine andere `AppService`-Aktion
     // aus, um den Zustand (inklusive des manuell hinzugefügten Beweises) zu speichern. (Modus A)
-    service_reporter.save_encrypted_data("dummy", b"data", Some(correct_password)).unwrap();
+    service_reporter
+        .save_encrypted_data("dummy", b"data", Some(correct_password))
+        .unwrap();
 
     let conflicts_before = service_reporter.list_conflicts().unwrap();
-    assert!(!conflicts_before[0].is_resolved, "Conflict should initially be unresolved");
+    assert!(
+        !conflicts_before[0].is_resolved,
+        "Conflict should initially be unresolved"
+    );
 
     // Gültige Beilegung vom Opfer erstellen lassen
     let (wallet_victim, _) = service_victim.get_unlocked_mut_for_test();
-    let proof_for_victim = create_mock_proof_of_double_spend("offender-xyz", &id_victim, None, None);
+    let proof_for_victim =
+        create_mock_proof_of_double_spend("offender-xyz", &id_victim, None, None);
     wallet_victim
         .proof_store
         .proofs
@@ -418,9 +484,12 @@ fn test_import_endorsement_is_transactional_on_save_failure() {
         "Conflict should remain unresolved after failed import"
     );
 
-    let proof_details = service_reporter.get_proof_of_double_spend(&proof_id).unwrap();
+    let proof_details = service_reporter
+        .get_proof_of_double_spend(&proof_id)
+        .unwrap();
     assert!(
-        proof_details.resolutions.is_none() || proof_details.resolutions.as_ref().unwrap().is_empty(),
+        proof_details.resolutions.is_none()
+            || proof_details.resolutions.as_ref().unwrap().is_empty(),
         "Proof should have no endorsements after failed import"
     );
 }
@@ -436,8 +505,10 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
     let alice = &ACTORS.alice;
     let correct_password = "correct_password";
     let david = &ACTORS.david;
-    let (mut service_alice, _) = test_utils::setup_service_with_profile(dir_alice.path(), alice, "Alice", "pwd");
-    let (mut service_david, _) = test_utils::setup_service_with_profile(dir_david.path(), david, "David", correct_password);
+    let (mut service_alice, _) =
+        test_utils::setup_service_with_profile(dir_alice.path(), alice, "Alice", "pwd");
+    let (mut service_david, _) =
+        test_utils::setup_service_with_profile(dir_david.path(), david, "David", correct_password);
     let id_david = service_david.get_user_id().unwrap();
 
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
@@ -447,16 +518,24 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
     // FIX: Explizite Voucher-Daten anstelle von Default::default() verwenden, um Panic zu vermeiden.
     let id_alice = service_alice.get_user_id().unwrap();
     let identity_alice = alice.identity.clone();
-    let voucher_v1 = service_alice.create_new_voucher(
-        &silver_toml,
-        "en",
-        NewVoucherData {
-            creator_profile: PublicProfile { id: Some(id_alice.clone()), ..Default::default() },
-            nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
-            ..Default::default()
-        },
-        Some("pwd")
-    ).unwrap();
+    let voucher_v1 = service_alice
+        .create_new_voucher(
+            &silver_toml,
+            "en",
+            NewVoucherData {
+                creator_profile: PublicProfile {
+                    id: Some(id_alice.clone()),
+                    ..Default::default()
+                },
+                nominal_value: ValueDefinition {
+                    amount: "100".to_string(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some("pwd"),
+        )
+        .unwrap();
 
     // Zwei konkurrierende Transaktionen aus V1 erstellen
     let prev_tx = voucher_v1.transactions.last().unwrap();
@@ -472,39 +551,84 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
 
     // Pfad A (wird zuerst erfolgreich empfangen)
     let mut tx_a = human_money_core::models::voucher::Transaction {
-        prev_hash: prev_tx_hash.clone(), t_type: "transfer".to_string(), t_time: time_a,
-        sender_id: id_alice.clone(), recipient_id: id_david.clone(), amount: "100".to_string(), ..Default::default()
+        prev_hash: prev_tx_hash.clone(),
+        t_type: "transfer".to_string(),
+        t_time: time_a,
+        sender_id: id_alice.clone(),
+        recipient_id: id_david.clone(),
+        amount: "100".to_string(),
+        ..Default::default()
     };
     tx_a = resign_transaction(tx_a, &identity_alice.signing_key);
     let mut voucher_path_a = voucher_v1.clone();
     voucher_path_a.transactions.push(tx_a);
-    let bundle_a = human_money_core::test_utils::create_test_bundle(&identity_alice, vec![voucher_path_a], &id_david, None).unwrap();
+    let bundle_a = human_money_core::test_utils::create_test_bundle(
+        &identity_alice,
+        vec![voucher_path_a],
+        &id_david,
+        None,
+    )
+    .unwrap();
 
     // Pfad B (löst den Konflikt aus)
     let mut tx_b = human_money_core::models::voucher::Transaction {
-        prev_hash: prev_tx_hash, t_type: "transfer".to_string(), t_time: time_b,
-        sender_id: id_alice.clone(), recipient_id: id_david.clone(), amount: "100".to_string(), ..Default::default()
+        prev_hash: prev_tx_hash,
+        t_type: "transfer".to_string(),
+        t_time: time_b,
+        sender_id: id_alice.clone(),
+        recipient_id: id_david.clone(),
+        amount: "100".to_string(),
+        ..Default::default()
     };
     tx_b = resign_transaction(tx_b, &identity_alice.signing_key);
     let mut voucher_path_b = voucher_v1.clone();
     voucher_path_b.transactions.push(tx_b);
-    let bundle_b = human_money_core::test_utils::create_test_bundle(&identity_alice, vec![voucher_path_b], &id_david, None).unwrap();
+    let bundle_b = human_money_core::test_utils::create_test_bundle(
+        &identity_alice,
+        vec![voucher_path_b],
+        &id_david,
+        None,
+    )
+    .unwrap();
 
     // David empfängt Pfad A erfolgreich
-    service_david.receive_bundle(&bundle_a, &standards_map, None, Some(correct_password)).unwrap();
-    assert_eq!(service_david.get_voucher_summaries(None, None).unwrap().len(), 1);
+    service_david
+        .receive_bundle(&bundle_a, &standards_map, None, Some(correct_password))
+        .unwrap();
+    assert_eq!(
+        service_david
+            .get_voucher_summaries(None, None)
+            .unwrap()
+            .len(),
+        1
+    );
     assert!(service_david.list_conflicts().unwrap().is_empty());
 
     // 2. ACT: David versucht, das konfliktreiche Bundle B mit falschem Passwort zu empfangen.
-    let result = service_david.receive_bundle(&bundle_b, &standards_map, None, Some("WRONG_PASSWORD"));
+    let result =
+        service_david.receive_bundle(&bundle_b, &standards_map, None, Some("WRONG_PASSWORD"));
 
     // 3. ASSERT: Operation schlägt fehl, Zustand wird komplett zurückgesetzt.
-    assert!(result.is_err(), "Receive should fail on conflict + save error");
+    assert!(
+        result.is_err(),
+        "Receive should fail on conflict + save error"
+    );
 
     let summaries_after = service_david.get_voucher_summaries(None, None).unwrap();
-    assert_eq!(summaries_after.len(), 1, "Should only contain the original voucher from path A");
-    assert_eq!(summaries_after[0].status, VoucherStatus::Active, "Original voucher should remain active");
+    assert_eq!(
+        summaries_after.len(),
+        1,
+        "Should only contain the original voucher from path A"
+    );
+    assert_eq!(
+        summaries_after[0].status,
+        VoucherStatus::Active,
+        "Original voucher should remain active"
+    );
 
     let conflicts_after = service_david.list_conflicts().unwrap();
-    assert!(conflicts_after.is_empty(), "No conflict proof should be left in memory after failed operation");
+    assert!(
+        conflicts_after.is_empty(),
+        "No conflict proof should be left in memory after failed operation"
+    );
 }

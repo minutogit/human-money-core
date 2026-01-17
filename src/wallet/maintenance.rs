@@ -12,8 +12,8 @@ use crate::models::conflict::{
 use crate::models::voucher::{Transaction, Voucher};
 use crate::services::conflict_manager;
 use crate::services::crypto_utils::get_hash;
-use crate::wallet::instance::{VoucherInstance, VoucherStatus};
 use crate::wallet::Wallet;
+use crate::wallet::instance::{VoucherInstance, VoucherStatus};
 use chrono::{DateTime, Duration, Utc};
 
 impl Wallet {
@@ -324,7 +324,12 @@ impl Wallet {
     ) -> Result<Option<Transaction>, VoucherCoreError> {
         // Zuerst im aktiven Store suchen
         for instance in self.voucher_store.vouchers.values() {
-            if let Some(tx) = instance.voucher.transactions.iter().find(|t| t.t_id == t_id) {
+            if let Some(tx) = instance
+                .voucher
+                .transactions
+                .iter()
+                .find(|t| t.t_id == t_id)
+            {
                 return Ok(Some(tx.clone()));
             }
         }
@@ -354,9 +359,12 @@ impl Wallet {
 
     /// Findet die lokale ID und den Status eines Gutscheins anhand einer enthaltenen Transaktions-ID.
     pub(super) fn find_local_voucher_by_tx_id(&self, tx_id: &str) -> Option<&VoucherInstance> {
-        self.voucher_store
-            .vouchers
-            .values()
-            .find(|instance| instance.voucher.transactions.iter().any(|tx| tx.t_id == tx_id))
+        self.voucher_store.vouchers.values().find(|instance| {
+            instance
+                .voucher
+                .transactions
+                .iter()
+                .any(|tx| tx.t_id == tx_id)
+        })
     }
 }

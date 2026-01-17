@@ -3,19 +3,19 @@
 //! Enthält die Kernlogik für das Erstellen und Verarbeiten von
 //! Transaktionen und Bundles.
 
+use super::conflict_handler::resolve_conflict_offline;
 use super::types::{CreateBundleResult, MultiTransferRequest, ProcessBundleResult};
 use crate::archive::VoucherArchive;
 use crate::error::{ValidationError, VoucherCoreError};
 use crate::models::profile::{TransactionBundleHeader, TransactionDirection, UserIdentity};
 use crate::models::secure_container::{PayloadType, SecureContainer};
-use crate::models::voucher::{Voucher};
+use crate::models::voucher::Voucher;
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::services::crypto_utils::get_hash;
 use crate::services::utils::to_canonical_json;
 use crate::services::{bundle_processor, conflict_manager, voucher_manager};
-use crate::wallet::instance::VoucherStatus;
 use crate::wallet::Wallet;
-use super::conflict_handler::resolve_conflict_offline;
+use crate::wallet::instance::VoucherStatus;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -78,7 +78,11 @@ impl Wallet {
 
         // --- LAYER 1: BUNDLE-ID REPLAY-SCHUTZ ---
         // Weist ein identisches Bundle sofort ab, das bereits verarbeitet wurde.
-        if self.bundle_meta_store.history.contains_key(&bundle.bundle_id) {
+        if self
+            .bundle_meta_store
+            .history
+            .contains_key(&bundle.bundle_id)
+        {
             return Err(VoucherCoreError::BundleAlreadyProcessed {
                 bundle_id: bundle.bundle_id.clone(),
             });
@@ -129,7 +133,13 @@ impl Wallet {
         // --- NEUES DEBUGGING: Zustand des Voucher Stores VOR der Verarbeitung ---
         println!("\n[Debug Wallet Process] === Zustand VOR Verarbeitung des Bundles ===");
         for (id, instance) in &self.voucher_store.vouchers {
-            println!("[Debug Wallet Process]   -> Vorhanden: local_id={}, voucher_id={}, status={:?}, tx_count={}", id, instance.voucher.voucher_id, instance.status, instance.voucher.transactions.len());
+            println!(
+                "[Debug Wallet Process]   -> Vorhanden: local_id={}, voucher_id={}, status={:?}, tx_count={}",
+                id,
+                instance.voucher.voucher_id,
+                instance.status,
+                instance.voucher.transactions.len()
+            );
         }
         println!("[Debug Wallet Process] ===============================================");
 
@@ -145,7 +155,10 @@ impl Wallet {
                 .values()
                 .find(|v| v.voucher.voucher_id == voucher.voucher_id)
             {
-                println!("[Debug Wallet Process] >>> ACHTUNG: Instanz für voucher_id '{}' existiert bereits.", voucher.voucher_id);
+                println!(
+                    "[Debug Wallet Process] >>> ACHTUNG: Instanz für voucher_id '{}' existiert bereits.",
+                    voucher.voucher_id
+                );
                 println!(
                     "[Debug Wallet Process]     Alte tx_count: {}, Neue tx_count: {}",
                     existing_instance.voucher.transactions.len(),
@@ -239,13 +252,21 @@ impl Wallet {
         // --- NEUES DEBUGGING: Zustand des Voucher Stores NACH der Verarbeitung ---
         println!("[Debug Wallet Process] === Zustand NACH Verarbeitung des Bundles ===");
         for (id, instance) in &self.voucher_store.vouchers {
-            println!("[Debug Wallet Process]   -> Vorhanden: local_id={}, voucher_id={}, status={:?}, tx_count={}", id, instance.voucher.voucher_id, instance.status, instance.voucher.transactions.len());
+            println!(
+                "[Debug Wallet Process]   -> Vorhanden: local_id={}, voucher_id={}, status={:?}, tx_count={}",
+                id,
+                instance.voucher.voucher_id,
+                instance.status,
+                instance.voucher.transactions.len()
+            );
         }
         println!("[Debug Wallet Process] ===============================================");
 
         // Die Fingerprint-Stores werden bei jeder Änderung neu aus dem VoucherStore aufgebaut.
-        let (own, known) =
-            conflict_manager::scan_and_rebuild_fingerprints(&self.voucher_store, &identity.user_id)?;
+        let (own, known) = conflict_manager::scan_and_rebuild_fingerprints(
+            &self.voucher_store,
+            &identity.user_id,
+        )?;
         self.own_fingerprints = own;
         self.known_fingerprints = known;
 
@@ -253,10 +274,7 @@ impl Wallet {
         if let Ok(deserialized_container) =
             serde_json::from_slice::<SecureContainer>(container_bytes)
         {
-            if matches!(
-                deserialized_container.c,
-                PayloadType::DetachedSignature
-            ) {
+            if matches!(deserialized_container.c, PayloadType::DetachedSignature) {
                 self.process_and_attach_signature(identity, container_bytes)?;
                 return Ok(ProcessBundleResult::default());
             }
@@ -285,14 +303,14 @@ impl Wallet {
                                 if let Some(instance_mut) =
                                     self.voucher_store.vouchers.get_mut(&instance_id)
                                 {
-                                    instance_mut.status =
-                                        if tx.t_id == verdict.valid_transaction_id {
-                                            VoucherStatus::Active
-                                        } else {
-                                            VoucherStatus::Quarantined {
-                                                reason: "L2 verdict".to_string(),
-                                            }
-                                        };
+                                    instance_mut.status = if tx.t_id == verdict.valid_transaction_id
+                                    {
+                                        VoucherStatus::Active
+                                    } else {
+                                        VoucherStatus::Quarantined {
+                                            reason: "L2 verdict".to_string(),
+                                        }
+                                    };
                                 }
                             }
                         }
@@ -357,9 +375,9 @@ impl Wallet {
             .active_fingerprints
             .contains_key(&new_fingerprint_hash)
             || self
-            .own_fingerprints
-            .history
-            .contains_key(&new_fingerprint_hash)
+                .own_fingerprints
+                .history
+                .contains_key(&new_fingerprint_hash)
         {
             // SELBSTHEILUNG: Gebe die ID des Gutscheins zurück, der die Inkonsistenz verursacht hat.
             // Der aufrufende AppService kann diesen Gutschein dann in Quarantäne verschieben.
@@ -453,14 +471,13 @@ impl Wallet {
                 })?;
 
             let standard_uuid = instance.voucher.voucher_standard.uuid.clone();
-            let standard_definition = standard_definitions.get(&standard_uuid).ok_or_else(
-                || {
+            let standard_definition =
+                standard_definitions.get(&standard_uuid).ok_or_else(|| {
                     VoucherCoreError::Generic(format!(
                         "Standard with UUID '{}' not found in provided definitions.",
                         standard_uuid
                     ))
-                },
-            )?;
+                })?;
 
             // NEU: InvolvedVoucherInfo für die Quelle erstellen (VOR dem Transfer)
             involved_sources_details.push(super::types::InvolvedVoucherInfo {

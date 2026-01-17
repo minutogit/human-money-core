@@ -26,8 +26,9 @@ pub fn create_fingerprint_for_transaction(
 ) -> Result<TransactionFingerprint, VoucherCoreError> {
     // 1. Anonymisiere den `valid_until`-Zeitstempel durch Runden auf das Monatsende.
     let valid_until_rounded = {
-        let parsed_date = DateTime::parse_from_rfc3339(&voucher.valid_until)
-            .map_err(|e| VoucherCoreError::Generic(format!("Failed to parse valid_until: {}", e)))?;
+        let parsed_date = DateTime::parse_from_rfc3339(&voucher.valid_until).map_err(|e| {
+            VoucherCoreError::Generic(format!("Failed to parse valid_until: {}", e))
+        })?;
 
         let year = parsed_date.year();
         let month = parsed_date.month();
@@ -37,10 +38,15 @@ pub fn create_fingerprint_for_transaction(
         } else {
             NaiveDate::from_ymd_opt(year, month + 1, 1)
         }
-            .ok_or_else(|| VoucherCoreError::Generic("Failed to calculate next month's date".to_string()))?;
+        .ok_or_else(|| {
+            VoucherCoreError::Generic("Failed to calculate next month's date".to_string())
+        })?;
 
         let last_day_of_month = first_of_next_month.pred_opt().unwrap();
-        let end_of_month_dt = last_day_of_month.and_hms_micro_opt(23, 59, 59, 999999).unwrap().and_utc();
+        let end_of_month_dt = last_day_of_month
+            .and_hms_micro_opt(23, 59, 59, 999999)
+            .unwrap()
+            .and_utc();
         end_of_month_dt.to_rfc3339_opts(SecondsFormat::Micros, true)
     };
 
@@ -91,15 +97,19 @@ pub fn scan_and_rebuild_fingerprints(
             // kritischen "eigenen" Fingerprints hinzugefügt.
             if tx.sender_id == user_id {
                 own.history
-                   .entry(fingerprint.prvhash_senderid_hash.clone())
-                   .or_default()
-                   .push(fingerprint.clone()); // Duplikate hier sind unwahrscheinlich, aber zur Sicherheit
+                    .entry(fingerprint.prvhash_senderid_hash.clone())
+                    .or_default()
+                    .push(fingerprint.clone()); // Duplikate hier sind unwahrscheinlich, aber zur Sicherheit
 
                 // Wenn der Gutschein zusätzlich noch aktiv ist, kommt er in die "Hot-List".
-                if matches!(instance.status, crate::wallet::instance::VoucherStatus::Active) {
-                    let active_entry = own.active_fingerprints
-                       .entry(fingerprint.prvhash_senderid_hash.clone())
-                       .or_default();
+                if matches!(
+                    instance.status,
+                    crate::wallet::instance::VoucherStatus::Active
+                ) {
+                    let active_entry = own
+                        .active_fingerprints
+                        .entry(fingerprint.prvhash_senderid_hash.clone())
+                        .or_default();
                     if !active_entry.contains(&fingerprint) {
                         active_entry.push(fingerprint);
                     }
@@ -122,7 +132,10 @@ pub fn check_for_double_spend(
     // 1. Alle bekannten Fingerprints aus allen Quellen dedupliziert zusammenführen.
     // Wir verwenden ein HashSet, um Duplikate (z.B. zwischen history und current_own)
     // automatisch zu eliminieren.
-    let mut all_fingerprints_map: HashMap<String, std::collections::HashSet<TransactionFingerprint>> = HashMap::new();
+    let mut all_fingerprints_map: HashMap<
+        String,
+        std::collections::HashSet<TransactionFingerprint>,
+    > = HashMap::new();
 
     println!("[DEBUG CONFLICT_MANAGER] Quellen werden zusammengeführt...");
     let sources = [
@@ -147,7 +160,10 @@ pub fn check_for_double_spend(
     }
 
     // 2. Jede Gruppe von Fingerprints auf Konflikte prüfen (mehr als eine eindeutige t_id).
-    println!("[DEBUG CONFLICT_MANAGER] Prüfe {} eindeutige Hashes auf Konflikte...", all_fingerprints_map.len());
+    println!(
+        "[DEBUG CONFLICT_MANAGER] Prüfe {} eindeutige Hashes auf Konflikte...",
+        all_fingerprints_map.len()
+    );
     for (hash, fps_set) in all_fingerprints_map {
         let fps_vec: Vec<TransactionFingerprint> = fps_set.into_iter().collect();
         let unique_t_ids = fps_vec
@@ -155,9 +171,16 @@ pub fn check_for_double_spend(
             .map(|fp| &fp.t_id)
             .collect::<std::collections::HashSet<_>>();
 
-        println!("[DEBUG CONFLICT_MANAGER] Hash '{}' hat {} eindeutige t_ids.", hash, unique_t_ids.len());
+        println!(
+            "[DEBUG CONFLICT_MANAGER] Hash '{}' hat {} eindeutige t_ids.",
+            hash,
+            unique_t_ids.len()
+        );
         if unique_t_ids.len() > 1 {
-            println!("[DEBUG CONFLICT_MANAGER] -> KONFLIKT für Hash '{}' entdeckt!", hash);
+            println!(
+                "[DEBUG CONFLICT_MANAGER] -> KONFLIKT für Hash '{}' entdeckt!",
+                hash
+            );
             // 3. Einen Konflikt als "verifizierbar" einstufen, wenn der Wallet-Besitzer
             // mindestens eine der beteiligten Transaktionen selbst kennt (aus seiner Historie).
             let is_verifiable = known_fingerprints.local_history.contains_key(&hash);
@@ -199,7 +222,8 @@ pub fn create_proof_of_double_spend(
 ) -> Result<ProofOfDoubleSpend, VoucherCoreError> {
     // 1. Beweis-Objekt erstellen und signieren.
     let proof_id = get_hash(format!("{}{}", offender_id, fork_point_prev_hash));
-    let reporter_signature_bytes = sign_ed25519(&reporter_identity.signing_key, proof_id.as_bytes());
+    let reporter_signature_bytes =
+        sign_ed25519(&reporter_identity.signing_key, proof_id.as_bytes());
     let reporter_signature = bs58::encode(reporter_signature_bytes.to_bytes()).into_string();
 
     let proof = ProofOfDoubleSpend {
@@ -277,8 +301,8 @@ pub fn cleanup_expired_histories(
 ) {
     own_fingerprints.history.retain(|_, fps| {
         fps.retain(|fp| {
-            if let Ok(valid_until) =
-                DateTime::parse_from_rfc3339(&fp.valid_until).map(|dt| dt.with_timezone(&chrono::Utc))
+            if let Ok(valid_until) = DateTime::parse_from_rfc3339(&fp.valid_until)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
             {
                 let purge_date = valid_until + *grace_period;
                 return *now < purge_date;
@@ -289,8 +313,8 @@ pub fn cleanup_expired_histories(
     });
     known_fingerprints.local_history.retain(|_, fps| {
         fps.retain(|fp| {
-            if let Ok(valid_until) =
-                DateTime::parse_from_rfc3339(&fp.valid_until).map(|dt| dt.with_timezone(&chrono::Utc))
+            if let Ok(valid_until) = DateTime::parse_from_rfc3339(&fp.valid_until)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
             {
                 let purge_date = valid_until + *grace_period;
                 return *now < purge_date;
@@ -348,17 +372,20 @@ pub fn encrypt_transaction_timestamp(transaction: &Transaction) -> Result<u128, 
     let nanos = DateTime::parse_from_rfc3339(&transaction.t_time)
         .map_err(|e| VoucherCoreError::Generic(format!("Failed to parse timestamp: {}", e)))?
         .timestamp_nanos_opt()
-        .ok_or_else(|| VoucherCoreError::Generic("Invalid timestamp for nanosecond conversion".to_string()))? as u128;
+        .ok_or_else(|| {
+            VoucherCoreError::Generic("Invalid timestamp for nanosecond conversion".to_string())
+        })? as u128;
 
     // b. Schlüssel (u128) aus dem Hash von prev_hash und t_id ableiten.
     let key_material = format!("{}{}", transaction.prev_hash, transaction.t_id);
     let key_hash_b58 = get_hash(key_material);
-    let key_hash_bytes = bs58::decode(key_hash_b58)
-        .into_vec()
-        .map_err(|_| VoucherCoreError::Generic("Failed to decode base58 hash for key derivation".to_string()))?;
+    let key_hash_bytes = bs58::decode(key_hash_b58).into_vec().map_err(|_| {
+        VoucherCoreError::Generic("Failed to decode base58 hash for key derivation".to_string())
+    })?;
 
     // Wir nehmen die ersten 16 Bytes (128 Bits) des Hashes als Schlüssel.
-    let key_bytes: [u8; 16] = key_hash_bytes[..16].try_into()
+    let key_bytes: [u8; 16] = key_hash_bytes[..16]
+        .try_into()
         .map_err(|_| VoucherCoreError::Generic("Hash too short for key derivation".to_string()))?;
     let key = u128::from_le_bytes(key_bytes);
 
@@ -377,14 +404,18 @@ pub fn encrypt_transaction_timestamp(transaction: &Transaction) -> Result<u128, 
 ///
 /// # Returns
 /// Der ursprüngliche, entschlüsselte Zeitstempel in Nanosekunden.
-pub fn decrypt_transaction_timestamp(transaction: &Transaction, encrypted_nanos: u128) -> Result<u128, VoucherCoreError> {
+pub fn decrypt_transaction_timestamp(
+    transaction: &Transaction,
+    encrypted_nanos: u128,
+) -> Result<u128, VoucherCoreError> {
     let key_material = format!("{}{}", transaction.prev_hash, transaction.t_id);
     let key_hash_b58 = get_hash(key_material);
-    let key_hash_bytes = bs58::decode(key_hash_b58)
-        .into_vec()
-        .map_err(|_| VoucherCoreError::Generic("Failed to decode base58 hash for key derivation".to_string()))?;
+    let key_hash_bytes = bs58::decode(key_hash_b58).into_vec().map_err(|_| {
+        VoucherCoreError::Generic("Failed to decode base58 hash for key derivation".to_string())
+    })?;
 
-    let key_bytes: [u8; 16] = key_hash_bytes[..16].try_into()
+    let key_bytes: [u8; 16] = key_hash_bytes[..16]
+        .try_into()
         .map_err(|_| VoucherCoreError::Generic("Hash too short for key derivation".to_string()))?;
     let key = u128::from_le_bytes(key_bytes);
 

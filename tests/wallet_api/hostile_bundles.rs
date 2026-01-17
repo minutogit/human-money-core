@@ -5,14 +5,16 @@
 //! Enthält Tests, die den `AppService` gegen den Empfang von feindseligen,
 //! intern inkonsistenten Gutscheinen härten.
 
-    use human_money_core::{
-        app_service::AppService,
-        test_utils::{
-            create_test_bundle, generate_signed_standard_toml, resign_transaction, ACTORS,
-            SILVER_STANDARD, setup_service_with_profile,
-        }, UserIdentity,
-    models::{profile::PublicProfile, voucher::{ValueDefinition}}, services::voucher_manager::NewVoucherData,
-    wallet::{instance::VoucherStatus, MultiTransferRequest, SourceTransfer},
+use human_money_core::{
+    UserIdentity,
+    app_service::AppService,
+    models::{profile::PublicProfile, voucher::ValueDefinition},
+    services::voucher_manager::NewVoucherData,
+    test_utils::{
+        ACTORS, SILVER_STANDARD, create_test_bundle, generate_signed_standard_toml,
+        resign_transaction, setup_service_with_profile,
+    },
+    wallet::{MultiTransferRequest, SourceTransfer, instance::VoucherStatus},
 };
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -23,21 +25,21 @@ fn setup_test_environment(
     dir: &tempfile::TempDir,
 ) -> ((AppService, UserIdentity), (AppService, String)) {
     // Alice erstellen
-    let (mut alice_service, alice_profile) = setup_service_with_profile(
-        dir.path(),
-        &ACTORS.alice,
-        "Alice",
-        PASSWORD,
-    );
-    alice_service.login(&alice_profile.folder_name, PASSWORD, false).unwrap();
-    alice_service.unlock_session(PASSWORD, 60).unwrap(); 
+    let (mut alice_service, alice_profile) =
+        setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", PASSWORD);
+    alice_service
+        .login(&alice_profile.folder_name, PASSWORD, false)
+        .unwrap();
+    alice_service.unlock_session(PASSWORD, 60).unwrap();
     let alice_identity = alice_service.get_unlocked_mut_for_test().1.clone();
 
     // Bob erstellen
     let (mut bob_service, bob_profile) =
         setup_service_with_profile(dir.path(), &ACTORS.bob, "Bob", PASSWORD);
-    bob_service.login(&bob_profile.folder_name, PASSWORD, false).unwrap();
-    bob_service.unlock_session(PASSWORD, 60).unwrap(); 
+    bob_service
+        .login(&bob_profile.folder_name, PASSWORD, false)
+        .unwrap();
+    bob_service.unlock_session(PASSWORD, 60).unwrap();
     let bob_id = bob_service.get_user_id().unwrap();
 
     ((alice_service, alice_identity), (bob_service, bob_id))
@@ -52,17 +54,22 @@ fn setup_sender_recipient() -> (AppService, UserIdentity, AppService, String) {
     let sender = &ACTORS.alice;
     let (mut service_sender, _) =
         setup_service_with_profile(dir_sender.path(), sender, "Sender", "pwd");
-    service_sender.unlock_session("pwd", 60).unwrap(); 
+    service_sender.unlock_session("pwd", 60).unwrap();
     let identity_sender = sender.identity.clone();
 
     let dir_recipient = tempdir().unwrap();
     let recipient = &ACTORS.recipient1;
     let (mut service_recipient, _) =
         setup_service_with_profile(dir_recipient.path(), recipient, "Recipient", "pwd");
-    service_recipient.unlock_session("pwd", 60).unwrap(); 
+    service_recipient.unlock_session("pwd", 60).unwrap();
     let id_recipient = service_recipient.get_user_id().unwrap();
 
-    (service_sender, identity_sender, service_recipient, id_recipient)
+    (
+        service_sender,
+        identity_sender,
+        service_recipient,
+        id_recipient,
+    )
 }
 
 /// Test 2.1: Ein empfangenes Bundle mit einem Gutschein, dessen Transaktionskette
@@ -82,10 +89,13 @@ fn test_rejection_of_broken_transaction_chain() {
                     id: Some(service_sender.get_user_id().unwrap()),
                     ..Default::default()
                 },
-                nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
+                nominal_value: ValueDefinition {
+                    amount: "100".to_string(),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            Some(PASSWORD)
+            Some(PASSWORD),
         )
         .unwrap();
 
@@ -119,8 +129,7 @@ fn test_rejection_of_broken_transaction_chain() {
     // Füge die kaputte, aber kryptographisch konsistente Transaktion hinzu
     voucher.transactions.push(resigned_broken_tx);
 
-    let bundle =
-        create_test_bundle(&identity_sender, vec![voucher], &id_recipient, None).unwrap();
+    let bundle = create_test_bundle(&identity_sender, vec![voucher], &id_recipient, None).unwrap();
 
     let mut standards_map = HashMap::new();
     standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
@@ -136,10 +145,12 @@ fn test_rejection_of_broken_transaction_chain() {
         "Error should complain about broken transaction chain. Got: {}",
         err_str
     );
-    assert!(service_recipient
-        .get_voucher_summaries(None, None)
-        .unwrap()
-        .is_empty());
+    assert!(
+        service_recipient
+            .get_voucher_summaries(None, None)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 /// Test 2.2: Ein Bundle mit einer "split"-Transaktion, deren Beträge sich nicht korrekt
@@ -169,7 +180,8 @@ fn test_rejection_of_inconsistent_split_math() {
                 },
                 ..Default::default()
             },
-            Some("pwd"))
+            Some("pwd"),
+        )
         .unwrap();
 
     let prev_tx_hash = human_money_core::services::crypto_utils::get_hash(
@@ -187,8 +199,7 @@ fn test_rejection_of_inconsistent_split_math() {
     tx2 = resign_transaction(tx2, &identity_sender.signing_key);
     voucher.transactions.push(tx2);
 
-    let bundle =
-        create_test_bundle(&identity_sender, vec![voucher], &id_recipient, None).unwrap();
+    let bundle = create_test_bundle(&identity_sender, vec![voucher], &id_recipient, None).unwrap();
 
     // 2. ACT
     let result = service_recipient.receive_bundle(&bundle, &standards_map, None, Some("pwd"));
@@ -198,7 +209,10 @@ fn test_rejection_of_inconsistent_split_math() {
     // `voucher_validation.rs` prüft nur `InsufficientFunds`, aber nicht, ob die Summe
     // eines Splits korrekt ist. Der Test wird daher aktuell fälschlicherweise PASSIEREN.
     // Ein idealer Fehler wäre `InvalidSplitBalance`. Wir prüfen auf einen generischen Fehler.
-    assert!(result.is_err(), "Receive bundle should have failed due to bad math. This might indicate a validation logic gap if it passes.");
+    assert!(
+        result.is_err(),
+        "Receive bundle should have failed due to bad math. This might indicate a validation logic gap if it passes."
+    );
 
     // Sobald die Validierung gehärtet ist, kann die spezifische Fehlermeldung geprüft werden.
     // assert!(result.unwrap_err().contains("InvalidSplitBalance"));
@@ -209,8 +223,7 @@ fn test_rejection_of_inconsistent_split_math() {
 #[test]
 fn test_rejection_of_self_received_bundle() {
     // 1. ARRANGE
-    let (mut service_sender, _, mut service_recipient, id_recipient) =
-        setup_sender_recipient();
+    let (mut service_sender, _, mut service_recipient, id_recipient) = setup_sender_recipient();
 
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let mut standards_map = HashMap::new();
@@ -226,18 +239,23 @@ fn test_rejection_of_self_received_bundle() {
                     id: Some(service_sender.get_user_id().unwrap()),
                     ..Default::default()
                 },
-                nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
+                nominal_value: ValueDefinition {
+                    amount: "100".to_string(),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            Some("pwd")
+            Some("pwd"),
         )
         .unwrap();
 
     // KORREKTUR für E0609: Die local_instance_id muss aus den Summaries geholt werden.
     let summaries = service_sender.get_voucher_summaries(None, None).unwrap();
-    let local_id = summaries.first()
+    let local_id = summaries
+        .first()
         .expect("Wallet should have one voucher summary after creation")
-        .local_instance_id.clone();
+        .local_instance_id
+        .clone();
 
     // Sender erstellt ein Bundle für den Empfänger (id_recipient)
     let transfer_request = MultiTransferRequest {
@@ -294,14 +312,12 @@ fn test_rejection_of_self_received_bundle() {
     );
 }
 
-
 /// Test 2.4: (Layer 1) Ein identisches Bundle, das erneut empfangen wird,
 /// muss anhand seiner Bundle-ID abgewiesen werden.
 #[test]
 fn test_rejection_of_identical_bundle_replay() {
     // 1. ARRANGE
-    let (mut service_sender, _, mut service_recipient, id_recipient) =
-        setup_sender_recipient();
+    let (mut service_sender, _, mut service_recipient, id_recipient) = setup_sender_recipient();
 
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let mut standards_map = HashMap::new();
@@ -317,10 +333,13 @@ fn test_rejection_of_identical_bundle_replay() {
                     id: Some(service_sender.get_user_id().unwrap()),
                     ..Default::default()
                 },
-                nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
+                nominal_value: ValueDefinition {
+                    amount: "100".to_string(),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            Some("pwd")
+            Some("pwd"),
         )
         .unwrap();
 
@@ -349,7 +368,13 @@ fn test_rejection_of_identical_bundle_replay() {
 
     // 3. ASSERT (First Receive)
     assert!(result_first.is_ok());
-    assert_eq!(service_recipient.get_voucher_summaries(None, None).unwrap().len(), 1);
+    assert_eq!(
+        service_recipient
+            .get_voucher_summaries(None, None)
+            .unwrap()
+            .len(),
+        1
+    );
 
     // 4. ACT (Second Receive - Replay)
     let result_second =
@@ -364,7 +389,13 @@ fn test_rejection_of_identical_bundle_replay() {
         err_str
     );
     // Der Zustand des Wallets darf sich nicht geändert haben
-    assert_eq!(service_recipient.get_voucher_summaries(None, None).unwrap().len(), 1);
+    assert_eq!(
+        service_recipient
+            .get_voucher_summaries(None, None)
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 /// Test 2.5: (Layer 2) Ein Gutschein, der bereits empfangen wurde, darf nicht
@@ -380,21 +411,66 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
     standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
 
     // Manuelles Erstellen von voucher_A (wie in Test 2.1)
-    let voucher_a = service_sender.create_new_voucher(&silver_toml, "en", NewVoucherData { creator_profile: PublicProfile { id: Some(service_sender.get_user_id().unwrap()), ..Default::default() }, nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() }, ..Default::default() }, Some("pwd")).unwrap();
-    let voucher_a_sent = human_money_core::services::voucher_manager::create_transaction(&voucher_a, &SILVER_STANDARD.0, &identity_sender.user_id, &identity_sender.signing_key, &id_recipient, "50.0000").unwrap();
+    let voucher_a = service_sender
+        .create_new_voucher(
+            &silver_toml,
+            "en",
+            NewVoucherData {
+                creator_profile: PublicProfile {
+                    id: Some(service_sender.get_user_id().unwrap()),
+                    ..Default::default()
+                },
+                nominal_value: ValueDefinition {
+                    amount: "100".to_string(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some("pwd"),
+        )
+        .unwrap();
+    let voucher_a_sent = human_money_core::services::voucher_manager::create_transaction(
+        &voucher_a,
+        &SILVER_STANDARD.0,
+        &identity_sender.user_id,
+        &identity_sender.signing_key,
+        &id_recipient,
+        "50.0000",
+    )
+    .unwrap();
 
     // Bundle 1 (Das legitime Bundle)
-    let bundle_1_bytes = create_test_bundle(&identity_sender, vec![voucher_a_sent.clone()], &id_recipient, Some("Bundle 1")).unwrap();
+    let bundle_1_bytes = create_test_bundle(
+        &identity_sender,
+        vec![voucher_a_sent.clone()],
+        &id_recipient,
+        Some("Bundle 1"),
+    )
+    .unwrap();
     // Bundle 2 (Das bösartige Replay-Bundle mit neuer Bundle-ID, aber identischem Inhalt)
-    let bundle_2_bytes = create_test_bundle(&identity_sender, vec![voucher_a_sent], &id_recipient, Some("Bundle 2")).unwrap();
+    let bundle_2_bytes = create_test_bundle(
+        &identity_sender,
+        vec![voucher_a_sent],
+        &id_recipient,
+        Some("Bundle 2"),
+    )
+    .unwrap();
 
     // 2. ACT (First Receive)
-    let result_first = service_recipient.receive_bundle(&bundle_1_bytes, &standards_map, None, Some("pwd"));
+    let result_first =
+        service_recipient.receive_bundle(&bundle_1_bytes, &standards_map, None, Some("pwd"));
     assert!(result_first.is_ok());
-    assert_eq!(service_recipient.get_voucher_summaries(None, None).unwrap().len(), 1);
+    assert_eq!(
+        service_recipient
+            .get_voucher_summaries(None, None)
+            .unwrap()
+            .len(),
+        1
+    );
 
     // 3. ACT (Second Receive - Replay)
-    let result_second = service_recipient.receive_bundle(&bundle_2_bytes, &standards_map, None, Some("pwd"));
+    let result_second =
+        service_recipient.receive_bundle(&bundle_2_bytes, &standards_map, None, Some("pwd"));
 
     // 4. ASSERT (Second Receive)
     assert!(result_second.is_err());
@@ -404,7 +480,13 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
         "Error should be TransactionFingerprintAlreadyKnown. Got: {}",
         err_str
     );
-    assert_eq!(service_recipient.get_voucher_summaries(None, None).unwrap().len(), 1);
+    assert_eq!(
+        service_recipient
+            .get_voucher_summaries(None, None)
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 /// Test 2.6: (Layer 3) Ein Bundle, das an ein anderes Präfix (mobil) derselben
@@ -422,7 +504,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
     let sender = &ACTORS.alice;
     let (mut service_sender, _) =
         setup_service_with_profile(dir_sender.path(), sender, "Sender", "pwd");
-    service_sender.unlock_session("pwd", 60).unwrap(); 
+    service_sender.unlock_session("pwd", 60).unwrap();
 
     // --- Empfänger-Wallets (Beide "Bob", aber unterschiedliche Präfixe) ---
     // WICHTIG: Wir verwenden ACTORS.bob und ACTORS.issuer. Beide nutzen
@@ -439,7 +521,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
         "Bob_PC",
         "pwd_bob",
     );
-    service_recipient_pc.unlock_session("pwd_bob", 60).unwrap(); 
+    service_recipient_pc.unlock_session("pwd_bob", 60).unwrap();
     let id_recipient_pc = service_recipient_pc.get_user_id().unwrap();
 
     // Wallet 2: Mobil
@@ -450,17 +532,28 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
         "Bob_Mobil",
         "pwd_bob",
     );
-    service_recipient_mobil.unlock_session("pwd_bob", 60).unwrap(); 
+    service_recipient_mobil
+        .unlock_session("pwd_bob", 60)
+        .unwrap();
     let id_recipient_mobil = service_recipient_mobil.get_user_id().unwrap();
 
     // Sanity Check: Sicherstellen, dass die Public Keys gleich sind,
     // aber die vollen User-IDs (Adressen) unterschiedlich.
-    let pk_pc = human_money_core::services::crypto_utils::get_pubkey_from_user_id(&id_recipient_pc).unwrap();
-    let pk_mobil = human_money_core::services::crypto_utils::get_pubkey_from_user_id(&id_recipient_mobil).unwrap();
-    assert_eq!(pk_pc, pk_mobil, "Public keys must be identical for this test.");
-    assert_ne!(id_recipient_pc, id_recipient_mobil, "Full User IDs (addresses) must be different.");
-    assert!(id_recipient_pc.starts_with("bo-")); // Präfix von ACTORS.bob
-    assert!(id_recipient_mobil.starts_with("is-")); // Präfix von ACTORS.issuer
+    let pk_pc = human_money_core::services::crypto_utils::get_pubkey_from_user_id(&id_recipient_pc)
+        .unwrap();
+    let pk_mobil =
+        human_money_core::services::crypto_utils::get_pubkey_from_user_id(&id_recipient_mobil)
+            .unwrap();
+    assert_eq!(
+        pk_pc, pk_mobil,
+        "Public keys must be identical for this test."
+    );
+    assert_ne!(
+        id_recipient_pc, id_recipient_mobil,
+        "Full User IDs (addresses) must be different."
+    );
+    assert!(id_recipient_pc.starts_with("bo:")); // Präfix von ACTORS.bob
+    assert!(id_recipient_mobil.starts_with("is:")); // Präfix von ACTORS.issuer
 
     // --- Sender erstellt Gutschein und Bundle für "Mobil" ---
     let _ = service_sender
@@ -468,30 +561,51 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
             &silver_toml,
             "en",
             NewVoucherData {
-                creator_profile: PublicProfile { id: Some(service_sender.get_user_id().unwrap()), ..Default::default() },
-                nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
+                creator_profile: PublicProfile {
+                    id: Some(service_sender.get_user_id().unwrap()),
+                    ..Default::default()
+                },
+                nominal_value: ValueDefinition {
+                    amount: "100".to_string(),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            Some("pwd")
+            Some("pwd"),
         )
         .unwrap();
-    let local_id_sender = service_sender.get_voucher_summaries(None, None).unwrap().first().unwrap().local_instance_id.clone();
+    let local_id_sender = service_sender
+        .get_voucher_summaries(None, None)
+        .unwrap()
+        .first()
+        .unwrap()
+        .local_instance_id
+        .clone();
 
     // Bundle wird explizit an die "Mobil"-Adresse gesendet
     let transfer_request = MultiTransferRequest {
         recipient_id: id_recipient_mobil.clone(),
-        sources: vec![SourceTransfer { local_instance_id: local_id_sender, amount_to_send: "50".to_string() }],
+        sources: vec![SourceTransfer {
+            local_instance_id: local_id_sender,
+            amount_to_send: "50".to_string(),
+        }],
         notes: Some("Für Bobs Handy".to_string()),
         sender_profile_name: None,
     };
 
-    let bundle_result = service_sender        .create_transfer_bundle(transfer_request, &standards_map, None, Some("pwd")).unwrap();
+    let bundle_result = service_sender
+        .create_transfer_bundle(transfer_request, &standards_map, None, Some("pwd"))
+        .unwrap();
     let bundle_bytes_for_mobil = bundle_result.bundle_bytes;
 
     // 2. ACT
     // Das "PC"-Wallet versucht, das für "Mobil" bestimmte Bundle einzulesen.
-    let result_pc_receive =
-        service_recipient_pc.receive_bundle(&bundle_bytes_for_mobil, &standards_map, None, Some("pwd_bob"));
+    let result_pc_receive = service_recipient_pc.receive_bundle(
+        &bundle_bytes_for_mobil,
+        &standards_map,
+        None,
+        Some("pwd_bob"),
+    );
 
     // 3. ASSERT (PC Wallet)
     assert!(result_pc_receive.is_err());
@@ -505,11 +619,27 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
         err_str
     );
     // Das PC-Wallet muss leer bleiben
-    assert!(service_recipient_pc.get_voucher_summaries(None, None).unwrap().is_empty());
+    assert!(
+        service_recipient_pc
+            .get_voucher_summaries(None, None)
+            .unwrap()
+            .is_empty()
+    );
 
     // 4. ASSERT (Mobil Wallet - Sanity Check)
     // Das "Mobil"-Wallet (der korrekte Empfänger) kann es problemlos annehmen.
-    let result_mobil_receive = service_recipient_mobil.receive_bundle(&bundle_bytes_for_mobil, &standards_map, None, Some("pwd_bob"));
+    let result_mobil_receive = service_recipient_mobil.receive_bundle(
+        &bundle_bytes_for_mobil,
+        &standards_map,
+        None,
+        Some("pwd_bob"),
+    );
     assert!(result_mobil_receive.is_ok());
-    assert_eq!(service_recipient_mobil.get_voucher_summaries(None, None).unwrap().len(), 1);
+    assert_eq!(
+        service_recipient_mobil
+            .get_voucher_summaries(None, None)
+            .unwrap()
+            .len(),
+        1
+    );
 }

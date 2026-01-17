@@ -4,13 +4,13 @@
 //! Signatur-Workflow zuständig sind (Anfragen, Erstellen, Verarbeiten).
 
 use super::Wallet;
-use crate::{error::VoucherCoreError, models::profile::PublicProfile};
 use crate::models::profile::UserIdentity;
-use crate::wallet::instance::VoucherStatus;
 use crate::models::secure_container::{PayloadType, SecureContainer};
 use crate::models::signature::DetachedSignature;
 use crate::models::voucher::Voucher;
 use crate::services::utils::to_canonical_json;
+use crate::wallet::instance::VoucherStatus;
+use crate::{error::VoucherCoreError, models::profile::PublicProfile};
 
 /// Methoden für den Signatur-Workflow.
 impl Wallet {
@@ -32,20 +32,17 @@ impl Wallet {
         local_instance_id: &str,
         recipient_id: &str,
     ) -> Result<Vec<u8>, VoucherCoreError> {
-        let instance = self
-            .voucher_store
-            .vouchers
-            .get(local_instance_id)
-            .ok_or(VoucherCoreError::VoucherNotFound(
-                local_instance_id.to_string(),
-            ))?;
+        let instance = self.voucher_store.vouchers.get(local_instance_id).ok_or(
+            VoucherCoreError::VoucherNotFound(local_instance_id.to_string()),
+        )?;
 
         // BUGFIX: Füge die fehlende Status-Prüfung hinzu. Eine Signaturanfrage ist
         // nur für aktive oder unvollständige Gutscheine sinnvoll.
-        if !matches!(instance.status, VoucherStatus::Active | VoucherStatus::Incomplete { .. }) {
-            return Err(VoucherCoreError::VoucherNotActive(
-                instance.status.clone(),
-            ));
+        if !matches!(
+            instance.status,
+            VoucherStatus::Active | VoucherStatus::Incomplete { .. }
+        ) {
+            return Err(VoucherCoreError::VoucherNotActive(instance.status.clone()));
         }
         let payload = to_canonical_json(&instance.voucher)?;
 
@@ -135,7 +132,8 @@ impl Wallet {
         container_bytes: &[u8],
     ) -> Result<String, VoucherCoreError> {
         let container: SecureContainer = serde_json::from_slice(container_bytes)?;
-        let payload = crate::services::secure_container_manager::open_secure_container(&container, identity)?;
+        let payload =
+            crate::services::secure_container_manager::open_secure_container(&container, identity)?;
 
         if !matches!(container.c, PayloadType::DetachedSignature) {
             return Err(VoucherCoreError::InvalidPayloadType);
@@ -148,30 +146,43 @@ impl Wallet {
         // we need to match the signature to a voucher differently.
         // In the new design, the signature should be matched based on other identifying factors
         // such as the context of which vouchers are expecting signatures.
-        
+
         let signature_obj = match signature {
             DetachedSignature::Signature(s) => s,
         };
 
         // Find a voucher that is expecting this signature
-        let target_instance = self.voucher_store.vouchers.values_mut()
+        let target_instance = self
+            .voucher_store
+            .vouchers
+            .values_mut()
             .find(|instance| instance.voucher.voucher_id == signature_obj.voucher_id)
-            .ok_or_else(|| VoucherCoreError::VoucherNotFound(
-                format!("No voucher found matching signature's voucher_id: {}", signature_obj.voucher_id)
-            ))?;
+            .ok_or_else(|| {
+                VoucherCoreError::VoucherNotFound(format!(
+                    "No voucher found matching signature's voucher_id: {}",
+                    signature_obj.voucher_id
+                ))
+            })?;
 
         // (Optional, aber empfohlen) Prüfen, ob die Signatur bereits vorhanden ist
-        if target_instance.voucher.signatures.iter().any(|sig| sig.signature_id == signature_obj.signature_id) {
+        if target_instance
+            .voucher
+            .signatures
+            .iter()
+            .any(|sig| sig.signature_id == signature_obj.signature_id)
+        {
             // Stillschweigend ignorieren oder Fehler zurückgeben
-            return Err(VoucherCoreError::MismatchedSignatureData( // TODO: Besserer Fehlertyp
-                format!("Signature {} already attached to voucher {}", signature_obj.signature_id, signature_obj.voucher_id)
-            )); 
+            return Err(VoucherCoreError::MismatchedSignatureData(
+                // TODO: Besserer Fehlertyp
+                format!(
+                    "Signature {} already attached to voucher {}",
+                    signature_obj.signature_id, signature_obj.voucher_id
+                ),
+            ));
         }
 
         target_instance.voucher.signatures.push(signature_obj);
 
         Ok(target_instance.local_instance_id.clone())
     }
-
-
 }

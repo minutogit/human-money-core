@@ -19,17 +19,19 @@
 //! - **Vollständiger Transfer:** Korrekte Erstellung einer Transaktion ohne Restbetrag,
 //!   wenn das gesamte Guthaben überwiesen wird.
 
-
+use human_money_core::test_utils::{ACTORS, SILVER_STANDARD};
 use human_money_core::{
-    // Structs from specific modules
-    models::voucher::{ValueDefinition},
-    services::voucher_manager::{create_transaction, create_voucher, VoucherManagerError, get_spendable_balance},
-    services::voucher_validation::{validate_voucher_against_standard},
     // Structs/Enums from the crate root (or re-exported there)
-    NewVoucherData, VoucherCoreError,
+    NewVoucherData,
+    VoucherCoreError,
+    // Structs from specific modules
+    models::voucher::ValueDefinition,
+    services::voucher_manager::{
+        VoucherManagerError, create_transaction, create_voucher, get_spendable_balance,
+    },
+    services::voucher_validation::validate_voucher_against_standard,
 };
 use rust_decimal_macros::dec;
-use human_money_core::test_utils::{ACTORS, SILVER_STANDARD};
 
 // --- TESTFÄLLE ---
 
@@ -38,7 +40,16 @@ fn test_chained_transaction_math_and_scaling() {
     // --- 1. SETUP ---
     let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     assert_eq!(
-        standard.validation.as_ref().unwrap().behavior_rules.as_ref().unwrap().amount_decimal_places.unwrap(), 4,
+        standard
+            .validation
+            .as_ref()
+            .unwrap()
+            .behavior_rules
+            .as_ref()
+            .unwrap()
+            .amount_decimal_places
+            .unwrap(),
+        4,
         "This test requires the silver standard with 4 decimal places."
     );
 
@@ -47,14 +58,27 @@ fn test_chained_transaction_math_and_scaling() {
     let bob = &ACTORS.bob;
 
     // Erstelle einen initialen Gutschein für Alice mit dem Wert 100
-    let alice_creator_info = human_money_core::models::profile::PublicProfile { id: Some(alice.user_id.clone()), ..Default::default() };
+    let alice_creator_info = human_money_core::models::profile::PublicProfile {
+        id: Some(alice.user_id.clone()),
+        ..Default::default()
+    };
     let voucher_data = NewVoucherData {
         creator_profile: alice_creator_info,
-        nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
+        nominal_value: ValueDefinition {
+            amount: "100".to_string(),
+            ..Default::default()
+        },
         ..Default::default()
     };
 
-    let mut current_voucher = create_voucher(voucher_data, standard, standard_hash, &alice.signing_key, "en").unwrap();
+    let mut current_voucher = create_voucher(
+        voucher_data,
+        standard,
+        standard_hash,
+        &alice.signing_key,
+        "en",
+    )
+    .unwrap();
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
         get_spendable_balance(&current_voucher, &alice.user_id, standard).unwrap(),
@@ -75,7 +99,7 @@ fn test_chained_transaction_math_and_scaling() {
         &bob.user_id,
         "40",
     )
-        .unwrap();
+    .unwrap();
 
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
@@ -100,7 +124,7 @@ fn test_chained_transaction_math_and_scaling() {
         &bob.user_id,
         "10.1234",
     )
-        .unwrap();
+    .unwrap();
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
         get_spendable_balance(&current_voucher, &alice.user_id, standard).unwrap(),
@@ -121,7 +145,7 @@ fn test_chained_transaction_math_and_scaling() {
         &bob.user_id,
         "9",
     )
-        .unwrap();
+    .unwrap();
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
         get_spendable_balance(&current_voucher, &alice.user_id, standard).unwrap(),
@@ -144,7 +168,7 @@ fn test_chained_transaction_math_and_scaling() {
         &bob.user_id,
         "0.87",
     )
-        .unwrap();
+    .unwrap();
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
         get_spendable_balance(&current_voucher, &alice.user_id, standard).unwrap(),
@@ -167,7 +191,7 @@ fn test_chained_transaction_math_and_scaling() {
         &bob.user_id,
         "40.0066",
     )
-        .unwrap();
+    .unwrap();
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
         get_spendable_balance(&current_voucher, &alice.user_id, standard).unwrap(),
@@ -192,7 +216,7 @@ fn test_chained_transaction_math_and_scaling() {
         &alice.user_id,
         "10",
     )
-        .unwrap();
+    .unwrap();
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
 
     // Prüfe die Guthaben nach der ersten Rücktransaktion
@@ -214,7 +238,7 @@ fn test_chained_transaction_math_and_scaling() {
         &alice.user_id,
         "0.0066",
     )
-        .unwrap();
+    .unwrap();
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
 
     // Prüfe die Guthaben nach der zweiten Rücktransaktion
@@ -235,19 +259,37 @@ fn test_transaction_fails_on_excess_precision() {
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
 
-    let alice_creator_info = human_money_core::models::profile::PublicProfile { id: Some(alice.user_id.clone()), ..Default::default() };
+    let alice_creator_info = human_money_core::models::profile::PublicProfile {
+        id: Some(alice.user_id.clone()),
+        ..Default::default()
+    };
     let voucher_data = NewVoucherData {
         creator_profile: alice_creator_info,
-        nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
+        nominal_value: ValueDefinition {
+            amount: "100".to_string(),
+            ..Default::default()
+        },
         ..Default::default()
     };
 
-    let voucher = create_voucher(voucher_data, standard, standard_hash, &alice.signing_key, "en").unwrap();
+    let voucher = create_voucher(
+        voucher_data,
+        standard,
+        standard_hash,
+        &alice.signing_key,
+        "en",
+    )
+    .unwrap();
 
     // --- AKTION & PRÜFUNG ---
     // Alice versucht, "0.12345" (5 Nachkommastellen) zu senden, erlaubt sind aber nur 4.
     let result = create_transaction(
-        &voucher, standard, &alice.user_id, &alice.signing_key, &bob.user_id, "0.12345",
+        &voucher,
+        standard,
+        &alice.user_id,
+        &alice.signing_key,
+        &bob.user_id,
+        "0.12345",
     );
 
     assert!(result.is_err());

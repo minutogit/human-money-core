@@ -51,7 +51,7 @@ value_counts = [
 # Die User-ID von Bob aus dem Test-Setup wird hier hartkodiert.
 [[validation.required_signatures]]
 role_description = "Official Approval by Bob"
-allowed_signer_ids = ["issuer-1oB@did:key:z6Mkoim7ZGcaKdoeD41USV5gmxfiVXXiPDeYt4T9rnEB5zfM"]
+allowed_signer_ids = ["issuer:1oB@did:key:z6Mkoim7ZGcaKdoeD41USV5gmxfiVXXiPDeYt4T9rnEB5zfM"]
 # GEÄNDERT: 'required_signature_description' wurde zu 'required_role' umbenannt.
 required_role = "Official Approval 2025"
 is_mandatory = true

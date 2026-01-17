@@ -4,19 +4,18 @@
 //! inklusive Identität, Gutschein-Bestand und einer Historie von Transaktionsbündeln.
 //! Diese Strukturen sind für die Verwaltung der "Wallet" eines Nutzers zuständig.
 
-use crate::models::voucher::Voucher;
-use crate::models::voucher::Address; // Importiert die Address-Struktur
 use crate::models::conflict::TransactionFingerprint;
+use crate::models::voucher::Address; // Importiert die Address-Struktur
+use crate::models::voucher::Voucher;
 use crate::wallet::instance::VoucherInstance;
 use ed25519_dalek::{SigningKey, VerifyingKey as EdPublicKey};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use zeroize::ZeroizeOnDrop;
 
 /// Repräsentiert die kryptographische Identität eines Nutzers.
 /// Der private Schlüssel wird sicher im Speicher gehalten und beim Verlassen des Gültigkeitsbereichs genullt.
-#[derive(ZeroizeOnDrop)]
-#[derive(Clone)]
+#[derive(ZeroizeOnDrop, Clone)]
 pub struct UserIdentity {
     /// Der private Ed25519-Schlüssel des Nutzers.
     /// **Wichtig:** Dieser Schlüssel wird nicht serialisiert und verlässt niemals das Profil.
@@ -42,7 +41,6 @@ impl Default for TransactionDirection {
         TransactionDirection::Sent
     }
 }
-
 
 /// Eine leichtgewichtige Zusammenfassung eines `TransactionBundle` für die Anzeige in einer Historie.
 /// Enthält alle Metadaten, aber anstelle der vollständigen Gutscheine nur deren IDs.
@@ -226,7 +224,7 @@ pub struct UserProfile {
 // Die `identity` wird nach der Erstellung separat hinzugefügt.
 impl Default for UserProfile {
     fn default() -> Self {
-        Self { 
+        Self {
             user_id: String::new(),
             first_name: None,
             last_name: None,

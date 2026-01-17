@@ -69,7 +69,7 @@ value_counts = [
 
 [signature]
 # Die `did:key` des Herausgebers, die seinen öffentlichen Schlüssel enthält.
-issuer_id = "0-xXz@did:key:z6Mkoim7ZGcaKdoeD41USV5gmxfiVXXiPDeYt4T9rnEB5zfM"
+issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "3ceXHE7eTpLAptURfcZnz8H4GPi3QtXfbpastT1ZPTxGZR3XMQgPAroTKHfi6XmXnh5EDPyb6wAt8FrC4RxFCrCq"
+signature = "3tfzbTZe55bdNa544dUSCNKFD7CzDqpYngZtTGq75nHK9AD8pUcPyem9QgQexTQYTGxBdwMNSoWML4wj3hxRLkEo"

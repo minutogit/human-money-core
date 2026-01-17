@@ -6,11 +6,11 @@
 
 #[cfg(test)]
 mod tests {
-    use tempfile::tempdir;
-    use human_money_core::test_utils::{self, ACTORS, SILVER_STANDARD};
+    use chrono::{Duration, Utc};
     use human_money_core::models::conflict::TransactionFingerprint;
-    use chrono::{Utc, Duration};
     use human_money_core::services::voucher_manager::NewVoucherData;
+    use human_money_core::test_utils::{self, ACTORS, SILVER_STANDARD};
+    use tempfile::tempdir;
 
     const PASSWORD: &str = "test-password-123";
 
@@ -18,15 +18,21 @@ mod tests {
     fn test_cleanup_synchronizes_stores() {
         // GIVEN: Ein Wallet mit einem abgelaufenen Fingerprint, der in beiden Stores vorhanden ist.
         let dir = tempdir().unwrap();
-        let (mut service, profile) =
-            test_utils::setup_service_with_profile(dir.path(), &ACTORS.bob, "HardeningTest1", PASSWORD);
+        let (mut service, profile) = test_utils::setup_service_with_profile(
+            dir.path(),
+            &ACTORS.bob,
+            "HardeningTest1",
+            PASSWORD,
+        );
         // Clean up any existing lock file
         let wallet_path = dir.path().join(&profile.folder_name);
         let lock_file = wallet_path.join(".wallet.lock");
         if lock_file.exists() {
             std::fs::remove_file(&lock_file).unwrap();
         }
-        service.login(&profile.folder_name, PASSWORD, false).unwrap();
+        service
+            .login(&profile.folder_name, PASSWORD, false)
+            .unwrap();
 
         let wallet = service.get_unlocked_mut_for_test().0;
         let expired_date = (Utc::now() - Duration::days(1)).to_rfc3339();
@@ -41,19 +47,37 @@ mod tests {
         };
 
         // Füge den Fingerprint beiden relevanten Stores hinzu
-        wallet.known_fingerprints.local_history.insert(key.clone(), vec![expired_fp]);
+        wallet
+            .known_fingerprints
+            .local_history
+            .insert(key.clone(), vec![expired_fp]);
         wallet.fingerprint_metadata.entry(key.clone()).or_default();
 
-        assert!(wallet.known_fingerprints.local_history.contains_key(&key), "Pre-condition: Fingerprint must be in history");
-        assert!(wallet.fingerprint_metadata.contains_key(&key), "Pre-condition: Metadata must exist for fingerprint");
+        assert!(
+            wallet.known_fingerprints.local_history.contains_key(&key),
+            "Pre-condition: Fingerprint must be in history"
+        );
+        assert!(
+            wallet.fingerprint_metadata.contains_key(&key),
+            "Pre-condition: Metadata must exist for fingerprint"
+        );
 
         // WHEN: Die Speicherbereinigung wird ausgeführt.
         service.run_storage_cleanup().unwrap();
 
         // THEN: Der Fingerprint wurde aus BEIDEN Stores synchron entfernt.
         let final_wallet = service.get_unlocked_mut_for_test().0;
-        assert!(!final_wallet.known_fingerprints.local_history.contains_key(&key), "Fingerprint should be removed from history");
-        assert!(!final_wallet.fingerprint_metadata.contains_key(&key), "Metadata should be removed simultaneously");
+        assert!(
+            !final_wallet
+                .known_fingerprints
+                .local_history
+                .contains_key(&key),
+            "Fingerprint should be removed from history"
+        );
+        assert!(
+            !final_wallet.fingerprint_metadata.contains_key(&key),
+            "Metadata should be removed simultaneously"
+        );
 
         service.logout();
     }
@@ -62,15 +86,21 @@ mod tests {
     fn test_recovery_handles_split_transaction_chain() {
         // GIVEN: Ein Wallet mit einem Gutschein, der geteilt (split) wurde.
         let dir = tempdir().unwrap();
-        let (mut alice_service, alice_profile) =
-            test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "RecoveryTest3", PASSWORD);
+        let (mut alice_service, alice_profile) = test_utils::setup_service_with_profile(
+            dir.path(),
+            &ACTORS.alice,
+            "RecoveryTest3",
+            PASSWORD,
+        );
         // Clean up any existing lock file
         let wallet_path = dir.path().join(&alice_profile.folder_name);
         let lock_file = wallet_path.join(".wallet.lock");
         if lock_file.exists() {
             std::fs::remove_file(&lock_file).unwrap();
         }
-        alice_service.login(&alice_profile.folder_name, PASSWORD, false).unwrap();
+        alice_service
+            .login(&alice_profile.folder_name, PASSWORD, false)
+            .unwrap();
 
         // Erstelle einen Gutschein mit 100 Einheiten
         let new_voucher_data = NewVoucherData {
@@ -81,10 +111,20 @@ mod tests {
             creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(ACTORS.alice.user_id.clone()),
                 ..Default::default()
-            }, ..Default::default()
+            },
+            ..Default::default()
         };
-        let voucher = alice_service.create_new_voucher(&toml::to_string(&SILVER_STANDARD.0).unwrap(), "de", new_voucher_data, Some(PASSWORD)).unwrap();
-        let local_id = alice_service.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
+        let voucher = alice_service
+            .create_new_voucher(
+                &toml::to_string(&SILVER_STANDARD.0).unwrap(),
+                "de",
+                new_voucher_data,
+                Some(PASSWORD),
+            )
+            .unwrap();
+        let local_id = alice_service.get_voucher_summaries(None, None).unwrap()[0]
+            .local_instance_id
+            .clone();
 
         let wallet_path = dir.path().join(&alice_profile.folder_name);
         alice_service.logout(); // Speichert den Zustand
@@ -95,7 +135,9 @@ mod tests {
         }
 
         // Führe einen Split durch ( sende 40 an Bob, behalte 60)
-        alice_service.login(&alice_profile.folder_name, PASSWORD, false).unwrap();
+        alice_service
+            .login(&alice_profile.folder_name, PASSWORD, false)
+            .unwrap();
         let request = human_money_core::wallet::MultiTransferRequest {
             recipient_id: ACTORS.bob.user_id.clone(),
             sources: vec![human_money_core::wallet::SourceTransfer {
@@ -106,8 +148,13 @@ mod tests {
             sender_profile_name: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
-        standards_toml.insert(SILVER_STANDARD.0.metadata.uuid.clone(), toml::to_string(&SILVER_STANDARD.0).unwrap());
-        alice_service.create_transfer_bundle(request, &standards_toml, None, Some(PASSWORD)).unwrap();
+        standards_toml.insert(
+            SILVER_STANDARD.0.metadata.uuid.clone(),
+            toml::to_string(&SILVER_STANDARD.0).unwrap(),
+        );
+        alice_service
+            .create_transfer_bundle(request, &standards_toml, None, Some(PASSWORD))
+            .unwrap();
 
         alice_service.logout(); // Speichert den Zustand mit 2 Transaktionen
         // Manually remove lock file
@@ -118,12 +165,23 @@ mod tests {
         // WHEN: Die Metadaten werden gelöscht und das Wallet wiederhergestellt.
         let metadata_path = wallet_path.join("fingerprint_metadata.enc");
         std::fs::remove_file(metadata_path).unwrap();
-        alice_service.login(&alice_profile.folder_name, PASSWORD, false).unwrap();
+        alice_service
+            .login(&alice_profile.folder_name, PASSWORD, false)
+            .unwrap();
 
         // THEN: Die `depth`-Werte der Kette sind korrekt initialisiert.
         let wallet = alice_service.get_unlocked_mut_for_test().0;
-        let voucher_instance = wallet.voucher_store.vouchers.values().find(|v| v.voucher.voucher_id == voucher.voucher_id).unwrap();
-        assert_eq!(voucher_instance.voucher.transactions.len(), 2, "Voucher should have two transactions");
+        let voucher_instance = wallet
+            .voucher_store
+            .vouchers
+            .values()
+            .find(|v| v.voucher.voucher_id == voucher.voucher_id)
+            .unwrap();
+        assert_eq!(
+            voucher_instance.voucher.transactions.len(),
+            2,
+            "Voucher should have two transactions"
+        );
 
         // Finde die Fingerprints für beide Transaktionen
         let init_tx_fp_key = voucher_instance.voucher.transactions[0].t_id.clone(); // Dies ist nicht der Key, wir müssen ihn finden
@@ -143,35 +201,63 @@ mod tests {
             }
         }
 
-        assert_eq!(split_depth, Some(0), "Die letzte Transaktion (split) sollte depth 0 haben.");
-        assert_eq!(init_depth, Some(1), "Die erste Transaktion (init) sollte depth 1 haben.");
+        assert_eq!(
+            split_depth,
+            Some(0),
+            "Die letzte Transaktion (split) sollte depth 0 haben."
+        );
+        assert_eq!(
+            init_depth,
+            Some(1),
+            "Die erste Transaktion (init) sollte depth 1 haben."
+        );
     }
 
     #[test]
     fn test_operations_on_empty_wallet_do_not_panic() {
         // GIVEN: Ein brandneues, leeres Wallet.
         let dir = tempdir().unwrap();
-        let (mut service, profile) =
-            test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "EmptyWalletTest", PASSWORD);
+        let (mut service, profile) = test_utils::setup_service_with_profile(
+            dir.path(),
+            &ACTORS.alice,
+            "EmptyWalletTest",
+            PASSWORD,
+        );
         // Clean up any existing lock file
         let wallet_path = dir.path().join(&profile.folder_name);
         let lock_file = wallet_path.join(".wallet.lock");
         if lock_file.exists() {
             std::fs::remove_file(&lock_file).unwrap();
         }
-        service.login(&profile.folder_name, PASSWORD, false).unwrap();
+        service
+            .login(&profile.folder_name, PASSWORD, false)
+            .unwrap();
 
-        assert!(service.get_unlocked_mut_for_test().0.voucher_store.vouchers.is_empty(), "Pre-condition: Wallet must be empty");
+        assert!(
+            service
+                .get_unlocked_mut_for_test()
+                .0
+                .voucher_store
+                .vouchers
+                .is_empty(),
+            "Pre-condition: Wallet must be empty"
+        );
 
         // WHEN: Wartungsoperationen werden ausgeführt.
         // THEN: Die Operationen laufen ohne Fehler oder Panics durch.
-        let cleanup_report = service.run_storage_cleanup().expect("Cleanup on empty wallet should not fail");
+        let cleanup_report = service
+            .run_storage_cleanup()
+            .expect("Cleanup on empty wallet should not fail");
         assert_eq!(cleanup_report.expired_fingerprints_removed, 0);
         assert_eq!(cleanup_report.limit_based_fingerprints_removed, 0);
 
         // Der Aufruf von rebuild_derived_stores ist Teil von `login` und wurde bereits implizit getestet.
         // Ein expliziter Aufruf bestätigt, dass es auch im laufenden Betrieb sicher ist.
-        service.get_unlocked_mut_for_test().0.rebuild_derived_stores().expect("Rebuild on empty wallet should not fail");
+        service
+            .get_unlocked_mut_for_test()
+            .0
+            .rebuild_derived_stores()
+            .expect("Rebuild on empty wallet should not fail");
 
         // Prüfe den Zustand danach
         let final_wallet = service.get_unlocked_mut_for_test().0;

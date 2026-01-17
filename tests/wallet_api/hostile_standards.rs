@@ -5,9 +5,9 @@
 //! Gutschein-Standard-Definitionen härten.
 
 use human_money_core::{
-    models::{profile::PublicProfile, voucher::{ValueDefinition}},
+    models::{profile::PublicProfile, voucher::ValueDefinition},
     services::voucher_manager::NewVoucherData,
-    test_utils::{self, create_custom_standard, ACTORS, SILVER_STANDARD},
+    test_utils::{self, ACTORS, SILVER_STANDARD, create_custom_standard},
 };
 use tempfile::tempdir;
 
@@ -27,7 +27,8 @@ fn test_disallowed_transaction_type() {
 
     let dir = tempdir().unwrap();
     let password = "password";
-    let (mut service, _) = test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Test User", password);
+    let (mut service, _) =
+        test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Test User", password);
     let user_id = service.get_user_id().unwrap();
 
     let voucher = service
@@ -35,17 +36,26 @@ fn test_disallowed_transaction_type() {
             &hostile_standard_toml,
             "en",
             NewVoucherData {
-                creator_profile: PublicProfile { id: Some(user_id), ..Default::default() },
-                nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
+                creator_profile: PublicProfile {
+                    id: Some(user_id),
+                    ..Default::default()
+                },
+                nominal_value: ValueDefinition {
+                    amount: "100".to_string(),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            Some(password)
+            Some(password),
         )
         .unwrap();
     let local_id = service.get_voucher_summaries(None, None).unwrap()[0]
         .local_instance_id
         .clone();
-    assert_eq!(voucher.voucher_standard.uuid, hostile_standard.metadata.uuid);
+    assert_eq!(
+        voucher.voucher_standard.uuid,
+        hostile_standard.metadata.uuid
+    );
 
     // 2. ACT: Versuche einen Split-Transfer
     let request = human_money_core::wallet::MultiTransferRequest {
@@ -61,15 +71,10 @@ fn test_disallowed_transaction_type() {
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(
         hostile_standard.metadata.uuid.clone(),
-        hostile_standard_toml.clone()
+        hostile_standard_toml.clone(),
     );
 
-    let result = service.create_transfer_bundle(
-        request,
-        &standards_toml,
-        None,
-        Some(password)
-    );
+    let result = service.create_transfer_bundle(request, &standards_toml, None, Some(password));
 
     // 3. ASSERT: Operation muss fehlschlagen
     assert!(result.is_err());
@@ -97,7 +102,8 @@ fn test_violation_of_max_creation_validity() {
 
     let dir = tempdir().unwrap();
     let password = "password";
-    let (mut service, _) = test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Test User", password);
+    let (mut service, _) =
+        test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Test User", password);
     let user_id = service.get_user_id().unwrap();
 
     // 2. ACT: Versuche, einen Gutschein mit einer Gültigkeit von 2 Jahren zu erstellen
@@ -105,12 +111,18 @@ fn test_violation_of_max_creation_validity() {
         &hostile_standard_toml,
         "en",
         NewVoucherData {
-            creator_profile: PublicProfile { id: Some(user_id), ..Default::default() },
-            nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
+            creator_profile: PublicProfile {
+                id: Some(user_id),
+                ..Default::default()
+            },
+            nominal_value: ValueDefinition {
+                amount: "100".to_string(),
+                ..Default::default()
+            },
             validity_duration: Some("P2Y".to_string()), // Länger als erlaubt
             ..Default::default()
         },
-        Some(password)
+        Some(password),
     );
 
     // 3. ASSERT: Operation muss fehlschlagen

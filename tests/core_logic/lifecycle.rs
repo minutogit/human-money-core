@@ -36,17 +36,20 @@
 
 use human_money_core::test_utils;
 
-use human_money_core::{
-    create_transaction, create_voucher, crypto_utils, from_json, get_spendable_balance,
-    to_canonical_json, to_json, validate_voucher_against_standard, Collateral,
-    NewVoucherData, ValueDefinition, Transaction, Voucher, VoucherCoreError, VoucherStatus, VoucherInstance, models::profile::PublicProfile,
-};
-use human_money_core::services::crypto_utils::get_hash;
 use human_money_core::error::ValidationError;
+use human_money_core::services::crypto_utils::get_hash;
 use human_money_core::services::voucher_manager::VoucherManagerError;
+use human_money_core::test_utils::{
+    ACTORS, MINUTO_STANDARD, SILVER_STANDARD, create_custom_standard, setup_in_memory_wallet,
+};
+use human_money_core::{
+    Collateral, NewVoucherData, Transaction, ValueDefinition, Voucher, VoucherCoreError,
+    VoucherInstance, VoucherStatus, create_transaction, create_voucher, crypto_utils, from_json,
+    get_spendable_balance, models::profile::PublicProfile, to_canonical_json, to_json,
+    validate_voucher_against_standard,
+};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use human_money_core::test_utils::{create_custom_standard, setup_in_memory_wallet, ACTORS, MINUTO_STANDARD, SILVER_STANDARD};
 
 // --- HELPER-FUNKTIONEN UND TESTDATEN ---
 
@@ -54,25 +57,39 @@ use human_money_core::test_utils::{create_custom_standard, setup_in_memory_walle
 fn test_full_creation_and_validation_cycle() {
     // 1. Setup: Lade Standard und erstelle Creator
     let identity = &ACTORS.issuer;
-    let creator = PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
+    let creator = PublicProfile {
+        id: Some(identity.user_id.clone()),
+        ..Default::default()
+    };
     let voucher_data = self::test_utils::create_minuto_voucher_data(creator);
 
     // KORREKTUR: Erstelle eine benutzerdefinierte Version des Standards, um sicherzustellen,
     // dass die Aufrundungsregel für diesen Test aktiv ist. Dies macht den Test
     // unabhängig vom Zustand der globalen MINUTO_STANDARD-Variable.
-    let (minuto_standard_with_rounding, standard_hash) = create_custom_standard(&MINUTO_STANDARD.0, |s| {
-        s.template.fixed.round_up_validity_to = Some("end_of_year".to_string());
-    });
-
-
+    let (minuto_standard_with_rounding, standard_hash) =
+        create_custom_standard(&MINUTO_STANDARD.0, |s| {
+            s.template.fixed.round_up_validity_to = Some("end_of_year".to_string());
+        });
 
     // 2. Erstellung
-    let mut voucher = human_money_core::test_utils::create_voucher_for_manipulation(voucher_data, &minuto_standard_with_rounding, &standard_hash, &identity.signing_key, "en");
+    let mut voucher = human_money_core::test_utils::create_voucher_for_manipulation(
+        voucher_data,
+        &minuto_standard_with_rounding,
+        &standard_hash,
+        &identity.signing_key,
+        "en",
+    );
     assert!(!voucher.voucher_id.is_empty());
     // PRÜFE: Die Creator-Signatur muss jetzt im Array sein.
     assert!(voucher.signatures.iter().any(|s| s.role == "creator"));
     // Prüfe die neuen Werte, die aus dem geänderten Standard kommen.
-    assert_eq!(voucher.voucher_standard.template.standard_minimum_issuance_validity, "P3Y");
+    assert_eq!(
+        voucher
+            .voucher_standard
+            .template
+            .standard_minimum_issuance_validity,
+        "P3Y"
+    );
 
     // --- DEBUG-Ausgabe hinzugefügt ---
     println!("[DEBUG] Erwartetes Ende: -12-31T23:59:59");
@@ -81,11 +98,16 @@ fn test_full_creation_and_validation_cycle() {
 
     // Prüfe, ob das Gültigkeitsdatum korrekt auf das Jahresende gerundet wurde.
     assert!(voucher.valid_until.contains("-12-31T23:59:59"));
-    let expected_description = "A voucher for goods or services worth 60 minutes of quality performance.";
-    assert_eq!(voucher.voucher_standard.template.description.trim(), expected_description.trim());
+    let expected_description =
+        "A voucher for goods or services worth 60 minutes of quality performance.";
+    assert_eq!(
+        voucher.voucher_standard.template.description.trim(),
+        expected_description.trim()
+    );
 
     // 3. Erste Validierung: Muss fehlschlagen, da Bürgen fehlen.
-    let initial_validation_result = validate_voucher_against_standard(&voucher, &minuto_standard_with_rounding);
+    let initial_validation_result =
+        validate_voucher_against_standard(&voucher, &minuto_standard_with_rounding);
     assert!(matches!(
        initial_validation_result.unwrap_err(),
         // KORREKTUR: Der Standard prüft jetzt `details.gender`, nicht `gender`.
@@ -96,15 +118,28 @@ fn test_full_creation_and_validation_cycle() {
     // 4. Simulation des Bürgenprozesses nach neuer Logik
     let g1 = &ACTORS.guarantor1;
     let g2 = &ACTORS.guarantor2;
-    let guarantor_sig_1 = human_money_core::test_utils::create_guarantor_signature(&voucher, g1, "Hans", "guarantor", "1");
-    let guarantor_sig_2 = human_money_core::test_utils::create_guarantor_signature(&voucher, g2, "Gabi", "guarantor", "2");
+    let guarantor_sig_1 = human_money_core::test_utils::create_guarantor_signature(
+        &voucher,
+        g1,
+        "Hans",
+        "guarantor",
+        "1",
+    );
+    let guarantor_sig_2 = human_money_core::test_utils::create_guarantor_signature(
+        &voucher,
+        g2,
+        "Gabi",
+        "guarantor",
+        "2",
+    );
 
     // Die creator-Signatur ist bereits von `create_voucher_for_manipulation` hinzugefügt worden.
     voucher.signatures.push(guarantor_sig_1);
     voucher.signatures.push(guarantor_sig_2);
 
     // 5. Finale Validierung (Positivfall mit Bürgen)
-    let final_validation_result = validate_voucher_against_standard(&voucher, &minuto_standard_with_rounding);
+    let final_validation_result =
+        validate_voucher_against_standard(&voucher, &minuto_standard_with_rounding);
     assert!(
         final_validation_result.is_ok(),
         "Final validation failed unexpectedly: {:?}",
@@ -116,12 +151,21 @@ fn test_full_creation_and_validation_cycle() {
 fn test_serialization_deserialization() {
     // 1. Erstelle einen Gutschein
     let identity = &ACTORS.issuer;
-    let creator = PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
+    let creator = PublicProfile {
+        id: Some(identity.user_id.clone()),
+        ..Default::default()
+    };
     let voucher_data = human_money_core::test_utils::create_minuto_voucher_data(creator);
 
     let (minuto_standard, standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
-    let original_voucher = human_money_core::test_utils::create_voucher_for_manipulation(voucher_data, minuto_standard, standard_hash, &identity.signing_key, "en");
+    let original_voucher = human_money_core::test_utils::create_voucher_for_manipulation(
+        voucher_data,
+        minuto_standard,
+        standard_hash,
+        &identity.signing_key,
+        "en",
+    );
 
     // 2. Serialisiere zu JSON
     let json_string = to_json(&original_voucher).unwrap();
@@ -137,25 +181,50 @@ fn test_serialization_deserialization() {
 fn test_validation_fails_on_invalid_signature() {
     // 1. Erstelle einen gültigen Gutschein
     let identity = &ACTORS.issuer;
-    let creator = PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
+    let creator = PublicProfile {
+        id: Some(identity.user_id.clone()),
+        ..Default::default()
+    };
     let voucher_data = human_money_core::test_utils::create_minuto_voucher_data(creator);
 
     let (minuto_standard, standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
-    let mut voucher = human_money_core::test_utils::create_voucher_for_manipulation(voucher_data, minuto_standard, standard_hash, &identity.signing_key, "en");
+    let mut voucher = human_money_core::test_utils::create_voucher_for_manipulation(
+        voucher_data,
+        minuto_standard,
+        standard_hash,
+        &identity.signing_key,
+        "en",
+    );
 
     // Füge die benötigten Bürgen hinzu, um den Gutschein valide zu machen, BEVOR wir ihn manipulieren.
     // Ansonsten würde die Validierung bereits an den fehlenden Bürgen scheitern.
     let g1 = &ACTORS.guarantor1;
     let g2 = &ACTORS.guarantor2;
-    let guarantor_sig_1 = human_money_core::test_utils::create_guarantor_signature(&voucher, g1, "Guarantor1", "guarantor", "1");
-    let guarantor_sig_2 = human_money_core::test_utils::create_guarantor_signature(&voucher, g2, "Guarantor2", "guarantor", "2");
+    let guarantor_sig_1 = human_money_core::test_utils::create_guarantor_signature(
+        &voucher,
+        g1,
+        "Guarantor1",
+        "guarantor",
+        "1",
+    );
+    let guarantor_sig_2 = human_money_core::test_utils::create_guarantor_signature(
+        &voucher,
+        g2,
+        "Guarantor2",
+        "guarantor",
+        "2",
+    );
     voucher.signatures.push(guarantor_sig_1);
     voucher.signatures.push(guarantor_sig_2);
     assert!(validate_voucher_against_standard(&voucher, minuto_standard).is_ok());
 
     // 2. Manipuliere die Signatur
-    let creator_sig = voucher.signatures.iter_mut().find(|s| s.role == "creator").unwrap();
+    let creator_sig = voucher
+        .signatures
+        .iter_mut()
+        .find(|s| s.role == "creator")
+        .unwrap();
     creator_sig.signature = "invalid_signature_string_12345".to_string();
 
     // 3. Validierung sollte fehlschlagen
@@ -171,7 +240,10 @@ fn test_validation_fails_on_invalid_signature() {
 #[test]
 fn test_validation_fails_on_missing_required_field() {
     let identity = &ACTORS.issuer;
-    let creator = PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
+    let creator = PublicProfile {
+        id: Some(identity.user_id.clone()),
+        ..Default::default()
+    };
     let voucher_data = human_money_core::test_utils::create_minuto_voucher_data(creator);
 
     let (minuto_standard, _standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
@@ -180,12 +252,15 @@ fn test_validation_fails_on_missing_required_field() {
     // die das Vorhandensein des optionalen Feldes `creator.phone` erzwingt.
     let mut standard = minuto_standard.clone();
     let validation = standard.validation.get_or_insert_with(Default::default);
-    let content_rules = validation.content_rules.get_or_insert_with(Default::default);
+    let content_rules = validation
+        .content_rules
+        .get_or_insert_with(Default::default);
     // Um die Existenz eines Feldes zu erzwingen, verwenden wir eine Regex-Regel.
-    let regex_patterns = content_rules.regex_patterns.get_or_insert_with(Default::default);
+    let regex_patterns = content_rules
+        .regex_patterns
+        .get_or_insert_with(Default::default);
     // HINWEIS: Der Pfad ist "creator.phone", da `creator_profile` mit `#[serde(rename = "creator")]` serialisiert wird.
     regex_patterns.insert("creator.phone".to_string(), ".+".to_string());
-
 
     // 3. Der Hash des modifizierten Standards muss neu berechnet und für die
     // Gutscheinerstellung verwendet werden, um einen `StandardHashMismatch` zu vermeiden.
@@ -193,14 +268,36 @@ fn test_validation_fails_on_missing_required_field() {
     standard_to_hash.signature = None;
     let new_hash = get_hash(to_canonical_json(&standard_to_hash).unwrap());
 
-    let mut voucher = human_money_core::test_utils::create_voucher_for_manipulation(voucher_data, &standard, &new_hash, &identity.signing_key, "en");
+    let mut voucher = human_money_core::test_utils::create_voucher_for_manipulation(
+        voucher_data,
+        &standard,
+        &new_hash,
+        &identity.signing_key,
+        "en",
+    );
 
     // Füge gültige Bürgen hinzu, damit die Validierung nicht an der Anzahl scheitert,
     // bevor die Inhaltsregel überhaupt geprüft wird.
     let g1 = &ACTORS.guarantor1;
     let g2 = &ACTORS.guarantor2;
-    voucher.signatures.push(human_money_core::test_utils::create_guarantor_signature(&voucher, g1, "G1", "guarantor", "1"));
-    voucher.signatures.push(human_money_core::test_utils::create_guarantor_signature(&voucher, g2, "G2", "guarantor", "2"));
+    voucher
+        .signatures
+        .push(human_money_core::test_utils::create_guarantor_signature(
+            &voucher,
+            g1,
+            "G1",
+            "guarantor",
+            "1",
+        ));
+    voucher
+        .signatures
+        .push(human_money_core::test_utils::create_guarantor_signature(
+            &voucher,
+            g2,
+            "G2",
+            "guarantor",
+            "2",
+        ));
 
     // 4. Validierung sollte mit `PathNotFound` fehlschlagen, da das Feld im Gutschein `None` ist.
     let validation_result = validate_voucher_against_standard(&voucher, &standard);
@@ -215,7 +312,10 @@ fn test_validation_fails_on_missing_required_field() {
 fn test_validation_fails_on_inconsistent_unit() {
     // Erstelle einen initial gültigen Gutschein nach dem Silber-Standard.
     let identity = &ACTORS.issuer;
-    let creator = PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
+    let creator = PublicProfile {
+        id: Some(identity.user_id.clone()),
+        ..Default::default()
+    };
     let voucher_data = human_money_core::test_utils::create_minuto_voucher_data(creator);
 
     let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
@@ -223,10 +323,19 @@ fn test_validation_fails_on_inconsistent_unit() {
     // KORREKTUR: Der Test muss den Standard VOR der Gutscheinerstellung modifizieren,
     // um Hash-Fehler zu vermeiden.
     let mut standard_with_rule = silver_standard.clone();
-    let validation = standard_with_rule.validation.get_or_insert_with(Default::default);
-    let content_rules = validation.content_rules.get_or_insert_with(Default::default);
-    let fixed_fields = content_rules.fixed_fields.get_or_insert_with(Default::default);
-    fixed_fields.insert("nominal_value.unit".to_string(), serde_json::json!(silver_standard.template.fixed.nominal_value.unit));
+    let validation = standard_with_rule
+        .validation
+        .get_or_insert_with(Default::default);
+    let content_rules = validation
+        .content_rules
+        .get_or_insert_with(Default::default);
+    let fixed_fields = content_rules
+        .fixed_fields
+        .get_or_insert_with(Default::default);
+    fixed_fields.insert(
+        "nominal_value.unit".to_string(),
+        serde_json::json!(silver_standard.template.fixed.nominal_value.unit),
+    );
 
     // Hash des modifizierten Standards berechnen.
     let mut standard_to_hash = standard_with_rule.clone();
@@ -234,7 +343,14 @@ fn test_validation_fails_on_inconsistent_unit() {
     let new_hash = get_hash(to_canonical_json(&standard_to_hash).unwrap());
 
     // Erstelle den Gutschein mit dem ORIGINALEN Standard, der eine korrekte Einheit setzt.
-    let mut voucher = create_voucher(voucher_data, silver_standard, standard_hash, &identity.signing_key, "en").unwrap();
+    let mut voucher = create_voucher(
+        voucher_data,
+        silver_standard,
+        standard_hash,
+        &identity.signing_key,
+        "en",
+    )
+    .unwrap();
 
     // Manipuliere die Einheit NACH der Erstellung, um einen inkonsistenten Zustand zu erzeugen.
     voucher.nominal_value.unit = "EUR".to_string();
@@ -244,9 +360,13 @@ fn test_validation_fails_on_inconsistent_unit() {
     // Damit die Validierung gegen den modifizierten Standard nicht am Hash scheitert,
     // müssen wir den Gutschein und die Creator-Signatur neu signieren.
     // KORREKTUR (FIX FÜR FEHLER 1): Korrekte Re-Signierungslogik
-    let creator_sig_index = voucher.signatures.iter().position(|s| s.role == "creator").unwrap();
+    let creator_sig_index = voucher
+        .signatures
+        .iter()
+        .position(|s| s.role == "creator")
+        .unwrap();
     let mut creator_sig = voucher.signatures.remove(creator_sig_index);
-    
+
     // 1. Berechne neuen voucher_id (Hash der Stammdaten)
     let mut voucher_to_hash = voucher.clone();
     voucher_to_hash.voucher_id = "".to_string();
@@ -263,7 +383,8 @@ fn test_validation_fails_on_inconsistent_unit() {
     creator_sig.signature_id = get_hash(to_canonical_json(&sig_to_hash).unwrap());
 
     // 3. Signiere die neue signature_id
-    let new_sig_bytes = crypto_utils::sign_ed25519(&identity.signing_key, creator_sig.signature_id.as_bytes());
+    let new_sig_bytes =
+        crypto_utils::sign_ed25519(&identity.signing_key, creator_sig.signature_id.as_bytes());
     creator_sig.signature = bs58::encode(new_sig_bytes.to_bytes()).into_string();
     voucher.signatures.push(creator_sig); // Add it back
 
@@ -280,12 +401,21 @@ fn test_validation_fails_on_inconsistent_unit() {
 #[test]
 fn test_validation_fails_on_guarantor_count() {
     let identity = &ACTORS.issuer;
-    let creator = PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
+    let creator = PublicProfile {
+        id: Some(identity.user_id.clone()),
+        ..Default::default()
+    };
     let voucher_data = self::test_utils::create_minuto_voucher_data(creator);
 
     let (minuto_standard, standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
-    let mut voucher = self::test_utils::create_voucher_for_manipulation(voucher_data, minuto_standard, standard_hash, &identity.signing_key, "en");
+    let mut voucher = self::test_utils::create_voucher_for_manipulation(
+        voucher_data,
+        minuto_standard,
+        standard_hash,
+        &identity.signing_key,
+        "en",
+    );
 
     // Entferne alle Signaturen AUSSER der "creator"-Signatur.
     // Der Gutschein hat jetzt 0 Bürgen (gender: 1, gender: 2).
@@ -295,9 +425,19 @@ fn test_validation_fails_on_guarantor_count() {
     assert!(validation_result.is_err());
     match validation_result.unwrap_err() {
         // KORREKTUR: Erwarte den korrekten Fehler für `details.gender`.
-        VoucherCoreError::Validation(ValidationError::FieldValueCountOutOfBounds { path, field, value, min: 1, max: 1, found: 0, .. })
-        if path == "signatures" && field == "details.gender" && value == "1" => {} // Korrekt
-        e => panic!("Expected FieldValueCountOutOfBounds error for 'details.gender'='1', but got {:?}", e),
+        VoucherCoreError::Validation(ValidationError::FieldValueCountOutOfBounds {
+            path,
+            field,
+            value,
+            min: 1,
+            max: 1,
+            found: 0,
+            ..
+        }) if path == "signatures" && field == "details.gender" && value == "1" => {} // Korrekt
+        e => panic!(
+            "Expected FieldValueCountOutOfBounds error for 'details.gender'='1', but got {:?}",
+            e
+        ),
     }
 }
 
@@ -306,7 +446,10 @@ fn test_validation_fails_on_guarantor_count() {
 #[test]
 fn test_canonical_json_is_deterministic_and_sorted() {
     let identity = &ACTORS.issuer;
-    let creator = PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
+    let creator = PublicProfile {
+        id: Some(identity.user_id.clone()),
+        ..Default::default()
+    };
     let data1 = self::test_utils::create_minuto_voucher_data(creator.clone());
     let data2 = self::test_utils::create_minuto_voucher_data(creator);
 
@@ -314,9 +457,21 @@ fn test_canonical_json_is_deterministic_and_sorted() {
 
     // Wir fügen eine winzige Pause ein, um sicherzustellen, dass die Zeitstempel
     // und somit die Hashes sich auf jeden Fall unterscheiden.
-    let voucher1 = self::test_utils::create_voucher_for_manipulation(data1, minuto_standard, standard_hash, &identity.signing_key, "en");
+    let voucher1 = self::test_utils::create_voucher_for_manipulation(
+        data1,
+        minuto_standard,
+        standard_hash,
+        &identity.signing_key,
+        "en",
+    );
     std::thread::sleep(std::time::Duration::from_micros(10));
-    let voucher2 = self::test_utils::create_voucher_for_manipulation(data2, minuto_standard, standard_hash, &identity.signing_key, "en");
+    let voucher2 = self::test_utils::create_voucher_for_manipulation(
+        data2,
+        minuto_standard,
+        standard_hash,
+        &identity.signing_key,
+        "en",
+    );
 
     // Verifiziere, dass die Gutscheine NICHT identisch sind, da ihre Zeitstempel
     // und die daraus abgeleiteten Felder (IDs, Signaturen) sich unterscheiden müssen.
@@ -343,19 +498,40 @@ fn test_canonical_json_is_deterministic_and_sorted() {
 fn test_validation_succeeds_with_extra_fields_in_json() {
     // 1. Erstelle einen VOLLSTÄNDIG gültigen Gutschein, inklusive der benötigten Bürgen.
     let identity = &ACTORS.issuer;
-    let creator = PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
+    let creator = PublicProfile {
+        id: Some(identity.user_id.clone()),
+        ..Default::default()
+    };
     let voucher_data = self::test_utils::create_minuto_voucher_data(creator);
 
     let (minuto_standard, standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
-    let mut valid_voucher = self::test_utils::create_voucher_for_manipulation(voucher_data, minuto_standard, standard_hash, &identity.signing_key, "en");
+    let mut valid_voucher = self::test_utils::create_voucher_for_manipulation(
+        voucher_data,
+        minuto_standard,
+        standard_hash,
+        &identity.signing_key,
+        "en",
+    );
 
     // Füge die für den Minuto-Standard erforderlichen Bürgen hinzu.
     let g1 = &ACTORS.guarantor1;
     let g2 = &ACTORS.guarantor2;
 
-    let guarantor_sig_1 = self::test_utils::create_guarantor_signature(&valid_voucher, g1, "Guarantor1", "guarantor", "1");
-    let guarantor_sig_2 = self::test_utils::create_guarantor_signature(&valid_voucher, g2, "Guarantor2", "guarantor", "2");
+    let guarantor_sig_1 = self::test_utils::create_guarantor_signature(
+        &valid_voucher,
+        g1,
+        "Guarantor1",
+        "guarantor",
+        "1",
+    );
+    let guarantor_sig_2 = self::test_utils::create_guarantor_signature(
+        &valid_voucher,
+        g2,
+        "Guarantor2",
+        "guarantor",
+        "2",
+    );
     valid_voucher.signatures.push(guarantor_sig_1);
     valid_voucher.signatures.push(guarantor_sig_2);
 
@@ -366,10 +542,10 @@ fn test_validation_succeeds_with_extra_fields_in_json() {
 
     // 2. Füge ein unbekanntes Feld zum JSON-Objekt hinzu.
     // Dies simuliert einen Gutschein, der von einer neueren Software-Version erstellt wurde.
-    voucher_as_value
-        .as_object_mut()
-        .unwrap()
-        .insert("unknown_future_field".to_string(), serde_json::json!("some_data"));
+    voucher_as_value.as_object_mut().unwrap().insert(
+        "unknown_future_field".to_string(),
+        serde_json::json!("some_data"),
+    );
 
     // Füge auch ein unbekanntes Feld in ein verschachteltes Objekt ein.
     voucher_as_value
@@ -394,7 +570,8 @@ fn test_validation_succeeds_with_extra_fields_in_json() {
     // 5. Die Validierung muss erfolgreich sein. Die `verify_creator_signature`-Funktion
     // wird intern die kanonische Form des `deserialized_voucher` (ohne die extra Felder)
     // berechnen, und diese muss mit der ursprünglichen Signatur übereinstimmen.
-    let validation_result = validate_voucher_against_standard(&deserialized_voucher, minuto_standard);
+    let validation_result =
+        validate_voucher_against_standard(&deserialized_voucher, minuto_standard);
 
     assert!(
         validation_result.is_ok(),
@@ -414,17 +591,28 @@ fn test_split_transaction_cycle_and_balance_check() {
     // 2. Erstelle Sender und Empfänger
     let sender = &ACTORS.alice;
     let recipient = &ACTORS.bob;
-    let sender_creator = PublicProfile { id: Some(sender.user_id.clone()), ..Default::default() };
+    let sender_creator = PublicProfile {
+        id: Some(sender.user_id.clone()),
+        ..Default::default()
+    };
 
     // 3. Erstelle einen Gutschein mit dem Wert 100.0000 - wir passen die Daten von `create_minuto_voucher_data` an.
     let mut voucher_data = self::test_utils::create_minuto_voucher_data(sender_creator);
     voucher_data.nominal_value.amount = "100.0000".to_string();
 
-    let initial_voucher = create_voucher(voucher_data, silver_standard, standard_hash, &sender.signing_key, "en").unwrap();
+    let initial_voucher = create_voucher(
+        voucher_data,
+        silver_standard,
+        standard_hash,
+        &sender.signing_key,
+        "en",
+    )
+    .unwrap();
 
     // 4. Überprüfe den initialen Zustand und das Guthaben
     assert!(validate_voucher_against_standard(&initial_voucher, silver_standard).is_ok());
-    let initial_balance = get_spendable_balance(&initial_voucher, &sender.user_id, silver_standard).unwrap();
+    let initial_balance =
+        get_spendable_balance(&initial_voucher, &sender.user_id, silver_standard).unwrap();
     assert_eq!(initial_balance, dec!(100.0000));
 
     // 5. Führe eine Split-Transaktion durch: Sende 30.5000 an den Empfänger
@@ -437,10 +625,11 @@ fn test_split_transaction_cycle_and_balance_check() {
         &recipient.user_id,
         split_amount,
     )
-        .unwrap();
+    .unwrap();
 
     // 6. Validiere den Gutschein nach dem Split
-    let validation_result = validate_voucher_against_standard(&voucher_after_split, silver_standard);
+    let validation_result =
+        validate_voucher_against_standard(&voucher_after_split, silver_standard);
     assert!(
         validation_result.is_ok(),
         "Validation after split failed: {:?}",
@@ -467,14 +656,24 @@ fn test_split_fails_on_insufficient_funds() {
     // Setup wie oben
     let sender = &ACTORS.alice;
     let recipient = &ACTORS.bob;
-    let sender_creator = PublicProfile { id: Some(sender.user_id.clone()), ..Default::default() };
+    let sender_creator = PublicProfile {
+        id: Some(sender.user_id.clone()),
+        ..Default::default()
+    };
 
     let mut voucher_data = self::test_utils::create_minuto_voucher_data(sender_creator);
     voucher_data.nominal_value.amount = "50.0".to_string(); // Initialwert 50
 
     let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
 
-    let initial_voucher = create_voucher(voucher_data, silver_standard, standard_hash, &sender.signing_key, "en").unwrap();
+    let initial_voucher = create_voucher(
+        voucher_data,
+        silver_standard,
+        standard_hash,
+        &sender.signing_key,
+        "en",
+    )
+    .unwrap();
 
     // Versuche, 50.1 zu senden (mehr als vorhanden)
     let split_result = create_transaction(
@@ -491,7 +690,6 @@ fn test_split_fails_on_insufficient_funds() {
         VoucherCoreError::Manager(VoucherManagerError::InsufficientFunds { .. })
     ));
 }
-
 
 // --- NEUER TEST FÜR DATENGESTEUERTE VALIDIERUNG (PHASE 4) ---
 
@@ -510,11 +708,21 @@ fn test_fails_to_create_forbidden_transaction_type() {
     // 2. Erstelle einen Gutschein, der nach diesem Standard gültig ist.
     let sender = &ACTORS.alice;
     let recipient = &ACTORS.bob;
-    let creator = PublicProfile { id: Some(sender.user_id.clone()), ..Default::default() };
+    let creator = PublicProfile {
+        id: Some(sender.user_id.clone()),
+        ..Default::default()
+    };
     let mut voucher_data = self::test_utils::create_minuto_voucher_data(creator);
     voucher_data.nominal_value.amount = "100".to_string();
 
-    let initial_voucher = create_voucher(voucher_data, &standard, &standard_hash, &sender.signing_key, "en").unwrap();
+    let initial_voucher = create_voucher(
+        voucher_data,
+        &standard,
+        &standard_hash,
+        &sender.signing_key,
+        "en",
+    )
+    .unwrap();
     assert!(validate_voucher_against_standard(&initial_voucher, &standard).is_ok());
 
     // 3. Versuche, eine "split"-Transaktion zu erstellen, obwohl sie verboten ist.
@@ -548,12 +756,22 @@ fn test_split_fails_on_non_divisible_voucher() {
 
     let sender = &ACTORS.alice;
     let recipient = &ACTORS.bob;
-    let sender_creator = PublicProfile { id: Some(sender.user_id.clone()), ..Default::default() };
+    let sender_creator = PublicProfile {
+        id: Some(sender.user_id.clone()),
+        ..Default::default()
+    };
 
     let mut voucher_data = self::test_utils::create_minuto_voucher_data(sender_creator);
     voucher_data.nominal_value.amount = "60.0000".to_string();
 
-    let initial_voucher = create_voucher(voucher_data, &standard, &new_hash, &sender.signing_key, "en").unwrap();
+    let initial_voucher = create_voucher(
+        voucher_data,
+        &standard,
+        &new_hash,
+        &sender.signing_key,
+        "en",
+    )
+    .unwrap();
 
     let split_result = create_transaction(
         &initial_voucher,
@@ -574,14 +792,23 @@ fn test_split_fails_on_non_divisible_voucher() {
 fn test_validity_duration_rules() {
     // 1. Setup
     let identity = &ACTORS.issuer;
-    let creator = PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
+    let creator = PublicProfile {
+        id: Some(identity.user_id.clone()),
+        ..Default::default()
+    };
     // 2. Testfall: Versuch, einen Gutschein mit zu kurzer Gültigkeit zu erstellen.
     // Der Minuto-Standard erfordert P3Y. Wir versuchen es mit P2Y.
     let mut short_duration_data = self::test_utils::create_minuto_voucher_data(creator.clone());
     let (minuto_standard, standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
     short_duration_data.validity_duration = Some("P2Y".to_string());
-    let creation_result = create_voucher(short_duration_data, minuto_standard, standard_hash, &identity.signing_key, "en");
+    let creation_result = create_voucher(
+        short_duration_data,
+        minuto_standard,
+        standard_hash,
+        &identity.signing_key,
+        "en",
+    );
 
     assert!(
         matches!(
@@ -600,22 +827,51 @@ fn test_validity_duration_rules() {
 
     // 4. Testfall: Nicht übereinstimmende Mindestgültigkeitsregel zwischen Gutschein und Standard
     let valid_data = self::test_utils::create_minuto_voucher_data(creator.clone());
-    let mut voucher2 = self::test_utils::create_voucher_for_manipulation(valid_data, minuto_standard, standard_hash, &identity.signing_key, "en");
+    let mut voucher2 = self::test_utils::create_voucher_for_manipulation(
+        valid_data,
+        minuto_standard,
+        standard_hash,
+        &identity.signing_key,
+        "en",
+    );
 
     // Füge gültige Bürgen hinzu, damit die Validierung nicht an der Anzahl scheitert.
     let g1 = &ACTORS.guarantor1;
     let g2 = &ACTORS.guarantor2;
-    voucher2.signatures.push(self::test_utils::create_guarantor_signature(&voucher2, g1, "G1", "guarantor", "1"));
-    voucher2.signatures.push(self::test_utils::create_guarantor_signature(&voucher2, g2, "G2", "guarantor", "2"));
+    voucher2
+        .signatures
+        .push(self::test_utils::create_guarantor_signature(
+            &voucher2,
+            g1,
+            "G1",
+            "guarantor",
+            "1",
+        ));
+    voucher2
+        .signatures
+        .push(self::test_utils::create_guarantor_signature(
+            &voucher2,
+            g2,
+            "G2",
+            "guarantor",
+            "2",
+        ));
 
     // Manipuliere die im Gutschein gespeicherte Regel
-    voucher2.voucher_standard.template.standard_minimum_issuance_validity = "P1Y".to_string(); // Standard erwartet P3Y
+    voucher2
+        .voucher_standard
+        .template
+        .standard_minimum_issuance_validity = "P1Y".to_string(); // Standard erwartet P3Y
 
     // KORREKTUR: Wie im Fall davor, muss der Gutschein nach der Manipulation neu signiert werden,
     // um einen vorzeitigen Abbruch der Validierung wegen Signaturfehlers zu verhindern.
     // Resign the creator signature
     // KORREKTUR (FIX FÜR FEHLER 2): Korrekte Re-Signierungslogik
-    let creator_sig_index = voucher2.signatures.iter().position(|s| s.role == "creator").unwrap();
+    let creator_sig_index = voucher2
+        .signatures
+        .iter()
+        .position(|s| s.role == "creator")
+        .unwrap();
     let mut creator_sig = voucher2.signatures.remove(creator_sig_index);
 
     // 1. Berechne neuen voucher_id
@@ -634,7 +890,8 @@ fn test_validity_duration_rules() {
     creator_sig.signature_id = get_hash(to_canonical_json(&sig_to_hash).unwrap());
 
     // 3. Signiere die neue signature_id
-    let new_sig_bytes2 = crypto_utils::sign_ed25519(&identity.signing_key, creator_sig.signature_id.as_bytes());
+    let new_sig_bytes2 =
+        crypto_utils::sign_ed25519(&identity.signing_key, creator_sig.signature_id.as_bytes());
     creator_sig.signature = bs58::encode(new_sig_bytes2.to_bytes()).into_string();
     voucher2.signatures.push(creator_sig); // Add it back
 
@@ -661,18 +918,27 @@ fn test_validity_duration_rules() {
 fn test_validation_fails_on_tampered_guarantor_signature() {
     // 1. Erstelle einen vollständig gültigen Gutschein
     let identity = &ACTORS.issuer;
-    let creator = human_money_core::models::profile::PublicProfile { id: Some(identity.user_id.clone()), ..Default::default() };
+    let creator = human_money_core::models::profile::PublicProfile {
+        id: Some(identity.user_id.clone()),
+        ..Default::default()
+    };
     let (minuto_standard, standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
     let mut voucher = self::test_utils::create_voucher_for_manipulation(
-        self::test_utils::create_minuto_voucher_data(creator), minuto_standard, standard_hash, &identity.signing_key, "en"
+        self::test_utils::create_minuto_voucher_data(creator),
+        minuto_standard,
+        standard_hash,
+        &identity.signing_key,
+        "en",
     );
 
     let g1 = &ACTORS.guarantor1;
     let g2 = &ACTORS.guarantor2;
 
-    let sig1 = self::test_utils::create_guarantor_signature(&voucher, g1, "Original", "guarantor", "1");
-    let sig2 = self::test_utils::create_guarantor_signature(&voucher, g2, "Untampered", "guarantor", "2");
+    let sig1 =
+        self::test_utils::create_guarantor_signature(&voucher, g1, "Original", "guarantor", "1");
+    let sig2 =
+        self::test_utils::create_guarantor_signature(&voucher, g2, "Untampered", "guarantor", "2");
     voucher.signatures.push(sig1);
     voucher.signatures.push(sig2);
     assert!(
@@ -683,7 +949,11 @@ fn test_validation_fails_on_tampered_guarantor_signature() {
 
     // 2. Manipuliere die Metadaten der ersten Signatur, NACHDEM sie erstellt wurde.
     // Wir manipulieren die Bürgen-Signatur (Index 1+), nicht die Creator-Signatur (Index 0).
-    let guarantor_sig = voucher.signatures.iter_mut().find(|s| s.role == "guarantor").unwrap();
+    let guarantor_sig = voucher
+        .signatures
+        .iter_mut()
+        .find(|s| s.role == "guarantor")
+        .unwrap();
     let original_signature_id = guarantor_sig.signature_id.clone();
     if let Some(ref mut details) = guarantor_sig.details {
         details.first_name = Some("Tampered".to_string());
@@ -701,7 +971,9 @@ fn test_validation_fails_on_tampered_guarantor_signature() {
     assert!(
         matches!(validation_result.as_ref().unwrap_err(),
             VoucherCoreError::Validation(ValidationError::InvalidSignatureId(found_id)) if *found_id == original_signature_id),
-        "Expected InvalidSignatureId error due to metadata tampering, but got {:?}", validation_result.err());
+        "Expected InvalidSignatureId error due to metadata tampering, but got {:?}",
+        validation_result.err()
+    );
 }
 
 #[test]
@@ -710,7 +982,10 @@ fn test_double_spend_detection_logic() {
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
     let frank = &ACTORS.charlie;
-    let alice_creator = PublicProfile { id: Some(alice.user_id.clone()), ..Default::default() };
+    let alice_creator = PublicProfile {
+        id: Some(alice.user_id.clone()),
+        ..Default::default()
+    };
 
     // 2. Alice erstellt einen SILBER-Gutschein mit dem Wert 100, da dieser teilbar ist.
     let mut voucher_data = self::test_utils::create_minuto_voucher_data(alice_creator);
@@ -720,14 +995,27 @@ fn test_double_spend_detection_logic() {
     // des Double Spends demonstrieren soll.
     let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
 
-    let initial_voucher = self::test_utils::create_voucher_for_manipulation(voucher_data, silver_standard, standard_hash, &alice.signing_key, "en");
+    let initial_voucher = self::test_utils::create_voucher_for_manipulation(
+        voucher_data,
+        silver_standard,
+        standard_hash,
+        &alice.signing_key,
+        "en",
+    );
     assert!(validate_voucher_against_standard(&initial_voucher, silver_standard).is_ok());
 
     // 3. Alice führt eine erste, legitime Transaktion durch: Sie sendet 40 an Bob.
     let voucher_after_split = create_transaction(
-        &initial_voucher, silver_standard, &alice.user_id, &alice.signing_key, &bob.user_id, "40"
-    ).unwrap();
-    let validation_result_1 = validate_voucher_against_standard(&voucher_after_split, silver_standard);
+        &initial_voucher,
+        silver_standard,
+        &alice.user_id,
+        &alice.signing_key,
+        &bob.user_id,
+        "40",
+    )
+    .unwrap();
+    let validation_result_1 =
+        validate_voucher_against_standard(&voucher_after_split, silver_standard);
     assert!(
         validation_result_1.is_ok(),
         "Validation of the first legitimate transaction failed unexpectedly: {:?}",
@@ -735,9 +1023,22 @@ fn test_double_spend_detection_logic() {
     );
     // 4. Alice betrügt: Sie nimmt den Zustand VOR der Transaktion an Bob (`initial_voucher`)
     //    und versucht, ihr ursprüngliches Guthaben von 100 erneut auszugeben, indem sie 60 an Frank sendet.
-    let fraudulent_voucher = create_transaction( &initial_voucher, silver_standard, &alice.user_id, &alice.signing_key, &frank.user_id, "60").unwrap();
-    let validation_result_2 = validate_voucher_against_standard(&fraudulent_voucher, silver_standard);
-    assert!(validation_result_2.is_ok(), "Validation of the fraudulent (but individually valid) transaction failed unexpectedly: {:?}", validation_result_2.err());
+    let fraudulent_voucher = create_transaction(
+        &initial_voucher,
+        silver_standard,
+        &alice.user_id,
+        &alice.signing_key,
+        &frank.user_id,
+        "60",
+    )
+    .unwrap();
+    let validation_result_2 =
+        validate_voucher_against_standard(&fraudulent_voucher, silver_standard);
+    assert!(
+        validation_result_2.is_ok(),
+        "Validation of the fraudulent (but individually valid) transaction failed unexpectedly: {:?}",
+        validation_result_2.err()
+    );
 
     // 5. Verifizierung des Double Spends:
     //    Beide Gutscheine sind für sich genommen gültig, aber die zweite Transaktion in beiden
@@ -747,11 +1048,23 @@ fn test_double_spend_detection_logic() {
 
     // Der Beweis: Gleicher `prev_hash` und `sender_id`, aber unterschiedliche `t_id`.
     // Dies ist der Fingerabdruck, den ein Layer-2-System erkennen würde.
-    assert_eq!(tx_to_bob.prev_hash, fraudulent_tx_to_frank.prev_hash, "prev_hash values must be identical to prove the double spend");
-    assert_eq!(tx_to_bob.sender_id, fraudulent_tx_to_frank.sender_id, "Sender IDs must be identical");
-    assert_ne!(tx_to_bob.t_id, fraudulent_tx_to_frank.t_id, "Transaction IDs must be different");
+    assert_eq!(
+        tx_to_bob.prev_hash, fraudulent_tx_to_frank.prev_hash,
+        "prev_hash values must be identical to prove the double spend"
+    );
+    assert_eq!(
+        tx_to_bob.sender_id, fraudulent_tx_to_frank.sender_id,
+        "Sender IDs must be identical"
+    );
+    assert_ne!(
+        tx_to_bob.t_id, fraudulent_tx_to_frank.t_id,
+        "Transaction IDs must be different"
+    );
 
-    println!("Double Spend Test: OK. prev_hash für beide Transaktionen ist: {}", tx_to_bob.prev_hash);
+    println!(
+        "Double Spend Test: OK. prev_hash für beide Transaktionen ist: {}",
+        tx_to_bob.prev_hash
+    );
 }
 
 // --- Hilfsfunktionen für den Transfer-Test, um private Logik der Wallet-Fassade zu simulieren ---
@@ -794,8 +1107,11 @@ fn calculate_local_instance_id(voucher: &Voucher, profile_owner_id: &str) -> Str
 
     for i in (0..voucher.transactions.len()).rev() {
         let history_slice = &voucher.transactions[..=i];
-        let balance =
-            get_balance_at_transaction(history_slice, profile_owner_id, &voucher.nominal_value.amount);
+        let balance = get_balance_at_transaction(
+            history_slice,
+            profile_owner_id,
+            &voucher.nominal_value.amount,
+        );
 
         if balance > Decimal::ZERO {
             defining_transaction_id = Some(voucher.transactions[i].t_id.clone());
@@ -807,7 +1123,6 @@ fn calculate_local_instance_id(voucher: &Voucher, profile_owner_id: &str) -> Str
     let combined_string = format!("{}{}{}", voucher.voucher_id, t_id, profile_owner_id);
     get_hash(combined_string)
 }
-
 
 #[test]
 fn test_secure_voucher_transfer_via_encrypted_bundle() {
@@ -828,22 +1143,34 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     let voucher_data = NewVoucherData {
         validity_duration: Some("P3Y".to_string()),
         non_redeemable_test_voucher: false,
-        nominal_value: ValueDefinition { amount: "500".to_string(), ..Default::default() },
+        nominal_value: ValueDefinition {
+            amount: "500".to_string(),
+            ..Default::default()
+        },
         collateral: Some(Collateral::default()),
         creator_profile: alice_creator,
     };
 
     let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
 
-    let voucher = self::test_utils::create_voucher_for_manipulation(voucher_data, silver_standard, standard_hash, &alice_identity.signing_key, "en");
+    let voucher = self::test_utils::create_voucher_for_manipulation(
+        voucher_data,
+        silver_standard,
+        standard_hash,
+        &alice_identity.signing_key,
+        "en",
+    );
     let local_id = calculate_local_instance_id(&voucher, &alice_identity.user_id);
 
     // Alice adds the new voucher to her wallet's store
-    alice_wallet.voucher_store.vouchers.insert(local_id.clone(), VoucherInstance {
-        voucher,
-        status: VoucherStatus::Active,
-        local_instance_id: local_id.clone(),
-    });
+    alice_wallet.voucher_store.vouchers.insert(
+        local_id.clone(),
+        VoucherInstance {
+            voucher,
+            status: VoucherStatus::Active,
+            local_instance_id: local_id.clone(),
+        },
+    );
     assert!(alice_wallet.voucher_store.vouchers.contains_key(&local_id));
 
     // --- 3. SECURE TRANSFER from Alice to Bob ---
@@ -860,19 +1187,34 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
+    standards.insert(
+        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.clone(),
+    );
 
-    let human_money_core::wallet::CreateBundleResult { bundle_bytes: encrypted_bundle_for_bob, .. } = alice_wallet.execute_multi_transfer_and_bundle(
-        &alice_identity,
-        &standards,
-        request,
-        None::<&dyn human_money_core::archive::VoucherArchive>,
-    ).unwrap();
+    let human_money_core::wallet::CreateBundleResult {
+        bundle_bytes: encrypted_bundle_for_bob,
+        ..
+    } = alice_wallet
+        .execute_multi_transfer_and_bundle(
+            &alice_identity,
+            &standards,
+            request,
+            None::<&dyn human_money_core::archive::VoucherArchive>,
+        )
+        .unwrap();
 
     // NACH ÄNDERUNG: Die alte Instanz wird gelöscht. Es sollte nur noch eine neue, archivierte Instanz im Wallet sein.
-    assert_eq!(alice_wallet.voucher_store.vouchers.len(), 1, "Alice's wallet should contain exactly one (archived) voucher instance.");
+    assert_eq!(
+        alice_wallet.voucher_store.vouchers.len(),
+        1,
+        "Alice's wallet should contain exactly one (archived) voucher instance."
+    );
     let instance = alice_wallet.voucher_store.vouchers.values().next().unwrap();
-    assert!(matches!(instance.status, VoucherStatus::Archived), "The remaining voucher's status should be Archived after sending.");
+    assert!(
+        matches!(instance.status, VoucherStatus::Archived),
+        "The remaining voucher's status should be Archived after sending."
+    );
     assert_eq!(
         alice_wallet.bundle_meta_store.history.len(),
         1,
@@ -882,13 +1224,25 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     // --- 4. RECEIPT AND PROCESSING by Bob ---
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_bob = std::collections::HashMap::new();
-    standards_for_bob.insert(SILVER_STANDARD.0.metadata.uuid.clone(), SILVER_STANDARD.0.clone());
+    standards_for_bob.insert(
+        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.clone(),
+    );
     bob_wallet
-        .process_encrypted_transaction_bundle(&bob_identity, &encrypted_bundle_for_bob, None::<&dyn human_money_core::archive::VoucherArchive>, &standards_for_bob)
+        .process_encrypted_transaction_bundle(
+            &bob_identity,
+            &encrypted_bundle_for_bob,
+            None::<&dyn human_money_core::archive::VoucherArchive>,
+            &standards_for_bob,
+        )
         .unwrap();
 
     // --- 5. VERIFICATION ---
-    assert_eq!(bob_wallet.voucher_store.vouchers.len(), 1, "Bob's wallet should now have one voucher.");
+    assert_eq!(
+        bob_wallet.voucher_store.vouchers.len(),
+        1,
+        "Bob's wallet should now have one voucher."
+    );
     assert_eq!(
         bob_wallet.bundle_meta_store.history.len(),
         1,
@@ -896,17 +1250,32 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     );
 
     // Berechne die lokale ID für Bobs Instanz des Gutscheins.
-    let received_voucher = &bob_wallet.voucher_store.vouchers.values().next().unwrap().voucher;
+    let received_voucher = &bob_wallet
+        .voucher_store
+        .vouchers
+        .values()
+        .next()
+        .unwrap()
+        .voucher;
     let bob_local_id = calculate_local_instance_id(received_voucher, &bob_identity.user_id);
-    assert!(bob_wallet.voucher_store.vouchers.contains_key(&bob_local_id), "Voucher with correct local ID should be in Bob's wallet.");
+    assert!(
+        bob_wallet
+            .voucher_store
+            .vouchers
+            .contains_key(&bob_local_id),
+        "Voucher with correct local ID should be in Bob's wallet."
+    );
 
     // Füge die finale Überprüfung hinzu, ob der empfangene Gutschein auch wirklich gültig ist.
     // KORREKTUR: Verwende ein assert!, das im Fehlerfall die genaue ValidationError ausgibt.
-    let final_validation_result = validate_voucher_against_standard(received_voucher, silver_standard);
+    let final_validation_result =
+        validate_voucher_against_standard(received_voucher, silver_standard);
     assert!(
         final_validation_result.is_ok(),
         "Validation of the received voucher failed: {:?}",
         final_validation_result.err()
     );
-    println!("SUCCESS: Voucher was securely transferred from Alice to Bob via an encrypted bundle.");
+    println!(
+        "SUCCESS: Voucher was securely transferred from Alice to Bob via an encrypted bundle."
+    );
 }

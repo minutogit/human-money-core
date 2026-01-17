@@ -32,16 +32,16 @@ Getrennte Konten: Obwohl die kryptographische Identität (der Public Key) gleich
 
 Eindeutige Adressen: Jedes Konto hat eine eindeutige, vollständige User-ID, die aus dem Präfix, einer Prüfsumme und dem einheitlichen Public Key besteht.
 
-Konto 1 (PC): pc-aB3@did:key:z...xyzA
+Konto 1 (PC): pc:aB3@did:key:z...xyzA
 
-Konto 2 (Mobil): mobil-C4d@did:key:z...xyzA
+Konto 2 (Mobil): mobil:C4d@did:key:z...xyzA
 
 ## Kernprinzipien der Implementierung
 Einheitliche Identität für das Web of Trust: Für das externe Reputationssystem (Web of Trust) ist nur der Public Key (did:key:z...xyzA) relevant. Alle Aktionen, unabhängig vom Präfix, werden kryptographisch dieser einen Identität zugeordnet.
 
-Strikte Kontentrennung zur Verhinderung von Double Spending: Die Wallet-Logik muss die vollständige User-ID (z.B. pc-aB3@did:key:z...xyzA) zur Validierung des Besitzes verwenden.
+Strikte Kontentrennung zur Verhinderung von Double Spending: Die Wallet-Logik muss die vollständige User-ID (z.B. pc:aB3@did:key:z...xyzA) zur Validierung des Besitzes verwenden.
 
-Beim Empfang (receive_bundle): Ein Gutschein, der an mobil-C4d@... adressiert ist, muss von einer Wallet, die als pc-aB3@... agiert, abgewiesen werden. Ein automatisches "Mitladen" ist ausgeschlossen, da dies zu kritischen Double-Spend-Szenarien führen würde, wenn beide Geräte (z.B. offline) denselben eingehenden Gutschein annehmen.
+Beim Empfang (receive_bundle): Ein Gutschein, der an mobil:C4d@... adressiert ist, muss von einer Wallet, die als pc:aB3@... agiert, abgewiesen werden. Ein automatisches "Mitladen" ist ausgeschlossen, da dies zu kritischen Double-Spend-Szenarien führen würde, wenn beide Geräte (z.B. offline) denselben eingehenden Gutschein annehmen.
 
 Prüfsummen-Validierung: Die in der User-ID enthaltene Checksumme (z.B. aB3) stellt sicher, dass Gutscheine durch Tippfehler nicht an ungültige oder falsche Präfix-Varianten gesendet werden können.
 

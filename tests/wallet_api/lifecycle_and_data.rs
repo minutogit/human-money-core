@@ -8,15 +8,15 @@
 #[cfg(test)]
 mod tests {
 
-    use human_money_core::services::voucher_manager::{NewVoucherData};
     use human_money_core::app_service::AppService;
-    use human_money_core::test_utils;
     use human_money_core::app_service::ProfileInfo;
-    use human_money_core::test_utils::{generate_signed_standard_toml, ACTORS};
+    use human_money_core::services::voucher_manager::NewVoucherData;
+    use human_money_core::test_utils;
+    use human_money_core::test_utils::{ACTORS, generate_signed_standard_toml};
     use tempfile::tempdir;
     // HINZUGEFÜGT: Imports für den neuen Testplan
-    use std::collections::HashMap;
     use human_money_core::wallet::MultiTransferRequest;
+    use std::collections::HashMap;
 
     const PASSWORD: &str = "correct-password-123";
     const WRONG_PASSWORD: &str = "wrong-password-!@#";
@@ -26,15 +26,17 @@ mod tests {
     /// Erstellt eine Dummy-Transferanfrage für Tests.
     /// Benötigt einen Service, der bereits einen Gutschein hat.
     fn create_dummy_transfer_request(service: &mut AppService) -> MultiTransferRequest {
-        let summary = service.get_voucher_summaries(None, None).unwrap().pop().expect("Service has no vouchers to transfer");
+        let summary = service
+            .get_voucher_summaries(None, None)
+            .unwrap()
+            .pop()
+            .expect("Service has no vouchers to transfer");
         MultiTransferRequest {
             recipient_id: "did:key:z6MkhXrm1Rvwj3veuaDtiN2o22uVQdWKkXEkK84vEgJtB7Ti".to_string(),
-            sources: vec![
-                human_money_core::wallet::SourceTransfer {
-                    local_instance_id: summary.local_instance_id,
-                    amount_to_send: "1.0".to_string(),
-                }
-            ],
+            sources: vec![human_money_core::wallet::SourceTransfer {
+                local_instance_id: summary.local_instance_id,
+                amount_to_send: "1.0".to_string(),
+            }],
             notes: None,
             sender_profile_name: None,
         }
@@ -43,10 +45,16 @@ mod tests {
     /// Hilfsfunktion, die einen Service erstellt UND einen Gutschein darin anlegt.
     /// Notwendig für alle Tests, die `create_transfer_bundle` aufrufen wollen.
     /// Gibt auch das TempDir zurück, um sicherzustellen, dass es während des Tests existiert.
-    fn setup_service_with_voucher(password: &str) -> (AppService, ProfileInfo, String, tempfile::TempDir) {
+    fn setup_service_with_voucher(
+        password: &str,
+    ) -> (AppService, ProfileInfo, String, tempfile::TempDir) {
         let dir = tempdir().unwrap();
-        let (mut service, profile) = test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Voucher User", password);
-
+        let (mut service, profile) = test_utils::setup_service_with_profile(
+            dir.path(),
+            &ACTORS.test_user,
+            "Voucher User",
+            password,
+        );
 
         let voucher_data = NewVoucherData {
             creator_profile: human_money_core::models::profile::PublicProfile {
@@ -60,17 +68,23 @@ mod tests {
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
         };
-        let signed_standard = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+        let signed_standard =
+            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
 
         // HINWEIS: Dieser Aufruf MUSS Some(password) (Modus A) verwenden, da setup_service_with_profile
         // (und der darin enthaltene Anker-Fix) KEINE Modus B-Session startet.
-        let _voucher = service.create_new_voucher(&signed_standard, "de", voucher_data, Some(password))
+        let _voucher = service
+            .create_new_voucher(&signed_standard, "de", voucher_data, Some(password))
             .expect("Voucher creation in setup_service_with_voucher failed");
-        let local_id = service.get_voucher_summaries(None, None).unwrap().pop().unwrap().local_instance_id;
+        let local_id = service
+            .get_voucher_summaries(None, None)
+            .unwrap()
+            .pop()
+            .unwrap()
+            .local_instance_id;
 
         (service, profile, local_id, dir)
     }
-
 
     // --- Teil 1: Absicherung des Gelben Bereichs (data_encryption.rs) ---
 
@@ -82,7 +96,12 @@ mod tests {
     fn test_data_encryption_workflow() {
         // 1. Profil erstellen und entsperren
         let dir = tempdir().unwrap();
-        let (mut service, _) = test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Data User", PASSWORD);
+        let (mut service, _) = test_utils::setup_service_with_profile(
+            dir.path(),
+            &ACTORS.test_user,
+            "Data User",
+            PASSWORD,
+        );
 
         // 2. Daten speichern (mit Modus B)
         let data_name = "user_settings";
@@ -107,7 +126,12 @@ mod tests {
     fn test_data_encryption_fails_when_locked() {
         let dir = tempdir().unwrap();
         // 1. Profil erstellen (Service ist danach entsperrt)
-        let (mut service, _) = test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Lock User", PASSWORD);
+        let (mut service, _) = test_utils::setup_service_with_profile(
+            dir.path(),
+            &ACTORS.test_user,
+            "Lock User",
+            PASSWORD,
+        );
         // 2. Service sperren
         service.logout();
 
@@ -135,7 +159,12 @@ mod tests {
     fn test_data_encryption_fails_with_wrong_password() {
         let dir = tempdir().unwrap();
         // 1. Profil erstellen
-        let (mut service, _) = test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Wrong Pass User", PASSWORD);
+        let (mut service, _) = test_utils::setup_service_with_profile(
+            dir.path(),
+            &ACTORS.test_user,
+            "Wrong Pass User",
+            PASSWORD,
+        );
 
         let data_name = "user_settings";
         let original_data = b"some config".to_vec();
@@ -166,7 +195,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let mut service = AppService::new(dir.path()).unwrap();
         let invalid_mnemonic = "this is not a valid bip39 phrase";
-        let result = service.create_profile("Invalid Mnemonic Profile", invalid_mnemonic, None, Some("test"), PASSWORD);
+        let result = service.create_profile(
+            "Invalid Mnemonic Profile",
+            invalid_mnemonic,
+            None,
+            Some("test"),
+            PASSWORD,
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to create new wallet"));
         assert!(service.get_user_id().is_err());
@@ -177,12 +212,24 @@ mod tests {
     #[test]
     fn test_login_fails_with_wrong_password() {
         let dir = tempdir().unwrap();
-        let (mut service, profile_info) = test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Login Test", PASSWORD);
+        let (mut service, profile_info) = test_utils::setup_service_with_profile(
+            dir.path(),
+            &ACTORS.test_user,
+            "Login Test",
+            PASSWORD,
+        );
         service.logout();
         let result = service.login(&profile_info.folder_name, WRONG_PASSWORD, false);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Login failed (check password)"));
-        assert!(service.get_user_id().is_err(), "Should not be able to get user ID while locked.");
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Login failed (check password)")
+        );
+        assert!(
+            service.get_user_id().is_err(),
+            "Should not be able to get user ID while locked."
+        );
     }
 
     /// **Test 6: test_recovery_preserves_wallet_data()** (Angepasst für Modus B)
@@ -193,7 +240,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let test_user = &ACTORS.test_user;
         // 1. Profil erstellen
-        let (mut service, profile_info) = test_utils::setup_service_with_profile(dir.path(), test_user, "Recovery Test", PASSWORD);
+        let (mut service, profile_info) = test_utils::setup_service_with_profile(
+            dir.path(),
+            test_user,
+            "Recovery Test",
+            PASSWORD,
+        );
 
         // 2. Einen Test-Gutschein erstellen (benötigt Modus B)
         let user_id = service.get_user_id().unwrap();
@@ -211,7 +263,8 @@ mod tests {
             ..Default::default()
         };
 
-        let signed_standard = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+        let signed_standard =
+            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
         let created_voucher = service
             // KORREKTUR: Der Login (via setup_service_with_profile) startet keine Session.
             // Wir MÜSSEN Modus A (Some(PASSWORD)) verwenden.
@@ -228,7 +281,12 @@ mod tests {
 
         // 5. Wallet wiederherstellen und neues Passwort setzen
         service
-            .recover_wallet_and_set_new_password(&profile_info.folder_name, &test_user.mnemonic, test_user.passphrase, "new_password")
+            .recover_wallet_and_set_new_password(
+                &profile_info.folder_name,
+                &test_user.mnemonic,
+                test_user.passphrase,
+                "new_password",
+            )
             .expect("Recovery should succeed");
 
         // 6. Assert: Der Gutschein muss nach der Wiederherstellung noch vorhanden sein
@@ -252,7 +310,8 @@ mod tests {
     #[test]
     fn test_session_unlock_session_success() {
         let dir = tempdir().unwrap();
-        let (mut service, _) = test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Test", PASSWORD);
+        let (mut service, _) =
+            test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Test", PASSWORD);
         // HINWEIS: setup_service_with_profile verlässt den Service im Unlocked-Zustand.
         // Dieser Test prüft, ob unlock_session mit dem korrekten PW im Unlocked-Zustand funktioniert.
         let result = service.unlock_session(PASSWORD, 60);
@@ -262,7 +321,8 @@ mod tests {
     #[test]
     fn test_session_unlock_session_fail() {
         let dir = tempdir().unwrap();
-        let (mut service, _) = test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Test", PASSWORD);
+        let (mut service, _) =
+            test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Test", PASSWORD);
         let result = service.unlock_session(WRONG_PASSWORD, 60);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Password verification failed"));
@@ -276,13 +336,15 @@ mod tests {
         // setup_service_with_voucher hinterlässt den Service im Unlocked-Zustand,
         // aber OHNE aktive Session (da lock_session() entfernt wurde).
         let request = create_dummy_transfer_request(&mut service);
-        
+
         // Load the standard definition for SILVER-PAYMENT-V1-2025-09
-        let signed_standard = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+        let signed_standard =
+            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
         standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
-        
-        let result = service.create_transfer_bundle(request, &standard_definitions, None, Some(PASSWORD));
+
+        let result =
+            service.create_transfer_bundle(request, &standard_definitions, None, Some(PASSWORD));
         assert!(result.is_ok());
     }
 
@@ -290,13 +352,19 @@ mod tests {
     fn test_session_mode_a_action_fails_with_wrong_password() {
         let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
         let request = create_dummy_transfer_request(&mut service);
-        
+
         // Load the standard definition for SILVER-PAYMENT-V1-2025-09
-        let signed_standard = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+        let signed_standard =
+            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
         standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
-        
-        let result = service.create_transfer_bundle(request, &standard_definitions, None, Some(WRONG_PASSWORD));
+
+        let result = service.create_transfer_bundle(
+            request,
+            &standard_definitions,
+            None,
+            Some(WRONG_PASSWORD),
+        );
         assert!(result.is_err());
         // Der Fehler kommt von derive_key_for_session -> get_file_key -> AuthenticationFailed
         assert!(result.unwrap_err().contains("Authentication failed"));
@@ -310,12 +378,13 @@ mod tests {
         // Service ist Unlocked, aber Session ist Locked (da setup_service_with_voucher lock_session() entfernt hat)
         // Der Aufruf mit `None` muss fehlschlagen.
         let request = create_dummy_transfer_request(&mut service);
-        
+
         // Load the standard definition for SILVER-PAYMENT-V1-2025-09
-        let signed_standard = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+        let signed_standard =
+            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
         standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
-        
+
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Password required.")); // KORREKTUR: Die Fehlermeldung ist kürzer.
@@ -327,12 +396,13 @@ mod tests {
         // Session explizit für diesen Test entsperren
         service.unlock_session(PASSWORD, 60).unwrap();
         let request = create_dummy_transfer_request(&mut service);
-        
+
         // Load the standard definition for SILVER-PAYMENT-V1-2025-09
-        let signed_standard = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+        let signed_standard =
+            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
         standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
-        
+
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
         assert!(result.is_ok());
     }
@@ -344,12 +414,13 @@ mod tests {
         service.unlock_session(PASSWORD, 1).unwrap(); // 1 Sekunde Timeout
         std::thread::sleep(std::time::Duration::from_secs(2));
         let request = create_dummy_transfer_request(&mut service);
-        
+
         // Load the standard definition for SILVER-PAYMENT-V1-2025-09
-        let signed_standard = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+        let signed_standard =
+            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
         standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
-        
+
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Session timed out."));
@@ -361,56 +432,70 @@ mod tests {
         // Session explizit für diesen Test entsperren
         service.unlock_session(PASSWORD, 3).unwrap(); // 3 Sekunden Timeout
         std::thread::sleep(std::time::Duration::from_secs(2));
-        service.refresh_session_activity().expect("Refresh should succeed within timeout"); // Timer zurücksetzen
+        service
+            .refresh_session_activity()
+            .expect("Refresh should succeed within timeout"); // Timer zurücksetzen
         std::thread::sleep(std::time::Duration::from_secs(2)); // Gesamt 4s vergangen
         let request = create_dummy_transfer_request(&mut service);
-        
+
         // Load the standard definition for SILVER-PAYMENT-V1-2025-09
-        let signed_standard = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+        let signed_standard =
+            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
         standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
-        
+
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
-        assert!(result.is_ok(), "Session should have been refreshed by refresh_session_activity");
+        assert!(
+            result.is_ok(),
+            "Session should have been refreshed by refresh_session_activity"
+        );
     }
 
     #[test]
     fn test_refresh_fails_on_expired_session() {
         let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
-        
+
         // 1. Session mit kurzem Timeout (1 Sekunde) starten
         service.unlock_session(PASSWORD, 1).unwrap();
-        
+
         // 2. Warten, bis die Session physisch abgelaufen ist (2 Sekunden)
         std::thread::sleep(std::time::Duration::from_secs(2));
-        
+
         // 3. Versuchen, die abgelaufene Session zu aktualisieren.
         // Dies muss nun fehlschlagen, da der Core den Timeout validiert.
         let refresh_result = service.refresh_session_activity();
-        assert!(refresh_result.is_err(), "Refresh must fail for expired sessions");
+        assert!(
+            refresh_result.is_err(),
+            "Refresh must fail for expired sessions"
+        );
         assert_eq!(refresh_result.unwrap_err(), "Session expired.");
 
         // 4. Verifizieren, dass die Session nun auch gesperrt ist (Cache geleert).
         // Zugriff ohne Passwort (Modus B) muss fehlschlagen.
         let load_result = service.load_encrypted_data("test_data", None);
         assert!(load_result.is_err());
-        assert!(load_result.unwrap_err().contains("Password required"), "Session cache should have been cleared");
+        assert!(
+            load_result.unwrap_err().contains("Password required"),
+            "Session cache should have been cleared"
+        );
     }
 
     #[test]
     fn test_logout_clears_active_session_immediately() {
         let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
-        
+
         // 1. Session starten (Modus B aktivieren)
         service.unlock_session(PASSWORD, 60).unwrap();
-        
+
         // 2. Verify: Aktion ohne Passwort klappt
-        service.save_encrypted_data("pre_logout", b"data", None).expect("Session should work");
+        service
+            .save_encrypted_data("pre_logout", b"data", None)
+            .expect("Session should work");
 
         // 3. Logout durchführen (Hard Reset)
         service.logout();
 
-        // 4. Verify: Zugriff muss komplett verweigert werden (Wallet is locked), 
+        // 4. Verify: Zugriff muss komplett verweigert werden (Wallet is locked),
         // nicht nur "Password required". Der Status ist jetzt Locked, nicht mehr Unlocked.
         let result = service.load_encrypted_data("pre_logout", None);
         assert!(result.is_err());
@@ -420,14 +505,18 @@ mod tests {
     #[test]
     fn test_session_mode_b_action_refreshes_session() {
         let dir = tempdir().unwrap();
-        let (mut service, _profile) = test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Test", PASSWORD);
+        let (mut service, _profile) =
+            test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Test", PASSWORD);
         // Session explizit für diesen Test entsperren
         service.unlock_session(PASSWORD, 3).unwrap(); // 3 Sekunden Timeout
         std::thread::sleep(std::time::Duration::from_secs(2));
         service.save_encrypted_data("test1", b"data", None).unwrap(); // Aktion setzt Timer zurück
         std::thread::sleep(std::time::Duration::from_secs(2)); // Gesamt 4s vergangen
         let result = service.load_encrypted_data("test1", None);
-        assert!(result.is_ok(), "Session should have been refreshed by save_encrypted_data");
+        assert!(
+            result.is_ok(),
+            "Session should have been refreshed by save_encrypted_data"
+        );
     }
 
     #[test]
@@ -437,12 +526,13 @@ mod tests {
         service.unlock_session(PASSWORD, 60).unwrap();
         service.lock_session(); // Session manuell sperren
         let request = create_dummy_transfer_request(&mut service);
-        
+
         // Load the standard definition for SILVER-PAYMENT-V1-2025-09
-        let signed_standard = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+        let signed_standard =
+            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
         standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
-        
+
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Password required."));
@@ -456,14 +546,19 @@ mod tests {
         // Session explizit für diesen Test entsperren
         service.unlock_session(PASSWORD, 60).unwrap(); // Modus B ist aktiv
         let request = create_dummy_transfer_request(&mut service);
-        
+
         // Load the standard definition for SILVER-PAYMENT-V1-2025-09
-        let signed_standard = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+        let signed_standard =
+            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
         standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
-        
-        let result = service.create_transfer_bundle(request, &standard_definitions, None, Some(PASSWORD));
-        assert!(result.is_ok(), "Modus A (Some(pass)) sollte Vorrang vor Modus B (Session) haben.");
+
+        let result =
+            service.create_transfer_bundle(request, &standard_definitions, None, Some(PASSWORD));
+        assert!(
+            result.is_ok(),
+            "Modus A (Some(pass)) sollte Vorrang vor Modus B (Session) haben."
+        );
     }
 
     #[test]
@@ -472,13 +567,19 @@ mod tests {
         // Session explizit für diesen Test entsperren
         service.unlock_session(PASSWORD, 60).unwrap(); // Modus B ist aktiv
         let request = create_dummy_transfer_request(&mut service);
-        
+
         // Load the standard definition for SILVER-PAYMENT-V1-2025-09
-        let signed_standard = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+        let signed_standard =
+            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
         standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
-        
-        let result = service.create_transfer_bundle(request, &standard_definitions, None, Some(WRONG_PASSWORD));
+
+        let result = service.create_transfer_bundle(
+            request,
+            &standard_definitions,
+            None,
+            Some(WRONG_PASSWORD),
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Authentication failed"));
     }

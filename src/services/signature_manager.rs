@@ -7,7 +7,9 @@ use crate::error::ValidationError;
 use crate::error::VoucherCoreError;
 use crate::models::profile::{PublicProfile, UserIdentity};
 use crate::models::signature::DetachedSignature;
-use crate::services::crypto_utils::{get_hash, get_pubkey_from_user_id, sign_ed25519, verify_ed25519};
+use crate::services::crypto_utils::{
+    get_hash, get_pubkey_from_user_id, sign_ed25519, verify_ed25519,
+};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
 
 /// Vervollständigt und signiert eine `DetachedSignature`.
@@ -33,7 +35,7 @@ pub fn complete_and_sign_detached_signature(
         DetachedSignature::Signature(sig) => {
             sig.signer_id = signer_identity.user_id.clone();
             sig.voucher_id = voucher_id.to_string(); // <-- HINZUFÜGEN
-            
+
             // If details parameter is Some, use it to complete the signature by merging
             // with existing details, giving priority to values in the details parameter.
             // If details parameter is None, explicitly clear the details (e.g., for include_details=false).
@@ -44,19 +46,39 @@ pub fn complete_and_sign_detached_signature(
                         Some(sig_details) => {
                             // Both signature and profile have details - merge giving priority to profile where it has values
                             let mut merged_details = sig_details.clone();
-                            
+
                             // Replace with profile values where they exist
-                            if profile_details.first_name.is_some() { merged_details.first_name = profile_details.first_name.clone(); }
-                            if profile_details.last_name.is_some() { merged_details.last_name = profile_details.last_name.clone(); }
-                            if profile_details.gender.is_some() { merged_details.gender = profile_details.gender.clone(); }
-                            if profile_details.organization.is_some() { merged_details.organization = profile_details.organization.clone(); }
-                            if profile_details.community.is_some() { merged_details.community = profile_details.community.clone(); }
-                            if profile_details.email.is_some() { merged_details.email = profile_details.email.clone(); }
-                            if profile_details.phone.is_some() { merged_details.phone = profile_details.phone.clone(); }
-                            if profile_details.url.is_some() { merged_details.url = profile_details.url.clone(); }
-                            if profile_details.coordinates.is_some() { merged_details.coordinates = profile_details.coordinates.clone(); }
-                            if profile_details.address.is_some() { merged_details.address = profile_details.address.clone(); }
-                            
+                            if profile_details.first_name.is_some() {
+                                merged_details.first_name = profile_details.first_name.clone();
+                            }
+                            if profile_details.last_name.is_some() {
+                                merged_details.last_name = profile_details.last_name.clone();
+                            }
+                            if profile_details.gender.is_some() {
+                                merged_details.gender = profile_details.gender.clone();
+                            }
+                            if profile_details.organization.is_some() {
+                                merged_details.organization = profile_details.organization.clone();
+                            }
+                            if profile_details.community.is_some() {
+                                merged_details.community = profile_details.community.clone();
+                            }
+                            if profile_details.email.is_some() {
+                                merged_details.email = profile_details.email.clone();
+                            }
+                            if profile_details.phone.is_some() {
+                                merged_details.phone = profile_details.phone.clone();
+                            }
+                            if profile_details.url.is_some() {
+                                merged_details.url = profile_details.url.clone();
+                            }
+                            if profile_details.coordinates.is_some() {
+                                merged_details.coordinates = profile_details.coordinates.clone();
+                            }
+                            if profile_details.address.is_some() {
+                                merged_details.address = profile_details.address.clone();
+                            }
+
                             sig.details = Some(merged_details);
                         }
                         None => {
@@ -70,7 +92,7 @@ pub fn complete_and_sign_detached_signature(
                     sig.details = None;
                 }
             }
-            
+
             sig.signer_id.clone()
         }
     };
@@ -96,8 +118,7 @@ pub fn complete_and_sign_detached_signature(
     };
 
     let signature_id = get_hash(signature_json_for_id);
-    let digital_signature =
-        sign_ed25519(&signer_identity.signing_key, signature_id.as_bytes());
+    let digital_signature = sign_ed25519(&signer_identity.signing_key, signature_id.as_bytes());
     let signature_str = bs58::encode(digital_signature.to_bytes()).into_string();
 
     match &mut signature_data {
@@ -137,14 +158,16 @@ pub fn validate_detached_signature(
     let obj = sig_obj_to_verify.as_object_mut().unwrap();
     obj.insert("signature_id".to_string(), "".into());
     obj.insert("signature".to_string(), "".into());
-    
+
     // voucher_id ist nun Teil des Hashings und wird nicht entfernt
 
     let canonical_json = to_canonical_json(&obj)?;
     let calculated_sig_id = get_hash(canonical_json);
 
     if calculated_sig_id != expected_sig_id {
-        return Err(VoucherCoreError::Validation(ValidationError::InvalidSignatureId(expected_sig_id)));
+        return Err(VoucherCoreError::Validation(
+            ValidationError::InvalidSignatureId(expected_sig_id),
+        ));
     }
 
     let public_key = get_pubkey_from_user_id(&signer_id)?;
@@ -152,18 +175,18 @@ pub fn validate_detached_signature(
 
     // Konvertiere den Vec<u8> in ein [u8; 64] Array, wie es von `from_bytes` erwartet wird.
     let signature_array: [u8; 64] = signature_bytes.try_into().map_err(|_| {
-        VoucherCoreError::Validation(
-            ValidationError::SignatureDecodeError(
-                "Invalid signature length: must be 64 bytes".to_string(),
-            ),
-        )
+        VoucherCoreError::Validation(ValidationError::SignatureDecodeError(
+            "Invalid signature length: must be 64 bytes".to_string(),
+        ))
     })?;
     let signature = ed25519_dalek::Signature::from_bytes(&signature_array);
 
     if !verify_ed25519(&public_key, expected_sig_id.as_bytes(), &signature) {
-        return Err(VoucherCoreError::Validation(ValidationError::InvalidSignature {
-            signer_id: signer_id.to_string(), // KORREKTUR E0308
-        }));
+        return Err(VoucherCoreError::Validation(
+            ValidationError::InvalidSignature {
+                signer_id: signer_id.to_string(), // KORREKTUR E0308
+            },
+        ));
     }
 
     Ok(())

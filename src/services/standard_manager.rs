@@ -3,8 +3,8 @@
 //! Dieses Modul enthält die Kernlogik zur Verarbeitung und Verifizierung
 //! von `VoucherStandardDefinition`-Dateien (standard.toml).
 
+use crate::error::{StandardDefinitionError, VoucherCoreError};
 use crate::models::voucher_standard_definition::{LocalizedText, VoucherStandardDefinition};
-use crate::error::{VoucherCoreError, StandardDefinitionError};
 use crate::services::crypto_utils::{get_hash, get_pubkey_from_user_id, verify_ed25519};
 use crate::services::utils::to_canonical_json;
 

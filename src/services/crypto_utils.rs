@@ -1,38 +1,33 @@
 //! # src/services/crypto_utils.rs
 // Zufallszahlengenerierung
 use rand::Rng;
-use rand_core::RngCore;
 use rand_core::OsRng;
+use rand_core::RngCore;
 
 // Kryptografische Hashes (SHA-2)
-use sha2::{Sha256, Sha512, Digest};
+use sha2::{Digest, Sha256, Sha512};
 
 // Symmetrische Verschlüsselung
 use chacha20poly1305::{
-    aead::{Aead, AeadCore, KeyInit},
     ChaCha20Poly1305, Nonce,
+    aead::{Aead, AeadCore, KeyInit},
 };
 
 // Ed25519 Signaturen
 use ed25519_dalek::{
-    SigningKey,
-    Signature,
-    VerifyingKey as EdPublicKey,
-    Signer,
-    Verifier,
-    SignatureError,
+    Signature, SignatureError, Signer, SigningKey, Verifier, VerifyingKey as EdPublicKey,
 };
 
 // X25519 Schlüsselvereinbarung
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey, StaticSecret};
 
 // BIP39 Mnemonic Phrase
-use bip39::{Mnemonic, Language};
+use bip39::{Language, Mnemonic};
 
 // Key Derivation Functions
+use hkdf::Hkdf;
 use hmac::Hmac;
 use pbkdf2::pbkdf2;
-use hkdf::Hkdf;
 
 // Standard Bibliothek
 use std::convert::TryInto;
@@ -51,14 +46,17 @@ use base64::{Engine as _, engine::general_purpose};
 /// # Errors
 ///
 /// Returns an error if the `word_count` is invalid.
-pub fn generate_mnemonic(word_count: usize, language: Language) -> Result<String, Box<dyn std::error::Error>> {
+pub fn generate_mnemonic(
+    word_count: usize,
+    language: Language,
+) -> Result<String, Box<dyn std::error::Error>> {
     let entropy_length = match word_count {
         12 => 16,
         15 => 20,
         18 => 24,
         21 => 28,
         24 => 32,
-        _  => return Err("Invalid entropy length".into()),
+        _ => return Err("Invalid entropy length".into()),
     };
     let mut rng = rand::thread_rng();
     let entropy: Vec<u8> = (0..entropy_length).map(|_| rng.r#gen()).collect();
@@ -107,7 +105,7 @@ pub fn get_hash(input: impl AsRef<[u8]>) -> String {
 /// ACHTUNG: Dies ist ein verkürzter Hash und dient nur als Heuristik.
 pub fn get_short_hash_from_user_id(user_id: &str) -> [u8; 4] {
     let hash = get_hash(user_id.as_bytes());
-    
+
     // 1. Base58-String zurück in Bytes dekodieren
     let hash_bytes = bs58::decode(&hash).into_vec().unwrap_or_default();
 
@@ -159,18 +157,15 @@ pub fn derive_ed25519_keypair(
         b"human-money-core",
         100_000,
         &mut stretched_key,
-    ).map_err(|e| VoucherCoreError::Crypto(
-        format!("PBKDF2 stretching failed: {}", e)
-    ))?;
+    )
+    .map_err(|e| VoucherCoreError::Crypto(format!("PBKDF2 stretching failed: {}", e)))?;
 
     // Use HKDF to derive an application-specific key from the stretched seed
     // This is a cryptographic best practice to separate keys for different purposes
     let hkdf = Hkdf::<Sha256>::new(None, &stretched_key);
     let mut ed_signing_key_seed = [0u8; 32];
     hkdf.expand(b"human-money-core/ed25519", &mut ed_signing_key_seed)
-        .map_err(|_| VoucherCoreError::Crypto(
-            "HKDF expansion failed".to_string()
-        ))?;
+        .map_err(|_| VoucherCoreError::Crypto("HKDF expansion failed".to_string()))?;
 
     // SigningKey::from_seed_bytes takes a 32-byte seed and uses it to derive the
     // Ed25519 keypair in a secure and standardized way (internally uses SHA512)
@@ -201,7 +196,9 @@ pub fn generate_ed25519_keypair_for_tests(seed: Option<&str>) -> (EdPublicKey, S
         let mut hasher = Sha512::new();
         hasher.update(seed_str.as_bytes());
         let hash_result = hasher.finalize();
-        let key_bytes: [u8; 32] = hash_result[..32].try_into().expect("Hash output must be 64 bytes");
+        let key_bytes: [u8; 32] = hash_result[..32]
+            .try_into()
+            .expect("Hash output must be 64 bytes");
 
         let signing_key = SigningKey::from_bytes(&key_bytes);
         (signing_key.verifying_key(), signing_key)
@@ -216,7 +213,6 @@ pub fn generate_ed25519_keypair_for_tests(seed: Option<&str>) -> (EdPublicKey, S
         (signing_key.verifying_key(), signing_key)
     }
 }
-
 
 /// Converts an Ed25519 public key to an X25519 public key for Diffie-Hellman key exchange.
 ///
@@ -278,7 +274,6 @@ pub fn generate_ephemeral_x25519_keypair() -> (X25519PublicKey, EphemeralSecret)
     (public, secret)
 }
 
-
 /// Performs Diffie-Hellman key exchange.
 ///
 /// This function performs Diffie-Hellman key exchange using our ephemeral secret
@@ -309,7 +304,9 @@ pub enum SymmetricEncryptionError {
     EncryptionFailed,
 
     /// Indicates that AEAD decryption failed, likely due to a wrong key or tampered data.
-    #[error("AEAD decryption failed. The key may be incorrect or the data may have been tampered with.")]
+    #[error(
+        "AEAD decryption failed. The key may be incorrect or the data may have been tampered with."
+    )]
     DecryptionFailed,
 
     /// Indicates that the provided data slice has an invalid length (e.g., too short to contain a nonce).
@@ -337,7 +334,8 @@ pub fn encrypt_data(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, SymmetricEnc
     let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
 
     // The `encrypt` method handles the authenticated encryption.
-    let ciphertext = cipher.encrypt(&nonce, data)
+    let ciphertext = cipher
+        .encrypt(&nonce, data)
         .map_err(|_| SymmetricEncryptionError::EncryptionFailed)?;
 
     // Prepend the nonce to the ciphertext for use in decryption.
@@ -362,11 +360,15 @@ pub fn encrypt_data(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, SymmetricEnc
 /// # Returns
 ///
 /// A `Result` containing the original plaintext data or a `SymmetricEncryptionError` if decryption fails.
-pub fn decrypt_data(key: &[u8; 32], encrypted_data_with_nonce: &[u8]) -> Result<Vec<u8>, SymmetricEncryptionError> {
+pub fn decrypt_data(
+    key: &[u8; 32],
+    encrypted_data_with_nonce: &[u8],
+) -> Result<Vec<u8>, SymmetricEncryptionError> {
     const NONCE_SIZE: usize = 12;
     if encrypted_data_with_nonce.len() < NONCE_SIZE {
         return Err(SymmetricEncryptionError::InvalidLength(format!(
-            "Encrypted data must be at least {} bytes long to contain a nonce.", NONCE_SIZE
+            "Encrypted data must be at least {} bytes long to contain a nonce.",
+            NONCE_SIZE
         )));
     }
 
@@ -375,7 +377,9 @@ pub fn decrypt_data(key: &[u8; 32], encrypted_data_with_nonce: &[u8]) -> Result<
     let nonce = Nonce::from_slice(nonce_bytes);
 
     // `decrypt` automatically verifies the authentication tag. If it fails, an error is returned.
-    cipher.decrypt(nonce, ciphertext).map_err(|_| SymmetricEncryptionError::DecryptionFailed)
+    cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| SymmetricEncryptionError::DecryptionFailed)
 }
 
 /// Signs a message with an Ed25519 signing key.
@@ -426,7 +430,9 @@ pub fn encode_base64(data: &[u8]) -> String {
 /// # Returns
 /// A `Result` containing the decoded byte vector or a `VoucherCoreError`.
 pub fn decode_base64(encoded_data: &str) -> Result<Vec<u8>, VoucherCoreError> {
-    general_purpose::URL_SAFE_NO_PAD.decode(encoded_data).map_err(|e| VoucherCoreError::Base64(e.to_string()))
+    general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded_data)
+        .map_err(|e| VoucherCoreError::Base64(e.to_string()))
 }
 
 /// Error types for user ID creation.
@@ -441,7 +447,7 @@ pub enum UserIdError {
     /// Das Präfix darf nicht mit einem Bindestrich beginnen oder enden.
     InvalidPrefixStartEnd,
     /// Das Präfix darf keine zwei aufeinanderfolgenden Bindestriche enthalten.
-    PrefixHasDoubleHyphen,
+    PrefixHasConsecutiveSeparators,
 }
 
 impl fmt::Display for UserIdError {
@@ -450,11 +456,9 @@ impl fmt::Display for UserIdError {
             UserIdError::PrefixEmpty => {
                 write!(f, "Prefix is mandatory and must not be empty.")
             }
-            UserIdError::PrefixTooLong(len) => write!(
-                f,
-                "Prefix is too long: {} characters (maximum is 63).",
-                len
-            ),
+            UserIdError::PrefixTooLong(len) => {
+                write!(f, "Prefix is too long: {} characters (maximum is 63).", len)
+            }
             UserIdError::InvalidPrefixChars => write!(
                 f,
                 "Prefix contains invalid characters. Only lowercase letters (a-z), numbers (0-9), and hyphens (-) are allowed."
@@ -462,8 +466,8 @@ impl fmt::Display for UserIdError {
             UserIdError::InvalidPrefixStartEnd => {
                 write!(f, "Prefix must not start or end with a hyphen.")
             }
-            UserIdError::PrefixHasDoubleHyphen => {
-                write!(f, "Prefix must not contain consecutive hyphens.")
+            UserIdError::PrefixHasConsecutiveSeparators => {
+                write!(f, "Prefix contains consecutive separators (- or :)")
             }
         }
     }
@@ -473,8 +477,11 @@ impl std::error::Error for UserIdError {}
 
 /// Generiert eine User-ID mit optionalem Präfix und einer obligatorischen Prüfsumme.
 ///
-/// Das Format ist: `[präfix-]prüfsumme@did:key:z...`
-pub fn create_user_id(public_key: &EdPublicKey, user_prefix: Option<&str>) -> Result<String, UserIdError> {
+/// Das Format ist: `[präfix:]prüfsumme@did:key:z...`
+pub fn create_user_id(
+    public_key: &EdPublicKey,
+    user_prefix: Option<&str>,
+) -> Result<String, UserIdError> {
     const ED25519_MULTICODEC_PREFIX: [u8; 2] = [0xed, 0x01];
 
     let mut bytes_to_encode = Vec::with_capacity(34);
@@ -492,18 +499,28 @@ pub fn create_user_id(public_key: &EdPublicKey, user_prefix: Option<&str>) -> Re
     if prefix.len() > 63 {
         return Err(UserIdError::PrefixTooLong(prefix.len()));
     }
-        if !prefix
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-        {
-            return Err(UserIdError::InvalidPrefixChars);
-        }
-        if prefix.starts_with('-') || prefix.ends_with('-') {
-            return Err(UserIdError::InvalidPrefixStartEnd);
-        }
-        if prefix.contains("--") {
-            return Err(UserIdError::PrefixHasDoubleHyphen);
-        }
+    if !prefix
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(UserIdError::InvalidPrefixChars);
+    }
+    if prefix.starts_with('-') || prefix.ends_with('-') {
+        return Err(UserIdError::InvalidPrefixStartEnd);
+    }
+    if prefix.contains("--") {
+        return Err(UserIdError::PrefixHasConsecutiveSeparators);
+    }
+    if prefix.starts_with('-')
+        || prefix.ends_with('-')
+        || prefix.starts_with(':')
+        || prefix.ends_with(':')
+    {
+        return Err(UserIdError::InvalidPrefixStartEnd);
+    }
+    if prefix.contains("--") || prefix.contains("::") {
+        return Err(UserIdError::PrefixHasConsecutiveSeparators);
+    }
 
     // Generiere Prüfsumme
     let checksum_input = format!("{}{}", prefix, did_key);
@@ -511,11 +528,10 @@ pub fn create_user_id(public_key: &EdPublicKey, user_prefix: Option<&str>) -> Re
     let checksum = &hash[hash.len() - 3..];
 
     // Da das Präfix nun obligatorisch ist, entfällt der `if prefix.is_empty()`-Check.
-    let human_readable_part = format!("{}-{}", prefix, checksum);
+    let human_readable_part = format!("{}:{}", prefix, checksum);
 
     Ok(format!("{}@{}", human_readable_part, did_key))
 }
-
 
 /// Validates a user ID string.
 ///
@@ -538,13 +554,12 @@ pub fn validate_user_id(user_id: &str) -> bool {
         return false;
     }
 
-    let (prefix, received_checksum) =
-        if let Some(pos) = human_readable_part.rfind('-') {
-            let (p, c) = human_readable_part.split_at(pos);
-            (p, &c[1..])
-        } else {
-            ("", human_readable_part)
-        };
+    let (prefix, received_checksum) = if let Some(pos) = human_readable_part.rfind(':') {
+        let (p, c) = human_readable_part.split_at(pos);
+        (p, &c[1..])
+    } else {
+        ("", human_readable_part)
+    };
 
     if !prefix.is_empty() {
         if prefix.len() > 63
@@ -587,7 +602,10 @@ impl std::fmt::Display for GetPubkeyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             GetPubkeyError::InvalidPrefix => {
-                write!(f, "Invalid prefix format (e.g., empty prefix is not allowed)")
+                write!(
+                    f,
+                    "Invalid prefix format (e.g., empty prefix is not allowed)"
+                )
             }
             GetPubkeyError::InvalidDidFormat => write!(
                 f,
@@ -659,7 +677,8 @@ pub fn get_pubkey_from_user_id(user_id: &str) -> Result<EdPublicKey, GetPubkeyEr
     let key_bytes = &decoded_bytes[ED25519_MULTICODEC_PREFIX.len()..];
     let actual_len = key_bytes.len();
 
-    let key_bytes_array: [u8; 32] = key_bytes.try_into()
+    let key_bytes_array: [u8; 32] = key_bytes
+        .try_into()
         .map_err(|_| GetPubkeyError::InvalidLength(actual_len))?;
 
     EdPublicKey::from_bytes(&key_bytes_array).map_err(GetPubkeyError::ConversionFailed)

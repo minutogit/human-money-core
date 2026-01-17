@@ -2,7 +2,7 @@
 //!
 //! Enthält allgemeine Hilfsfunktionen, z.B. für Zeitstempel und kanonische Serialisierung.
 
-use chrono::{Datelike, DateTime, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use serde::Serialize;
 use serde_json_canonicalizer::to_string;
 
@@ -56,9 +56,7 @@ pub fn get_timestamp(years_to_add: i32, end_of_year: bool) -> String {
             future_time.second(),
         ) {
             // If successful, re-apply nanoseconds
-            chrono::LocalResult::Single(dt) => dt
-                .with_nanosecond(current_nanos)
-                .unwrap_or(dt), // Keep original dt if setting nanosecond fails (unlikely)
+            chrono::LocalResult::Single(dt) => dt.with_nanosecond(current_nanos).unwrap_or(dt), // Keep original dt if setting nanosecond fails (unlikely)
             // Handle potential ambiguities or errors (like invalid dates, e.g., Feb 29)
             chrono::LocalResult::None | chrono::LocalResult::Ambiguous(_, _) => {
                 // Determine the last valid day of the target month/year
@@ -69,11 +67,12 @@ pub fn get_timestamp(years_to_add: i32, end_of_year: bool) -> String {
                     (new_year, future_time.month() + 1)
                 };
                 // Get the day *before* the first day of the next month
-                let last_day_of_month = chrono::NaiveDate::from_ymd_opt(next_month_year, next_month, 1)
-                    .unwrap() // This should always succeed for valid year/month combos
-                    .pred_opt() // Get the previous day (last day of original month)
-                    .unwrap() // This should always succeed
-                    .day();
+                let last_day_of_month =
+                    chrono::NaiveDate::from_ymd_opt(next_month_year, next_month, 1)
+                        .unwrap() // This should always succeed for valid year/month combos
+                        .pred_opt() // Get the previous day (last day of original month)
+                        .unwrap() // This should always succeed
+                        .day();
 
                 // Use the minimum of the original day and the last valid day of the month
                 let valid_day = std::cmp::min(future_time.day(), last_day_of_month);
@@ -87,9 +86,9 @@ pub fn get_timestamp(years_to_add: i32, end_of_year: bool) -> String {
                     future_time.minute(),
                     future_time.second(),
                 ) {
-                    chrono::LocalResult::Single(dt) => dt
-                        .with_nanosecond(current_nanos)
-                        .unwrap_or(dt), // Re-apply nanoseconds again
+                    chrono::LocalResult::Single(dt) => {
+                        dt.with_nanosecond(current_nanos).unwrap_or(dt)
+                    } // Re-apply nanoseconds again
                     _ => Utc::now(), // Ultimate fallback if reconstruction still fails
                 }
             }
@@ -111,7 +110,6 @@ pub fn get_timestamp(years_to_add: i32, end_of_year: bool) -> String {
     // %Y-%m-%dT%H:%M:%S%.6fZ
     future_time.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
 }
-
 
 /// Returns the current timestamp in ISO 8601 format in UTC with default parameters.
 /// This is a convenience function that calls get_timestamp(0, false).

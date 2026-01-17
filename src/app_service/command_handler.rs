@@ -3,17 +3,17 @@
 //! Enthält die zentralen, schreibenden Aktionen (Commands) des `AppService`,
 //! die den Zustand des Wallets verändern und persistieren.
 
-use super::{AppState, AppService};
+use super::{AppService, AppState};
 use crate::archive::VoucherArchive;
-use crate::storage::WalletLockGuard; // Importiere den RAII Guard
+use crate::error::ValidationError;
 use crate::models::conflict::ResolutionEndorsement;
 use crate::models::voucher::Voucher;
-use crate::wallet::instance::VoucherStatus;
 use crate::services::voucher_validation;
-use crate::{AuthMethod, ValidationFailureReason, VoucherCoreError};
-use crate::error::ValidationError;
 use crate::services::{standard_manager, voucher_manager::NewVoucherData};
+use crate::storage::WalletLockGuard; // Importiere den RAII Guard
+use crate::wallet::instance::VoucherStatus;
 use crate::wallet::{CreateBundleResult, MultiTransferRequest, ProcessBundleResult};
+use crate::{AuthMethod, ValidationFailureReason, VoucherCoreError};
 
 use std::collections::HashMap;
 
@@ -32,14 +32,23 @@ impl AppService {
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
         let (result, new_state) = match current_state {
-            AppState::Unlocked { mut storage, wallet, identity, session_cache } => {
-
+            AppState::Unlocked {
+                mut storage,
+                wallet,
+                identity,
+                session_cache,
+            } => {
                 // --- SPERRE ERLANGEN (RAII) ---
                 let _lock_guard = match WalletLockGuard::new(&storage) {
                     Ok(guard) => guard,
                     Err(e) => {
                         // FEHLERBEHEBUNG: Zustand manuell wiederherstellen und Funktion verlassen
-                        self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
+                        self.state = AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        };
                         return Err(e.to_string());
                     }
                 };
@@ -48,7 +57,15 @@ impl AppService {
                 match crate::services::standard_manager::verify_and_parse_standard(
                     standard_toml_content,
                 ) {
-                    Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity, session_cache }),
+                    Err(e) => (
+                        Err(e.to_string()),
+                        AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        },
+                    ),
                     Ok((verified_standard, standard_hash)) => {
                         match crate::services::voucher_manager::create_voucher(
                             data,
@@ -57,10 +74,22 @@ impl AppService {
                             &identity.signing_key,
                             lang_preference,
                         ) {
-                            Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity, session_cache }),
+                            Err(e) => (
+                                Err(e.to_string()),
+                                AppState::Unlocked {
+                                    storage,
+                                    wallet,
+                                    identity,
+                                    session_cache,
+                                },
+                            ),
                             Ok(new_voucher) => {
                                 // Validierung und Status-Ermittlung
-                                let validation_result = voucher_validation::validate_voucher_against_standard(&new_voucher, &verified_standard);
+                                let validation_result =
+                                    voucher_validation::validate_voucher_against_standard(
+                                        &new_voucher,
+                                        &verified_standard,
+                                    );
 
                                 let (operation_result, initial_status) = match validation_result {
                                     Ok(_) => (Ok(new_voucher.clone()), VoucherStatus::Active),
@@ -83,7 +112,15 @@ impl AppService {
                                 };
 
                                 match operation_result {
-                                    Err(e) => (Err(e), AppState::Unlocked { storage, wallet, identity, session_cache }),
+                                    Err(e) => (
+                                        Err(e),
+                                        AppState::Unlocked {
+                                            storage,
+                                            wallet,
+                                            identity,
+                                            session_cache,
+                                        },
+                                    ),
                                     Ok(voucher_to_return) => {
                                         // Authentifizierung ermitteln
                                         let auth_method = match password {
@@ -91,13 +128,18 @@ impl AppService {
                                             None => {
                                                 match &session_cache {
                                                     Some(cache) => {
-                                                        if std::time::Instant::now() > cache.last_activity + cache.session_duration {
+                                                        if std::time::Instant::now()
+                                                            > cache.last_activity
+                                                                + cache.session_duration
+                                                        {
                                                             // Timeout Fallback placeholder
                                                             AuthMethod::SessionKey([0u8; 32])
                                                         } else {
-                                                            AuthMethod::SessionKey(cache.session_key)
+                                                            AuthMethod::SessionKey(
+                                                                cache.session_key,
+                                                            )
                                                         }
-                                                    },
+                                                    }
                                                     None => AuthMethod::SessionKey([0u8; 32]),
                                                 }
                                             }
@@ -107,25 +149,70 @@ impl AppService {
                                         if let AuthMethod::SessionKey(k) = auth_method {
                                             if k == [0u8; 32] {
                                                 // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                                                self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                                                return Err("Session timed out or password required.".to_string());
+                                                self.state = AppState::Unlocked {
+                                                    storage,
+                                                    wallet,
+                                                    identity,
+                                                    session_cache,
+                                                };
+                                                return Err(
+                                                    "Session timed out or password required."
+                                                        .to_string(),
+                                                );
                                             }
                                         }
 
                                         // 1. Kopie erstellen
                                         let mut temp_wallet = wallet.clone();
-                                        let local_id = crate::wallet::Wallet::calculate_local_instance_id(&new_voucher, &identity.user_id).unwrap();
-                                        temp_wallet.add_voucher_instance(local_id, new_voucher.clone(), initial_status);
+                                        let local_id =
+                                            crate::wallet::Wallet::calculate_local_instance_id(
+                                                &new_voucher,
+                                                &identity.user_id,
+                                            )
+                                            .unwrap();
+                                        temp_wallet.add_voucher_instance(
+                                            local_id,
+                                            new_voucher.clone(),
+                                            initial_status,
+                                        );
 
                                         // 2. Abgeleitete Stores aktualisieren & Speichern
                                         match temp_wallet.rebuild_derived_stores() {
                                             Ok(_) => {
-                                                match temp_wallet.save(&mut storage, &identity, &auth_method) {
-                                                    Ok(_) => (Ok(voucher_to_return), AppState::Unlocked { storage, wallet: temp_wallet, identity, session_cache }),
-                                                    Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity, session_cache }),
+                                                match temp_wallet.save(
+                                                    &mut storage,
+                                                    &identity,
+                                                    &auth_method,
+                                                ) {
+                                                    Ok(_) => (
+                                                        Ok(voucher_to_return),
+                                                        AppState::Unlocked {
+                                                            storage,
+                                                            wallet: temp_wallet,
+                                                            identity,
+                                                            session_cache,
+                                                        },
+                                                    ),
+                                                    Err(e) => (
+                                                        Err(e.to_string()),
+                                                        AppState::Unlocked {
+                                                            storage,
+                                                            wallet,
+                                                            identity,
+                                                            session_cache,
+                                                        },
+                                                    ),
                                                 }
                                             }
-                                            Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity, session_cache })
+                                            Err(e) => (
+                                                Err(e.to_string()),
+                                                AppState::Unlocked {
+                                                    storage,
+                                                    wallet,
+                                                    identity,
+                                                    session_cache,
+                                                },
+                                            ),
                                         }
                                     }
                                 }
@@ -164,14 +251,23 @@ impl AppService {
         }
 
         let (result, new_state) = match current_state {
-            AppState::Unlocked { mut storage, wallet, identity, session_cache } => {
-
+            AppState::Unlocked {
+                mut storage,
+                wallet,
+                identity,
+                session_cache,
+            } => {
                 // --- SPERRE ERLANGEN (RAII) ---
                 let _lock_guard = match WalletLockGuard::new(&storage) {
                     Ok(guard) => guard,
                     Err(e) => {
                         // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                        self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
+                        self.state = AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        };
                         return Err(e.to_string());
                     }
                 };
@@ -182,25 +278,38 @@ impl AppService {
                 match password {
                     Some(pwd_str) => {
                         auth_method = AuthMethod::Password(pwd_str);
-                    },
+                    }
                     None => {
-                        let session_key = match &session_cache {
-                            Some(cache) => {
-                                let now = std::time::Instant::now();
-                                if now > cache.last_activity + cache.session_duration {
-                                    // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                                    self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                                    return Err("Session timed out. Please provide password.".to_string());
-                                } else {
-                                    cache.session_key
+                        let session_key =
+                            match &session_cache {
+                                Some(cache) => {
+                                    let now = std::time::Instant::now();
+                                    if now > cache.last_activity + cache.session_duration {
+                                        // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
+                                        self.state = AppState::Unlocked {
+                                            storage,
+                                            wallet,
+                                            identity,
+                                            session_cache,
+                                        };
+                                        return Err("Session timed out. Please provide password."
+                                            .to_string());
+                                    } else {
+                                        cache.session_key
+                                    }
                                 }
-                            },
-                            None => {
-                                // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                                self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                                return Err("Password required. Please use 'unlock_session'.".to_string());
-                            }
-                        };
+                                None => {
+                                    // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
+                                    self.state = AppState::Unlocked {
+                                        storage,
+                                        wallet,
+                                        identity,
+                                        session_cache,
+                                    };
+                                    return Err("Password required. Please use 'unlock_session'."
+                                        .to_string());
+                                }
+                            };
                         auth_method = AuthMethod::SessionKey(session_key);
                     }
                 }
@@ -217,16 +326,28 @@ impl AppService {
                         match temp_wallet.save(&mut storage, &identity, &auth_method) {
                             Ok(_) => (
                                 Ok(create_result),
-                                AppState::Unlocked { storage, wallet: temp_wallet, identity, session_cache },
+                                AppState::Unlocked {
+                                    storage,
+                                    wallet: temp_wallet,
+                                    identity,
+                                    session_cache,
+                                },
                             ),
                             Err(e) => (
                                 Err(e.to_string()),
-                                AppState::Unlocked { storage, wallet, identity, session_cache },
+                                AppState::Unlocked {
+                                    storage,
+                                    wallet,
+                                    identity,
+                                    session_cache,
+                                },
                             ),
                         }
                     }
                     // --- SELBSTHEILUNG ---
-                    Err(crate::error::VoucherCoreError::DoubleSpendAttemptBlocked { local_instance_id }) => {
+                    Err(crate::error::VoucherCoreError::DoubleSpendAttemptBlocked {
+                        local_instance_id,
+                    }) => {
                         let mut wallet_to_correct = wallet; // Nimm das Original
 
                         wallet_to_correct.update_voucher_status(
@@ -238,16 +359,40 @@ impl AppService {
 
                         match wallet_to_correct.save(&mut storage, &identity, &auth_method) {
                             Ok(_) => (
-                                Err(format!("Action blocked and wallet state corrected: Voucher {} was internally inconsistent and is now in quarantine.", local_instance_id)),
-                                AppState::Unlocked { storage, wallet: wallet_to_correct, identity, session_cache }
+                                Err(format!(
+                                    "Action blocked and wallet state corrected: Voucher {} was internally inconsistent and is now in quarantine.",
+                                    local_instance_id
+                                )),
+                                AppState::Unlocked {
+                                    storage,
+                                    wallet: wallet_to_correct,
+                                    identity,
+                                    session_cache,
+                                },
                             ),
                             Err(save_err) => (
-                                Err(format!("Critical Error: Failed to save wallet correction. Error: {}", save_err)),
-                                AppState::Unlocked { storage, wallet: wallet_to_correct, identity, session_cache }
-                            )
+                                Err(format!(
+                                    "Critical Error: Failed to save wallet correction. Error: {}",
+                                    save_err
+                                )),
+                                AppState::Unlocked {
+                                    storage,
+                                    wallet: wallet_to_correct,
+                                    identity,
+                                    session_cache,
+                                },
+                            ),
                         }
                     }
-                    Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity, session_cache }),
+                    Err(e) => (
+                        Err(e.to_string()),
+                        AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        },
+                    ),
                 }
             }
             AppState::Locked => (Err("Wallet is locked.".to_string()), AppState::Locked),
@@ -267,14 +412,23 @@ impl AppService {
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
         let (result, new_state) = match current_state {
-            AppState::Unlocked { mut storage, wallet, identity, session_cache } => {
-
+            AppState::Unlocked {
+                mut storage,
+                wallet,
+                identity,
+                session_cache,
+            } => {
                 // --- SPERRE ERLANGEN (RAII) ---
                 let _lock_guard = match WalletLockGuard::new(&storage) {
                     Ok(guard) => guard,
                     Err(e) => {
                         // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                        self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
+                        self.state = AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        };
                         return Err(e.to_string());
                     }
                 };
@@ -295,30 +449,54 @@ impl AppService {
                     bundle_data,
                     standard_definitions_toml,
                 ) {
-                    Err(e) => (Err(e), AppState::Unlocked { storage, wallet, identity, session_cache }),
+                    Err(e) => (
+                        Err(e),
+                        AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        },
+                    ),
                     Ok(_) => {
                         let auth_method;
 
                         match password {
                             Some(pwd_str) => {
                                 auth_method = AuthMethod::Password(pwd_str);
-                            },
+                            }
                             None => {
                                 let session_key = match &session_cache {
                                     Some(cache) => {
                                         let now = std::time::Instant::now();
                                         if now > cache.last_activity + cache.session_duration {
                                             // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                                            self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                                            return Err("Session timed out. Please provide password.".to_string());
+                                            self.state = AppState::Unlocked {
+                                                storage,
+                                                wallet,
+                                                identity,
+                                                session_cache,
+                                            };
+                                            return Err(
+                                                "Session timed out. Please provide password."
+                                                    .to_string(),
+                                            );
                                         } else {
                                             cache.session_key
                                         }
-                                    },
+                                    }
                                     None => {
                                         // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                                        self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                                        return Err("Password required. Please use 'unlock_session'.".to_string());
+                                        self.state = AppState::Unlocked {
+                                            storage,
+                                            wallet,
+                                            identity,
+                                            session_cache,
+                                        };
+                                        return Err(
+                                            "Password required. Please use 'unlock_session'."
+                                                .to_string(),
+                                        );
                                     }
                                 };
                                 auth_method = AuthMethod::SessionKey(session_key);
@@ -326,9 +504,12 @@ impl AppService {
                         }
                         // TRANSANKTIONALER ANSATZ:
                         let mut temp_wallet = wallet.clone();
-                        match temp_wallet
-                            .process_encrypted_transaction_bundle(&identity, bundle_data, archive, &verified_definitions)
-                        {
+                        match temp_wallet.process_encrypted_transaction_bundle(
+                            &identity,
+                            bundle_data,
+                            archive,
+                            &verified_definitions,
+                        ) {
                             Ok(proc_result) => {
                                 match temp_wallet.save(&mut storage, &identity, &auth_method) {
                                     Ok(_) => (
@@ -342,11 +523,24 @@ impl AppService {
                                     ),
                                     Err(e) => (
                                         Err(e.to_string()),
-                                        AppState::Unlocked { storage, wallet, identity, session_cache },
+                                        AppState::Unlocked {
+                                            storage,
+                                            wallet,
+                                            identity,
+                                            session_cache,
+                                        },
                                     ),
                                 }
                             }
-                            Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity, session_cache }),
+                            Err(e) => (
+                                Err(e.to_string()),
+                                AppState::Unlocked {
+                                    storage,
+                                    wallet,
+                                    identity,
+                                    session_cache,
+                                },
+                            ),
                         }
                     }
                 }
@@ -365,14 +559,23 @@ impl AppService {
     ) -> Result<(), String> {
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
         let (result, new_state) = match current_state {
-            AppState::Unlocked { mut storage, wallet, identity, session_cache } => {
-
+            AppState::Unlocked {
+                mut storage,
+                wallet,
+                identity,
+                session_cache,
+            } => {
                 // --- SPERRE ERLANGEN (RAII) ---
                 let _lock_guard = match WalletLockGuard::new(&storage) {
                     Ok(guard) => guard,
                     Err(e) => {
                         // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                        self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
+                        self.state = AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        };
                         return Err(e.to_string());
                     }
                 };
@@ -383,46 +586,73 @@ impl AppService {
                 match password {
                     Some(pwd_str) => {
                         auth_method = AuthMethod::Password(pwd_str);
-                    },
+                    }
                     None => {
-                        let session_key = match &session_cache {
-                            Some(cache) => {
-                                let now = std::time::Instant::now();
-                                if now > cache.last_activity + cache.session_duration {
-                                    // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                                    self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                                    return Err("Session timed out. Please provide password.".to_string());
-                                } else {
-                                    cache.session_key
+                        let session_key =
+                            match &session_cache {
+                                Some(cache) => {
+                                    let now = std::time::Instant::now();
+                                    if now > cache.last_activity + cache.session_duration {
+                                        // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
+                                        self.state = AppState::Unlocked {
+                                            storage,
+                                            wallet,
+                                            identity,
+                                            session_cache,
+                                        };
+                                        return Err("Session timed out. Please provide password."
+                                            .to_string());
+                                    } else {
+                                        cache.session_key
+                                    }
                                 }
-                            },
-                            None => {
-                                // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                                self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                                return Err("Password required. Please use 'unlock_session'.".to_string());
-                            }
-                        };
+                                None => {
+                                    // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
+                                    self.state = AppState::Unlocked {
+                                        storage,
+                                        wallet,
+                                        identity,
+                                        session_cache,
+                                    };
+                                    return Err("Password required. Please use 'unlock_session'."
+                                        .to_string());
+                                }
+                            };
                         auth_method = AuthMethod::SessionKey(session_key);
                     }
                 }
                 // TRANSANKTIONALER ANSATZ:
                 let mut temp_wallet = wallet.clone();
                 match temp_wallet.add_resolution_endorsement(endorsement) {
-                    Ok(_) => {
-                        match temp_wallet.save(&mut storage, &identity, &auth_method) {
-                            Ok(_) => (
-                                Ok(()),
-                                AppState::Unlocked {
-                                    storage,
-                                    wallet: temp_wallet,
-                                    identity,
-                                    session_cache,
-                                },
-                            ),
-                            Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity, session_cache }),
-                        }
-                    }
-                    Err(e) => (Err(e.to_string()), AppState::Unlocked { storage, wallet, identity, session_cache }),
+                    Ok(_) => match temp_wallet.save(&mut storage, &identity, &auth_method) {
+                        Ok(_) => (
+                            Ok(()),
+                            AppState::Unlocked {
+                                storage,
+                                wallet: temp_wallet,
+                                identity,
+                                session_cache,
+                            },
+                        ),
+                        Err(e) => (
+                            Err(e.to_string()),
+                            AppState::Unlocked {
+                                storage,
+                                wallet,
+                                identity,
+                                session_cache,
+                            },
+                        ),
+                    },
+                    Err(e) => (
+                        Err(e.to_string()),
+                        AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        },
+                    ),
                 }
             }
             AppState::Locked => (Err("Wallet is locked.".to_string()), AppState::Locked),

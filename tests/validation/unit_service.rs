@@ -5,9 +5,7 @@
 //! der Validierungs-Engine im `voucher_validation`-Service.
 
 use human_money_core::error::ValidationError;
-use human_money_core::models::voucher::{
-    ValueDefinition, Transaction, Voucher, VoucherSignature,
-};
+use human_money_core::models::voucher::{Transaction, ValueDefinition, Voucher, VoucherSignature};
 use human_money_core::models::voucher_standard_definition::VoucherStandardDefinition;
 use human_money_core::services::voucher_validation;
 use std::fs;
@@ -47,7 +45,13 @@ mod transaction_count_validation {
         // standard_strict_counts.toml [validation.counts] transactions = { min = 1, max = 2 }
         // create_base_voucher() fügt 1 Transaktion hinzu.
 
-        let count_rules = standard.validation.as_ref().unwrap().counts.as_ref().unwrap();
+        let count_rules = standard
+            .validation
+            .as_ref()
+            .unwrap()
+            .counts
+            .as_ref()
+            .unwrap();
         let result = voucher_validation::validate_transaction_count(&voucher, count_rules);
 
         assert!(result.is_ok());
@@ -59,7 +63,8 @@ mod transaction_count_validation {
 
         // Füge eine dritte Transaktion hinzu (verletzt max = 2)
         voucher.transactions.push(Transaction::default());
-        let result_above_max = voucher_validation::validate_transaction_count(&voucher, count_rules);
+        let result_above_max =
+            voucher_validation::validate_transaction_count(&voucher, count_rules);
         assert!(matches!(
             result_above_max.err().unwrap(),
             ValidationError::CountOutOfBounds { field, min, max, found }
@@ -85,7 +90,13 @@ mod content_rules_validation {
         voucher.voucher_standard.template.description = "INV-999888".to_string();
 
         let voucher_json = serde_json::to_value(&voucher).unwrap();
-        let content_rules = standard.validation.as_ref().unwrap().content_rules.as_ref().unwrap();
+        let content_rules = standard
+            .validation
+            .as_ref()
+            .unwrap()
+            .content_rules
+            .as_ref()
+            .unwrap();
         let result = voucher_validation::validate_content_rules(&voucher_json, content_rules);
 
         assert!(result.is_ok());
@@ -98,7 +109,13 @@ mod content_rules_validation {
         voucher.nominal_value.unit = "USD".to_string(); // Falsch, Standard erfordert EUR
 
         let voucher_json = serde_json::to_value(&voucher).unwrap();
-        let content_rules = standard.validation.as_ref().unwrap().content_rules.as_ref().unwrap();
+        let content_rules = standard
+            .validation
+            .as_ref()
+            .unwrap()
+            .content_rules
+            .as_ref()
+            .unwrap();
         let result = voucher_validation::validate_content_rules(&voucher_json, content_rules);
 
         assert!(matches!(
@@ -115,7 +132,13 @@ mod content_rules_validation {
         voucher.nominal_value.amount = "75.00".to_string(); // Nicht in der erlaubten Liste
 
         let voucher_json = serde_json::to_value(&voucher).unwrap();
-        let content_rules = standard.validation.as_ref().unwrap().content_rules.as_ref().unwrap();
+        let content_rules = standard
+            .validation
+            .as_ref()
+            .unwrap()
+            .content_rules
+            .as_ref()
+            .unwrap();
         let result = voucher_validation::validate_content_rules(&voucher_json, content_rules);
 
         assert!(matches!(
@@ -132,7 +155,13 @@ mod content_rules_validation {
         voucher.voucher_standard.template.description = "INVALID-123".to_string(); // Passt nicht zum Regex-Muster
 
         let voucher_json = serde_json::to_value(&voucher).unwrap();
-        let content_rules = standard.validation.as_ref().unwrap().content_rules.as_ref().unwrap();
+        let content_rules = standard
+            .validation
+            .as_ref()
+            .unwrap()
+            .content_rules
+            .as_ref()
+            .unwrap();
         let result = voucher_validation::validate_content_rules(&voucher_json, content_rules);
 
         assert!(matches!(
@@ -175,10 +204,20 @@ mod field_group_rules_validation {
         ];
 
         let voucher_json = serde_json::to_value(&voucher).unwrap();
-        let rules = standard.validation.as_ref().unwrap().field_group_rules.as_ref().unwrap();
+        let rules = standard
+            .validation
+            .as_ref()
+            .unwrap()
+            .field_group_rules
+            .as_ref()
+            .unwrap();
         let result = voucher_validation::validate_field_group_rules(&voucher_json, rules);
 
-        assert!(result.is_ok(), "Validation failed unexpectedly: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Validation failed unexpectedly: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -195,7 +234,13 @@ mod field_group_rules_validation {
         ];
 
         let voucher_json = serde_json::to_value(&voucher).unwrap();
-        let rules = standard.validation.as_ref().unwrap().field_group_rules.as_ref().unwrap();
+        let rules = standard
+            .validation
+            .as_ref()
+            .unwrap()
+            .field_group_rules
+            .as_ref()
+            .unwrap();
         let result = voucher_validation::validate_field_group_rules(&voucher_json, rules);
 
         let err = result.err().unwrap();
@@ -221,7 +266,8 @@ mod field_group_rules_validation {
     }
 
     #[test]
-    fn test_validate_field_group_rules_when_other_values_exist_but_required_are_met_then_succeeds() {
+    fn test_validate_field_group_rules_when_other_values_exist_but_required_are_met_then_succeeds()
+    {
         // Lade den Standard, der `field="role"` prüft.
         let standard = load_test_standard("standard_conflicting_rules.toml");
         let mut voucher = create_base_voucher();
@@ -238,10 +284,20 @@ mod field_group_rules_validation {
         ];
 
         let voucher_json = serde_json::to_value(&voucher).unwrap();
-        let rules = standard.validation.as_ref().unwrap().field_group_rules.as_ref().unwrap();
+        let rules = standard
+            .validation
+            .as_ref()
+            .unwrap()
+            .field_group_rules
+            .as_ref()
+            .unwrap();
         let result = voucher_validation::validate_field_group_rules(&voucher_json, rules);
 
-        assert!(result.is_ok(), "Validation failed unexpectedly: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Validation failed unexpectedly: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -249,7 +305,13 @@ mod field_group_rules_validation {
         let standard = load_test_standard("standard_path_not_found.toml");
         let voucher = create_base_voucher(); // Hat kein "non_existent_field"
         let voucher_json = serde_json::to_value(&voucher).unwrap();
-        let rules = standard.validation.as_ref().unwrap().field_group_rules.as_ref().unwrap();
+        let rules = standard
+            .validation
+            .as_ref()
+            .unwrap()
+            .field_group_rules
+            .as_ref()
+            .unwrap();
         let result = voucher_validation::validate_field_group_rules(&voucher_json, rules);
 
         assert!(matches!(
@@ -266,7 +328,13 @@ mod field_group_rules_validation {
             "signatures": "this should be an array"
         });
 
-        let rules = standard.validation.as_ref().unwrap().field_group_rules.as_ref().unwrap();
+        let rules = standard
+            .validation
+            .as_ref()
+            .unwrap()
+            .field_group_rules
+            .as_ref()
+            .unwrap();
         let result = voucher_validation::validate_field_group_rules(&voucher_json, rules);
 
         assert!(matches!(
@@ -301,13 +369,23 @@ mod diagnosis {
             .expect("Failed to serialize VoucherSignature for diagnosis");
 
         // Diese Ausgabe ist der primäre Zweck des Tests.
-        println!("[DIAGNOSIS JSON]: {}", serde_json::to_string_pretty(&json_value).unwrap());
+        println!(
+            "[DIAGNOSIS JSON]: {}",
+            serde_json::to_string_pretty(&json_value).unwrap()
+        );
 
         // KORREKTUR: Bestätigen, dass der Pfad "details.gender" ist, wie das JSON zeigt.
         let found_value = get_value_by_path(&json_value, "details.gender");
-        assert_eq!(found_value, Some(&serde_json::Value::String("1".to_string())), "Path 'details.gender' MUSS gefunden werden.");
+        assert_eq!(
+            found_value,
+            Some(&serde_json::Value::String("1".to_string())),
+            "Path 'details.gender' MUSS gefunden werden."
+        );
 
         let not_found_value = get_value_by_path(&json_value, "signer_details.gender");
-        assert_eq!(not_found_value, None, "Path 'signer_details.gender' darf NICHT gefunden werden.");
+        assert_eq!(
+            not_found_value, None,
+            "Path 'signer_details.gender' darf NICHT gefunden werden."
+        );
     }
 }

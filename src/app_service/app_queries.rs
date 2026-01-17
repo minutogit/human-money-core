@@ -1,8 +1,8 @@
 //! # src/app_service/app_queries.rs
 //!
 //! Enthält alle reinen Lese-Operationen (Queries) des `AppService`.
-use crate::wallet::{instance::VoucherStatus, AggregatedBalance};
-use super::{AppState, AppService};
+use super::{AppService, AppState};
+use crate::wallet::{AggregatedBalance, instance::VoucherStatus};
 use crate::wallet::{VoucherDetails, VoucherSummary, Wallet};
 
 impl AppService {

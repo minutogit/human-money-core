@@ -12,7 +12,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ValidationFailureReason {
     /// Die Anzahl der Bürgen-Signaturen ist zu niedrig.
-    GuarantorCountLow { required: u32, max: u32, current: u32 },
+    GuarantorCountLow {
+        required: u32,
+        max: u32,
+        current: u32,
+    },
     /// Die Anzahl der zusätzlichen Signaturen ist zu niedrig.
     AdditionalSignatureCountLow { required: u32, current: u32 },
     /// Eine spezifische, im Standard geforderte Signatur fehlt.

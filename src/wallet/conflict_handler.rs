@@ -6,21 +6,21 @@
 use super::{DoubleSpendCheckResult, Wallet};
 use crate::archive::VoucherArchive;
 use crate::error::{ValidationError, VoucherCoreError};
+use crate::models::profile::VoucherStore;
 use crate::models::{
     conflict::{
         FingerprintMetadata, ProofOfDoubleSpend, ResolutionEndorsement, TransactionFingerprint,
     },
     profile::{TransactionBundleHeader, UserIdentity},
-    voucher::{Voucher},
+    voucher::Voucher,
 };
 use crate::services::conflict_manager;
 use crate::services::crypto_utils::{
     get_hash, get_pubkey_from_user_id, get_short_hash_from_user_id, verify_ed25519,
 };
 use crate::services::utils::to_canonical_json;
-use crate::models::profile::VoucherStore;
-use crate::wallet::instance::{VoucherStatus};
 use crate::wallet::ProofOfDoubleSpendSummary;
+use crate::wallet::instance::VoucherStatus;
 use ed25519_dalek::Signature;
 use std::collections::HashMap;
 
@@ -44,10 +44,7 @@ impl Wallet {
 
     /// Führt eine vollständige Double-Spend-Prüfung durch.
     pub fn check_for_double_spend(&self) -> DoubleSpendCheckResult {
-        conflict_manager::check_for_double_spend(
-            &self.own_fingerprints,
-            &self.known_fingerprints,
-        )
+        conflict_manager::check_for_double_spend(&self.own_fingerprints, &self.known_fingerprints)
     }
 
     /// Entfernt alle abgelaufenen Fingerprints aus dem Speicher.
@@ -61,10 +58,7 @@ impl Wallet {
     }
 
     /// Importiert und merged fremde Fingerprints in den Speicher.
-    pub fn import_foreign_fingerprints(
-        &mut self,
-        data: &[u8],
-    ) -> Result<usize, VoucherCoreError> {
+    pub fn import_foreign_fingerprints(&mut self, data: &[u8]) -> Result<usize, VoucherCoreError> {
         conflict_manager::import_foreign_fingerprints(&mut self.known_fingerprints, data)
     }
 
@@ -195,7 +189,11 @@ impl Wallet {
             let signature_bytes = bs58::decode(&tx.sender_signature).into_vec()?;
             let signature = Signature::from_slice(&signature_bytes)?;
 
-            if verify_ed25519(&offender_pubkey, signature_payload_hash.as_bytes(), &signature) {
+            if verify_ed25519(
+                &offender_pubkey,
+                signature_payload_hash.as_bytes(),
+                &signature,
+            ) {
                 verified_tx_count += 1;
             }
         }
@@ -207,9 +205,7 @@ impl Wallet {
 
         let voucher = self
             .find_voucher_for_transaction(&conflicting_transactions[0].t_id, archive)?
-            .ok_or_else(|| {
-                VoucherCoreError::VoucherNotFound("for proof creation".to_string())
-            })?;
+            .ok_or_else(|| VoucherCoreError::VoucherNotFound("for proof creation".to_string()))?;
         let voucher_valid_until = voucher.valid_until.clone();
 
         // 4. Rufe den Service auf, um das Beweis-Objekt zu erstellen.
@@ -250,8 +246,7 @@ impl Wallet {
             })?;
 
             // Berechne den relevanten Fingerprint-Hash (die "Kollisions-ID")
-            let fingerprint_hash =
-                get_hash(format!("{}{}", last_tx.prev_hash, last_tx.sender_id));
+            let fingerprint_hash = get_hash(format!("{}{}", last_tx.prev_hash, last_tx.sender_id));
 
             // --- KORRIGIERTE LOGIK: Unterscheide Replay vs. Double Spend ---
 
@@ -386,10 +381,7 @@ impl Wallet {
 
             for fp in candidates_at_depth {
                 // Metadaten aktualisieren: Empfänger als "wissend" markieren
-                if let Some(meta) = self
-                    .fingerprint_metadata
-                    .get_mut(&fp.prvhash_senderid_hash)
-                {
+                if let Some(meta) = self.fingerprint_metadata.get_mut(&fp.prvhash_senderid_hash) {
                     meta.known_by_peers.insert(recipient_short_hash);
                     selected_fingerprints.push(fp.clone());
                     selected_depths.insert(fp.prvhash_senderid_hash.clone(), meta.depth);

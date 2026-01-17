@@ -5,12 +5,12 @@
 //! Ursprünglich in `tests/test_archive.rs`.
 
 use human_money_core::{
+    VoucherStatus,
     archive::file_archive::FileVoucherArchive,
-    models::{
-        conflict::{CanonicalMetadataStore},
-        profile::UserProfile,
-    },
-    models::voucher::{ValueDefinition}, services::voucher_manager, wallet::Wallet, VoucherStatus
+    models::voucher::ValueDefinition,
+    models::{conflict::CanonicalMetadataStore, profile::UserProfile},
+    services::voucher_manager,
+    wallet::Wallet,
 };
 use std::fs;
 use tempfile::tempdir;
@@ -29,7 +29,7 @@ fn test_voucher_archiving_on_full_spend() {
     let bob_identity = &ACTORS.bob;
 
     let mut alice_wallet = Wallet {
-        profile: UserProfile { 
+        profile: UserProfile {
             user_id: alice_identity.user_id.clone(),
             first_name: None,
             last_name: None,
@@ -76,15 +76,19 @@ fn test_voucher_archiving_on_full_spend() {
             ..Default::default()
         };
 
-        voucher_manager::create_voucher(voucher_data, standard, standard_hash, &alice_identity.signing_key, "en")
-            .unwrap()
+        voucher_manager::create_voucher(
+            voucher_data,
+            standard,
+            standard_hash,
+            &alice_identity.signing_key,
+            "en",
+        )
+        .unwrap()
     };
 
     let voucher_id = voucher.voucher_id.clone();
-    let local_id =
-        Wallet::calculate_local_instance_id(&voucher, &alice_identity.user_id).unwrap();
-    alice_wallet
-        .add_voucher_instance(local_id.clone(), voucher.clone(), VoucherStatus::Active);
+    let local_id = Wallet::calculate_local_instance_id(&voucher, &alice_identity.user_id).unwrap();
+    alice_wallet.add_voucher_instance(local_id.clone(), voucher.clone(), VoucherStatus::Active);
 
     // 2. AKTION
     // Alice sendet ihr GESAMTES Guthaben ("100") an Bob und übergibt dabei ihr Archiv.
@@ -109,12 +113,16 @@ fn test_voucher_archiving_on_full_spend() {
             Some(&archive), // Das Archiv-Backend wird übergeben.
         )
         .expect("Transfer with archive should succeed.");
-    
+
     // The new method returns only bundle bytes, not the voucher state, so we need to reconstruct
     // it from the bundle to maintain the test functionality
     let transferred_voucher_state = {
         // To get the transferred voucher state, we need to open the bundle
-        let bundle_result = human_money_core::services::bundle_processor::open_and_verify_bundle(&bob_identity, &bundle_bytes).unwrap();
+        let bundle_result = human_money_core::services::bundle_processor::open_and_verify_bundle(
+            &bob_identity,
+            &bundle_bytes,
+        )
+        .unwrap();
         bundle_result.vouchers.into_iter().next().unwrap()
     };
 

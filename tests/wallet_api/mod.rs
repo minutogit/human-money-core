@@ -9,7 +9,7 @@ pub mod signature_workflows;
 // Deklariert das neue Modul für komplexe Zustands- und Konflikttests.
 mod state_management;
 // Deklariert das neue Modul für Tests zur atomaren Zustandsverwaltung (Transaktionalität).
-mod transactionality;
-mod lifecycle_and_data;
 mod hostile_bundles;
 mod hostile_standards;
+mod lifecycle_and_data;
+mod transactionality;

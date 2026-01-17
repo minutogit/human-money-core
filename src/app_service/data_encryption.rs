@@ -3,7 +3,7 @@
 //! Enthält die `AppService`-Methoden zur Ver- und Entschlüsselung von
 //! beliebigen, anwendungsspezifischen Daten.
 
-use super::{AppState, AppService};
+use super::{AppService, AppState};
 use crate::storage::{AuthMethod, Storage, WalletLockGuard};
 
 impl AppService {
@@ -33,38 +33,50 @@ impl AppService {
             Some(pwd_str) => {
                 println!("[DEBUG DATA] Mode A (Some(password)) detected.");
                 match &mut self.state {
-                    AppState::Unlocked { storage, identity, .. } => {
+                    AppState::Unlocked {
+                        storage, identity, ..
+                    } => {
                         // KORREKTUR: Modus A verwendet AuthMethod::Password
                         let auth_method = AuthMethod::Password(pwd_str);
                         let result = {
                             // --- SPERRE ERLANGEN (RAII) ---
-                            let _lock_guard = WalletLockGuard::new(storage).map_err(|e| e.to_string())?;
+                            let _lock_guard =
+                                WalletLockGuard::new(storage).map_err(|e| e.to_string())?;
                             // --- SPERRE ENDE ---
                             storage
                                 .save_arbitrary_data(&identity.user_id, &auth_method, name, data)
                                 .map_err(|e| e.to_string())
                         };
                         result
-                    },
+                    }
                     AppState::Locked => Err("Wallet is locked.".to_string()),
                 }
-            },
+            }
             None => {
                 println!("[DEBUG DATA] Mode B (None) detected.");
                 let session_key = self.get_session_key()?;
                 let auth_method = AuthMethod::SessionKey(session_key);
                 match &mut self.state {
-                    AppState::Unlocked { storage, identity, .. } => {
+                    AppState::Unlocked {
+                        storage, identity, ..
+                    } => {
                         let result = {
                             // --- SPERRE ERLANGEN (RAII) ---
-                            let _lock_guard = WalletLockGuard::new(storage).map_err(|e| e.to_string())?;
+                            let _lock_guard =
+                                WalletLockGuard::new(storage).map_err(|e| e.to_string())?;
                             // --- SPERRE ENDE ---
                             storage
                                 .save_arbitrary_data(&identity.user_id, &auth_method, name, data)
-                                .map_err(|e| { println!("[DEBUG DATA] Mode B: save_arbitrary_data FAILED: {}", e); e.to_string() })
+                                .map_err(|e| {
+                                    println!(
+                                        "[DEBUG DATA] Mode B: save_arbitrary_data FAILED: {}",
+                                        e
+                                    );
+                                    e.to_string()
+                                })
                         };
                         result
-                    },
+                    }
                     AppState::Locked => Err("Wallet is locked.".to_string()),
                 }
             }
@@ -93,24 +105,34 @@ impl AppService {
             Some(pwd_str) => {
                 println!("[DEBUG DATA] Mode A (Some(password)) detected.");
                 match &mut self.state {
-                    AppState::Unlocked { storage, identity, .. } => {
+                    AppState::Unlocked {
+                        storage, identity, ..
+                    } => {
                         // KORREKTUR: Modus A verwendet AuthMethod::Password
                         let auth_method = AuthMethod::Password(pwd_str);
                         storage
                             .load_arbitrary_data(&identity.user_id, &auth_method, name)
-                            .map_err(|e| { println!("[DEBUG DATA] Mode A: load_arbitrary_data FAILED: {}", e); e.to_string() })
-                    },
+                            .map_err(|e| {
+                                println!("[DEBUG DATA] Mode A: load_arbitrary_data FAILED: {}", e);
+                                e.to_string()
+                            })
+                    }
                     AppState::Locked => Err("Wallet is locked.".to_string()),
                 }
-            },
+            }
             None => {
                 println!("[DEBUG DATA] Mode B (None) detected.");
                 let session_key = self.get_session_key()?;
                 let auth_method = AuthMethod::SessionKey(session_key);
                 match &mut self.state {
-                    AppState::Unlocked { storage, identity, .. } => storage
+                    AppState::Unlocked {
+                        storage, identity, ..
+                    } => storage
                         .load_arbitrary_data(&identity.user_id, &auth_method, name)
-                        .map_err(|e| { println!("[DEBUG DATA] Mode B: load_arbitrary_data FAILED: {}", e); e.to_string() }),
+                        .map_err(|e| {
+                            println!("[DEBUG DATA] Mode B: load_arbitrary_data FAILED: {}", e);
+                            e.to_string()
+                        }),
                     AppState::Locked => Err("Wallet is locked.".to_string()),
                 }
             }

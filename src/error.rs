@@ -4,7 +4,7 @@
 //! Verwendet `thiserror` zur einfachen Erstellung von aussagekräftigen Fehlern
 //! und zur automatischen Konvertierung von untergeordneten Fehlertypen.
 
-use thiserror::Error;
+use crate::wallet::instance::VoucherStatus;
 use crate::{
     services::{
         crypto_utils::{GetPubkeyError, SymmetricEncryptionError},
@@ -13,7 +13,7 @@ use crate::{
     },
     storage::StorageError,
 };
-use crate::wallet::instance::VoucherStatus;
+use thiserror::Error;
 
 /// Definiert Fehler, die bei der Verarbeitung einer `VoucherStandardDefinition` auftreten können.
 #[derive(Error, Debug)]
@@ -37,9 +37,10 @@ pub enum StandardDefinitionError {
 #[derive(Error, Debug)]
 pub enum ValidationError {
     // --- Datengesteuerte Validierungsfehler ---
-
     /// Eine quantitative Regel wurde verletzt (z.B. zu viele oder zu wenige Signaturen).
-    #[error("Count for '{field}' is out of bounds. Expected min: {min}, max: {max}, but found: {found}.")]
+    #[error(
+        "Count for '{field}' is out of bounds. Expected min: {min}, max: {max}, but found: {found}."
+    )]
     CountOutOfBounds {
         field: String,
         min: u32,
@@ -60,7 +61,9 @@ pub enum ValidationError {
     },
 
     /// Der Wert eines Feldes ist in der Liste der erlaubten Werte nicht enthalten.
-    #[error("Field '{field}' has a value that is not in the allowed list. Found: {found}, Allowed: {allowed:?}.")]
+    #[error(
+        "Field '{field}' has a value that is not in the allowed list. Found: {found}, Allowed: {allowed:?}."
+    )]
     FieldValueNotAllowed {
         field: String,
         found: serde_json::Value,
@@ -68,7 +71,9 @@ pub enum ValidationError {
     },
 
     /// Der Wert eines Feldes entspricht nicht dem geforderten Regex-Muster.
-    #[error("Field '{field}' does not match the required pattern '{pattern}'. Found value: '{found}'.")]
+    #[error(
+        "Field '{field}' does not match the required pattern '{pattern}'. Found value: '{found}'."
+    )]
     FieldRegexMismatch {
         field: String,
         pattern: String,
@@ -84,13 +89,12 @@ pub enum ValidationError {
 
     /// Ein Wert unter einem Pfad hatte einen unerwarteten Datentyp.
     #[error("Invalid data type at path '{path}', expected {expected}")]
-    InvalidDataType {
-        path: String,
-        expected: String,
-    },
+    InvalidDataType { path: String, expected: String },
 
     /// Ein Feldwert in einer Gruppe von Objekten kam nicht in der erwarteten Häufigkeit (min/max) vor.
-    #[error("Field group validation failed for field '{field}' at path '{path}': Expected value '{value}' to appear between {min} and {max} times, but found {found}.")]
+    #[error(
+        "Field group validation failed for field '{field}' at path '{path}': Expected value '{value}' to appear between {min} and {max} times, but found {found}."
+    )]
     FieldValueCountOutOfBounds {
         path: String,
         field: String,
@@ -105,18 +109,16 @@ pub enum ValidationError {
     VoucherNotDivisible,
 
     /// Die Gültigkeitsdauer des Gutscheins überschreitet die im Standard definierte Maximaldauer.
-    #[error("Voucher validity duration exceeds the maximum allowed. Max allowed: '{max_allowed}', Found: '{found}'.")]
-    ValidityDurationExceeded {
-        max_allowed: String,
-        found: String,
-    },
+    #[error(
+        "Voucher validity duration exceeds the maximum allowed. Max allowed: '{max_allowed}', Found: '{found}'."
+    )]
+    ValidityDurationExceeded { max_allowed: String, found: String },
 
     /// Ein JSON-Pfad konnte im Gutschein-Objekt nicht gefunden werden.
     #[error("Content rule failed: Path '{path}' could not be resolved in the voucher.")]
     PathNotFound { path: String },
 
     // --- Logische & kryptographische Validierungsfehler ---
-
     /// Die UUID des Standards im Gutschein stimmt nicht mit der UUID der Validierungsdefinition überein.
     #[error("Voucher standard UUID mismatch. Expected: {expected}, Found: {found}")]
     StandardUuidMismatch { expected: String, found: String },
@@ -149,7 +151,9 @@ pub enum ValidationError {
     InvalidTransaction(String),
 
     /// Der `voucher_id` (Hash der Stammdaten) passt nicht zu den Stammdaten.
-    #[error("Voucher hash mismatch: The voucher's data hash (voucher_id) does not match its content.")]
+    #[error(
+        "Voucher hash mismatch: The voucher's data hash (voucher_id) does not match its content."
+    )]
     InvalidVoucherHash,
 
     /// Die Signatur einer Transaktion ist ungültig.
@@ -173,57 +177,86 @@ pub enum ValidationError {
     TooManyDecimalPlaces { allowed: u32, found: u32 },
 
     /// Der Betrag der `init`-Transaktion stimmt nicht mit dem Nennwert des Gutscheins überein.
-    #[error("Initial transaction amount must match nominal value. Expected: {expected}, Found: {found}")]
+    #[error(
+        "Initial transaction amount must match nominal value. Expected: {expected}, Found: {found}"
+    )]
     InitAmountMismatch { expected: String, found: String },
 
     // --- Neue Validierungsfehler aus 'test_advanced_validation' ---
-
     /// Das Gültigkeitsdatum liegt vor dem Erstellungsdatum.
-    #[error("Invalid date logic: valid_until ('{valid_until}') cannot be before creation_date ('{creation}').")]
-    InvalidDateLogic { creation: String, valid_until: String },
+    #[error(
+        "Invalid date logic: valid_until ('{valid_until}') cannot be before creation_date ('{creation}')."
+    )]
+    InvalidDateLogic {
+        creation: String,
+        valid_until: String,
+    },
 
     /// Ein Bürge hat versucht, mehrfach für denselben Gutschein zu bürgen.
     #[error("Duplicate guarantor found: {guarantor_id}. Each guarantor can only sign once.")]
     DuplicateGuarantor { guarantor_id: String },
 
     /// Ein Zeitstempel in der Kette ist nicht chronologisch korrekt.
-    #[error("Invalid time order for {entity} '{id}': timestamp '{time2}' is not after previous timestamp '{time1}'.")]
-    InvalidTimeOrder { entity: String, id: String, time1: String, time2: String },
+    #[error(
+        "Invalid time order for {entity} '{id}': timestamp '{time2}' is not after previous timestamp '{time1}'."
+    )]
+    InvalidTimeOrder {
+        entity: String,
+        id: String,
+        time1: String,
+        time2: String,
+    },
 
     /// Sender oder Empfänger der 'init'-Transaktion ist nicht der Ersteller des Gutscheins.
     #[error("Initial transaction party mismatch: expected '{expected}', found '{found}'.")]
     InitPartyMismatch { expected: String, found: String },
 
     /// Die t_id einer Transaktion stimmt nicht mit dem Hash ihres Inhalts überein.
-    #[error("Transaction ID mismatch for transaction '{t_id}'. The content may have been tampered with.")]
+    #[error(
+        "Transaction ID mismatch for transaction '{t_id}'. The content may have been tampered with."
+    )]
     MismatchedTransactionId { t_id: String },
 
     /// Die Teilbarkeitseigenschaft des Gutscheins stimmt nicht mit der des Standards überein.
-    #[error("Divisibility mismatch: voucher is '{from_voucher}' but standard requires '{from_standard}'.")]
-    IncorrectDivisibility { from_voucher: bool, from_standard: bool },
+    #[error(
+        "Divisibility mismatch: voucher is '{from_voucher}' but standard requires '{from_standard}'."
+    )]
+    IncorrectDivisibility {
+        from_voucher: bool,
+        from_standard: bool,
+    },
 
     /// Ein Betrag in einer Transaktion ist negativ oder null.
     #[error("Transaction amount must be positive, but found '{amount}'.")]
     NegativeOrZeroAmount { amount: String },
 
     /// Bei einem vollen Transfer stimmt der Transaktionsbetrag nicht mit dem Guthaben des Senders überein.
-    #[error("Full transfer amount mismatch: Sender's balance is '{expected}', but transaction amount is '{found}'.")]
+    #[error(
+        "Full transfer amount mismatch: Sender's balance is '{expected}', but transaction amount is '{found}'."
+    )]
     FullTransferAmountMismatch { expected: String, found: String },
 
     /// Während der Überprüfung der Transaktionskette wurden unzureichende Mittel festgestellt.
-    #[error("Insufficient funds found in transaction chain for user '{user_id}'. Needed: {needed}, Available: {available}")]
-    InsufficientFundsInChain { user_id: String, needed: String, available: String },
+    #[error(
+        "Insufficient funds found in transaction chain for user '{user_id}'. Needed: {needed}, Available: {available}"
+    )]
+    InsufficientFundsInChain {
+        user_id: String,
+        needed: String,
+        available: String,
+    },
 
     /// Die Gültigkeitsdauer des Gutscheins ist kürzer als vom Standard gefordert.
-    #[error("The voucher's effective validity duration is shorter than the minimum required by the standard.")]
+    #[error(
+        "The voucher's effective validity duration is shorter than the minimum required by the standard."
+    )]
     ValidityDurationTooShort,
 
     /// Die im Gutschein gespeicherte Mindestgültigkeitsregel stimmt nicht mit der des Standards überein.
-    #[error("The minimum validity duration rule stored in the voucher does not match the standard. Expected: {expected}, Found: {found}")]
-    MismatchedMinimumValidity {
-        expected: String,
-        found: String,
-    },
+    #[error(
+        "The minimum validity duration rule stored in the voucher does not match the standard. Expected: {expected}, Found: {found}"
+    )]
+    MismatchedMinimumValidity { expected: String, found: String },
 
     /// The voucher's validity duration exceeds the maximum allowed by the standard.
     #[error("Voucher validity duration is too long. Maximum allowed is {max_allowed}.")]
@@ -234,7 +267,9 @@ pub enum ValidationError {
     InvalidAmountFormat { path: String, found: String },
 
     /// An amount field has more decimal places than the standard allows.
-    #[error("Invalid amount precision at path '{path}'. Standard allows max {max_places} decimal places, but found {found}.")]
+    #[error(
+        "Invalid amount precision at path '{path}'. Standard allows max {max_places} decimal places, but found {found}."
+    )]
     InvalidAmountPrecision {
         path: String,
         max_places: u8,
@@ -246,7 +281,6 @@ pub enum ValidationError {
     CreatorAsGuarantor { creator_id: String },
 }
 
-
 /// Der zentrale Fehlertyp für alle Operationen in der `human_money_core`-Bibliothek.
 #[derive(Error, Debug)]
 pub enum VoucherCoreError {
@@ -254,9 +288,13 @@ pub enum VoucherCoreError {
     Validation(#[from] ValidationError),
     #[error("Bundle has already been processed and was rejected. Bundle ID: {bundle_id}")]
     BundleAlreadyProcessed { bundle_id: String },
-    #[error("Transaction fingerprint is already known, indicating a potential replay attack. Fingerprint Hash: {fingerprint_hash}")]
+    #[error(
+        "Transaction fingerprint is already known, indicating a potential replay attack. Fingerprint Hash: {fingerprint_hash}"
+    )]
     TransactionFingerprintAlreadyKnown { fingerprint_hash: String },
-    #[error("Bundle Recipient Mismatch: This bundle was not intended for this wallet. Expected recipient: {expected}, but last transaction was for: {found}")]
+    #[error(
+        "Bundle Recipient Mismatch: This bundle was not intended for this wallet. Expected recipient: {expected}, but last transaction was for: {found}"
+    )]
     BundleRecipientMismatch { expected: String, found: String },
     #[error("Voucher Manager Error: {0}")]
     Manager(#[from] VoucherManagerError),
@@ -298,7 +336,9 @@ pub enum VoucherCoreError {
     VoucherNotActive(VoucherStatus),
     #[error("Ownership validation failed: {0}")]
     VoucherOwnershipNotFound(String),
-    #[error("Double spend attempt blocked for voucher {local_instance_id}: A transaction has already been issued from this voucher state.")]
+    #[error(
+        "Double spend attempt blocked for voucher {local_instance_id}: A transaction has already been issued from this voucher state."
+    )]
     DoubleSpendAttemptBlocked { local_instance_id: String },
     #[error("Base58 decode error: {0}")]
     Bs58Decode(#[from] bs58::decode::Error),

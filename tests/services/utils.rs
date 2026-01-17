@@ -8,9 +8,10 @@
 
 // --- Tests from test_date_utils.rs ---
 
-use human_money_core::test_utils::{ACTORS, SILVER_STANDARD};
 use chrono::{DateTime, Utc};
+use human_money_core::test_utils::{ACTORS, SILVER_STANDARD};
 use human_money_core::{
+    NewVoucherData, VoucherCoreError,
     error::ValidationError,
     services::{
         crypto_utils,
@@ -18,7 +19,6 @@ use human_money_core::{
         voucher_manager::{self, create_voucher},
         voucher_validation::validate_voucher_against_standard,
     },
-    NewVoucherData, VoucherCoreError,
 };
 
 #[test]
@@ -72,33 +72,59 @@ fn test_iso8601_duration_date_math_correctness() {
 fn test_round_up_date_logic() {
     let test_cases = vec![
         // 1. Aufrunden auf das Ende des Tages
-        ("2025-08-26T10:20:30Z", "P1D", "2025-08-26T23:59:59.999999999Z"),
+        (
+            "2025-08-26T10:20:30Z",
+            "P1D",
+            "2025-08-26T23:59:59.999999999Z",
+        ),
         // 2. Aufrunden auf das Ende des Monats (31 Tage)
-        ("2025-01-15T12:00:00Z", "P1M", "2025-01-31T23:59:59.999999999Z"),
+        (
+            "2025-01-15T12:00:00Z",
+            "P1M",
+            "2025-01-31T23:59:59.999999999Z",
+        ),
         // 3. Aufrunden auf das Ende des Monats (Februar, kein Schaltjahr)
-        ("2025-02-10T00:00:00Z", "P1M", "2025-02-28T23:59:59.999999999Z"),
+        (
+            "2025-02-10T00:00:00Z",
+            "P1M",
+            "2025-02-28T23:59:59.999999999Z",
+        ),
         // 4. Randfall: Aufrunden am letzten Tag des Monats (Schaltjahr)
-        ("2024-02-29T18:00:00Z", "P1M", "2024-02-29T23:59:59.999999999Z"),
+        (
+            "2024-02-29T18:00:00Z",
+            "P1M",
+            "2024-02-29T23:59:59.999999999Z",
+        ),
         // 5. Aufrunden auf das Ende des Jahres
-        ("2025-03-01T01:00:00Z", "P1Y", "2025-12-31T23:59:59.999999999Z"),
+        (
+            "2025-03-01T01:00:00Z",
+            "P1Y",
+            "2025-12-31T23:59:59.999999999Z",
+        ),
         // 6. Randfall: Aufrunden am letzten Tag des Jahres
-        ("2025-12-31T23:00:00Z", "P1Y", "2025-12-31T23:59:59.999999999Z"),
+        (
+            "2025-12-31T23:00:00Z",
+            "P1Y",
+            "2025-12-31T23:59:59.999999999Z",
+        ),
     ];
 
     for (start_str, rounding_str, expected_str) in test_cases {
-        let start_date = DateTime::parse_from_rfc3339(start_str).unwrap().with_timezone(&Utc);
-        let expected_date = DateTime::parse_from_rfc3339(expected_str).unwrap().with_timezone(&Utc);
+        let start_date = DateTime::parse_from_rfc3339(start_str)
+            .unwrap()
+            .with_timezone(&Utc);
+        let expected_date = DateTime::parse_from_rfc3339(expected_str)
+            .unwrap()
+            .with_timezone(&Utc);
 
         // Annahme: `round_up_date` ist für den Test aufrufbar.
         let result_date = voucher_manager::round_up_date(start_date, rounding_str)
             .expect("Rounding calculation should not fail");
 
         assert_eq!(
-            result_date,
-            expected_date,
+            result_date, expected_date,
             "Failed on rounding case: {} with rule {}",
-            start_str,
-            rounding_str
+            start_str, rounding_str
         );
     }
 }
@@ -123,7 +149,14 @@ fn test_chronological_validation_with_timezones() {
     };
 
     // KORREKTUR: Übergebe den korrekten `signing_key` vom Typ &SigningKey.
-    let mut voucher = create_voucher(voucher_data, standard, standard_hash, &test_user.signing_key, "en").unwrap();
+    let mut voucher = create_voucher(
+        voucher_data,
+        standard,
+        standard_hash,
+        &test_user.signing_key,
+        "en",
+    )
+    .unwrap();
 
     // 2. Manipuliere den Zeitstempel der `init`-Transaktion so, dass er VOR dem Erstellungsdatum des Gutscheins liegt.
     // Die Validierung sollte dies als Fehler erkennen.
@@ -137,7 +170,10 @@ fn test_chronological_validation_with_timezones() {
     let payload = serde_json::json!({ "prev_hash": tx.prev_hash, "sender_id": tx.sender_id, "t_id": tx.t_id });
     let signature_hash = crypto_utils::get_hash(to_canonical_json(&payload).unwrap());
     // KORREKTUR: Übergebe den korrekten `signing_key` vom Typ &SigningKey.
-    tx.sender_signature = bs58::encode(crypto_utils::sign_ed25519(&test_user.signing_key, signature_hash.as_bytes()).to_bytes()).into_string();
+    tx.sender_signature = bs58::encode(
+        crypto_utils::sign_ed25519(&test_user.signing_key, signature_hash.as_bytes()).to_bytes(),
+    )
+    .into_string();
     voucher.transactions[0] = tx;
 
     // 3. Validierung: Die Transaktionszeit (`2020`) liegt nun vor dem Erstellungsdatum (`~2025`).
@@ -159,7 +195,8 @@ fn test_chronological_validation_with_timezones() {
 // --- Tests from test_local_instance_id.rs ---
 
 use human_money_core::models::voucher::{
-    Address, Collateral, ValueDefinition, Transaction, Voucher, VoucherStandard, VoucherTemplateData,
+    Address, Collateral, Transaction, ValueDefinition, Voucher, VoucherStandard,
+    VoucherTemplateData,
 };
 use human_money_core::services::crypto_utils::get_hash;
 use human_money_core::services::utils::get_current_timestamp;
@@ -281,8 +318,10 @@ fn test_local_id_after_full_transfer() {
     assert!(result_recipient.is_ok());
     let local_id_recipient = result_recipient.unwrap();
 
-    let expected_combined_string =
-        format!("{}{}{}", voucher.voucher_id, "t-transfer-def", &recipient.user_id);
+    let expected_combined_string = format!(
+        "{}{}{}",
+        voucher.voucher_id, "t-transfer-def", &recipient.user_id
+    );
     let expected_hash = get_hash(expected_combined_string);
 
     assert_eq!(local_id_recipient, expected_hash);
@@ -292,8 +331,15 @@ fn test_local_id_after_full_transfer() {
     let result_creator = Wallet::calculate_local_instance_id(&voucher, &creator.user_id);
     assert!(result_creator.is_ok());
     let creators_archived_id = result_creator.unwrap();
-    let expected_archived_string = format!("{}{}{}", voucher.voucher_id, "t-transfer-def", &creator.user_id);
-    assert_eq!(creators_archived_id, get_hash(expected_archived_string), "Die archivierte ID des Erstellers sollte auf der Transfer-Transaktion basieren.");
+    let expected_archived_string = format!(
+        "{}{}{}",
+        voucher.voucher_id, "t-transfer-def", &creator.user_id
+    );
+    assert_eq!(
+        creators_archived_id,
+        get_hash(expected_archived_string),
+        "Die archivierte ID des Erstellers sollte auf der Transfer-Transaktion basieren."
+    );
 }
 
 /// Testet die `local_instance_id` für Sender und Empfänger nach einer Teilung (Split).
@@ -329,8 +375,10 @@ fn test_local_id_after_split() {
     let result_recipient = Wallet::calculate_local_instance_id(&voucher, &recipient.user_id);
     assert!(result_recipient.is_ok());
     let local_id_recipient = result_recipient.unwrap();
-    let expected_combined_recipient =
-        format!("{}{}{}", voucher.voucher_id, "t-split-ghi", &recipient.user_id);
+    let expected_combined_recipient = format!(
+        "{}{}{}",
+        voucher.voucher_id, "t-split-ghi", &recipient.user_id
+    );
     assert_eq!(local_id_recipient, get_hash(expected_combined_recipient));
 }
 
@@ -344,9 +392,10 @@ fn test_local_id_for_non_owner() {
 
     let result = Wallet::calculate_local_instance_id(&voucher, &non_owner.user_id);
     assert!(result.is_err());
-    assert!(
-        matches!(result.unwrap_err(), VoucherCoreError::VoucherOwnershipNotFound(_))
-    );
+    assert!(matches!(
+        result.unwrap_err(),
+        VoucherCoreError::VoucherOwnershipNotFound(_)
+    ));
 }
 
 /// Stellt sicher, dass sich die `local_instance_id` ändert, wenn ein Gutschein
@@ -384,9 +433,19 @@ fn test_local_id_changes_on_round_trip() {
     // auf der Transaktion basiert, bei der sie die Senderin war.
     assert!(alice_result_after_send.is_ok());
     let alice_archived_id = alice_result_after_send.unwrap();
-    assert_ne!(initial_alice_id, alice_archived_id, "Alice's archived ID should NOT be her initial ID.");
-    let expected_archived_string = format!("{}{}{}", voucher.voucher_id, "t-alice-to-bob", &alice.user_id);
-    assert_eq!(alice_archived_id, get_hash(expected_archived_string), "Alice's archived ID should be based on the transaction to Bob.");
+    assert_ne!(
+        initial_alice_id, alice_archived_id,
+        "Alice's archived ID should NOT be her initial ID."
+    );
+    let expected_archived_string = format!(
+        "{}{}{}",
+        voucher.voucher_id, "t-alice-to-bob", &alice.user_id
+    );
+    assert_eq!(
+        alice_archived_id,
+        get_hash(expected_archived_string),
+        "Alice's archived ID should be based on the transaction to Bob."
+    );
 
     // 4. Bob sendet den Gutschein zurück an Alice
     let tx_to_alice = Transaction {
@@ -416,7 +475,9 @@ fn test_local_id_changes_on_round_trip() {
     );
 
     // Die neue ID muss auf der letzten Transaktion basieren.
-    let expected_final_string =
-        format!("{}{}{}", voucher.voucher_id, "t-bob-to-alice", &alice.user_id);
+    let expected_final_string = format!(
+        "{}{}{}",
+        voucher.voucher_id, "t-bob-to-alice", &alice.user_id
+    );
     assert_eq!(final_alice_id, get_hash(expected_final_string));
 }

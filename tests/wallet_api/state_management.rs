@@ -5,22 +5,26 @@
 //! Handhabung von Konflikten wie Double-Spending.
 
 use human_money_core::{
+    VoucherStatus,
     app_service::AppService,
-    models::{conflict::{ProofOfDoubleSpend, ResolutionEndorsement}, profile::PublicProfile, voucher::{ValueDefinition}},
+    models::{
+        conflict::{ProofOfDoubleSpend, ResolutionEndorsement},
+        profile::PublicProfile,
+        voucher::ValueDefinition,
+    },
     services::{crypto_utils, voucher_manager::NewVoucherData},
     test_utils::{
-        create_test_bundle, generate_signed_standard_toml,
-        resign_transaction, ACTORS, SILVER_STANDARD,
+        ACTORS, SILVER_STANDARD, create_test_bundle, generate_signed_standard_toml,
+        resign_transaction,
     },
-    VoucherStatus,
 };
 
 use chrono::DateTime;
 use chrono::{Duration, Utc};
-use std::{collections::HashMap};
 use human_money_core::test_utils;
-use tempfile::tempdir;
 use human_money_core::{models::voucher::Transaction, services::utils};
+use std::collections::HashMap;
+use tempfile::tempdir;
 
 /// Lokale Test-Hilfsfunktion, um einen mock `ProofOfDoubleSpend` zu erzeugen.
 fn create_mock_proof_of_double_spend(
@@ -53,9 +57,11 @@ fn api_app_service_full_conflict_resolution_workflow() {
     let reporter = &ACTORS.reporter;
     let victim = &ACTORS.victim;
 
-    let (mut service_reporter, profile_reporter) = test_utils::setup_service_with_profile(dir_reporter.path(), reporter, "Reporter", password);
+    let (mut service_reporter, profile_reporter) =
+        test_utils::setup_service_with_profile(dir_reporter.path(), reporter, "Reporter", password);
     service_reporter.unlock_session(password, 60).unwrap();
-    let (mut service_victim, _) = test_utils::setup_service_with_profile(dir_victim.path(), victim, "Victim", password);
+    let (mut service_victim, _) =
+        test_utils::setup_service_with_profile(dir_victim.path(), victim, "Victim", password);
     service_victim.unlock_session(password, 60).unwrap();
     let id_victim = service_victim.get_user_id().unwrap();
 
@@ -65,7 +71,10 @@ fn api_app_service_full_conflict_resolution_workflow() {
 
     // Test-interne Hilfsfunktion, um den Beweis direkt in den Store zu legen.
     let (wallet, _identity) = service_reporter.get_unlocked_mut_for_test();
-    wallet.proof_store.proofs.insert(proof.proof_id.clone(), proof);
+    wallet
+        .proof_store
+        .proofs
+        .insert(proof.proof_id.clone(), proof);
 
     // --- 3. Aktion 1 (Reporter): Konflikt als ungelöst listen ---
     let conflicts_before = service_reporter.list_conflicts().unwrap();
@@ -74,9 +83,11 @@ fn api_app_service_full_conflict_resolution_workflow() {
 
     // --- 4. Aktion 2 (Opfer): Beilegung erstellen ---
     let (wallet_victim, _identity_victim) = service_victim.get_unlocked_mut_for_test();
-    let proof_for_victim = create_mock_proof_of_double_spend("offender-xyz", &id_victim, None, None);
+    let proof_for_victim =
+        create_mock_proof_of_double_spend("offender-xyz", &id_victim, None, None);
     wallet_victim
-        .proof_store.proofs
+        .proof_store
+        .proofs
         .insert(proof_for_victim.proof_id.clone(), proof_for_victim);
 
     let endorsement = service_victim
@@ -144,9 +155,11 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     let dir_david = tempdir().unwrap();
     let alice = &ACTORS.alice;
     let david = &ACTORS.david;
-    let (mut service_alice, _) = test_utils::setup_service_with_profile(dir_alice.path(), alice, "Alice", "pwd");
+    let (mut service_alice, _) =
+        test_utils::setup_service_with_profile(dir_alice.path(), alice, "Alice", "pwd");
     service_alice.unlock_session("pwd", 60).unwrap();
-    let (mut service_david, _) = test_utils::setup_service_with_profile(dir_david.path(), david, "David", "pwd");
+    let (mut service_david, _) =
+        test_utils::setup_service_with_profile(dir_david.path(), david, "David", "pwd");
     service_david.unlock_session("pwd", 60).unwrap();
     let id_alice = service_alice.get_user_id().unwrap();
     let id_david = service_david.get_user_id().unwrap();
@@ -163,11 +176,17 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
             &silver_standard_toml,
             "en",
             NewVoucherData {
-                nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
-                creator_profile: PublicProfile { id: Some(id_alice.clone()), ..Default::default() },
+                nominal_value: ValueDefinition {
+                    amount: "100".to_string(),
+                    ..Default::default()
+                },
+                creator_profile: PublicProfile {
+                    id: Some(id_alice.clone()),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            Some("pwd")
+            Some("pwd"),
         )
         .unwrap();
 
@@ -210,9 +229,13 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
 
     let bundle_bob =
         create_test_bundle(&identity_alice, vec![voucher_v2_bob], &id_david, None).unwrap();
-    let bundle_charlie =
-        create_test_bundle(&identity_alice, vec![voucher_v2_charlie.clone()], &id_david, None)
-            .unwrap();
+    let bundle_charlie = create_test_bundle(
+        &identity_alice,
+        vec![voucher_v2_charlie.clone()],
+        &id_david,
+        None,
+    )
+    .unwrap();
 
     // --- 4. David empfängt zuerst das spätere Bundle (Charlie) ---
     service_david
@@ -230,7 +253,11 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
 
     // --- 6. Assertions ---
     let summaries_after = service_david.get_voucher_summaries(None, None).unwrap();
-    assert_eq!(summaries_after.len(), 2, "Wallet should now contain two instances");
+    assert_eq!(
+        summaries_after.len(),
+        2,
+        "Wallet should now contain two instances"
+    );
 
     let summary_charlie = service_david
         .get_voucher_details(&charlie_instance_id)
@@ -264,9 +291,11 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     let dir_david = tempdir().unwrap();
     let david = &ACTORS.david;
 
-    let (mut service_alice, _) = test_utils::setup_service_with_profile(dir_alice.path(), alice, "Alice", "pwd");
+    let (mut service_alice, _) =
+        test_utils::setup_service_with_profile(dir_alice.path(), alice, "Alice", "pwd");
     service_alice.unlock_session("pwd", 60).unwrap();
-    let (mut service_david, _) = test_utils::setup_service_with_profile(dir_david.path(), david, "David", "pwd");
+    let (mut service_david, _) =
+        test_utils::setup_service_with_profile(dir_david.path(), david, "David", "pwd");
     service_david.unlock_session("pwd", 60).unwrap();
     let id_alice = service_alice.get_user_id().unwrap();
     let id_david = service_david.get_user_id().unwrap();
@@ -282,17 +311,25 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
             &silver_standard_toml,
             "en",
             NewVoucherData {
-                nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
-                creator_profile: PublicProfile { id: Some(id_alice.clone()), ..Default::default() },
+                nominal_value: ValueDefinition {
+                    amount: "100".to_string(),
+                    ..Default::default()
+                },
+                creator_profile: PublicProfile {
+                    id: Some(id_alice.clone()),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            Some("pwd")
+            Some("pwd"),
         )
         .unwrap();
 
     // --- 2. Erzeuge konkurrierende Transaktionen mit IDENTISCHEM Zeitstempel ---
     let prev_tx = voucher_v1.transactions.last().unwrap();
-    let prev_tx_time = DateTime::parse_from_rfc3339(&prev_tx.t_time).unwrap().with_timezone(&Utc);
+    let prev_tx_time = DateTime::parse_from_rfc3339(&prev_tx.t_time)
+        .unwrap()
+        .with_timezone(&Utc);
     let collision_time = (prev_tx_time + Duration::seconds(1)).to_rfc3339();
     let prev_tx_hash = crypto_utils::get_hash(utils::to_canonical_json(prev_tx).unwrap());
 
@@ -313,29 +350,58 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
 
     // Pfad B: Full-Transfer 100
     let mut tx_b = Transaction {
-        prev_hash: prev_tx_hash, t_type: "transfer".to_string(), t_time: collision_time,
-        sender_id: id_alice.clone(), recipient_id: id_david.clone(), amount: "100".to_string(), ..Default::default()
+        prev_hash: prev_tx_hash,
+        t_type: "transfer".to_string(),
+        t_time: collision_time,
+        sender_id: id_alice.clone(),
+        recipient_id: id_david.clone(),
+        amount: "100".to_string(),
+        ..Default::default()
     };
     tx_b = resign_transaction(tx_b, &identity_alice.signing_key);
     let mut voucher_b = voucher_v1.clone();
     voucher_b.transactions.push(tx_b.clone());
 
-    let bundle_a = create_test_bundle(&identity_alice, vec![voucher_a.clone()], &id_david, None).unwrap();
+    let bundle_a =
+        create_test_bundle(&identity_alice, vec![voucher_a.clone()], &id_david, None).unwrap();
     let bundle_b = create_test_bundle(&identity_alice, vec![voucher_b], &id_david, None).unwrap();
 
-    assert_ne!(tx_a.t_id, tx_b.t_id, "Conflicting transactions must have different t_ids");
+    assert_ne!(
+        tx_a.t_id, tx_b.t_id,
+        "Conflicting transactions must have different t_ids"
+    );
 
     // --- 3. David empfängt beide Bundles ---
-    service_david.receive_bundle(&bundle_a, &standards_map, None, Some("pwd")).unwrap();
-    service_david.receive_bundle(&bundle_b, &standards_map, None, Some("pwd")).unwrap();
+    service_david
+        .receive_bundle(&bundle_a, &standards_map, None, Some("pwd"))
+        .unwrap();
+    service_david
+        .receive_bundle(&bundle_b, &standards_map, None, Some("pwd"))
+        .unwrap();
 
     // --- 4. Assertions ---
     let summaries_after = service_david.get_voucher_summaries(None, None).unwrap();
-    assert_eq!(summaries_after.len(), 2, "Wallet should contain two instances");
-    let active_count = summaries_after.iter().filter(|s| s.status == VoucherStatus::Active).count();
-    let quarantined_count = summaries_after.iter().filter(|s| matches!(s.status, VoucherStatus::Quarantined{..})).count();
-    assert_eq!(active_count, 1, "Exactly one voucher should be active (tie-break)");
-    assert_eq!(quarantined_count, 1, "Exactly one voucher should be quarantined (tie-break)");
+    assert_eq!(
+        summaries_after.len(),
+        2,
+        "Wallet should contain two instances"
+    );
+    let active_count = summaries_after
+        .iter()
+        .filter(|s| s.status == VoucherStatus::Active)
+        .count();
+    let quarantined_count = summaries_after
+        .iter()
+        .filter(|s| matches!(s.status, VoucherStatus::Quarantined { .. }))
+        .count();
+    assert_eq!(
+        active_count, 1,
+        "Exactly one voucher should be active (tie-break)"
+    );
+    assert_eq!(
+        quarantined_count, 1,
+        "Exactly one voucher should be quarantined (tie-break)"
+    );
 }
 
 /// Test 2.1: Stellt sicher, dass der gesamte Zustand eines Wallets verlustfrei
@@ -353,7 +419,8 @@ fn api_wallet_save_and_load_fidelity() {
 
     // --- 2. Wallet A in komplexen Zustand versetzen ---
     {
-        let (mut service_a, _) = test_utils::setup_service_with_profile(dir.path(), test_user, "Test User A", password);
+        let (mut service_a, _) =
+            test_utils::setup_service_with_profile(dir.path(), test_user, "Test User A", password);
         service_a.unlock_session(password, 60).unwrap();
         let id_a = service_a.get_user_id().unwrap();
         service_a
@@ -361,7 +428,10 @@ fn api_wallet_save_and_load_fidelity() {
                 &silver_toml,
                 "en",
                 NewVoucherData {
-                    creator_profile: PublicProfile { id: Some(id_a.clone()), ..Default::default() },
+                    creator_profile: PublicProfile {
+                        id: Some(id_a.clone()),
+                        ..Default::default()
+                    },
                     nominal_value: ValueDefinition {
                         unit: "Unzen".to_string(),
                         amount: "10".to_string(),
@@ -370,7 +440,7 @@ fn api_wallet_save_and_load_fidelity() {
                     },
                     ..Default::default()
                 },
-                Some(password)
+                Some(password),
             )
             .unwrap();
 
@@ -393,17 +463,17 @@ fn api_wallet_save_and_load_fidelity() {
             sender_profile_name: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
-        standards_toml.insert(
-            silver_standard.metadata.uuid.clone(),
-            silver_toml.clone()
-        );
-        service_a.create_transfer_bundle(request, &standards_toml, None, Some(password)).unwrap();
+        standards_toml.insert(silver_standard.metadata.uuid.clone(), silver_toml.clone());
+        service_a
+            .create_transfer_bundle(request, &standards_toml, None, Some(password))
+            .unwrap();
 
         // Bundle-Metadaten durch Empfang erzeugen
         let transfer_back_bundle = {
             let dir_bob = tempdir().unwrap();
             let bob = &ACTORS.bob;
-            let (mut service_bob, _) = test_utils::setup_service_with_profile(dir_bob.path(), bob, "Bob", "pwd");
+            let (mut service_bob, _) =
+                test_utils::setup_service_with_profile(dir_bob.path(), bob, "Bob", "pwd");
             service_bob.unlock_session("pwd", 60).unwrap();
             let id_bob = service_bob.get_user_id().unwrap();
             service_bob
@@ -411,14 +481,22 @@ fn api_wallet_save_and_load_fidelity() {
                     &silver_toml,
                     "en",
                     NewVoucherData {
-                        creator_profile: PublicProfile { id: Some(id_bob), ..Default::default() },
-                        nominal_value: ValueDefinition { amount: "1".to_string(), ..Default::default() },
+                        creator_profile: PublicProfile {
+                            id: Some(id_bob),
+                            ..Default::default()
+                        },
+                        nominal_value: ValueDefinition {
+                            amount: "1".to_string(),
+                            ..Default::default()
+                        },
                         ..Default::default()
                     },
-                    Some("pwd")
+                    Some("pwd"),
                 )
                 .unwrap();
-            let local_id = service_bob.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
+            let local_id = service_bob.get_voucher_summaries(None, None).unwrap()[0]
+                .local_instance_id
+                .clone();
 
             let request = human_money_core::wallet::MultiTransferRequest {
                 recipient_id: id_a.clone(),
@@ -431,15 +509,16 @@ fn api_wallet_save_and_load_fidelity() {
             };
 
             let mut standards_toml = std::collections::HashMap::new();
-            standards_toml.insert(
-                silver_standard.metadata.uuid.clone(),
-                silver_toml.clone()
-            );
+            standards_toml.insert(silver_standard.metadata.uuid.clone(), silver_toml.clone());
 
-            let human_money_core::wallet::CreateBundleResult { bundle_bytes, .. } = service_bob.create_transfer_bundle(request, &standards_toml, None, Some("pwd")).unwrap();
+            let human_money_core::wallet::CreateBundleResult { bundle_bytes, .. } = service_bob
+                .create_transfer_bundle(request, &standards_toml, None, Some("pwd"))
+                .unwrap();
             bundle_bytes
         };
-        service_a.receive_bundle(&transfer_back_bundle, &standards_map, None, Some(password)).unwrap();
+        service_a
+            .receive_bundle(&transfer_back_bundle, &standards_map, None, Some(password))
+            .unwrap();
 
         // --- Schritt B: Vollständiger Transfer ---
         let summary_before_full_transfer = service_a.get_voucher_summaries(None, None).unwrap();
@@ -459,27 +538,40 @@ fn api_wallet_save_and_load_fidelity() {
             sender_profile_name: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
-        standards_toml.insert(
-            silver_standard.metadata.uuid.clone(),
-            silver_toml.clone()
-        );
-        service_a.create_transfer_bundle(request, &standards_toml, None, Some(password)).unwrap();
+        standards_toml.insert(silver_standard.metadata.uuid.clone(), silver_toml.clone());
+        service_a
+            .create_transfer_bundle(request, &standards_toml, None, Some(password))
+            .unwrap();
     } // service_a geht out of scope
 
     // --- 3. Wallet B aus demselben Verzeichnis laden ---
     let mut service_b = AppService::new(dir.path()).unwrap();
     let profile_b = service_b.list_profiles().unwrap().pop().unwrap();
-    service_b.login(&profile_b.folder_name, password, false)
+    service_b
+        .login(&profile_b.folder_name, password, false)
         .expect("Login for service_b should succeed");
 
     // --- 4. Assertions ---
     let summaries = service_b.get_voucher_summaries(None, None).unwrap();
-    assert_eq!(summaries.len(), 2, "Should have 2 voucher instances (1 active, 1 archived)");
+    assert_eq!(
+        summaries.len(),
+        2,
+        "Should have 2 voucher instances (1 active, 1 archived)"
+    );
 
-    let archived_count = summaries.iter().filter(|s| s.status == VoucherStatus::Archived).count();
-    let active_count = summaries.iter().filter(|s| s.status == VoucherStatus::Active).count();
+    let archived_count = summaries
+        .iter()
+        .filter(|s| s.status == VoucherStatus::Archived)
+        .count();
+    let active_count = summaries
+        .iter()
+        .filter(|s| s.status == VoucherStatus::Active)
+        .count();
     assert_eq!(active_count, 1, "Incorrect number of active vouchers found");
-    assert_eq!(archived_count, 1, "Incorrect number of archived vouchers found");
+    assert_eq!(
+        archived_count, 1,
+        "Incorrect number of archived vouchers found"
+    );
 
     let balances = service_b.get_total_balance_by_currency().unwrap();
     let silver_balance = balances
@@ -487,14 +579,13 @@ fn api_wallet_save_and_load_fidelity() {
         .find(|b| b.unit == "Oz")
         .map(|b| b.total_amount.as_str());
 
-    assert_eq!(
-        silver_balance,
-        Some("1.0000"),
-        "Silver balance mismatch"
-    );
+    assert_eq!(silver_balance, Some("1.0000"), "Silver balance mismatch");
 
     let minuto_balance_exists = balances.iter().any(|b| b.unit == "Min");
-    assert!(!minuto_balance_exists, "Minuto balance should not exist as it was never created");
+    assert!(
+        !minuto_balance_exists,
+        "Minuto balance should not exist as it was never created"
+    );
 }
 
 /// Test 6.1: Verifiziert, dass `create_new_voucher` exakt eine Instanz hinzufügt.
@@ -504,18 +595,29 @@ fn test_create_voucher_adds_exactly_one_instance() {
     let test_user = &ACTORS.test_user;
     let password = "test_password_123";
     let dir = tempdir().expect("Failed to create temp dir");
-    let (mut app_service, _) = test_utils::setup_service_with_profile(dir.path(), test_user, "Test User", password);
+    let (mut app_service, _) =
+        test_utils::setup_service_with_profile(dir.path(), test_user, "Test User", password);
     app_service.unlock_session(password, 60).unwrap();
     let user_id = app_service.get_user_id().unwrap();
 
     let initial_summaries = app_service.get_voucher_summaries(None, None).unwrap();
-    assert_eq!(initial_summaries.len(), 0, "Wallet should be empty at the beginning");
+    assert_eq!(
+        initial_summaries.len(),
+        0,
+        "Wallet should be empty at the beginning"
+    );
 
     let standard_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
 
     let voucher_data = NewVoucherData {
-        creator_profile: PublicProfile { id: Some(user_id), ..Default::default() },
-        nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
+        creator_profile: PublicProfile {
+            id: Some(user_id),
+            ..Default::default()
+        },
+        nominal_value: ValueDefinition {
+            amount: "100".to_string(),
+            ..Default::default()
+        },
         validity_duration: Some("P1Y".to_string()),
         ..Default::default()
     };
@@ -528,13 +630,20 @@ fn test_create_voucher_adds_exactly_one_instance() {
     // 3. ASSERT
     let final_summaries = app_service.get_voucher_summaries(None, None).unwrap();
 
-    assert_eq!(final_summaries.len(), 1, "There should be exactly one voucher in the wallet after creation");
+    assert_eq!(
+        final_summaries.len(),
+        1,
+        "There should be exactly one voucher in the wallet after creation"
+    );
 
     let summary = &final_summaries[0];
     assert_eq!(summary.current_amount, "100.0000");
 
     let expected_description = "Dieser Gutschein dient als Zahlungsmittel für Waren oder Dienstleistungen im Wert von 100 Unzen Silber.";
-    assert_eq!(created_voucher.voucher_standard.template.description, expected_description, "The description from the silver standard template was not applied correctly.");
+    assert_eq!(
+        created_voucher.voucher_standard.template.description, expected_description,
+        "The description from the silver standard template was not applied correctly."
+    );
 }
 
 /// Test 6.2: Stellt sicher, dass `create_new_voucher` transaktional ist.
@@ -544,35 +653,66 @@ fn test_create_voucher_is_transactional_on_save_failure() {
     let test_user = &ACTORS.test_user;
     let correct_password = "correct_password";
     let dir = tempdir().expect("Failed to create temp dir");
-    let (mut app_service, _) = test_utils::setup_service_with_profile(dir.path(), test_user, "Test User", correct_password);
+    let (mut app_service, _) = test_utils::setup_service_with_profile(
+        dir.path(),
+        test_user,
+        "Test User",
+        correct_password,
+    );
     app_service.unlock_session(correct_password, 60).unwrap();
     let user_id = app_service.get_user_id().unwrap();
 
     let standard_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let voucher_data = NewVoucherData {
-        creator_profile: PublicProfile { id: Some(user_id), ..Default::default() },
-        nominal_value: ValueDefinition { amount: "50".to_string(), ..Default::default() },
+        creator_profile: PublicProfile {
+            id: Some(user_id),
+            ..Default::default()
+        },
+        nominal_value: ValueDefinition {
+            amount: "50".to_string(),
+            ..Default::default()
+        },
         validity_duration: Some("P1Y".to_string()),
         ..Default::default()
     };
 
     // 2. ACT 1: Versuche, mit falschem Passwort zu erstellen
-    let creation_result_fail = app_service
-        .create_new_voucher(&standard_toml, "de", voucher_data.clone(), Some("WRONG_PASSWORD"));
+    let creation_result_fail = app_service.create_new_voucher(
+        &standard_toml,
+        "de",
+        voucher_data.clone(),
+        Some("WRONG_PASSWORD"),
+    );
 
     // 3. ASSERT 1
-    assert!(creation_result_fail.is_err(), "Creation with wrong password should fail");
+    assert!(
+        creation_result_fail.is_err(),
+        "Creation with wrong password should fail"
+    );
     let summaries_after_fail = app_service.get_voucher_summaries(None, None).unwrap();
-    assert_eq!(summaries_after_fail.len(), 0, "Wallet should still be empty after a failed save");
+    assert_eq!(
+        summaries_after_fail.len(),
+        0,
+        "Wallet should still be empty after a failed save"
+    );
 
     // 4. ACT 2: Erstelle einen Gutschein mit dem korrekten Passwort
     app_service
-        .create_new_voucher(&standard_toml, "de", voucher_data.clone(), Some(correct_password))
+        .create_new_voucher(
+            &standard_toml,
+            "de",
+            voucher_data.clone(),
+            Some(correct_password),
+        )
         .expect("Voucher creation with correct password should succeed");
 
     // 5. ASSERT 2
     let final_summaries = app_service.get_voucher_summaries(None, None).unwrap();
-    assert_eq!(final_summaries.len(), 1, "There should be exactly one voucher in the wallet after one failed and one successful creation");
+    assert_eq!(
+        final_summaries.len(),
+        1,
+        "There should be exactly one voucher in the wallet after one failed and one successful creation"
+    );
 }
 
 /// Test 7.1: Verifiziert die "Stale State"-Sicherheitslücke bei konkurrierendem Zugriff.
@@ -592,18 +732,13 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
     let dir = tempdir().unwrap();
     let alice = &ACTORS.alice;
     let password = "super-secret-password";
-    let silver_toml =
-        generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     let mut standards_map = HashMap::new();
     standards_map.insert(silver_standard.metadata.uuid.clone(), silver_toml.clone());
 
-    let (mut service_initial, profile_info) = test_utils::setup_service_with_profile(
-        dir.path(),
-        alice,
-        "Alice Concurrent",
-        password,
-    );
+    let (mut service_initial, profile_info) =
+        test_utils::setup_service_with_profile(dir.path(), alice, "Alice Concurrent", password);
     let id_alice = service_initial.get_user_id().unwrap();
 
     // Erstelle den Gutschein
@@ -626,9 +761,7 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
         )
         .unwrap();
 
-    let voucher_to_spend_id = service_initial
-        .get_voucher_summaries(None, None)
-        .unwrap()[0]
+    let voucher_to_spend_id = service_initial.get_voucher_summaries(None, None).unwrap()[0]
         .local_instance_id
         .clone();
 
@@ -660,18 +793,20 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
         sender_profile_name: None,
     };
 
-    let result_actor = app_actor.create_transfer_bundle(
-        request_bob,
-        &standards_map,
-        None,
-        Some(password),
+    let result_actor =
+        app_actor.create_transfer_bundle(request_bob, &standards_map, None, Some(password));
+    assert!(
+        result_actor.is_ok(),
+        "Der erste Transfer (Actor) sollte erfolgreich sein"
     );
-    assert!(result_actor.is_ok(), "Der erste Transfer (Actor) sollte erfolgreich sein");
 
     // --- 3b. SIMULIERE EXTERNEN LOCK ---
     // Da wir uns im selben Prozess befinden, würde app_stale den Lock sonst erhalten.
     // Wir schreiben PID 1 (init/systemd), was fast immer existiert und als "alive" gilt.
-    let lock_path = dir.path().join(&profile_info.folder_name).join(".wallet.lock");
+    let lock_path = dir
+        .path()
+        .join(&profile_info.folder_name)
+        .join(".wallet.lock");
     std::fs::write(&lock_path, "1").expect("Failed to create fake lock file");
 
     // --- 4. Stale Instanz handelt (basierend auf altem Speicherstand) ---
@@ -685,12 +820,8 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
         sender_profile_name: None,
     };
 
-    let result_stale = app_stale.create_transfer_bundle(
-        request_charlie,
-        &standards_map,
-        None,
-        Some(password),
-    );
+    let result_stale =
+        app_stale.create_transfer_bundle(request_charlie, &standards_map, None, Some(password));
 
     // Cleanup des Fake-Locks
     let _ = std::fs::remove_file(lock_path);

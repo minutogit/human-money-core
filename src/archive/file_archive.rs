@@ -6,7 +6,8 @@ use super::{ArchiveError, VoucherArchive};
 use crate::models::voucher::Transaction;
 use crate::models::voucher::Voucher;
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
-use crate::services::utils::to_canonical_json; use std::{fs, path::PathBuf};
+use crate::services::utils::to_canonical_json;
+use std::{fs, path::PathBuf};
 
 /// Eine Implementierung des `VoucherArchive`-Traits, die auf dem Dateisystem basiert.
 ///
@@ -84,9 +85,7 @@ impl VoucherArchive for FileVoucherArchive {
                     let entry = entry?;
                     let path = entry.path();
                     if path.is_file() && path.extension().map_or(false, |s| s == "json") {
-                        if let Ok(voucher) =
-                            serde_json::from_slice::<Voucher>(&fs::read(&path)?)
-                        {
+                        if let Ok(voucher) = serde_json::from_slice::<Voucher>(&fs::read(&path)?) {
                             if let Some(tx) = voucher.transactions.iter().find(|t| t.t_id == t_id) {
                                 return Ok(Some((voucher.clone(), tx.clone())));
                             }

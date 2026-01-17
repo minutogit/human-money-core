@@ -6,14 +6,13 @@
 
 // Explizite Pfadangabe für das `test_utils`-Modul, um Unklarheiten zu vermeiden.
 
-
 // --- Tests from test_secure_container.rs ---
-use human_money_core::test_utils::ACTORS;
+use human_money_core::VoucherCoreError;
 use human_money_core::models::secure_container::PayloadType;
 use human_money_core::services::secure_container_manager::{
-    create_secure_container, open_secure_container, ContainerManagerError,
+    ContainerManagerError, create_secure_container, open_secure_container,
 };
-use human_money_core::VoucherCoreError;
+use human_money_core::test_utils::ACTORS;
 
 #[test]
 fn test_multi_recipient_secure_container() {
@@ -37,20 +36,26 @@ fn test_multi_recipient_secure_container() {
         secret_payload,
         PayloadType::Generic("test_message".to_string()),
     )
-        .unwrap();
+    .unwrap();
 
     // --- 3. VERIFICATION BY RECIPIENTS ---
 
     // Bob versucht, den Container zu öffnen.
     let bob_payload = open_secure_container(&container, &bob_identity).unwrap();
     assert_eq!(bob_payload, secret_payload);
-    assert_eq!(container.c, PayloadType::Generic("test_message".to_string()));
+    assert_eq!(
+        container.c,
+        PayloadType::Generic("test_message".to_string())
+    );
     println!("SUCCESS: Bob successfully opened the container.");
 
     // Carol versucht, denselben Container zu öffnen.
     let carol_payload = open_secure_container(&container, &carol_identity).unwrap();
     assert_eq!(carol_payload, secret_payload);
-    assert_eq!(container.c, PayloadType::Generic("test_message".to_string()));
+    assert_eq!(
+        container.c,
+        PayloadType::Generic("test_message".to_string())
+    );
     println!("SUCCESS: Carol successfully opened the container.");
 
     // --- 4. VERIFICATION FAILURE BY UNAUTHORIZED USER ---
@@ -65,7 +70,10 @@ fn test_multi_recipient_secure_container() {
             // Korrekter Fehlertyp
             println!("SUCCESS: Dave was correctly denied access.");
         }
-        e => panic!("Dave's access should be denied with NotAnIntendedRecipient error, but got {:?}", e),
+        e => panic!(
+            "Dave's access should be denied with NotAnIntendedRecipient error, but got {:?}",
+            e
+        ),
     }
 }
 
@@ -92,8 +100,7 @@ fn test_sender_can_reopen_container() {
     // Der Empfänger kann den Container öffnen.
     let recipient_payload = open_secure_container(&container, recipient).unwrap();
     assert_eq!(
-        recipient_payload,
-        payload,
+        recipient_payload, payload,
         "Recipient should be able to open the container"
     );
 
@@ -101,8 +108,7 @@ fn test_sender_can_reopen_container() {
     // Der Sender muss denselben Container ebenfalls öffnen können.
     let sender_payload = open_secure_container(&container, sender).unwrap();
     assert_eq!(
-        sender_payload,
-        payload,
+        sender_payload, payload,
         "Sender should be able to re-open their own container"
     );
     println!("SUCCESS: Sender was able to re-open the container, Double Key Wrapping works.");
@@ -111,17 +117,16 @@ fn test_sender_can_reopen_container() {
 // --- Tests from test_crypto_utils.rs ---
 
 use bip39::Language;
+use hkdf::Hkdf;
 use human_money_core::services::crypto_utils::{
-    create_user_id, decrypt_data, derive_ed25519_keypair, ed25519_pub_to_x25519,
-    ed25519_sk_to_x25519_sk, encrypt_data, generate_ed25519_keypair_for_tests, UserIdError,
+    UserIdError, create_user_id, decrypt_data, derive_ed25519_keypair, ed25519_pub_to_x25519,
+    ed25519_sk_to_x25519_sk, encrypt_data, generate_ed25519_keypair_for_tests,
     generate_ephemeral_x25519_keypair, generate_mnemonic, get_pubkey_from_user_id,
     perform_diffie_hellman, sign_ed25519, validate_mnemonic_phrase, validate_user_id,
     verify_ed25519,
 };
-use hkdf::Hkdf;
 use sha2::Sha256;
 use x25519_dalek::PublicKey as X25519PublicKey;
-
 
 #[test]
 fn test_generate_mnemonic() -> Result<(), Box<dyn std::error::Error>> {
@@ -147,20 +152,30 @@ fn test_validate_mnemonic() {
     // 1. Test mit einer bekanntermaßen gültigen Phrase
     let valid_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
     let result = validate_mnemonic_phrase(valid_mnemonic);
-    assert!(result.is_ok(), "Validation of a correct mnemonic failed. Error: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Validation of a correct mnemonic failed. Error: {:?}",
+        result.err()
+    );
     println!("SUCCESS: Correctly validated a valid mnemonic.");
 
     // 2. Test mit einem ungültigen Wort
     let invalid_word_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon hello";
     let result = validate_mnemonic_phrase(invalid_word_mnemonic);
-    assert!(result.is_err(), "Validation should have failed for an invalid word.");
+    assert!(
+        result.is_err(),
+        "Validation should have failed for an invalid word."
+    );
     println!("SUCCESS: Correctly identified a mnemonic with an invalid word.");
 
     // 3. Test mit einer ungültigen Prüfsumme
     // "about" wurde durch "abandon" ersetzt, was die Prüfsumme ungültig macht.
     let bad_checksum_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
     let result = validate_mnemonic_phrase(bad_checksum_mnemonic);
-    assert!(result.is_err(), "Validation should have failed for a bad checksum.");
+    assert!(
+        result.is_err(),
+        "Validation should have failed for a bad checksum."
+    );
     println!("SUCCESS: Correctly identified a mnemonic with a bad checksum.");
 }
 
@@ -175,8 +190,8 @@ fn test_validate_mnemonic() {
 /// Ein Benutzer kann dieselbe Mnemonic (und damit denselben Public Key,
 /// z.B. `...did:key:zABC`) auf mehreren Geräten (z.B. PC und Mobiltelefon) verwenden.
 ///
-/// Damit ein an `pc-123@did:key:zABC` gesendeter Gutschein nicht versehentlich
-/// auch vom Mobiltelefon (z.B. `mobil-456@did:key:zABC`) angenommen werden kann,
+/// Damit ein an `pc:123@did:key:zABC` gesendeter Gutschein nicht versehentlich
+/// auch vom Mobiltelefon (z.B. `mobil:456@did:key:zABC`) angenommen werden kann,
 /// muss die Wallet-Logik die *gesamte User-ID* strikt prüfen.
 ///
 /// Indem wir ein Präfix erzwingen, vereinfachen wir das mentale Modell für den
@@ -229,8 +244,14 @@ fn test_ephemeral_dh_key_generation() {
     let (bob_dh_pub, bob_dh_priv) = generate_ephemeral_x25519_keypair();
     assert_eq!(alice_dh_pub.as_bytes().len(), 32);
     assert_eq!(bob_dh_pub.as_bytes().len(), 32);
-    println!("Alice's ephemeral public key: {}", hex::encode(alice_dh_pub.to_bytes()));
-    println!("Bob's ephemeral public key: {}", hex::encode(bob_dh_pub.to_bytes()));
+    println!(
+        "Alice's ephemeral public key: {}",
+        hex::encode(alice_dh_pub.to_bytes())
+    );
+    println!(
+        "Bob's ephemeral public key: {}",
+        hex::encode(bob_dh_pub.to_bytes())
+    );
 
     let alice_shared = perform_diffie_hellman(alice_dh_priv, &bob_dh_pub);
     let bob_shared = perform_diffie_hellman(bob_dh_priv, &alice_dh_pub);
@@ -277,7 +298,10 @@ fn test_get_pubkey_from_user_id() -> Result<(), Box<dyn std::error::Error>> {
     let signature = sign_ed25519(&ed_sk, message);
     let is_valid_recovered = verify_ed25519(&recovered_ed_pub, message, &signature);
     assert!(is_valid_recovered);
-    println!("Signature valid (using RECOVERED key)? {}", is_valid_recovered);
+    println!(
+        "Signature valid (using RECOVERED key)? {}",
+        is_valid_recovered
+    );
     Ok(())
 }
 
@@ -294,7 +318,10 @@ fn test_static_encryption_flow() {
     let alice_x_sk_static = ed25519_sk_to_x25519_sk(&alice_ed_sk);
     let alice_x_pub_from_sk = X25519PublicKey::from(&alice_x_sk_static);
     let alice_x_pub_from_pub = ed25519_pub_to_x25519(&alice_ed_pub);
-    assert_eq!(alice_x_pub_from_sk.as_bytes(), alice_x_pub_from_pub.as_bytes());
+    assert_eq!(
+        alice_x_pub_from_sk.as_bytes(),
+        alice_x_pub_from_pub.as_bytes()
+    );
     println!("SUCCESS: Private key conversion (Ed25519 -> X25519) is consistent.");
 
     // 3. Führe einen statischen Diffie-Hellman-Austausch durch.
@@ -313,18 +340,25 @@ fn test_static_encryption_flow() {
     // 4. Leite einen sicheren Verschlüsselungsschlüssel aus dem gemeinsamen Geheimnis ab (Best Practice).
     let hkdf = Hkdf::<Sha256>::new(None, shared_secret_alice.as_bytes());
     let mut encryption_key = [0u8; 32];
-    hkdf.expand(b"voucher-p2p-encryption", &mut encryption_key).unwrap();
+    hkdf.expand(b"voucher-p2p-encryption", &mut encryption_key)
+        .unwrap();
 
     // 5. Teste die Ver- und Entschlüsselung.
     let plaintext = b"This is a secret message for Bob.";
     println!("Plaintext: '{}'", std::str::from_utf8(plaintext).unwrap());
 
     let encrypted_data = encrypt_data(&encryption_key, plaintext).unwrap();
-    println!("Encrypted (hex, nonce prefixed): {}", hex::encode(&encrypted_data));
+    println!(
+        "Encrypted (hex, nonce prefixed): {}",
+        hex::encode(&encrypted_data)
+    );
     assert_ne!(plaintext, &encrypted_data[..]); // Sicherstellen, dass es kein Klartext ist.
 
     let decrypted_data = decrypt_data(&encryption_key, &encrypted_data).unwrap();
-    println!("Decrypted: '{}'", std::str::from_utf8(&decrypted_data).unwrap());
+    println!(
+        "Decrypted: '{}'",
+        std::str::from_utf8(&decrypted_data).unwrap()
+    );
     assert_eq!(plaintext.to_vec(), decrypted_data);
     println!("SUCCESS: Message was encrypted and decrypted correctly.");
 

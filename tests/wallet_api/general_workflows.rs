@@ -7,25 +7,25 @@
 
 // Binde das `test_utils` Modul explizit über seinen Dateipfad ein.
 
-
 use human_money_core::test_utils::{
-    add_voucher_to_wallet, create_voucher_for_manipulation, generate_signed_standard_toml,
-    generate_valid_mnemonic, setup_in_memory_wallet, setup_service_with_profile, ACTORS, MINUTO_STANDARD, SILVER_STANDARD,
+    ACTORS, MINUTO_STANDARD, SILVER_STANDARD, add_voucher_to_wallet,
+    create_voucher_for_manipulation, generate_signed_standard_toml, generate_valid_mnemonic,
+    setup_in_memory_wallet, setup_service_with_profile,
+};
+use human_money_core::{
+    VoucherCoreError, VoucherStatus,
+    app_service::AppService,
+    models::{
+        profile::PublicProfile, voucher::ValueDefinition,
+        voucher_standard_definition::VoucherStandardDefinition,
+    },
+    services::voucher_manager::NewVoucherData,
+    storage::AuthMethod,
+    wallet::Wallet,
 };
 use rust_decimal::Decimal;
 use std::str::FromStr;
 use tempfile::tempdir;
-use human_money_core::{
-    app_service::AppService,
-    models::{
-        voucher::{ValueDefinition},
-        voucher_standard_definition::VoucherStandardDefinition, profile::PublicProfile,
-    },
-    services::voucher_manager::NewVoucherData,
-    storage::{AuthMethod},
-    wallet::Wallet,
-    VoucherCoreError, VoucherStatus,
-};
 
 // --- 1. AppService Workflows ---
 
@@ -64,7 +64,10 @@ fn api_app_service_full_lifecycle() {
 
     // --- 3. Logout und Login für Alice ---
     service_alice.logout();
-    assert!(service_alice.get_user_id().is_err(), "Service should be locked after logout");
+    assert!(
+        service_alice.get_user_id().is_err(),
+        "Service should be locked after logout"
+    );
     service_alice
         .login(&profile_info_alice.folder_name, "password", false)
         .expect("Login with correct password should succeed");
@@ -87,7 +90,7 @@ fn api_app_service_full_lifecycle() {
                 },
                 ..Default::default()
             },
-            Some("password")
+            Some("password"),
         )
         .expect("Voucher creation failed");
     let summaries_alice = service_alice.get_voucher_summaries(None, None).unwrap();
@@ -106,13 +109,11 @@ fn api_app_service_full_lifecycle() {
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.metadata.uuid.clone(), silver_standard_toml.clone());
     service_alice.unlock_session("password", 60).unwrap();
-    let human_money_core::wallet::CreateBundleResult { bundle_bytes: transfer_bundle, .. } = service_alice
-        .create_transfer_bundle(
-            request,
-            &standards_toml,
-            None,
-            Some("password")
-        )
+    let human_money_core::wallet::CreateBundleResult {
+        bundle_bytes: transfer_bundle,
+        ..
+    } = service_alice
+        .create_transfer_bundle(request, &standards_toml, None, Some("password"))
         .expect("Transfer failed");
     let summary = service_alice
         .get_voucher_details(&local_id_alice)
@@ -151,7 +152,8 @@ fn api_app_service_lifecycle_with_passphrase() {
     let dir = tempdir().expect("Failed to create temp dir");
 
     // --- 2. Profil mit Passphrase erstellen und Service entsperren ---
-    let (mut service, profile_info) = setup_service_with_profile(dir.path(), actor_with_passphrase, "Test User", "password");
+    let (mut service, profile_info) =
+        setup_service_with_profile(dir.path(), actor_with_passphrase, "Test User", "password");
     let original_user_id = service.get_user_id().unwrap();
     assert!(original_user_id.starts_with(actor_with_passphrase.prefix.unwrap()));
     service.logout();
@@ -168,10 +170,12 @@ fn api_app_service_lifecycle_with_passphrase() {
         recovery_result.is_err(),
         "Recovery with mnemonic only (when passphrase was used for creation) should fail."
     );
-    assert!(recovery_result
-        .unwrap_err()
-        .to_lowercase()
-        .contains("recovery failed"));
+    assert!(
+        recovery_result
+            .unwrap_err()
+            .to_lowercase()
+            .contains("recovery failed")
+    );
 
     assert!(
         service.get_user_id().is_err(),
@@ -202,14 +206,12 @@ fn api_app_service_mnemonic_helpers() {
         AppService::validate_mnemonic(&mnemonic).is_ok(),
         "A freshly generated mnemonic should be valid"
     );
-    let invalid_word_mnemonic =
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon hello";
+    let invalid_word_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon hello";
     assert!(
         AppService::validate_mnemonic(invalid_word_mnemonic).is_err(),
         "Should fail with an invalid word"
     );
-    let bad_checksum_mnemonic =
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
+    let bad_checksum_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
     assert!(
         AppService::validate_mnemonic(bad_checksum_mnemonic).is_err(),
         "Should fail with a bad checksum"
@@ -234,20 +236,36 @@ fn api_app_service_password_recovery() {
     let new_password = "password-ABC";
 
     // --- 2. Profil erstellen und wieder sperren ---
-    let (mut service, profile_info) = setup_service_with_profile(dir.path(), actor, "Alice Recovery", initial_password);
+    let (mut service, profile_info) =
+        setup_service_with_profile(dir.path(), actor, "Alice Recovery", initial_password);
     service.logout();
 
     // --- 3. Wiederherstellung mit falscher Mnemonic (muss fehlschlagen) ---
     let wrong_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon"; // Schlechte Prüfsumme
     assert!(
         service
-            .recover_wallet_and_set_new_password(&profile_info.folder_name, wrong_mnemonic, None, new_password)
+            .recover_wallet_and_set_new_password(
+                &profile_info.folder_name,
+                wrong_mnemonic,
+                None,
+                new_password
+            )
             .is_err()
     );
-    assert!( service.get_user_id().is_err(), "Service should remain locked after failed recovery" );
+    assert!(
+        service.get_user_id().is_err(),
+        "Service should remain locked after failed recovery"
+    );
 
     // --- 4. Wiederherstellung mit korrekter Mnemonic (muss erfolgreich sein) ---
-    service.recover_wallet_and_set_new_password(&profile_info.folder_name, &actor.mnemonic, None, new_password).expect("Recovery with correct mnemonic should succeed");
+    service
+        .recover_wallet_and_set_new_password(
+            &profile_info.folder_name,
+            &actor.mnemonic,
+            None,
+            new_password,
+        )
+        .expect("Recovery with correct mnemonic should succeed");
     assert!(
         service.get_user_id().is_ok(),
         "Service should be unlocked after successful recovery"
@@ -255,11 +273,15 @@ fn api_app_service_password_recovery() {
 
     service.logout();
     assert!(
-        service.login(&profile_info.folder_name, initial_password, false).is_err(),
+        service
+            .login(&profile_info.folder_name, initial_password, false)
+            .is_err(),
         "Login with old password should fail after recovery"
     );
     assert!(
-        service.login(&profile_info.folder_name, new_password, false).is_ok(),
+        service
+            .login(&profile_info.folder_name, new_password, false)
+            .is_ok(),
         "Login with new password should succeed after recovery"
     );
 }
@@ -279,19 +301,30 @@ fn api_app_service_password_recovery_with_passphrase() {
     let new_password = "password-ABC";
 
     // 1. Profil mit Passphrase erstellen
-    let (mut service, profile_info) = setup_service_with_profile(dir.path(), actor, "Passphrase User", initial_password);
+    let (mut service, profile_info) =
+        setup_service_with_profile(dir.path(), actor, "Passphrase User", initial_password);
     service.logout();
 
     // 2. Wiederherstellung OHNE Passphrase (muss fehlschlagen)
-    let recovery_fail =
-        service.recover_wallet_and_set_new_password(&profile_info.folder_name, &actor.mnemonic, None, new_password);
+    let recovery_fail = service.recover_wallet_and_set_new_password(
+        &profile_info.folder_name,
+        &actor.mnemonic,
+        None,
+        new_password,
+    );
     assert!(
         recovery_fail.is_err(),
         "Recovery without the correct passphrase should fail"
     );
 
     // 3. Wiederherstellung MIT korrekter Passphrase (muss erfolgreich sein)
-    service .recover_wallet_and_set_new_password(&profile_info.folder_name, &actor.mnemonic, actor.passphrase, new_password)
+    service
+        .recover_wallet_and_set_new_password(
+            &profile_info.folder_name,
+            &actor.mnemonic,
+            actor.passphrase,
+            new_password,
+        )
         .expect("Recovery with correct passphrase should succeed");
 
     // 4. Verifizierung
@@ -300,7 +333,8 @@ fn api_app_service_password_recovery_with_passphrase() {
     let login_result = service.login(&profile_info.folder_name, new_password, false);
     assert!(
         login_result.is_ok(),
-        "Login with new password should succeed. Error: {:?}", login_result.err()
+        "Login with new password should succeed. Error: {:?}",
+        login_result.err()
     );
 }
 
@@ -318,18 +352,27 @@ fn api_wallet_lifecycle() {
     let dir = tempdir().unwrap();
     let test_user = &ACTORS.alice; // Nehmen wir Alice als Testperson
     let (wallet_a, identity_a) =
-        Wallet::new_from_mnemonic(&test_user.mnemonic, test_user.passphrase, test_user.prefix).expect("Wallet creation failed");
+        Wallet::new_from_mnemonic(&test_user.mnemonic, test_user.passphrase, test_user.prefix)
+            .expect("Wallet creation failed");
     let original_user_id = wallet_a.profile.user_id.clone();
     let folder_name = {
-        let secret_string = format!("{}{}{}", &test_user.mnemonic, test_user.passphrase.unwrap_or(""), test_user.prefix.unwrap_or(""));
+        let secret_string = format!(
+            "{}{}{}",
+            &test_user.mnemonic,
+            test_user.passphrase.unwrap_or(""),
+            test_user.prefix.unwrap_or("")
+        );
         human_money_core::services::crypto_utils::get_hash(secret_string.as_bytes())
     };
     let user_storage_path = dir.path().join(folder_name);
     let mut storage = human_money_core::storage::file_storage::FileStorage::new(user_storage_path);
 
-
     wallet_a
-        .save(&mut storage, &identity_a, &AuthMethod::Password("password123"))
+        .save(
+            &mut storage,
+            &identity_a,
+            &AuthMethod::Password("password123"),
+        )
         .expect("Saving wallet failed");
 
     let auth = AuthMethod::Password("password123");
@@ -353,9 +396,14 @@ fn api_wallet_transfer_full_amount() {
     let alice = &ACTORS.alice;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
     let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
-    let voucher_id =
-        add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", minuto_standard, true)
-            .unwrap();
+    let voucher_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        true,
+    )
+    .unwrap();
     let bob = &ACTORS.bob;
     let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
 
@@ -370,15 +418,13 @@ fn api_wallet_transfer_full_amount() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+    standards.insert(
+        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.clone(),
+    );
 
     let human_money_core::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
-        .execute_multi_transfer_and_bundle(
-            &alice.identity,
-            &standards,
-            request,
-            None,
-        )
+        .execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None)
         .unwrap();
 
     let summary = alice_wallet
@@ -390,9 +436,17 @@ fn api_wallet_transfer_full_amount() {
 
     // KORREKTUR: Die Map muss den Minuto-Standard enthalten.
     let mut standards_for_bob = std::collections::HashMap::new();
-    standards_for_bob.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+    standards_for_bob.insert(
+        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.clone(),
+    );
     bob_wallet
-        .process_encrypted_transaction_bundle(&bob.identity, &bundle_bytes, None, &standards_for_bob)
+        .process_encrypted_transaction_bundle(
+            &bob.identity,
+            &bundle_bytes,
+            None,
+            &standards_for_bob,
+        )
         .unwrap();
 
     let summary = bob_wallet.list_vouchers(None, None).pop().unwrap();
@@ -413,9 +467,14 @@ fn api_wallet_transfer_split_amount() {
     let alice = &ACTORS.alice;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
     let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
-    let voucher_id =
-        add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", minuto_standard, true)
-            .unwrap();
+    let voucher_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        true,
+    )
+    .unwrap();
     let bob = &ACTORS.bob;
     let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
 
@@ -430,15 +489,13 @@ fn api_wallet_transfer_split_amount() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+    standards.insert(
+        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.clone(),
+    );
 
     let human_money_core::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
-        .execute_multi_transfer_and_bundle(
-            &alice.identity,
-            &standards,
-            request,
-            None,
-        )
+        .execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None)
         .unwrap();
 
     let active_summary = alice_wallet
@@ -450,9 +507,17 @@ fn api_wallet_transfer_split_amount() {
 
     // KORREKTUR: Die Map muss den Minuto-Standard enthalten.
     let mut standards_for_bob = std::collections::HashMap::new();
-    standards_for_bob.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+    standards_for_bob.insert(
+        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.clone(),
+    );
     bob_wallet
-        .process_encrypted_transaction_bundle(&bob.identity, &bundle_bytes, None, &standards_for_bob)
+        .process_encrypted_transaction_bundle(
+            &bob.identity,
+            &bundle_bytes,
+            None,
+            &standards_for_bob,
+        )
         .unwrap();
     let bob_summary = bob_wallet.list_vouchers(None, None).pop().unwrap();
     assert_eq!(bob_summary.current_amount, "30");
@@ -469,9 +534,14 @@ fn api_wallet_transfer_invalid_amount() {
     let alice = &ACTORS.alice;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
     let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
-    let voucher_id =
-        add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", minuto_standard, true)
-            .unwrap();
+    let voucher_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        true,
+    )
+    .unwrap();
     let bob = &ACTORS.bob;
 
     let request = human_money_core::wallet::MultiTransferRequest {
@@ -485,18 +555,14 @@ fn api_wallet_transfer_invalid_amount() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
-
-    let result_negative = alice_wallet.execute_multi_transfer_and_bundle(
-        &alice.identity,
-        &standards,
-        request,
-        None,
+    standards.insert(
+        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.clone(),
     );
-    assert!(matches!(
-        result_negative,
-        Err(VoucherCoreError::Manager(_))
-    ));
+
+    let result_negative =
+        alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None);
+    assert!(matches!(result_negative, Err(VoucherCoreError::Manager(_))));
 
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob.identity.user_id.clone(),
@@ -509,18 +575,14 @@ fn api_wallet_transfer_invalid_amount() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
-
-    let result_decimal = alice_wallet.execute_multi_transfer_and_bundle(
-        &alice.identity,
-        &standards,
-        request,
-        None,
+    standards.insert(
+        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.clone(),
     );
-    assert!(matches!(
-        result_decimal,
-        Err(VoucherCoreError::Manager(_))
-    ));
+
+    let result_decimal =
+        alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None);
+    assert!(matches!(result_decimal, Err(VoucherCoreError::Manager(_))));
 }
 
 /// Stellt sicher, dass Transfers nur mit `Active` Gutscheinen möglich sind.
@@ -534,9 +596,14 @@ fn api_wallet_transfer_inactive_voucher() {
     let alice = &ACTORS.alice;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
     let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
-    let voucher_id =
-        add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", minuto_standard, true)
-            .unwrap();
+    let voucher_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        true,
+    )
+    .unwrap();
     let bob = &ACTORS.bob;
 
     let instance = alice_wallet
@@ -544,7 +611,9 @@ fn api_wallet_transfer_inactive_voucher() {
         .vouchers
         .get_mut(&voucher_id)
         .unwrap();
-    instance.status = VoucherStatus::Quarantined { reason: "test".to_string() };
+    instance.status = VoucherStatus::Quarantined {
+        reason: "test".to_string(),
+    };
 
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob.identity.user_id.clone(),
@@ -557,17 +626,18 @@ fn api_wallet_transfer_inactive_voucher() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
-
-    let result = alice_wallet.execute_multi_transfer_and_bundle(
-        &alice.identity,
-        &standards,
-        request,
-        None,
+    standards.insert(
+        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.clone(),
     );
+
+    let result =
+        alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None);
     assert!(matches!(
         result,
-        Err(VoucherCoreError::VoucherNotActive(VoucherStatus::Quarantined{..}))
+        Err(VoucherCoreError::VoucherNotActive(
+            VoucherStatus::Quarantined { .. }
+        ))
     ));
 }
 
@@ -585,9 +655,14 @@ fn api_wallet_proactive_double_spend_prevention() {
     let alice = &ACTORS.alice;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
     let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
-    let voucher_id =
-        add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", minuto_standard, true)
-            .unwrap();
+    let voucher_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        true,
+    )
+    .unwrap();
     let bob = &ACTORS.bob;
 
     let request = human_money_core::wallet::MultiTransferRequest {
@@ -601,15 +676,13 @@ fn api_wallet_proactive_double_spend_prevention() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+    standards.insert(
+        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.clone(),
+    );
 
     alice_wallet
-        .execute_multi_transfer_and_bundle(
-            &alice.identity,
-            &standards,
-            request,
-            None,
-        )
+        .execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None)
         .expect("First transfer should succeed");
 
     let request = human_money_core::wallet::MultiTransferRequest {
@@ -623,18 +696,14 @@ fn api_wallet_proactive_double_spend_prevention() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
-
-    let result = alice_wallet.execute_multi_transfer_and_bundle(
-        &alice.identity,
-        &standards,
-        request,
-        None,
+    standards.insert(
+        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.clone(),
     );
-    assert!(matches!(
-        result,
-        Err(VoucherCoreError::VoucherNotFound(_))
-    ));
+
+    let result =
+        alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None);
+    assert!(matches!(result, Err(VoucherCoreError::VoucherNotFound(_))));
 }
 
 /// Testet das Erstellen eines neuen Gutscheins direkt im Wallet.
@@ -724,14 +793,20 @@ fn api_wallet_query_total_balance() {
                 &issuer.identity.signing_key,
                 "en",
             );
-            let local_id = Wallet::calculate_local_instance_id(&voucher, &issuer.identity.user_id).unwrap();
-            wallet
-                .add_voucher_instance(local_id, voucher, status);
+            let local_id =
+                Wallet::calculate_local_instance_id(&voucher, &issuer.identity.user_id).unwrap();
+            wallet.add_voucher_instance(local_id, voucher, status);
         };
 
     add_voucher("100", VoucherStatus::Active, minuto_standard);
     add_voucher("50", VoucherStatus::Active, minuto_standard);
-    add_voucher("200", VoucherStatus::Quarantined { reason: "test".to_string() }, minuto_standard); // Ignored
+    add_voucher(
+        "200",
+        VoucherStatus::Quarantined {
+            reason: "test".to_string(),
+        },
+        minuto_standard,
+    ); // Ignored
     add_voucher("1.25", VoucherStatus::Active, silver_standard);
     add_voucher("0.75", VoucherStatus::Active, silver_standard);
 
@@ -754,7 +829,11 @@ fn api_wallet_query_total_balance() {
     let silver_abbreviation = "Oz"; // Korrigierte, statische Abkürzung für den Silber-Standard.
     let expected_silver_balance = Decimal::from_str("2.00").unwrap();
     let actual_silver_balance = Decimal::from_str(
-        balances.iter().find(|b| &b.unit == silver_abbreviation).map(|b| b.total_amount.as_str()).unwrap(),
+        balances
+            .iter()
+            .find(|b| &b.unit == silver_abbreviation)
+            .map(|b| b.total_amount.as_str())
+            .unwrap(),
     )
     .unwrap();
     assert_eq!(actual_silver_balance, expected_silver_balance);
@@ -811,7 +890,7 @@ fn api_wallet_rejects_invalid_bundle() {
         &alice.identity.signing_key,
         "en",
     )
-        .unwrap();
+    .unwrap();
 
     voucher.voucher_standard.template.description = "BAD-FORMAT".to_string(); // Verstößt gegen Regex
 
@@ -827,15 +906,18 @@ fn api_wallet_rejects_invalid_bundle() {
         )
         .unwrap();
 
-    let decrypted_bundle =
-        human_money_core::services::bundle_processor::open_and_verify_bundle(&bob.identity, &bundle_bytes)
-            .unwrap();
+    let decrypted_bundle = human_money_core::services::bundle_processor::open_and_verify_bundle(
+        &bob.identity,
+        &bundle_bytes,
+    )
+    .unwrap();
     let received_voucher = decrypted_bundle.vouchers.first().unwrap();
 
-    let validation_result = human_money_core::services::voucher_validation::validate_voucher_against_standard(
-        received_voucher,
-        &standard,
-    );
+    let validation_result =
+        human_money_core::services::voucher_validation::validate_voucher_against_standard(
+            received_voucher,
+            &standard,
+        );
     assert!(
         validation_result.is_err(),
         "Validation of the manipulated voucher should fail"
@@ -893,7 +975,7 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
                 },
                 ..Default::default()
             },
-            Some("password")
+            Some("password"),
         )
         .expect("Voucher creation failed");
 
@@ -908,12 +990,32 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
         .expect("Should be able to get voucher details");
 
     // 5. Überprüfen, dass die Details korrekt sind
-    assert_eq!(details.status, VoucherStatus::Active, "Voucher should be active");
-    assert_eq!(details.voucher.voucher_id, created_voucher.voucher_id, "Voucher ID should match");
-    assert_eq!(details.voucher.nominal_value.amount, "100", "Nominal value should match");
-    assert_eq!(details.voucher.creator_profile.id.as_ref().unwrap(), &id_alice, "Creator ID should match");
-    assert!(!details.voucher.transactions.is_empty(), "Voucher should have at least one transaction");
-    assert_eq!(details.voucher.transactions[0].t_type, "init", "First transaction should be init");
+    assert_eq!(
+        details.status,
+        VoucherStatus::Active,
+        "Voucher should be active"
+    );
+    assert_eq!(
+        details.voucher.voucher_id, created_voucher.voucher_id,
+        "Voucher ID should match"
+    );
+    assert_eq!(
+        details.voucher.nominal_value.amount, "100",
+        "Nominal value should match"
+    );
+    assert_eq!(
+        details.voucher.creator_profile.id.as_ref().unwrap(),
+        &id_alice,
+        "Creator ID should match"
+    );
+    assert!(
+        !details.voucher.transactions.is_empty(),
+        "Voucher should have at least one transaction"
+    );
+    assert_eq!(
+        details.voucher.transactions[0].t_type, "init",
+        "First transaction should be init"
+    );
 }
 
 /// Testet einen Multi-Transfer, bei dem Guthaben von mehreren Quellen gebündelt wird.
@@ -933,12 +1035,22 @@ fn api_wallet_transfer_multi_source() {
     let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
     // Füge zwei Gutscheine zu Alices Wallet hinzu
-    let voucher_id_1 =
-        add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", minuto_standard, true)
-            .unwrap();
-    let voucher_id_2 =
-        add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "50", minuto_standard, true)
-            .unwrap();
+    let voucher_id_1 = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        true,
+    )
+    .unwrap();
+    let voucher_id_2 = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "50",
+        minuto_standard,
+        true,
+    )
+    .unwrap();
 
     let bob = &ACTORS.bob;
     let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
@@ -961,7 +1073,10 @@ fn api_wallet_transfer_multi_source() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+    standards.insert(
+        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.clone(),
+    );
 
     let human_money_core::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
         .execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None)
@@ -976,18 +1091,40 @@ fn api_wallet_transfer_multi_source() {
         .collect();
     remaining_amounts_alice.sort(); // Sortieren für deterministischen Vergleich
 
-    assert_eq!(remaining_amounts_alice.len(), 2, "Alice sollte zwei aktive Rest-Gutscheine haben");
-    assert_eq!(remaining_amounts_alice, vec![Decimal::from(20), Decimal::from(80)]);
+    assert_eq!(
+        remaining_amounts_alice.len(),
+        2,
+        "Alice sollte zwei aktive Rest-Gutscheine haben"
+    );
+    assert_eq!(
+        remaining_amounts_alice,
+        vec![Decimal::from(20), Decimal::from(80)]
+    );
 
     // 4. VERIFIZIERUNG (Bob)
     // KORREKTUR: Die Map muss den Minuto-Standard enthalten.
     let mut standards_for_bob = std::collections::HashMap::new();
-    standards_for_bob.insert(minuto_standard.metadata.uuid.clone(), minuto_standard.clone());
+    standards_for_bob.insert(
+        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.clone(),
+    );
     bob_wallet
-        .process_encrypted_transaction_bundle(&bob.identity, &bundle_bytes, None, &standards_for_bob)
+        .process_encrypted_transaction_bundle(
+            &bob.identity,
+            &bundle_bytes,
+            None,
+            &standards_for_bob,
+        )
         .unwrap();
     let balances = bob_wallet.get_total_balance_by_currency();
     let minuto_balance = balances.iter().find(|b| b.unit == "Minuto").unwrap();
-    assert_eq!(minuto_balance.total_amount, "50", "Bobs Gesamtguthaben sollte 50 sein");
-    assert_eq!(bob_wallet.list_vouchers(None, None).len(), 2, "Bob sollte zwei neue Gutscheine erhalten haben");
+    assert_eq!(
+        minuto_balance.total_amount, "50",
+        "Bobs Gesamtguthaben sollte 50 sein"
+    );
+    assert_eq!(
+        bob_wallet.list_vouchers(None, None).len(),
+        2,
+        "Bob sollte zwei neue Gutscheine erhalten haben"
+    );
 }

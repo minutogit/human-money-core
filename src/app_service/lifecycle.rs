@@ -4,11 +4,11 @@
 //! wie Initialisierung, Login/Logout und Wiederherstellung.
 
 use super::{AppService, AppState, ProfileInfo};
-use crate::storage::{file_storage::FileStorage, AuthMethod, Storage};
+use crate::storage::{AuthMethod, Storage, file_storage::FileStorage};
 use crate::wallet::Wallet;
 use bip39::Language;
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 const PROFILES_INDEX_FILE: &str = "profiles.json";
@@ -91,14 +91,19 @@ impl AppService {
     ) -> Result<(), String> {
         let mut profiles = self.list_profiles()?;
         if profiles.iter().any(|p| p.profile_name == profile_name) {
-            return Err(format!("A profile with the name '{}' already exists.", profile_name));
+            return Err(format!(
+                "A profile with the name '{}' already exists.",
+                profile_name
+            ));
         }
 
         let folder_name = Self::derive_folder_name(mnemonic, passphrase, user_prefix);
         let profile_path = self.base_storage_path.join(&folder_name);
 
         if profile_path.exists() {
-            return Err("A profile with these secrets already exists (folder collision).".to_string());
+            return Err(
+                "A profile with these secrets already exists (folder collision).".to_string(),
+            );
         }
 
         let mut storage = FileStorage::new(profile_path);
@@ -111,7 +116,9 @@ impl AppService {
             .map_err(|e| format!("Failed to save new wallet: {}", e))?;
 
         // Sperre erlangen
-        storage.lock().map_err(|e| format!("Failed to lock wallet: {}", e))?;
+        storage
+            .lock()
+            .map_err(|e| format!("Failed to lock wallet: {}", e))?;
 
         // Füge das neue Profil zur Indexdatei hinzu
         profiles.push(ProfileInfo {
@@ -137,11 +144,7 @@ impl AppService {
         // geschrieben wird. Wir rufen dies hier einmalig auf, um sicherzustellen,
         // dass alle Modus A / Modus B Operationen danach funktionieren.
         // Wir ignorieren das Ergebnis, da der Aufruf nur zum Initialisieren dient.
-        let _ = self.save_encrypted_data(
-            "__storage_session_anchor",
-            b"init",
-            Some(password)
-        );
+        let _ = self.save_encrypted_data("__storage_session_anchor", b"init", Some(password));
         Ok(())
     }
 
@@ -171,14 +174,18 @@ impl AppService {
             .map_err(|e| format!("Login failed (check password): {}", e))?;
 
         if cleanup_on_login {
-            wallet.run_storage_cleanup(None)
-                  .map_err(|e| format!("Storage cleanup on login failed: {}", e))?;
-            wallet.save(&mut storage, &identity, &AuthMethod::Password(password))
-                  .map_err(|e| format!("Failed to save wallet after cleanup: {}", e))?;
+            wallet
+                .run_storage_cleanup(None)
+                .map_err(|e| format!("Storage cleanup on login failed: {}", e))?;
+            wallet
+                .save(&mut storage, &identity, &AuthMethod::Password(password))
+                .map_err(|e| format!("Failed to save wallet after cleanup: {}", e))?;
         }
 
         // Sperre erlangen
-        storage.lock().map_err(|e| format!("Failed to lock wallet: {}", e))?;
+        storage
+            .lock()
+            .map_err(|e| format!("Failed to lock wallet: {}", e))?;
 
         self.state = AppState::Unlocked {
             storage,
@@ -190,11 +197,7 @@ impl AppService {
         // BUG-FIX: Initialisiere den "Session-Anker". (Siehe create_profile)
         // Dies stellt sicher, dass Modus A / Modus B Operationen nach einem
         // Login funktionieren.
-        let _ = self.save_encrypted_data(
-            "__storage_session_anchor",
-            b"init",
-            Some(password)
-        );
+        let _ = self.save_encrypted_data("__storage_session_anchor", b"init", Some(password));
         Ok(())
     }
 
@@ -221,19 +224,25 @@ impl AppService {
 
         // 1. Lade das Wallet mit der Mnemonic-Phrase (öffnet das "zweite Schloss").
         let auth_method = AuthMethod::Mnemonic(mnemonic, passphrase);
-        let (wallet, identity) = Wallet::load(&storage, &auth_method)
-            .map_err(|e| format!("Recovery failed (check mnemonic phrase and passphrase): {}", e))?;
+        let (wallet, identity) = Wallet::load(&storage, &auth_method).map_err(|e| {
+            format!(
+                "Recovery failed (check mnemonic phrase and passphrase): {}",
+                e
+            )
+        })?;
 
         // 2. Setze das Passwort zurück, indem das Mnemonic-Schloss geöffnet und das Passwort-Schloss neu geschrieben wird.
         Wallet::reset_password(&mut storage, &identity, new_password)
             .map_err(|e| format!("Failed to set new password: {}", e))?;
 
         // Sperre erlangen
-        storage.lock().map_err(|e| format!("Failed to lock wallet: {}", e))?;
+        storage
+            .lock()
+            .map_err(|e| format!("Failed to lock wallet: {}", e))?;
 
-        self.state = AppState::Unlocked { 
-            storage, 
-            wallet, 
+        self.state = AppState::Unlocked {
+            storage,
+            wallet,
             identity,
             session_cache: None,
         };
@@ -261,15 +270,26 @@ impl AppService {
     pub fn unlock_session(&mut self, password: &str, duration_seconds: u64) -> Result<(), String> {
         println!("[DEBUG LIFECYCLE] Attempting to unlock session...");
         match &mut self.state {
-            AppState::Unlocked { storage, wallet: _, identity: _, session_cache } => {
+            AppState::Unlocked {
+                storage,
+                wallet: _,
+                identity: _,
+                session_cache,
+            } => {
                 // Verifiziere das Passwort, indem wir versuchen, den Session-Key abzuleiten
-                let session_key = storage.derive_key_for_session(password)
-                    .map_err(|e| { println!("[DEBUG LIFECYCLE] storage.derive_key_for_session FAILED: {}", e); format!("Password verification failed: {}", e) })?;
+                let session_key = storage.derive_key_for_session(password).map_err(|e| {
+                    println!(
+                        "[DEBUG LIFECYCLE] storage.derive_key_for_session FAILED: {}",
+                        e
+                    );
+                    format!("Password verification failed: {}", e)
+                })?;
 
-                // Teste, ob der abgeleitete Schlüssel gültig ist, indem wir ihn verwenden, 
+                // Teste, ob der abgeleitete Schlüssel gültig ist, indem wir ihn verwenden,
                 // um den verschlüsselten Dateischlüssel zu entschlüsseln.
                 // Dies validiert, dass das Passwort korrekt war.
-                storage.test_session_key(&session_key)
+                storage
+                    .test_session_key(&session_key)
                     .map_err(|e| format!("Password verification failed: {}", e))?;
 
                 println!("[DEBUG LIFECYCLE] storage.derive_key_for_session SUCCEEDED.");
@@ -279,9 +299,9 @@ impl AppService {
                     session_duration: Duration::from_secs(duration_seconds),
                     last_activity: Instant::now(),
                 });
-                
+
                 Ok(())
-            },
+            }
             AppState::Locked => Err("Wallet is locked. Please login first.".to_string()),
         }
     }

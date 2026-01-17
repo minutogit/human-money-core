@@ -3,7 +3,9 @@
 //! Definiert die Abstraktion für die persistente Speicherung von Wallet-Daten.
 //! Dies ermöglicht es, die Kernlogik von der konkreten Speichermethode zu entkoppeln.
 
-use crate::models::conflict::{CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, ProofStore};
+use crate::models::conflict::{
+    CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, ProofStore,
+};
 use crate::models::profile::{BundleMetadataStore, UserIdentity, UserProfile, VoucherStore};
 pub mod file_storage;
 use thiserror::Error;
@@ -50,15 +52,19 @@ impl<'a> AuthMethod<'a> {
     pub fn get_password(&self) -> Result<&'a str, StorageError> {
         match self {
             AuthMethod::Password(p) => Ok(p),
-            _ => Err(StorageError::Generic("Password not available for this auth method".to_string())),
+            _ => Err(StorageError::Generic(
+                "Password not available for this auth method".to_string(),
+            )),
         }
     }
-    
+
     /// Extrahiert den Session-Key, wenn die Methode `SessionKey` ist.
     pub fn get_session_key(&self) -> Result<[u8; 32], StorageError> {
         match self {
             AuthMethod::SessionKey(key) => Ok(*key),
-            _ => Err(StorageError::Generic("Session key not available for this auth method".to_string())),
+            _ => Err(StorageError::Generic(
+                "Session key not available for this auth method".to_string(),
+            )),
         }
     }
 }
@@ -96,7 +102,11 @@ pub trait Storage {
     fn profile_exists(&self) -> bool;
 
     /// Lädt und entschlüsselt den `KnownFingerprints`-Store.
-    fn load_known_fingerprints(&self, user_id: &str, auth: &AuthMethod) -> Result<KnownFingerprints, StorageError>;
+    fn load_known_fingerprints(
+        &self,
+        user_id: &str,
+        auth: &AuthMethod,
+    ) -> Result<KnownFingerprints, StorageError>;
 
     /// Speichert und verschlüsselt den `KnownFingerprints`-Store.
     fn save_known_fingerprints(
@@ -107,7 +117,11 @@ pub trait Storage {
     ) -> Result<(), StorageError>;
 
     /// Lädt und entschlüsselt den kritischen `OwnFingerprints`-Store.
-    fn load_own_fingerprints(&self, user_id: &str, auth: &AuthMethod) -> Result<OwnFingerprints, StorageError>;
+    fn load_own_fingerprints(
+        &self,
+        user_id: &str,
+        auth: &AuthMethod,
+    ) -> Result<OwnFingerprints, StorageError>;
 
     /// Speichert und verschlüsselt den kritischen `OwnFingerprints`-Store.
     fn save_own_fingerprints(
@@ -132,7 +146,6 @@ pub trait Storage {
         metadata: &BundleMetadataStore,
     ) -> Result<(), StorageError>;
 
-
     /// Lädt und entschlüsselt den ProofStore.
     fn load_proofs(&self, user_id: &str, auth: &AuthMethod) -> Result<ProofStore, StorageError>;
 
@@ -143,7 +156,6 @@ pub trait Storage {
         auth: &AuthMethod,
         proof_store: &ProofStore,
     ) -> Result<(), StorageError>;
-
 
     /// Lädt den kanonischen Speicher für Fingerprint-Metadaten.
     fn load_fingerprint_metadata(
@@ -170,7 +182,13 @@ pub trait Storage {
     /// * `auth` - Die Authentifizierungsmethode zum Verschlüsseln.
     /// * `name` - Ein eindeutiger Name für den Datenblock (z.B. "app_settings").
     /// * `data` - Die zu verschlüsselnden Rohdaten.
-    fn save_arbitrary_data(&mut self, user_id: &str, auth: &AuthMethod, name: &str, data: &[u8]) -> Result<(), StorageError>;
+    fn save_arbitrary_data(
+        &mut self,
+        user_id: &str,
+        auth: &AuthMethod,
+        name: &str,
+        data: &[u8],
+    ) -> Result<(), StorageError>;
 
     /// Lädt einen beliebigen, benannten und verschlüsselten Datenblock.
     ///
@@ -178,7 +196,12 @@ pub trait Storage {
     /// * `user_id` - Die ID des Benutzers, dem die Daten zugeordnet sind.
     /// * `auth` - Die Authentifizierungsmethode zum Entschlüsseln.
     /// * `name` - Der Name des zu ladenden Datenblocks.
-    fn load_arbitrary_data(&self, user_id: &str, auth: &AuthMethod, name: &str) -> Result<Vec<u8>, StorageError>;
+    fn load_arbitrary_data(
+        &self,
+        user_id: &str,
+        auth: &AuthMethod,
+        name: &str,
+    ) -> Result<Vec<u8>, StorageError>;
 
     /// Überprüft, ob ein abgeleiteter Session-Key gültig ist, indem versucht wird,
     /// damit auf verschlüsselte Daten zuzugreifen.
@@ -228,7 +251,10 @@ impl Drop for WalletLockGuard {
         if self.lock_file_path.exists() {
             if let Err(e) = fs::remove_file(&self.lock_file_path) {
                 // WICHTIG: In `drop` niemals paniken!
-                eprintln!("Schwerwiegender Fehler: Wallet-Sperre konnte nicht freigegeben werden: {:?}", e);
+                eprintln!(
+                    "Schwerwiegender Fehler: Wallet-Sperre konnte nicht freigegeben werden: {:?}",
+                    e
+                );
             }
         }
     }

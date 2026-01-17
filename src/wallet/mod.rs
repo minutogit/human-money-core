@@ -12,10 +12,10 @@ mod conflict_handler;
 mod queries;
 mod signature_handler;
 // NEU: Modul-Deklarationen für das Refactoring
-pub mod types;
 mod lifecycle;
-mod transaction_handler;
 mod maintenance;
+mod transaction_handler;
+pub mod types;
 
 // in src/wallet/mod.rs
 // ...
@@ -28,10 +28,7 @@ pub use types::*;
 use crate::models::conflict::{
     CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, ProofStore,
 };
-use crate::models::profile::{
-    BundleMetadataStore, UserProfile, VoucherStore,
-};
-
+use crate::models::profile::{BundleMetadataStore, UserProfile, VoucherStore};
 
 // ALLE STRUCT-DEFINITIONEN WURDEN NACH src/wallet/types.rs VERSCHOBEN.
 
@@ -69,5 +66,4 @@ impl Wallet {
     // - process_encrypted_transaction_bundle
     // - _execute_single_transfer
     // - execute_multi_transfer_and_bundle
-
 }

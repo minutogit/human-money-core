@@ -38,8 +38,8 @@ role_description = "Official stamp from the authority"
 # ALT: "did:key:z6Mkn8Gg3d2b3r1s4t5u6v7w8x9y0z1a2b3c4d5e6f7g8h9i"
 #
 allowed_signer_ids = [
-    "is-ABC@did:key:z...bitte-ersetzen-durch-ACTORS.issuer-id",
-    "ch-XYZ@did:key:z...bitte-ersetzen-durch-ACTORS.charlie-id"
+    "is:ABC@did:key:z...bitte-ersetzen-durch-ACTORS.issuer-id",
+    "ch:XYZ@did:key:z...bitte-ersetzen-durch-ACTORS.charlie-id"
 ]
 # GEÄNDERT: 'required_signature_description' wurde zu 'required_role' umbenannt.
 required_role = "Official Approver"
@@ -48,7 +48,7 @@ is_mandatory = true
 # Definiert eine optionale Signatur
 [[validation.required_signatures]]
 role_description = "Optional quality check"
-allowed_signer_ids = ["dummy-123@did:key:z...dummy-key-fuer-optionalen-check"] # Dummy-Key
+allowed_signer_ids = ["dummy:123@did:key:z...dummy-key-fuer-optionalen-check"] # Dummy-Key
 # GEÄNDERT: 'required_signature_description' wurde zu 'required_role' umbenannt.
 required_role = "Quality Inspector"
 is_mandatory = false

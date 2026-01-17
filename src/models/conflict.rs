@@ -3,9 +3,9 @@
 //! Definiert die Datenstrukturen für die Erkennung, den Beweis und die
 //! Lösung von Double-Spending-Konflikten.
 
+use crate::models::voucher::Transaction;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use crate::models::voucher::Transaction;
 
 //==============================================================================
 // TEIL 1: STRUKTUREN ZUR KONFLIKTERKENNUNG (aus fingerprint.rs)
@@ -70,7 +70,6 @@ pub struct OwnFingerprints {
     pub history: HashMap<String, Vec<TransactionFingerprint>>,
 }
 
-
 //==============================================================================
 // TEIL 2: KANONISCHE METADATEN-SCHICHT (NEU)
 //==============================================================================
@@ -94,7 +93,6 @@ pub struct FingerprintMetadata {
 /// Der Schlüssel ist die eindeutige ID des `TransactionFingerprint`
 /// (`prvhash_senderid_hash`), um eine 1:1-Beziehung sicherzustellen.
 pub type CanonicalMetadataStore = HashMap<String, FingerprintMetadata>;
-
 
 //==============================================================================
 // TEIL 3: STRUKTUREN ZUM BEWEIS UND ZUR LÖSUNG VON KONFLIKTEN

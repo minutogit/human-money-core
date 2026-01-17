@@ -62,12 +62,12 @@ use std::time::{Duration, Instant};
 
 // Deklaration der neuen Handler als öffentliche Sub-Module.
 // Jede Datei enthält einen `impl AppService`-Block für ihren spezifischen Bereich.
+pub mod app_queries;
+pub mod app_signature_handler;
 pub mod command_handler;
 pub mod conflict_handler;
 pub mod data_encryption;
 pub mod lifecycle;
-pub mod app_queries;
-pub mod app_signature_handler;
 
 /// Repräsentiert die öffentlich sichtbaren Informationen eines Profils.
 /// Wird verwendet, um dem Frontend eine Liste der verfügbaren Profile zu übergeben.
@@ -156,9 +156,14 @@ impl AppService {
 
         for voucher in &bundle.vouchers {
             let standard_uuid = &voucher.voucher_standard.uuid;
-            let standard_toml = standard_definitions_toml.get(standard_uuid).ok_or_else(
-                || format!("Required standard definition for UUID '{}' not provided.", standard_uuid),
-            )?;
+            let standard_toml = standard_definitions_toml
+                .get(standard_uuid)
+                .ok_or_else(|| {
+                    format!(
+                        "Required standard definition for UUID '{}' not provided.",
+                        standard_uuid
+                    )
+                })?;
 
             let (verified_standard, _) =
                 crate::services::standard_manager::verify_and_parse_standard(standard_toml)
@@ -168,7 +173,7 @@ impl AppService {
                 voucher,
                 &verified_standard,
             )
-                .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?;
         }
         Ok(())
     }
@@ -177,7 +182,12 @@ impl AppService {
     /// und das "Sliding Window" (setzt 'last_activity' neu).
     pub fn get_session_key(&mut self) -> Result<[u8; 32], String> {
         match &mut self.state {
-            AppState::Unlocked { storage: _, wallet: _, identity: _, session_cache } => {
+            AppState::Unlocked {
+                storage: _,
+                wallet: _,
+                identity: _,
+                session_cache,
+            } => {
                 if let Some(cache) = session_cache {
                     let now = Instant::now();
                     if now > cache.last_activity + cache.session_duration {
@@ -192,7 +202,7 @@ impl AppService {
                 } else {
                     Err("Password required. Please use 'unlock_session'.".to_string())
                 }
-            },
+            }
             AppState::Locked => Err("Wallet is locked.".to_string()),
         }
     }
@@ -223,12 +233,13 @@ impl AppService {
         }
     }
 
-
     /// Eine Hilfsmethoden nur für Tests, um Zugriff auf die interne Identität zu bekommen.
     #[doc(hidden)]
     pub fn get_unlocked_mut_for_test(&mut self) -> (&mut Wallet, &UserIdentity) {
         match &mut self.state {
-            AppState::Unlocked { wallet, identity, .. } => (wallet, identity),
+            AppState::Unlocked {
+                wallet, identity, ..
+            } => (wallet, identity),
             _ => panic!("Service must be unlocked for this test helper"),
         }
     }

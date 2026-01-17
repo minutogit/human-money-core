@@ -9,18 +9,18 @@ use ed25519_dalek::{Signature, Verifier};
 
 // FIX: Interne Module werden mit `crate::` importiert.
 use crate::{
+    VoucherCoreError, VoucherStatus,
     models::conflict::{Layer2Verdict, ProofOfDoubleSpend, ResolutionEndorsement},
     services::crypto_utils,
     test_utils::{
-        add_voucher_to_wallet, create_voucher_for_manipulation, setup_in_memory_wallet, ACTORS,
-        MINUTO_STANDARD,
+        ACTORS, MINUTO_STANDARD, add_voucher_to_wallet, create_voucher_for_manipulation,
+        setup_in_memory_wallet,
     },
-    VoucherCoreError, VoucherStatus,
 };
 /// Bündelt die Tests zur Validierung der `local_instance_id`-Logik.
 mod local_instance_id_logic {
     // Importiert die benötigten Typen vom Crate-Anfang. Das ist robuster.
-    use crate::{Wallet, VoucherCoreError};
+    use crate::{VoucherCoreError, Wallet};
     // Holt die Test-Helfer und die nur hier benötigte `create_transaction` Funktion
     use crate::services::voucher_manager::create_transaction;
     use crate::test_utils::{self, ACTORS};
@@ -75,9 +75,14 @@ mod local_instance_id_logic {
 
         // Bob (40) -> Charlie (40) - Voller Transfer
         let voucher_after_tx2 = create_transaction(
-            &voucher_after_tx1, standard, &bob.user_id, &bob.signing_key, &charlie.user_id, "40.0000",
+            &voucher_after_tx1,
+            standard,
+            &bob.user_id,
+            &bob.signing_key,
+            &charlie.user_id,
+            "40.0000",
         )
-            .unwrap();
+        .unwrap();
         let final_tx = voucher_after_tx2.transactions.last().unwrap();
 
         // --- Aktion ---
@@ -103,9 +108,14 @@ mod local_instance_id_logic {
 
         // Bob (40) -> Alice (40) - Sendet den Betrag zurück
         let voucher_after_tx2 = create_transaction(
-            &voucher_after_tx1, standard, &bob.user_id, &bob.signing_key, &alice.user_id, "40.0000",
+            &voucher_after_tx1,
+            standard,
+            &bob.user_id,
+            &bob.signing_key,
+            &alice.user_id,
+            "40.0000",
         )
-            .unwrap();
+        .unwrap();
         let final_tx = voucher_after_tx2.transactions.last().unwrap();
 
         // --- Aktion ---
@@ -131,9 +141,14 @@ mod local_instance_id_logic {
         let (standard, _, alice, bob, initial_voucher) = test_utils::setup_voucher_with_one_tx();
         // Alice hat noch 60. Sie sendet diese 60 komplett an Bob.
         let voucher_after_full_transfer = create_transaction(
-            &initial_voucher, standard, &alice.user_id, &alice.signing_key, &bob.user_id, "60.0000",
+            &initial_voucher,
+            standard,
+            &alice.user_id,
+            &alice.signing_key,
+            &bob.user_id,
+            "60.0000",
         )
-            .unwrap();
+        .unwrap();
         let final_tx = voucher_after_full_transfer.transactions.last().unwrap();
 
         // --- Aktion ---
@@ -169,7 +184,10 @@ mod local_instance_id_logic {
         println!("Debug: Das Ergebnis für Charlie ist: {:?}", &result);
 
         // --- Erwartetes Ergebnis ---
-        assert!(result.is_err(), "Function should return an error for a non-owner.");
+        assert!(
+            result.is_err(),
+            "Function should return an error for a non-owner."
+        );
         assert!(matches!(
             result.unwrap_err(),
             VoucherCoreError::VoucherOwnershipNotFound(_)
@@ -223,25 +241,28 @@ mod instance_state_behavior {
         };
         let mut standards_map = std::collections::HashMap::new();
         standards_map.insert(standard.metadata.uuid.clone(), standard.clone());
-        let transfer_result = wallet.execute_multi_transfer_and_bundle(
-            alice,
-            &standards_map,
-            request,
-            None,
-        );
+        let transfer_result =
+            wallet.execute_multi_transfer_and_bundle(alice, &standards_map, request, None);
         assert!(
-            matches!(transfer_result, Err(VoucherCoreError::VoucherNotActive(VoucherStatus::Quarantined { .. }))),
+            matches!(
+                transfer_result,
+                Err(VoucherCoreError::VoucherNotActive(
+                    VoucherStatus::Quarantined { .. }
+                ))
+            ),
             "create_transfer should fail for a quarantined voucher"
         );
 
         // 2. Test create_signing_request
-        let signing_request_result = wallet.create_signing_request(
-            alice,
-            &local_id,
-            &ACTORS.guarantor1.user_id,
-        );
+        let signing_request_result =
+            wallet.create_signing_request(alice, &local_id, &ACTORS.guarantor1.user_id);
         assert!(
-            matches!(signing_request_result, Err(VoucherCoreError::VoucherNotActive(VoucherStatus::Quarantined { .. }))),
+            matches!(
+                signing_request_result,
+                Err(VoucherCoreError::VoucherNotActive(
+                    VoucherStatus::Quarantined { .. }
+                ))
+            ),
             "create_signing_request should fail for a quarantined voucher"
         );
     }
@@ -251,7 +272,6 @@ mod instance_state_behavior {
 mod maintenance_logic {
     use super::*;
     use crate::wallet::Wallet;
-
 
     /// **Test 3.1: Korrektes Löschen abgelaufener, archivierter Instanzen**
     ///
@@ -286,8 +306,13 @@ mod maintenance_logic {
         };
 
         // Gutschein A (abgelaufen)
-        let mut voucher_a =
-            create_voucher_for_manipulation(voucher_data.clone(), standard, hash, &user.signing_key, "en");
+        let mut voucher_a = create_voucher_for_manipulation(
+            voucher_data.clone(),
+            standard,
+            hash,
+            &user.signing_key,
+            "en",
+        );
         voucher_a.valid_until = (Utc::now() - Duration::days(365 * 3)).to_rfc3339();
         let id_a = Wallet::calculate_local_instance_id(&voucher_a, &user.user_id).unwrap();
         wallet.add_voucher_instance(id_a.clone(), voucher_a, VoucherStatus::Archived);
@@ -303,8 +328,14 @@ mod maintenance_logic {
         wallet.cleanup_storage(1); // Gnadenfrist von 1 Jahr
 
         // --- Assertions ---
-        assert!(!wallet.voucher_store.vouchers.contains_key(&id_a), "Expired voucher A should have been removed");
-        assert!(wallet.voucher_store.vouchers.contains_key(&id_b), "Voucher B within grace period should remain");
+        assert!(
+            !wallet.voucher_store.vouchers.contains_key(&id_a),
+            "Expired voucher A should have been removed"
+        );
+        assert!(
+            wallet.voucher_store.vouchers.contains_key(&id_b),
+            "Voucher B within grace period should remain"
+        );
     }
 }
 
@@ -326,8 +357,7 @@ mod conflict_management_api {
         let reporter = &ACTORS.victim; // Nehmen wir an, das Opfer ist der Melder.
         let fork_point_prev_hash = "fork_hash_123".to_string();
         let proof_id = crypto_utils::get_hash(format!("{}{}", offender_id, fork_point_prev_hash));
-        let signature =
-            crypto_utils::sign_ed25519(&reporter.signing_key, proof_id.as_bytes());
+        let signature = crypto_utils::sign_ed25519(&reporter.signing_key, proof_id.as_bytes());
 
         ProofOfDoubleSpend {
             proof_id,
@@ -370,7 +400,10 @@ mod conflict_management_api {
         let mut wallet = setup_in_memory_wallet(identity);
         let proof = create_mock_proof_of_double_spend("offender-id", "victim-id", None, None);
         // FIX: `insert` wird auf dem `proofs` Feld aufgerufen, nicht auf `ProofStore` selbst.
-        wallet.proof_store.proofs.insert(proof.proof_id.clone(), proof.clone());
+        wallet
+            .proof_store
+            .proofs
+            .insert(proof.proof_id.clone(), proof.clone());
 
         // Act: Rufe die Funktion auf.
         let conflicts = wallet.list_conflicts();
@@ -404,9 +437,15 @@ mod conflict_management_api {
             notes: None,
         };
         let proof = create_mock_proof_of_double_spend(
-            "offender-id", "victim-id", Some(vec![endorsement]), None,
+            "offender-id",
+            "victim-id",
+            Some(vec![endorsement]),
+            None,
         );
-        wallet.proof_store.proofs.insert(proof.proof_id.clone(), proof);
+        wallet
+            .proof_store
+            .proofs
+            .insert(proof.proof_id.clone(), proof);
 
         // Act: Rufe die Funktion auf.
         let conflicts = wallet.list_conflicts();
@@ -435,7 +474,10 @@ mod conflict_management_api {
         };
         let proof =
             create_mock_proof_of_double_spend("offender-id", "victim-id", None, Some(verdict));
-        wallet.proof_store.proofs.insert(proof.proof_id.clone(), proof);
+        wallet
+            .proof_store
+            .proofs
+            .insert(proof.proof_id.clone(), proof);
 
         // Act: Rufe die Funktion auf.
         let conflicts = wallet.list_conflicts();
@@ -457,7 +499,10 @@ mod conflict_management_api {
         let identity = &ACTORS.test_user;
         let mut wallet = setup_in_memory_wallet(identity);
         let proof = create_mock_proof_of_double_spend("offender", "victim", None, None);
-        wallet.proof_store.proofs.insert(proof.proof_id.clone(), proof.clone());
+        wallet
+            .proof_store
+            .proofs
+            .insert(proof.proof_id.clone(), proof.clone());
 
         // Act: Rufe den Beweis mit der korrekten ID ab.
         let result = wallet.get_proof_of_double_spend(&proof.proof_id);
@@ -483,10 +528,12 @@ mod conflict_management_api {
         // Assert: Das Ergebnis muss ein Fehler sein.
         assert!(result.is_err());
         // Optional: Überprüfe die spezifische Fehlermeldung.
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Proof with ID 'non-existent-id' not found"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Proof with ID 'non-existent-id' not found")
+        );
     }
 
     // === Tests für `Wallet::create_resolution_endorsement` ===
@@ -502,7 +549,8 @@ mod conflict_management_api {
         let proof =
             create_mock_proof_of_double_spend("offender-id", &victim_identity.user_id, None, None);
         wallet_with_proof
-            .proof_store.proofs
+            .proof_store
+            .proofs
             .insert(proof.proof_id.clone(), proof.clone());
 
         // Act: Das Opfer erstellt die Beilegungserklärung.
@@ -548,8 +596,7 @@ mod conflict_management_api {
         let wallet = setup_in_memory_wallet(identity);
 
         // Act: Versuche, eine Beilegung für einen nicht existierenden Beweis zu erstellen.
-        let result =
-            wallet.create_resolution_endorsement(identity, "non-existent-id", None);
+        let result = wallet.create_resolution_endorsement(identity, "non-existent-id", None);
 
         // Assert: Das Ergebnis muss ein Fehler sein.
         assert!(result.is_err());
@@ -569,9 +616,16 @@ mod conflict_management_api {
         let mut victim_wallet = setup_in_memory_wallet(victim_identity);
 
         // Der Reporter und das Opfer haben beide den Beweis.
-        let proof = create_mock_proof_of_double_spend("offender-id", &victim_identity.user_id, None, None);
-        reporter_wallet.proof_store.proofs.insert(proof.proof_id.clone(), proof.clone());
-        victim_wallet.proof_store.proofs.insert(proof.proof_id.clone(), proof.clone());
+        let proof =
+            create_mock_proof_of_double_spend("offender-id", &victim_identity.user_id, None, None);
+        reporter_wallet
+            .proof_store
+            .proofs
+            .insert(proof.proof_id.clone(), proof.clone());
+        victim_wallet
+            .proof_store
+            .proofs
+            .insert(proof.proof_id.clone(), proof.clone());
 
         // Das Opfer erstellt die Beilegung.
         let endorsement = victim_wallet
@@ -583,7 +637,9 @@ mod conflict_management_api {
 
         // Assert: Der Vorgang war erfolgreich und der Beweis wurde aktualisiert.
         assert!(result.is_ok());
-        let updated_proof = reporter_wallet.get_proof_of_double_spend(&proof.proof_id).unwrap();
+        let updated_proof = reporter_wallet
+            .get_proof_of_double_spend(&proof.proof_id)
+            .unwrap();
         let resolutions = updated_proof.resolutions.unwrap();
         assert_eq!(resolutions.len(), 1);
         assert_eq!(resolutions[0].endorsement_id, endorsement.endorsement_id);
@@ -600,19 +656,48 @@ mod conflict_management_api {
             let mut reporter_wallet = setup_in_memory_wallet(reporter_identity);
             let victim_identity = &ACTORS.victim;
             let mut victim_wallet = setup_in_memory_wallet(victim_identity);
-            let proof = create_mock_proof_of_double_spend("offender-id", &victim_identity.user_id, None, None);
-            reporter_wallet.proof_store.proofs.insert(proof.proof_id.clone(), proof.clone());
-            victim_wallet.proof_store.proofs.insert(proof.proof_id.clone(), proof.clone());
-            let endorsement = victim_wallet.create_resolution_endorsement(&victim_identity, &proof.proof_id, None).unwrap();
-            (reporter_wallet, victim_wallet, victim_identity, proof, endorsement)
+            let proof = create_mock_proof_of_double_spend(
+                "offender-id",
+                &victim_identity.user_id,
+                None,
+                None,
+            );
+            reporter_wallet
+                .proof_store
+                .proofs
+                .insert(proof.proof_id.clone(), proof.clone());
+            victim_wallet
+                .proof_store
+                .proofs
+                .insert(proof.proof_id.clone(), proof.clone());
+            let endorsement = victim_wallet
+                .create_resolution_endorsement(&victim_identity, &proof.proof_id, None)
+                .unwrap();
+            (
+                reporter_wallet,
+                victim_wallet,
+                victim_identity,
+                proof,
+                endorsement,
+            )
         };
 
         // Act: Füge dieselbe Beilegung ZWEIMAL hinzu.
-        assert!(reporter_wallet.add_resolution_endorsement(endorsement.clone()).is_ok());
-        assert!(reporter_wallet.add_resolution_endorsement(endorsement.clone()).is_ok());
+        assert!(
+            reporter_wallet
+                .add_resolution_endorsement(endorsement.clone())
+                .is_ok()
+        );
+        assert!(
+            reporter_wallet
+                .add_resolution_endorsement(endorsement.clone())
+                .is_ok()
+        );
 
         // Assert: Der Vektor enthält die Beilegung aber nur EINMAL.
-        let updated_proof = reporter_wallet.get_proof_of_double_spend(&proof.proof_id).unwrap();
+        let updated_proof = reporter_wallet
+            .get_proof_of_double_spend(&proof.proof_id)
+            .unwrap();
         let resolutions = updated_proof.resolutions.unwrap();
         assert_eq!(resolutions.len(), 1, "Endorsement was added more than once");
     }
@@ -631,8 +716,7 @@ mod key_derivation_logic {
     /// Passphrase korrekt in den Ableitungsprozess einbezogen wird.
     #[test]
     fn test_passphrase_alters_key_derivation() {
-        let mnemonic =
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let passphrase = "my-secret-passphrase";
 
         // Ableitung OHNE Passphrase
@@ -645,8 +729,7 @@ mod key_derivation_logic {
 
         // Die resultierenden User-IDs MÜSSEN unterschiedlich sein.
         assert_ne!(
-            wallet_no_pass.profile.user_id,
-            wallet_with_pass.profile.user_id,
+            wallet_no_pass.profile.user_id, wallet_with_pass.profile.user_id,
             "User IDs should be different when a passphrase is used."
         );
 

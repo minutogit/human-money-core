@@ -4,7 +4,7 @@
 //! mehrere Empfänger verschlüsselten Daten-Container. Dieser Container dient als
 //! universelles und sicheres Transportmittel für beliebige Daten zwischen Nutzern.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
 /// Definiert die Art des Inhalts, der im `SecureContainer` transportiert wird.

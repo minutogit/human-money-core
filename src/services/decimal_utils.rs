@@ -5,9 +5,9 @@
 //! alle Beträge im System einheitlich behandelt werden, um Rundungs- und
 //! Vergleichsfehler zu vermeiden.
 
-use rust_decimal::Decimal;
 use crate::error::VoucherCoreError;
 use crate::services::voucher_manager::VoucherManagerError;
+use rust_decimal::Decimal;
 
 /// **Prinzip: Strenge Validierung am Eingang.**
 ///
@@ -27,7 +27,7 @@ pub fn validate_precision(amount: &Decimal, allowed_places: u32) -> Result<(), V
             allowed: allowed_places,
             found: amount.scale(),
         }
-            .into())
+        .into())
     } else {
         Ok(())
     }
