@@ -5,7 +5,9 @@ use crate::models::voucher::{
     Collateral, Transaction, ValueDefinition, Voucher, VoucherSignature, VoucherStandard,
 };
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
-use crate::services::crypto_utils::{get_hash, get_pubkey_from_user_id, sign_ed25519};
+use crate::services::crypto_utils::{
+    derive_ephemeral_key_pair, get_hash, get_pubkey_from_user_id, sign_ed25519,
+};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
 use crate::services::{decimal_utils, standard_manager};
 
@@ -323,6 +325,20 @@ pub fn create_voucher(
 
     let initial_amount = Decimal::from_str(&temp_voucher.nominal_value.amount)?;
 
+    // --- L2 ANKER (SCHRITT B) - P2PKH Implementierung ---
+    // 1. Genesis-Key (Sender): Wird SOFORT enthüllt, um die init-Tx zu signieren.
+    //    Dies ist der "Proof of Authorization" für den Start der Kette.
+    let (genesis_secret, genesis_public) =
+        derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "genesis")?;
+    let genesis_pub_str = bs58::encode(genesis_public.to_bytes()).into_string();
+
+    // 2. Holder-Key (Receiver): Wird GEHASHT als Anker für die nächste Tx hinterlegt.
+    //    Wir speichern NICHT den Key selbst, da der Creator ihn jederzeit re-deriven kann.
+    let (_, holder_public) =
+        derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "holder")?;
+    let holder_pub_str = bs58::encode(holder_public.to_bytes()).into_string();
+    let holder_anchor_hash = get_hash(holder_pub_str);
+
     let mut init_transaction = Transaction {
         t_id: "".to_string(),
         prev_hash: get_hash(format!(
@@ -336,8 +352,39 @@ pub fn create_voucher(
         amount: decimal_utils::format_for_storage(&initial_amount, decimal_places),
         sender_remaining_amount: None,
         sender_signature: "".to_string(),
+
+        receiver_ephemeral_pub_hash: Some(holder_anchor_hash),
+        sender_ephemeral_pub: Some(genesis_pub_str.clone()),
+        privacy_guard: None,
+        trap_data: None,
+        layer2_signature: None, // Wird gleich berechnet
+        valid_until: Some(temp_voucher.valid_until.clone()),
     };
 
+    // --- L2 SIGNATUR (SCHRITT C) ---
+    // 1. Berechne die vorläufige t_id OHNE Signaturen (Sender & L2)
+    let tx_json_pre_l2 = to_canonical_json(&init_transaction)?;
+    let pre_l2_tid = get_hash(tx_json_pre_l2);
+
+    // 2. Erstelle den L2-Hash: Hash(pre_l2_tid + valid_until + sender_ephemeral_pub)
+    //    Wir binden die Signatur an den SENDER Key (Genesis), da dieser die Signatur leistet.
+    let l2_payload = format!(
+        "{}{}{}",
+        pre_l2_tid,
+        init_transaction
+            .valid_until
+            .as_ref()
+            .unwrap_or(&"".to_string()),
+        genesis_pub_str
+    );
+    let l2_hash = get_hash(l2_payload);
+
+    // 3. Signiere mit dem ephemeralen Key
+    let l2_sig_bytes = sign_ed25519(&genesis_secret, l2_hash.as_bytes());
+    init_transaction.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
+
+    // --- FINALE T_ID & SENDER SIGNATUR (SCHRITT D) ---
+    // Die t_id muss nun neu berechnet werden, da layer2_signature Teil des JSON ist.
     let tx_json_for_id = to_canonical_json(&init_transaction)?;
     let final_t_id = get_hash(tx_json_for_id);
     init_transaction.t_id = final_t_id;
@@ -548,6 +595,12 @@ pub fn create_transaction(
         amount: decimal_utils::format_for_storage(&amount_to_send, decimal_places),
         sender_remaining_amount,
         sender_signature: "".to_string(),
+        receiver_ephemeral_pub_hash: None,
+        sender_ephemeral_pub: None,
+        privacy_guard: None,
+        trap_data: None,
+        layer2_signature: None,
+        valid_until: None,
     };
 
     let tx_json_for_id = to_canonical_json(&new_transaction)?;

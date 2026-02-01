@@ -9,14 +9,14 @@ use human_money_core::crypto_utils::get_hash;
 use human_money_core::error::ValidationError;
 use human_money_core::test_utils;
 use human_money_core::{
-    NewVoucherData, Transaction, ValueDefinition, VoucherCoreError, create_transaction,
-    create_voucher, crypto_utils, models::profile::PublicProfile, to_canonical_json,
-    validate_voucher_against_standard,
+    create_transaction, create_voucher, crypto_utils, models::profile::PublicProfile,
+    to_canonical_json, validate_voucher_against_standard, NewVoucherData, Transaction,
+    ValueDefinition, VoucherCoreError,
 };
 
 use human_money_core::test_utils::{
-    ACTORS, MINUTO_STANDARD, SILVER_STANDARD, create_female_guarantor_signature,
-    create_male_guarantor_signature, create_voucher_for_manipulation, resign_transaction,
+    create_female_guarantor_signature, create_male_guarantor_signature,
+    create_voucher_for_manipulation, resign_transaction, ACTORS, MINUTO_STANDARD, SILVER_STANDARD,
 };
 
 // KORREKTUR FÜR E0425: Diese Hilfsfunktion muss auf oberster Ebene
@@ -117,7 +117,7 @@ mod structural_integrity {
             .unwrap();
         let mut creator_sig = voucher.signatures.remove(creator_sig_index);
         let voucher_nonce = voucher.voucher_nonce.clone(); // Brauchen wir für den init-Hash
-        // KORREKTUR FÜR E0382: .clone() hinzugefügt, um partial move zu verhindern
+                                                           // KORREKTUR FÜR E0382: .clone() hinzugefügt, um partial move zu verhindern
         let other_signatures = voucher.signatures.clone();
 
         let mut voucher_to_sign = voucher.clone();
@@ -822,6 +822,12 @@ mod behavioral_rules {
             amount: "10.0000".to_string(),
             sender_remaining_amount: None,
             sender_signature: "".to_string(),
+            receiver_ephemeral_pub_hash: None,
+            sender_ephemeral_pub: None,
+            privacy_guard: None,
+            trap_data: None,
+            layer2_signature: None,
+            valid_until: None,
         };
         let signed_tx = resign_transaction(invalid_transfer_tx, &recipient.signing_key);
         voucher.transactions.push(signed_tx);
@@ -952,7 +958,7 @@ mod behavioral_rules {
     mod issuance_firewall {
         use super::*;
         use human_money_core::services::voucher_manager::VoucherManagerError;
-        use human_money_core::test_utils::{SILVER_STANDARD, create_custom_standard};
+        use human_money_core::test_utils::{create_custom_standard, SILVER_STANDARD};
 
         /// Erstellt eine Testumgebung mit den benötigten Akteuren und Standards.
         struct TestSetup {
@@ -1019,7 +1025,8 @@ mod behavioral_rules {
             mut voucher: human_money_core::Voucher,
             signer_key: &ed25519_dalek::SigningKey,
         ) -> human_money_core::Voucher {
-            // Resign the creator signature
+            use ed25519_dalek::Signer; // Trait für .sign()
+                                       // Resign the creator signature
             let creator_sig_index = voucher
                 .signatures
                 .iter()
@@ -1067,6 +1074,38 @@ mod behavioral_rules {
                 crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher_nonce));
             let mut tx_to_resign = original_transactions[0].clone();
             tx_to_resign.prev_hash = new_init_prev_hash;
+
+            // FIX: Layer-2 Signatur aktualisieren, da valid_until geändert wurde
+            if tx_to_resign.t_type == "init" {
+                // 1. Datum synchronisieren
+                tx_to_resign.valid_until = Some(voucher.valid_until.clone());
+
+                // 2. Ephemeren Schlüssel ableiten (für L2-Signatur)
+                let nonce_bytes = bs58::decode(&voucher_nonce).into_vec().unwrap();
+                let (ephem_secret, ephem_pub) = crypto_utils::derive_ephemeral_key_pair(
+                    signer_key,
+                    &nonce_bytes,
+                    "genesis", // FIX: Nutze den Genesis-Kontext für die Sender-Signatur
+                )
+                .unwrap();
+
+                // 3. L2-Hash berechnen (Basis-ID + Datum + Key)
+                let mut temp_tx = tx_to_resign.clone();
+                temp_tx.t_id = "".to_string();
+                temp_tx.sender_signature = "".to_string();
+                temp_tx.layer2_signature = None; // Wichtig für Basis-ID
+
+                let pre_l2_tid = crypto_utils::get_hash(to_canonical_json(&temp_tx).unwrap());
+                let ephem_pub_str = bs58::encode(ephem_pub.to_bytes()).into_string();
+                let l2_payload = format!("{}{}{}", pre_l2_tid, voucher.valid_until, ephem_pub_str);
+
+                // 4. Signieren und setzen
+                let l2_hash = crypto_utils::get_hash(l2_payload);
+                let l2_sig = ephem_secret.sign(l2_hash.as_bytes());
+                tx_to_resign.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
+                // Sender Ephemeral Pub muss gesetzt sein (der Key)
+                tx_to_resign.sender_ephemeral_pub = Some(ephem_pub_str);
+            }
 
             let mut last_resigned_tx = resign_transaction(tx_to_resign, signer_key);
             let mut last_tx_hash =
@@ -1295,6 +1334,77 @@ mod behavioral_rules {
                 "100",
             );
             assert!(result.is_ok());
+        }
+    }
+
+    /// Prüft die neuen Sicherheitsmerkmale (Layer 2 Anchor).
+    #[cfg(test)]
+    mod layer2_security {
+        use super::*;
+        use human_money_core::test_utils::SILVER_STANDARD;
+
+        #[test]
+        fn test_layer2_anchor_prevents_validity_tampering() {
+            let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+            let creator = &ACTORS.alice;
+
+            let voucher_data = NewVoucherData {
+                creator_profile: PublicProfile {
+                    id: Some(creator.user_id.clone()),
+                    ..Default::default()
+                },
+                nominal_value: ValueDefinition {
+                    amount: "100".to_string(),
+                    ..Default::default()
+                },
+                validity_duration: Some("P1Y".to_string()),
+                ..Default::default()
+            };
+
+            let voucher = create_voucher(
+                voucher_data,
+                standard,
+                standard_hash,
+                &creator.signing_key,
+                "en",
+            )
+            .expect("Voucher creation should succeed");
+
+            let init_tx = &voucher.transactions[0];
+            assert!(
+                init_tx.sender_ephemeral_pub.is_some(),
+                "Voucher must have sender ephemeral key"
+            );
+            assert!(
+                init_tx.receiver_ephemeral_pub_hash.is_some(),
+                "Voucher must have receiver anchor hash"
+            );
+            assert!(
+                init_tx.layer2_signature.is_some(),
+                "Voucher must have L2 signature"
+            );
+            assert_eq!(
+                init_tx.valid_until,
+                Some(voucher.valid_until.clone()),
+                "Transaction valid_until must match root"
+            );
+
+            let mut corrupted_voucher = voucher.clone();
+            let new_date = "2099-01-01T00:00:00Z".to_string();
+            corrupted_voucher.transactions[0].valid_until = Some(new_date);
+
+            let tx = corrupted_voucher.transactions[0].clone();
+            corrupted_voucher.transactions[0] = resign_transaction(tx, &creator.signing_key);
+
+            let result = validate_voucher_against_standard(&corrupted_voucher, standard);
+
+            assert!(
+                matches!(result.unwrap_err(),
+                    VoucherCoreError::Validation(ValidationError::InvalidSignature { signer_id })
+                    if signer_id == "Layer2-Anchor"
+                ),
+                "Manipulation of valid_until should break Layer 2 signature"
+            );
         }
     }
 }

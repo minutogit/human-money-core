@@ -66,6 +66,15 @@ pub struct Address {
     pub full_address: String,
 }
 
+/// Daten für die Identity-Trap (Betrugserkennung).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct TrapData {
+    pub u: String,
+    pub v: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub proof: String,
+}
+
 /// Repräsentiert eine einzelne Transaktion in der Transaktionskette des Gutscheins.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct Transaction {
@@ -90,6 +99,25 @@ pub struct Transaction {
     pub sender_signature: String,
     /// Der Hash der vorhergehenden Transaktion oder der voucher_id für die init-Transaktion.
     pub prev_hash: String,
+
+    // --- Layer 2 & Privacy Fields ---
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_ephemeral_pub: Option<String>, // Der enthüllte Key (Preimage) für L2-Signatur
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receiver_ephemeral_pub_hash: Option<String>, // Der Anker-Hash für die Verkettung (P2PKH)
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub privacy_guard: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trap_data: Option<TrapData>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer2_signature: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
 }
 
 /// Repräsentiert eine universelle Signatur (ehemals AdditionalSignature),

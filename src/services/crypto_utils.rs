@@ -9,8 +9,8 @@ use sha2::{Digest, Sha256, Sha512};
 
 // Symmetrische Verschlüsselung
 use chacha20poly1305::{
-    ChaCha20Poly1305, Nonce,
     aead::{Aead, AeadCore, KeyInit},
+    ChaCha20Poly1305, Nonce,
 };
 
 // Ed25519 Signaturen
@@ -34,7 +34,7 @@ use std::convert::TryInto;
 use std::fmt;
 
 use crate::error::VoucherCoreError;
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
 
 /// Generates a mnemonic phrase with a specified word count and language.
 ///
@@ -173,6 +173,27 @@ pub fn derive_ed25519_keypair(
 
     let public_key = signing_key.verifying_key();
     Ok((public_key, signing_key))
+}
+
+/// Leitet ein kurzlebiges (ephemeral) Schlüsselpaar deterministisch aus einem Master-Schlüssel und einem Seed ab.
+/// Verwendet HKDF-SHA256.
+pub fn derive_ephemeral_key_pair(
+    master_key: &SigningKey,
+    seed: &[u8],
+    info: &str,
+) -> Result<(SigningKey, EdPublicKey), VoucherCoreError> {
+    let ikm = master_key.to_bytes();
+
+    let hkdf = Hkdf::<Sha256>::new(Some(seed), &ikm);
+
+    let mut okm = [0u8; 32];
+    hkdf.expand(info.as_bytes(), &mut okm)
+        .map_err(|_| VoucherCoreError::Crypto("HKDF expansion failed".to_string()))?;
+
+    let signing_key = SigningKey::from_bytes(&okm);
+    let public_key = EdPublicKey::from(&signing_key);
+
+    Ok((signing_key, public_key))
 }
 
 /// Erzeugt ein zufälliges oder deterministisches Ed25519-Schlüsselpaar für Testzwecke.

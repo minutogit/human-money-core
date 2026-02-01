@@ -11,7 +11,6 @@
 use chrono::{DateTime, Utc};
 use human_money_core::test_utils::{ACTORS, SILVER_STANDARD};
 use human_money_core::{
-    NewVoucherData, VoucherCoreError,
     error::ValidationError,
     services::{
         crypto_utils,
@@ -19,6 +18,7 @@ use human_money_core::{
         voucher_manager::{self, create_voucher},
         voucher_validation::validate_voucher_against_standard,
     },
+    NewVoucherData, VoucherCoreError,
 };
 
 #[test]
@@ -269,6 +269,12 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
         amount: amount.to_string(),
         sender_remaining_amount: None,
         sender_signature: "sig-init".to_string(),
+        receiver_ephemeral_pub_hash: None,
+        sender_ephemeral_pub: None,
+        privacy_guard: None,
+        trap_data: None,
+        layer2_signature: None,
+        valid_until: None,
     };
     voucher.transactions.push(init_transaction);
     voucher
@@ -310,6 +316,12 @@ fn test_local_id_after_full_transfer() {
         amount: "100".to_string(),
         sender_remaining_amount: None, // Kein Restbetrag
         sender_signature: "sig-transfer".to_string(),
+        receiver_ephemeral_pub_hash: None,
+        sender_ephemeral_pub: None,
+        privacy_guard: None,
+        trap_data: None,
+        layer2_signature: None,
+        valid_until: None,
     };
     voucher.transactions.push(transfer_tx);
 
@@ -360,6 +372,12 @@ fn test_local_id_after_split() {
         amount: "40".to_string(),
         sender_remaining_amount: Some("60".to_string()),
         sender_signature: "sig-split".to_string(),
+        receiver_ephemeral_pub_hash: None,
+        sender_ephemeral_pub: None,
+        privacy_guard: None,
+        trap_data: None,
+        layer2_signature: None,
+        valid_until: None,
     };
     voucher.transactions.push(split_tx);
 
@@ -422,6 +440,12 @@ fn test_local_id_changes_on_round_trip() {
         amount: "100".to_string(),
         sender_remaining_amount: None,
         sender_signature: "sig-to-bob".to_string(),
+        receiver_ephemeral_pub_hash: None,
+        sender_ephemeral_pub: None,
+        privacy_guard: None,
+        trap_data: None,
+        layer2_signature: None,
+        valid_until: None,
     };
     voucher.transactions.push(tx_to_bob);
 
@@ -458,6 +482,12 @@ fn test_local_id_changes_on_round_trip() {
         amount: "100".to_string(),
         sender_remaining_amount: None,
         sender_signature: "sig-to-alice".to_string(),
+        receiver_ephemeral_pub_hash: None,
+        sender_ephemeral_pub: None,
+        privacy_guard: None,
+        trap_data: None,
+        layer2_signature: None,
+        valid_until: None,
     };
     voucher.transactions.push(tx_to_alice);
 

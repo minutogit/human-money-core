@@ -27,11 +27,11 @@ use crate::services::{
     },
     secure_container_manager, signature_manager,
     utils::to_canonical_json,
-    voucher_manager::{NewVoucherData, create_transaction, create_voucher},
+    voucher_manager::{create_transaction, create_voucher, NewVoucherData},
 };
 use crate::wallet::Wallet;
 use crate::{
-    UserIdentity, VoucherCoreError, VoucherInstance, VoucherStatus, models::voucher::Voucher,
+    models::voucher::Voucher, UserIdentity, VoucherCoreError, VoucherInstance, VoucherStatus,
 };
 use std::ops::Deref;
 
@@ -850,6 +850,12 @@ pub fn create_voucher_for_manipulation(
         amount: voucher.nominal_value.amount.clone(),
         sender_remaining_amount: None,
         sender_signature: "".to_string(),
+        receiver_ephemeral_pub_hash: None,
+        sender_ephemeral_pub: None,
+        privacy_guard: None,
+        trap_data: None,
+        layer2_signature: None,
+        valid_until: None,
     };
     voucher
         .transactions

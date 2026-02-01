@@ -13,10 +13,10 @@ use crate::services::crypto_utils::{get_hash, get_pubkey_from_user_id, verify_ed
 use crate::services::utils::to_canonical_json;
 use crate::services::voucher_manager::add_iso8601_duration;
 
-use ed25519_dalek::Signature;
+use ed25519_dalek::{Signature, Verifier};
 use regex::Regex;
 use rust_decimal::Decimal;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
@@ -337,8 +337,8 @@ pub fn validate_field_group_rules(
                 && item.get("role").and_then(Value::as_str) == Some("creator")
             {
                 continue; // Die 'creator'-Signatur wird bei 'details'-Regeln übersprungen.
-                // [DEBUG]
-                // println!("[DEBUG VALIDATION]     Skipping rule for 'creator'.");
+                          // [DEBUG]
+                          // println!("[DEBUG VALIDATION]     Skipping rule for 'creator'.");
             }
 
             // Wir extrahieren den Wert des relevanten Feldes als String, um ihn zu zählen.
@@ -566,6 +566,22 @@ fn verify_transactions(
             .into());
         }
 
+        // --- P2PKH Verkettungs-Validierung ---
+        // Prüfe, dass der in dieser Tx enthüllte sender_ephemeral_pub
+        // dem Hash in der vorherigen Tx entspricht (receiver_ephemeral_pub_hash)
+        if let (Some(revealed_pub), Some(prev_anchor)) = (
+            &tx.sender_ephemeral_pub,
+            &prev_tx.receiver_ephemeral_pub_hash,
+        ) {
+            let calculated_hash = get_hash(revealed_pub.clone());
+            if calculated_hash != *prev_anchor {
+                return Err(ValidationError::InvalidTransaction(
+                    "P2PKH chain broken: sender_ephemeral_pub does not match previous receiver_ephemeral_pub_hash".to_string(),
+                )
+                .into());
+            }
+        }
+
         // --- Financial Consistency Check (Look-behind-by-one) ---
         let sender_balance_before_tx = {
             if prev_tx.recipient_id == tx.sender_id {
@@ -708,9 +724,17 @@ fn verify_transaction_basics(
 fn verify_transaction_integrity_and_signature(
     transaction: &Transaction,
 ) -> Result<(), VoucherCoreError> {
+    // 1. Basis-Integrität prüfen (t_id Berechnung)
     let mut tx_for_tid_calc = transaction.clone();
+
+    // WICHTIG: Um die ID zu validieren, müssen wir die Sender-Signatur entfernen.
     tx_for_tid_calc.t_id = "".to_string();
     tx_for_tid_calc.sender_signature = "".to_string();
+
+    // L2-Logik: Falls eine Layer-2-Signatur vorhanden ist, ist sie Teil des JSONs
+    // und somit Teil der t_id. Wir müssen sie hier NICHT entfernen für die t_id Prüfung,
+    // da die t_id im Voucher die L2-Sig inkludiert.
+
     let calculated_tid = get_hash(to_canonical_json(&tx_for_tid_calc)?);
     if transaction.t_id != calculated_tid {
         return Err(ValidationError::MismatchedTransactionId {
@@ -719,6 +743,49 @@ fn verify_transaction_integrity_and_signature(
         .into());
     }
 
+    // 2. Layer-2 Signatur Validierung (Optional, wenn vorhanden)
+    if let Some(l2_sig) = &transaction.layer2_signature {
+        // P2PKH Logik: Wir verifizieren gegen den SENDER PubKey (der enthüllt wurde),
+        // nicht gegen den Receiver (der jetzt ein Hash ist).
+        if let Some(sender_ephem_pub) = &transaction.sender_ephemeral_pub {
+            // Um den Hash für die L2-Signatur zu rekonstruieren, brauchen wir die ID
+            // so wie sie WAR, BEVOR die L2-Signatur hinzugefügt wurde.
+            let mut tx_pre_l2 = tx_for_tid_calc.clone();
+            tx_pre_l2.layer2_signature = None; // Entfernen für pre-l2-hash
+
+            let pre_l2_tid = get_hash(to_canonical_json(&tx_pre_l2)?);
+            let valid_until = transaction.valid_until.as_deref().unwrap_or("");
+
+            let l2_payload = format!("{}{}{}", pre_l2_tid, valid_until, sender_ephem_pub);
+            let l2_hash = get_hash(l2_payload);
+
+            // Dekodiere Key & Sig
+            let ephem_pub_bytes = bs58::decode(sender_ephem_pub).into_vec().map_err(|_| {
+                ValidationError::SignatureDecodeError("Invalid ephemeral pubkey".into())
+            })?;
+            let l2_sig_bytes = bs58::decode(l2_sig).into_vec().map_err(|_| {
+                ValidationError::SignatureDecodeError("Invalid l2 signature".into())
+            })?;
+
+            // Verifiziere (Low-Level-Call wäre besser, hier manuell via dalek Wrapper logic)
+            let ephem_key = ed25519_dalek::VerifyingKey::from_bytes(
+                ephem_pub_bytes.as_slice().try_into().unwrap(),
+            )
+            .map_err(|_| {
+                ValidationError::SignatureDecodeError("Invalid ephemeral pubkey bytes".into())
+            })?;
+            let signature = Signature::from_bytes(l2_sig_bytes.as_slice().try_into().unwrap());
+
+            if ephem_key.verify(l2_hash.as_bytes(), &signature).is_err() {
+                return Err(ValidationError::InvalidSignature {
+                    signer_id: "Layer2-Anchor".to_string(),
+                }
+                .into());
+            }
+        }
+    }
+
+    // 3. Sender Signatur Validierung
     let signature_payload = json!({
         "prev_hash": transaction.prev_hash,
         "sender_id": transaction.sender_id,
