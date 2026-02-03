@@ -75,6 +75,22 @@ pub struct TrapData {
     pub proof: String,
 }
 
+/// Der entschlüsselte Payload des Privacy-Guards.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct RecipientPayload {
+    /// Die vollständige Composite-DID des Absenders.
+    pub sender_permanent_did: String,
+    /// Das Ziel-Präfix (z.B. "creator:fY7") zur Validierung.
+    pub target_prefix: String,
+    /// Optionale Nachricht.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memo: Option<String>,
+    /// Zeitstempel der Erstellung.
+    pub timestamp: u64,
+    /// Der Seed für den nächsten ephemeren Schlüssel (damit der Empfänger ihn generieren kann).
+    pub next_key_seed: String,
+}
+
 /// Repräsentiert eine einzelne Transaktion in der Transaktionskette des Gutscheins.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct Transaction {
@@ -106,6 +122,9 @@ pub struct Transaction {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receiver_ephemeral_pub_hash: Option<String>, // Der Anker-Hash für die Verkettung (P2PKH)
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_change_anchor_hash: Option<String>, // Der Anker-Hash für das Restgeld
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub privacy_guard: Option<String>,

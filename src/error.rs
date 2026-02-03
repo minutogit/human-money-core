@@ -277,8 +277,12 @@ pub enum ValidationError {
     },
 
     /// The creator of the voucher is also listed as a guarantor.
-    #[error("The voucher creator ('{creator_id}') cannot also be a guarantor.")]
+    #[error("The creator of the voucher ('{creator_id}') cannot also be a guarantor.")]
     CreatorAsGuarantor { creator_id: String },
+    
+    /// JSON parsing error within validation context
+    #[error("JSON validation error: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 /// Der zentrale Fehlertyp für alle Operationen in der `human_money_core`-Bibliothek.

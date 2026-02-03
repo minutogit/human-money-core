@@ -111,12 +111,28 @@ pub fn get_timestamp(years_to_add: i32, end_of_year: bool) -> String {
     future_time.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
 }
 
-/// Returns the current timestamp in ISO 8601 format in UTC with default parameters.
-/// This is a convenience function that calls get_timestamp(0, false).
-///
-/// # Returns
-///
-/// A string representing the current timestamp in ISO 8601 format.
+#[cfg(not(any(test, feature = "test-utils")))]
 pub fn get_current_timestamp() -> String {
     get_timestamp(0, false)
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+pub fn get_current_timestamp() -> String {
+    MOCK_TIME.with(|time| {
+        if let Some(t) = time.borrow().as_ref() {
+            t.clone()
+        } else {
+            get_timestamp(0, false)
+        }
+    })
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+thread_local! {
+    static MOCK_TIME: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+pub fn set_mock_time(time: Option<String>) {
+    MOCK_TIME.with(|t| *t.borrow_mut() = time);
 }

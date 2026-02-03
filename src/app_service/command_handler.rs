@@ -171,10 +171,13 @@ impl AppService {
                                             )
                                             .unwrap();
                                         temp_wallet.add_voucher_instance(
-                                            local_id,
+                                            local_id.clone(),
                                             new_voucher.clone(),
                                             initial_status,
                                         );
+
+                                        // STATLESS: Wir müssen den Seed nicht mehr speichern.
+                                        // Er wird bei Bedarf direkt aus der Voucher-Nonce und der Identity abgeleitet.
 
                                         // 2. Abgeleitete Stores aktualisieren & Speichern
                                         match temp_wallet.rebuild_derived_stores() {

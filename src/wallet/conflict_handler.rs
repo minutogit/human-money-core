@@ -16,12 +16,12 @@ use crate::models::{
 };
 use crate::services::conflict_manager;
 use crate::services::crypto_utils::{
-    get_hash, get_pubkey_from_user_id, get_short_hash_from_user_id, verify_ed25519,
+    get_hash, get_pubkey_from_user_id, get_short_hash_from_user_id,
 };
 use crate::services::utils::to_canonical_json;
 use crate::wallet::ProofOfDoubleSpendSummary;
 use crate::wallet::instance::VoucherStatus;
-use ed25519_dalek::Signature;
+use ed25519_dalek::{Signature, Verifier};
 use std::collections::HashMap;
 
 /// Methoden zur Verwaltung des Fingerprint-Speichers und der Double-Spending-Logik.
@@ -187,13 +187,38 @@ impl Wallet {
             });
             let signature_payload_hash = get_hash(to_canonical_json(&signature_payload)?);
             let signature_bytes = bs58::decode(&tx.sender_signature).into_vec()?;
-            let signature = Signature::from_slice(&signature_bytes)?;
+            // KORREKTUR: P2PKH-Unterstützung
+            let verification_key = if tx.t_type == "init" {
+                offender_pubkey
+            } else {
+                 // Bei Transfer/Split muss der Ephemeral Key (sender_ephemeral_pub) verwendet werden.
+                if let Some(pub_str) = &tx.sender_ephemeral_pub {
+                    let pub_bytes = bs58::decode(pub_str).into_vec().unwrap_or_default();
+                    if let Ok(array) = pub_bytes.try_into() {
+                        if let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(&array) {
+                             vk
+                        } else {
+                             continue; // Invalid Key
+                        }
+                    } else {
+                         continue; // Invalid Length
+                    }
+                } else {
+                    continue; // Missing Key
+                }
+            };
 
-            if verify_ed25519(
-                &offender_pubkey,
+            // Konvertiere Signature Bytes zu Signature Object
+            let signature = if let Ok(sig_arr) = signature_bytes.try_into() {
+                 Signature::from_bytes(&sig_arr)
+            } else {
+                 continue;
+            };
+
+            if verification_key.verify(
                 signature_payload_hash.as_bytes(),
                 &signature,
-            ) {
+            ).is_ok() {
                 verified_tx_count += 1;
             }
         }

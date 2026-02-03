@@ -18,7 +18,7 @@ use std::path::Path;
 // HINWEIS: Dieser `use` wurde auf `super::` umgestellt.
 use super::test_utils::{ACTORS, SILVER_STANDARD, setup_in_memory_wallet};
 use human_money_core::models::conflict::TransactionFingerprint;
-use human_money_core::models::voucher::{Address, Collateral, ValueDefinition, Voucher};
+use human_money_core::models::voucher::{Address, Collateral, ValueDefinition};
 use human_money_core::services::voucher_manager::{self, NewVoucherData};
 use human_money_core::wallet::Wallet;
 use human_money_core::{UserIdentity, VoucherStatus, services::crypto_utils};
@@ -33,22 +33,6 @@ fn setup_test_wallet(identity: &UserIdentity, _name: &str, _storage_dir: &Path) 
     setup_in_memory_wallet(identity)
 }
 
-/// Extrahiert den einzigen Gutschein aus dem Wallet eines Akteurs.
-fn get_voucher_from_wallet(wallet: &Wallet) -> Voucher {
-    assert_eq!(
-        wallet.voucher_store.vouchers.len(),
-        1,
-        "Expected exactly one voucher in the wallet"
-    );
-    wallet
-        .voucher_store
-        .vouchers
-        .values()
-        .next()
-        .unwrap()
-        .voucher
-        .clone()
-}
 
 /// Erstellt einen leeren Fingerprint für Testzwecke.
 fn new_dummy_fingerprint(t_id: &str) -> TransactionFingerprint {
@@ -105,7 +89,7 @@ fn test_fingerprint_generation() {
     let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
 
     // create_voucher erwartet den &SigningKey, nicht die ganze Identity.
-    let mut voucher = voucher_manager::create_voucher(
+    let voucher = voucher_manager::create_voucher(
         voucher_data,
         standard,
         standard_hash,
@@ -113,17 +97,26 @@ fn test_fingerprint_generation() {
         "en",
     )
     .unwrap();
-    voucher = voucher_manager::create_transaction(
+    let holder_key = human_money_core::test_utils::derive_holder_key(&voucher, &identity.signing_key);
+    let (v, _secrets) = voucher_manager::create_transaction(
         &voucher,
         standard,
         &identity.user_id,
-        &identity.signing_key,
-        "recipient_id",
+        &identity.signing_key, // Sender Permanent Key (ID)
+        &holder_key, // Sender Ephemeral Key (Anchor)
+        &human_money_core::test_utils::ACTORS.bob.user_id,
         "50",
     )
     .unwrap();
-    let local_id = Wallet::calculate_local_instance_id(&voucher, &identity.user_id).unwrap();
-    wallet.add_voucher_instance(local_id, voucher.clone(), VoucherStatus::Active);
+    
+
+    
+    let instance = human_money_core::wallet::instance::VoucherInstance {
+        voucher: v.clone(),
+        status: VoucherStatus::Active,
+        local_instance_id: Wallet::calculate_local_instance_id(&v, &identity.user_id).unwrap(),
+    };
+    wallet.voucher_store.vouchers.insert(instance.local_instance_id.clone(), instance);
 
     // Aktion
     wallet.scan_and_rebuild_fingerprints().unwrap();
@@ -575,7 +568,13 @@ fn test_local_double_spend_detection_lifecycle() {
     .unwrap();
     let local_id =
         Wallet::calculate_local_instance_id(&initial_voucher, &alice_identity.user_id).unwrap();
-    alice_wallet.add_voucher_instance(local_id, initial_voucher, VoucherStatus::Active);
+
+    let instance = human_money_core::wallet::instance::VoucherInstance {
+        voucher: initial_voucher.clone(),
+        status: VoucherStatus::Active,
+        local_instance_id: local_id.clone(),
+    };
+    alice_wallet.voucher_store.vouchers.insert(local_id, instance);
 
     // Alice verwendet die neue, korrekte Methode, um den Gutschein an Bob zu senden.
     // Wir klonen die ID, um den immutable borrow auf alice_wallet sofort zu beenden.
@@ -649,27 +648,35 @@ fn test_local_double_spend_detection_lifecycle() {
     let david_identity = &ACTORS.david;
     let mut charlie_wallet = setup_test_wallet(charlie_identity, "charlie", storage_path);
     let mut david_wallet = setup_test_wallet(david_identity, "david", storage_path);
-    let voucher_from_bob = get_voucher_from_wallet(&bob_wallet);
+    
+    // Hole den Seed aus Bobs Wallet, um den Double Spend zu autorisieren.
+    // get_voucher_from_wallet returned nur den Voucher, wir brauchen die Instanz.
+    let bob_instance = bob_wallet.voucher_store.vouchers.values().next().unwrap();
+    let bob_ephemeral_key = bob_wallet.rederive_secret_seed(&bob_instance.voucher, bob_identity).unwrap();
+
+    let voucher_from_bob = bob_instance.voucher.clone(); // use instance.voucher instead of helper
 
     // Bob agiert böswillig. Er umgeht die Schutzmechanismen seines Wallets (create_transfer würde das blockieren)
     // und erstellt manuell zwei widersprüchliche Transaktionen aus demselben Zustand.
     // Wichtig: Wir fügen eine kleine Verzögerung ein, um sicherzustellen, dass die Zeitstempel
     // der betrügerischen Transaktionen deterministisch unterscheidbar sind.
-    let voucher_for_charlie = voucher_manager::create_transaction(
+    let (voucher_for_charlie, _) = voucher_manager::create_transaction(
         &voucher_from_bob,
         standard,
         &bob_identity.user_id,
         &bob_identity.signing_key,
+        &bob_ephemeral_key, // Bob's ephemeral key extracted from wallet
         &charlie_identity.user_id,
         "100",
     )
     .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(10));
-    let voucher_for_david = voucher_manager::create_transaction(
+    let (voucher_for_david, _) = voucher_manager::create_transaction(
         &voucher_from_bob,
         standard,
         &bob_identity.user_id,
         &bob_identity.signing_key,
+        &bob_ephemeral_key, // Reuse same key for double spend
         &david_identity.user_id,
         "100",
     )
@@ -912,7 +919,8 @@ fn test_local_double_spend_detection_lifecycle() {
     );
     assert!(
         matches!(loser_status, Some(VoucherStatus::Quarantined { .. })),
-        "Die 'Verlierer'-Instanz (von David, weil später) muss unter Quarantäne gestellt werden."
+        "Die 'Verlierer'-Instanz (von David, weil später) muss unter Quarantäne gestellt werden. Got: {:?}",
+        loser_status
     );
 
     // Der Versuch, den unter Quarantäne stehenden Gutschein (die 'Verlierer'-Instanz) auszugeben, muss fehlschlagen.

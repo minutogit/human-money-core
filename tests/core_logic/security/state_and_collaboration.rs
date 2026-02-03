@@ -95,7 +95,13 @@ fn test_wallet_state_management_on_split() {
 
     let local_id =
         Wallet::calculate_local_instance_id(&initial_voucher, &a_identity.user_id).unwrap();
-    wallet_a.add_voucher_instance(local_id, initial_voucher, VoucherStatus::Active);
+    // KORREKTUR: Manuelle Insertion inkl. Seed
+    let instance_a = human_money_core::wallet::instance::VoucherInstance {
+        voucher: initial_voucher.clone(),
+        status: human_money_core::wallet::instance::VoucherStatus::Active,
+        local_instance_id: local_id.clone(),
+    };
+    wallet_a.voucher_store.vouchers.insert(local_id.clone(), instance_a);
     let original_local_id = wallet_a
         .voucher_store
         .vouchers
@@ -205,21 +211,23 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
     )
     .unwrap();
 
-    // Eve erstellt zwei widersprüchliche Zukünfte
-    let voucher_for_alice = create_transaction(
+    let holder_key = self::test_utils::derive_holder_key(&initial_voucher, &eve_identity.signing_key);
+    let (voucher_for_alice, _) = create_transaction(
         &initial_voucher,
         standard,
         &eve_identity.user_id,
         &eve_identity.signing_key,
+        &holder_key,
         &a_identity.user_id,
         "100",
     )
     .unwrap();
-    let voucher_for_bob = create_transaction(
+    let (voucher_for_bob, _) = create_transaction(
         &initial_voucher,
         standard,
         &eve_identity.user_id,
         &eve_identity.signing_key,
+        &holder_key,
         &b_identity.user_id,
         "100",
     )
@@ -395,15 +403,18 @@ fn test_serialization_roundtrip_with_special_chars() {
     sig_obj.signature = bs58::encode(signature.to_bytes()).into_string();
     original_voucher.signatures.push(sig_obj);
 
-    original_voucher = create_transaction(
+    let holder_key = self::test_utils::derive_holder_key(&original_voucher, &signing_key);
+    let (ov, _) = create_transaction(
         &original_voucher,
         standard,
         &original_voucher.creator_profile.id.as_ref().unwrap(),
         &signing_key,
-        "some_recipient_id",
+        &holder_key,
+        &human_money_core::test_utils::ACTORS.bob.user_id, // Valid DID
         "23",
     )
     .unwrap();
+    original_voucher = ov;
 
     // 2. Aktion
     // Wir verwenden serde_json::to_string direkt, um den Prozess ohne unsere Wrapper zu testen.

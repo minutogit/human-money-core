@@ -247,6 +247,7 @@ mod integration_with_voucher {
             &MINUTO_STANDARD.0,
             &identity.user_id,
             &identity.signing_key,
+            &identity.signing_key, // Init->Tx1
             &ACTORS.bob.user_id,
             "1",
         );

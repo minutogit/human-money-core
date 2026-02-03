@@ -8,6 +8,7 @@ use crate::models::conflict::CanonicalMetadataStore;
 use crate::models::conflict::{KnownFingerprints, OwnFingerprints, ProofStore};
 use crate::models::profile::{BundleMetadataStore, UserIdentity, UserProfile, VoucherStore};
 use crate::services::crypto_utils;
+#[cfg(not(any(test, feature = "test-utils")))]
 use argon2::Argon2;
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::SigningKey;
@@ -937,16 +938,36 @@ fn get_file_key(
     }
 }
 
+/// Helper to get Argon2 instance with appropriate parameters for the environment.
+#[cfg(not(any(test, feature = "test-utils")))]
+fn get_argon2() -> Argon2<'static> {
+    Argon2::default()
+}
+
 /// Leitet einen kryptographischen Schlüssel aus einem Passwort und Salt ab.
 fn derive_key_from_password(
     password: &str,
     salt: &[u8; SALT_SIZE],
 ) -> Result<[u8; KEY_SIZE], StorageError> {
-    let mut key = [0u8; KEY_SIZE];
-    Argon2::default()
-        .hash_password_into(password.as_bytes(), salt, &mut key)
-        .map_err(|e| StorageError::Generic(format!("Password key derivation failed: {}", e)))?;
-    Ok(key)
+    #[cfg(any(test, feature = "test-utils"))]
+    {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(password.as_bytes());
+        hasher.update(salt);
+        let result = hasher.finalize();
+        let mut key = [0u8; KEY_SIZE];
+        key.copy_from_slice(&result[..KEY_SIZE]);
+        Ok(key)
+    }
+    #[cfg(not(any(test, feature = "test-utils")))]
+    {
+        let mut key = [0u8; KEY_SIZE];
+        get_argon2()
+            .hash_password_into(password.as_bytes(), salt, &mut key)
+            .map_err(|e| StorageError::Generic(format!("Password key derivation failed: {}", e)))?;
+        Ok(key)
+    }
 }
 
 /// Leitet einen kryptographischen Schlüssel aus dem privaten Schlüssel der Identität ab.
@@ -954,9 +975,23 @@ fn derive_key_from_signing_key(
     signing_key: &SigningKey,
     salt: &[u8; SALT_SIZE],
 ) -> Result<[u8; KEY_SIZE], StorageError> {
-    let mut key = [0u8; KEY_SIZE];
-    Argon2::default()
-        .hash_password_into(signing_key.to_bytes().as_ref(), salt, &mut key)
-        .map_err(|e| StorageError::Generic(format!("Identity key derivation failed: {}", e)))?;
-    Ok(key)
+    #[cfg(any(test, feature = "test-utils"))]
+    {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(signing_key.to_bytes());
+        hasher.update(salt);
+        let result = hasher.finalize();
+        let mut key = [0u8; KEY_SIZE];
+        key.copy_from_slice(&result[..KEY_SIZE]);
+        Ok(key)
+    }
+    #[cfg(not(any(test, feature = "test-utils")))]
+    {
+        let mut key = [0u8; KEY_SIZE];
+        get_argon2()
+            .hash_password_into(signing_key.to_bytes().as_ref(), salt, &mut key)
+            .map_err(|e| StorageError::Generic(format!("Identity key derivation failed: {}", e)))?;
+        Ok(key)
+    }
 }

@@ -14,11 +14,14 @@ use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::services::crypto_utils::get_hash;
 use crate::services::utils::to_canonical_json;
 use crate::services::{bundle_processor, conflict_manager, voucher_manager};
+use ed25519_dalek::SigningKey;
 use crate::wallet::Wallet;
 use crate::wallet::instance::VoucherStatus;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::str::FromStr;
+use hkdf::Hkdf;
+use sha2::Sha256;
 
 impl Wallet {
     /// Erstellt ein `TransactionBundle`, verpackt es und aktualisiert den Wallet-Zustand.
@@ -33,11 +36,7 @@ impl Wallet {
         fingerprint_depths: HashMap<String, u8>,
         sender_profile_name: Option<String>,
     ) -> Result<(Vec<u8>, TransactionBundleHeader), VoucherCoreError> {
-        // DEBUG: Log sender and recipient to trace the NotAnIntendedRecipient error.
-        println!(
-            "[Debug Wallet::create_and_encrypt] Sender: {}, Recipient: {}",
-            identity.user_id, recipient_id
-        );
+
 
         for v in &vouchers {
             let local_id = Self::calculate_local_instance_id(v, &identity.user_id)?;
@@ -130,48 +129,49 @@ impl Wallet {
         let mut involved_vouchers = Vec::new();
         let mut involved_vouchers_details = Vec::new();
 
-        // --- NEUES DEBUGGING: Zustand des Voucher Stores VOR der Verarbeitung ---
-        println!("\n[Debug Wallet Process] === Zustand VOR Verarbeitung des Bundles ===");
-        for (id, instance) in &self.voucher_store.vouchers {
-            println!(
-                "[Debug Wallet Process]   -> Vorhanden: local_id={}, voucher_id={}, status={:?}, tx_count={}",
-                id,
-                instance.voucher.voucher_id,
-                instance.status,
-                instance.voucher.transactions.len()
-            );
-        }
-        println!("[Debug Wallet Process] ===============================================");
+
 
         for voucher in bundle.vouchers.clone() {
             // KORREKTUR: Die `retain`-Logik wurde entfernt. Sie war die Ursache für die
             // fehlgeschlagene Double-Spend-Erkennung, da sie eine der beiden
             // widersprüchlichen Gutschein-Instanzen fälschlicherweise gelöscht hat.
             let local_id = Self::calculate_local_instance_id(&voucher, &identity.user_id)?;
-            // --- NEUES DEBUGGING: Detaillierte Prüfung für jeden eingehenden Gutschein ---
-            if let Some(existing_instance) = self
-                .voucher_store
-                .vouchers
-                .values()
-                .find(|v| v.voucher.voucher_id == voucher.voucher_id)
-            {
-                println!(
-                    "[Debug Wallet Process] >>> ACHTUNG: Instanz für voucher_id '{}' existiert bereits.",
-                    voucher.voucher_id
-                );
-                println!(
-                    "[Debug Wallet Process]     Alte tx_count: {}, Neue tx_count: {}",
-                    existing_instance.voucher.transactions.len(),
-                    voucher.transactions.len()
-                );
+
+
+
+            // --- NEU: Privacy Key Handling (Stateless) ---
+            // Wir prüfen zwar noch auf den Payload, speichern aber NICHTS mehr im State.
+            // Der Check dient nur dem Logging/Warning.
+            /*
+            let mut current_seed = None;
+            */
+            if let Some(last_tx) = voucher.transactions.last() {
+                if let Some(guard_base64) = &last_tx.privacy_guard {
+                    // Verwende die neue Helper-Funktion in crypto_utils
+                    if let Ok(decrypted_payload_bytes) = crate::services::crypto_utils::decrypt_recipient_payload(
+                        guard_base64,
+                        &identity.signing_key
+                    ) {
+                        if let Ok(payload) = serde_json::from_slice::<crate::models::voucher::RecipientPayload>(&decrypted_payload_bytes) {
+                            // Check target_prefix (Simple validation)
+                            // "target_prefix": "creator:fY7..."
+                            // identity.user_id: "creator:fY7...@did..."
+                            // TODO: Robusterer Check?
+                            if identity.user_id.starts_with(&payload.target_prefix) {
+                                // STATLESS: Wir müssen den Seed hier nicht mehr speichern oder cachen.
+                            // Er wird bei Bedarf re-deriviert.
+                            } else {
+                                println!("[Warning] Payload target prefix mismatch: {} vs {}", payload.target_prefix, identity.user_id);
+                            }
+                        }
+                    }
+                }
             }
-            println!(
-                "[Debug Wallet Process] Füge Instanz hinzu: local_id={}, voucher_id={}, tx_count={}",
-                local_id,
-                voucher.voucher_id,
-                voucher.transactions.len()
-            );
+
             self.add_voucher_instance(local_id.clone(), voucher.clone(), VoucherStatus::Active);
+            
+            // STATLESS: Wir speichern den Seed NICHT mehr.
+            // if let Some(seed) = current_seed { ... }
 
             // --- NEU: TransferSummary-Logik ---
             // 1. Sammle die lokale ID
@@ -249,18 +249,7 @@ impl Wallet {
             &fingerprint_depths,
         )?;
 
-        // --- NEUES DEBUGGING: Zustand des Voucher Stores NACH der Verarbeitung ---
-        println!("[Debug Wallet Process] === Zustand NACH Verarbeitung des Bundles ===");
-        for (id, instance) in &self.voucher_store.vouchers {
-            println!(
-                "[Debug Wallet Process]   -> Vorhanden: local_id={}, voucher_id={}, status={:?}, tx_count={}",
-                id,
-                instance.voucher.voucher_id,
-                instance.status,
-                instance.voucher.transactions.len()
-            );
-        }
-        println!("[Debug Wallet Process] ===============================================");
+
 
         // Die Fingerprint-Stores werden bei jeder Änderung neu aus dem VoucherStore aufgebaut.
         let (own, known) = conflict_manager::scan_and_rebuild_fingerprints(
@@ -386,11 +375,16 @@ impl Wallet {
             });
         }
 
-        let new_voucher_state = voucher_manager::create_transaction(
+        // Privacy Key Logic: RE-DERIVATION (Stateless)
+        // Wir leiten den Seed direkt aus dem Voucher + Identity ab, anstatt ihn zu speichern.
+        let sender_ephemeral_key = self.rederive_secret_seed(&voucher_to_spend, identity)?;
+
+        let (new_voucher_state, _secrets) = voucher_manager::create_transaction(
             &voucher_to_spend,
             standard_definition,
             &identity.user_id,
-            &identity.signing_key,
+            &identity.signing_key,      // Permanent Key (für Trap ID)
+            &sender_ephemeral_key,      // Ephemeral Key (für L2 Sig / Anchor)
             recipient_id,
             amount_to_send,
         )?;
@@ -415,7 +409,16 @@ impl Wallet {
             let new_local_id = Self::calculate_local_instance_id(&new_voucher_state, owner_id)?;
 
             // 4. Füge die neue Instanz mit der NEUEN ID und dem korrekten Status hinzu.
-            self.add_voucher_instance(new_local_id, new_voucher_state.clone(), new_status);
+            self.add_voucher_instance(new_local_id.clone(), new_voucher_state.clone(), new_status);
+            
+            // 5. STATLESS: Wir speichern den Change-Seed NICHT mehr. Er ist nun deterministisch.
+            /*
+            if let Some(change_seed) = secrets.change_seed {
+                 if let Some(instance) = self.voucher_store.vouchers.get_mut(&new_local_id) {
+                     instance.current_secret_seed = Some(change_seed);
+                 }
+            }
+            */
         }
 
         if let Some(archive_backend) = archive {
@@ -529,4 +532,85 @@ impl Wallet {
             involved_sources_details,
         })
     }
+
+    /// Hilfsfunktion zur Stateless Seed Recovery.
+    /// Versucht, den benötigten Ephemeral Key für die LETZTE Transaktion wiederherzustellen.
+    /// - Fall A (Split): Deterministisch via HKDF aus Identity.
+    /// - Fall B (Received): Entschlüsseln des Privacy Guard via Identity.
+    pub fn rederive_secret_seed(
+        &self,
+        voucher: &Voucher,
+        identity: &UserIdentity,
+    ) -> Result<SigningKey, VoucherCoreError> {
+        let last_tx = voucher.transactions.last().ok_or_else(|| {
+            VoucherCoreError::Generic("Cannot rederive seed: Voucher has no transactions.".to_string())
+        })?;
+
+        // Fall A: Die letzte Transaktion war von UNS (Split/Change)
+        if last_tx.sender_id == identity.user_id && last_tx.sender_remaining_amount.is_some() {
+            // Re-Derive Change Key via HKDF
+            let sender_id_prefix = identity.user_id.split('@').next().unwrap_or(&identity.user_id).to_string();
+            let prev_hash = &last_tx.prev_hash; // Salt 
+            // ACHTUNG: Bei Change Key müssen wir den HASH DER VORHERIGEN TX nehmen?
+            // Nein, laut Spec/Manager Logik ist es der Hash der INPUT-Tx.
+            // Aber Moment: Der Change-Output wurde in DIESER Tx ("last_tx") erzeugt.
+            // Der "prev_hash" in "last_tx" bezieht sich auf die Transaktion DAVOR.
+            // Das ist korrekt, denn HKDF nutzt (prev_hash, IKM).
+            
+            let ikm = identity.signing_key.to_bytes();
+            let (prk, _) = Hkdf::<Sha256>::extract(Some(prev_hash.as_bytes()), &ikm);
+            let hkdf = Hkdf::<Sha256>::from_prk(&prk).map_err(|_| VoucherCoreError::Crypto("Invalid PRK length".to_string()))?;
+            
+            let info = format!("{}change_seed", sender_id_prefix);
+            let mut change_seed = [0u8; 32];
+            hkdf.expand(info.as_bytes(), &mut change_seed)
+                 .map_err(|e| VoucherCoreError::Crypto(format!("HKDF re-derive failed: {}", e)))?;
+            
+            return Ok(SigningKey::from_bytes(&change_seed));
+        }
+
+        // Fall B: Die letzte Transaktion war an UNS (Received)
+        // Wir müssen den Privacy Guard entschlüsseln.
+        if let Some(guard_base64) = &last_tx.privacy_guard {
+             // Verwende die Helper-Funktion in crypto_utils
+             let decrypted_payload_bytes = crate::services::crypto_utils::decrypt_recipient_payload(
+                guard_base64,
+                &identity.signing_key
+            ).map_err(|e| VoucherCoreError::Crypto(format!("Failed to decrypt privacy guard: {}", e)))?;
+
+            let payload = serde_json::from_slice::<crate::models::voucher::RecipientPayload>(&decrypted_payload_bytes)
+                .map_err(|e| VoucherCoreError::Validation(ValidationError::Json(e)))?;
+
+            // Seed extrahieren
+             let seed_bytes = bs58::decode(&payload.next_key_seed)
+                .into_vec()
+                .map_err(|e| VoucherCoreError::Crypto(format!("Invalid base58 in payload seed: {}", e)))?;
+            let seed_arr: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                VoucherCoreError::Crypto("Invalid seed length in payload".to_string())
+            })?;
+            return Ok(SigningKey::from_bytes(&seed_arr));
+        }
+
+        // Fall C: Init (Ersteller) - Sonderfall?
+        // Wenn ich Ersteller bin und den ersten Schritt machen will.
+        if last_tx.t_type == "init" && last_tx.sender_id == identity.user_id {
+             // Init hat genesis key. "sender_ephemeral_pub" ist genesis PUB.
+             // Aber wo ist das SECRET?
+             // Ah, Init generiert "genesis" Key Pair aus Nonce.
+             // derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "genesis")
+             
+             let nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec()
+                .map_err(|_| VoucherCoreError::Generic("Invalid nonce".to_string()))?;
+             
+             let (holder_secret, _) = crate::services::crypto_utils::derive_ephemeral_key_pair(
+                &identity.signing_key, 
+                &nonce_bytes, 
+                "holder"
+            )?;
+            return Ok(holder_secret);
+        }
+
+        Err(VoucherCoreError::Generic("Could not rederive secret seed: No valid strategy found.".to_string()))
+    }
 }
+

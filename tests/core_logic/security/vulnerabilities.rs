@@ -18,6 +18,7 @@ use human_money_core::services::voucher_manager::{self, NewVoucherData};
 use human_money_core::services::voucher_validation::{self};
 use human_money_core::wallet::Wallet;
 use human_money_core::{UserIdentity, VoucherStatus};
+use human_money_core::test_utils::derive_holder_key;
 use human_money_core::{VoucherCoreError, create_transaction, create_voucher, to_canonical_json};
 use rand::seq::SliceRandom;
 use rand::{Rng, thread_rng};
@@ -210,7 +211,7 @@ fn create_hacked_bundle_and_container(
 }
 
 /// Erstellt und signiert eine (potenziell manipulierte) Transaktion.
-fn create_hacked_tx(signer_identity: &UserIdentity, mut hacked_tx: Transaction) -> Transaction {
+fn create_hacked_tx(signer_key: &ed25519_dalek::SigningKey, mut hacked_tx: Transaction) -> Transaction {
     let tx_json_for_id = to_canonical_json(&hacked_tx).unwrap();
     hacked_tx.t_id = get_hash(tx_json_for_id);
 
@@ -220,7 +221,7 @@ fn create_hacked_tx(signer_identity: &UserIdentity, mut hacked_tx: Transaction) 
     });
     let signature_payload_hash = get_hash(to_canonical_json(&signature_payload).unwrap());
     let signature = sign_ed25519(
-        &signer_identity.signing_key,
+        signer_key,
         signature_payload_hash.as_bytes(),
     );
     hacked_tx.sender_signature = bs58::encode(signature.to_bytes()).into_string();
@@ -242,6 +243,55 @@ fn create_test_voucher_data_with_amount(
         collateral: Some(Collateral::default()),
         creator_profile,
     }
+}
+
+/// Fügt P2PKH-Felder (Anchor Reveal, Next Anchor, L2 Signature) zu einer manuellen Transaktion hinzu.
+fn add_p2pkh_layer(
+    tx: &mut Transaction,
+    holder_secret: &ed25519_dalek::SigningKey,
+) {
+    use ed25519_dalek::Signer;
+    let holder_pub = holder_secret.verifying_key();
+    let holder_pub_str = bs58::encode(holder_pub.to_bytes()).into_string();
+
+    // Generate next holder key (random) for the receiver anchor
+    let mut rng = thread_rng();
+    let mut random_bytes = [0u8; 32];
+    rng.fill(&mut random_bytes);
+    let next_secret = ed25519_dalek::SigningKey::from_bytes(&random_bytes);
+    let next_pub = next_secret.verifying_key();
+    let next_pub_str = bs58::encode(next_pub.to_bytes()).into_string();
+    let next_hash = get_hash(next_pub_str);
+
+    tx.sender_ephemeral_pub = Some(holder_pub_str.clone());
+    tx.receiver_ephemeral_pub_hash = Some(next_hash);
+    tx.sender_change_anchor_hash = None; // Standard: kein Change
+
+    // Prepare for L2 Signature
+    tx.sender_signature = "".to_string();
+    tx.layer2_signature = None;
+    tx.t_id = "".to_string();
+
+    let pre_l2_json = to_canonical_json(tx).unwrap();
+    let pre_l2_tid = get_hash(pre_l2_json);
+
+    let l2_payload = if tx.t_type == "init" {
+        let valid_until = tx.valid_until.as_deref().unwrap_or("");
+        format!("{}{}{}", pre_l2_tid, valid_until, holder_pub_str)
+    } else {
+        format!(
+            "{}{}{}{}",
+            pre_l2_tid,
+            holder_pub_str,
+            tx.receiver_ephemeral_pub_hash.as_deref().unwrap_or(""),
+            tx.sender_change_anchor_hash.as_deref().unwrap_or("")
+        )
+    };
+
+    let l2_hash = get_hash(l2_payload);
+    let l2_sig = holder_secret.sign(l2_hash.as_bytes());
+
+    tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 }
 
 // ===================================================================================
@@ -269,6 +319,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     valid_voucher.signatures.push(guarantor_sig);
     let local_id =
         Wallet::calculate_local_instance_id(&valid_voucher, &ACTORS.issuer.user_id).unwrap();
+
     let instance = VoucherInstance {
         voucher: valid_voucher,
         status: VoucherStatus::Active,
@@ -321,6 +372,8 @@ fn test_attack_tamper_core_data_and_guarantors() {
         .unwrap()
         .1
         .voucher;
+    
+    let hacker_holder_secret = hacker_wallet.rederive_secret_seed(voucher_in_hacker_wallet, &ACTORS.hacker).unwrap();
 
     // ### SZENARIO 1a: WERTINFLATION ###
     println!("--- Angriff 1a: Wertinflation ---");
@@ -341,7 +394,8 @@ fn test_attack_tamper_core_data_and_guarantors() {
         ..Default::default()
     };
     // Diese Transaktion selbst ist valide und wird vom Hacker signiert. Der Betrug liegt im manipulierten Creator-Block.
-    final_tx = create_hacked_tx(&ACTORS.hacker, final_tx);
+    add_p2pkh_layer(&mut final_tx, &hacker_holder_secret);
+    final_tx = create_hacked_tx(&hacker_holder_secret, final_tx);
     inflated_voucher.transactions.push(final_tx);
 
     let hacked_container = create_hacked_bundle_and_container(
@@ -416,7 +470,8 @@ fn test_attack_tamper_core_data_and_guarantors() {
         t_type: "transfer".to_string(),
         ..Default::default()
     };
-    final_tx_2 = create_hacked_tx(&ACTORS.hacker, final_tx_2);
+    add_p2pkh_layer(&mut final_tx_2, &hacker_holder_secret);
+    final_tx_2 = create_hacked_tx(&hacker_holder_secret, final_tx_2);
     tampered_guarantor_voucher.transactions.push(final_tx_2);
 
     let hacked_container = create_hacked_bundle_and_container(
@@ -484,6 +539,7 @@ fn test_attack_tamper_transaction_history() {
     .unwrap();
     let local_id_a =
         Wallet::calculate_local_instance_id(&voucher_a, &ACTORS.alice.user_id).unwrap();
+
     let instance_a = VoucherInstance {
         voucher: voucher_a,
         status: VoucherStatus::Active,
@@ -544,11 +600,14 @@ fn test_attack_tamper_transaction_history() {
 
     // DANK DES SICHERHEITSPATCHES in `voucher_manager` schlägt dieser Aufruf nun fehl,
     // da `create_transaction` den Gutschein vorab validiert.
+    let bob_key = bob_wallet_hacker.rederive_secret_seed(&voucher_with_tampered_history, &ACTORS.bob).unwrap();
+    
     let transfer_attempt_result = voucher_manager::create_transaction(
         &voucher_with_tampered_history,
         standard,
         &ACTORS.bob.user_id,
         &ACTORS.bob.signing_key,
+        &bob_key,
         &ACTORS.victim.user_id,
         "100",
     );
@@ -581,6 +640,7 @@ fn test_attack_create_inconsistent_transaction() {
     .unwrap();
     let local_id_issuer =
         Wallet::calculate_local_instance_id(&initial_voucher, &ACTORS.issuer.user_id).unwrap();
+    let _holder_key = human_money_core::test_utils::derive_holder_key(&initial_voucher, &ACTORS.issuer.signing_key);
     let instance_i = VoucherInstance {
         voucher: initial_voucher,
         status: VoucherStatus::Active,
@@ -623,19 +683,16 @@ fn test_attack_create_inconsistent_transaction() {
             &standards_for_hacker,
         )
         .unwrap();
-    let voucher_in_hacker_wallet = &hacker_wallet
-        .voucher_store
-        .vouchers
-        .iter()
-        .next()
-        .unwrap()
-        .1
-        .voucher;
+    let (_hacker_instance, voucher_in_hacker_wallet) = {
+        let entry = hacker_wallet.voucher_store.vouchers.iter().next().unwrap().1;
+        (entry, &entry.voucher)
+    };
+    let hacker_holder_secret = hacker_wallet.rederive_secret_seed(voucher_in_hacker_wallet, &ACTORS.hacker).unwrap();
 
     // ### SZENARIO 3a: OVERSPENDING ###
     println!("--- Angriff 3a: Overspending ---");
     let mut overspend_voucher = voucher_in_hacker_wallet.clone();
-    let overspend_tx_unsigned = Transaction {
+    let mut overspend_tx_unsigned = Transaction {
         prev_hash: get_hash(
             to_canonical_json(overspend_voucher.transactions.last().unwrap()).unwrap(),
         ),
@@ -646,7 +703,8 @@ fn test_attack_create_inconsistent_transaction() {
         t_type: "transfer".to_string(),
         ..Default::default()
     };
-    let overspend_tx = create_hacked_tx(&ACTORS.hacker, overspend_tx_unsigned);
+    add_p2pkh_layer(&mut overspend_tx_unsigned, &hacker_holder_secret);
+    let overspend_tx = create_hacked_tx(&hacker_holder_secret, overspend_tx_unsigned);
     overspend_voucher.transactions.push(overspend_tx);
     let hacked_container = create_hacked_bundle_and_container(
         &ACTORS.hacker,
@@ -686,7 +744,8 @@ fn test_attack_create_inconsistent_transaction() {
                 ValidationError::InsufficientFundsInChain { .. }
             ))
         ),
-        "Validation must fail with InsufficientFundsInChain on overspending attempt."
+        "Validation must fail with InsufficientFundsInChain on overspending attempt. Got: {:?}",
+        result
     );
     victim_wallet.voucher_store.vouchers.clear();
 }
@@ -711,9 +770,10 @@ fn test_attack_inconsistent_split_transaction() {
     // ### ANGRIFF ###
     println!("--- Angriff 3b: Inkonsistente Split-Transaktion (Gelderschaffung) ---");
     let mut inconsistent_split_voucher = voucher.clone();
+    let holder_key = derive_holder_key(&voucher, &hacker_identity.signing_key);
 
     // Hacker erstellt eine Split-Transaktion, bei der die Summe nicht stimmt (100 -> 30 + 80)
-    let inconsistent_tx_unsigned = Transaction {
+    let mut inconsistent_tx_unsigned = Transaction {
         prev_hash: get_hash(
             to_canonical_json(inconsistent_split_voucher.transactions.last().unwrap()).unwrap(),
         ),
@@ -725,7 +785,8 @@ fn test_attack_inconsistent_split_transaction() {
         t_type: "split".to_string(),
         ..Default::default()
     };
-    let inconsistent_tx = create_hacked_tx(hacker_identity, inconsistent_tx_unsigned);
+    add_p2pkh_layer(&mut inconsistent_tx_unsigned, &holder_key);
+    let inconsistent_tx = create_hacked_tx(&holder_key, inconsistent_tx_unsigned);
     inconsistent_split_voucher
         .transactions
         .push(inconsistent_tx);
@@ -768,7 +829,15 @@ fn test_attack_init_amount_mismatch() {
 
     // Die Transaktion muss neu signiert werden, damit die Validierung nicht an einer
     // kaputten Signatur scheitert, bevor der Betrug geprüft wird.
-    let resigned_malicious_tx = create_hacked_tx(hacker_identity, malicious_init_tx);
+    // Init transaction uses Permanent Key, but L2 signature uses Holder Key (derived from creator). 
+    // Here we updated Init, so L2 changes.
+    // However, create_hacked_tx signs with Permanent, which is correct for Init.
+    // BUT we must also update L2 signature.
+    // Since Hacker is Creator, we can use derive_holder_key.
+    let holder_key = derive_holder_key(&voucher, &hacker_identity.signing_key);
+    add_p2pkh_layer(&mut malicious_init_tx, &holder_key);
+    
+    let resigned_malicious_tx = create_hacked_tx(&hacker_identity.signing_key, malicious_init_tx);
     voucher.transactions[0] = resigned_malicious_tx;
 
     // ### VALIDIERUNG ###
@@ -906,7 +975,7 @@ fn test_attack_full_transfer_amount_mismatch() {
     // Erstelle eine 'transfer' Transaktion, die aber nicht den vollen Betrag von 100 sendet.
     // Wir erstellen die Transaktion explizit, anstatt die `init`-Transaktion zu klonen,
     // um Nebeneffekte zu vermeiden und den Test robuster zu machen.
-    let malicious_tx = Transaction {
+    let mut malicious_tx = Transaction {
         t_id: String::new(), // Wird später gesetzt
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_type: "transfer".to_string(),
@@ -917,7 +986,9 @@ fn test_attack_full_transfer_amount_mismatch() {
         sender_remaining_amount: None,
         ..Default::default()
     };
-    let resigned_malicious_tx = create_hacked_tx(&creator_identity, malicious_tx);
+    let holder_key = derive_holder_key(&voucher, &creator_identity.signing_key);
+    add_p2pkh_layer(&mut malicious_tx, &holder_key);
+    let resigned_malicious_tx = create_hacked_tx(&holder_key, malicious_tx);
     voucher.transactions.push(resigned_malicious_tx);
 
     // ### VALIDIERUNG ###
@@ -959,7 +1030,7 @@ fn test_attack_remainder_in_full_transfer() {
     // ### ANGRIFF ###
     // Erstelle eine 'transfer' Transaktion, die den vollen Betrag sendet,
     // aber fälschlicherweise auch einen Restbetrag enthält.
-    let malicious_tx = Transaction {
+    let mut malicious_tx = Transaction {
         t_id: String::new(), // Wird später gesetzt
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_type: "transfer".to_string(),
@@ -970,7 +1041,9 @@ fn test_attack_remainder_in_full_transfer() {
         t_time: get_current_timestamp(),
         ..Default::default()
     };
-    let resigned_malicious_tx = create_hacked_tx(&creator_identity, malicious_tx);
+    let holder_key = derive_holder_key(&voucher, &creator_identity.signing_key);
+    add_p2pkh_layer(&mut malicious_tx, &holder_key);
+    let resigned_malicious_tx = create_hacked_tx(&holder_key, malicious_tx);
     voucher.transactions.push(resigned_malicious_tx);
 
     // ### VALIDIERUNG ###
@@ -1111,24 +1184,31 @@ fn test_attack_fuzzing_random_mutations() {
     master_voucher.signatures.push(additional_sig);
 
     // Erstelle eine Transaktionskette, die auch einen Split enthält.
-    master_voucher = create_transaction(
+    let holder_key = human_money_core::test_utils::derive_holder_key(&master_voucher, &ACTORS.issuer.signing_key);
+    let (mv, secrets_1) = create_transaction(
         &master_voucher,
         standard,
         &ACTORS.issuer.user_id,
         &ACTORS.issuer.signing_key,
+        &holder_key,
         &ACTORS.alice.user_id,
         "1000",
     )
     .unwrap();
-    master_voucher = create_transaction(
+    master_voucher = mv;
+    let alice_seed = secrets_1.recipient_seed;
+    let alice_key = ed25519_dalek::SigningKey::from_bytes(&bs58::decode(alice_seed).into_vec().unwrap().try_into().unwrap());
+    let (mv, _) = create_transaction(
         &master_voucher,
         standard,
         &ACTORS.alice.user_id,
         &ACTORS.alice.signing_key,
+        &alice_key,
         &ACTORS.bob.user_id,
         "500",
     )
     .unwrap(); // Split
+    master_voucher = mv;
 
     let mut rng = thread_rng();
     println!("--- Starte intelligenten Fuzzing-Test mit 2000 Iterationen ---");

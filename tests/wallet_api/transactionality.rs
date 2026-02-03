@@ -548,6 +548,8 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         .with_timezone(&Utc);
     let time_a = (prev_tx_time + Duration::seconds(1)).to_rfc3339();
     let time_b = (prev_tx_time + Duration::seconds(2)).to_rfc3339();
+    let alice_holder_key = test_utils::derive_holder_key(&voucher_v1, &identity_alice.signing_key);
+    let alice_holder_pub = bs58::encode(alice_holder_key.verifying_key().to_bytes()).into_string();
 
     // Pfad A (wird zuerst erfolgreich empfangen)
     let mut tx_a = human_money_core::models::voucher::Transaction {
@@ -557,9 +559,10 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         sender_id: id_alice.clone(),
         recipient_id: id_david.clone(),
         amount: "100".to_string(),
+        sender_ephemeral_pub: Some(alice_holder_pub.clone()),
         ..Default::default()
     };
-    tx_a = resign_transaction(tx_a, &identity_alice.signing_key);
+    tx_a = resign_transaction(tx_a, &alice_holder_key);
     let mut voucher_path_a = voucher_v1.clone();
     voucher_path_a.transactions.push(tx_a);
     let bundle_a = human_money_core::test_utils::create_test_bundle(
@@ -578,9 +581,10 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         sender_id: id_alice.clone(),
         recipient_id: id_david.clone(),
         amount: "100".to_string(),
+        sender_ephemeral_pub: Some(alice_holder_pub),
         ..Default::default()
     };
-    tx_b = resign_transaction(tx_b, &identity_alice.signing_key);
+    tx_b = resign_transaction(tx_b, &alice_holder_key);
     let mut voucher_path_b = voucher_v1.clone();
     voucher_path_b.transactions.push(tx_b);
     let bundle_b = human_money_core::test_utils::create_test_bundle(

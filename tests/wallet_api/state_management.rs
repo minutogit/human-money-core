@@ -192,12 +192,15 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
 
     // --- 3. Alice erzeugt zwei konkurrierende Transaktionen ---
     let prev_tx = voucher_v1.transactions.last().unwrap();
+    // TX_A -> Bob (früher)
     let prev_tx_time = DateTime::parse_from_rfc3339(&prev_tx.t_time)
         .unwrap()
         .with_timezone(&Utc);
     let time_a = (prev_tx_time + Duration::seconds(1)).to_rfc3339();
     let time_b = (prev_tx_time + Duration::seconds(2)).to_rfc3339();
     let prev_tx_hash = crypto_utils::get_hash(utils::to_canonical_json(prev_tx).unwrap());
+    let alice_holder_key = test_utils::derive_holder_key(&voucher_v1, &identity_alice.signing_key);
+    let alice_holder_pub = bs58::encode(alice_holder_key.verifying_key().to_bytes()).into_string();
 
     // TX_A -> Bob (früher)
     let mut tx_a = Transaction {
@@ -207,9 +210,11 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
         sender_id: id_alice.clone(),
         recipient_id: id_david.clone(),
         amount: "100".to_string(),
+        sender_ephemeral_pub: Some(alice_holder_pub.clone()),
+        layer2_signature: Some("dummy_l2_sig".to_string()),
         ..Default::default()
     };
-    tx_a = resign_transaction(tx_a, &identity_alice.signing_key);
+    tx_a = resign_transaction(tx_a, &alice_holder_key);
     let mut voucher_v2_bob = voucher_v1.clone();
     voucher_v2_bob.transactions.push(tx_a);
 
@@ -221,9 +226,10 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
         sender_id: id_alice.clone(),
         recipient_id: id_david.clone(),
         amount: "100".to_string(),
+        sender_ephemeral_pub: Some(alice_holder_pub),
         ..Default::default()
     };
-    tx_b = resign_transaction(tx_b, &identity_alice.signing_key);
+    tx_b = resign_transaction(tx_b, &alice_holder_key);
     let mut voucher_v2_charlie = voucher_v1.clone();
     voucher_v2_charlie.transactions.push(tx_b);
 
@@ -333,6 +339,9 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     let collision_time = (prev_tx_time + Duration::seconds(1)).to_rfc3339();
     let prev_tx_hash = crypto_utils::get_hash(utils::to_canonical_json(prev_tx).unwrap());
 
+    let alice_holder_key = test_utils::derive_holder_key(&voucher_v1, &identity_alice.signing_key);
+    let alice_holder_pub = bs58::encode(alice_holder_key.verifying_key().to_bytes()).into_string();
+
     // Pfad A: Split-Transfer 99
     let mut tx_a = Transaction {
         prev_hash: prev_tx_hash.clone(),
@@ -342,9 +351,10 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
         recipient_id: id_david.clone(),
         amount: "99.0000".to_string(),
         sender_remaining_amount: Some("1.0000".to_string()),
+        sender_ephemeral_pub: Some(alice_holder_pub.clone()),
         ..Default::default()
     };
-    tx_a = resign_transaction(tx_a, &identity_alice.signing_key);
+    tx_a = resign_transaction(tx_a, &alice_holder_key);
     let mut voucher_a = voucher_v1.clone();
     voucher_a.transactions.push(tx_a.clone());
 
@@ -356,9 +366,10 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
         sender_id: id_alice.clone(),
         recipient_id: id_david.clone(),
         amount: "100".to_string(),
+        sender_ephemeral_pub: Some(alice_holder_pub),
         ..Default::default()
     };
-    tx_b = resign_transaction(tx_b, &identity_alice.signing_key);
+    tx_b = resign_transaction(tx_b, &alice_holder_key);
     let mut voucher_b = voucher_v1.clone();
     voucher_b.transactions.push(tx_b.clone());
 

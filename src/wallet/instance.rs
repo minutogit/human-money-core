@@ -54,4 +54,8 @@ pub struct VoucherInstance {
     pub status: VoucherStatus,
     /// Eine eindeutige, lokale ID für diese Instanz, die als Schlüssel im `VoucherStore` dient.
     pub local_instance_id: String,
+    // VERALTET: `current_secret_seed` wurde entfernt, da wir nun statelessly arbeiten.
+    // Der Seed wird bei Bedarf aus dem Voucher + Identity re-derived.
+    // #[serde(default, skip_serializing_if = "Option::is_none")]
+    // pub current_secret_seed: Option<String>,
 }

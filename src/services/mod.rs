@@ -8,4 +8,5 @@ pub mod signature_manager;
 pub mod standard_manager;
 pub mod utils;
 pub mod voucher_manager;
+pub mod trap_manager;
 pub mod voucher_validation;

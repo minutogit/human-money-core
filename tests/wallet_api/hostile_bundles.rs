@@ -107,10 +107,12 @@ fn test_rejection_of_broken_transaction_chain() {
         &SILVER_STANDARD.0, // Das Objekt aus test_utils
         &identity_sender.user_id,
         &identity_sender.signing_key,
+        &human_money_core::test_utils::derive_holder_key(&voucher, &identity_sender.signing_key), // Init -> Tx1
         &id_recipient,
         "50.0000",
     )
     .unwrap()
+    .0
     .transactions
     .pop()
     .unwrap(); // Nimm die neue, gültige Transaktion
@@ -141,8 +143,8 @@ fn test_rejection_of_broken_transaction_chain() {
     assert!(result.is_err());
     let err_str = result.unwrap_err();
     assert!(
-        err_str.contains("Transaction chain broken"),
-        "Error should complain about broken transaction chain. Got: {}",
+        err_str.contains("Invalid signature for signer Layer2-Anchor"),
+        "Error should complain about broken L2 signature due to tampered prev_hash. Got: {}",
         err_str
     );
     assert!(
@@ -429,11 +431,12 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
             Some("pwd"),
         )
         .unwrap();
-    let voucher_a_sent = human_money_core::services::voucher_manager::create_transaction(
+    let (voucher_a_sent, _) = human_money_core::services::voucher_manager::create_transaction(
         &voucher_a,
         &SILVER_STANDARD.0,
         &identity_sender.user_id,
         &identity_sender.signing_key,
+        &human_money_core::test_utils::derive_holder_key(&voucher_a, &identity_sender.signing_key), // Init -> Tx 1
         &id_recipient,
         "50.0000",
     )

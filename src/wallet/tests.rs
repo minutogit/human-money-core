@@ -35,7 +35,7 @@ mod local_instance_id_logic {
         // --- Setup ---
         // Erstellt einen Gutschein von Alice (100) und eine Transaktion,
         // bei der sie 40 an Bob sendet.
-        let (_, _, alice, bob, voucher_after_split) = test_utils::setup_voucher_with_one_tx();
+        let (_, _, alice, bob, voucher_after_split, _) = test_utils::setup_voucher_with_one_tx();
         let split_tx = voucher_after_split.transactions.last().unwrap();
 
         // --- Aktion ---
@@ -70,15 +70,20 @@ mod local_instance_id_logic {
     fn test_path_dependency_long_chain() {
         // --- Setup ---
         // Alice (100) -> Bob (40)
-        let (standard, _, _, bob, voucher_after_tx1) = test_utils::setup_voucher_with_one_tx();
+        let (standard, _, _, bob, voucher_after_tx1, secrets) = test_utils::setup_voucher_with_one_tx();
         let charlie = &ACTORS.charlie;
 
+        // Recover Bob's ephemeral key from the secrets of the previous transaction
+        let bob_seed_bytes = bs58::decode(secrets.recipient_seed).into_vec().unwrap();
+        let bob_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(&bob_seed_bytes.try_into().unwrap());
+
         // Bob (40) -> Charlie (40) - Voller Transfer
-        let voucher_after_tx2 = create_transaction(
+        let (voucher_after_tx2, _) = create_transaction(
             &voucher_after_tx1,
             standard,
             &bob.user_id,
             &bob.signing_key,
+            &bob_ephemeral_key,
             &charlie.user_id,
             "40.0000",
         )
@@ -104,14 +109,19 @@ mod local_instance_id_logic {
     fn test_path_dependency_bounce_back() {
         // --- Setup ---
         // Alice (100) -> Bob (40)
-        let (standard, _, alice, bob, voucher_after_tx1) = test_utils::setup_voucher_with_one_tx();
+        let (standard, _, alice, bob, voucher_after_tx1, secrets) = test_utils::setup_voucher_with_one_tx();
+
+        // Recover Bob's ephemeral key
+        let bob_seed_bytes = bs58::decode(secrets.recipient_seed).into_vec().unwrap();
+        let bob_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(&bob_seed_bytes.try_into().unwrap());
 
         // Bob (40) -> Alice (40) - Sendet den Betrag zurück
-        let voucher_after_tx2 = create_transaction(
+        let (voucher_after_tx2, _) = create_transaction(
             &voucher_after_tx1,
             standard,
             &bob.user_id,
             &bob.signing_key,
+            &bob_ephemeral_key,
             &alice.user_id,
             "40.0000",
         )
@@ -138,13 +148,19 @@ mod local_instance_id_logic {
     #[test]
     fn test_correct_id_for_archived_state() {
         // --- Setup ---
-        let (standard, _, alice, bob, initial_voucher) = test_utils::setup_voucher_with_one_tx();
-        // Alice hat noch 60. Sie sendet diese 60 komplett an Bob.
-        let voucher_after_full_transfer = create_transaction(
+        // --- Setup ---
+        let (standard, _, alice, bob, initial_voucher, secrets) = test_utils::setup_voucher_with_one_tx();
+
+        let alice_change_seed = secrets.change_seed.expect("Alice should have received change from split");
+        let alice_change_key_bytes = bs58::decode(alice_change_seed).into_vec().unwrap();
+        let alice_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(&alice_change_key_bytes.try_into().unwrap());
+        
+        let (voucher_after_full_transfer, _) = create_transaction(
             &initial_voucher,
             standard,
             &alice.user_id,
             &alice.signing_key,
+            &alice_ephemeral_key, // Use change key!
             &bob.user_id,
             "60.0000",
         )
@@ -174,7 +190,7 @@ mod local_instance_id_logic {
     fn test_error_when_user_has_no_balance_or_history() {
         // --- Setup ---
         // Alice (100) -> Bob (40). Charlie war nie beteiligt.
-        let (_, _, _, _, voucher) = test_utils::setup_voucher_with_one_tx();
+        let (_, _, _, _, voucher, _) = test_utils::setup_voucher_with_one_tx();
         let charlie = &ACTORS.charlie;
 
         // --- Aktion ---

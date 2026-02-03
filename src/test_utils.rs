@@ -5,7 +5,7 @@
 
 // HINWEIS: Absoluter Pfad zu externen Crates für mehr Robustheit
 use bip39::Language;
-use ed25519_dalek::Signer;
+use ed25519_dalek::{Signer, SigningKey};
 use lazy_static::lazy_static;
 use std::path::Path;
 use std::path::PathBuf;
@@ -338,6 +338,7 @@ pub fn setup_voucher_with_one_tx() -> (
     &'static UserIdentity,
     &'static UserIdentity,
     Voucher,
+    crate::services::voucher_manager::TransactionSecrets,
 ) {
     let (standard, standard_hash) = (
         &crate::test_utils::SILVER_STANDARD.0,
@@ -368,11 +369,15 @@ pub fn setup_voucher_with_one_tx() -> (
     )
     .unwrap();
 
-    let voucher_after_tx1 = create_transaction(
+    // Für die ERSTE Transaktion (Init -> Tx1) ist der Anchor der Hash des User-IDs (Permanent Key).
+    // KORREKTUR: Der Anchor ist der "holder"-Key, der aus dem Nonce abgeleitet wurde.
+    let holder_key = derive_holder_key(&initial_voucher, &creator.signing_key);
+    let (voucher_after_tx1, secrets) = create_transaction(
         &initial_voucher,
         standard,
         &creator.user_id,
-        &creator.signing_key,
+        &creator.signing_key,   // Permanent Key (ID/Trap)
+        &holder_key,            // Ephemeral Key (Anchor Resolution)
         &recipient.user_id,
         "40.0000",
     )
@@ -384,6 +389,7 @@ pub fn setup_voucher_with_one_tx() -> (
         creator,
         recipient,
         voucher_after_tx1,
+        secrets,
     )
 }
 
@@ -543,6 +549,10 @@ pub fn add_voucher_to_wallet(
         voucher.signatures.push(s2);
     }
 
+    // P2PKH Support: Re-Derive Holder Seed
+    let holder_key = derive_holder_key(&voucher, &identity.signing_key);
+    let _holder_seed = bs58::encode(holder_key.to_bytes()).into_string();
+
     let local_id = Wallet::calculate_local_instance_id(&voucher, &identity.user_id)?;
     wallet.voucher_store.vouchers.insert(
         local_id.clone(),
@@ -550,6 +560,7 @@ pub fn add_voucher_to_wallet(
             voucher: voucher.clone(),
             status: VoucherStatus::Active,
             local_instance_id: local_id.clone(),
+            // current_secret_seed: Some(holder_seed), // Removed in stateless refactor
         },
     );
 
@@ -599,6 +610,38 @@ pub fn setup_service_with_profile(
         .expect("Could not find freshly created profile in index");
 
     (service, profile_info)
+}
+
+/// Erstellt eine Transaktion und extrahiert automatisch den neuen Seed für die nächste Transaktion.
+/// Dies simuliert das Verhalten des Wallets in Tests.
+pub fn create_transaction_with_auto_decrypt(
+    voucher: &Voucher,
+    standard: &VoucherStandardDefinition,
+    sender_id: &str,
+    sender_permanent_key: &SigningKey,
+    sender_ephemeral_key: &SigningKey,
+    recipient_id: &str,
+    _recipient_permanent_key: &SigningKey, // Nicht mehr benötigt, aber wir lassen es im Signature, um bestehende Calls nicht zu brechen?
+    amount: &str,
+) -> Result<(Voucher, SigningKey), VoucherCoreError> {
+    let (new_voucher, secrets) = create_transaction(
+        voucher,
+        standard,
+        sender_id,
+        sender_permanent_key,
+        sender_ephemeral_key,
+        recipient_id,
+        amount,
+    )?;
+
+    // Use returned secret directly
+    let seed_bytes = bs58::decode(secrets.recipient_seed).into_vec()
+       .map_err(|e| VoucherCoreError::Crypto(format!("Invalid seed base58: {}", e)))?;
+    
+    let seed_arr: [u8; 32] = seed_bytes.try_into().expect("Seed must be 32 bytes");
+    let next_key = SigningKey::from_bytes(&seed_arr);
+    
+    Ok((new_voucher, next_key))
 }
 
 pub fn create_guarantor_signature_data(
@@ -799,7 +842,7 @@ pub fn create_voucher_for_manipulation(
         voucher_id: "".to_string(),
         voucher_nonce,
         creation_date: creation_date_str.clone(),
-        valid_until,
+        valid_until: valid_until.clone(),
         non_redeemable_test_voucher: false,
         nominal_value: final_nominal_value,
         collateral: final_collateral,
@@ -838,9 +881,22 @@ pub fn create_voucher_for_manipulation(
     voucher.signatures.push(creator_sig_obj);
 
     // 4. Init-Transaktion erstellen
+    // 4. Init-Transaktion erstellen (MIT P2PKH ANKER & L2 SIGNATUR)
+
+    // A. Keys ableiten
+    let (genesis_secret, genesis_public) =
+        crypto_utils::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "genesis").expect("Failed to derive genesis key");
+    let genesis_pub_str = bs58::encode(genesis_public.to_bytes()).into_string();
+
+    let (_, holder_public) =
+        crypto_utils::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "holder").expect("Failed to derive holder key");
+    let holder_pub_str = bs58::encode(holder_public.to_bytes()).into_string();
+    let holder_anchor_hash = crypto_utils::get_hash(holder_pub_str);
+
     let prev_hash =
         crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher.voucher_nonce));
-    let init_tx = Transaction {
+    
+    let mut init_tx = Transaction {
         t_id: "".to_string(),
         prev_hash,
         t_type: "init".to_string(),
@@ -850,17 +906,38 @@ pub fn create_voucher_for_manipulation(
         amount: voucher.nominal_value.amount.clone(),
         sender_remaining_amount: None,
         sender_signature: "".to_string(),
-        receiver_ephemeral_pub_hash: None,
-        sender_ephemeral_pub: None,
+        // P2PKH SETUP
+        receiver_ephemeral_pub_hash: Some(holder_anchor_hash),
+        sender_ephemeral_pub: Some(genesis_pub_str.clone()),
+        sender_change_anchor_hash: None,
         privacy_guard: None,
         trap_data: None,
         layer2_signature: None,
-        valid_until: None,
+        valid_until: Some(valid_until.clone()),
     };
+
+    // B. L2 Signatur berechnen
+    let tx_json_pre_l2 = to_canonical_json(&init_tx).unwrap();
+    let pre_l2_tid = crypto_utils::get_hash(tx_json_pre_l2);
+
+    let l2_payload = format!(
+        "{}{}{}",
+        pre_l2_tid,
+        init_tx.valid_until.as_ref().unwrap_or(&"".to_string()),
+        genesis_pub_str
+    );
+    let l2_hash = crypto_utils::get_hash(l2_payload);
+    let l2_sig_bytes = crypto_utils::sign_ed25519(&genesis_secret, l2_hash.as_bytes());
+    init_tx.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
+
+    // C. Finale ID & Signatur
+    // resign_transaction_ext berechnet t_id und sender_signature neu.
+    // Wir übergeben genesis_secret für die L2-Signatur separat.
     voucher
         .transactions
-        .push(resign_transaction(init_tx, signing_key));
+        .push(resign_transaction_ext(init_tx, signing_key, Some(&genesis_secret)));
     voucher
+
 }
 
 #[allow(dead_code)]
@@ -966,18 +1043,66 @@ pub fn create_female_guarantor_signature(voucher: &Voucher) -> VoucherSignature 
 
 #[allow(dead_code)]
 pub fn resign_transaction(
-    mut tx: Transaction,
+    tx: Transaction,
     signer_key: &ed25519_dalek::SigningKey,
 ) -> Transaction {
+    resign_transaction_ext(tx, signer_key, None)
+}
+
+#[allow(dead_code)]
+pub fn resign_transaction_ext(
+    mut tx: Transaction,
+    signer_key: &ed25519_dalek::SigningKey,
+    l2_signer_key: Option<&ed25519_dalek::SigningKey>,
+) -> Transaction {
+    // 1. L2 Signature (if needed)
+    if let Some(sender_ephem_pub) = &tx.sender_ephemeral_pub {
+        tx.layer2_signature = None;
+        tx.t_id = "".to_string();
+        tx.sender_signature = "".to_string();
+        
+        let tx_json_pre_l2 = to_canonical_json(&tx).unwrap();
+        let pre_l2_tid = crypto_utils::get_hash(tx_json_pre_l2);
+        
+        let l2_payload = if tx.t_type == "init" {
+            format!(
+                "{}{}{}",
+                pre_l2_tid,
+                tx.valid_until.as_deref().unwrap_or(""),
+                sender_ephem_pub
+            )
+        } else {
+            format!(
+                "{}{}{}{}",
+                pre_l2_tid,
+                sender_ephem_pub,
+                tx.receiver_ephemeral_pub_hash.as_deref().unwrap_or(""),
+                tx.sender_change_anchor_hash.as_deref().unwrap_or("")
+            )
+        };
+        let l2_hash = crypto_utils::get_hash(l2_payload);
+
+        // For L2, we either use the provided l2_signer_key (expert mode)
+        // or we use the provided signer_key.
+        let actual_l2_key = l2_signer_key.unwrap_or(signer_key);
+        let l2_sig = crypto_utils::sign_ed25519(actual_l2_key, l2_hash.as_bytes());
+        
+        tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
+    }
+
     tx.t_id = "".to_string();
     tx.sender_signature = "".to_string();
+    // Die t_id muss auf dem kanonischen JSON der gesamten Tx basieren (inkl. ephemeral fields)
     tx.t_id = crypto_utils::get_hash(to_canonical_json(&tx).unwrap());
-    let payload = serde_json::json!({
+    
+    // Die Signatur-Payload: 
+    let signature_payload = serde_json::json!({
         "prev_hash": tx.prev_hash,
         "sender_id": tx.sender_id,
         "t_id": tx.t_id
     });
-    let signature_hash = crypto_utils::get_hash(to_canonical_json(&payload).unwrap());
+    let signature_hash = crypto_utils::get_hash(to_canonical_json(&signature_payload).unwrap());
+    
     tx.sender_signature =
         bs58::encode(crypto_utils::sign_ed25519(signer_key, signature_hash.as_bytes()).to_bytes())
             .into_string();
@@ -1167,4 +1292,16 @@ mod tests {
             "Year should be the target leap year"
         );
     }
+}
+
+// Helper to derive the holder key for Init transaction
+pub fn derive_holder_key(voucher: &crate::models::voucher::Voucher, creator_signing_key: &ed25519_dalek::SigningKey) -> ed25519_dalek::SigningKey {
+    let nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
+    let nonce_arr: [u8; 16] = nonce_bytes.try_into().unwrap();
+    let (holder_key, _) = crate::services::crypto_utils::derive_ephemeral_key_pair(
+        creator_signing_key,
+        &nonce_arr,
+        "holder"
+    ).unwrap();
+    holder_key
 }

@@ -617,11 +617,13 @@ fn test_split_transaction_cycle_and_balance_check() {
 
     // 5. Führe eine Split-Transaktion durch: Sende 30.5000 an den Empfänger
     let split_amount = "30.5000";
-    let voucher_after_split = create_transaction(
-        &initial_voucher,
+    let holder_key = human_money_core::test_utils::derive_holder_key(&initial_voucher, &sender.signing_key);
+    let (voucher_after_split, _) = create_transaction(
+        &initial_voucher, // KORREKTUR: Fehlte im vorherigen Versuch
         &SILVER_STANDARD.0,
         &sender.user_id,
         &sender.signing_key,
+        &holder_key, // Init->Tx1: Emphemerer Key ist Holder Key
         &recipient.user_id,
         split_amount,
     )
@@ -676,14 +678,16 @@ fn test_split_fails_on_insufficient_funds() {
     .unwrap();
 
     // Versuche, 50.1 zu senden (mehr als vorhanden)
+    let holder_key = self::test_utils::derive_holder_key(&initial_voucher, &sender.signing_key);
     let split_result = create_transaction(
         &initial_voucher,
         silver_standard,
         &sender.user_id,
         &sender.signing_key,
+        &holder_key, // Init->Tx1 uses derived key
         &recipient.user_id,
         "50.1",
-    );
+    ).map(|(v, _)| v);
 
     assert!(matches!(
         split_result.unwrap_err(),
@@ -726,14 +730,16 @@ fn test_fails_to_create_forbidden_transaction_type() {
     assert!(validate_voucher_against_standard(&initial_voucher, &standard).is_ok());
 
     // 3. Versuche, eine "split"-Transaktion zu erstellen, obwohl sie verboten ist.
+    let holder_key = self::test_utils::derive_holder_key(&initial_voucher, &sender.signing_key);
     let split_result = create_transaction(
         &initial_voucher,
         &standard,
         &sender.user_id,
         &sender.signing_key,
+        &holder_key, // Init->Tx1
         &recipient.user_id,
         "50", // Teilbetrag, der einen "split" erzwingt
-    );
+    ).map(|(v, _)| v);
 
     // 4. Assert: Die Erstellung muss mit einem `TransactionTypeNotAllowed`-Fehler fehlschlagen.
     assert!(matches!(
@@ -773,14 +779,16 @@ fn test_split_fails_on_non_divisible_voucher() {
     )
     .unwrap();
 
+    let holder_key = self::test_utils::derive_holder_key(&initial_voucher, &sender.signing_key);
     let split_result = create_transaction(
-        &initial_voucher,
+        &initial_voucher, // KORREKTUR
         &standard,
         &sender.user_id,
         &sender.signing_key,
+        &holder_key, // Init->Tx1
         &recipient.user_id,
         "10.0",
-    );
+    ).map(|(v, _)| v);
 
     assert!(matches!(
         split_result.unwrap_err(),
@@ -1005,11 +1013,13 @@ fn test_double_spend_detection_logic() {
     assert!(validate_voucher_against_standard(&initial_voucher, silver_standard).is_ok());
 
     // 3. Alice führt eine erste, legitime Transaktion durch: Sie sendet 40 an Bob.
-    let voucher_after_split = create_transaction(
+    let holder_key = human_money_core::test_utils::derive_holder_key(&initial_voucher, &alice.signing_key);
+    let (voucher_after_split, _) = create_transaction(
         &initial_voucher,
         silver_standard,
         &alice.user_id,
         &alice.signing_key,
+        &holder_key, // Init->Tx1
         &bob.user_id,
         "40",
     )
@@ -1023,11 +1033,12 @@ fn test_double_spend_detection_logic() {
     );
     // 4. Alice betrügt: Sie nimmt den Zustand VOR der Transaktion an Bob (`initial_voucher`)
     //    und versucht, ihr ursprüngliches Guthaben von 100 erneut auszugeben, indem sie 60 an Frank sendet.
-    let fraudulent_voucher = create_transaction(
+    let (fraudulent_voucher, _) = create_transaction(
         &initial_voucher,
         silver_standard,
         &alice.user_id,
         &alice.signing_key,
+        &holder_key, // Double Spend Attempt (Same key as legit tx)
         &frank.user_id,
         "60",
     )
@@ -1162,7 +1173,7 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     );
     let local_id = calculate_local_instance_id(&voucher, &alice_identity.user_id);
 
-    // Alice adds the new voucher to her wallet's store
+
     alice_wallet.voucher_store.vouchers.insert(
         local_id.clone(),
         VoucherInstance {

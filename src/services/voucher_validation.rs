@@ -9,7 +9,10 @@ use crate::models::voucher_standard_definition::{
     BehaviorRules, ContentRules, CountRules, FieldGroupRule, RequiredSignatureRule,
     VoucherStandardDefinition,
 };
-use crate::services::crypto_utils::{get_hash, get_pubkey_from_user_id, verify_ed25519};
+use crate::services::crypto_utils::{
+    ed25519_pk_to_curve_point, get_hash, get_pubkey_from_user_id, verify_ed25519,
+};
+use crate::services::trap_manager::verify_trap;
 use crate::services::utils::to_canonical_json;
 use crate::services::voucher_manager::add_iso8601_duration;
 
@@ -320,12 +323,6 @@ pub fn validate_field_group_rules(
         // bestätigt, dass `serde` das Feld wie erwartet als "details" serialisiert.
         let effective_field_path = rule.field.clone();
 
-        // [DEBUG]
-        println!(
-            "[DEBUG VALIDATION] Checking field_group_rule for path: '{}', field: '{}'",
-            path, &effective_field_path
-        );
-
         let mut value_occurrences: HashMap<String, u32> = HashMap::new();
 
         for item in array {
@@ -343,22 +340,12 @@ pub fn validate_field_group_rules(
 
             // Wir extrahieren den Wert des relevanten Feldes als String, um ihn zu zählen.
             if let Some(value_node) = get_value_by_path(item, &effective_field_path) {
-                // [DEBUG]
-                println!("[DEBUG VALIDATION]     Found value_node: {:?}", value_node);
-
                 if let Some(s) = value_node.as_str() {
                     *value_occurrences.entry(s.to_string()).or_insert(0) += 1;
                 } else if value_node.is_number() || value_node.is_boolean() {
                     *value_occurrences.entry(value_node.to_string()).or_insert(0) += 1;
                 }
             } else {
-                // [DEBUG]
-                // HINWEIS: Dies ist normal für den 'creator', wenn die Regel 'details.gender' ist.
-                println!(
-                    "[DEBUG VALIDATION]     Field '{}' not found in item (Role: {:?}).",
-                    &effective_field_path,
-                    item.get("role").and_then(Value::as_str).unwrap_or("N/A")
-                );
             }
         }
 
@@ -568,17 +555,63 @@ fn verify_transactions(
 
         // --- P2PKH Verkettungs-Validierung ---
         // Prüfe, dass der in dieser Tx enthüllte sender_ephemeral_pub
-        // dem Hash in der vorherigen Tx entspricht (receiver_ephemeral_pub_hash)
-        if let (Some(revealed_pub), Some(prev_anchor)) = (
-            &tx.sender_ephemeral_pub,
-            &prev_tx.receiver_ephemeral_pub_hash,
-        ) {
-            let calculated_hash = get_hash(revealed_pub.clone());
-            if calculated_hash != *prev_anchor {
+        // dem Hash in der vorherigen Tx entspricht (receiver_ephemeral_pub_hash ODER sender_change_anchor_hash)
+        if let Some(revealed_pub) = &tx.sender_ephemeral_pub {
+            let correct_anchor = if tx.sender_id == prev_tx.recipient_id {
+                prev_tx.receiver_ephemeral_pub_hash.as_ref()
+            } else if tx.sender_id == prev_tx.sender_id {
+                prev_tx.sender_change_anchor_hash.as_ref()
+            } else {
+                // Wenn der Sender weder Empfänger noch Sender der vorigen Tx war, ist die Kette unterbrochen.
+                // Außer bei Sonderfällen (Delegation?), die hier nicht abgedeckt sind.
                 return Err(ValidationError::InvalidTransaction(
-                    "P2PKH chain broken: sender_ephemeral_pub does not match previous receiver_ephemeral_pub_hash".to_string(),
+                    "Transaction chain broken: Sender is not linked to previous transaction participants.".to_string()
+                ).into());
+            };
+
+            if let Some(anchor) = correct_anchor {
+                let calculated_hash = get_hash(revealed_pub.clone());
+                if calculated_hash != *anchor {
+                    return Err(ValidationError::InvalidTransaction(
+                        "P2PKH chain broken: sender_ephemeral_pub does not match previous anchor (receiver or change).".to_string(),
+                    )
+                    .into());
+                }
+            } else {
+                 return Err(ValidationError::InvalidTransaction(
+                    "P2PKH chain broken: Previous transaction has no anchor for this spender.".to_string(),
                 )
                 .into());
+            }
+        }
+
+        // --- TRAP Validierung ---
+        if let Some(trap) = &tx.trap_data {
+            // Wir können die Trap nur verifizieren, wenn wir die U-Werte rekonstruieren können.
+            // Dazu brauchen wir prev_hash, ephem_keys, amount und prefix.
+            // Wir nehmen an, dass 'sender_id' im Klartext oder als valides DID vorliegt,
+            // um den ID-Punkt zu holen. Wenn sender_id "anonymous" ist, überspringen wir den ZKP-Check (Public Mode).
+            if let Ok(signer_pk) = get_pubkey_from_user_id(&tx.sender_id) {
+                if let Ok(signer_id_point) = ed25519_pk_to_curve_point(&signer_pk) {
+                     let sender_prefix = tx.sender_id.split('@').next().unwrap_or(&tx.sender_id).to_string();
+                     // Rekonstruktion U Input
+                     // u = HashToCurve(prev_hash + sender_ephemeral_pub + receiver_ephemeral_pub_hash + amount + prefix)
+                     
+                     // Achtung: Wir müssen sicherstellen, dass wir exakt dasselbe Format wie im TrapManager nutzen.
+                     // amount muss 'formatted for storage' sein (ist er im Tx struct schon).
+                     let u_input = format!(
+                        "{}{}{}{}{}",
+                        tx.prev_hash,
+                        tx.sender_ephemeral_pub.as_deref().unwrap_or(""),
+                        tx.receiver_ephemeral_pub_hash.as_deref().unwrap_or(""),
+                        tx.amount,
+                        sender_prefix
+                    );
+                    
+                    if let Err(e) = verify_trap(trap, u_input.as_bytes(), &signer_id_point, &sender_prefix) {
+                         return Err(ValidationError::InvalidTransaction(format!("Trap verification failed: {}", e)).into());
+                    }
+                }
             }
         }
 
@@ -754,10 +787,25 @@ fn verify_transaction_integrity_and_signature(
             tx_pre_l2.layer2_signature = None; // Entfernen für pre-l2-hash
 
             let pre_l2_tid = get_hash(to_canonical_json(&tx_pre_l2)?);
-            let valid_until = transaction.valid_until.as_deref().unwrap_or("");
-
-            let l2_payload = format!("{}{}{}", pre_l2_tid, valid_until, sender_ephem_pub);
-            let l2_hash = get_hash(l2_payload);
+            
+            // UNTERSCHEIDUNG INIT vs TRANSFER für L2 Hash:
+            // INIT: hash(pre_l2_tid + valid_until + sender_ephem_pub)
+            // TRANSFER: hash(pre_l2_tid + sender_ephem_pub + receiver_ephem_pub_hash + change_anchor)
+            
+            let l2_hash = if transaction.t_type == "init" {
+                 let valid_until = transaction.valid_until.as_deref().unwrap_or("");
+                 let l2_payload = format!("{}{}{}", pre_l2_tid, valid_until, sender_ephem_pub);
+                 get_hash(l2_payload)
+            } else {
+                 let l2_payload = format!(
+                    "{}{}{}{}",
+                    pre_l2_tid,
+                    sender_ephem_pub,
+                    transaction.receiver_ephemeral_pub_hash.as_deref().unwrap_or(""),
+                    transaction.sender_change_anchor_hash.as_deref().unwrap_or("")
+                );
+                get_hash(l2_payload)
+            };
 
             // Dekodiere Key & Sig
             let ephem_pub_bytes = bs58::decode(sender_ephem_pub).into_vec().map_err(|_| {
@@ -792,7 +840,19 @@ fn verify_transaction_integrity_and_signature(
         "t_id": transaction.t_id
     });
     let signature_payload_hash = get_hash(to_canonical_json(&signature_payload)?);
-    let sender_pub_key = get_pubkey_from_user_id(&transaction.sender_id)?;
+    
+    // KORREKTUR: Unterscheidung nach Transaktionstyp
+    // Init: Wird mit dem PERMANENT KEY des Creators (Sender) signiert.
+    // Transfer/Split: Wird mit dem EPHEMERAL KEY (P2PKH) signiert.
+    let sender_pub_key = if transaction.t_type == "init" {
+        get_pubkey_from_user_id(&transaction.sender_id)?
+    } else {
+        let pub_str = transaction.sender_ephemeral_pub.as_ref().ok_or(ValidationError::InvalidTransaction("Missing sender_ephemeral_pub for non-init transaction".into()))?;
+        let pub_bytes = bs58::decode(pub_str).into_vec().map_err(|_| ValidationError::SignatureDecodeError("Invalid ephemeral pubkey encoding".into()))?;
+        // Convert to VerifyingKey
+        let array: [u8; 32] = pub_bytes.try_into().map_err(|_| ValidationError::SignatureDecodeError("Invalid ephemeral pubkey length".into()))?;
+        ed25519_dalek::VerifyingKey::from_bytes(&array).map_err(|_| ValidationError::SignatureDecodeError("Invalid ephemeral pubkey bytes".into()))?
+    };
     let signature_bytes = bs58::decode(&transaction.sender_signature).into_vec()?;
 
     // KORREKTUR: Verwende die robuste Pars-Logik, um 64-Byte-Länge zu prüfen.

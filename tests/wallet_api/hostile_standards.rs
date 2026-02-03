@@ -59,7 +59,7 @@ fn test_disallowed_transaction_type() {
 
     // 2. ACT: Versuche einen Split-Transfer
     let request = human_money_core::wallet::MultiTransferRequest {
-        recipient_id: "recipient-id".to_string(),
+        recipient_id: ACTORS.recipient1.identity.user_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_id.clone(),
             amount_to_send: "40".to_string(), // Teilbetrag -> "split"

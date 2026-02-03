@@ -20,6 +20,8 @@ use ed25519_dalek::{
 
 // X25519 Schlüsselvereinbarung
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey, StaticSecret};
+use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
+
 
 // BIP39 Mnemonic Phrase
 use bip39::{Language, Mnemonic};
@@ -148,6 +150,11 @@ pub fn derive_ed25519_keypair(
     // Generate the standard BIP-39 seed (uses PBKDF2 with 2048 rounds)
     let bip39_seed = mnemonic.to_seed(passphrase.unwrap_or(""));
 
+    #[cfg(not(any(test, feature = "test-utils")))]
+    const PBKDF2_ROUNDS: u32 = 100_000;
+    #[cfg(any(test, feature = "test-utils"))]
+    const PBKDF2_ROUNDS: u32 = 1;
+
     // Apply additional key stretching using PBKDF2 with 100,000 rounds
     // This provides enhanced protection against brute-force attacks
     // while maintaining BIP-39 compatibility for the initial seed generation
@@ -155,7 +162,7 @@ pub fn derive_ed25519_keypair(
     pbkdf2::<Hmac<Sha512>>(
         &bip39_seed,
         b"human-money-core",
-        100_000,
+        PBKDF2_ROUNDS,
         &mut stretched_key,
     )
     .map_err(|e| VoucherCoreError::Crypto(format!("PBKDF2 stretching failed: {}", e)))?;
@@ -253,6 +260,83 @@ pub fn ed25519_pub_to_x25519(ed_pub: &EdPublicKey) -> X25519PublicKey {
     X25519PublicKey::from(x25519_bytes)
 }
 
+/// Konvertiert einen Ed25519 Public Key in einen EdwardsPoint auf der Kurve.
+/// Dies wird benötigt, um die ID in der Trap-Gleichung ($V = m \cdot U + ID$) zu verwenden.
+pub fn ed25519_pk_to_curve_point(ed_pub: &EdPublicKey) -> Result<EdwardsPoint, VoucherCoreError> {
+    CompressedEdwardsY::from_slice(ed_pub.as_bytes())
+        .map_err(|_| VoucherCoreError::Crypto("Invalid Ed25519 public key bytes".to_string()))?
+        .decompress()
+        .ok_or_else(|| VoucherCoreError::Crypto("Failed to decompress Ed25519 public key point".to_string()))
+}
+
+
+
+/// Helper: Baut den deterministischen Info-String für HKDF auf.
+/// info = "human-money-core/x25519-exchange" + sort(pk1, pk2)
+pub fn build_hkdf_info(pk1: &X25519PublicKey, pk2: &X25519PublicKey) -> Vec<u8> {
+    const LABEL: &[u8] = b"human-money-core/x25519-exchange";
+    const KEY_LEN: usize = 32;
+
+    let (key_a, key_b) = if pk1.as_bytes() < pk2.as_bytes() {
+        (pk1.as_bytes(), pk2.as_bytes())
+    } else {
+        (pk2.as_bytes(), pk1.as_bytes())
+    };
+
+    let mut info = Vec::with_capacity(LABEL.len() + KEY_LEN + KEY_LEN);
+    info.extend_from_slice(LABEL);
+    info.extend_from_slice(key_a);
+    info.extend_from_slice(key_b);
+    info
+}
+
+/// Entschlüsselt den Privacy Guard Payload für den Empfänger.
+///
+/// # Arguments
+/// * `privacy_guard_base64` - Der Base64-kodierte Guard-String.
+/// * `recipient_secret_key` - Der permanente Signing Key des Empfängers (wird in StaticSecret umgewandelt).
+///
+/// # Returns
+/// Der entschlüsselte Byte-Vector (JSON Payload).
+pub fn decrypt_recipient_payload(
+    privacy_guard_base64: &str,
+    recipient_secret_key: &SigningKey,
+) -> Result<Vec<u8>, VoucherCoreError> {
+    // 1. Decode Base64
+    let guard_bytes = decode_base64(privacy_guard_base64)?;
+
+    // Guard Format: [EphemeralPK (32)] + [Nonce+Ciphertext]
+    if guard_bytes.len() < 32 + 12 {
+        return Err(VoucherCoreError::Crypto("Invalid privacy guard length".to_string()));
+    }
+
+    let (ephemeral_pk_bytes, encrypted_content) = guard_bytes.split_at(32);
+
+    // 2. Parse Ephemeral Public Key
+    let ephemeral_pk_arr: [u8; 32] = ephemeral_pk_bytes.try_into().unwrap();
+    let ephemeral_pk_x = X25519PublicKey::from(ephemeral_pk_arr);
+
+    // 3. Recipient Secret Key conversion (Ed25519 -> X25519)
+    let recipient_secret_x = ed25519_sk_to_x25519_sk(recipient_secret_key);
+
+    // 4. DH Exchange
+    // Note: We use the recipient's static secret and the sender's ephemeral public.
+    let shared_point = recipient_secret_x.diffie_hellman(&ephemeral_pk_x);
+    let shared_secret_bytes = shared_point.as_bytes();
+
+    // 5. HKDF Derivation
+    let recipient_public_x = X25519PublicKey::from(&recipient_secret_x);
+    let info = build_hkdf_info(&ephemeral_pk_x, &recipient_public_x);
+
+    let hkdf = Hkdf::<Sha256>::new(None, shared_secret_bytes);
+    let mut symmetric_key = [0u8; 32];
+    hkdf.expand(&info, &mut symmetric_key)
+        .map_err(|_| VoucherCoreError::Crypto("HKDF expansion failed".to_string()))?;
+
+    // 6. Decrypt
+    decrypt_data(&symmetric_key, encrypted_content).map_err(VoucherCoreError::SymmetricEncryption)
+}
+
 /// Konvertiert einen Ed25519 Signaturschlüssel in einen X25519 geheimen Schlüssel für Diffie-Hellman.
 ///
 /// Dies ist das Gegenstück zum öffentlichen Schlüssel `ed25519_pub_to_x25519`. Es ermöglicht die
@@ -338,26 +422,16 @@ pub fn perform_diffie_hellman(
     // - Unidirectionality does not require separation into Send/Receive keys.
     let hkdf = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
 
-    // KANONISIERUNG: Lexikographische Sortierung der Public Keys für Interoperabilität.
-    // Damit generieren Sender und Empfänger garantiert denselben Info-String.
-    let (key_a, key_b) = if our_public.as_bytes() < their_public.as_bytes() {
-        (our_public.as_bytes(), their_public.as_bytes())
-    } else {
-        (their_public.as_bytes(), our_public.as_bytes())
-    };
+    // KANONISIERUNG & Info-String Bau
+    let info = build_hkdf_info(&our_public, their_public);
+    // Sicherer Aufbau des Info-Strings (via Helper)
+    // info[..LABEL.len()].copy_from_slice(LABEL); ... replaced by helper
 
-    // KONSTANTE BUFFER-GRÖSSE: Wir berechnen die exakte Länge zur Kompilierzeit.
-    // Das verhindert Buffer-Overflows und Panics ohne Laufzeitkosten.
-    const LABEL: &[u8] = b"human-money-core/x25519-exchange";
-    const KEY_LEN: usize = 32;
-    const INFO_LEN: usize = LABEL.len() + KEY_LEN + KEY_LEN;
-
-    let mut info = [0u8; INFO_LEN];
-
-    // Sicherer Aufbau des Info-Strings (keine Panics möglich, da Größen exakt passen)
-    info[..LABEL.len()].copy_from_slice(LABEL);
-    info[LABEL.len()..LABEL.len() + KEY_LEN].copy_from_slice(key_a);
-    info[LABEL.len() + KEY_LEN..].copy_from_slice(key_b);
+    // Ableitung des Schlüssels
+    let mut symmetric_key = [0u8; 32];
+    // expand sollte hier niemals fehlschlagen
+    hkdf.expand(&info, &mut symmetric_key)
+        .expect("HKDF expansion with valid length should not fail");
 
     // Ableitung des Schlüssels
     let mut symmetric_key = [0u8; 32];
