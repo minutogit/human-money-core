@@ -7,7 +7,7 @@ vc-id: 3b29e076-55bb-4fde-93ea-5bac0b28cd8a
 ---
 # Spezifikation: Hybride Privatsphäre, Offline-Sicherheit & Quantensichere Anker
 
-**Version:** 4.4 (Restored Critical Details)
+**Version:** 4.5 (Privacy Modes Extension)
 
 **Datum:** 03.02.2026
 
@@ -81,11 +81,171 @@ Dieses Modell beschreibt, wie das System spezifische Angriffe durch kryptographi
     **Konsequenz:** Der letzte *bekannte* Teilnehmer der Kette, der Guthaben an die unbekannte Fake-ID weitergeleitet hat, gerät unter Generalverdacht. Er ist entweder der Angreifer selbst oder hat grob fahrlässig mit einer unvertrauenswürdigen Partei gehandelt. In einem Web of Trust gilt das Prinzip: Wer Werte an Anonyme leitet, haftet sozial für deren Fehlverhalten.
     
 
-## 3. Architektur: Die P2PKH-Verkettung (Pay-to-Public-Key-Hash)
+## 3. Spezifikation Erweiterung: Privacy Modes & Transaktionsstruktur
+
+**Kontext:** Ergänzung zu Spezifikation - Hybride Privatsphäre und Offline-Sicherheit.
+**Betrifft:** Transaction Struct, VoucherStandardDefinition, Validierungslogik.
+
+### 3.1 Grundkonzept: Privacy als Overlay
+
+Das System trennt strikt zwischen **technischer Sicherheit (Layer 2)** und **sozialer Identität (Layer 1)**.
+
+- **Layer 2 (Technischer Layer):** Jede Transaktion verwendet immer ephemere Schlüssel und kryptographische Anker, um Double-Spending durch das Layer 2 verhindern zu können. Das zentrale Feld hierfür ist `receiver_ephemeral_pub_hash` (der "Stealth Key" / Anker für die nächste Transaktion). Dies ist der unveränderliche Unterbau.
+- **Layer 1 (Sozialer Layer):** Die Offenlegung der Identität (`did:key`) in den Feldern `sender_id` und `recipient_id` ist ein optionales Overlay. Ein Sender kann entscheiden (oder durch den Standard gezwungen werden), ob diese Felder mit lesbaren DIDs gefüllt werden oder leer/anonym bleiben.
+
+**Merksatz:** Das Netzwerk validiert technisch immer Anonym (Zero-Knowledge bzgl. Identität), aber sozial optional Transparent.
+
+### 3.2 Konfiguration: Die Privacy Modes
+
+In der `standard.toml` (bzw. `VoucherStandardDefinition`) wird der Modus über die Variable `privacy_mode` gesteuert.
+
+#### 3.2.1 Die Modi
+
+| Modus | Wert (TOML) | Beschreibung | Sender-Identität (sender_id) | Empfänger-Identität (recipient_id) |
+| :--- | :--- | :--- | :--- | :--- |
+| Öffentlich | `"public"` | Transparenz ist erzwungen. | **PFLICHT** (`did:key`) | **PFLICHT** (`did:key`) |
+| Diskret | `"stealth"` | Identitäten sind verboten. | **VERBOTEN** (None/Hash) | **VERBOTEN** (None/Hash) |
+| Flexibel | `"flexible"` | Sender entscheidet. | **OPTIONAL** | **OPTIONAL** (Darf `did:key` sein) |
+
+**Hinweis:** Unabhängig von diesen Feldern ist der technische Anker `receiver_ephemeral_pub_hash` immer vorhanden und sichert die Transaktion.
+
+**Sonderregel Issuer:** Der Ersteller des Gutscheins (`creator_id`) ist immer öffentlich, unabhängig vom Modus, um das Vertrauen in die Deckung zu gewährleisten.
+
+### 3.3 Datenstruktur: Die angepasste Transaktion
+
+Das `Transaction` Struct wird erweitert, um die zwei Signaturebenen (Technisch vs. Identität) abzubilden.
+
+```rust
+pub struct Transaction {
+    /// Eindeutige ID der Transaktion (Hash über alle Felder inkl. Nonce).
+    pub t_id: String,
+    
+    /// Art der Transaktion (Standard, Split, Merge, Mint).
+    pub t_type: String,
+
+    // --- TECHNISCHER LAYER (Layer 2 - Immer vorhanden) ---
+    
+    /// Der Hash des vorherigen Stealth-Public-Keys oder Transaktions-Hash.
+    /// Dient als Anker in der Kette.
+    pub prev_hash: String,
+
+    /// Der Hash des ephemeren Public Keys des Empfängers (Stealth Key).
+    /// Dies ist der Anker für die nächste Transaktion.
+    /// Existiert IMMER, auch wenn recipient_id öffentlich ist.
+    pub receiver_ephemeral_pub_hash: String,
+
+    /// Die Signatur ausgeführt durch den Stealth-Key (Private Key passend zum prev_hash).
+    /// Beweist den technischen Besitz des Gutscheins.
+    /// Signiert: Hash(t_id).
+    pub sender_proof_signature: String,
+
+    // --- SOZIALER LAYER (Layer 1 - Abhängig vom Privacy Mode) ---
+
+    /// Die öffentliche Identität des Senders (z.B. "did:key:z6Mk...").
+    /// - public: ZWINGEND
+    /// - stealth: LEER (None)
+    /// - flexible: OPTIONAL
+    pub sender_id: Option<String>,
+
+    /// Die Signatur ausgeführt durch den Identity-Key (sender_id).
+    /// Beweist, dass der Sender 'sozial' zu dieser technischen Transaktion steht.
+    /// Signiert: Hash(t_id).
+    /// Muss vorhanden sein, wenn sender_id gesetzt ist.
+    pub sender_identity_signature: Option<String>,
+
+    /// Signatur des Layer-2 Ankers.
+    /// WICHTIG: Der Inhalt (Payload) dieser Signatur hängt vom Transaktionstyp ab!
+    ///
+    /// 1. Typ 'init': 
+    /// Signiert: Hash(pre_l2_tid + valid_until + sender_ephemeral_pub)
+    ///    Signierer: Der Private Key von sender_ephemeral_pub (Genesis).
+    ///    Zweck: Bindet das Ablaufdatum kryptographisch an den Genesis-Key.
+    ///
+    /// 2. Typ 'transfer' / 'split': 
+    ///    Signiert: Hash(pre_l2_tid + sender_ephemeral_pub + receiver_ephemeral_pub_hash + [sender_change_anchor_hash])
+    ///    Signierer: Der Private Key von sender_ephemeral_pub (der gerade enthüllte Key).
+    ///    Zweck: "Staffelstab-Übergabe". Bestätigt, dass der Besitzer des aktuellen Keys
+    ///    die neuen Hashes (Anker) autorisiert hat.
+    pub layer2_signature: Option<String>,
+
+    /// An wen geht das Geld (Layer 1)?
+    /// - public: Muss ein `did:key` sein.
+    /// - stealth: Darf KEIN `did:key` sein (z.B. leer oder Hash).
+    /// - flexible: Darf ein `did:key` sein ODER leer/Hash.
+    pub recipient_id: String,
+
+    pub amount: String,
+    // ... weitere Felder (sender_remaining_amount, etc.) ...
+    
+    // --- SICHERHEITSMECHANISMEN (Layer 2) ---
+    
+    /// Verschlüsselte Wiederherstellungsdaten (XChaCha20Poly1305).
+    /// Enthält das serialisierte `RecipientPayload`-Struct.
+    /// Ermöglicht dem Empfänger die Wiederherstellung von Kontext und Seeds.
+    pub privacy_guard: String,
+
+    /// Die mathematische Falle für Double-Spend Erkennung.
+    /// Enthält Challenge `u`, Response `v` und den Zero-Knowledge-Proof.
+    pub trap_data: TrapData,
+}
+```
+
+### 3.4 Validierungslogik
+
+Der Validator prüft Transaktionen basierend auf dem `privacy_mode` des Standards.
+
+#### 3.4.1 Basispfrüfung (Immer)
+- **Hash-Integrität:** Prüfe ob `t_id` korrekt aus dem Inhalt gehasht wurde.
+- **Layer 2 Beweis:** Verifiziere `sender_proof_signature` gegen den bekannten ephemeral Public Key (aus `prev_hash` bzw. Vorläufer-Transaktion).
+
+#### 3.4.2 Modus-Spezifische Prüfung
+
+**Modus: "public"**
+- **Prüfung A:** Ist `sender_id` vorhanden? Falls `None` → **FEHLER**.
+- **Prüfung B:** Ist `sender_id` ein gültiger `did:key`? Falls Nein → **FEHLER**.
+- **Prüfung C:** Verifiziere `sender_identity_signature` mit `sender_id` gegen `t_id`. Falls ungültig → **FEHLER**.
+
+**Modus: "stealth"**
+- **Prüfung A:** Ist `sender_id` vorhanden? Falls `Some(...)` → **FEHLER**.
+- **Prüfung B:** Enthält `recipient_id` einen `did:key`? Falls Ja → **FEHLER** (Empfänger muss geschützt werden).
+
+**Modus: "flexible"**
+- **Fall A (Sender will transparent sein):**
+    - Wenn `sender_id` gesetzt ist: Muss `sender_identity_signature` gültig sein.
+- **Fall B (Sender will anonym bleiben):**
+    - Wenn `sender_id` leer ist: Nur `sender_proof_signature` (Layer 2) ist notwendig.
+- **Empfänger-Wahl:** Das Feld `recipient_id` darf einen `did:key` enthalten (öffentlich addressiert) oder anonym bleiben. Die technische Sicherheit ist durch `receiver_ephemeral_pub_hash` in beiden Fällen gegeben.
+
+### 3.5 Anwendung in der Praxis (User Story "Flexible")
+
+Alice (Sender) hat einen Gutschein. Sie will an Bob (Empfänger) senden.
+Der Standard ist "flexible".
+
+**Szenario:** Alice möchte transparent senden (z.B. Projektabrechnung), Bob gibt ihr einfach seine DID.
+1. Alice setzt ihre `sender_id` auf ihren `did:key`.
+2. Alice signiert mit ihrem Identity Key (`sender_identity_signature`).
+3. Alice trägt Bobs DID in `recipient_id` ein (damit jeder sieht: "Ging an Bob").
+4. **Technischer Hintergrund:** Alice berechnet trotzdem lokal einen Stealth Key aus Bobs DID und schreibt dessen Hash in `receiver_ephemeral_pub_hash`.
+
+**Ergebnis:**
+- **Layer 1 (Sozial):** Jeder sieht "Alice -> Bob".
+- **Layer 2 (Technik):** Das Netzwerk sieht einen kryptographischen Anker (`receiver_ephemeral_pub_hash`), der das Double-Spending verhindert.
+
+Bob kann den Gutschein später weiterverwenden, indem er den Stealth-Key (Private Key) ableitet. Ob er sich dabei dann selbst als "Bob" im `sender_id` Feld offenbart, ist seine Entscheidung (da Modus "Flexible").
+
+### 3.6 Definition in standard.toml
+
+```toml
+[privacy]
+# Optionen: "public", "stealth", "flexible"
+mode = "flexible"
+```
+
+## 4. Architektur: Die P2PKH-Verkettung (Layer 2 Details)
 
 Die Sicherheit der Transaktionskette basiert nicht mehr auf der direkten Nennung des Nachfolgers, sondern auf einem **Commitment-Reveal-Schema**. Dies ist die Basis für die Layer-2-Sicherheit und Quantenresistenz.
 
-### 3.1 Das Konzept
+### 4.1 Das Konzept
 
 Wir speichern pro Transaktionsschritt nur das absolute Minimum, um die Kette zu validieren:
 
@@ -94,7 +254,7 @@ Wir speichern pro Transaktionsschritt nur das absolute Minimum, um die Kette zu 
 - **Der Beweis (The Reveal):** Der Klartext-Public-Key, der zum Hash der _vorherigen_ Transaktion passt. Er beweist, dass der aktuelle Sender berechtigt ist, den alten Zustand aufzulösen.
     
 
-### 3.2 Visuelle Darstellung der Kette
+### 4.2 Visuelle Darstellung der Kette
 
 ```
 Transaktion 1 (Init)       Transaktion 2 (Transfer)       Transaktion 3 ...
@@ -110,11 +270,11 @@ Transaktion 1 (Init)       Transaktion 2 (Transfer)       Transaktion 3 ...
 +----------------------+   +-----------------------+
 ```
 
-## 4. Datenstrukturen & Formate
+## 5. Datenstrukturen & Formate
 
 Das System nutzt etablierte kryptographische Standards: **Ed25519** für Signaturen, **BLAKE3** für Hashing, **XChaCha20-Poly1305** für Verschlüsselung und **HKDF-SHA256** zur deterministischen Schlüsselableitung und Side-Channel-Resistenz.
 
-### 4.1 Format der Bezeichner (Composite Identifier)
+### 5.1 Format der Bezeichner (Composite Identifier)
 
 Um Domain Separation und menschliche Lesbarkeit zu vereinen, folgen alle Identitäten im System einem festen Muster:
 
@@ -131,86 +291,13 @@ Um Domain Separation und menschliche Lesbarkeit zu vereinen, folgen alle Identit
 
 `creator:fY7@did:key:z6MkfoBD8yWs1ECX31fEZk8EGbVjJQckRUCLrUMP6ctc5Fn`
 
-### 4.2 Hauptstruktur Transaction (JSON/Rust)
-
-Diese Struktur spiegelt die Implementierung wider und trennt die mathematische Falle (`trap_data`) vom verschlüsselten Payload (`privacy_guard`).
-
-```
-struct Transaction {
-    /// Eindeutiger Identifier der Transaktion (Hash)
-    t_id: String,
-    
-    /// Typ: "standard", "split", "issue"
-    t_type: String,
-    
-    /// Hash der vorherigen Transaktion (Verkettung)
-    prev_hash: String,
-    
-    /// Im Privacy Mode ist dies NULL.
-    sender_did: Option<String>, 
-    
-    /// Der übertragene Betrag
-    amount: Decimal,
-    
-    /// Restbetrag für den Sender (nur bei Split)
-    sender_remaining_amount: Option<Decimal>,
-
-    // --- Layer 2 & Privacy Fields ---
-
-    /// Der Stealth-Key (Klartext) für den Empfänger, falls öffentlich (selten),
-    /// oder der Proof-Key des Senders, um die vorherige Tx aufzulösen.
-    /// Bei Typ 'init': Der neue Genesis-Key.
-    /// Bei Typ 'transfer'/'split': Der enthüllte Key der vorherigen Transaktion (Input-Key).
-    sender_ephemeral_pub: Option<String>,
-
-    /// Der Anker für die NÄCHSTE Transaktion (Hash des Empfänger-Keys).
-    /// P2PKH: Wir speichern nur den Hash, um Quantensicherheit zu gewährleisten.
-    receiver_ephemeral_pub_hash: Option<String>,
-
-    /// Der Anker für das RESTGELD (Hash des Sender-Keys für den Restbetrag).
-    /// Nur bei "split" Transaktionen gesetzt. Ermöglicht dem Sender, den Restbetrag
-    /// anonym weiterzuverwenden (Gabelung der Kette).
-    sender_change_anchor_hash: Option<String>,
-
-    /// Verschlüsselter Container (RecipientPayload).
-    /// Enthält Ziel-Präfix, Memo und den ephemeren Key für den Empfänger.
-    privacy_guard: Option<String>,
-
-    /// Die mathematische Falle für Double-Spend Erkennung (ZKP).
-    trap_data: Option<TrapData>,
-    
-    /// Signatur des Layer-2 Ankers.
-    /// WICHTIG: Der Inhalt (Payload) dieser Signatur hängt vom Transaktionstyp ab!
-    ///
-    /// 1. Typ 'init': 
-    /// Signiert: Hash(pre_l2_tid + valid_until + sender_ephemeral_pub)
-    ///    Signierer: Der Private Key von sender_ephemeral_pub (Genesis).
-    ///    Zweck: Bindet das Ablaufdatum kryptographisch an den Genesis-Key.
-    ///
-    /// 2. Typ 'transfer' / 'split': 
-    ///    Signiert: Hash(pre_l2_tid + sender_ephemeral_pub + receiver_ephemeral_pub_hash + [sender_change_anchor_hash])
-    ///    Signierer: Der Private Key von sender_ephemeral_pub (der gerade enthüllte Key).
-    ///    Zweck: "Staffelstab-Übergabe". Bestätigt, dass der Besitzer des aktuellen Keys
-    ///    die neuen Hashes (Anker) autorisiert hat.
-    layer2_signature: Option<String>,
-
-    /// Gültigkeitsdatum (ISO 8601).
-    /// Nur in der 'init'-Transaktion zwingend für die Layer-2 Signatur erforderlich.
-    /// Dient der Garbage Collection auf dem Server.
-    valid_until: Option<String>,
-
-    /// Signiert den Hash der Tx
-    signature: Signature,
-}
-```
-
-### 4.3 Die mathematische Falle (TrapData)
+### 5.2 Die mathematische Falle (TrapData)
 
 Enthält die öffentlichen Komponenten des **Schnorr Non-Interactive Zero-Knowledge Proofs (NIZK)**.
 
 Der Proof beweist die Kenntnis von $m$ für die Relation $V - ID = m \cdot U$, ohne $m$ zu enthüllen.
 
-```
+```rust
 #[derive(Serialize, Deserialize)]
 struct TrapData {
     /// Challenge U (Fiat-Shamir).
@@ -230,11 +317,11 @@ struct TrapData {
 }
 ```
 
-### 4.4 Der verschlüsselte Payload (RecipientPayload)
+### 5.3 Der verschlüsselte Payload (RecipientPayload)
 
 Dies ist der entschlüsselte Inhalt von `privacy_guard`.
 
-```
+```rust
 #[derive(Serialize, Deserialize)]
 struct RecipientPayload {
     /// Die vollständige Composite-DID des Absenders
@@ -246,19 +333,20 @@ struct RecipientPayload {
     /// Beispiel: "creator:fY7"
     pub target_prefix: String,
 
-    /// Optionale Nachricht / Verwendungszweck
-    pub memo: Option<String>,
-
     /// Zeitstempel der Erstellung (u64)
-    pub timestamp: u64, 
+    pub timestamp: u64,
+
+    /// Der Seed für den nächsten ephemeren Schlüssel (damit der Empfänger ihn generieren kann).
+    /// Dies ermöglicht dem Empfänger, den nächsten Private Key abzuleiten, ohne dass dieser über das Netzwerk übertragen wird.
+    pub next_key_seed: String, 
 }
 ```
 
-## 5. Protokoll-Ablauf & Algorithmen
+## 6. Protokoll-Ablauf & Algorithmen
 
 Der Ablauf unterscheidet sich fundamental zwischen der Erzeugung (Init) und der Weitergabe (Transfer).
 
-### 5.1 Initialisierung (Die Anker-Erzeugung)
+### 6.1 Initialisierung (Die Anker-Erzeugung)
 
 Der Ersteller erzeugt den Gutschein. Hier muss das **Ablaufdatum** kryptographisch gesichert werden, damit Layer-2-Server alte Daten sicher löschen können.
 
@@ -273,7 +361,7 @@ Der Ersteller erzeugt den Gutschein. Hier muss das **Ablaufdatum** kryptographis
     _Dies garantiert: Dieser Gutschein ist gültig bis Datum X und startet mit Key Y._
     
 
-### 5.2 Transfer & Split (Die Staffelstab-Übergabe)
+### 6.2 Transfer & Split (Die Staffelstab-Übergabe)
 
 Alice (`minuto:bth@did:alice`) sendet Guthaben an Bob.
 
@@ -339,22 +427,49 @@ Alice (`minuto:bth@did:alice`) sendet Guthaben an Bob.
 6. **Finalisierung:** Signatur der gesamten Tx und Anhängen an die Datei.
     
 
-## 6. Fingerprints & Double-Spend Erkennung
+## 7. Fingerprints & Double-Spend Erkennung
 
-### 6.1 Der LinkingTag (Der Index)
+### 7.1 Der Double-Spend-Tag (DS-Tag)
 
-Die Formel lautet:
+Der **Double-Spend-Tag** (symbolisch **$u$**) ist die kryptographische Garantie, dass ein spezifischer Input nur ein einziges Mal ausgegeben werden kann.
 
-$$LinkingTag = Hash(SenderPrivateKey \times Hash(prev\_hash + prefix))$$
+**Kritische Sicherheits-Regel:**
+Der DS-Tag darf **ausschließlich** von den **Input-Daten** abhängen (Was gebe ich aus?), niemals von den **Output-Daten** (Wieviel sende ich an wen?).
+*Würde der Betrag in den Tag einfließen, könnte ein Angreifer denselben Input zweimal mit unterschiedlichen Beträgen ausgeben, ohne dass die Tags kollidieren.*
 
-- **Domain Separation:** Durch die Einbindung des Präfixes (z. B. `desktop:x9Z` oder `mobile:a1B`) erzeugt derselbe Private Key für unterschiedliche **Sub-Accounts (Unterkonten)** unterschiedliche Tags. Das Präfix dient hier der logischen Trennung von Kontexten (z. B. Gerätetyp, Verwendungszweck) unter derselben Identität. Ein Cross-Replay-Angriff zwischen verschiedenen Kontexten ist damit mathematisch ausgeschlossen.
+**Die korrekte Berechnung:**
+Der Tag identifiziert eindeutig den *Verbrauch* eines spezifischen Ankers.
+
+$$u = HashToCurve(prev\_hash + sender\_ephemeral\_pub + prefix)$$
+
+Die Komponenten sind:
+1.  `prev_hash`: Die ID der Quelle (Vorgänger-Gutschein).
+2.  `sender_ephemeral_pub`: Der **Input-Key** (der "Schlüssel zum Schloss"), der in diesem Moment enthüllt wird.
+3.  `prefix`: Die Identität des Signierers (zur Domain Separation).
+
+**Lösung für Split-Transaktionen (Gabelung):**
+Wie unterscheidet das System beim Split zwischen "Transfer" und "Restgeld", wenn beide denselben `prev_hash` haben?
+
+Durch den **Input-Key (`sender_ephemeral_pub`)**!
+Die vorherige Split-Transaktion hat zwei unterschiedliche Anker (Schlösser) hinterlegt:
+1.  Einen Anker für den Empfänger.
+2.  Einen separaten Anker für das Restgeld (Change).
+
+*   **Transfer-Zweig:** Der Empfänger öffnet SEINEN Anker (mit seinem Key $Key_{Receiver}$).
+    $\rightarrow u_{Transfer} = Hash(prev\_hash + Key_{Receiver} + ID_{Receiver})$
+*   **Restgeld-Zweig:** Der Sender öffnet den CHANGE-Anker (mit dem Change-Key $Key_{Change}$).
+    $\rightarrow u_{Change} = Hash(prev\_hash + Key_{Change} + ID_{Sender})$
+
+Da $Key_{Receiver}$ und $Key_{Change}$ kryptographisch verschieden sind (unterschiedliche Seeds), sind auch die resultierenden DS-Tags global eindeutig.
+
+**Definition Double-Spend:**
+Ein Double-Spend liegt vor, wenn **derselbe Double-Spend-Tag ($u$) zweimal** im Netzwerk registriert wird.
+Dies beweist, dass derselbe Input-Key für dieselbe Quelle mehrfach verwendet wurde.
     
-- **Sicherheits-Differenzierung (Einweg-Schutz):** Da der `LinkingTag` öffentlich ist, muss er mathematisch strikt von $m$ getrennt sein, um Rückrechnungen auf die Identität zu verhindern.
-    
 
-### 6.2 Die Fingerprint-Struktur (Die Falle)
+### 7.2 Die Fingerprint-Struktur (Die Falle)
 
-```
+```rust
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TransactionFingerprint {
     pub tag: [u8; 32],
@@ -367,7 +482,7 @@ pub struct TransactionFingerprint {
 }
 ```
 
-## 7. Zusammenfassung und Sicherheits-Nuancen
+## 8. Zusammenfassung und Sicherheits-Nuancen
 
 |   |   |   |
 |---|---|---|
@@ -376,7 +491,7 @@ pub struct TransactionFingerprint {
 |**Sicherheit**|**Unbreakable**|Trap kann nicht umgangen werden, da ZKP deterministisches $m$ erzwingt.|
 |**Ordnung**|**Prefix Scoping**|Bezeichner wie `creator:fY7@did...` erzwingen strikte Kontext-Trennung.|
 
-### 7.1 Hinweis zur Quantensicherheit
+### 8.1 Hinweis zur Quantensicherheit
 
 Das System bietet eine **hybride Sicherheit**:
 
@@ -389,11 +504,10 @@ Das System bietet eine **hybride Sicherheit**:
     - **Schutz:** Selbst wenn eine Identität gebrochen wird, kann der Angreifer Guthaben **nicht** stehlen, solange er nicht den _aktuellen_ Layer-2-Anker (den Hash-Preimage) kennt.
         
 
-## 8. Implementierungshinweise
+## 9. Implementierungshinweise
 
 - **HKDF:** Verwende `HKDF-SHA256` für alle Schlüsselableitungen.
     
 - **Proof:** Implementiere das Schnorr-Protokoll strikt nach Definition, um Interoperabilität zu gewährleisten.
     
-
-Diese Spezifikation ist bindend für die Entwicklung der Core-Bibliothek.
+- **Neu:** Beachte die Privacy-Regeln aus Section 3!

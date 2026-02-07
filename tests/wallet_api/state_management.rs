@@ -15,7 +15,6 @@ use human_money_core::{
     services::{crypto_utils, voucher_manager::NewVoucherData},
     test_utils::{
         ACTORS, SILVER_STANDARD, create_test_bundle, generate_signed_standard_toml,
-        resign_transaction,
     },
 };
 
@@ -207,14 +206,15 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
         prev_hash: prev_tx_hash.clone(),
         t_type: "transfer".to_string(),
         t_time: time_a,
-        sender_id: id_alice.clone(),
+        sender_id: Some(id_alice.clone()),
         recipient_id: id_david.clone(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(alice_holder_pub.clone()),
         layer2_signature: Some("dummy_l2_sig".to_string()),
         ..Default::default()
     };
-    tx_a = resign_transaction(tx_a, &alice_holder_key);
+    // FIX: Use resign_transaction_ext (Permanent Key for L1, Holder Key for L2/Proof)
+    tx_a = test_utils::resign_transaction_ext(tx_a, &identity_alice.signing_key, Some(&alice_holder_key));
     let mut voucher_v2_bob = voucher_v1.clone();
     voucher_v2_bob.transactions.push(tx_a);
 
@@ -223,13 +223,14 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
         prev_hash: prev_tx_hash,
         t_type: "transfer".to_string(),
         t_time: time_b,
-        sender_id: id_alice.clone(),
+        sender_id: Some(id_alice.clone()),
         recipient_id: id_david.clone(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(alice_holder_pub),
         ..Default::default()
     };
-    tx_b = resign_transaction(tx_b, &alice_holder_key);
+    // FIX: Use resign_transaction_ext (Permanent Key for L1, Holder Key for L2/Proof)
+    tx_b = test_utils::resign_transaction_ext(tx_b, &identity_alice.signing_key, Some(&alice_holder_key));
     let mut voucher_v2_charlie = voucher_v1.clone();
     voucher_v2_charlie.transactions.push(tx_b);
 
@@ -347,14 +348,15 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
         prev_hash: prev_tx_hash.clone(),
         t_type: "split".to_string(),
         t_time: collision_time.clone(),
-        sender_id: id_alice.clone(),
+        sender_id: Some(id_alice.clone()),
         recipient_id: id_david.clone(),
         amount: "99.0000".to_string(),
         sender_remaining_amount: Some("1.0000".to_string()),
         sender_ephemeral_pub: Some(alice_holder_pub.clone()),
         ..Default::default()
     };
-    tx_a = resign_transaction(tx_a, &alice_holder_key);
+    // FIX: Use resign_transaction_ext
+    tx_a = test_utils::resign_transaction_ext(tx_a, &identity_alice.signing_key, Some(&alice_holder_key));
     let mut voucher_a = voucher_v1.clone();
     voucher_a.transactions.push(tx_a.clone());
 
@@ -363,13 +365,14 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
         prev_hash: prev_tx_hash,
         t_type: "transfer".to_string(),
         t_time: collision_time,
-        sender_id: id_alice.clone(),
+        sender_id: Some(id_alice.clone()),
         recipient_id: id_david.clone(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(alice_holder_pub),
         ..Default::default()
     };
-    tx_b = resign_transaction(tx_b, &alice_holder_key);
+    // FIX: Use resign_transaction_ext
+    tx_b = test_utils::resign_transaction_ext(tx_b, &identity_alice.signing_key, Some(&alice_holder_key));
     let mut voucher_b = voucher_v1.clone();
     voucher_b.transactions.push(tx_b.clone());
 

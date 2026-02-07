@@ -30,6 +30,9 @@ pub enum StandardDefinitionError {
     /// Fehler bei der Dekodierung der Signatur (z.B. Base58).
     #[error("Failed to decode signature: {0}")]
     SignatureDecode(String),
+    /// Der angegebene Privacy Mode im Standard ist ungültig.
+    #[error("Invalid privacy mode: {0}")]
+    InvalidMode(String),
 }
 
 /// Definiert die verschiedenen Fehler, die während der Validierung auftreten können.

@@ -1097,7 +1097,7 @@ fn get_balance_at_transaction(
             } else {
                 current_balance += tx_amount;
             }
-        } else if tx.sender_id == user_id {
+        } else if tx.sender_id.as_deref() == Some(user_id) {
             if let Some(remaining_str) = &tx.sender_remaining_amount {
                 if let Ok(remaining_amount) = Decimal::from_str_exact(remaining_str) {
                     current_balance = remaining_amount;

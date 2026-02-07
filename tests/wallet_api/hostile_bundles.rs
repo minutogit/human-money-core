@@ -126,7 +126,8 @@ fn test_rejection_of_broken_transaction_chain() {
     //    (t_id == hash(inhalt)) besteht.
     //    Die `resign_transaction` berechnet die t_id und Signatur basierend auf dem
     //    *neuen* (kaputten) prev_hash.
-    let resigned_broken_tx = resign_transaction(broken_tx, &identity_sender.signing_key);
+    let holder_key = human_money_core::test_utils::derive_holder_key(&voucher, &identity_sender.signing_key);
+    let resigned_broken_tx = human_money_core::test_utils::resign_transaction_ext(broken_tx, &identity_sender.signing_key, Some(&holder_key));
 
     // Füge die kaputte, aber kryptographisch konsistente Transaktion hinzu
     voucher.transactions.push(resigned_broken_tx);
@@ -143,8 +144,8 @@ fn test_rejection_of_broken_transaction_chain() {
     assert!(result.is_err());
     let err_str = result.unwrap_err();
     assert!(
-        err_str.contains("Invalid signature for signer Layer2-Anchor"),
-        "Error should complain about broken L2 signature due to tampered prev_hash. Got: {}",
+        err_str.contains("Transaction chain broken") || err_str.contains("prev_hash does not match"),
+        "Error should complain about broken chain. Got: {}",
         err_str
     );
     assert!(

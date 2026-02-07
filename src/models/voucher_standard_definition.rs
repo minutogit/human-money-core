@@ -170,6 +170,13 @@ pub struct Validation {
     pub field_group_rules: Option<HashMap<String, FieldGroupRule>>,
 }
 
+/// Konfiguration für die Privatsphäre-Modi.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+pub struct PrivacySettings {
+    /// Der Modus: "public", "stealth" oder "flexible".
+    pub mode: String,
+}
+
 // --- Haupt-Struct ---
 
 /// Das Haupt-Struct, das die gesamte, nun signierte Standard-Definition kapselt.
@@ -179,6 +186,9 @@ pub struct VoucherStandardDefinition {
     pub template: VoucherTemplate,
     // Ersetzt die alte `ValidationRules` durch die flexible Struktur.
     pub validation: Option<Validation>,
+    /// Die Konfiguration der Privatsphäre-Modi.
+    #[serde(default)]
+    pub privacy: Option<PrivacySettings>,
     // Die Signatur ist optional, da sie für die Kanonisierung temporär entfernt wird.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<SignatureBlock>,

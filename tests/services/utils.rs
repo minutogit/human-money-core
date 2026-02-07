@@ -165,12 +165,12 @@ fn test_chronological_validation_with_timezones() {
     // Damit der Fehler isoliert wird, müssen wir die Transaktion neu hashen und signieren.
     let mut tx = voucher.transactions[0].clone();
     tx.t_id = "".to_string(); // Hash-relevante Felder zurücksetzen
-    tx.sender_signature = "".to_string();
+    tx.sender_proof_signature = "".to_string();
     tx.t_id = crypto_utils::get_hash(to_canonical_json(&tx).unwrap());
     let payload = serde_json::json!({ "prev_hash": tx.prev_hash, "sender_id": tx.sender_id, "t_id": tx.t_id });
     let signature_hash = crypto_utils::get_hash(to_canonical_json(&payload).unwrap());
     // KORREKTUR: Übergebe den korrekten `signing_key` vom Typ &SigningKey.
-    tx.sender_signature = bs58::encode(
+    tx.sender_proof_signature = bs58::encode(
         crypto_utils::sign_ed25519(&test_user.signing_key, signature_hash.as_bytes()).to_bytes(),
     )
     .into_string();
@@ -260,15 +260,16 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
 
     let mut voucher = voucher;
     let init_transaction = Transaction {
+        sender_identity_signature: None,
         t_id: "t-init-abc".to_string(),
         prev_hash: get_hash(format!("{}{}", &voucher.voucher_id, &voucher.voucher_nonce)),
         t_type: "init".to_string(),
         t_time: get_current_timestamp(),
-        sender_id: creator_id.to_string(),
+        sender_id: Some(creator_id.to_string()),
         recipient_id: creator_id.to_string(),
         amount: amount.to_string(),
         sender_remaining_amount: None,
-        sender_signature: "sig-init".to_string(),
+        sender_proof_signature: "sig-init".to_string(),
         receiver_ephemeral_pub_hash: None,
         sender_ephemeral_pub: None,
         privacy_guard: None,
@@ -308,15 +309,16 @@ fn test_local_id_after_full_transfer() {
     let mut voucher = create_base_voucher(&creator.user_id, "100");
 
     let transfer_tx = Transaction {
+        sender_identity_signature: None,
         t_id: "t-transfer-def".to_string(),
         prev_hash: get_hash("..."),
         t_type: "".to_string(), // Voller Transfer
         t_time: get_current_timestamp(),
-        sender_id: creator.user_id.clone(),
+        sender_id: Some(creator.user_id.clone()),
         recipient_id: recipient.user_id.clone(),
         amount: "100".to_string(),
         sender_remaining_amount: None, // Kein Restbetrag
-        sender_signature: "sig-transfer".to_string(),
+        sender_proof_signature: "sig-transfer".to_string(),
         receiver_ephemeral_pub_hash: None,
         sender_ephemeral_pub: None,
         privacy_guard: None,
@@ -365,15 +367,16 @@ fn test_local_id_after_split() {
     let mut voucher = create_base_voucher(&sender.user_id, "100");
 
     let split_tx = Transaction {
+        sender_identity_signature: None,
         t_id: "t-split-ghi".to_string(),
         prev_hash: get_hash("..."),
         t_type: "split".to_string(),
         t_time: get_current_timestamp(),
-        sender_id: sender.user_id.clone(),
+        sender_id: Some(sender.user_id.clone()),
         recipient_id: recipient.user_id.clone(),
         amount: "40".to_string(),
         sender_remaining_amount: Some("60".to_string()),
-        sender_signature: "sig-split".to_string(),
+        sender_proof_signature: "sig-split".to_string(),
         receiver_ephemeral_pub_hash: None,
         sender_ephemeral_pub: None,
         privacy_guard: None,
@@ -434,15 +437,16 @@ fn test_local_id_changes_on_round_trip() {
 
     // 2. Alice sendet den Gutschein an Bob
     let tx_to_bob = Transaction {
+        sender_identity_signature: None,
         t_id: "t-alice-to-bob".to_string(),
         prev_hash: get_hash("..."),
         t_type: "".to_string(),
         t_time: get_current_timestamp(),
-        sender_id: alice.user_id.clone(),
+        sender_id: Some(alice.user_id.clone()),
         recipient_id: bob.user_id.clone(),
         amount: "100".to_string(),
         sender_remaining_amount: None,
-        sender_signature: "sig-to-bob".to_string(),
+        sender_proof_signature: "sig-to-bob".to_string(),
         receiver_ephemeral_pub_hash: None,
         sender_ephemeral_pub: None,
         privacy_guard: None,
@@ -477,15 +481,16 @@ fn test_local_id_changes_on_round_trip() {
 
     // 4. Bob sendet den Gutschein zurück an Alice
     let tx_to_alice = Transaction {
+        sender_identity_signature: None,
         t_id: "t-bob-to-alice".to_string(),
         prev_hash: get_hash("..."),
         t_type: "".to_string(),
         t_time: get_current_timestamp(),
-        sender_id: bob.user_id.clone(),
+        sender_id: Some(bob.user_id.clone()),
         recipient_id: alice.user_id.clone(),
         amount: "100".to_string(),
         sender_remaining_amount: None,
-        sender_signature: "sig-to-alice".to_string(),
+        sender_proof_signature: "sig-to-alice".to_string(),
         receiver_ephemeral_pub_hash: None,
         sender_ephemeral_pub: None,
         privacy_guard: None,

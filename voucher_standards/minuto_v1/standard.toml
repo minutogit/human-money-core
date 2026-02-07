@@ -72,4 +72,4 @@ value_counts = [
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "3tfzbTZe55bdNa544dUSCNKFD7CzDqpYngZtTGq75nHK9AD8pUcPyem9QgQexTQYTGxBdwMNSoWML4wj3hxRLkEo"
+signature = "4DgZhKW75bQ5hxdJDadkxudeLut5x8enFbnQzPdp7opB4ftMM2qK3zy8ypLR1XLeLGcLUkzpHGSAVjwLdzwB1c7a"

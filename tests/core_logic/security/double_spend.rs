@@ -134,7 +134,7 @@ fn test_fingerprint_generation() {
     );
 
     let tx1 = &voucher.transactions[0];
-    let expected_hash1 = crypto_utils::get_hash(format!("{}{}", tx1.prev_hash, tx1.sender_id));
+    let expected_hash1 = crypto_utils::get_hash(format!("{}{}", tx1.prev_hash, tx1.sender_id.as_deref().unwrap_or("anon")));
     assert!(
         wallet
             .own_fingerprints

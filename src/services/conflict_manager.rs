@@ -51,13 +51,25 @@ pub fn create_fingerprint_for_transaction(
     };
 
     // 2. Erstelle den Fingerprint mit dem gerundeten Zeitstempel.
-    let prev_hash_sender_id = format!("{}{}", transaction.prev_hash, transaction.sender_id);
-    let hash = get_hash(&prev_hash_sender_id);
+    // NEU: Wir verwenden das 'u' aus den TrapData als kanonischen DS-Tag.
+    // Dies stellt sicher, dass der Fingerprint exakt mit der mathematischen Falle
+    // übereinstimmt. Nur für 'init' (die keine Trap hat) berechnen wir den Tag manuell.
+    let tag = if let Some(trap) = &transaction.trap_data {
+        trap.u.clone()
+    } else {
+        // Fallback für 'init' oder Legacy: Manuelle Berechnung
+        let sender_unique_part = if let Some(ephem_pub) = &transaction.sender_ephemeral_pub {
+            ephem_pub.clone()
+        } else {
+            transaction.sender_id.as_deref().unwrap_or("anonymous").to_string()
+        };
+        get_hash(format!("{}{}", transaction.prev_hash, sender_unique_part))
+    };
 
     Ok(TransactionFingerprint {
-        prvhash_senderid_hash: hash,
+        prvhash_senderid_hash: tag,
         t_id: transaction.t_id.clone(),
-        sender_signature: transaction.sender_signature.clone(),
+        sender_signature: transaction.sender_proof_signature.clone(),
         valid_until: valid_until_rounded,
         encrypted_timestamp: encrypt_transaction_timestamp(transaction)?,
     })
@@ -78,8 +90,8 @@ pub fn scan_and_rebuild_fingerprints(
             let fingerprint = create_fingerprint_for_transaction(tx, &instance.voucher)?;
             // DEBUG: Log the components of the hash being generated
             println!(
-                "[Debug CM Rebuild] Gen FP for t_id: '{}'. Using prev_hash: '{}', sender_id: '{}'. Resulting prvhash_senderid_hash: '{}'",
-                tx.t_id, tx.prev_hash, tx.sender_id, fingerprint.prvhash_senderid_hash
+               "[Scan/Rebuild] Gen FP for t_id: '{}'. Using prev_hash: '{}', sender_id: '{}'. Resulting prvhash: '{}'",
+                tx.t_id, tx.prev_hash, tx.sender_id.as_deref().unwrap_or("anon"), fingerprint.prvhash_senderid_hash
             );
 
             // Jede Transaktion wird zur allgemeinen lokalen Historie hinzugefügt.
@@ -95,7 +107,7 @@ pub fn scan_and_rebuild_fingerprints(
 
             // Nur wenn der Nutzer der Sender war, wird der Fingerprint auch zu den
             // kritischen "eigenen" Fingerprints hinzugefügt.
-            if tx.sender_id == user_id {
+            if tx.sender_id.as_deref() == Some(user_id) {
                 own.history
                     .entry(fingerprint.prvhash_senderid_hash.clone())
                     .or_default()

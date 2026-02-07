@@ -13,3 +13,4 @@ mod hostile_bundles;
 mod hostile_standards;
 mod lifecycle_and_data;
 mod transactionality;
+mod mixed_mode_vulnerability;

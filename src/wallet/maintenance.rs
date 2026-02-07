@@ -223,7 +223,7 @@ impl Wallet {
                 let fingerprint =
                     conflict_manager::create_fingerprint_for_transaction(tx, &instance.voucher)?;
 
-                if tx.sender_id == self.profile.user_id {
+                if tx.sender_id.as_ref() == Some(&self.profile.user_id) {
                     let entry = self
                         .own_fingerprints
                         .history
@@ -296,7 +296,7 @@ impl Wallet {
         // Die definierende Transaktion ist einfach die letzte, in der der Benutzer
         // als Sender oder Empfänger auftaucht.
         for tx in voucher.transactions.iter().rev() {
-            if tx.recipient_id == profile_owner_id || tx.sender_id == profile_owner_id {
+            if tx.recipient_id == profile_owner_id || tx.sender_id.as_deref() == Some(profile_owner_id) {
                 defining_transaction_id = Some(tx.t_id.clone());
                 break;
             }

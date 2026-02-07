@@ -132,6 +132,17 @@ impl Wallet {
 
 
         for voucher in bundle.vouchers.clone() {
+            // --- VALIDIERUNG GEGEN STANDARD ---
+            let standard_uuid = &voucher.voucher_standard.uuid;
+            let standard = standard_definitions.get(standard_uuid).ok_or_else(|| {
+                VoucherCoreError::Generic(format!(
+                    "Standard definition not found for UUID: {}",
+                    standard_uuid
+                ))
+            })?;
+            
+            crate::services::voucher_validation::validate_voucher_against_standard(&voucher, standard)?;
+            
             // KORREKTUR: Die `retain`-Logik wurde entfernt. Sie war die Ursache für die
             // fehlgeschlagene Double-Spend-Erkennung, da sie eine der beiden
             // widersprüchlichen Gutschein-Instanzen fälschlicherweise gelöscht hat.
@@ -311,6 +322,11 @@ impl Wallet {
                     self.proof_store
                         .proofs
                         .insert(proof.proof_id.clone(), proof);
+                } else {
+                    // Todo klären
+                    // Fallback: Wenn kein strikter kryptographischer Beweis erstellt werden kann
+                    // (z.B. weil Daten fehlen), MUSS dennoch lokal aufgeräumt werden.
+                    resolve_conflict_offline(&mut self.voucher_store, fingerprints);
                 }
             } else {
                 // KORREKTUR: Dieser `else`-Block fehlte. Er stellt sicher, dass die Offline-Logik auch
@@ -355,18 +371,28 @@ impl Wallet {
         })?;
         let prev_hash = get_hash(to_canonical_json(last_tx)?);
 
+        // Privacy Key Logic: RE-DERIVATION (Stateless)
+        // Wir leiten den Seed direkt aus dem Voucher + Identity ab, anstatt ihn zu speichern.
+        // WICHTIG: Wir müssen dies VOR dem Double-Spend-Check tun, um den ephemeren Key zu kennen.
+        let sender_ephemeral_key = self.rederive_secret_seed(&voucher_to_spend, identity)?;
+        let ephem_pub_str = bs58::encode(sender_ephemeral_key.verifying_key().to_bytes()).into_string();
+
         // PRÜFUNG GEGEN ALLE BEKANNTEN FINGERPRINTS:
-        // Wir prüfen sowohl gegen die aktuell aktiven als auch gegen die gesamte
-        // bekannte Historie, um einen Double Spend sicher auszuschließen.
-        let new_fingerprint_hash = get_hash(format!("{}{}", prev_hash, identity.user_id));
+        // NEU: Wir verwenden das 'u' (DS-Tag), das exakt so auch im Trap berechnet wird.
+        // Dies macht die proaktive Prüfung 100% konsistent mit der mathematischen Falle.
+        let sender_id_prefix = identity.user_id.split('@').next().unwrap_or(&identity.user_id).to_string();
+        let u_input = format!("{}{}{}", prev_hash, ephem_pub_str, sender_id_prefix);
+        let u_point = crate::services::trap_manager::hash_to_curve(u_input.as_bytes());
+        let u_str = bs58::encode(u_point.compress().as_bytes()).into_string();
+
         if self
             .own_fingerprints
             .active_fingerprints
-            .contains_key(&new_fingerprint_hash)
+            .contains_key(&u_str)
             || self
                 .own_fingerprints
                 .history
-                .contains_key(&new_fingerprint_hash)
+                .contains_key(&u_str)
         {
             // SELBSTHEILUNG: Gebe die ID des Gutscheins zurück, der die Inkonsistenz verursacht hat.
             // Der aufrufende AppService kann diesen Gutschein dann in Quarantäne verschieben.
@@ -374,10 +400,6 @@ impl Wallet {
                 local_instance_id: local_instance_id.to_string(),
             });
         }
-
-        // Privacy Key Logic: RE-DERIVATION (Stateless)
-        // Wir leiten den Seed direkt aus dem Voucher + Identity ab, anstatt ihn zu speichern.
-        let sender_ephemeral_key = self.rederive_secret_seed(&voucher_to_spend, identity)?;
 
         let (new_voucher_state, _secrets) = voucher_manager::create_transaction(
             &voucher_to_spend,
@@ -395,7 +417,7 @@ impl Wallet {
 
         // 2. Bestimme den Status des neuen Gutschein-Zustands für den Sender.
         if let Some(last_tx) = new_voucher_state.transactions.last() {
-            let (new_status, owner_id) = if last_tx.sender_id == identity.user_id
+            let (new_status, owner_id) = if last_tx.sender_id.as_ref() == Some(&identity.user_id)
                 && last_tx.sender_remaining_amount.is_some()
             {
                 // Es ist ein Split, der Sender behält einen aktiven Restbetrag.
@@ -547,7 +569,7 @@ impl Wallet {
         })?;
 
         // Fall A: Die letzte Transaktion war von UNS (Split/Change)
-        if last_tx.sender_id == identity.user_id && last_tx.sender_remaining_amount.is_some() {
+        if last_tx.sender_id.as_ref() == Some(&identity.user_id) && last_tx.sender_remaining_amount.is_some() {
             // Re-Derive Change Key via HKDF
             let sender_id_prefix = identity.user_id.split('@').next().unwrap_or(&identity.user_id).to_string();
             let prev_hash = &last_tx.prev_hash; // Salt 
@@ -593,7 +615,7 @@ impl Wallet {
 
         // Fall C: Init (Ersteller) - Sonderfall?
         // Wenn ich Ersteller bin und den ersten Schritt machen will.
-        if last_tx.t_type == "init" && last_tx.sender_id == identity.user_id {
+        if last_tx.t_type == "init" && last_tx.sender_id.as_ref() == Some(&identity.user_id) {
              // Init hat genesis key. "sender_ephemeral_pub" ist genesis PUB.
              // Aber wo ist das SECRET?
              // Ah, Init generiert "genesis" Key Pair aus Nonce.

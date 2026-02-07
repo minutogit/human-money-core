@@ -363,11 +363,11 @@ pub fn create_voucher(
         )),
         t_type: "init".to_string(),
         t_time: creation_date_str.clone(),
-        sender_id: creator_id.clone(),
+        sender_id: Some(creator_id.clone()), // Init ist immer public
         recipient_id: creator_id.clone(), // Init: geht an Creator selbst
         amount: decimal_utils::format_for_storage(&initial_amount, decimal_places),
         sender_remaining_amount: None,
-        sender_signature: "".to_string(),
+
 
         receiver_ephemeral_pub_hash: Some(holder_anchor_hash),
         sender_ephemeral_pub: Some(genesis_pub_str.clone()),
@@ -376,6 +376,8 @@ pub fn create_voucher(
         layer2_signature: None, // Wird gleich berechnet
         valid_until: Some(temp_voucher.valid_until.clone()),
         sender_change_anchor_hash: None,
+        sender_proof_signature: "".to_string(), // Wird später berechnet
+        sender_identity_signature: None,
     };
 
     // --- L2 SIGNATUR (SCHRITT C) ---
@@ -400,27 +402,21 @@ pub fn create_voucher(
     let l2_sig_bytes = sign_ed25519(&genesis_secret, l2_hash.as_bytes());
     init_transaction.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
 
-    // --- FINALE T_ID & SENDER SIGNATUR (SCHRITT D) ---
+    // --- FINALE T_ID & SENDER SIGNATUREN (SCHRITT D) ---
     // Die t_id muss nun neu berechnet werden, da layer2_signature Teil des JSON ist.
     let tx_json_for_id = to_canonical_json(&init_transaction)?;
     let final_t_id = get_hash(tx_json_for_id);
     init_transaction.t_id = final_t_id;
 
-    let signature_payload = serde_json::json!({
-        "prev_hash": init_transaction.prev_hash,
-        "sender_id": init_transaction.sender_id,
-        "t_id": init_transaction.t_id
-    });
-    let signature_payload_json = to_canonical_json(&signature_payload)?;
-    let signature_hash = get_hash(signature_payload_json);
+    // 1. Sender Proof Signature (L2): Signiert Hash(t_id) mit Genesis Key (Ephemeral)
+    // Beweist technischen Besitz/Autorisierung auf L2 Ebene.
+    let proof_sig_bytes = sign_ed25519(&genesis_secret, init_transaction.t_id.as_bytes());
+    init_transaction.sender_proof_signature = bs58::encode(proof_sig_bytes.to_bytes()).into_string();
 
-    // Bei Init signiert der Creator (Permanent Key) noch traditionell, oder?
-    // Spec sagt: "Signatur der gesamten Tx".
-    // Da wir aber "genesis_secret" haben...
-    // Für Init kann es der Creator Key sein, da Init öffentlich ist (Creator im Profil).
-    let transaction_signature = sign_ed25519(creator_signing_key, signature_hash.as_bytes());
-    init_transaction.sender_signature =
-        bs58::encode(transaction_signature.to_bytes()).into_string();
+    // 2. Sender Identity Signature (L1): Signiert Hash(t_id) mit Creator Key (Permanent)
+    // Beweist die Identität des Erstellers (da sender_id gesetzt ist).
+    let identity_sig_bytes = sign_ed25519(creator_signing_key, init_transaction.t_id.as_bytes());
+    init_transaction.sender_identity_signature = Some(bs58::encode(identity_sig_bytes.to_bytes()).into_string());
 
     temp_voucher.signatures.push(creator_sig_obj); // Füge die Creator-Signatur hinzu
     temp_voucher.transactions.push(init_transaction);
@@ -608,6 +604,50 @@ pub fn create_transaction(
     let prev_hash = get_hash(to_canonical_json(voucher.transactions.last().unwrap())?);
     let t_time = get_current_timestamp();
 
+    // PRIVACY MODE CHECK
+    let privacy_mode = standard
+        .privacy
+        .as_ref()
+        .map(|p| p.mode.as_str())
+        .unwrap_or("public"); // Default to public if not specified
+
+    // Determine Sender ID Visibility
+    let final_sender_id = match privacy_mode {
+        "public" => Some(sender_id.to_string()),
+        "stealth" => None,
+        "flexible" => {
+            // Flexible: Sender decides. For now, we mimic "public" behavior if passed,
+            // later we might want an explict flag in `create_transaction` args.
+            // Assumption: If this function is called with a sender_id, we use it?
+            // Or should we add an Argument `suppress_identity`?
+            // For this implementation: We use sender_id as explicit intent to be public.
+            // (If we wanted anonymous, caller should handle it, but here we require sender_id for Trap generation anyway).
+            // Let's assume for Flexible we default to Public unless configured otherwise.
+            // TODO: Add parameter to control this. For now: Public.
+            Some(sender_id.to_string())
+        }
+        _ => return Err(VoucherManagerError::Generic(format!("Unknown privacy mode: {}", privacy_mode)).into()),
+    };
+
+    // Validate Recipient ID against Mode
+    let recipient_is_did = recipient_id.starts_with("did:") || recipient_id.contains("@did:");
+    let recipient_id_check = match privacy_mode {
+        "public" => {
+            if !recipient_is_did {
+                 return Err(VoucherManagerError::Generic("Public mode requires DID recipient.".to_string()).into());
+            }
+            recipient_id
+        }
+        "stealth" => {
+             if recipient_is_did {
+                 return Err(VoucherManagerError::Generic("Stealth mode forbids DID recipient.".to_string()).into());
+             }
+             recipient_id
+        }
+        "flexible" => recipient_id, // Both allowed
+        _ => recipient_id,
+    };
+
     // 1. REVEAL: Der aktuelle Ephemeral Key wird veröffentlicht.
     let sender_ephemeral_pub =
         bs58::encode(sender_ephemeral_key.verifying_key().to_bytes()).into_string();
@@ -663,7 +703,6 @@ pub fn create_transaction(
     let payload = RecipientPayload {
         sender_permanent_did: sender_id.to_string(),
         target_prefix,
-        memo: None,
         timestamp: Utc::now().timestamp() as u64,
         next_key_seed: encoded_recipient_seed.clone(),
     };
@@ -704,11 +743,9 @@ pub fn create_transaction(
     let amount_str = decimal_utils::format_for_storage(&amount_to_send, decimal_places);
     
     let u_input = format!(
-        "{}{}{}{}{}",
+        "{}{}{}",
         prev_hash,
         sender_ephemeral_pub,
-        receiver_ephemeral_pub_hash.as_deref().unwrap_or(""),
-        amount_str,
         sender_id_prefix
     );
     let u_point = hash_to_curve(u_input.as_bytes());
@@ -727,11 +764,10 @@ pub fn create_transaction(
         prev_hash: prev_hash.clone(), // Clone here needed? prev_hash is String
         t_type,
         t_time,
-        sender_id: sender_id.to_string(),
-        recipient_id: recipient_id.to_string(),
+        sender_id: final_sender_id,
+        recipient_id: recipient_id_check.to_string(),
         amount: amount_str,
         sender_remaining_amount,
-        sender_signature: "".to_string(),
         receiver_ephemeral_pub_hash,
         sender_ephemeral_pub: Some(sender_ephemeral_pub.clone()),
         privacy_guard,
@@ -739,6 +775,8 @@ pub fn create_transaction(
         layer2_signature: None,
         valid_until: None,
         sender_change_anchor_hash,
+        sender_proof_signature: "".to_string(),
+        sender_identity_signature: None,
     };
 
     // 5. L2 SIGNATUR
@@ -760,20 +798,21 @@ pub fn create_transaction(
     let l2_sig_bytes = sign_ed25519(sender_ephemeral_key, l2_hash.as_bytes());
     new_transaction.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
 
-    // 6. FINALE T_ID & Transaction Signature
+    // 6. FINALE T_ID & Transaction Signatures
     let tx_json_for_id = to_canonical_json(&new_transaction)?;
     new_transaction.t_id = get_hash(tx_json_for_id);
 
-    let signature_payload = serde_json::json!({
-        "prev_hash": new_transaction.prev_hash,
-        "sender_id": new_transaction.sender_id,
-        "t_id": new_transaction.t_id
-    });
-    let signature_payload_hash = get_hash(to_canonical_json(&signature_payload)?);
-    
-    // Signiere mit Ephemeral Key (dem Input Key!), um die Integrität zu sichern
-    let signature = sign_ed25519(sender_ephemeral_key, signature_payload_hash.as_bytes());
-    new_transaction.sender_signature = bs58::encode(signature.to_bytes()).into_string();
+    // a) Sender Proof Signature (L2): Signiert Hash(t_id) mit Ephemeral Key (Input Key)
+    // Beweist technischen Besitz/Autorisierung auf L2 Ebene.
+    let proof_sig_bytes = sign_ed25519(sender_ephemeral_key, new_transaction.t_id.as_bytes());
+    new_transaction.sender_proof_signature = bs58::encode(proof_sig_bytes.to_bytes()).into_string();
+
+    // b) Sender Identity Signature (L1): Signiert Hash(t_id) mit Sender Permanent Key
+    // NUR wenn sender_id gesetzt ist (Public/Flexible Mode).
+    if new_transaction.sender_id.is_some() {
+         let identity_sig_bytes = sign_ed25519(sender_permanent_key, new_transaction.t_id.as_bytes());
+         new_transaction.sender_identity_signature = Some(bs58::encode(identity_sig_bytes.to_bytes()).into_string());
+    }
 
     let mut new_voucher = voucher.clone();
     new_voucher.transactions.push(new_transaction);
@@ -884,7 +923,7 @@ pub fn get_spendable_balance(
 
     let balance_str = if last_tx.recipient_id == user_id {
         &last_tx.amount
-    } else if last_tx.sender_id == user_id {
+    } else if last_tx.sender_id.as_deref() == Some(user_id) {
         last_tx.sender_remaining_amount.as_deref().unwrap_or("0")
     } else {
         "0"

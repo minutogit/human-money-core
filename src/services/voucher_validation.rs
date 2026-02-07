@@ -19,9 +19,11 @@ use crate::services::voucher_manager::add_iso8601_duration;
 use ed25519_dalek::{Signature, Verifier};
 use regex::Regex;
 use rust_decimal::Decimal;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
+
+
 
 /// Hauptfunktion zur Validierung eines Gutscheins gegen seinen Standard.
 /// Dies ist der zentrale Orchestrator, der alle untergeordneten Validierungsschritte aufruft.
@@ -81,10 +83,65 @@ pub fn validate_voucher_against_standard(
         }
     }
 
+    // NEU: Validierung des Privacy-Modes
+    let privacy_mode = standard.privacy.as_ref().map(|p| p.mode.as_str()).unwrap_or("public");
+    validate_privacy_mode(voucher, privacy_mode)?;
+
     verify_transactions(voucher, standard)?;
 
     // Signaturen als letztes prüfen, da sie auf den IDs/Hashes der anderen Komponenten basieren.
     verify_signatures(voucher)?;
+    Ok(())
+}
+
+/// Validiert die Einhaltung des Privacy-Modes für alle Transaktionen.
+fn validate_privacy_mode(voucher: &Voucher, mode: &str) -> Result<(), VoucherCoreError> {
+    for (i, tx) in voucher.transactions.iter().enumerate() {
+        // Init-Transaktion (Index 0) ist IMMER public (Creator ist bekannt).
+        if i == 0 {
+            if tx.sender_id.is_none() {
+                return Err(ValidationError::InvalidTransaction(
+                    "Init transaction must always have a sender_id (creator).".to_string()
+                ).into());
+            }
+            continue;
+        }
+
+        match mode {
+            "public" => {
+                // 1. sender_id muss vorhanden sein.
+                if tx.sender_id.is_none() {
+                    return Err(ValidationError::InvalidTransaction(
+                        format!("Transaction {} missing sender_id in 'public' mode.", tx.t_id)
+                    ).into());
+                }
+                // 2. recipient_id muss eine DID sein.
+                if !tx.recipient_id.starts_with("did:") && !tx.recipient_id.contains("@did:") {
+                    return Err(ValidationError::InvalidTransaction(
+                        format!("Transaction {} has non-DID recipient in 'public' mode.", tx.t_id)
+                    ).into());
+                }
+            }
+            "stealth" => {
+                // 1. sender_id darf NICHT vorhanden sein.
+                if tx.sender_id.is_some() {
+                    return Err(ValidationError::InvalidTransaction(
+                        format!("Transaction {} has sender_id in 'stealth' mode.", tx.t_id)
+                    ).into());
+                }
+                // 2. recipient_id darf KEINE DID sein (muss anonym sein).
+                if tx.recipient_id.starts_with("did:") {
+                     return Err(ValidationError::InvalidTransaction(
+                        format!("Transaction {} has public DID recipient in 'stealth' mode.", tx.t_id)
+                    ).into());
+                }
+            }
+            "flexible" => {
+                // Alles erlaubt. Konsistenz (Sender ID <-> Sig) wird in Integrity geprüft.
+            }
+            _ => return Err(VoucherCoreError::Standard(StandardDefinitionError::InvalidMode(mode.to_string()))),
+        }
+    }
     Ok(())
 }
 
@@ -526,6 +583,12 @@ fn verify_transactions(
     // --- Phase 2: Verify all subsequent transactions in the chain ---
     let mut last_tx_hash = get_hash(to_canonical_json(init_tx)?);
     let mut last_tx_time = init_tx.t_time.clone();
+    
+    // Track valid outputs from the previous transaction that can be spent.
+    // For init/transfer: [amount]
+    // For split: [amount, remaining]
+    // The next transaction MUST consume exactly one of these values.
+    let mut valid_previous_outputs = vec![Decimal::from_str(&init_tx.amount)?];
 
     for (i, tx) in voucher.transactions.iter().enumerate().skip(1) {
         let prev_tx = &voucher.transactions[i - 1];
@@ -552,34 +615,103 @@ fn verify_transactions(
             }
             .into());
         }
+        
+        // --- Amount Continuity Check ---
+        let current_amount = Decimal::from_str(&tx.amount)?;
+        let current_remainder = if let Some(rem) = &tx.sender_remaining_amount {
+             Decimal::from_str(rem)?
+        } else {
+             Decimal::ZERO
+        };
+        let total_input_needed = current_amount + current_remainder;
+        
+        // Check if `total_input_needed` matches any of the valid previous outputs
+        let mut match_found = false;
+        for valid_out in &valid_previous_outputs {
+             // Use normalize() for comparison to handle trailing zeros (e.g. 100.00 vs 100)
+             if total_input_needed.normalize() == valid_out.normalize() {
+                 match_found = true;
+                 break;
+             }
+        }
+        
+        if !match_found {
+             return Err(ValidationError::InsufficientFundsInChain {
+                 user_id: tx.sender_id.clone().unwrap_or_else(|| "anonymous".to_string()),
+                 needed: total_input_needed.to_string(),
+                 // We just show the first valid output for simplicity in error message, 
+                 // or maybe format all of them?
+                 available: valid_previous_outputs.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(" or "),
+             }.into());
+        }
+        
+        // Update valid outputs for next iteration
+        valid_previous_outputs.clear();
+        valid_previous_outputs.push(current_amount);
+        if let Some(rem) = &tx.sender_remaining_amount {
+             valid_previous_outputs.push(Decimal::from_str(rem)?);
+        }
+
 
         // --- P2PKH Verkettungs-Validierung ---
         // Prüfe, dass der in dieser Tx enthüllte sender_ephemeral_pub
-        // dem Hash in der vorherigen Tx entspricht (receiver_ephemeral_pub_hash ODER sender_change_anchor_hash)
+        // dem Hash in der vorherigen Tx entspricht.
         if let Some(revealed_pub) = &tx.sender_ephemeral_pub {
-            let correct_anchor = if tx.sender_id == prev_tx.recipient_id {
-                prev_tx.receiver_ephemeral_pub_hash.as_ref()
-            } else if tx.sender_id == prev_tx.sender_id {
-                prev_tx.sender_change_anchor_hash.as_ref()
+            let correct_anchor = if prev_tx.recipient_id == tx.sender_id.clone().unwrap_or_default() { // Fall: Sender identifiziert sich als Empfänger
+                 // ACHTUNG: Wenn sender_id NONE ist (Stealth), matcht das hier nicht auf recipient_id (die ja meist auch Hash/Anon ist).
+                 // In Stealth müssen wir rein kryptographisch prüfen.
+                 // Aber: Wir wissen nicht, OB wir der Empfänger waren, außer wir probieren es?
+                 // Nein, Validierung ist öffentlich. Jeder muss es prüfen können.
+                 // LÖSUNG: Wir können nicht rein an IDs festmachen, wer der Parent war, wenn IDs fehlen.
+                 // Wir müssen PRÜFEN, ob der Hash passt.
+                 
+                 // Versuch 1: Passt es zum Receiver Hash der Vor-Tx?
+                 let hash_pub = get_hash(revealed_pub.clone());
+                 if let Some(prev_recv_hash) = &prev_tx.receiver_ephemeral_pub_hash {
+                     if hash_pub == *prev_recv_hash {
+                         Some(prev_recv_hash)
+                     } else if let Some(prev_change_hash) = &prev_tx.sender_change_anchor_hash {
+                         if hash_pub == *prev_change_hash {
+                             Some(prev_change_hash)
+                         } else {
+                             None
+                         }
+                     } else {
+                         None
+                     }
+                 } else {
+                     None
+                 }
             } else {
-                // Wenn der Sender weder Empfänger noch Sender der vorigen Tx war, ist die Kette unterbrochen.
-                // Außer bei Sonderfällen (Delegation?), die hier nicht abgedeckt sind.
-                return Err(ValidationError::InvalidTransaction(
-                    "Transaction chain broken: Sender is not linked to previous transaction participants.".to_string()
-                ).into());
+                 // Fallback für explizite ID Matches (Public Mode)
+                 if Some(prev_tx.recipient_id.clone()) == tx.sender_id {
+                      prev_tx.receiver_ephemeral_pub_hash.as_ref()
+                 } else if tx.sender_id.is_some() && tx.sender_id == prev_tx.sender_id {
+                      prev_tx.sender_change_anchor_hash.as_ref()
+                 } else {
+                     // Wenn keine ID Matcht, versuchen wir den Hash-Match (siehe oben)
+                     let hash_pub = get_hash(revealed_pub.clone());
+                      if let Some(prev_recv_hash) = &prev_tx.receiver_ephemeral_pub_hash {
+                         if hash_pub == *prev_recv_hash {
+                             Some(prev_recv_hash)
+                         } else if let Some(prev_change_hash) = &prev_tx.sender_change_anchor_hash {
+                             if hash_pub == *prev_change_hash {
+                                 Some(prev_change_hash)
+                             } else {
+                                 None
+                             }
+                         } else {
+                             None
+                         }
+                     } else {
+                         None
+                     }
+                 }
             };
 
-            if let Some(anchor) = correct_anchor {
-                let calculated_hash = get_hash(revealed_pub.clone());
-                if calculated_hash != *anchor {
-                    return Err(ValidationError::InvalidTransaction(
-                        "P2PKH chain broken: sender_ephemeral_pub does not match previous anchor (receiver or change).".to_string(),
-                    )
-                    .into());
-                }
-            } else {
+            if correct_anchor.is_none() {
                  return Err(ValidationError::InvalidTransaction(
-                    "P2PKH chain broken: Previous transaction has no anchor for this spender.".to_string(),
+                    "P2PKH chain broken: sender_ephemeral_pub does not match any previous anchor.".to_string(),
                 )
                 .into());
             }
@@ -587,29 +719,22 @@ fn verify_transactions(
 
         // --- TRAP Validierung ---
         if let Some(trap) = &tx.trap_data {
-            // Wir können die Trap nur verifizieren, wenn wir die U-Werte rekonstruieren können.
-            // Dazu brauchen wir prev_hash, ephem_keys, amount und prefix.
-            // Wir nehmen an, dass 'sender_id' im Klartext oder als valides DID vorliegt,
-            // um den ID-Punkt zu holen. Wenn sender_id "anonymous" ist, überspringen wir den ZKP-Check (Public Mode).
-            if let Ok(signer_pk) = get_pubkey_from_user_id(&tx.sender_id) {
-                if let Ok(signer_id_point) = ed25519_pk_to_curve_point(&signer_pk) {
-                     let sender_prefix = tx.sender_id.split('@').next().unwrap_or(&tx.sender_id).to_string();
-                     // Rekonstruktion U Input
-                     // u = HashToCurve(prev_hash + sender_ephemeral_pub + receiver_ephemeral_pub_hash + amount + prefix)
-                     
-                     // Achtung: Wir müssen sicherstellen, dass wir exakt dasselbe Format wie im TrapManager nutzen.
-                     // amount muss 'formatted for storage' sein (ist er im Tx struct schon).
-                     let u_input = format!(
-                        "{}{}{}{}{}",
-                        tx.prev_hash,
-                        tx.sender_ephemeral_pub.as_deref().unwrap_or(""),
-                        tx.receiver_ephemeral_pub_hash.as_deref().unwrap_or(""),
-                        tx.amount,
-                        sender_prefix
-                    );
-                    
-                    if let Err(e) = verify_trap(trap, u_input.as_bytes(), &signer_id_point, &sender_prefix) {
-                         return Err(ValidationError::InvalidTransaction(format!("Trap verification failed: {}", e)).into());
+            // Nur möglich, wenn sender_id (Public Identity) bekannt ist.
+            if let Some(sender_id) = &tx.sender_id {
+                if let Ok(signer_pk) = get_pubkey_from_user_id(sender_id) {
+                    if let Ok(signer_id_point) = ed25519_pk_to_curve_point(&signer_pk) {
+                         let sender_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string();
+                         
+                         let u_input = format!(
+                            "{}{}{}",
+                            tx.prev_hash,
+                            tx.sender_ephemeral_pub.as_deref().unwrap_or(""),
+                            sender_prefix
+                        );
+                        
+                        if let Err(e) = verify_trap(trap, u_input.as_bytes(), &signer_id_point, &sender_prefix) {
+                             return Err(ValidationError::InvalidTransaction(format!("Trap verification failed: {}", e)).into());
+                        }
                     }
                 }
             }
@@ -617,19 +742,41 @@ fn verify_transactions(
 
         // --- Financial Consistency Check (Look-behind-by-one) ---
         let sender_balance_before_tx = {
-            if prev_tx.recipient_id == tx.sender_id {
-                Decimal::from_str(&prev_tx.amount)?
-            } else if prev_tx.sender_id == tx.sender_id {
-                Decimal::from_str(prev_tx.sender_remaining_amount.as_deref().unwrap_or("0"))?
+            // Wir müssen herausfinden, ob wir der Recipient oder der Sender (Change) der Vor-Tx waren.
+            // Da wir ggf. keine IDs haben, nutzen wir den Match aus der P2PKH Prüfung?
+            // Vereinfachung: Wir schauen auf die Beträge und P2PKH Link.
+            // Da wir oben "correct_anchor" nicht exponiert haben, hier heuristisch:
+            
+            // Wenn Recipient Balance matching?
+            // "Look-behind": 
+            // - War prev_tx.recipient der Vorbesitzer?
+            // - War prev_tx.sender (Change) der Vorbesitzer?
+            
+            // Wenn wir den Key revealt haben, der zu RecipientHash passt -> Balance = Amount
+            // Wenn wir den Key revealt haben, der zu ChangeHash passt -> Balance = Remaining
+            
+            // AUSTAUSCH DER LOGIK: Statt ID-Check nun Hash-Check
+            let my_revealed_pub_hash = tx.sender_ephemeral_pub.as_ref().map(|k| get_hash(k.clone())).unwrap_or_default();
+            
+            if Some(&my_revealed_pub_hash) == prev_tx.receiver_ephemeral_pub_hash.as_ref() {
+                 Decimal::from_str(&prev_tx.amount)?
+            } else if Some(&my_revealed_pub_hash) == prev_tx.sender_change_anchor_hash.as_ref() {
+                 Decimal::from_str(prev_tx.sender_remaining_amount.as_deref().unwrap_or("0"))?
             } else {
-                Decimal::ZERO
+                // Fallback für alte Logik / Init
+                if tx.t_type == "init" {
+                    Decimal::ZERO // Init hat keinen Vorgänger in dem Sinne, Balance Check ist anders
+                } else {
+                     // Wenn keine kryptographische Verbindung -> Error (wurde oben schon gefangen eigentlich)
+                     Decimal::ZERO 
+                }
             }
         };
 
         let amount_to_send = Decimal::from_str(&tx.amount)?;
         if sender_balance_before_tx < amount_to_send {
             return Err(ValidationError::InsufficientFundsInChain {
-                user_id: tx.sender_id.clone(),
+                user_id: tx.sender_id.clone().unwrap_or("anonymous".to_string()),
                 needed: amount_to_send.to_string(),
                 available: sender_balance_before_tx.to_string(),
             }
@@ -701,12 +848,12 @@ fn verify_transaction_basics(
             )
             .into());
         }
-        if Some(&tx.sender_id) != voucher.creator_profile.id.as_ref()
-            || Some(&tx.recipient_id) != voucher.creator_profile.id.as_ref()
+        if (voucher.creator_profile.id.is_some() && tx.sender_id != voucher.creator_profile.id)
+            || (voucher.creator_profile.id.is_some() && Some(&tx.recipient_id) != voucher.creator_profile.id.as_ref())
         {
             return Err(ValidationError::InitPartyMismatch {
                 expected: voucher.creator_profile.id.clone().unwrap_or_default(),
-                found: tx.sender_id.clone(),
+                found: tx.sender_id.clone().unwrap_or_default(),
             }
             .into());
         }
@@ -735,7 +882,7 @@ fn verify_transaction_basics(
             )
             .into());
         }
-        if tx.sender_id == tx.recipient_id {
+        if tx.sender_id.is_some() && tx.sender_id == Some(tx.recipient_id.clone()) {
             return Err(ValidationError::InvalidTransaction(
                 "Sender and recipient cannot be the same in a non-init transaction.".to_string(),
             )
@@ -743,11 +890,43 @@ fn verify_transaction_basics(
         }
     }
 
+    if tx.t_type == "split" {
+        if tx.sender_remaining_amount.is_none() {
+            return Err(ValidationError::InvalidTransaction(
+                "Transaction of type 'split' must have a sender_remaining_amount.".to_string(),
+            )
+            .into());
+        }
+    } else if tx.t_type == "transfer" {
+        if tx.sender_remaining_amount.is_some() {
+            return Err(ValidationError::InvalidTransaction(
+                "Transaction of type 'transfer' must not have a sender_remaining_amount.".to_string(),
+            )
+            .into());
+        }
+    } else if !is_init {
+         // Allow unknown types? Probably not safe.
+         // For now, let's stick to known types.
+         return Err(ValidationError::InvalidTransaction(
+             format!("Unknown transaction type: {}", tx.t_type)
+         ).into());
+    }
+
     if Decimal::from_str(&tx.amount)? <= Decimal::ZERO {
         return Err(ValidationError::NegativeOrZeroAmount {
             amount: tx.amount.clone(),
         }
         .into());
+    }
+    
+    // Check remaining amount positivity if present
+    if let Some(rem) = &tx.sender_remaining_amount {
+         if Decimal::from_str(rem)? <= Decimal::ZERO {
+            return Err(ValidationError::NegativeOrZeroAmount {
+                amount: rem.clone(),
+            }
+            .into());
+         }
     }
 
     Ok(())
@@ -760,13 +939,13 @@ fn verify_transaction_integrity_and_signature(
     // 1. Basis-Integrität prüfen (t_id Berechnung)
     let mut tx_for_tid_calc = transaction.clone();
 
-    // WICHTIG: Um die ID zu validieren, müssen wir die Sender-Signatur entfernen.
+    // WICHTIG: Um die ID zu validieren, müssen wir die Signaturen entfernen.
     tx_for_tid_calc.t_id = "".to_string();
-    tx_for_tid_calc.sender_signature = "".to_string();
+    tx_for_tid_calc.sender_proof_signature = "".to_string();
+    tx_for_tid_calc.sender_identity_signature = None;
 
     // L2-Logik: Falls eine Layer-2-Signatur vorhanden ist, ist sie Teil des JSONs
-    // und somit Teil der t_id. Wir müssen sie hier NICHT entfernen für die t_id Prüfung,
-    // da die t_id im Voucher die L2-Sig inkludiert.
+    // und somit Teil der t_id! (Siehe voucher_manager)
 
     let calculated_tid = get_hash(to_canonical_json(&tx_for_tid_calc)?);
     if transaction.t_id != calculated_tid {
@@ -776,7 +955,47 @@ fn verify_transaction_integrity_and_signature(
         .into());
     }
 
-    // 2. Layer-2 Signatur Validierung (Optional, wenn vorhanden)
+    // 2. Sender Proof Signature (L2 - P2PKH)
+    // Muss vorhanden und gültig sein.
+    if transaction.sender_proof_signature.is_empty() {
+         return Err(ValidationError::InvalidTransaction("Missing sender_proof_signature".to_string()).into());
+    }
+    
+    // Verifiziere Proof Sig (Input Key signiert t_id)
+    if let Some(ephem_pub_str) = &transaction.sender_ephemeral_pub {
+        let ephem_pub_bytes = bs58::decode(ephem_pub_str).into_vec().map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
+        let pub_key = ed25519_dalek::VerifyingKey::from_bytes(ephem_pub_bytes.as_slice().try_into().unwrap())
+                .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
+                
+        let sig_bytes = bs58::decode(&transaction.sender_proof_signature).into_vec().map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
+        let signature = Signature::from_bytes(sig_bytes.as_slice().try_into().unwrap());
+        
+        if pub_key.verify(transaction.t_id.as_bytes(), &signature).is_err() {
+            return Err(ValidationError::InvalidTransaction("Invalid sender_proof_signature".to_string()).into());
+        }
+    } else {
+        return Err(ValidationError::InvalidTransaction("Missing sender_ephemeral_pub for proof signature".to_string()).into());
+    }
+
+    // (Init/Transfer distinction handling for L2 signature happens above in L2 block)
+    // (Sender Identity Signature verification happens in block 3 above)
+
+    // 3. Sender Identity Signature (L1)
+    // Nur prüfen wenn sender_id vorhanden.
+    if let Some(sender_id) = &transaction.sender_id {
+         let identity_sig_enc = transaction.sender_identity_signature.as_ref()
+            .ok_or_else(|| ValidationError::InvalidTransaction("Missing sender_identity_signature for public sender".to_string()))?;
+            
+         let pub_key = get_pubkey_from_user_id(sender_id)?;
+         let sig_bytes = bs58::decode(identity_sig_enc).into_vec().map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
+         let signature = Signature::from_bytes(sig_bytes.as_slice().try_into().unwrap());
+         
+         if pub_key.verify(transaction.t_id.as_bytes(), &signature).is_err() {
+            return Err(ValidationError::InvalidTransaction("Invalid sender_identity_signature".to_string()).into());
+         }
+    }
+
+    // 4. Layer-2 Signature Validierung (Optional, wenn vorhanden)
     if let Some(l2_sig) = &transaction.layer2_signature {
         // P2PKH Logik: Wir verifizieren gegen den SENDER PubKey (der enthüllt wurde),
         // nicht gegen den Receiver (der jetzt ein Hash ist).
@@ -833,46 +1052,6 @@ fn verify_transaction_integrity_and_signature(
         }
     }
 
-    // 3. Sender Signatur Validierung
-    let signature_payload = json!({
-        "prev_hash": transaction.prev_hash,
-        "sender_id": transaction.sender_id,
-        "t_id": transaction.t_id
-    });
-    let signature_payload_hash = get_hash(to_canonical_json(&signature_payload)?);
-    
-    // KORREKTUR: Unterscheidung nach Transaktionstyp
-    // Init: Wird mit dem PERMANENT KEY des Creators (Sender) signiert.
-    // Transfer/Split: Wird mit dem EPHEMERAL KEY (P2PKH) signiert.
-    let sender_pub_key = if transaction.t_type == "init" {
-        get_pubkey_from_user_id(&transaction.sender_id)?
-    } else {
-        let pub_str = transaction.sender_ephemeral_pub.as_ref().ok_or(ValidationError::InvalidTransaction("Missing sender_ephemeral_pub for non-init transaction".into()))?;
-        let pub_bytes = bs58::decode(pub_str).into_vec().map_err(|_| ValidationError::SignatureDecodeError("Invalid ephemeral pubkey encoding".into()))?;
-        // Convert to VerifyingKey
-        let array: [u8; 32] = pub_bytes.try_into().map_err(|_| ValidationError::SignatureDecodeError("Invalid ephemeral pubkey length".into()))?;
-        ed25519_dalek::VerifyingKey::from_bytes(&array).map_err(|_| ValidationError::SignatureDecodeError("Invalid ephemeral pubkey bytes".into()))?
-    };
-    let signature_bytes = bs58::decode(&transaction.sender_signature).into_vec()?;
-
-    // KORREKTUR: Verwende die robuste Pars-Logik, um 64-Byte-Länge zu prüfen.
-    let signature_array: [u8; 64] = signature_bytes.try_into().map_err(|_| {
-        ValidationError::SignatureDecodeError(
-            "Invalid transaction signature length: must be 64 bytes".to_string(),
-        )
-    })?;
-    let signature = Signature::from_bytes(&signature_array);
-
-    if !verify_ed25519(
-        &sender_pub_key,
-        signature_payload_hash.as_bytes(),
-        &signature,
-    ) {
-        return Err(ValidationError::InvalidTransactionSignature {
-            t_id: transaction.t_id.clone(),
-            sender_id: transaction.sender_id.clone(),
-        }
-        .into());
-    }
+    // 3. (Alte sender_signature Logik entfernt - wird jetzt durch sender_proof_signature und sender_identity_signature oben abgedeckt)
     Ok(())
 }

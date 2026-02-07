@@ -123,7 +123,7 @@ mod compatibility_scenarios {
         let mut temp_tx: human_money_core::models::voucher::Transaction =
             serde_json::from_value(serde_json::Value::Object(init_transaction.clone())).unwrap();
         temp_tx.t_id = "".to_string();
-        temp_tx.sender_signature = "".to_string();
+        temp_tx.layer2_signature = Some("".to_string());
         let new_tid = human_money_core::services::crypto_utils::get_hash(
             to_canonical_json(&temp_tx).unwrap(),
         );

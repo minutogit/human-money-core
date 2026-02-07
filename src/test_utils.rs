@@ -901,11 +901,12 @@ pub fn create_voucher_for_manipulation(
         prev_hash,
         t_type: "init".to_string(),
         t_time: creation_date_str,
-        sender_id: voucher.creator_profile.id.as_ref().unwrap().clone(),
+        sender_id: Some(voucher.creator_profile.id.as_ref().unwrap().clone()),
         recipient_id: voucher.creator_profile.id.as_ref().unwrap().clone(),
         amount: voucher.nominal_value.amount.clone(),
         sender_remaining_amount: None,
-        sender_signature: "".to_string(),
+        sender_proof_signature: "".to_string(), // Wird in resign_transaction_ext gesetzt
+        sender_identity_signature: None,        // Wird in resign_transaction_ext gesetzt
         // P2PKH SETUP
         receiver_ephemeral_pub_hash: Some(holder_anchor_hash),
         sender_ephemeral_pub: Some(genesis_pub_str.clone()),
@@ -1059,7 +1060,8 @@ pub fn resign_transaction_ext(
     if let Some(sender_ephem_pub) = &tx.sender_ephemeral_pub {
         tx.layer2_signature = None;
         tx.t_id = "".to_string();
-        tx.sender_signature = "".to_string();
+        tx.sender_proof_signature = "".to_string();
+        tx.sender_identity_signature = None;
         
         let tx_json_pre_l2 = to_canonical_json(&tx).unwrap();
         let pre_l2_tid = crypto_utils::get_hash(tx_json_pre_l2);
@@ -1091,21 +1093,25 @@ pub fn resign_transaction_ext(
     }
 
     tx.t_id = "".to_string();
-    tx.sender_signature = "".to_string();
+    tx.sender_proof_signature = "".to_string();
+    tx.sender_identity_signature = None;
+    
     // Die t_id muss auf dem kanonischen JSON der gesamten Tx basieren (inkl. ephemeral fields)
     tx.t_id = crypto_utils::get_hash(to_canonical_json(&tx).unwrap());
     
-    // Die Signatur-Payload: 
-    let signature_payload = serde_json::json!({
-        "prev_hash": tx.prev_hash,
-        "sender_id": tx.sender_id,
-        "t_id": tx.t_id
-    });
-    let signature_hash = crypto_utils::get_hash(to_canonical_json(&signature_payload).unwrap());
-    
-    tx.sender_signature =
-        bs58::encode(crypto_utils::sign_ed25519(signer_key, signature_hash.as_bytes()).to_bytes())
-            .into_string();
+    // 1. Sender Proof Signature (L2) - signed by Ephemeral Key (l2_signer_key)
+    // If l2_signer_key provided, use it. Otherwise fall back to signer_key (e.g. for simple tests)
+    let proof_key = l2_signer_key.unwrap_or(signer_key);
+    let proof_sig = crypto_utils::sign_ed25519(proof_key, tx.t_id.as_bytes());
+    tx.sender_proof_signature = bs58::encode(proof_sig.to_bytes()).into_string();
+
+    // 2. Sender Identity Signature (L1) - signed by Permanent Key (signer_key)
+    // Only if sender_id is present
+    if tx.sender_id.is_some() {
+        let identity_sig = crypto_utils::sign_ed25519(signer_key, tx.t_id.as_bytes());
+        tx.sender_identity_signature = Some(bs58::encode(identity_sig.to_bytes()).into_string());
+    }
+
     tx
 }
 

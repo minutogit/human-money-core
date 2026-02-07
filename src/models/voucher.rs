@@ -82,12 +82,9 @@ pub struct RecipientPayload {
     pub sender_permanent_did: String,
     /// Das Ziel-Präfix (z.B. "creator:fY7") zur Validierung.
     pub target_prefix: String,
-    /// Optionale Nachricht.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memo: Option<String>,
     /// Zeitstempel der Erstellung.
     pub timestamp: u64,
-    /// Der Seed für den nächsten ephemeren Schlüssel (damit der Empfänger ihn generieren kann).
+    /// Der Seed für den nächsten ephemeren Schlüssel.
     pub next_key_seed: String,
 }
 
@@ -97,31 +94,53 @@ pub struct Transaction {
     /// Eindeutige ID der Transaktion.
     pub t_id: String,
     /// Art der Transaktion. Leer für einen vollen Transfer, "init" für die Erstellung, "split" für Teilbeträge.
-    /// Das Feld wird bei der Serialisierung weggelassen, wenn es leer ist.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub t_type: String,
     /// Zeitpunkt der Transaktion im ISO 8601-Format.
     pub t_time: String,
+    
+    // --- TECHNISCHER LAYER (Layer 2 - Immer vorhanden) ---
+    
+    /// Der Hash des vorherigen Stealth-Public-Keys oder Transaktions-Hash.
+    pub prev_hash: String,
+
+    /// Der Hash des ephemeren Public Keys des Empfängers (Stealth Key).
+    /// Existiert IMMER, auch wenn recipient_id öffentlich ist.
+    /// Option nur für Abwärtskompatibilität bzw. Init-Sonderfälle, 
+    /// aber im Standard-Flow nun Pflicht.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receiver_ephemeral_pub_hash: Option<String>,
+
+    /// Die Signatur ausgeführt durch den Stealth-Key (Private Key passend zum prev_hash).
+    /// Signiert: Hash(t_id).
+    pub sender_proof_signature: String,
+
+    // --- SOZIALER LAYER (Layer 1 - Abhängig vom Privacy Mode) ---
+
     /// ID des Senders der Transaktion.
-    pub sender_id: String,
+    /// Optional, abhängig vom Privacy Mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_id: Option<String>,
+
+    /// Die Signatur ausgeführt durch den Identity-Key (sender_id).
+    /// Muss vorhanden sein, wenn sender_id gesetzt ist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_identity_signature: Option<String>,
+
     /// ID des Empfängers der Transaktion.
+    /// Kann public (did:key) oder anonymisiert sein.
     pub recipient_id: String,
+    
     /// Der Betrag, der bei dieser Transaktion bewegt wurde.
     pub amount: String,
     /// Der Restbetrag beim Sender nach einer Teilung. Nur bei `t_type: "split"` vorhanden.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_remaining_amount: Option<String>,
-    /// Digitale Signatur des Senders für diese Transaktion.
-    pub sender_signature: String,
-    /// Der Hash der vorhergehenden Transaktion oder der voucher_id für die init-Transaktion.
-    pub prev_hash: String,
 
     // --- Layer 2 & Privacy Fields ---
+    
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_ephemeral_pub: Option<String>, // Der enthüllte Key (Preimage) für L2-Signatur
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub receiver_ephemeral_pub_hash: Option<String>, // Der Anker-Hash für die Verkettung (P2PKH)
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_change_anchor_hash: Option<String>, // Der Anker-Hash für das Restgeld

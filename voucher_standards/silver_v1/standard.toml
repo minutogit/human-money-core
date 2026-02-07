@@ -56,4 +56,4 @@ amount_decimal_places = 4
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "39cTSkJuzJFCzivVDjUxHPFXwhScCaZQ56cXh4CWEDjR4DyUfyaAnsbJ1HAVxAro6xW1ot4AwNNWX2cvrtJCcUvz"
+signature = "KPGPrWi5kW9F9jukKfyGxwgYgESWFJVpwwRfe7Uj2nUyZA9CK1ijYPBGdsEtFixmJBmZZ7iHePXmcufoFUzq8xa"

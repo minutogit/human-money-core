@@ -16,7 +16,7 @@ use crate::models::{
 };
 use crate::services::conflict_manager;
 use crate::services::crypto_utils::{
-    get_hash, get_pubkey_from_user_id, get_short_hash_from_user_id,
+    get_hash, get_short_hash_from_user_id,
 };
 use crate::services::utils::to_canonical_json;
 use crate::wallet::ProofOfDoubleSpendSummary;
@@ -172,13 +172,12 @@ impl Wallet {
         }
 
         // 2. Extrahiere Kerndaten und verifiziere Signaturen.
-        let offender_id = conflicting_transactions[0].sender_id.clone();
+        let offender_id = conflicting_transactions[0].sender_id.clone().unwrap_or("anonymous".to_string());
         let fork_point_prev_hash = conflicting_transactions[0].prev_hash.clone();
-        let offender_pubkey = get_pubkey_from_user_id(&offender_id)?;
 
         let mut verified_tx_count = 0;
         for tx in &conflicting_transactions {
-            if tx.sender_id != offender_id || tx.prev_hash != fork_point_prev_hash {
+            if tx.sender_id != Some(offender_id.clone()) || tx.prev_hash != fork_point_prev_hash {
                 return Ok(None);
             }
 
@@ -186,26 +185,23 @@ impl Wallet {
                 "prev_hash": &tx.prev_hash, "sender_id": &tx.sender_id, "t_id": &tx.t_id
             });
             let signature_payload_hash = get_hash(to_canonical_json(&signature_payload)?);
-            let signature_bytes = bs58::decode(&tx.sender_signature).into_vec()?;
-            // KORREKTUR: P2PKH-Unterstützung
-            let verification_key = if tx.t_type == "init" {
-                offender_pubkey
-            } else {
-                 // Bei Transfer/Split muss der Ephemeral Key (sender_ephemeral_pub) verwendet werden.
-                if let Some(pub_str) = &tx.sender_ephemeral_pub {
-                    let pub_bytes = bs58::decode(pub_str).into_vec().unwrap_or_default();
-                    if let Ok(array) = pub_bytes.try_into() {
-                        if let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(&array) {
-                             vk
-                        } else {
-                             continue; // Invalid Key
-                        }
+            // Use sender_proof_signature (L2) for conflict proof
+            let signature_bytes = bs58::decode(&tx.sender_proof_signature).into_vec()?;
+            
+            // The signature is ALWAYS signed by the ephemeral key (L2)
+            let verification_key = if let Some(pub_str) = &tx.sender_ephemeral_pub {
+                let pub_bytes = bs58::decode(pub_str).into_vec().unwrap_or_default();
+                if let Ok(array) = pub_bytes.try_into() {
+                    if let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(&array) {
+                            vk
                     } else {
-                         continue; // Invalid Length
+                            continue; // Invalid Key
                     }
                 } else {
-                    continue; // Missing Key
+                        continue; // Invalid Length
                 }
+            } else {
+                continue; // Missing Key
             };
 
             // Konvertiere Signature Bytes zu Signature Object
@@ -270,8 +266,9 @@ impl Wallet {
                 ))
             })?;
 
-            // Berechne den relevanten Fingerprint-Hash (die "Kollisions-ID")
-            let fingerprint_hash = get_hash(format!("{}{}", last_tx.prev_hash, last_tx.sender_id));
+            // Berechne den relevanten Fingerprint (die "Kollisions-ID")
+            let fingerprint = conflict_manager::create_fingerprint_for_transaction(last_tx, voucher)?;
+            let fingerprint_hash = fingerprint.prvhash_senderid_hash;
 
             // --- KORRIGIERTE LOGIK: Unterscheide Replay vs. Double Spend ---
 
