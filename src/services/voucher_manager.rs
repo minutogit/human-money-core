@@ -344,14 +344,21 @@ pub fn create_voucher(
     // --- L2 ANKER (SCHRITT B) - P2PKH Implementierung ---
     // 1. Genesis-Key (Sender): Wird SOFORT enthüllt, um die init-Tx zu signieren.
     //    Dies ist der "Proof of Authorization" für den Start der Kette.
+    let creator_prefix = creator_id.split(':').next().unwrap_or("unknown");
+
+    // --- L2 ANKER (SCHRITT B) - P2PKH Implementierung ---
+    // 1. Genesis-Key (Sender): Wird SOFORT enthüllt, um die init-Tx zu signieren.
+    //    Dies ist der "Proof of Authorization" für den Start der Kette.
+    //    Key Binding: Der Genesis-Key ist an das Präfix des Erstellers gebunden.
     let (genesis_secret, genesis_public) =
-        derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "genesis")?;
+        derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "genesis", Some(creator_prefix))?;
     let genesis_pub_str = bs58::encode(genesis_public.to_bytes()).into_string();
 
     // 2. Holder-Key (Receiver): Wird GEHASHT als Anker für die nächste Tx hinterlegt.
     //    Wir speichern NICHT den Key selbst, da der Creator ihn jederzeit re-deriven kann.
+    //    Key Binding: Der Holder-Key (für die erste Ausgabe) ist ebenfalls an das Präfix des Erstellers gebunden (Self-Issue).
     let (_, holder_public) =
-        derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "holder")?;
+        derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "holder", Some(creator_prefix))?;
     let holder_pub_str = bs58::encode(holder_public.to_bytes()).into_string();
     let holder_anchor_hash = get_hash(holder_pub_str);
 
@@ -740,16 +747,20 @@ pub fn create_transaction(
     // 4. TRAP Generation & Identity Recovery Logic
     //
     // a) Calculate CONSTANT DS-Tag (Index):
-    //    Depends ONLY on Input (prev_hash, input_key, sender_prefix).
-    //    This ensures O(1) detection of Double Spends.
+    //    Depends ONLY on Input (prev_hash, input_key).
+    //    This ensures O(1) detection of Double Spends, independent of the identity used.
     let sender_id_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string(); // "prefix:checksum"
     let amount_str = decimal_utils::format_for_storage(&amount_to_send, decimal_places);
     
+    // CHANGE: Decouple ds_tag from Identity Prefix!
+    // OLD: format!("{}{}{}", prev_hash, sender_ephemeral_pub, sender_id_prefix);
+    // NEW: format!("{}{}", prev_hash, sender_ephemeral_pub);
+    // This prevents "Identity Hopping" attacks where attackers use different prefixes
+    // for the same input to generate different ds_tags.
     let ds_tag_input = format!(
-        "{}{}{}",
+        "{}{}",
         prev_hash,
-        sender_ephemeral_pub,
-        sender_id_prefix
+        sender_ephemeral_pub
     );
     let ds_tag = get_hash(ds_tag_input.as_bytes());
 

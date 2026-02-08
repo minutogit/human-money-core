@@ -884,12 +884,17 @@ pub fn create_voucher_for_manipulation(
     // 4. Init-Transaktion erstellen (MIT P2PKH ANKER & L2 SIGNATUR)
 
     // A. Keys ableiten
+    let prefix = voucher.creator_profile.id.as_ref()
+        .and_then(|id| id.split(':').next())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
     let (genesis_secret, genesis_public) =
-        crypto_utils::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "genesis").expect("Failed to derive genesis key");
+        crypto_utils::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "genesis", Some(&prefix)).expect("Failed to derive genesis key");
     let genesis_pub_str = bs58::encode(genesis_public.to_bytes()).into_string();
 
     let (_, holder_public) =
-        crypto_utils::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "holder").expect("Failed to derive holder key");
+        crypto_utils::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "holder", Some(&prefix)).expect("Failed to derive holder key");
     let holder_pub_str = bs58::encode(holder_public.to_bytes()).into_string();
     let holder_anchor_hash = crypto_utils::get_hash(holder_pub_str);
 
@@ -1301,13 +1306,21 @@ mod tests {
 }
 
 // Helper to derive the holder key for Init transaction
+// Helper to derive the holder key for Init transaction
 pub fn derive_holder_key(voucher: &crate::models::voucher::Voucher, creator_signing_key: &ed25519_dalek::SigningKey) -> ed25519_dalek::SigningKey {
     let nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
     let nonce_arr: [u8; 16] = nonce_bytes.try_into().unwrap();
+    
+    let prefix = voucher.creator_profile.id.as_ref()
+        .and_then(|id| id.split(':').next())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    
     let (holder_key, _) = crate::services::crypto_utils::derive_ephemeral_key_pair(
         creator_signing_key,
         &nonce_arr,
-        "holder"
+        "holder",
+        Some(&prefix)
     ).unwrap();
     holder_key
 }

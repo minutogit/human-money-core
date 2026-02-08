@@ -725,11 +725,11 @@ fn verify_transactions(
                     if let Ok(signer_id_point) = ed25519_pk_to_curve_point(&signer_pk) {
                          let sender_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string();
                          
+                         // FIXED: Independent DS-Tag calculation (No Prefix!)
                          let ds_tag_input = format!(
-                            "{}{}{}",
+                            "{}{}",
                             tx.prev_hash,
-                            tx.sender_ephemeral_pub.as_deref().unwrap_or(""),
-                            sender_prefix
+                            tx.sender_ephemeral_pub.as_deref().unwrap_or("")
                         );
                         let expected_ds_tag = get_hash(ds_tag_input.as_bytes());
 

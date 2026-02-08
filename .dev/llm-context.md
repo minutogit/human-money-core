@@ -30,16 +30,16 @@ Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `human_m
 
 - **Entkoppelte & Anonymisierte Speicherung:** Die Kernlogik (`Wallet`) ist vom Speicher (`Storage`-Trait) entkoppelt. Die Standardimplementierung `FileStorage` speichert jedes Benutzerprofil in einem eigenen, anonymen Unterverzeichnis. Der Name dieses Verzeichnisses wird aus einem Hash der Benutzergeheimnisse (`mnemonic`, `passphrase`, `prefix`) abgeleitet, um die Privatsphäre auf dem Speichermedium zu schützen.
 
-  - **Separated Account Identity (SAI) für strikte Kontotrennung:** Ein Benutzer besitzt eine einzige kryptographische Identität (Public Key), die aus dem Mnemonic abgeleitet wird. Durch die Verwendung von Präfixen (z.B. "pc", "mobil") werden separate Konten für verschiedene Kontexte definiert, wobei jedes Konto eine eindeutige User-ID hat (z.B. `pc:aB3@did:key:z...xyzA`, `mobil:C4d@did:key:z...xyzA`). Dies gewährleistet:
+  - **Separated Account Identity (SAI) für strikte Kontotrennung:** Ein Benutzer besitzt eine einzige kryptographische Identität (Public Key), die aus dem Mnemonic abgeleitet wird. Durch die Verwendung von Präfixen (z.B. "pc", "mobil") werden separate Konten für verschiedene Kontexte definiert. Hierbei kommt die **Context-Bound Key Derivation** via HKDF-SHA256 zum Einsatz: Der geheime Seed für jedes Konto wird kryptographisch sauber aus dem Hauptschlüssel und dem Präfix abgeleitet. Dies gewährleistet:
   - Einheitliche Identität für das Web of Trust: Alle Aktionen werden kryptographisch derselben Identität zugeordnet.
-  - Strikte Kontentrennung: Die Wallet-Logik verwendet die vollständige User-ID zur Validierung des Besitzes und lehnt Gutscheine ab, die an ein anderes Präfix als das eigene gerichtet sind, um Double Spending durch Zustands-Inkonsistenzen zu verhindern.
-  - Interne Transfers: Guthaben zwischen eigenen Geräten müssen durch explizite Transaktionen bewegt werden.
+  - Strikte Kontentrennung: Die Wallet-Logik verwendet die vollständige User-ID (z.B. `pc:aB3@did:key:z...`) zur Validierung des Besitzes. Guthaben bleibt im definierten ökonomischen Kontext.
+  - Schutz vor "Identity Hopping": Da die Schlüsselableitung an das Präfix gebunden ist, können Identitäten nicht einfach gewechselt werden, ohne die mathematische Falle (Identity Trap) auszulösen.
 
 - **Offline-Fähigkeit:** Transaktionen sollen auch offline durchgeführt werden können, indem die aktualisierte Gutschein-Datei direkt an den neuen Halter übergeben wird.
 
 - **Fokus auf Betrugserkennung, nicht -vermeidung:** Da es kein globales Ledger gibt, kann die Core-Bibliothek nicht verhindern, dass ein Nutzer widersprüchliche Transaktionshistorien (Double Spending) erzeugt. Das System stellt stattdessen sicher, dass jeder Betrugsversuch durch digitale Signaturen kryptographisch beweisbar ist, was eine Erkennung und soziale Sanktionen in einem übergeordneten System (Layer 2) ermöglicht.
 
-- **Peer-to-Peer Gossip-Protokoll:** Zur dezentralen und anonymisierten Erkennung von Double Spending tauschen Wallets bei jeder Transaktion "Fingerabdrücke" anderer Transaktionen aus. Eine Heuristik (`depth`, `known_by_peers`) sorgt für eine effiziente Verbreitung.
+- **Peer-to-Peer Gossip-Protokoll:** Zur dezentralen und anonymisierten Erkennung von Double Spending tauschen Wallets bei jeder Transaktion **Transaktions-Fingerprints** (`ds_tag`) anderer Transaktionen aus. Diese Fingerprints sind deterministisch aus dem Input abgeleitet (`hash(prev_hash + sender_ephemeral_pub)`), was eine O(1) Erkennung von Kollisionen ermöglicht. Eine Heuristik (`depth`, `known_by_peers`) sorgt für eine effiziente Verbreitung.
 
 - **Fokus auf Kernlogik:** Zunächst wird nur die grundlegende Funktionalität der Gutschein- und Transaktionsverwaltung implementiert. Die "Transaction Verification Layer" und "User Trust Verification Layer" (Layer 2 mit Servern) sollen *nicht* implementiert werden, aber die Struktur der Transaktionsketten sollte so optimiert werden, dass eine spätere Erweiterung um diese Layer möglich ist.
 
@@ -71,103 +71,81 @@ Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_
 
 - **`[validation]`**: Beinhaltet Regeln (z.B. `required_voucher_fields`, `guarantor_rules`), die zur Überprüfung eines Gutscheins verwendet werden.
 
-```
+```json
 {
   "voucher_standard": {
-    "name": "STRING", // Der Name des Standards, zu dem dieser Gutschein gehört (z.B. "Minuto-Gutschein", "Silber-Umlauf-Gutschein").
-    "uuid": "STRING"  // Die eindeutige Kennung (UUID) des Standards, zu dem dieser Gutschein gehört.
-    "standard_definition_hash": "STRING" // Der SHA3-256 Hash des kanonisierten Standard-TOML-Inhalts (ohne Signatur), um die Unveränderlichkeit zu gewährleisten.
-    "template": { // Die Template-Daten, die aus dem Standard-TOML kopiert wurden.
-      "description": "STRING", // Eine allgemeine, menschenlesbare Beschreibung des spezifischen Gutscheins.
-      "primary_redemption_type": "STRING", // Der primäre Einlösezweck, übernommen vom Standard (z.B. "goods_or_services").
-      "divisible": "BOOLEAN", // Gibt an, ob der Gutschein in kleinere Einheiten aufgeteilt werden kann (true/false).
-      "standard_minimum_issuance_validity": "STRING", // Die bei der Erstellung gültige Mindestgültigkeitsdauer aus dem Standard (ISO 8601 Duration).
-      "signature_requirements_description": "STRING", // Eine menschenlesbare Beschreibung der Signaturanforderungen (früher Bürgenanforderungen), übernommen vom Standard.
-      "footnote": "STRING" // Ein optionaler Fußnotentext, der vom Standard vorgegeben wird.
+    "name": "STRING", // Name des Standards (z.B. "Minuto-Gutschein")
+    "uuid": "STRING", // Eindeutige Kennung des Standards
+    "standard_definition_hash": "STRING", // Hash der TOML-Definition zur Versionsbindung
+    "template": { // Aus dem Standard kopierte Template-Daten
+      "description": "STRING", // Menschenlesbare Beschreibung der Gutschein-Art
+      "primary_redemption_type": "STRING", // Primärer Zweck (z.B. "goods_or_services")
+      "divisible": "BOOLEAN", // Erlaubt der Standard Teilungen?
+      "standard_minimum_issuance_validity": "STRING", // Standard-Gültigkeitsdauer (ISO 8601)
+      "signature_requirements_description": "STRING", // Beschreibung der Bürgschafts-Regeln
+      "footnote": "STRING" // Optionale Fußnote des Standards
     }
   },
-  "voucher_id": "STRING", // Die eindeutige ID dieses spezifischen Gutscheins.
-  "voucher_nonce": "STRING", // Ein zufälliges Nonce, um den ersten `prev_hash` unvorhersehbar zu machen.
-  "creation_date": "YYYY-MM-DDTHH:MM:SS.SSSSSSZ", // Das Erstellungsdatum des Gutscheins im ISO 8601-Format.
-  "valid_until": "YYYY-MM-DDTHH:MM:SS.SSSSSSZ",    // Das Gültigkeitsdatum des Gutscheins im ISO 8601-Format.
-  "non_redeemable_test_voucher": "BOOLEAN", // Eine Markierung, ob es sich um einen nicht einlösbaren Testgutschein handelt (true/false).
-  "nominal_value": { // Definiert den Wert, den der Gutschein repräsentiert.
-    "unit": "STRING",     // Die Einheit des Gutscheinwerts (z.B. "Minuten", "Unzen", "Euro").
-    "amount": "STRING",   // Die genaue Menge des Werts (z.B. "888", "1", "50"). Als String für Flexibilität bei Einheiten.
-    "abbreviation": "OPTIONAL STRING", // Eine optionale gängige Abkürzung der Einheit (z.B. "m", "oz", "€"). Wird bei Serialisierung weggelassen, wenn nicht gesetzt. Bei Gutscheinerstellung wird eine benutzerdefinierte Abkürzung bevorzugt; falls keine angegeben ist, wird die aus den Standard-Metadaten verwendet.
-    "description": "OPTIONAL STRING" // Eine optionale Beschreibung des Werts (z.B. "Objektive Zeit", "Physisches Silber", "Nationale Währung"). Wird bei Serialisierung weggelassen, wenn nicht gesetzt.
+  "voucher_id": "STRING", // Eindeutige ID dieses spezifischen Gutscheins
+  "voucher_nonce": "STRING", // Zufallswert für den unvorhersehbaren Kettenstart (Layer 2 Schutz)
+  "creation_date": "ISO-8601", // Erstellungszeitpunkt des Containers
+  "valid_until": "ISO-8601", // Endgültiges Ablaufdatum des Gutscheins
+  "non_redeemable_test_voucher": "BOOLEAN", // Kennzeichnung als Testobjekt
+  "nominal_value": { // Der aufgedruckte Wert
+    "unit": "STRING", // Währung/Einheit (z.B. "Minuten", "Euro")
+    "amount": "STRING", // Betrag als String (für hohe Präzision/Dezimalzahlen)
+    "abbreviation": "STRING, optional", // Kurzform (z.B. "min", "€")
+    "description": "STRING, optional" // Detaillierte Beschreibung des Werts
   },
-  "collateral": { // Informationen zur Besicherung des Gutscheins. Optional und wird bei Serialisierung weggelassen, wenn nicht gesetzt.
-    "unit": "STRING",         // Die Einheit der Besicherung (z.B. "Unzen", "Euro"). Teil von ValueDefinition, eingebettet via #[serde(flatten)].
-    "amount": "STRING",       // Die Menge der Besicherung (z.B. "entspricht dem Nennwert", "200"). Teil von ValueDefinition, eingebettet via #[serde(flatten)].
-    "abbreviation": "OPTIONAL STRING",// Eine optionale gängige Abkürzung für die Besicherung (z.B. "oz", "€"). Teil von ValueDefinition, eingebettet via #[serde(flatten)]. Wird bei Serialisierung weggelassen, wenn nicht gesetzt. Bei Gutscheinerstellung wird eine benutzerdefinierte Abkürzung bevorzugt; falls keine angegeben ist, wird die aus den Standard-Metadaten verwendet.
-    "description": "OPTIONAL STRING", // Eine optionale detailliertere Beschreibung der Besicherung (z.B. "Edelmetall Silber, treuhänderisch verwahrt"). Teil von ValueDefinition, eingebettet via #[serde(flatten)]. Wird bei Serialisierung weggelassen, wenn nicht gesetzt.
-    "type": "OPTIONAL STRING",         // Die optionale Art der Besicherung (z.B. "Physisches Edelmetall", "Community-Besicherung", "Fiat-Währung"). Wird bei Serialisierung weggelassen, wenn nicht gesetzt.
-    "redeem_condition": "OPTIONAL STRING" // **Extrem wichtig:** Optionale Bedingungen unter denen die Besicherung eingelöst/ausgezahlt werden kann (z.B. Notfallklausel). Wird bei Serialisierung weggelassen, wenn nicht gesetzt.
+  "collateral": { // Optionale Hinterlegung/Besicherung
+    "unit": "STRING", // Einheit der Besicherung
+    "amount": "STRING", // Menge der Besicherung
+    "abbreviation": "STRING, optional",
+    "description": "STRING, optional",
+    "type": "STRING, optional", // Art der Sicherheit (z.B. "Gold", "Community")
+    "redeem_condition": "STRING, optional" // Bedingungen für die Einlösung der Sicherheit
   },
-  "creator_profile": { // Detaillierte Informationen zum Ersteller des Gutscheins, als PublicProfile.
-    "id": "STRING, optional",             // Die User-ID (did:key) des Profilinhabers.
-    "first_name": "STRING, optional",     // Vorname des Erstellers.
-    "last_name": "STRING, optional",      // Nachname des Erstellers.
-    "address": {                // Detaillierte Adressinformationen des Erstellers.
-      "street": "STRING, optional",       // Straße.
-      "house_number": "STRING, optional", // Hausnummer.
-      "zip_code": "STRING, optional",     // Postleitzahl.
-      "city": "STRING, optional",         // Stadt.
-      "country": "STRING, optional",      // Land.
-      "full_address": "STRING, optional"  // Vollständige, formatierte Adresse.
-    },
-    "organization": "STRING, optional",   // Die Organisation des Erstellers.
-    "community": "STRING, optional",      // Beschreibung der Gemeinschaft, zu der der Ersteller gehört.
-    "phone": "STRING, optional",          // Telefonnummer des Erstellers.
-    "email": "STRING, optional",          // E-Mail-Adresse des Erstellers.
-    "url": "STRING, optional",            // URL des Erstellers oder dessen Webseite.
-    "gender": "STRING, optional",         // Geschlecht des Erstellers ISO 5218 (1 = male", 2 = female", 0 = not known, 9 = Not applicable).
-    "coordinates": "STRING, optional"     // Geografische Koordinaten des Erstellers (z.B. "Breitengrad, Längengrad").
+  "creator": { // Öffentliches Profil des Ausstellers
+    "id": "STRING", // did:key Identität
+    "first_name": "STRING, optional",
+    "last_name": "STRING, optional",
+    "organization": "STRING, optional",
+    "..." : "..." // Weitere Felder gemäß PublicProfile
   },
-    "service_offer": "STRING, optional", // Neu: Angebotene Dienstleistungen/Waren.
-    "needs": "STRING, optional"          // Neu: Gesuchte Dienstleistungen/Waren.
-  },  "signatures": [ // Ein Array für alle Signaturen (inkl. Bürgen).
-    { // Jede Signatur ist ein in sich geschlossenes, überprüfbares Objekt.
-      "voucher_id": "STRING",         // Die ID des Gutscheins, zu dem diese Signatur gehört.
-      "signature_id": "STRING",       // Die eindeutige ID dieser Signatur.
-      // Die Metadaten (alles außer signature_id und signature) werden kanonisiert und gehasht, um die signature_id zu erzeugen.
-      "signer_id": "STRING",          // Eindeutige ID des Unterzeichners (aus Public Key).
-
-      // --- Optionale Metadaten ---
-      "details": { // Verschachtelte Details unter Verwendung des PublicProfile-Structs
-        "id": "STRING, optional", // Die User-ID (did:key) des Profilinhabers.
-        "first_name": "STRING, optional",
-        "last_name": "STRING, optional",
-        "organization": "STRING, optional",
-        "community": "STRING, optional",
-        "address": { // Vollständiges Adressobjekt, optional.
-        },
-        "gender": "STRING, optional", // ISO 5218
-        "email": "STRING, optional",
-        "phone": "STRING, optional",
-        "coordinates": "STRING, optional",
-        "url": "STRING, optional",
-        "service_offer": "STRING, optional", // Neu: Angebotene Dienstleistungen/Waren.
-        "needs": "STRING, optional"          // Neu: Gesuchte Dienstleistungen/Waren.
-      },
-
-      "signature": "STRING",            // Die digitale Signatur, die die `signature_id` dieses Objekts unterzeichnet.
-      "signature_time": "YYYY-MM-DDTHH:MM:SS.SSSSSSZ", // Zeitpunkt der Signatur.
-      "role": "STRING"                  // Definiert die Rolle oder den Zweck dieser Signatur (z.B. "creator", "guarantor", "notary").
+  "signatures": [ // Alle statischen Signaturen (Ersteller, Bürgen, Notare)
+    {
+      "voucher_id": "STRING", // Verweis auf diesen Gutschein
+      "signature_id": "STRING", // Eindeutige ID dieser Signatur (Hash über Metadaten)
+      "signer_id": "STRING", // ID des Unterzeichners
+      "signature": "STRING", // Die kryptographische Signatur (Ed25519)
+      "signature_time": "ISO-8601", // Zeitpunkt der Unterzeichnung
+      "role": "STRING", // Rolle (z.B. "creator", "guarantor", "notary")
+      "details": { "..." : "..." } // Profil-Details zum Zeitpunkt der Signatur
     }
   ],
-  "transactions": [ // Eine chronologische Liste aller Transaktionen dieses Gutscheins.
-    { // Jede Transaktion ist ein in sich geschlossenes, signiertes Objekt.
-      "t_id": "STRING",                 // Eindeutige ID der Transaktion, erzeugt durch Hashing der Transaktionsdaten (ohne t_id und Signatur).
-      "prev_hash": "STRING",            // Der Hash der vorherigen Transaktion (oder der voucher_id bei der "init"-Transaktion), der die Kette kryptographisch sichert.
-      "t_type": "STRING, optional",     // Art der Transaktion: "init" für Initialisierung, "split" für Teilung, "transfer" für einen vollen Transfer. Kann bei vollem Transfer leer sein.
-      "t_time": "YYYY-MM-DDTHH:MM:SS.SSSSSSZ", // Zeitpunkt der Transaktion.
-      "sender_id": "STRING",            // ID des Senders der Transaktion.
-      "recipient_id": "STRING",         // ID des Empfängers der Transaktion.
-      "amount": "STRING",               // Der Betrag, der bei dieser Transaktion bewegt wurde.
-      "sender_remaining_amount": "STRING",// Der Restbetrag beim Sender. Dieses Feld existiert nur bei "split"-Transaktionen.
-      "sender_signature": "STRING"      // Digitale Signatur des Senders. Signiert ein Objekt, das aus prev_hash + sender_id + t_id besteht.
+  "transactions": [ // Die dynamische Transaktionskette (Mini-Blockchain)
+    {
+      "t_id": "STRING", // Hash über Transaktionsdaten (Integritätsanker)
+      "t_type": "STRING", // "init", "split" (Teilung), "" (Transfer)
+      "t_time": "ISO-8601", // Zeitpunkt der Transaktion
+      "prev_hash": "STRING", // Kryptographischer Link zur vorherigen Transaktion
+      "receiver_ephemeral_pub_hash": "STRING", // Anker (Schloss) für den Empfänger (Hash des Stealth-Keys)
+      "sender_proof_signature": "STRING", // Beweis des technischen Besitzes (Layer 2 Signatur)
+      "sender_id": "STRING, optional", // Identität des Senders (Layer 1 - Public Mode)
+      "sender_identity_signature": "STRING, optional", // Soziale Signatur (Layer 1 - Public Mode)
+      "recipient_id": "STRING", // Empfänger-ID (did:key oder "Anonym")
+      "amount": "STRING", // Übertragener Teilbetrag
+      "sender_remaining_amount": "STRING, optional", // Restguthaben beim Sender (nur bei Teilung)
+      "sender_ephemeral_pub": "STRING, optional", // Reveal des Stealth-Keys (Preimage für prev_hash Check)
+      "sender_change_anchor_hash": "STRING, optional", // Neuer Anker für das Wechselgeld des Senders
+      "privacy_guard": "STRING, optional", // Verschlüsselter RecipientPayload (nur für Empfänger lesbar)
+      "trap_data": { // Mathematische Falle bei Double-Spending (Identity Trap)
+        "ds_tag": "STRING", // Deterministsicher Fingerprint des Inputs
+        "u": "STRING", // Challenge-Scalar für den ZKP
+        "blinded_id": "STRING", // Identitäts-Punkt V = m*U + ID
+        "proof": "STRING" // Schnorr-Beweis über Wissen von m
+      },
+      "layer2_signature": "STRING, optional" // Optionale Bestätigung durch einen Layer 2 Validator
     }
   ]
 }
@@ -183,35 +161,33 @@ Diese Struktur bündelt alle notwendigen Daten zur Erstellung eines neuen Gutsch
 - `collateral` (Option<Collateral>): Optionale Informationen zur Besicherung des Gutscheins. Wird nur erstellt, wenn sowohl der Standard dies erlaubt als auch der Benutzer Angaben macht. Kann None sein, wenn keine Besicherung notwendig ist oder keine Angaben gemacht wurden.
 - `creator_profile` (PublicProfile): Enthält detaillierte Informationen zum Ersteller des Gutscheins, wie Name, Adresse usw.
 
-### Transaktionskette
+- **`voucher_id` & `voucher_nonce`**: Die `voucher_id` ist der globale Anker. Die `voucher_nonce` sorgt dafür, dass selbst zwei identisch erstellte Gutscheine unterschiedliche Start-Hashes haben, was die Anonymität auf Layer 2 erhöht.
+- **`nominal_value` vs. `collateral`**: Der `nominal_value` repräsentiert den Wert *im System* (z.B. Zeit). Die `collateral` beschreibt die *Absicherung* außerhalb des Systems (z.B. Gold).
+- **`creator` (PublicProfile)**: Detaillierte Identitätsinformationen des Ausstellers. Enthält Adressdaten, Kontaktdaten und optionale Koordinaten.
 
-Die Transaktionen im `transactions`-Array bilden eine kryptographisch verkettete Liste, ähnlich einer Blockchain.
+### Transaktionskette & P2PKH (Layer 2)
 
-- **Verkettung:** Jede Transaktion enthält ein `prev_hash`-Feld.
+Die Transaktionskette folgt einem **Commitment-Reveal-Schema (Hybrid P2PKH)**, das Quantensicherheit und Privatsphäre vereint.
 
-  - Die erste Transaktion (`t_type: "init"`) hat einen `prev_hash`, der der Hash der Konkatenation von `voucher_id` und `voucher_nonce` ist. Dies verhindert, dass der `prev_hash` erraten werden kann, was die Anonymität des Erstellers auf Layer 2 schützt.
+#### Felder im Detail:
+- **`receiver_ephemeral_pub_hash` (Der Anker / Commitment)**: Dies ist der Hash eines einmaligen Stealth-Keys des Empfängers. Er dient als "Verschluss" der aktuellen Transaktion. Niemand außer dem Empfänger kann diesen Hash einem Nutzer zuordnen.
+- **`sender_ephemeral_pub` (Das Reveal)**: In der *nächsten* Transaktion enthüllt der Sender den Public Key, dessen Hash im `receiver_ephemeral_pub_hash` der vorherigen Transaktion stand. Dies beweist das Recht zum Ausgeben.
+- **`sender_proof_signature` (Technischer Besitz)**: Eine Ed25519-Signatur über die `t_id`, ausgeführt mit dem nun enthüllten Stealth-Key. Sie beweist, dass der Sender den Schlüssel zum "Schloss" besitzt.
+- **`sender_identity_signature` (Sozialer Besitz)**: Eine optionale Signatur mit dem permanenten Identity-Key. Sie ist im "Stealth" Mode verboten und im "Public" Mode Pflicht.
+- **`privacy_guard` (Verschlüsselter Kanal)**: Ein verschlüsselter Container (RecipientPayload), der via X25519 nur für den Empfänger lesbar ist. Er enthält den `next_key_seed`, damit der Empfänger weiß, welchen Schlüssel er generieren muss, um das Guthaben später weiterzugeben (**Forward Secrecy**).
+- **`sender_change_anchor_hash`**: Bei Teilzahlungen (`split`) wird das Restgeld an einen neuen, vom Sender selbst kontrollierten Anker gesendet.
 
-  - Jede nachfolgende Transaktion hat einen `prev_hash`, der der Hash der vollständigen, kanonisierten vorherigen Transaktion ist.
+#### Sicherheit durch BLAKE3:
+Da ruhende Guthaben nur als BLAKE3-Hashes (`receiver_ephemeral_pub_hash`) vorliegen, bieten sie Schutz vor zukünftigen Preimage-Angriffen durch Quantencomputer. Die Identität bleibt verborgen, bis das Guthaben ausgegeben wird.
 
-- **Integrität:** Jede Transaktion hat eine `t_id`, die aus dem Hash ihrer eigenen Daten (ohne `t_id` und `sender_signature`) erzeugt wird. Das stellt sicher, dass die Transaktionsdetails nicht nachträglich geändert werden können, ohne die `t_id` ungültig zu machen.
+### Double-Spending-Erkennung (Die Falle)
 
-- **Authentizität:** Die `sender_signature` signiert ein separates, minimales Objekt, das nur die Kern-Metadaten der Transaktion (`prev_hash`, `sender_id`, `t_id`) enthält. Dies beweist, dass der Sender die Transaktion autorisiert hat. Der Zeitstempel (`t_time`) muss nicht explizit signiert werden, da er bereits Teil der Daten ist, die zur Erzeugung der `t_id` gehasht werden und somit implizit durch die Signatur der `t_id` geschützt ist.
+Ein Betrugsversuch wird durch eine mathematische Falle (**Identity Trap**) basierend auf Schnorr Non-Interactive Zero-Knowledge Proofs (NIZK) erkannt.
 
-### Double-Spending-Erkennung
-
-Ein **Double Spend** liegt vor, wenn ein Nutzer von einem bestimmten Zustand des Gutscheins (repräsentiert durch den `prev_hash` der letzten gültigen Transaktion) zwei oder mehr unterschiedliche neue Transaktionen erstellt und diese an verschiedene Personen verteilt.
-
-#### Anonymisierte Erkennung auf Layer 2 mit verschlüsseltem Zeitstempel
-
-Die Transaktionsstruktur ist für eine **anonymisierte Betrugserkennung** durch ein übergeordnetes System (Layer 2) optimiert:
-
-- **Anonymer Fingerabdruck:** Anstatt `prev_hash` und `sender_id` direkt preiszugeben, erzeugt ein Client einen anonymen "Fingerabdruck": `prvhash_senderid_hash = hash(prev_hash + sender_id)`.
-
-- **Server-Upload:** Der Client lädt ein `TransactionFingerprint`-Objekt hoch. Es enthält den `prvhash_senderid_hash`, die `t_id`, die `sender_signature` und einen **verschlüsselten Zeitstempel**.
-
-- **Verschlüsselter Zeitstempel:** Um eine zeitliche Einordnung im Konfliktfall zu ermöglichen, ohne das Datum an den Server preiszugeben, wird der Zeitstempel (in Nanosekunden) via XOR mit einem deterministischen Schlüssel verschlüsselt: `encrypted_nanos = original_nanos ^ hash(prev_hash + t_id)`. Der Server kann diesen Wert nicht entschlüsseln, da er `prev_hash` und `t_id` nicht kennt.
-
-- **Aufdeckung & Beweis:** Ein Double Spend wird erkannt, wenn der Server für einen bekannten `prvhash_senderid_hash` einen neuen Eintrag mit einer anderen `t_id` erhält. Der Server kann dem zweiten Einreicher die Daten des ersten Eintrags als Beweis zurücksenden. Ein Client, der beide widersprüchlichen Transaktionen besitzt, hat damit den Beweis für den Betrug. Er kann beide Signaturen verifizieren und **beide Zeitstempel entschlüsseln**, um festzustellen, welche Transaktion die frühere war.
+- **Double-Spend Tag (`ds_tag`):** Ein deterministischer Identifier des Inputs: `ds_tag = hash(prev_hash + sender_ephemeral_pub)`. Kollidiert dieser Tag bei unterschiedlichen `t_id`s, liegt ein Double-Spend vor.
+- **The Trap:** Innerhalb der `trap_data` wird eine Relation $V = m \cdot U + ID$ genutzt. Wer denselben Input zweimal ausgibt, muss aufgrund der deterministischen Ableitung von $m$ (via HKDF) zwangsläufig seine Identität ($ID$) offenbaren.
+- **Anonymisierte Analyse:** Auf Layer 2 werden nur Fingerprints ausgetauscht. Ein Server sieht keine Klartext-IDs oder Beträge, sondern nur den `ds_tag` und verschlüsselte Zeitstempel.
+- **Beweis:** Ein Double-Spend-Beweis (`ProofOfDoubleSpend`) kombiniert die kollidierenden Transaktionen und ermöglicht die mathematische Extraktion der Täter-ID.
 
 #### Erkennung ohne Layer-2-Server (durch Pfad-Vereinigung)
 
@@ -237,21 +213,25 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
 
 - **Layer-2-Urteil:** Ein von einem Server signiertes Urteil (`Layer2Verdict`) hat immer Vorrang vor der lokalen Heuristik. In diesem Fall bestimmt der Server, welcher Zweig gültig ist.
 
-### Weitere relevante Konzepte (für zukünftige Erweiterungen optimieren)
+### Privacy Modes
 
-- **Teilzahlungen:** Ein Gutschein kann in kleinere Beträge aufgeteilt werden. Der Restbetrag verbleibt beim Sender, der daraus weitere Transaktionen erstellen kann.
+In der `standard.toml` wird der Transparenzgrad gesteuert:
 
-- **Multi-Quellen-Transfers:** Guthaben kann aus mehreren Gutscheinen in einer einzigen Transaktion an einen Empfänger gebündelt werden. Dies wird durch die `MultiTransferRequest`-Struktur und die `execute_multi_transfer_and_bundle`-Methode ermöglicht.
+| Modus | Wert | Identität (sender_id) | Empfänger-ID |
+| :--- | :--- | :--- | :--- |
+| Öffentlich | `"public"` | **PFLICHT** (`did:key`) | **PFLICHT** (`did:key`) |
+| Diskret | `"stealth"` | **VERBOTEN** | **HASH/ANONYM** |
+| Flexibel | `"flexible"` | **OPTIONAL** | **FREIE WAHL** |
 
-- **Zusätzliche Signaturen:** Möglichkeit, weitere Signaturen (z.B. von Bürgen/Garanten) in die Gutschein-Datei zu integrieren. Alle Signaturen verwenden nun eine einheitliche Struktur mit verschachtelten `details`-Feldern gemäß dem `PublicProfile`-Struct und einer `role`-Angabe (z.B. "creator", "guarantor", "notary"). Die `creator`-Signatur ist nun eine Standard-`VoucherSignature` mit der Rolle "creator".
-  
-- **PublicProfile-Struktur:** Ein standardisiertes öffentliches Profil, das in Signaturen und im `creator_profile`-Feld wiederverwendet werden kann. Diese Struktur konsolidiert optionale öffentliche Details wie Name, Geschlecht, Organisation usw. unter einem verschachtelten `details`-Feld, was die Schema-Härtung und API-Vereinfachung ermöglicht.
+Der technische Layer 2 Schutz durch ephemere Schlüssel ist in **allen** Modi aktiv.
 
-- **Verschlüsselung:** Die Übertragung von Daten (z.B. Transaktionsbündel) wird durch einen generischen, **anonymisierten** `SecureContainer` geschützt. Dieser implementiert **Forward Secrecy durch ephemere X25519-Schlüssel**. Ein "Double Key Wrapping"-Mechanismus stellt sicher, dass sowohl die Empfänger als auch der Sender selbst den Container entschlüsseln können. Alle binären Daten werden als Base64-Strings kodiert.
+### Verschlüsselung & SecureContainer
 
-- **Begrenzte Gültigkeitsdauer:** Gutscheine sollen nach einer bestimmten Zeit ihre Gültigkeit verlieren.
-
-- **Keine Layer 2 Implementierung:** Die Logik für die "Transaction Verification Layer" (Server-basiertes Double-Spending-Matching) und die "User Trust Verification Layer" (Reputationsmanagement) wird in dieser Core-Bibliothek *nicht* implementiert. Die Datenstrukturen für Transaktionsketten sollen jedoch eine spätere Anbindung an solche Systeme ermöglichen.
+Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer`.
+- **Anonymität:** Keine Klartext-IDs im Header.
+- **Sicherheit:** Forward Secrecy durch ephemere X25519-Schlüssel.
+- **Double Key Wrapping:** Sowohl Absender als auch Empfänger können den Inhalt entschlüsseln.
+- **Payload:** Beinhaltet einen `RecipientPayload` mit dem Seed für den nächsten ephemeren Schlüssel.
 
 ## 6\. Aktueller Projektstrukturbaum
 
@@ -261,13 +241,17 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
 ├── docs
 │   └── de
 │       ├── konliktmanagement.md
+│       ├── spec
+│       │   └── Spezifikation - Hybride Privatsphäre und Offline-Sicherheit für digitale Gutscheine.md
 │       ├── standard-konzepte.md
 │       └── zustands-management.md
 ├── examples
 │   ├── playground_crypto_utils.rs
+│   ├── playground_double_spend_analysis.rs
 │   ├── playground_utils.rs
 │   ├── playground_voucher_lifecycle.rs
 │   └── playground_wallet.rs
+├── LICENSE
 ├── README.md
 ├── sign_standards.sh
 ├── sign_test_standards.sh
@@ -307,6 +291,7 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
 │   │   ├── secure_container_manager.rs
 │   │   ├── signature_manager.rs
 │   │   ├── standard_manager.rs
+│   │   ├── trap_manager.rs
 │   │   ├── utils.rs
 │   │   ├── voucher_manager.rs
 │   │   └── voucher_validation.rs
@@ -335,7 +320,9 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
 │   │   ├── lifecycle.rs
 │   │   ├── math.rs
 │   │   ├── mod.rs
+│   │   ├── privacy_modes.rs
 │   │   └── security
+│   │       ├── double_spend_identification.rs
 │   │       ├── double_spend.rs
 │   │       ├── mod.rs
 │   │       ├── standard_validation.rs
@@ -372,11 +359,13 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
 │   │   └── unit_service.rs
 │   ├── validation_tests.rs
 │   ├── wallet_api
-│   │   ├── general_workflows.rs
+│   │  ├── general_workflows.rs
 │   │   ├── hostile_bundles.rs
 │   │   ├── hostile_standards.rs
 │   │   ├── lifecycle_and_data.rs
+│   │   ├── mixed_mode_vulnerability.rs
 │   │   ├── mod.rs
+│   │   ├── multi_identity_vulnerability.rs
 │   │   ├── signature_workflows.rs
 │   │   ├── state_management.rs
 │   │   └── transactionality.rs
@@ -391,7 +380,7 @@ Die Reaktion des Wallets auf einen nachgewiesenen Double Spend wurde verbessert,
     │   └── standard.toml
     └── standard_template.toml
 
-24 directories, 110 files
+28 directories, 119 files
 ```
 
 ## 7\. Implementierte Kernfunktionen
@@ -490,18 +479,17 @@ Das `wallet`-Modul wurde umfassend refaktorisiert, um die Komplexität zu reduzi
   - `pub fn new_from_mnemonic(...)`: Erstellt ein brandneues Wallet.
   - `pub fn load(...)`: Lädt ein existierendes Wallet aus dem Storage.
   - `pub fn save(...)`: Speichert den aktuellen Zustand des Wallets.
-  - `pub fn reset_password(...)`: Setzt das Passwort für ein Wallet zurück.
   - `pub fn create_new_voucher(...)`: Erstellt einen brandneuen Gutschein und fügt ihn direkt zum Wallet hinzu.
 
 - **Transaktionsverarbeitung** (`transaction_handler.rs`)
   - `pub fn create_and_encrypt_transaction_bundle(...)`: Erstellt ein `TransactionBundle`, verpackt es und aktualisiert den Wallet-Zustand.
   - `pub fn process_encrypted_transaction_bundle(...)`: Verarbeitet eingehende Gutscheine oder Signaturen, inkl. der Verarbeitung von empfangenen Fingerprints. Implementiert umfassenden Schutz gegen Replay-Angriffe durch zwei Schichten (Bundle-ID-Prüfung und Fingerprint-Prüfung) und weist eingehende Bundles zurück, die nicht explizit für den Wallet-Besitzer bestimmt sind.
   - `pub fn execute_multi_transfer_and_bundle(...)`: Führt einen Transfer durch, der Guthaben aus mehreren Quell-Gutscheinen kombinieren kann. Ersetzt die alte `create_transfer`-Methode. Akzeptiert eine `MultiTransferRequest`-Struktur mit einer Liste von Quellen und führt alle Transaktionen in einem einzigen Bundle durch. Managt den internen Zustand (Archivierung, Restbetrag) und wählt Fingerprints für das Gossip-Protokoll.
+  - `pub fn rederive_secret_seed(...)`: **Stateless Seed Recovery.** Leitet ephemere Schlüssel on-demand aus der Identität und dem Gutschein ab, anstatt sie zu speichern.
   - `fn _execute_single_transfer(...)`: Führt die Zustandsveränderung für EINEN Gutschein im Wallet durch. (Private Hilfsmethode)
 
 - **Wartung & Speicher-Management** (`maintenance.rs`)
   - `pub fn run_storage_cleanup(...)`: Führt eine mehrstufige Bereinigung der Fingerprint-Stores durch (abgelaufen, dann nach `depth`).
-  - `pub fn cleanup_storage(...)`: Führt Wartungsarbeiten am Wallet-Speicher durch, um veraltete Daten zu entfernen.
   - `pub fn rebuild_derived_stores(...)`: Rekonstruiert alle abgeleiteten Stores (Fingerprints, Metadaten) aus dem `VoucherStore`.
   - `pub fn add_voucher_instance(...)`: Fügt eine Gutscheininstanz zum Wallet hinzu.
   - `pub fn get_voucher_instance(...)`: Ruft eine Gutscheininstanz ab.
@@ -619,6 +607,15 @@ Dieses Modul kapselt die gesamte Geschäftslogik zur Erkennung, Verifizierung un
 - `pub fn encrypt_transaction_timestamp(transaction: &Transaction) -> Result<u128, VoucherCoreError>`: Verschlüsselt einen Transaktionszeitstempel via XOR für die anonymisierte Analyse auf Layer 2.
 - `pub fn decrypt_transaction_timestamp(transaction: &Transaction, encrypted_nanos: u128) -> Result<u128, VoucherCoreError>`: Entschlüsselt den Zeitstempel einer Transaktion.
 
+### `src/services/trap_manager` Modul
+
+Implementiert die "Mathematische Falle" (Identity Trap) gemäß Spezifikation.
+
+- `pub fn derive_m(...)`: Leitet den geheimen Slope $m$ via HKDF ab (gebunden an `prev_hash` und `prefix`).
+- `pub fn generate_trap(...)`: Erzeugt `TrapData` (Blinded ID, ZKP) für eine Transaktion.
+- `pub fn verify_trap(...)`: Verifiziert die mathematische Korrektest von Trap-Daten und ZKP.
+- `pub fn hash_to_scalar(...)`: Deterministische Abbildung von Daten auf einen Skalar (SHA-512).
+
 ### `services::crypto_utils` Modul
 
 Enthält kryptographische Hilfsfunktionen für Schlüsselgenerierung, Hashing, Signaturen und User-ID-Verwaltung.
@@ -627,19 +624,16 @@ Enthält kryptographische Hilfsfunktionen für Schlüsselgenerierung, Hashing, S
 - `pub fn validate_mnemonic_phrase(phrase: &str) -> Result<(), String>`: Validiert eine BIP-39 mnemonic phrase.
 - `pub fn get_hash(input: impl AsRef<[u8]>) -> String`: Berechnet einen SHA3-256 Hash und gibt ihn als base58-kodierten String zurück.
 - `pub fn get_short_hash_from_user_id(user_id: &str) -> [u8; 4]`: Erzeugt einen 4-Byte-Kurz-Hash aus der User-ID für speichereffizientes Tracking.
-- `pub fn derive_ed25519_keypair(mnemonic_phrase: &str, passphrase: Option<&str>) -> Result<(EdPublicKey, SigningKey), VoucherCoreError>`: Leitet ein Ed25519-Schlüsselpaar aus einer mnemonic phrase ab.
-- `pub fn generate_ed25519_keypair_for_tests(seed: Option<&str>) -> (EdPublicKey, SigningKey)`: Erzeugt ein zufälliges oder deterministisches Ed25519-Schlüsselpaar für Tests.
-- `pub fn ed25519_pub_to_x25519(ed_pub: &EdPublicKey) -> X25519PublicKey`: Konvertiert einen Ed25519 Public Key zu X25519 für Diffie-Hellman.
-- `pub fn ed25519_sk_to_x25519_sk(ed_sk: &SigningKey) -> StaticSecret`: Konvertiert einen Ed25519 Signing Key zu X25519 StaticSecret.
-- `pub fn generate_ephemeral_x25519_keypair() -> (X25519PublicKey, EphemeralSecret)`: Generiert ein temporäres X25519-Schlüsselpaar für Forward Secrecy.
-- `pub fn perform_diffie_hellman(our_secret: EphemeralSecret, their_public: &X25519PublicKey) -> [u8; 32]`: Führt Diffie-Hellman-Schlüsselaustausch durch.
-- `pub fn create_user_id(public_key: &EdPublicKey, user_prefix: Option<&str>) -> Result<String, UserIdError>`: Generiert eine User-ID mit optionalem Präfix und Prüfsumme.
+- `pub fn derive_ephemeral_key_pair(...) -> Result<(SigningKey, EdPublicKey), VoucherCoreError>`: **Context-Bound Key Derivation.** Leitet ephemere Schlüssel deterministisch ab und bindet sie mathematisch an ein `context_prefix`, um Identity-Hopping zu verhindern.
+- `pub fn perform_diffie_hellman(...) -> Result<[u8; 32], VoucherCoreError>`: Führt X25519 DH-Austausch mit HKDF-Expansion und Kanonisierung der Public Keys durch.
+- `pub fn encrypt_data(...)` / `pub fn decrypt_data(...)`: Authentifizierte Verschlüsselung via ChaCha20Poly1305.
+- `pub fn create_user_id(...)`: Erzeugt DID-kompatible User-IDs mit obligatorischem Präfix und Prüfsumme.
+- `pub fn get_hash(...)`: Standard-Hashfunktion (SHA3-256) mit Base58-Kodierung.
 - `pub fn get_pubkey_from_user_id(user_id: &str) -> Result<EdPublicKey, VoucherCoreError>`: Extrahiert den Ed25519 Public Key aus einer User-ID.
 - `pub fn sign_ed25519(signing_key: &SigningKey, message: &[u8]) -> Signature`: Signiert eine Nachricht mit Ed25519.
 - `pub fn verify_ed25519(public_key: &EdPublicKey, message: &[u8], signature: &Signature) -> bool`: Verifiziert eine Ed25519-Signatur.
 - `pub fn encode_base64(data: &[u8]) -> String`: Kodiert Daten in URL-safe Base64.
 - `pub fn decode_base64(encoded_data: &str) -> Result<Vec<u8>, VoucherCoreError>`: Dekodiert URL-safe Base64.
-- `pub fn encrypt_data(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, SymmetricEncryptionError>`: Symmetrisch verschlüsselt Daten mit ChaCha20-Poly1305.
 - `pub fn decrypt_data(key: &[u8; 32], encrypted_data_with_nonce: &[u8]) -> Result<Vec<u8>, SymmetricEncryptionError>`: Symmetrisch entschlüsselt Daten.
 
 ### `services::decimal_utils` Modul
@@ -776,3 +770,19 @@ Das Wallet-Modul und die AppService-Schnittstelle wurden um neue Informationsstr
   - `ContentRules`, `BehaviorRules`: Inhalts- und Verhaltensregeln.
   - `ValueCountRule`, `FieldGroupRule`: Gruppenprüfungen.
   - `Validation`: Hauptstruktur für Validierungsregeln.
+
+### `tests/` Verzeichnis - Wichtige Sicherheits- & Architekturtests
+
+Um die Robustheit des Systems zu gewährleisten, wurden spezialisierte Tests implementiert:
+
+- **Architektur-Hardening (`tests/architecture/hardening.rs`)**: Verifiziert die Integrität der Key-Derivation und den Schutz gegen Identity-Hopping auf Systemebene.
+- **Resilience & Gossip (`tests/architecture/resilience_and_gossip.rs`)**: Testet die Stabilität des Fingerprint-Austauschs und die dezentrale Double-Spend Erkennung.
+- **Double-Spend Identifikation (`tests/core_logic/security/double_spend_identification.rs`)**: Fokusiert auf die mathematische Extraktion der Täter-ID aus kollidierenden Transaktionen.
+- **Mixed Mode Vulnerability (`tests/wallet_api/mixed_mode_vulnerability.rs`)**: Stellt sicher, dass der Wechsel zwischen Public- und Stealth-Modus keine Sicherheitslücken (z.B. durch unterschiedliche Fingerprints) aufreißt.
+- **Multi-Identity Vulnerability (`tests/wallet_api/multi_identity_vulnerability.rs`)**: Verifiziert, dass ein Nutzer nicht mehrere Identitäten innerhalb desselben ökonomischen Kontextes missbräuchlich verwenden kann.
+
+## 8. Dokumentation
+
+- **Haupt-Spezifikation**: `docs/de/spec/Spezifikation - Hybride Privatsphäre und Offline-Sicherheit für digitale Gutscheine.md` - Das maßgebliche Dokument für das gesamte Protokolldesign.
+- **Zustands-Management**: `docs/de/zustands-management.md` - Details zur Persistenz und Wallet-Zustandsübergängen.
+- **Konfliktmanagement**: `docs/de/konliktmanagement.md` - Vertiefende Informationen zur Double-Spend Erkennung und Beilegung.

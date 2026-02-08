@@ -378,10 +378,10 @@ impl Wallet {
         let ephem_pub_str = bs58::encode(sender_ephemeral_key.verifying_key().to_bytes()).into_string();
 
         // PRÜFUNG GEGEN ALLE BEKANNTEN FINGERPRINTS:
-        // Wir verwenden das 'ds_tag', das exakt so auch in voucher_manager berechnet wird.
+        // Wir verwenden das 'ds_tag', das exakt so auch in voucher_manager berechnet wird
+        // (jetzt unabhängig vom Prefix).
         // Dies macht die proaktive Prüfung 100% konsistent mit der mathematischen Falle.
-        let sender_id_prefix = identity.user_id.split('@').next().unwrap_or(&identity.user_id).to_string();
-        let ds_tag_input = format!("{}{}{}", prev_hash, ephem_pub_str, sender_id_prefix);
+        let ds_tag_input = format!("{}{}", prev_hash, ephem_pub_str);
         let ds_tag = get_hash(ds_tag_input.as_bytes());
 
         if self
@@ -623,10 +623,13 @@ impl Wallet {
              let nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec()
                 .map_err(|_| VoucherCoreError::Generic("Invalid nonce".to_string()))?;
              
+             let sender_id_prefix = identity.user_id.split(':').next().unwrap_or("unknown");
+             
              let (holder_secret, _) = crate::services::crypto_utils::derive_ephemeral_key_pair(
                 &identity.signing_key, 
                 &nonce_bytes, 
-                "holder"
+                "holder",
+                Some(sender_id_prefix)
             )?;
             return Ok(holder_secret);
         }

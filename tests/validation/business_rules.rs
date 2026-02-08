@@ -1126,10 +1126,12 @@ mod behavioral_rules {
 
             // Ephemeren Genesis-Schlüssel für L2 ableiten
             let nonce_bytes = bs58::decode(&voucher_nonce).into_vec().unwrap();
+            let prefix = voucher.creator_profile.id.as_ref().map(|id| id.split(':').next().unwrap_or(id)).unwrap_or("").to_string();
             let (genesis_secret, _) = crypto_utils::derive_ephemeral_key_pair(
                 signer_key,
                 &nonce_bytes,
                 "genesis",
+                Some(&prefix),
             ).unwrap();
 
             // L2 Signatur via resign_transaction_ext sicherstellen
@@ -1144,7 +1146,7 @@ mod behavioral_rules {
                 tx_to_resign.prev_hash = last_tx_hash;
                 
                 // Für Test-Hops vom Creator leiten wir den Holder-Key ab
-                let (holder_secret, _) = crypto_utils::derive_ephemeral_key_pair(signer_key, &nonce_bytes, "holder").unwrap();
+                let (holder_secret, _) = crypto_utils::derive_ephemeral_key_pair(signer_key, &nonce_bytes, "holder", Some(&prefix)).unwrap();
                 
                 last_resigned_tx = test_utils::resign_transaction_ext(tx_to_resign, signer_key, Some(&holder_secret));
                 last_tx_hash =
@@ -1420,10 +1422,12 @@ mod behavioral_rules {
             
             // Derive Genesis Key to simulate valid Proof Signature update (bypassing Proof check)
             let nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
+            let prefix = creator.user_id.split(':').next().unwrap_or(&creator.user_id).to_string();
             let (genesis_secret, _) = human_money_core::services::crypto_utils::derive_ephemeral_key_pair(
                 &creator.signing_key,
                 &nonce_bytes,
                 "genesis",
+                Some(&prefix),
             ).unwrap();
 
             let mut corrupted_voucher = voucher.clone();

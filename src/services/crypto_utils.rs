@@ -184,17 +184,32 @@ pub fn derive_ed25519_keypair(
 
 /// Leitet ein kurzlebiges (ephemeral) Schlüsselpaar deterministisch aus einem Master-Schlüssel und einem Seed ab.
 /// Verwendet HKDF-SHA256.
+///
+/// # Key Binding (Context Protection)
+/// Um Context-Hopping zu verhindern, wird das `context_prefix` (z.B. "minuto:regio")
+/// in die Ableitung eingebunden. Dadurch ist der resultierende Schlüssel mathematisch
+/// an diesen Kontext gebunden. Ein Versuch, denselben Seed für einen anderen Kontext
+/// zu verwenden, führt zu einem anderen Schlüssel.
 pub fn derive_ephemeral_key_pair(
     master_key: &SigningKey,
     seed: &[u8],
     info: &str,
+    context_prefix: Option<&str>,
 ) -> Result<(SigningKey, EdPublicKey), VoucherCoreError> {
     let ikm = master_key.to_bytes();
 
+    // 1. HKDF Extract: Master Key + Seed
     let hkdf = Hkdf::<Sha256>::new(Some(seed), &ikm);
 
+    // 2. HKDF Expand: Info (+ Context Binding)
+    let mut final_info = info.as_bytes().to_vec();
+    if let Some(prefix) = context_prefix {
+        final_info.extend_from_slice(b"|");
+        final_info.extend_from_slice(prefix.as_bytes());
+    }
+
     let mut okm = [0u8; 32];
-    hkdf.expand(info.as_bytes(), &mut okm)
+    hkdf.expand(&final_info, &mut okm)
         .map_err(|_| VoucherCoreError::Crypto("HKDF expansion failed".to_string()))?;
 
     let signing_key = SigningKey::from_bytes(&okm);

@@ -62,14 +62,11 @@ pub fn create_fingerprint_for_transaction(
         )
     } else {
         // Fallback für 'init' oder Legacy: Manuelle Berechnung
-        // WICHTIG: Wenn sender_id vorhanden ist (wie bei 'init'), verwenden wir sie
-        // für die Konsistenz mit bestehenden Tests und der Dokumentation.
-        let sender_part = transaction
-            .sender_id
-            .as_deref()
-            .or(transaction.sender_ephemeral_pub.as_deref())
-            .unwrap_or("anon");
-        let fallback_tag = get_hash(format!("{}{}", transaction.prev_hash, sender_part));
+        // FIXED: Wir verwenden nun NUR noch den `sender_ephemeral_pub` (Genesis Key bei Init),
+        // um den Tag zu berechnen. Dies entspricht der neuen Logik in `voucher_manager`.
+        // `sender_id` wird NICHT mehr verwendet, um Identity-Hopping zu verhindern.
+        let ephem_key = transaction.sender_ephemeral_pub.as_deref().unwrap_or("");
+        let fallback_tag = get_hash(format!("{}{}", transaction.prev_hash, ephem_key));
         (fallback_tag, "none".to_string(), "none".to_string())
     };
 

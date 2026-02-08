@@ -53,7 +53,8 @@ Dieses Modell beschreibt, wie das System spezifische Angriffe durch kryptographi
     
 - **Abwehr (Deterministischer Zwang):** Der Zero-Knowledge-Proof (ZKP) validiert nicht nur die Gleichung, sondern erzwingt deterministische Ableitung via HKDF:
     
-    $$m = HKDF(SenderPrivateKey, prev\_hash, prefix)$$
+    $$m = HKDF(SenderPrivateKey, prev\_hash, info = prefix)$$
+    (Wobei das Präfix via HKDF-Expand untrennbar mit dem Schlüssel $m$ gebunden wird).
 - **Ergebnis:**
     
     - Wählt der Angreifer das korrekte (gleiche) $m$ $\rightarrow$ Die Falle schnappt zu (Identität wird berechnet).
@@ -179,7 +180,8 @@ pub struct Transaction {
     
     // --- SICHERHEITSMECHANISMEN (Layer 2) ---
     
-    /// Verschlüsselte Wiederherstellungsdaten (XChaCha20Poly1305).
+    /// Verschlüsselte Wiederherstellungsdaten (ChaCha20-Poly1305).
+    /// Binär-Layout (Base64 kodiert): [EphemeralPK(32)] + [Nonce(12)] + [Ciphertext]
     /// Enthält das serialisierte `RecipientPayload`-Struct.
     /// Ermöglicht dem Empfänger die Wiederherstellung von Kontext und Seeds.
     pub privacy_guard: String,
@@ -270,9 +272,9 @@ Transaktion 1 (Init)       Transaktion 2 (Transfer)       Transaktion 3 ...
 +----------------------+   +-----------------------+
 ```
 
-## 5. Datenstrukturen & Formate
+### 5. Datenstrukturen & Formate
 
-Das System nutzt etablierte kryptographische Standards: **Ed25519** für Signaturen, **BLAKE3** für Hashing, **XChaCha20-Poly1305** für Verschlüsselung und **HKDF-SHA256** zur deterministischen Schlüsselableitung und Side-Channel-Resistenz.
+Das System nutzt etablierte kryptographische Standards: **Ed25519** für Signaturen, **SHA3-256** für Hashing, **ChaCha20-Poly1305** für Verschlüsselung und **HKDF-SHA256** zur deterministischen Schlüsselableitung und Side-Channel-Resistenz.
 
 ### 5.1 Format der Bezeichner (Composite Identifier)
 
@@ -295,7 +297,7 @@ Um Domain Separation und menschliche Lesbarkeit zu vereinen, folgen alle Identit
 
 Enthält die öffentlichen Komponenten des **Schnorr Non-Interactive Zero-Knowledge Proofs (NIZK)**.
 
-Der Proof beweist die Kenntnis von $m$ für die Relation $V - ID = m \cdot U$, ohne $m$ zu enthüllen.
+Der Proof beweist die Kenntnis von $m$ für die Relation $V - ID = m \cdot U$, ohne $m$ zu enthüllen. Als Hash-Funktion für die Challenge-Berechnung wird **SHA3-256** verwendet.
 
 ```rust
 #[derive(Serialize, Deserialize)]
@@ -349,6 +351,14 @@ struct RecipientPayload {
 }
 ```
 
+#### 5.3.1 Schlüsselableitung (HKDF)
+Für die symmetrische Verschlüsselung des Payloads wird der Shared Secret aus dem X25519-Austausch mittels HKDF-SHA256 expandiert.
+
+**Info-String Format:**
+`"human-money-core/x25519-exchange" + sort(public_key_1, public_key_2)`
+
+Wobei `public_key_1` und `public_key_2` die 32-Byte X25519 Public Keys (ephemeral und statisch) in lexikographischer Sortierung sind. Dies stellt sicher, dass beide Parteien denselben Info-String unabhängig von ihrer Rolle berechnen.
+
 ## 6. Protokoll-Ablauf & Algorithmen
 
 Der Ablauf unterscheidet sich fundamental zwischen der Erzeugung (Init) und der Weitergabe (Transfer).
@@ -378,12 +388,12 @@ Alice (`minuto:bth@did:alice`) sendet Guthaben an Bob.
     
     - `prk = HKDF-Extract(salt=prev_hash, ikm=AlicePrivateKey)`
         
-    - `m = HKDF-Expand(prk, info=prefix, len=32)`
-      (Info ist der Präfix-String z.B. "minuto:bth")
+    - `m = HKDF-Expand(prk, info=context_prefix + "|" + label, len=32)`
+      (Label ist z.B. "genesis" oder "holder". Das `context_prefix` stellt sicher, dass derselbe Seed in unterschiedlichen ökonomischen Kontexten zu unterschiedlichen Schlüsseln führt).
 
     - **Neu: Change-Key Seed:**
       Falls Wechselgeld entsteht (Split), wird der Seed für den neuen Schlüssel ebenfalls deterministisch abgeleitet, um Statelessness zu garantieren:
-      `change_seed = HKDF-Expand(prk, info=prefix + "change_seed", len=32)`
+      `change_seed = HKDF-Expand(prk, info=context_prefix + "|change_seed", len=32)`
         
 2. **ZKP Challenge (Fiat-Shamir & Schnorr Proof):**
     
@@ -413,7 +423,7 @@ Alice (`minuto:bth@did:alice`) sendet Guthaben an Bob.
         
     - Parse $(R, s)$ aus `proof`.
         
-    - Berechne $c = Hash(U, V, R, prefix)$.
+    - Berechne Challenge $c = Hash(U, V, R, prefix)$ mittels **SHA3-256**.
         
     - Prüfe: $s \cdot U \stackrel{?}{=} R + c \cdot (V - AliceID)$.
         
@@ -445,14 +455,18 @@ Der DS-Tag darf **ausschließlich** von den **Input-Daten** abhängen (Was gebe 
 *Würde der Betrag in den Tag einfließen, könnte ein Angreifer denselben Input zweimal mit unterschiedlichen Beträgen ausgeben, ohne dass die Tags kollidieren.*
 
 **Die korrekte Berechnung:**
-Der Tag identifiziert eindeutig den *Verbrauch* eines spezifischen Ankers. Im Code wird dieses Feld als `ds_tag` bezeichnet.
+Der Tag identifiziert eindeutig den *Verbrauch* eines spezifischen Ankers. Er ist unabhängig von der gewählten Identität (Präfix), da die mathematische Bindung bereits auf Layer 2 durch den ephemeren Schlüssel erfolgt.
 
-$$u = HashToCurve(prev\_hash + sender\_ephemeral\_pub + prefix)$$
+$$u = Hash(prev\_hash + sender\_ephemeral\_pub) \text{ (mittels SHA3-256)}$$
 
 Die Komponenten sind:
 1.  `prev_hash`: Die ID der Quelle (Vorgänger-Gutschein).
 2.  `sender_ephemeral_pub`: Der **Input-Key** (der "Schlüssel zum Schloss"), der in diesem Moment enthüllt wird.
-3.  `prefix`: Die Identität des Signierers (zur Domain Separation).
+
+**Warum kein Präfix im Tag? (Entwicklungs-Historie)**
+In früheren Versionen des Protokolls (ohne ephemere Schlüssel) war die Einbindung des Präfixes in den DS-Tag notwendig, um verschiedene "Unterkonten" desselben `did:key` zu unterscheiden. Da der `prev_hash` beim Splitten identisch blieb, hätten zwei legale Zahlungen von unterschiedlichen Unterkonten (z.B. Alice:PC und Alice:Mobil) sonst denselben Tag erzeugt (False Positive).
+
+Mit dem **Privacy Mode** und **ephemeren Schlüsseln** ist dies hinfällig: Jeder Unteraccount (`context_prefix`) leitet bereits einen *eindeutigen* `sender_ephemeral_pub` für seine Transaktion ab. Da diese Keys bereits global eindeutig sind, ist das Präfix im `ds_tag` redundant. Das Entfernen schließt zudem die Sicherheitslücke des "Identity Hopping", bei der ein Angreifer versuchen könnte, denselben ephemeren Key mit verschiedenen Präfixes mehrfach auszugeben.
 
 **Lösung für Split-Transaktionen (Gabelung):**
 Wie unterscheidet das System beim Split zwischen "Transfer" und "Restgeld", wenn beide denselben `prev_hash` haben?
@@ -463,9 +477,9 @@ Die vorherige Split-Transaktion hat zwei unterschiedliche Anker (Schlösser) hin
 2.  Einen separaten Anker für das Restgeld (Change).
 
 *   **Transfer-Zweig:** Der Empfänger öffnet SEINEN Anker (mit seinem Key $Key_{Receiver}$).
-    $\rightarrow u_{Transfer} = Hash(prev\_hash + Key_{Receiver} + ID_{Receiver})$
+    $\rightarrow u_{Transfer} = Hash(prev\_hash + Key_{Receiver})$
 *   **Restgeld-Zweig:** Der Sender öffnet den CHANGE-Anker (mit dem Change-Key $Key_{Change}$).
-    $\rightarrow u_{Change} = Hash(prev\_hash + Key_{Change} + ID_{Sender})$
+    $\rightarrow u_{Change} = Hash(prev\_hash + Key_{Change})$
 
 Da $Key_{Receiver}$ und $Key_{Change}$ kryptographisch verschieden sind (unterschiedliche Seeds), sind auch die resultierenden DS-Tags global eindeutig.
 
@@ -505,7 +519,7 @@ pub struct TransactionFingerprint {
 
 Das System bietet eine **hybride Sicherheit**:
 
-1. **Layer 2 (Post-Quantum):** Die Anker (`receiver_ephemeral_pub_hash`) basieren auf kryptographischen Hashes (BLAKE3). Ein Quantencomputer kann das Preimage nicht berechnen. Ruhende Guthaben (Cold Storage) sind daher sicher, solange der Key nicht enthüllt wurde.
+1. **Layer 2 (Post-Quantum):** Die Anker (`receiver_ephemeral_pub_hash`) basieren auf kryptographischen Hashes (**SHA3-256**). Ein Quantencomputer kann das Preimage nicht berechnen. Ruhende Guthaben (Cold Storage) sind daher sicher, solange der Key nicht enthüllt wurde.
     
 2. **Layer 1 (Pre-Quantum):** Die Identitäten (`did:key`) und Signaturen basieren auf Ed25519 (Elliptische Kurven). Ein hinreichend mächtiger Quantencomputer könnte theoretisch den Private Key aus einem Public Key errechnen.
     

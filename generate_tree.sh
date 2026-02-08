@@ -24,6 +24,7 @@ EXCLUDES=(
     "wallet_data"
     ".opencode"
     ".qwen"
+    ".agent"
 )
 
 # Erstelle den endgültigen String für die -I Option mit printf (robuster als echo).
