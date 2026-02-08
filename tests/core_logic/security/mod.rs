@@ -25,3 +25,4 @@ mod state_and_collaboration;
 mod vulnerabilities;
 mod double_spend_identification;
 mod trap_verification;
+mod privacy_evasion;

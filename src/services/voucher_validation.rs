@@ -111,6 +111,13 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &str) -> Result<(), VoucherCor
             continue;
         }
 
+        // Global check for whitespace obfuscation (Test 4)
+        if tx.recipient_id.trim() != tx.recipient_id {
+             return Err(ValidationError::InvalidTransaction(
+                format!("Transaction {} has recipient_id with leading/trailing whitespace (obfuscation attempt).", tx.t_id)
+            ).into());
+        }
+
         match mode {
             "public" => {
                 // 1. sender_id muss vorhanden sein.
@@ -133,7 +140,11 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &str) -> Result<(), VoucherCor
                         format!("Transaction {} has sender_id in 'stealth' mode.", tx.t_id)
                     ).into());
                 }
-                // 2. recipient_id darf KEINE DID sein (muss anonym sein).
+                // 2. sender_identity_signature darf NICHT vorhanden sein (Test 1).
+                if tx.sender_identity_signature.is_some() {
+                    return Err(ValidationError::StealthSignatureLeak { t_id: tx.t_id.clone() }.into());
+                }
+                // 3. recipient_id darf KEINE DID sein (muss anonym sein).
                 if tx.recipient_id.starts_with("did:") {
                      return Err(ValidationError::InvalidTransaction(
                         format!("Transaction {} has public DID recipient in 'stealth' mode.", tx.t_id)
@@ -141,7 +152,10 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &str) -> Result<(), VoucherCor
                 }
             }
             "flexible" => {
-                // Alles erlaubt. Konsistenz (Sender ID <-> Sig) wird in Integrity geprüft.
+                // Check consistency: If anonymous (no sender_id), there must be no identity signature (Test 2).
+                if tx.sender_id.is_none() && tx.sender_identity_signature.is_some() {
+                    return Err(ValidationError::FlexibleModeIdentityInconsistency { t_id: tx.t_id.clone() }.into());
+                }
             }
             _ => return Err(VoucherCoreError::Standard(StandardDefinitionError::InvalidMode(mode.to_string()))),
         }
@@ -728,6 +742,13 @@ fn verify_transactions(
 
         // --- TRAP Validierung ---
         if let Some(trap) = &tx.trap_data {
+            // TEST 3: Prevent Trapezoidal Identity Leak
+            // Check if formatted as a curve point (Base58) and not cleartext.
+            // A simple heuristic: Base58 shouldn't contain ':' usually, and definitely not "creator:" or "did:".
+            if trap.blinded_id.contains(':') || trap.blinded_id.contains('@') {
+                 return Err(ValidationError::TrapDataInvalid { t_id: tx.t_id.clone() }.into());
+            }
+
             // Nur möglich, wenn sender_id (Public Identity) bekannt ist.
             if let Some(sender_id) = &tx.sender_id {
                 if let Ok(signer_pk) = get_pubkey_from_user_id(sender_id) {

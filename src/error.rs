@@ -137,6 +137,18 @@ pub enum ValidationError {
     #[error("Invalid creator ID: {0}")]
     InvalidCreatorId(#[from] GetPubkeyError),
 
+    /// Stealth Mode: Eine Identitäts-Signatur wurde gefunden, obwohl der Modus Anonymität vorschreibt.
+    #[error("Privacy Leak: Transaction '{t_id}' contains a sender_identity_signature in stealth mode.")]
+    StealthSignatureLeak { t_id: String },
+
+    /// Flexible Mode: Eine Identitäts-Signatur ist vorhanden, aber die sender_id fehlt (Inkonsistenz).
+    #[error("Data Hygiene: Transaction '{t_id}' contains a signature but no sender_id in flexible mode.")]
+    FlexibleModeIdentityInconsistency { t_id: String },
+
+    /// Trap Data: Die blinded_id (Trap) hat ein ungültiges Format oder enthält verdächtige Daten.
+    #[error("Trap Integrity: Transaction '{t_id}' has invalid or suspicious blinded_id format.")]
+    TrapDataInvalid { t_id: String },
+
     /// Die voucher_id in einer Signatur stimmt nicht mit der des Gutscheins überein.
     #[error("Signature references wrong voucher. Expected ID: {expected}, Found ID: {found}")]
     MismatchedVoucherIdInSignature { expected: String, found: String },
