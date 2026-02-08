@@ -91,6 +91,8 @@ mod tests {
         let valid_date = (now + Duration::days(1)).to_rfc3339();
         let expired_fp = TransactionFingerprint {
             ds_tag: "expired_key".to_string(),
+            u: String::new(),
+            blinded_id: String::new(),
             valid_until: expired_date,
             t_id: String::new(),
             encrypted_timestamp: 0,
@@ -98,6 +100,8 @@ mod tests {
         };
         let valid_fp = TransactionFingerprint {
             ds_tag: "valid_key".to_string(),
+            u: String::new(),
+            blinded_id: String::new(),
             valid_until: valid_date,
             t_id: String::new(),
             encrypted_timestamp: 0,
@@ -154,6 +158,8 @@ mod tests {
             let key = format!("key_{}", i);
             let fp = TransactionFingerprint {
                 ds_tag: key.clone(),
+                u: String::new(),
+                blinded_id: String::new(),
                 t_id: format!("tx_{:02}", i), // Padding für korrekte lexikalische Sortierung
                 encrypted_timestamp: 0,
                 sender_signature: String::new(),
@@ -533,6 +539,8 @@ mod tests {
         let fp_key = "test_fp_key".to_string();
         let fingerprint = TransactionFingerprint {
             ds_tag: fp_key.clone(),
+            u: String::new(),
+            blinded_id: String::new(),
             t_id: String::new(),
             encrypted_timestamp: 0,
             sender_signature: String::new(),
@@ -618,6 +626,8 @@ mod tests {
         let fp_key = "test_fp_key".to_string();
         let fingerprint = TransactionFingerprint {
             ds_tag: fp_key.clone(),
+            u: String::new(),
+            blinded_id: String::new(),
             t_id: String::new(),
             encrypted_timestamp: 0,
             sender_signature: String::new(),
@@ -779,6 +789,8 @@ mod tests {
         for i in 0..5 {
             let key = format!("key_{}", i);
             let fp = TransactionFingerprint {
+                u: String::new(),
+                blinded_id: String::new(),
                 ds_tag: key.clone(),
                 t_id: String::new(),
                 encrypted_timestamp: 0,
@@ -886,6 +898,8 @@ mod tests {
         let key = "key_already_known".to_string();
         let fp = TransactionFingerprint {
             ds_tag: key.clone(),
+            u: String::new(),
+            blinded_id: String::new(),
             t_id: String::new(),
             encrypted_timestamp: 0,
             sender_signature: String::new(),
@@ -961,6 +975,8 @@ mod tests {
         for i in 0..200 {
             let key = format!("key_{}", i);
             let fp = TransactionFingerprint {
+                u: String::new(),
+                blinded_id: String::new(),
                 ds_tag: key.clone(),
                 t_id: String::new(),
                 encrypted_timestamp: 0,

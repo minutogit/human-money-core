@@ -725,14 +725,22 @@ fn verify_transactions(
                     if let Ok(signer_id_point) = ed25519_pk_to_curve_point(&signer_pk) {
                          let sender_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string();
                          
-                         let u_input = format!(
+                         let ds_tag_input = format!(
                             "{}{}{}",
                             tx.prev_hash,
                             tx.sender_ephemeral_pub.as_deref().unwrap_or(""),
                             sender_prefix
                         );
+                        let expected_ds_tag = get_hash(ds_tag_input.as_bytes());
+
+                        let u_input_varying = format!(
+                            "{}{}{}",
+                            expected_ds_tag,
+                            tx.amount,
+                            tx.receiver_ephemeral_pub_hash.as_deref().unwrap_or("")
+                        );
                         
-                        if let Err(e) = verify_trap(trap, u_input.as_bytes(), &signer_id_point, &sender_prefix) {
+                        if let Err(e) = verify_trap(trap, &expected_ds_tag, u_input_varying.as_bytes(), &signer_id_point, &sender_prefix) {
                              return Err(ValidationError::InvalidTransaction(format!("Trap verification failed: {}", e)).into());
                         }
                     }

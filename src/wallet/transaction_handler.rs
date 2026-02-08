@@ -378,21 +378,20 @@ impl Wallet {
         let ephem_pub_str = bs58::encode(sender_ephemeral_key.verifying_key().to_bytes()).into_string();
 
         // PRÜFUNG GEGEN ALLE BEKANNTEN FINGERPRINTS:
-        // NEU: Wir verwenden das 'u' (DS-Tag), das exakt so auch im Trap berechnet wird.
+        // Wir verwenden das 'ds_tag', das exakt so auch in voucher_manager berechnet wird.
         // Dies macht die proaktive Prüfung 100% konsistent mit der mathematischen Falle.
         let sender_id_prefix = identity.user_id.split('@').next().unwrap_or(&identity.user_id).to_string();
-        let u_input = format!("{}{}{}", prev_hash, ephem_pub_str, sender_id_prefix);
-        let u_point = crate::services::trap_manager::hash_to_curve(u_input.as_bytes());
-        let u_str = bs58::encode(u_point.compress().as_bytes()).into_string();
+        let ds_tag_input = format!("{}{}{}", prev_hash, ephem_pub_str, sender_id_prefix);
+        let ds_tag = get_hash(ds_tag_input.as_bytes());
 
         if self
             .own_fingerprints
             .active_fingerprints
-            .contains_key(&u_str)
+            .contains_key(&ds_tag)
             || self
                 .own_fingerprints
                 .history
-                .contains_key(&u_str)
+                .contains_key(&ds_tag)
         {
             // SELBSTHEILUNG: Gebe die ID des Gutscheins zurück, der die Inkonsistenz verursacht hat.
             // Der aufrufende AppService kann diesen Gutschein dann in Quarantäne verschieben.

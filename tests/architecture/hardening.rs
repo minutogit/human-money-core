@@ -40,6 +40,8 @@ mod tests {
 
         let expired_fp = TransactionFingerprint {
             ds_tag: key.clone(),
+            u: String::new(),
+            blinded_id: String::new(),
             valid_until: expired_date,
             t_id: String::new(),
             encrypted_timestamp: 0,

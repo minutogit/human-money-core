@@ -54,8 +54,12 @@ pub fn create_fingerprint_for_transaction(
     // NEU: Wir verwenden das 'ds_tag' aus den TrapData als kanonischen DS-Tag.
     // Dies stellt sicher, dass der Fingerprint exakt mit der mathematischen Falle
     // übereinstimmt. Nur für 'init' (die keine Trap hat) berechnen wir den Tag manuell.
-    let tag = if let Some(trap) = &transaction.trap_data {
-        trap.ds_tag.clone()
+    let (tag, u, blinded_id) = if let Some(trap) = &transaction.trap_data {
+        (
+            trap.ds_tag.clone(),
+            trap.u.clone(),
+            trap.blinded_id.clone()
+        )
     } else {
         // Fallback für 'init' oder Legacy: Manuelle Berechnung
         // WICHTIG: Wenn sender_id vorhanden ist (wie bei 'init'), verwenden wir sie
@@ -65,11 +69,14 @@ pub fn create_fingerprint_for_transaction(
             .as_deref()
             .or(transaction.sender_ephemeral_pub.as_deref())
             .unwrap_or("anon");
-        get_hash(format!("{}{}", transaction.prev_hash, sender_part))
+        let fallback_tag = get_hash(format!("{}{}", transaction.prev_hash, sender_part));
+        (fallback_tag, "none".to_string(), "none".to_string())
     };
 
     Ok(TransactionFingerprint {
         ds_tag: tag,
+        u,
+        blinded_id,
         t_id: transaction.t_id.clone(),
         sender_signature: transaction.sender_proof_signature.clone(),
         valid_until: valid_until_rounded,

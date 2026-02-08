@@ -11,7 +11,7 @@ use crate::services::crypto_utils::{
     generate_ephemeral_x25519_keypair, get_hash, get_pubkey_from_user_id,
     perform_diffie_hellman, sign_ed25519,
 };
-use crate::services::trap_manager::{derive_m, generate_trap, hash_to_curve};
+use crate::services::trap_manager::{derive_m, generate_trap, hash_to_scalar};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
 use hkdf::Hkdf;
 use sha2::Sha256;
@@ -737,18 +737,33 @@ pub fn create_transaction(
     // Für jetzt: Wir ignorieren das Speichern des Change-Keys hier (Verlustrisiko!), 
     // aber das ist ok da dies nur die Voucher-Erstellung ist.
 
-    // 4. TRAP Generation
-    // u = HashToCurve(prev_hash + sender_ephemeral_pub + receiver_ephemeral_pub_hash + amount + prefix)
+    // 4. TRAP Generation & Identity Recovery Logic
+    //
+    // a) Calculate CONSTANT DS-Tag (Index):
+    //    Depends ONLY on Input (prev_hash, input_key, sender_prefix).
+    //    This ensures O(1) detection of Double Spends.
     let sender_id_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string(); // "prefix:checksum"
     let amount_str = decimal_utils::format_for_storage(&amount_to_send, decimal_places);
     
-    let u_input = format!(
+    let ds_tag_input = format!(
         "{}{}{}",
         prev_hash,
         sender_ephemeral_pub,
         sender_id_prefix
     );
-    let u_point = hash_to_curve(u_input.as_bytes());
+    let ds_tag = get_hash(ds_tag_input.as_bytes());
+
+    // b) Calculate VARYING Challenge U:
+    //    Depends on Output (amount, receiver, etc.) via ds_tag.
+    //    This ensures that two different transactions have DIFFERENT U points,
+    //    allowing the calculation of 'm' and thus the Identity ID.
+    let u_input_varying = format!(
+        "{}{}{}",
+        ds_tag,
+        amount_str,
+        receiver_ephemeral_pub_hash.as_deref().unwrap_or("")
+    );
+    let u_scalar = hash_to_scalar(u_input_varying.as_bytes());
 
     // m derivation
     let m = derive_m(&prev_hash, &sender_permanent_key.to_bytes(), &sender_id_prefix)?;
@@ -756,7 +771,7 @@ pub fn create_transaction(
     // My ID Point
     let my_id_point = ed25519_pk_to_curve_point(&sender_permanent_key.verifying_key())?;
 
-    let trap_data = Some(generate_trap(&u_point, &m, &my_id_point, &sender_id_prefix)?);
+    let trap_data = Some(generate_trap(ds_tag, &u_scalar, &m, &my_id_point, &sender_id_prefix)?);
 
 
     let mut new_transaction = Transaction {

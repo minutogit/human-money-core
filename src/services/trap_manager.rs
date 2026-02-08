@@ -10,10 +10,27 @@
 
 use crate::error::VoucherCoreError;
 use crate::models::voucher::TrapData;
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use sha2::{Digest, Sha512};
 use std::convert::TryInto;
+
+/// Generiert einen deterministischen EdwardsPoint aus beliebigen Eingabedaten.
+/// Verwendet SHA-512 und die Elligator2-Variante von curve25519-dalek (`hash_from_bytes`).
+///
+/// # Arguments
+/// * `input` - Die Eingabedaten (z.B. Transaktions-Details).
+///
+/// # Returns
+/// Returns Ein valider `EdwardsPoint` auf der Kurve.
+/// Generiert einen deterministischen Scalar aus beliebigen Eingabedaten.
+/// Verwendet SHA-512.
+pub fn hash_to_scalar(input: &[u8]) -> Scalar {
+    let mut hasher = Sha512::default();
+    hasher.update(input);
+    Scalar::from_hash(hasher)
+}
 
 /// Generiert einen deterministischen EdwardsPoint aus beliebigen Eingabedaten.
 /// Verwendet SHA-512 und die Elligator2-Variante von curve25519-dalek (`hash_from_bytes`).
@@ -72,31 +89,56 @@ pub fn derive_m(
 ///
 /// # Returns
 /// Ein `TrapData`-Struct mit Base58-kodierten Werten.
+/// Generiert die Trap-Daten und den ZKP.
+///
+/// # Arguments
+/// * `ds_tag` - Der konstante Index-String.
+/// * `u_scalar` - Der variierende Challenge-Scalar (berechnet via hash_to_scalar).
+/// * `m` - Der geheime Slope (Scalar).
+/// * `my_id_point` - Der öffentliche Identitätspunkt des Senders (ID).
+/// * `prefix` - Das Präfix (wird in die ZKP-Challenge eingebunden).
+///
+/// # Returns
+/// Ein `TrapData`-Struct mit Base58-kodierten Werten.
 pub fn generate_trap(
-    u: &EdwardsPoint,
+    ds_tag: String,
+    u_scalar: &Scalar,
     m: &Scalar,
     my_id_point: &EdwardsPoint,
     prefix: &str,
 ) -> Result<TrapData, VoucherCoreError> {
-    // 1. Berechne V = m * U + ID
-    let v = (m * u) + my_id_point;
+    // 1. Berechne V = u * (m * G) + ID
+    //    V = (u * m) * G + ID
+    //    Wir definieren M = m * G (Slope Point)
+    let slope_term = (u_scalar * m) * ED25519_BASEPOINT_POINT;
+    let v = slope_term + my_id_point;
 
     // 2. ZKP (Schnorr Proof)
+    // Wir beweisen Wissen von 'm' bezüglich der Basis X = u * G.
+    // Y = V - ID = m * X.
+    // X = u * G
+    // Y = m * X
+    let x_base = u_scalar * ED25519_BASEPOINT_POINT;
+    let y_public = v - my_id_point; // Dies ist (u*m)*G
+
     // Prover wählt zufälliges Nonce r
     let mut rng = rand::thread_rng();
     let r = Scalar::random(&mut rng);
 
-    // Commitment R = r * U
-    let commitment_r = r * u;
+    // Commitment R = r * X
+    let commitment_r = r * x_base;
 
-    // Challenge c = Hash(U, V, R, prefix)
-    let c = calculate_challenge(u, &v, &commitment_r, prefix);
+    // Challenge c = Hash(X, Y, R, prefix)
+    let c = calculate_challenge(&x_base, &y_public, &commitment_r, prefix);
 
     // Response s = r + c * m
     let s = r + (c * m);
 
     // Serialisierung für Transport (Base58)
-    let ds_tag_str = bs58::encode(u.compress().as_bytes()).into_string();
+    // ds_tag ist bereits ein String (der konstante Index)
+    
+    // u ist der variierende Scalar
+    let u_str = bs58::encode(u_scalar.as_bytes()).into_string();
     let blinded_id_str = bs58::encode(v.compress().as_bytes()).into_string();
     
     // Proof als Tupel (R, s) serialisiert
@@ -107,7 +149,8 @@ pub fn generate_trap(
     let proof_str = bs58::encode(proof_bytes).into_string();
 
     Ok(TrapData {
-        ds_tag: ds_tag_str,
+        ds_tag,
+        u: u_str,
         blinded_id: blinded_id_str,
         proof: proof_str,
     })
@@ -117,34 +160,39 @@ pub fn generate_trap(
 ///
 /// # Arguments
 /// * `trap_data` - Die empfangenen Trap-Daten.
+/// * `expected_ds_tag` - Der erwartete konstante Index.
 /// * `expected_u_input` - Die rohen Daten, die zu U führen sollten (zur Prüfung von U).
 /// * `signer_id_point` - Der öffentliche Identitätspunkt (ID) des Senders.
-///                       Dieser wird zur Verifizierung benötigt, da der Proof beweist, dass
-///                       der Prover den geheimen Slope `m` für genau diese ID kennt ($V = m \cdot U + ID$).
 /// * `prefix` - Das Nutzer-Präfix.
 ///
 /// # Returns
 /// Ok(()), wenn der Proof gültig ist.
 pub fn verify_trap(
     trap_data: &TrapData,
-    expected_ds_tag_input: &[u8],
+    expected_ds_tag: &str,
+    expected_u_input: &[u8],
     signer_id_point: &EdwardsPoint,
     prefix: &str,
 ) -> Result<(), VoucherCoreError> {
-    // 1. Parse DS-Tag, Blinded-ID from Base58
-    let ds_tag_bytes = bs58::decode(&trap_data.ds_tag).into_vec().map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
-    let blinded_id_bytes = bs58::decode(&trap_data.blinded_id).into_vec().map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
-    
-    let u = CompressedEdwardsY::from_slice(&ds_tag_bytes).map_err(|_| VoucherCoreError::Crypto("Invalid DS-Tag (U)".to_string()))?.decompress().ok_or(VoucherCoreError::Crypto("Decompression DS-Tag failed".to_string()))?;
-    let v = CompressedEdwardsY::from_slice(&blinded_id_bytes).map_err(|_| VoucherCoreError::Crypto("Invalid Blinded-ID (V)".to_string()))?.decompress().ok_or(VoucherCoreError::Crypto("Decompression Blinded-ID failed".to_string()))?;
-
-    // 2. Check DS-Tag consistency
-    let calculated_u = hash_to_curve(expected_ds_tag_input);
-    if u != calculated_u {
-        return Err(VoucherCoreError::Crypto("Trap DS-Tag does not match transaction data".to_string()));
+    // 1. Verify DS-Tag (Constant Index)
+    if trap_data.ds_tag != expected_ds_tag {
+        return Err(VoucherCoreError::Crypto("Trap DS-Tag does not match expected input (Constant Index Mismatch)".to_string()));
     }
 
-    // 3. Parse Proof (R, s)
+    // 2. Parse U (Varying Challenge SCALAR), V (Blinded ID Point)
+    let u_bytes = bs58::decode(&trap_data.u).into_vec().map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+    let blinded_id_bytes = bs58::decode(&trap_data.blinded_id).into_vec().map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+    
+    let u_scalar = Scalar::from_bytes_mod_order(u_bytes.try_into().map_err(|_| VoucherCoreError::Crypto("Invalid Scalar U length".to_string()))?);
+    let v_point = CompressedEdwardsY::from_slice(&blinded_id_bytes).map_err(|_| VoucherCoreError::Crypto("Invalid Blinded-ID (V)".to_string()))?.decompress().ok_or(VoucherCoreError::Crypto("Decompression Blinded-ID failed".to_string()))?;
+
+    // 3. Verify U matches expected varying input (t_id included)
+    let calculated_u_scalar = hash_to_scalar(expected_u_input);
+    if u_scalar != calculated_u_scalar {
+        return Err(VoucherCoreError::Crypto("Trap Scalar U does not match transaction data (Varying Input Mismatch)".to_string()));
+    }
+
+    // 4. Parse Proof (R, s)
     let proof_bytes = bs58::decode(&trap_data.proof).into_vec().map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
     if proof_bytes.len() != 64 {
         return Err(VoucherCoreError::Crypto("Invalid proof length".to_string()));
@@ -154,12 +202,16 @@ pub fn verify_trap(
     let commitment_r = CompressedEdwardsY::from_slice(r_bytes).map_err(|_| VoucherCoreError::Crypto("Invalid point R".to_string()))?.decompress().ok_or(VoucherCoreError::Crypto("Decompression R failed".to_string()))?;
     let s = Scalar::from_bytes_mod_order(s_bytes.try_into().unwrap());
 
-    // 4. Verify ZKP: s * U == R + c * (V - ID)
-    let c = calculate_challenge(&u, &v, &commitment_r, prefix);
+    // 5. Verify ZKP: s * X == R + c * Y
+    // X = u * G
+    // Y = V - ID
+    let x_base = u_scalar * ED25519_BASEPOINT_POINT;
+    let y_public = v_point - signer_id_point;
+
+    let c = calculate_challenge(&x_base, &y_public, &commitment_r, prefix);
     
-    let diff = v - signer_id_point; // V - ID
-    let rhs = commitment_r + (diff * c); // R + c*(V-ID)
-    let lhs = u * s; // s * U
+    let rhs = commitment_r + (c * y_public); // R + c*Y
+    let lhs = s * x_base; // s * X
 
     if lhs != rhs {
         return Err(VoucherCoreError::Crypto("Trap ZKP verification failed".to_string()));

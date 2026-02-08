@@ -23,3 +23,4 @@ mod double_spend;
 mod standard_validation;
 mod state_and_collaboration;
 mod vulnerabilities;
+mod double_spend_identification;

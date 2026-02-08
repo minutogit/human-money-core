@@ -70,6 +70,7 @@ pub struct Address {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct TrapData {
     pub ds_tag: String,
+    pub u: String,
     pub blinded_id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub proof: String,

@@ -300,18 +300,25 @@ Der Proof beweist die Kenntnis von $m$ für die Relation $V - ID = m \cdot U$, o
 ```rust
 #[derive(Serialize, Deserialize)]
 struct TrapData {
-    /// Challenge U (Fiat-Shamir) -> Feldname: ds_tag
-    /// Deterministischer Hash der öffentlichen Transaktionsdaten auf einen Kurvenpunkt (Hash-to-Curve).
-    /// u = HashToCurve(prev_hash + sender_ephemeral_pub + receiver_ephemeral_pub_hash + amount + prefix)
-    /// Verfahren: SHA-512 Hash -> Elligator2 oder deterministisches Mapping auf validen Ed25519 Punkt.
-    /// Damit wird garantiert, dass alle Clients denselben Punkt U berechnen.
+    /// Challenge Index -> Feldname: ds_tag
+    /// Deterministischer Hash der INPUT-Daten (prev_hash, input_key, etc.).
+    /// Er MUSS konstant sein für alle Transaktionen, die denselben Input verwenden.
+    /// Dient der O(1) Erkennung von Double Spends.
     ds_tag: String,
+
+    /// Variierender Challenge-Scalar (u) -> Feldname: u
+    /// Deterministischer Hash der OUTPUT-Daten (amount, receiver, etc.) auf einen Skalar.
+    /// u = HashToScalar(ds_tag + amount + receiver...)
+    /// Dieser Wert unterscheidet sich bei Double Spends mathematisch und ermöglicht die Identifikations-Wiederherstellung.
+    u: String,
     
-    /// Response (V = m*U + ID) -> Feldname: blinded_id
+    /// Response (V = u * m + ID) -> Feldname: blinded_id
+    /// Wobei 'm' hier als Projektions-Punkt (M = slope * G) interpretiert werden kann, 
+    /// sodass V = u * M + ID.
     blinded_id: String,
     
-    /// Der kryptographische Beweis (Schnorr-Signatur über U).
-    /// Beweist: "Ich kenne m, sodass V = m*U + ID".
+    /// Der kryptographische Beweis (Schnorr-Signatur).
+    /// Beweist: "Ich kenne m, sodass V = u*m + ID".
     /// Format: Serialisiertes Tupel (Commitment R, Response s)
     proof: String, 
 }

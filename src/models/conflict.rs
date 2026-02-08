@@ -18,7 +18,16 @@ use std::collections::{HashMap, HashSet};
 pub struct TransactionFingerprint {
     /// Der Double-Spend-Tag (DS-Tag).
     /// Dies ist der primäre Schlüssel, um potenzielle Konflikte zu gruppieren.
+    /// Er MUSS deterministisch und konstant für denselben Input sein.
     pub ds_tag: String,
+
+    /// Der variierende Challenge-Punkt (U) der mathematischen Falle.
+    /// Er hängt von der Transaktions-ID ab und ermöglicht (zusammen mit v)
+    /// die Berechnung der Identität bei einem Double Spend.
+    pub u: String,
+
+    /// Die maskierte Identität (V = m*U + ID).
+    pub blinded_id: String,
 
     /// Die eindeutige ID der Transaktion (`t_id`). Ein abweichender Wert hier bei
     /// identischem `ds_tag` signalisiert einen Double Spend.

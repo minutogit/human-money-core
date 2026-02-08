@@ -38,6 +38,8 @@ fn setup_test_wallet(identity: &UserIdentity, _name: &str, _storage_dir: &Path) 
 fn new_dummy_fingerprint(t_id: &str) -> TransactionFingerprint {
     TransactionFingerprint {
         ds_tag: "".to_string(),
+        u: "".to_string(),
+        blinded_id: "".to_string(),
         t_id: t_id.to_string(),
         encrypted_timestamp: 0,
         sender_signature: "".to_string(),
