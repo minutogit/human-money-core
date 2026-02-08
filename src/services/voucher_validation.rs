@@ -107,6 +107,10 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &str) -> Result<(), VoucherCor
             continue;
         }
 
+        if tx.t_type == "init" {
+            continue;
+        }
+
         match mode {
             "public" => {
                 // 1. sender_id muss vorhanden sein.

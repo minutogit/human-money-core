@@ -947,7 +947,7 @@ fn test_attack_full_transfer_amount_mismatch() {
     // Erstelle eine 'transfer' Transaktion, die aber nicht den vollen Betrag von 100 sendet.
     // Wir erstellen die Transaktion explizit, anstatt die `init`-Transaktion zu klonen,
     // um Nebeneffekte zu vermeiden und den Test robuster zu machen.
-    let mut malicious_tx = Transaction {
+    let malicious_tx = Transaction {
         t_id: String::new(), // Wird später gesetzt
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_type: "transfer".to_string(),
@@ -1006,7 +1006,7 @@ fn test_attack_remainder_in_full_transfer() {
     // ### ANGRIFF ###
     // Erstelle eine 'transfer' Transaktion, die den vollen Betrag sendet,
     // aber fälschlicherweise auch einen Restbetrag enthält.
-    let mut malicious_tx = Transaction {
+    let malicious_tx = Transaction {
         t_id: String::new(), // Wird später gesetzt
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_type: "transfer".to_string(),

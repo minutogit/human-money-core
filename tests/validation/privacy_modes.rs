@@ -1,0 +1,218 @@
+use human_money_core::test_utils::setup_voucher_with_one_tx;
+use human_money_core::services::voucher_validation::validate_voucher_against_standard;
+use human_money_core::models::voucher_standard_definition::PrivacySettings;
+use human_money_core::services::crypto_utils::get_hash;
+use human_money_core::to_canonical_json;
+use human_money_core::models::voucher::Transaction;
+use human_money_core::services::utils::get_current_timestamp;
+
+#[test]
+fn test_public_mode_enforcement() {
+    let (standard_ref, _hash, _creator, _recipient, mut voucher, _secrets) = setup_voucher_with_one_tx();
+    let mut standard = standard_ref.clone();
+    
+    standard.privacy = Some(PrivacySettings {
+        mode: "public".to_string(),
+    });
+    // Re-hash standard
+    let mut std_no_sig = standard.clone();
+    std_no_sig.signature = None;
+    let new_hash = get_hash(to_canonical_json(&std_no_sig).unwrap());
+    voucher.voucher_standard.standard_definition_hash = new_hash.clone(); 
+    
+    let desc_str = human_money_core::services::standard_manager::get_localized_text(&standard.template.fixed.description, "en").unwrap_or("").to_string();
+
+    voucher.voucher_standard = human_money_core::models::voucher::VoucherStandard {
+        name: standard.metadata.name.clone(),
+        uuid: standard.metadata.uuid.clone(),
+        standard_definition_hash: new_hash,
+        template: human_money_core::models::voucher::VoucherTemplateData {
+             description: desc_str,
+             primary_redemption_type: "goods_or_services".to_string(),
+             divisible: standard.template.fixed.is_divisible,
+             standard_minimum_issuance_validity: "P3Y".to_string(),
+             signature_requirements_description: "none".to_string(),
+             footnote: "".to_string(),
+        }
+    };
+    
+    // Recalculate Voucher ID
+    let mut voucher_header = voucher.clone();
+    voucher_header.voucher_id = "".to_string();
+    voucher_header.transactions = vec![];
+    voucher_header.signatures = vec![];
+    let new_voucher_id = get_hash(to_canonical_json(&voucher_header).unwrap());
+    voucher.voucher_id = new_voucher_id.clone();
+    
+    // Truncate
+    voucher.transactions.truncate(1);
+
+    // Mod Init for Linking
+    let secret = "secret_link";
+    let secret_hash = get_hash(secret);
+    voucher.transactions[0].receiver_ephemeral_pub_hash = Some(secret_hash);
+    
+    // Fix Genesis Transaction
+    let genesis_prev_hash = get_hash(format!("{}{}", new_voucher_id, voucher.voucher_nonce));
+    voucher.transactions[0].prev_hash = genesis_prev_hash;
+    let genesis_hash = get_hash(to_canonical_json(&voucher.transactions[0]).unwrap());
+    let amount = voucher.transactions[0].amount.clone();
+
+    // Add Transfer Transaction
+    let tx_1 = Transaction {
+        t_id: "stub_public".to_string(),
+        prev_hash: genesis_hash,
+        t_time: get_current_timestamp(),
+        t_type: "transfer".to_string(),
+        amount: amount,
+        sender_id: None, // Fail case first
+        recipient_id: "did:key:recipient".to_string(),
+        sender_ephemeral_pub: Some(secret.to_string()), // Needed for balance check
+        ..Default::default()
+    };
+    voucher.transactions.push(tx_1);
+    
+    human_money_core::set_signature_bypass(true);
+    let result = validate_voucher_against_standard(&voucher, &standard);
+    assert!(result.is_err(), "Public mode must reject missing sender_id");
+    
+    // Fix it
+    let last_idx = voucher.transactions.len() - 1;
+    voucher.transactions[last_idx].sender_id = Some(voucher.transactions[0].recipient_id.clone());
+    
+    let result_ok = validate_voucher_against_standard(&voucher, &standard);
+    if let Err(e) = &result_ok {
+        panic!("Validation failed: {:?}", e);
+    }
+    assert!(result_ok.is_ok(), "Validation should pass with sender_id present");
+    human_money_core::set_signature_bypass(false);
+}
+
+#[test]
+fn test_stealth_mode_enforcement() {
+    let (standard_ref, _hash, _creator, _recipient, mut voucher, _secrets) = setup_voucher_with_one_tx();
+    let mut standard = standard_ref.clone();
+    
+    standard.privacy = Some(PrivacySettings {
+        mode: "stealth".to_string(),
+    });
+    
+    let mut std_no_sig = standard.clone();
+    std_no_sig.signature = None;
+    let new_hash = get_hash(to_canonical_json(&std_no_sig).unwrap());
+    voucher.voucher_standard.standard_definition_hash = new_hash;
+
+    // Recalculate Voucher ID for Stealth
+    let mut voucher_header = voucher.clone();
+    voucher_header.voucher_id = "".to_string();
+    voucher_header.transactions = vec![];
+    voucher_header.signatures = vec![];
+    let new_voucher_id = get_hash(to_canonical_json(&voucher_header).unwrap());
+    voucher.voucher_id = new_voucher_id.clone();
+    
+    // Truncate to Init Only
+    voucher.transactions.truncate(1);
+
+    // Modify Init to allow Stealth Spending (Set ephemeral hash we know)
+    let secret_key = "secret_key_for_stealth";
+    let secret_key_hash = get_hash(secret_key);
+    
+    // We KEEP recipient_id as Creator (Public) to pass Init rules.
+    voucher.transactions[0].receiver_ephemeral_pub_hash = Some(secret_key_hash.clone());
+    voucher.transactions[0].prev_hash = get_hash(format!("{}{}", new_voucher_id, voucher.voucher_nonce));
+    
+    let genesis_hash = get_hash(to_canonical_json(&voucher.transactions[0]).unwrap());
+    let amount = voucher.transactions[0].amount.clone();
+
+    // Add Stealth Transfer Transaction
+    let mut tx_1 = Transaction {
+        t_id: "stub_stealth".to_string(), 
+        prev_hash: genesis_hash,
+        t_time: get_current_timestamp(),
+        t_type: "transfer".to_string(),
+        amount: amount, // Must match exactly
+        sender_id: None, // Correct for Stealth
+        recipient_id: "hash_of_next_key".to_string(), // Correct for Stealth
+        sender_ephemeral_pub: Some(secret_key.to_string()), // Reveals key -> Links to Init
+        ..Default::default()
+    };
+    
+    // We intentionally violate rule first: Add sender_id
+    tx_1.sender_id = Some("did:key:fail".to_string());
+    voucher.transactions.push(tx_1);
+
+    human_money_core::set_signature_bypass(true);
+    let result = validate_voucher_against_standard(&voucher, &standard);
+    
+    assert!(result.is_err(), "Stealth mode must reject cleartext sender_id");
+    
+    // Fix it
+    let last_idx = voucher.transactions.len() - 1;
+    voucher.transactions[last_idx].sender_id = None;
+    
+    let result_ok = validate_voucher_against_standard(&voucher, &standard);
+    if let Err(e) = &result_ok {
+        panic!("Validation failed: {:?}", e);
+    }
+    assert!(result_ok.is_ok(), "Stealth mode should accept anonymous sender");
+
+    human_money_core::set_signature_bypass(false);
+}
+
+#[test]
+fn test_flexible_mode_hybrid_behavior() {
+    let (standard_ref, _hash, _creator, _recipient, mut voucher, _secrets) = setup_voucher_with_one_tx();
+    let mut standard = standard_ref.clone();
+    
+    standard.privacy = Some(PrivacySettings {
+        mode: "flexible".to_string(),
+    });
+    let mut std_no_sig = standard.clone();
+    std_no_sig.signature = None;
+    let new_hash = get_hash(to_canonical_json(&std_no_sig).unwrap());
+    voucher.voucher_standard.standard_definition_hash = new_hash;
+
+    // Recalculate Voucher ID for Flexible
+    let mut voucher_header = voucher.clone();
+    voucher_header.voucher_id = "".to_string();
+    voucher_header.transactions = vec![];
+    voucher_header.signatures = vec![];
+    let new_voucher_id = get_hash(to_canonical_json(&voucher_header).unwrap());
+    voucher.voucher_id = new_voucher_id.clone();
+    
+    // Truncate
+    voucher.transactions.truncate(1);
+
+    // Mod Init for Linking
+    let secret = "secret_link_flex";
+    let secret_hash = get_hash(secret);
+    voucher.transactions[0].receiver_ephemeral_pub_hash = Some(secret_hash);
+
+    voucher.transactions[0].prev_hash = get_hash(format!("{}{}", new_voucher_id, voucher.voucher_nonce));
+    let genesis_hash = get_hash(to_canonical_json(&voucher.transactions[0]).unwrap());
+    let amount = voucher.transactions[0].amount.clone();
+
+    // Add Transfer Transaction
+    let tx_1 = Transaction {
+        t_id: "stub_flex".to_string(),
+        prev_hash: genesis_hash,
+        t_time: get_current_timestamp(),
+        t_type: "transfer".to_string(),
+        amount: amount,
+        sender_id: Some(voucher.transactions[0].recipient_id.clone()), // Valid Sender (Public)
+        recipient_id: "did:key:recipient".to_string(),
+        sender_ephemeral_pub: Some(secret.to_string()),
+        receiver_ephemeral_pub_hash: Some("some_hash".to_string()), 
+        ..Default::default()
+    };
+    voucher.transactions.push(tx_1);
+    
+    human_money_core::set_signature_bypass(true);
+    let result = validate_voucher_against_standard(&voucher, &standard);
+    if let Err(e) = &result {
+        panic!("Validation failed: {:?}", e);
+    }
+    assert!(result.is_ok()); 
+    
+    human_money_core::set_signature_bypass(false);
+}

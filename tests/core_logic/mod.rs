@@ -17,3 +17,4 @@ pub mod lifecycle;
 pub mod math;
 pub mod security;
 pub mod privacy_modes;
+pub mod flow_integrity;
