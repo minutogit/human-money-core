@@ -456,6 +456,11 @@ pub fn get_value_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> 
 
 /// Hilfsfunktion, die prüft, ob eine einzelne zusätzliche Signatur gültig ist. Gibt bool zurück.
 fn is_signature_valid(signature_obj: &VoucherSignature) -> Result<(), ValidationError> {
+    #[cfg(feature = "test-utils")]
+    if crate::is_signature_bypass_active() {
+        return Ok(());
+    }
+
     let mut obj_to_verify = signature_obj.clone();
     obj_to_verify.signature_id = "".to_string();
     obj_to_verify.signature = "".to_string();
@@ -944,6 +949,11 @@ fn verify_transaction_basics(
 fn verify_transaction_integrity_and_signature(
     transaction: &Transaction,
 ) -> Result<(), VoucherCoreError> {
+    #[cfg(feature = "test-utils")]
+    if crate::is_signature_bypass_active() {
+        return Ok(());
+    }
+
     // 1. Basis-Integrität prüfen (t_id Berechnung)
     let mut tx_for_tid_calc = transaction.clone();
 

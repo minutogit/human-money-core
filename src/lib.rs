@@ -44,6 +44,42 @@ pub use services::voucher_manager::{
 };
 pub use services::voucher_validation::validate_voucher_against_standard;
 
+// =========================================================================
+//  SAFETY FUSE & TEST UTILITIES
+// =========================================================================
+
+// 1. COMPILE-TIME BOMB
+// Verhindert physikalisch, dass ein Release-Build mit aktiven Test-Tools erstellt wird.
+// Wenn dieser Fehler auftritt, wurde versucht 'test-utils' im Release-Mode zu nutzen -> VERBOTEN.
+#[cfg(all(not(debug_assertions), feature = "test-utils"))]
+compile_error!("CRITICAL SECURITY FAILURE: The 'test-utils' feature is enabled in a release build! This disables signature verification capabilities. Build aborted.");
+
+// 2. THREAD-LOCAL BYPASS STATE
+#[cfg(feature = "test-utils")]
+use std::cell::Cell;
+
+#[cfg(feature = "test-utils")]
+thread_local! {
+    /// Speichert den Bypass-Status exklusiv für den aktuellen Thread.
+    /// Standard: false (Sicherheit aktiv).
+    static SIGNATURE_BYPASS_ACTIVE: Cell<bool> = Cell::new(false);
+}
+
+// 3. PUBLIC API (Nur verfügbar mit feature="test-utils")
+
+/// Aktiviert (true) oder deaktiviert (false) die Signaturprüfung für den aktuellen Thread.
+/// Nutze dies NUR in Integration-Tests.
+#[cfg(feature = "test-utils")]
+pub fn set_signature_bypass(bypass: bool) {
+    SIGNATURE_BYPASS_ACTIVE.with(|f| f.set(bypass));
+}
+
+/// Prüft, ob der Bypass für den aktuellen Thread aktiv ist.
+#[cfg(feature = "test-utils")]
+pub fn is_signature_bypass_active() -> bool {
+    SIGNATURE_BYPASS_ACTIVE.with(|f| f.get())
+}
+
 // Macht das Test-Modul für alle Tests (intern und extern) verfügbar.
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

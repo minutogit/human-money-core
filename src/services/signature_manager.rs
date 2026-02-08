@@ -145,6 +145,18 @@ pub fn complete_and_sign_detached_signature(
 pub fn validate_detached_signature(
     signature_data: &DetachedSignature,
 ) -> Result<(), VoucherCoreError> {
+    // --- BYPASS CHECK START ---
+    #[cfg(feature = "test-utils")]
+    {
+        if crate::is_signature_bypass_active() {
+            // Warnung ausgeben (nur sichtbar mit --nocapture oder bei Fehler),
+            // damit man beim Debuggen weiß, was passiert.
+            // eprintln!("[TEST-MODE] WARNUNG: Signaturprüfung übersprungen.");
+            return Ok(());
+        }
+    }
+    // --- BYPASS CHECK END ---
+
     let (mut sig_obj_to_verify, signer_id, expected_sig_id, signature_b58) = match signature_data {
         DetachedSignature::Signature(sig) => (
             serde_json::to_value(sig)?,

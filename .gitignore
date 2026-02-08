@@ -1,8 +1,9 @@
 /target
 runtest.sh
 todo.md
-.idea/workspace.xml
-.idea/vcs.xml
+.idea/
+.agent/
 /.qwen
 /.opencode/
 /.opencode/agent/
+
