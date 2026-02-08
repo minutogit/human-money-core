@@ -300,15 +300,15 @@ Der Proof beweist die Kenntnis von $m$ für die Relation $V - ID = m \cdot U$, o
 ```rust
 #[derive(Serialize, Deserialize)]
 struct TrapData {
-    /// Challenge U (Fiat-Shamir).
+    /// Challenge U (Fiat-Shamir) -> Feldname: ds_tag
     /// Deterministischer Hash der öffentlichen Transaktionsdaten auf einen Kurvenpunkt (Hash-to-Curve).
     /// u = HashToCurve(prev_hash + sender_ephemeral_pub + receiver_ephemeral_pub_hash + amount + prefix)
     /// Verfahren: SHA-512 Hash -> Elligator2 oder deterministisches Mapping auf validen Ed25519 Punkt.
     /// Damit wird garantiert, dass alle Clients denselben Punkt U berechnen.
-    u: String,
+    ds_tag: String,
     
-    /// Response (V = m*U + ID)
-    v: String,
+    /// Response (V = m*U + ID) -> Feldname: blinded_id
+    blinded_id: String,
     
     /// Der kryptographische Beweis (Schnorr-Signatur über U).
     /// Beweist: "Ich kenne m, sodass V = m*U + ID".
@@ -438,7 +438,7 @@ Der DS-Tag darf **ausschließlich** von den **Input-Daten** abhängen (Was gebe 
 *Würde der Betrag in den Tag einfließen, könnte ein Angreifer denselben Input zweimal mit unterschiedlichen Beträgen ausgeben, ohne dass die Tags kollidieren.*
 
 **Die korrekte Berechnung:**
-Der Tag identifiziert eindeutig den *Verbrauch* eines spezifischen Ankers.
+Der Tag identifiziert eindeutig den *Verbrauch* eines spezifischen Ankers. Im Code wird dieses Feld als `ds_tag` bezeichnet.
 
 $$u = HashToCurve(prev\_hash + sender\_ephemeral\_pub + prefix)$$
 
@@ -472,13 +472,16 @@ Dies beweist, dass derselbe Input-Key für dieselbe Quelle mehrfach verwendet wu
 ```rust
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TransactionFingerprint {
-    pub tag: [u8; 32],
+    /// Der Double-Spend-Tag (entspricht mathematisch U)
+    pub ds_tag: String,
     
-    /// Deterministischer Basis-Punkt U
-    pub u: [u8; 32],
+    /// Die Transaktions-ID
+    pub t_id: String,
     
-    /// V = m*U + ID (Enthält die Identität versteckt)
-    pub v: [u8; 32],
+    /// Verschlüsselter Zeitstempel
+    pub encrypted_timestamp: u128,
+
+    // ... weitere Felder wie signature, valid_until
 }
 ```
 

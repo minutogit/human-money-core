@@ -96,8 +96,8 @@ pub fn generate_trap(
     let s = r + (c * m);
 
     // Serialisierung für Transport (Base58)
-    let u_str = bs58::encode(u.compress().as_bytes()).into_string();
-    let v_str = bs58::encode(v.compress().as_bytes()).into_string();
+    let ds_tag_str = bs58::encode(u.compress().as_bytes()).into_string();
+    let blinded_id_str = bs58::encode(v.compress().as_bytes()).into_string();
     
     // Proof als Tupel (R, s) serialisiert
     // Format: [32 bytes R compressed] || [32 bytes s]
@@ -107,8 +107,8 @@ pub fn generate_trap(
     let proof_str = bs58::encode(proof_bytes).into_string();
 
     Ok(TrapData {
-        u: u_str,
-        v: v_str,
+        ds_tag: ds_tag_str,
+        blinded_id: blinded_id_str,
         proof: proof_str,
     })
 }
@@ -127,21 +127,21 @@ pub fn generate_trap(
 /// Ok(()), wenn der Proof gültig ist.
 pub fn verify_trap(
     trap_data: &TrapData,
-    expected_u_input: &[u8],
+    expected_ds_tag_input: &[u8],
     signer_id_point: &EdwardsPoint,
     prefix: &str,
 ) -> Result<(), VoucherCoreError> {
-    // 1. Parse U, V from Base58
-    let u_bytes = bs58::decode(&trap_data.u).into_vec().map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
-    let v_bytes = bs58::decode(&trap_data.v).into_vec().map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+    // 1. Parse DS-Tag, Blinded-ID from Base58
+    let ds_tag_bytes = bs58::decode(&trap_data.ds_tag).into_vec().map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+    let blinded_id_bytes = bs58::decode(&trap_data.blinded_id).into_vec().map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
     
-    let u = CompressedEdwardsY::from_slice(&u_bytes).map_err(|_| VoucherCoreError::Crypto("Invalid point U".to_string()))?.decompress().ok_or(VoucherCoreError::Crypto("Decompression U failed".to_string()))?;
-    let v = CompressedEdwardsY::from_slice(&v_bytes).map_err(|_| VoucherCoreError::Crypto("Invalid point V".to_string()))?.decompress().ok_or(VoucherCoreError::Crypto("Decompression V failed".to_string()))?;
+    let u = CompressedEdwardsY::from_slice(&ds_tag_bytes).map_err(|_| VoucherCoreError::Crypto("Invalid DS-Tag (U)".to_string()))?.decompress().ok_or(VoucherCoreError::Crypto("Decompression DS-Tag failed".to_string()))?;
+    let v = CompressedEdwardsY::from_slice(&blinded_id_bytes).map_err(|_| VoucherCoreError::Crypto("Invalid Blinded-ID (V)".to_string()))?.decompress().ok_or(VoucherCoreError::Crypto("Decompression Blinded-ID failed".to_string()))?;
 
-    // 2. Check U consistency
-    let calculated_u = hash_to_curve(expected_u_input);
+    // 2. Check DS-Tag consistency
+    let calculated_u = hash_to_curve(expected_ds_tag_input);
     if u != calculated_u {
-        return Err(VoucherCoreError::Crypto("Trap U does not match transaction data".to_string()));
+        return Err(VoucherCoreError::Crypto("Trap DS-Tag does not match transaction data".to_string()));
     }
 
     // 3. Parse Proof (R, s)

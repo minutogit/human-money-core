@@ -54,9 +54,9 @@ Die `human_money_core`-Bibliothek ist so optimiert, dass eine übergeordnete Anw
 
 Um einen Double-Spend global zu erkennen, muss ein Server wissen, ob ein Sender versucht, von demselben Zustand (`prev_hash`) zweimal auszugeben. Um dabei die Anonymität zu wahren, wird ein anonymer "Fingerabdruck" erzeugt.
 
-- **Fingerabdruck-ID:** `prvhash_senderid_hash` = `hash(prev_hash + sender_id)`.
+- **Fingerabdruck-ID:** `ds_tag` = `hash(prev_hash + sender_id)`.
 - **Server-Upload:** Ein Client lädt ein **`TransactionFingerprint`**-Objekt an den Server hoch. Es enthält:
-  - `prvhash_senderid_hash`: Die anonyme ID des Sendevorgangs.
+  - `ds_tag`: Die anonyme ID des Sendevorgangs.
   - `t_id`: Die ID der spezifischen Transaktion.
   - `sender_signature`: Der kryptographische Beweis.
   - `encrypted_timestamp`: Ein verschlüsselter Zeitstempel.
@@ -79,7 +79,7 @@ Der Schlüssel zur neuen, verbesserten Methode ist der **verschlüsselte Zeitste
 
 ### Erkennung und Beweisführung (Neues Schema)
 
-Ein Double-Spend hat stattgefunden, wenn der Server einen Fingerprint für einen `prvhash_senderid_hash` erhält, für den bereits ein Eintrag mit einer anderen `t_id` existiert.
+Ein Double-Spend hat stattgefunden, wenn der Server einen Fingerprint für einen `ds_tag` erhält, für den bereits ein Eintrag mit einer anderen `t_id` existiert.
 
 - **Alarm:** Der Server schlägt Alarm und sendet den bereits existierenden Fingerprint als Beweis zurück.
 - **Lokale Verifizierung:** Der Client des Opfers hat nun zwei widersprüchliche Transaktionen. Er kann:

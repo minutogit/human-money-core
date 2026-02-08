@@ -64,7 +64,7 @@ Wenn ein Nutzer versucht, einen Gutschein auszugeben, wird die entsprechende Vou
 
 Die eigentliche Prüfung findet statt, wenn ein Wallet ein Bundle von einem anderen Nutzer empfängt (process_encrypted_transaction_bundle).
 
-**Fingerprint-Scan:** Nach dem Hinzufügen des neuen Gutscheins zum Speicher wird ein Scan aller Transaktionen im Wallet durchgeführt. Für jede Transaktion wird ein anonymer Fingerabdruck (prvhash_senderid_hash) erzeugt.
+**Fingerprint-Scan:** Nach dem Hinzufügen des neuen Gutscheins zum Speicher wird ein Scan aller Transaktionen im Wallet durchgeführt. Für jede Transaktion wird ein anonymer Fingerabdruck (ds_tag) erzeugt.
 
 **Konflikterkennung:** Das System prüft, ob für einen Fingerabdruck mehrere Transaktionen mit unterschiedlichen IDs (t_id) existieren. Ist dies der Fall, liegt ein Double-Spend-Konflikt vor.
 

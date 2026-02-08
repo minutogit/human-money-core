@@ -37,7 +37,7 @@ fn setup_test_wallet(identity: &UserIdentity, _name: &str, _storage_dir: &Path) 
 /// Erstellt einen leeren Fingerprint für Testzwecke.
 fn new_dummy_fingerprint(t_id: &str) -> TransactionFingerprint {
     TransactionFingerprint {
-        prvhash_senderid_hash: "".to_string(),
+        ds_tag: "".to_string(),
         t_id: t_id.to_string(),
         encrypted_timestamp: 0,
         sender_signature: "".to_string(),
@@ -180,7 +180,7 @@ fn test_fingerprint_exchange() {
 
     // Setup: Erzeuge Fingerprints im Sender-Wallet
     let mut fp1 = new_dummy_fingerprint("t1");
-    fp1.prvhash_senderid_hash = "hash1".to_string();
+    fp1.ds_tag = "hash1".to_string();
     sender_wallet
         .own_fingerprints
         .history

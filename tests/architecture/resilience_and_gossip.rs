@@ -42,7 +42,7 @@ mod tests {
     ) -> Vec<u8> {
         let (fprints, depths): (Vec<_>, HashMap<_, _>) = fingerprints
             .into_iter()
-            .map(|(fp, depth)| (fp.clone(), (fp.prvhash_senderid_hash, depth)))
+            .map(|(fp, depth)| (fp.clone(), (fp.ds_tag, depth)))
             .unzip();
 
         let forwarded_fingerprints = fprints;
@@ -90,14 +90,14 @@ mod tests {
         let expired_date = (now - Duration::days(1)).to_rfc3339();
         let valid_date = (now + Duration::days(1)).to_rfc3339();
         let expired_fp = TransactionFingerprint {
-            prvhash_senderid_hash: "expired_key".to_string(),
+            ds_tag: "expired_key".to_string(),
             valid_until: expired_date,
             t_id: String::new(),
             encrypted_timestamp: 0,
             sender_signature: String::new(),
         };
         let valid_fp = TransactionFingerprint {
-            prvhash_senderid_hash: "valid_key".to_string(),
+            ds_tag: "valid_key".to_string(),
             valid_until: valid_date,
             t_id: String::new(),
             encrypted_timestamp: 0,
@@ -153,7 +153,7 @@ mod tests {
         for i in 0..12 {
             let key = format!("key_{}", i);
             let fp = TransactionFingerprint {
-                prvhash_senderid_hash: key.clone(),
+                ds_tag: key.clone(),
                 t_id: format!("tx_{:02}", i), // Padding für korrekte lexikalische Sortierung
                 encrypted_timestamp: 0,
                 sender_signature: String::new(),
@@ -532,7 +532,7 @@ mod tests {
 
         let fp_key = "test_fp_key".to_string();
         let fingerprint = TransactionFingerprint {
-            prvhash_senderid_hash: fp_key.clone(),
+            ds_tag: fp_key.clone(),
             t_id: String::new(),
             encrypted_timestamp: 0,
             sender_signature: String::new(),
@@ -617,7 +617,7 @@ mod tests {
             .unwrap();
         let fp_key = "test_fp_key".to_string();
         let fingerprint = TransactionFingerprint {
-            prvhash_senderid_hash: fp_key.clone(),
+            ds_tag: fp_key.clone(),
             t_id: String::new(),
             encrypted_timestamp: 0,
             sender_signature: String::new(),
@@ -779,7 +779,7 @@ mod tests {
         for i in 0..5 {
             let key = format!("key_{}", i);
             let fp = TransactionFingerprint {
-                prvhash_senderid_hash: key.clone(),
+                ds_tag: key.clone(),
                 t_id: String::new(),
                 encrypted_timestamp: 0,
                 sender_signature: String::new(),
@@ -844,7 +844,7 @@ mod tests {
             .map(|fp| {
                 bundle
                     .fingerprint_depths
-                    .get(&fp.prvhash_senderid_hash)
+                    .get(&fp.ds_tag)
                     .unwrap()
                     .clone()
             })
@@ -885,7 +885,7 @@ mod tests {
         let (wallet, alice_identity) = alice_service.get_unlocked_mut_for_test();
         let key = "key_already_known".to_string();
         let fp = TransactionFingerprint {
-            prvhash_senderid_hash: key.clone(),
+            ds_tag: key.clone(),
             t_id: String::new(),
             encrypted_timestamp: 0,
             sender_signature: String::new(),
@@ -961,7 +961,7 @@ mod tests {
         for i in 0..200 {
             let key = format!("key_{}", i);
             let fp = TransactionFingerprint {
-                prvhash_senderid_hash: key.clone(),
+                ds_tag: key.clone(),
                 t_id: String::new(),
                 encrypted_timestamp: 0,
                 sender_signature: String::new(),

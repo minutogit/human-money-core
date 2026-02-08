@@ -16,12 +16,12 @@ use std::collections::{HashMap, HashSet};
 /// nachzuweisen und abgelaufene Fingerprints zu verwalten.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TransactionFingerprint {
-    /// Der kryptographische Hash von `prev_hash + sender_id`.
+    /// Der Double-Spend-Tag (DS-Tag).
     /// Dies ist der primäre Schlüssel, um potenzielle Konflikte zu gruppieren.
-    pub prvhash_senderid_hash: String,
+    pub ds_tag: String,
 
     /// Die eindeutige ID der Transaktion (`t_id`). Ein abweichender Wert hier bei
-    /// identischem `prvhash_senderid_hash` signalisiert einen Double Spend.
+    /// identischem `ds_tag` signalisiert einen Double Spend.
     pub t_id: String,
 
     /// Der verschlüsselte Zeitstempel der Transaktion in Nanosekunden.
@@ -91,7 +91,7 @@ pub struct FingerprintMetadata {
 
 /// Der zentrale, kanonische Speicher für alle dynamischen Fingerprint-Metadaten.
 /// Der Schlüssel ist die eindeutige ID des `TransactionFingerprint`
-/// (`prvhash_senderid_hash`), um eine 1:1-Beziehung sicherzustellen.
+/// (`ds_tag`), um eine 1:1-Beziehung sicherzustellen.
 pub type CanonicalMetadataStore = HashMap<String, FingerprintMetadata>;
 
 //==============================================================================

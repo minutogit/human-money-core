@@ -459,7 +459,7 @@ impl Wallet {
         let history_entry = self
             .own_fingerprints
             .history
-            .entry(fingerprint.prvhash_senderid_hash.clone())
+            .entry(fingerprint.ds_tag.clone())
             .or_default();
         if !history_entry.contains(&fingerprint) {
             history_entry.push(fingerprint.clone());

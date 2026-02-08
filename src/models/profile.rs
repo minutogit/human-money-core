@@ -92,7 +92,7 @@ pub struct TransactionBundle {
     pub forwarded_fingerprints: Vec<TransactionFingerprint>,
 
     /// Die zugehörigen 'depth'-Werte für die weitergeleiteten Fingerprints.
-    /// Key: prvhash_senderid_hash des Fingerprints.
+    /// Key: ds_tag des Fingerprints.
     #[serde(default)]
     pub fingerprint_depths: HashMap<String, u8>,
 

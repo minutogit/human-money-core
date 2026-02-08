@@ -39,7 +39,7 @@ mod tests {
         let key = "expired_key".to_string();
 
         let expired_fp = TransactionFingerprint {
-            prvhash_senderid_hash: key.clone(),
+            ds_tag: key.clone(),
             valid_until: expired_date,
             t_id: String::new(),
             encrypted_timestamp: 0,

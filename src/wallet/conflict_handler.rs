@@ -268,7 +268,7 @@ impl Wallet {
 
             // Berechne den relevanten Fingerprint (die "Kollisions-ID")
             let fingerprint = conflict_manager::create_fingerprint_for_transaction(last_tx, voucher)?;
-            let fingerprint_hash = fingerprint.prvhash_senderid_hash;
+            let fingerprint_hash = fingerprint.ds_tag;
 
             // --- KORRIGIERTE LOGIK: Unterscheide Replay vs. Double Spend ---
 
@@ -351,7 +351,7 @@ impl Wallet {
                     conflict_manager::create_fingerprint_for_transaction(tx, voucher)?;
                 if let Some(meta) = self
                     .fingerprint_metadata
-                    .get_mut(&fingerprint.prvhash_senderid_hash)
+                    .get_mut(&fingerprint.ds_tag)
                 {
                     meta.known_by_peers.insert(recipient_short_hash);
                 }
@@ -376,14 +376,14 @@ impl Wallet {
 
         // Um eine deterministische (wenngleich nicht perfekt zufällige) Auswahl zu gewährleisten, sortieren wir.
         all_known_fingerprints
-            .sort_by(|a, b| a.prvhash_senderid_hash.cmp(&b.prvhash_senderid_hash));
+            .sort_by(|a, b| a.ds_tag.cmp(&b.ds_tag));
 
         let mut current_depth = 0;
         while selected_fingerprints.len() < MAX_FINGERPRINTS_TO_SEND {
             let mut candidates_at_depth: Vec<_> = all_known_fingerprints
                 .iter()
                 .filter(|fp| {
-                    if let Some(meta) = self.fingerprint_metadata.get(&fp.prvhash_senderid_hash) {
+                    if let Some(meta) = self.fingerprint_metadata.get(&fp.ds_tag) {
                         // Kriterien: Korrekte Tiefe UND Empfänger kennt ihn noch nicht
                         meta.depth == current_depth
                             && !meta.known_by_peers.contains(&recipient_short_hash)
@@ -403,10 +403,10 @@ impl Wallet {
 
             for fp in candidates_at_depth {
                 // Metadaten aktualisieren: Empfänger als "wissend" markieren
-                if let Some(meta) = self.fingerprint_metadata.get_mut(&fp.prvhash_senderid_hash) {
+                if let Some(meta) = self.fingerprint_metadata.get_mut(&fp.ds_tag) {
                     meta.known_by_peers.insert(recipient_short_hash);
                     selected_fingerprints.push(fp.clone());
-                    selected_depths.insert(fp.prvhash_senderid_hash.clone(), meta.depth);
+                    selected_depths.insert(fp.ds_tag.clone(), meta.depth);
                 }
             }
             current_depth += 1;
@@ -429,16 +429,14 @@ impl Wallet {
         // Phase 1: Aktiver Austausch (aus dem Bundle) - Min-Merge-Regel
         for fp in forwarded_fingerprints {
             let received_depth = fingerprint_depths
-                .get(&fp.prvhash_senderid_hash)
+                .get(&fp.ds_tag)
                 .cloned()
                 .unwrap_or(u8::MAX);
             let new_depth = received_depth.saturating_add(1);
-
             let meta = self
                 .fingerprint_metadata
-                .entry(fp.prvhash_senderid_hash.clone())
+                .entry(fp.ds_tag.clone())
                 .or_default();
-
             // Min-Merge: Behalte den kleineren (besseren) depth-Wert
             if new_depth < meta.depth || meta.depth == 0 {
                 // 0 ist der Default-Wert
@@ -459,7 +457,7 @@ impl Wallet {
 
                 let meta = self
                     .fingerprint_metadata
-                    .entry(fingerprint.prvhash_senderid_hash.clone())
+                    .entry(fingerprint.ds_tag.clone())
                     .or_insert_with(FingerprintMetadata::default);
 
                 // Nur initialisieren, wenn der Wert noch nicht durch aktiven Austausch gesetzt wurde

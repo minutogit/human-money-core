@@ -69,8 +69,8 @@ pub struct Address {
 /// Daten für die Identity-Trap (Betrugserkennung).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct TrapData {
-    pub u: String,
-    pub v: String,
+    pub ds_tag: String,
+    pub blinded_id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub proof: String,
 }

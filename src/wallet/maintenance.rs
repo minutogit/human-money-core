@@ -71,7 +71,7 @@ impl Wallet {
         {
             if let Ok(valid_until) = DateTime::parse_from_rfc3339(&fp.valid_until) {
                 if valid_until.with_timezone(&Utc) < now {
-                    expired_keys.insert(fp.prvhash_senderid_hash.clone());
+                    expired_keys.insert(fp.ds_tag.clone());
                 }
             }
         }
@@ -119,13 +119,13 @@ impl Wallet {
                 );
 
             for fp in all_fingerprints {
-                if let Some(meta) = self.fingerprint_metadata.get(&fp.prvhash_senderid_hash) {
+                if let Some(meta) = self.fingerprint_metadata.get(&fp.ds_tag) {
                     // Wir verwenden die `t_id` als deterministischen Tie-Breaker anstelle des
                     // nicht verfügbaren `t_time`, um eine ineffiziente Entschlüsselung zu vermeiden.
                     candidates_for_removal.push((
                         meta.depth,
                         fp.t_id.clone(),
-                        fp.prvhash_senderid_hash.clone(),
+                        fp.ds_tag.clone(),
                     ));
                 }
             }
@@ -227,7 +227,7 @@ impl Wallet {
                     let entry = self
                         .own_fingerprints
                         .history
-                        .entry(fingerprint.prvhash_senderid_hash.clone())
+                        .entry(fingerprint.ds_tag.clone())
                         .or_default();
                     if !entry.contains(&fingerprint) {
                         entry.push(fingerprint.clone());
@@ -236,7 +236,7 @@ impl Wallet {
                     let entry = self
                         .known_fingerprints
                         .local_history
-                        .entry(fingerprint.prvhash_senderid_hash.clone())
+                        .entry(fingerprint.ds_tag.clone())
                         .or_default();
                     if !entry.contains(&fingerprint) {
                         entry.push(fingerprint.clone());
@@ -247,7 +247,7 @@ impl Wallet {
                 let depth_in_chain = (tx_count - 1 - i) as u8;
                 let meta = self
                     .fingerprint_metadata
-                    .entry(fingerprint.prvhash_senderid_hash)
+                    .entry(fingerprint.ds_tag)
                     .or_insert_with(FingerprintMetadata::default);
 
                 // Wende die "geringste depth gewinnt"-Regel an. Ein kleinerer Wert bedeutet
