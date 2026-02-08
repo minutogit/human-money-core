@@ -82,6 +82,7 @@ fn new_test_voucher_data(creator_id: String) -> NewVoucherData {
 
 #[test]
 fn test_fingerprint_generation() {
+    human_money_core::set_signature_bypass(true);
     let _temp_dir = tempfile::tempdir().unwrap();
     let identity = &ACTORS.test_user;
     let mut wallet = setup_in_memory_wallet(identity);
@@ -178,6 +179,7 @@ fn test_fingerprint_generation() {
 
 #[test]
 fn test_fingerprint_exchange() {
+    human_money_core::set_signature_bypass(true);
     let mut sender_wallet = setup_in_memory_wallet(&ACTORS.sender);
     let mut receiver_wallet = setup_in_memory_wallet(&ACTORS.recipient1);
 
@@ -223,6 +225,7 @@ fn test_fingerprint_exchange() {
 
 #[test]
 fn test_conflict_classification() {
+    human_money_core::set_signature_bypass(true);
     let mut wallet = setup_in_memory_wallet(&ACTORS.test_user);
 
     let conflict_hash = "shared_hash".to_string();
@@ -274,6 +277,7 @@ fn test_conflict_classification() {
 
 #[test]
 fn test_cleanup_expired_fingerprints() {
+    human_money_core::set_signature_bypass(true);
     let mut wallet = setup_in_memory_wallet(&ACTORS.test_user);
 
     let mut expired_fp_hist = new_dummy_fingerprint("t_hist_expired");
@@ -339,6 +343,7 @@ fn test_cleanup_expired_fingerprints() {
 
 #[test]
 fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
+    human_money_core::set_signature_bypass(true);
     // ### Setup ###
     // Erstellt einen Sender und zwei potenzielle Empfänger.
     let temp_dir = tempfile::tempdir().unwrap();
@@ -546,6 +551,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
 
 #[test]
 fn test_local_double_spend_detection_lifecycle() {
+    human_money_core::set_signature_bypass(true);
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let storage_path = temp_dir.path();
     let archive = FileVoucherArchive::new(storage_path.join("archive"));

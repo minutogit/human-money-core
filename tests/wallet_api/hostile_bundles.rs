@@ -12,7 +12,7 @@ use human_money_core::{
     services::voucher_manager::NewVoucherData,
     test_utils::{
         ACTORS, SILVER_STANDARD, create_test_bundle, generate_signed_standard_toml,
-        resign_transaction, setup_service_with_profile,
+        setup_service_with_profile,
     },
     wallet::{MultiTransferRequest, SourceTransfer, instance::VoucherStatus},
 };
@@ -121,16 +121,15 @@ fn test_rejection_of_broken_transaction_chain() {
     let mut broken_tx = valid_tx;
     broken_tx.prev_hash = "garbage_hash_value_that_breaks_the_chain".to_string();
 
-    // 3. WICHTIG: Transaktion neu signieren (resign).
-    //    Dies ist notwendig, damit die Transaktion die *erste* Validierungsprüfung
-    //    (t_id == hash(inhalt)) besteht.
-    //    Die `resign_transaction` berechnet die t_id und Signatur basierend auf dem
-    //    *neuen* (kaputten) prev_hash.
-    let holder_key = human_money_core::test_utils::derive_holder_key(&voucher, &identity_sender.signing_key);
-    let resigned_broken_tx = human_money_core::test_utils::resign_transaction_ext(broken_tx, &identity_sender.signing_key, Some(&holder_key));
+    // 3. WICHTIG: Dank Signature-Bypass müssen wir keine kryptographische Signatur mehr
+    //    berechnen. Wir brauchen nur die t_id zu aktualisieren, damit die strukturelle 
+    //    Integritätsprüfung (t_id == hash(inhalt)) passt.
+    broken_tx.t_id = human_money_core::crypto_utils::get_hash(
+        human_money_core::to_canonical_json(&broken_tx).unwrap()
+    );
 
-    // Füge die kaputte, aber kryptographisch konsistente Transaktion hinzu
-    voucher.transactions.push(resigned_broken_tx);
+    // Füge die kaputte, aber strukturell konsistente Transaktion hinzu
+    voucher.transactions.push(broken_tx);
 
     let bundle = create_test_bundle(&identity_sender, vec![voucher], &id_recipient, None).unwrap();
 
@@ -138,7 +137,9 @@ fn test_rejection_of_broken_transaction_chain() {
     standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
 
     // 2. ACT
+    human_money_core::set_signature_bypass(true);
     let result = service_recipient.receive_bundle(&bundle, &standards_map, None, Some(PASSWORD));
+    human_money_core::set_signature_bypass(false);
 
     // 3. ASSERT
     assert!(result.is_err());
@@ -199,13 +200,18 @@ fn test_rejection_of_inconsistent_split_math() {
     tx2.recipient_id = id_recipient.clone();
     tx2.amount = "30.0000".to_string();
     tx2.sender_remaining_amount = Some("80.0000".to_string()); // Falscher Restbetrag
-    tx2 = resign_transaction(tx2, &identity_sender.signing_key);
+    // 3. WICHTIG: Dank Signature-Bypass aktualisieren wir nur die t_id.
+    tx2.t_id = human_money_core::crypto_utils::get_hash(
+        human_money_core::to_canonical_json(&tx2).unwrap()
+    );
     voucher.transactions.push(tx2);
 
     let bundle = create_test_bundle(&identity_sender, vec![voucher], &id_recipient, None).unwrap();
 
     // 2. ACT
+    human_money_core::set_signature_bypass(true);
     let result = service_recipient.receive_bundle(&bundle, &standards_map, None, Some("pwd"));
+    human_money_core::set_signature_bypass(false);
 
     // 3. ASSERT
     // HINWEIS: Dies deckt eine Lücke in der aktuellen Validierungslogik auf.

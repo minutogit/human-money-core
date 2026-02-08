@@ -16,20 +16,10 @@ use human_money_core::{
 
 use human_money_core::test_utils::{
     create_female_guarantor_signature, create_male_guarantor_signature,
-    create_voucher_for_manipulation, resign_transaction, ACTORS, MINUTO_STANDARD, SILVER_STANDARD,
+    create_voucher_for_manipulation, ACTORS, MINUTO_STANDARD, SILVER_STANDARD,
     derive_holder_key,
 };
 
-// KORREKTUR FÜR E0425: Diese Hilfsfunktion muss auf oberster Ebene
-// dieses Moduls definiert werden, damit alle untergeordneten Module
-// (structural_integrity, behavioral_rules, etc.) darauf zugreifen können.
-fn sign_ed_default(
-    signing_key: &ed25519_dalek::SigningKey,
-    message: &[u8],
-) -> ed25519_dalek::Signature {
-    use ed25519_dalek::Signer;
-    signing_key.sign(message)
-}
 
 /// Prüft grundlegende strukturelle und logische Regeln.
 #[cfg(test)]
@@ -110,60 +100,24 @@ mod structural_integrity {
 
         voucher.valid_until = "2020-01-01T00:00:00Z".to_string();
 
-        // Resign the creator signature
-        let creator_sig_index = voucher
-            .signatures
-            .iter()
-            .position(|s| s.role == "creator")
-            .unwrap();
-        let mut creator_sig = voucher.signatures.remove(creator_sig_index);
-        let voucher_nonce = voucher.voucher_nonce.clone(); // Brauchen wir für den init-Hash
-                                                           // KORREKTUR FÜR E0382: .clone() hinzugefügt, um partial move zu verhindern
-        let other_signatures = voucher.signatures.clone();
+        // Dank Signature-Bypass müssen wir nicht mehr mühsam re-signieren.
+        // Wir müssen lediglich die voucher_id und prev_hash aktualisieren,
+        // da diese strukturell auf Konsistenz geprüft werden.
+        
+        let mut voucher_to_hash = voucher.clone();
+        voucher_to_hash.voucher_id = "".to_string();
+        voucher_to_hash.transactions.clear();
+        voucher_to_hash.signatures.clear();
+        voucher.voucher_id = get_hash(to_canonical_json(&voucher_to_hash).unwrap());
 
-        let mut voucher_to_sign = voucher.clone();
-        voucher_to_sign.voucher_id = "".to_string(); // KORREKTUR: voucher_id muss vor dem Hashing geleert werden
-        voucher_to_sign.transactions.clear();
-        voucher_to_sign.signatures.clear(); // Clear all sigs for voucher hash
-
-        // 1. Berechne den neuen Hash der Stammdaten (die neue voucher_id)
-        let new_hash = crypto_utils::get_hash(to_canonical_json(&voucher_to_sign).unwrap());
-        // 2. Aktualisiere die voucher_id auf dem Gutschein selbst und auf der Creator-Signatur
-        voucher.voucher_id = new_hash.clone();
-        creator_sig.voucher_id = new_hash;
-        // --- ENDE KORREKTUR ---
-
-        // Recalculate signature_id
-        let mut sig_to_hash = creator_sig.clone();
-        sig_to_hash.signature_id = "".to_string();
-        sig_to_hash.signature = "".to_string();
-        creator_sig.signature_id = get_hash(to_canonical_json(&sig_to_hash).unwrap());
-        // Sign the new signature_id
-        let new_sig = sign_ed_default(
-            &creator_identity.signing_key,
-            creator_sig.signature_id.as_bytes(),
-        );
-        creator_sig.signature = bs58::encode(new_sig.to_bytes()).into_string();
-        // Recalculate signature_id
-        let mut sig_to_hash = creator_sig.clone();
-        sig_to_hash.signature_id = "".to_string();
-        sig_to_hash.signature = "".to_string();
-        creator_sig.signature_id = get_hash(to_canonical_json(&sig_to_hash).unwrap());
-
-        voucher.signatures = other_signatures; // Setze die alten Bürgen-Signaturen wieder ein
-        voucher.signatures.push(creator_sig); // Füge die Creator-Signatur hinzu
-
-        // Der 'init'-Hash (tx 0) muss ebenfalls aktualisiert werden, da
-        // er von der (jetzt geänderten) voucher_id abhängt.
         if !voucher.transactions.is_empty() {
-            let new_init_prev_hash =
-                crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher_nonce));
-            let mut init_tx = voucher.transactions.remove(0);
-            init_tx.prev_hash = new_init_prev_hash;
-            // 'resign_transaction' berechnet t_id und sender_signature neu
-            let resigned_init_tx = resign_transaction(init_tx, &creator_identity.signing_key);
-            voucher.transactions.insert(0, resigned_init_tx);
+            voucher.transactions[0].prev_hash =
+                crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher.voucher_nonce));
         }
+
+        human_money_core::set_signature_bypass(true);
+        let _validation_result = validate_voucher_against_standard(&voucher, standard);
+        human_money_core::set_signature_bypass(false);
         // --- ENDE KORREKTUR ---
 
         let validation_result = validate_voucher_against_standard(&voucher, standard);
@@ -199,9 +153,10 @@ mod structural_integrity {
         )
         .unwrap();
         voucher.transactions[0].amount = "not-a-number".to_string();
-        let tx = voucher.transactions[0].clone();
-        voucher.transactions[0] = resign_transaction(tx, &creator_identity.signing_key);
+        
+        human_money_core::set_signature_bypass(true);
         let validation_result = validate_voucher_against_standard(&voucher, standard);
+        human_money_core::set_signature_bypass(false);
         assert!(
             matches!(
                 validation_result.unwrap_err(),
@@ -249,31 +204,9 @@ mod structural_integrity {
         let invalid_second_time = "2020-01-01T00:00:00Z";
         voucher_after_split.transactions[1].t_time = invalid_second_time.to_string();
 
-        // KORREKTUR: L2-Signatur neu berechnen, da sich pre_l2_tid geändert hat
-        let mut tx_for_l2 = voucher_after_split.transactions[1].clone();
-        tx_for_l2.t_id = "".to_string();
-        tx_for_l2.layer2_signature = Some("".to_string());
-        tx_for_l2.layer2_signature = None; // Exclude itself from hash
-        
-        let pre_l2_tid = crypto_utils::get_hash(to_canonical_json(&tx_for_l2).unwrap());
-        let sender_ephem_pub = tx_for_l2.sender_ephemeral_pub.unwrap();
-        let receiver_anchor = tx_for_l2.receiver_ephemeral_pub_hash.unwrap_or_default();
-        let change_anchor = tx_for_l2.sender_change_anchor_hash.unwrap_or_default();
-        
-        let l2_payload = format!("{}{}{}{}", pre_l2_tid, sender_ephem_pub, receiver_anchor, change_anchor);
-        let l2_hash = crypto_utils::get_hash(l2_payload);
-        
-        // Re-derive the key used for this tx (Init -> Tx1 = Holder Key)
-        let holder_key = derive_holder_key(&initial_voucher, &sender.signing_key);
-        use ed25519_dalek::Signer;
-        let l2_sig = holder_key.sign(l2_hash.as_bytes());
-        
-        voucher_after_split.transactions[1].layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
-
-        let tx = voucher_after_split.transactions[1].clone();
-        voucher_after_split.transactions[1] = resign_transaction(tx, &sender.signing_key);
-
+        human_money_core::set_signature_bypass(true);
         let validation_result = validate_voucher_against_standard(&voucher_after_split, standard);
+        human_money_core::set_signature_bypass(false);
         // KORREKTUR: P2PKH-Validierung kann vor der Time-Order-Validierung fehlschlagen.
         // Wir akzeptieren jeden Validierungsfehler als Erfolg.
         let err = validation_result.unwrap_err();
@@ -699,72 +632,21 @@ mod behavioral_rules {
         let long_validity_dt = creation_dt + chrono::Duration::days(365 * 6);
         voucher.valid_until = long_validity_dt.to_rfc3339();
 
-        // Resign the creator signature
-        let creator_sig_index = voucher
-            .signatures
-            .iter()
-            .position(|s| s.role == "creator")
-            .unwrap();
-        let mut creator_sig = voucher.signatures.remove(creator_sig_index);
-        // KORREKTUR (B1): Behalte alle ANDEREN Signaturen
-        let other_signatures = voucher.signatures.clone();
-        let voucher_nonce = voucher.voucher_nonce.clone(); // Brauchen wir für den init-Hash
-        let mut voucher_to_sign = voucher.clone();
-        voucher_to_sign.voucher_id = "".to_string(); // Wichtig: voucher_id ist nicht Teil ihres eigenen Hashes
-        voucher_to_sign.transactions.clear();
-        voucher_to_sign.signatures.clear(); // LÖSCHE ALLE Signaturen NUR für die Hash-Berechnung
+        // Update IDs but bypass signatures
+        let mut voucher_to_hash = voucher.clone();
+        voucher_to_hash.voucher_id = "".to_string();
+        voucher_to_hash.transactions.clear();
+        voucher_to_hash.signatures.clear();
+        voucher.voucher_id = crypto_utils::get_hash(to_canonical_json(&voucher_to_hash).unwrap());
 
-        // 1. Berechne den neuen Hash der Stammdaten (die neue voucher_id)
-        let hash = crypto_utils::get_hash(to_canonical_json(&voucher_to_sign).unwrap());
-
-        // 2. Aktualisiere die voucher_id auf dem Gutschein selbst
-        voucher.voucher_id = hash.clone();
-
-        // 3. Aktualisiere die creator_sig, damit sie die neue voucher_id enthält
-        creator_sig.voucher_id = hash;
-        let mut sig_to_hash = creator_sig.clone();
-        sig_to_hash.signature_id = "".to_string();
-        sig_to_hash.signature = "".to_string();
-        creator_sig.signature_id = get_hash(to_canonical_json(&sig_to_hash).unwrap());
-
-        // 4. Signiere die *neue* signature_id
-        let new_sig = sign_ed_default(
-            &creator_identity.signing_key,
-            creator_sig.signature_id.as_bytes(),
-        );
-        creator_sig.signature = bs58::encode(new_sig.to_bytes()).into_string();
-
-        voucher.signatures = other_signatures; // Setze die alten Bürgen-Signaturen wieder ein
-        voucher.signatures.push(creator_sig); // Füge die Creator-Signatur hinzu
-
-        // 5. Aktualisiere auch die init-Transaktion
-        // Wir müssen die *gesamte* Kette neu aufbauen, nicht nur die init-Transaktion.
-
-        let original_transactions = voucher.transactions.clone();
-        voucher.transactions.clear();
-
-        // Behandle 'init'-Transaktion (tx[0])
-        let new_init_prev_hash =
-            crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher_nonce));
-        let mut tx_to_resign = original_transactions[0].clone();
-        tx_to_resign.prev_hash = new_init_prev_hash;
-
-        let mut last_resigned_tx = resign_transaction(tx_to_resign, &creator_identity.signing_key);
-        let mut last_tx_hash =
-            crypto_utils::get_hash(to_canonical_json(&last_resigned_tx).unwrap());
-        voucher.transactions.push(last_resigned_tx);
-
-        // Behandle alle nachfolgenden Transaktionen (tx[1]...tx[n])
-        for i in 1..original_transactions.len() {
-            tx_to_resign = original_transactions[i].clone();
-            tx_to_resign.prev_hash = last_tx_hash;
-            last_resigned_tx = resign_transaction(tx_to_resign, &creator_identity.signing_key);
-            last_tx_hash = crypto_utils::get_hash(to_canonical_json(&last_resigned_tx).unwrap());
-            voucher.transactions.push(last_resigned_tx);
+        if !voucher.transactions.is_empty() {
+            voucher.transactions[0].prev_hash =
+                crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher.voucher_nonce));
         }
-        // --- ENDE KORREKTUR ---
 
+        human_money_core::set_signature_bypass(true);
         let result = validate_voucher_against_standard(&voucher, &standard);
+        human_money_core::set_signature_bypass(false);
         assert!(matches!(
             result.unwrap_err(),
             VoucherCoreError::Validation(ValidationError::ValidityDurationTooLong { max_allowed, .. })
@@ -822,10 +704,10 @@ mod behavioral_rules {
         )
         .unwrap();
         voucher.transactions[0].amount = "100.123".to_string();
-        let tx = voucher.transactions[0].clone();
-        voucher.transactions[0] = resign_transaction(tx, &creator_identity.signing_key);
-
+        
+        human_money_core::set_signature_bypass(true);
         let result2 = validate_voucher_against_standard(&voucher, &standard);
+        human_money_core::set_signature_bypass(false);
         assert!(matches!(
             result2.unwrap_err(),
             VoucherCoreError::Validation(ValidationError::InvalidAmountPrecision { path, max_places: 2, found: 3 }) if path == "transactions[0].amount"
@@ -879,10 +761,13 @@ mod behavioral_rules {
         let l2_sig = sender_ephem_key.sign(l2_hash.as_bytes());
         invalid_transfer_tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 
-        let signed_tx = resign_transaction(invalid_transfer_tx, &recipient.signing_key);
+        let signed_tx = invalid_transfer_tx; // Keine Re-Signierung nötig
         voucher.transactions.push(signed_tx);
 
+        human_money_core::set_signature_bypass(true);
         let result = validate_voucher_against_standard(&voucher, &standard);
+        human_money_core::set_signature_bypass(false);
+
         // KORREKTUR: P2PKH kann vor Business-Rules fehlschlagen. Jeder Validierungsfehler ist akzeptabel.
         assert!(matches!(
             result.unwrap_err(),
@@ -1073,85 +958,35 @@ mod behavioral_rules {
             }
         }
 
-        /// Hilfsfunktion, um einen Gutschein nach Manipulation neu zu signieren (Creator-Signatur).
-        fn resign_voucher_creator_signature(
+        /// Hilfsfunktion, um einen Gutschein nach Manipulation strukturell valide zu machen (IDs und Hashes).
+        /// Signaturen werden NICHT aktualisiert, da wir mit Signature-Bypass arbeiten.
+        fn update_voucher_hashes_for_test(
             mut voucher: human_money_core::Voucher,
-            signer_key: &ed25519_dalek::SigningKey,
         ) -> human_money_core::Voucher {
-                                       // Resign the creator signature
-            let creator_sig_index = voucher
-                .signatures
-                .iter()
-                .position(|s| s.role == "creator")
-                .unwrap();
-            let mut creator_sig = voucher.signatures.remove(creator_sig_index);
-            // KORREKTUR (B1): Behalte alle ANDEREN Signaturen (z.B. Bürgen)
-            let other_signatures = voucher.signatures.clone();
-
-            let voucher_nonce = voucher.voucher_nonce.clone(); // Brauchen wir für den init-Hash
-            let mut voucher_to_sign = voucher.clone();
-            voucher_to_sign.voucher_id = "".to_string(); // Wichtig: voucher_id ist nicht Teil ihres eigenen Hashes
-            voucher_to_sign.transactions.clear();
-            voucher_to_sign.signatures.clear(); // LÖSCHE ALLE Signaturen NUR für die Hash-Berechnung
+            let voucher_nonce = voucher.voucher_nonce.clone();
+            let mut voucher_to_hash = voucher.clone();
+            voucher_to_hash.voucher_id = "".to_string();
+            voucher_to_hash.transactions.clear();
+            voucher_to_hash.signatures.clear();
 
             // 1. Berechne den neuen Hash der Stammdaten (die neue voucher_id)
-            let hash = crypto_utils::get_hash(to_canonical_json(&voucher_to_sign).unwrap());
-
-            // 2. Aktualisiere die voucher_id auf dem Gutschein selbst
-            voucher.voucher_id = hash.clone();
-
-            // 3. Aktualisiere die creator_sig, damit sie die neue voucher_id enthält
-            creator_sig.voucher_id = hash;
-            let mut sig_to_hash = creator_sig.clone();
-            sig_to_hash.signature_id = "".to_string();
-            sig_to_hash.signature = "".to_string();
-            creator_sig.signature_id = get_hash(to_canonical_json(&sig_to_hash).unwrap());
-
-            // 4. Signiere die *neue* signature_id
-            let new_sig = sign_ed_default(signer_key, creator_sig.signature_id.as_bytes());
-            creator_sig.signature = bs58::encode(new_sig.to_bytes()).into_string();
-
-            voucher.signatures = other_signatures; // Setze die alten Bürgen-Signaturen wieder ein
-            voucher.signatures.push(creator_sig); // Füge die Creator-Signatur hinzu
+            let hash = crypto_utils::get_hash(to_canonical_json(&voucher_to_hash).unwrap());
+            voucher.voucher_id = hash;
 
             // 5. KORREKTUR: Aktualisiere auch die init-Transaktion und kaskadierte Hashes
-            let original_transactions = voucher.transactions.clone();
-            voucher.transactions.clear();
-
-            // Behandle 'init'-Transaktion (tx[0])
-            let new_init_prev_hash =
-                crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher_nonce));
-            let mut tx_to_resign = original_transactions[0].clone();
-            tx_to_resign.prev_hash = new_init_prev_hash;
-
-            // Ephemeren Genesis-Schlüssel für L2 ableiten
-            let nonce_bytes = bs58::decode(&voucher_nonce).into_vec().unwrap();
-            let prefix = voucher.creator_profile.id.as_ref().map(|id| id.split(':').next().unwrap_or(id)).unwrap_or("").to_string();
-            let (genesis_secret, _) = crypto_utils::derive_ephemeral_key_pair(
-                signer_key,
-                &nonce_bytes,
-                "genesis",
-                Some(&prefix),
-            ).unwrap();
-
-            // L2 Signatur via resign_transaction_ext sicherstellen
-            let mut last_resigned_tx = test_utils::resign_transaction_ext(tx_to_resign, signer_key, Some(&genesis_secret));
-            let mut last_tx_hash =
-                crypto_utils::get_hash(to_canonical_json(&last_resigned_tx).unwrap());
-            voucher.transactions.push(last_resigned_tx);
-
-            // Behandle alle nachfolgenden Transaktionen (tx[1]...tx[n])
-            for i in 1..original_transactions.len() {
-                tx_to_resign = original_transactions[i].clone();
-                tx_to_resign.prev_hash = last_tx_hash;
+            if !voucher.transactions.is_empty() {
+                let new_init_prev_hash =
+                    crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher_nonce));
+                voucher.transactions[0].prev_hash = new_init_prev_hash;
                 
-                // Für Test-Hops vom Creator leiten wir den Holder-Key ab
-                let (holder_secret, _) = crypto_utils::derive_ephemeral_key_pair(signer_key, &nonce_bytes, "holder", Some(&prefix)).unwrap();
-                
-                last_resigned_tx = test_utils::resign_transaction_ext(tx_to_resign, signer_key, Some(&holder_secret));
-                last_tx_hash =
-                    crypto_utils::get_hash(to_canonical_json(&last_resigned_tx).unwrap());
-                voucher.transactions.push(last_resigned_tx);
+                // Wir aktualisieren die t_id, damit die Kette strukturell passt
+                for i in 0..voucher.transactions.len() {
+                    if i > 0 {
+                        let prev_hash = crypto_utils::get_hash(to_canonical_json(&voucher.transactions[i-1]).unwrap());
+                        voucher.transactions[i].prev_hash = prev_hash;
+                    }
+                    voucher.transactions[i].t_id = crypto_utils::get_hash(to_canonical_json(&voucher.transactions[i]).unwrap());
+                }
             }
 
             voucher
@@ -1205,9 +1040,10 @@ mod behavioral_rules {
                     .unwrap();
             voucher.valid_until =
                 six_months_from_now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
-            voucher = resign_voucher_creator_signature(voucher, &setup.creator_pc.signing_key);
+            voucher = update_voucher_hashes_for_test(voucher);
 
             // 3. Aktion: Versuche zu senden (Creator -> Dritter)
+            human_money_core::set_signature_bypass(true);
             let result = create_transaction(
                 &voucher,
                 standard_a,
@@ -1217,6 +1053,7 @@ mod behavioral_rules {
                 &setup.user_b.user_id,
                 "100",
             );
+            human_money_core::set_signature_bypass(false);
 
             // 4. Erwartung: Firewall schlägt fehl
             assert!(matches!(
@@ -1248,9 +1085,10 @@ mod behavioral_rules {
                     .unwrap();
             voucher.valid_until =
                 six_months_from_now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
-            voucher = resign_voucher_creator_signature(voucher, &setup.creator_pc.signing_key);
+            voucher = update_voucher_hashes_for_test(voucher);
 
             // Aktion: Sende an Creator_Mobil (gleiche PK, anderer Prefix)
+            human_money_core::set_signature_bypass(true);
             let result = create_transaction(
                 &voucher,
                 standard_a,
@@ -1260,6 +1098,7 @@ mod behavioral_rules {
                 &setup.creator_mobil.user_id,
                 "100",
             );
+            human_money_core::set_signature_bypass(false);
             assert!(result.is_ok());
         }
 

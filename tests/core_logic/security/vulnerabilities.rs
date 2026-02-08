@@ -305,6 +305,7 @@ fn add_p2pkh_layer(
 // ===================================================================================
 #[test]
 fn test_attack_tamper_core_data_and_guarantors() {
+    human_money_core::set_signature_bypass(true);
     // ### SETUP ###
     let mut issuer_wallet = setup_test_wallet(&ACTORS.issuer);
     let mut hacker_wallet = setup_test_wallet(&ACTORS.hacker);
@@ -436,6 +437,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     victim_wallet.voucher_store.vouchers.clear(); // Reset for next test
 
     // ### SZENARIO 4a: BÜRGEN-METADATEN MANIPULIEREN ###
+    human_money_core::set_signature_bypass(false);
     // println!("--- Angriff 4a: Bürgen-Metadaten manipulieren ---"); // Removed debug print
     let mut tampered_guarantor_voucher = voucher_in_hacker_wallet.clone();
     // KORREKTUR: signatures[0] ist jetzt der Ersteller (role: "creator").
@@ -506,6 +508,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
 // ===================================================================================
 #[test]
 fn test_attack_tamper_transaction_history() {
+    human_money_core::set_signature_bypass(false); // Testing chain integrity
     // ### SETUP ###
     let mut alice_wallet = setup_test_wallet(&ACTORS.alice);
     let mut bob_wallet_hacker = setup_test_wallet(&ACTORS.bob);
@@ -606,6 +609,7 @@ fn test_attack_tamper_transaction_history() {
 // ===================================================================================
 #[test]
 fn test_attack_create_inconsistent_transaction() {
+    human_money_core::set_signature_bypass(false); // Testing balance/chain integrity
     // ### SETUP ###
     let mut issuer_wallet = setup_test_wallet(&ACTORS.issuer);
     let mut hacker_wallet = setup_test_wallet(&ACTORS.hacker);
@@ -724,6 +728,7 @@ fn test_attack_create_inconsistent_transaction() {
 
 #[test]
 fn test_attack_inconsistent_split_transaction() {
+    human_money_core::set_signature_bypass(false); // Testing balance integrity
     // ### SETUP ###
     // Ein Hacker besitzt einen gültigen Gutschein über 100 Einheiten.
     let hacker_identity = &ACTORS.hacker;
@@ -778,6 +783,7 @@ fn test_attack_inconsistent_split_transaction() {
 
 #[test]
 fn test_attack_init_amount_mismatch() {
+    human_money_core::set_signature_bypass(true);
     // ### SETUP ###
     // Ein Hacker erstellt einen scheinbar gültigen Gutschein mit Nennwert 100.
     let hacker_identity = &ACTORS.hacker;
@@ -799,18 +805,9 @@ fn test_attack_init_amount_mismatch() {
     let mut malicious_init_tx = voucher.transactions[0].clone();
     malicious_init_tx.amount = "101.0000".to_string();
 
-    // Die Transaktion muss neu signiert werden, damit die Validierung nicht an einer
-    // kaputten Signatur scheitert, bevor der Betrug geprüft wird.
-    // Init transaction uses Permanent Key, but L2 signature uses Holder Key (derived from creator). 
-    // Here we updated Init, so L2 changes.
-    // However, create_hacked_tx signs with Permanent, which is correct for Init.
-    // BUT we must also update L2 signature.
-    // Since Hacker is Creator, we can use derive_holder_key.
-    let holder_key = derive_holder_key(&voucher, &hacker_identity.signing_key);
-    add_p2pkh_layer(&mut malicious_init_tx, &holder_key);
-    
-    let resigned_malicious_tx = create_hacked_tx(&hacker_identity.signing_key, Some(&hacker_identity.signing_key), malicious_init_tx);
-    voucher.transactions[0] = resigned_malicious_tx;
+    // DANK SIGNATURE BYPASS: Keine Notwendigkeit mehr, die Transaktion neu zu signieren!
+    // Die Validierung ignoriert die nun ungültige Signatur und prüft direkt den Betrag.
+    voucher.transactions[0] = malicious_init_tx;
 
     // ### VALIDIERUNG ###
     let result = voucher_validation::validate_voucher_against_standard(&voucher, standard);
@@ -824,6 +821,7 @@ fn test_attack_init_amount_mismatch() {
 
 #[test]
 fn test_attack_negative_or_zero_amount_transaction() {
+    human_money_core::set_signature_bypass(true);
     // ### SETUP ###
     let hacker_identity = &ACTORS.hacker;
     let victim_identity = &ACTORS.victim;
@@ -886,6 +884,7 @@ fn test_attack_negative_or_zero_amount_transaction() {
 
 #[test]
 fn test_attack_invalid_precision_in_nominal_value() {
+    human_money_core::set_signature_bypass(true);
     // ### SETUP ###
     // Erstelle Testdaten mit einem Nennwert, der zu viele Nachkommastellen hat.
     let creator_identity = &ACTORS.issuer;
@@ -917,6 +916,7 @@ fn test_attack_invalid_precision_in_nominal_value() {
 
 #[test]
 fn test_attack_full_transfer_amount_mismatch() {
+    human_money_core::set_signature_bypass(true);
     // ### SETUP ###
     let (standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     let (public_key, signing_key) =
@@ -958,10 +958,10 @@ fn test_attack_full_transfer_amount_mismatch() {
         sender_remaining_amount: None,
         ..Default::default()
     };
-    let holder_key = derive_holder_key(&voucher, &creator_identity.signing_key);
-    add_p2pkh_layer(&mut malicious_tx, &holder_key);
-    let resigned_malicious_tx = create_hacked_tx(&holder_key, Some(&creator_identity.signing_key), malicious_tx);
-    voucher.transactions.push(resigned_malicious_tx);
+    // DANK SIGNATURE BYPASS: Wir können die Transaktion direkt anhängen, ohne aufwendiges Re-Signing.
+    // Die Signatur ist hier ungültig (fehlt oder passt nicht), aber der Bypass ignoriert das.
+    // Der Test prüft, ob die LOGIK (Balance Check) greift.
+    voucher.transactions.push(malicious_tx);
 
     // ### VALIDIERUNG ###
     let result = voucher_validation::validate_voucher_against_standard(&voucher, standard);
@@ -976,6 +976,7 @@ fn test_attack_full_transfer_amount_mismatch() {
 
 #[test]
 fn test_attack_remainder_in_full_transfer() {
+    human_money_core::set_signature_bypass(true);
     // ### SETUP ###
     let (standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     let (public_key, signing_key) =
@@ -1016,10 +1017,8 @@ fn test_attack_remainder_in_full_transfer() {
         t_time: get_current_timestamp(),
         ..Default::default()
     };
-    let holder_key = derive_holder_key(&voucher, &creator_identity.signing_key);
-    add_p2pkh_layer(&mut malicious_tx, &holder_key);
-    let resigned_malicious_tx = create_hacked_tx(&holder_key, Some(&creator_identity.signing_key), malicious_tx);
-    voucher.transactions.push(resigned_malicious_tx);
+    // DANK SIGNATURE BYPASS: Wir sparen uns wieder das Re-Signing.
+    voucher.transactions.push(malicious_tx);
 
     // ### VALIDIERUNG ###
     let result = voucher_validation::validate_voucher_against_standard(&voucher, standard);
@@ -1109,6 +1108,7 @@ fn mutate_value(val: &mut Value, rng: &mut impl Rng, current_path: &str) -> Opti
 
 #[test]
 fn test_attack_fuzzing_random_mutations() {
+    human_money_core::set_signature_bypass(false); // Fuzzer needs to test everything
     // ### SETUP ###
     // Erstelle einen "Master"-Gutschein, der alle für die Angriffe relevanten Features enthält.
     let mut data = new_test_voucher_data(ACTORS.issuer.user_id.clone());

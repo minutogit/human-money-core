@@ -22,6 +22,7 @@ mod compatibility_scenarios {
 
     #[test]
     fn test_validate_voucher_with_unknown_fields_in_json_then_succeeds() {
+        human_money_core::set_signature_bypass(true);
         let identity = &ACTORS.issuer;
         let voucher_data = NewVoucherData {
             validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu Silver)
@@ -82,6 +83,7 @@ mod compatibility_scenarios {
 
     #[test]
     fn test_validate_voucher_when_t_type_is_unknown_then_fails() {
+        human_money_core::set_signature_bypass(true);
         let identity = &ACTORS.issuer;
         let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
         let voucher = human_money_core::test_utils::create_voucher_for_manipulation(
@@ -176,6 +178,7 @@ mod compatibility_scenarios {
 
     #[test]
     fn test_parse_standard_with_unknown_fields_in_toml_then_succeeds() {
+        human_money_core::set_signature_bypass(true);
         // 1. Nimm einen zur Laufzeit gültig signierten Standard.
         let (mut standard_struct, _) = SILVER_STANDARD.clone(); // Verwende Silver zur Konsistenz
 

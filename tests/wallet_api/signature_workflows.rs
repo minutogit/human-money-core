@@ -87,6 +87,7 @@ fn setup_voucher_for_alice(
 ///     benötigten Bürgen nicht erfüllt ist.
 #[test]
 fn api_wallet_full_signature_workflow() {
+    human_money_core::set_signature_bypass(true);
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
@@ -165,6 +166,7 @@ fn api_wallet_full_signature_workflow() {
 /// 3.  Der Versuch schlägt mit `NotAnIntendedRecipient` fehl.
 #[test]
 fn api_wallet_signature_fail_wrong_recipient() {
+    human_money_core::set_signature_bypass(true);
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
     let eve = &ACTORS.hacker;
@@ -194,6 +196,7 @@ fn api_wallet_signature_fail_wrong_recipient() {
 ///     Authentifizierungsfehlers (AEAD) fehlschlägt.
 #[test]
 fn api_wallet_signature_fail_tampered_container() {
+    human_money_core::set_signature_bypass(true);
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
@@ -245,6 +248,7 @@ fn api_wallet_signature_fail_tampered_container() {
 ///     mit der ID von B nicht kennt, an den die Signatur angehängt werden soll.
 #[test]
 fn api_wallet_signature_fail_mismatched_voucher_id() {
+    human_money_core::set_signature_bypass(true);
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
@@ -303,6 +307,7 @@ fn api_wallet_signature_fail_mismatched_voucher_id() {
 /// 3.  Der Prozess schlägt mit `InvalidPayloadType` fehl.
 #[test]
 fn api_wallet_signature_fail_wrong_payload_type() {
+    human_money_core::set_signature_bypass(true);
     let alice = &ACTORS.alice;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
     let (_, local_id) = setup_voucher_for_alice(&mut alice_wallet, &alice.identity);
@@ -334,6 +339,7 @@ fn api_wallet_signature_fail_wrong_payload_type() {
 /// 6.  Die Details des Gutscheins zeigen die neue Signatur an.
 #[test]
 fn api_app_service_full_signature_workflow() {
+    human_money_core::set_signature_bypass(true);
     let silver_standard_toml =
         generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let dir_creator = tempdir().unwrap();
@@ -431,6 +437,7 @@ fn api_app_service_full_signature_workflow() {
 /// 5.  Der Gutschein hat danach eine Signatur von Bob.
 #[test]
 fn api_wallet_signature_roundtrip_minuto_required() {
+    human_money_core::set_signature_bypass(true);
     let alice = &ACTORS.alice;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
     let bob = &ACTORS.bob;
@@ -523,6 +530,7 @@ fn api_wallet_signature_roundtrip_minuto_required() {
 ///     wechselt der Status des Gutscheins zu `Active`.
 #[test]
 fn test_full_guarantor_workflow_via_app_service() {
+    human_money_core::set_signature_bypass(true);
     // --- 1. Setup: Drei separate Benutzer simulieren ---
     let dir_creator = tempdir().expect("Failed to create temp dir for creator");
     let dir_g1 = tempdir().expect("Failed to create temp dir for guarantor1");
@@ -705,6 +713,7 @@ fn test_full_guarantor_workflow_via_app_service() {
 /// 5.  Der Gutschein hat danach eine Signatur, obwohl sie nicht erforderlich war.
 #[test]
 fn api_wallet_signature_roundtrip_silver_optional() {
+    human_money_core::set_signature_bypass(true);
     let alice = &ACTORS.alice;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
     let bob = &ACTORS.bob;

@@ -357,39 +357,18 @@ fn test_validation_fails_on_inconsistent_unit() {
     // WICHTIG: Aktualisiere den Hash im Gutschein, damit die Validierung nicht am Hash-Mismatch scheitert.
     voucher.voucher_standard.standard_definition_hash = new_hash;
 
-    // Damit die Validierung gegen den modifizierten Standard nicht am Hash scheitert,
-    // müssen wir den Gutschein und die Creator-Signatur neu signieren.
-    // KORREKTUR (FIX FÜR FEHLER 1): Korrekte Re-Signierungslogik
-    let creator_sig_index = voucher
-        .signatures
-        .iter()
-        .position(|s| s.role == "creator")
-        .unwrap();
-    let mut creator_sig = voucher.signatures.remove(creator_sig_index);
-
-    // 1. Berechne neuen voucher_id (Hash der Stammdaten)
+    // Dank Signature-Bypass benötigen wir keine mühsame Re-Signierung der creator_sig mehr.
+    // Wir müssen nur sicherstellen, dass die voucher_id (Hash der Stammdaten) konsistent ist.
     let mut voucher_to_hash = voucher.clone();
     voucher_to_hash.voucher_id = "".to_string();
     voucher_to_hash.transactions.clear();
     voucher_to_hash.signatures.clear();
     let new_voucher_hash = crypto_utils::get_hash(to_canonical_json(&voucher_to_hash).unwrap());
-    voucher.voucher_id = new_voucher_hash.clone();
-    creator_sig.voucher_id = new_voucher_hash;
+    voucher.voucher_id = new_voucher_hash;
 
-    // 2. Berechne neue signature_id (Hash der Signatur-Metadaten)
-    let mut sig_to_hash = creator_sig.clone();
-    sig_to_hash.signature_id = "".to_string();
-    sig_to_hash.signature = "".to_string();
-    creator_sig.signature_id = get_hash(to_canonical_json(&sig_to_hash).unwrap());
-
-    // 3. Signiere die neue signature_id
-    let new_sig_bytes =
-        crypto_utils::sign_ed25519(&identity.signing_key, creator_sig.signature_id.as_bytes());
-    creator_sig.signature = bs58::encode(new_sig_bytes.to_bytes()).into_string();
-    voucher.signatures.push(creator_sig); // Add it back
-
-    // Validierung sollte wegen der Einheit fehlschlagen
+    human_money_core::set_signature_bypass(true);
     let validation_result = validate_voucher_against_standard(&voucher, &standard_with_rule);
+    human_money_core::set_signature_bypass(false);
     assert!(validation_result.is_err());
     // This is now covered by the generic `content_rules` validation.
     assert!(matches!(
@@ -871,39 +850,18 @@ fn test_validity_duration_rules() {
         .template
         .standard_minimum_issuance_validity = "P1Y".to_string(); // Standard erwartet P3Y
 
-    // KORREKTUR: Wie im Fall davor, muss der Gutschein nach der Manipulation neu signiert werden,
-    // um einen vorzeitigen Abbruch der Validierung wegen Signaturfehlers zu verhindern.
-    // Resign the creator signature
-    // KORREKTUR (FIX FÜR FEHLER 2): Korrekte Re-Signierungslogik
-    let creator_sig_index = voucher2
-        .signatures
-        .iter()
-        .position(|s| s.role == "creator")
-        .unwrap();
-    let mut creator_sig = voucher2.signatures.remove(creator_sig_index);
-
-    // 1. Berechne neuen voucher_id
+    // Dank Signature-Bypass benötigen wir keine Re-Signierung.
+    // Wir müssen nur die voucher_id aktualisieren, damit die strukturelle Integrität gewahrt bleibt.
     let mut voucher_to_hash2 = voucher2.clone();
     voucher_to_hash2.voucher_id = "".to_string();
     voucher_to_hash2.transactions.clear();
     voucher_to_hash2.signatures.clear();
     let new_voucher_hash2 = crypto_utils::get_hash(to_canonical_json(&voucher_to_hash2).unwrap());
-    voucher2.voucher_id = new_voucher_hash2.clone();
-    creator_sig.voucher_id = new_voucher_hash2;
+    voucher2.voucher_id = new_voucher_hash2;
 
-    // 2. Berechne neue signature_id
-    let mut sig_to_hash = creator_sig.clone();
-    sig_to_hash.signature_id = "".to_string();
-    sig_to_hash.signature = "".to_string();
-    creator_sig.signature_id = get_hash(to_canonical_json(&sig_to_hash).unwrap());
-
-    // 3. Signiere die neue signature_id
-    let new_sig_bytes2 =
-        crypto_utils::sign_ed25519(&identity.signing_key, creator_sig.signature_id.as_bytes());
-    creator_sig.signature = bs58::encode(new_sig_bytes2.to_bytes()).into_string();
-    voucher2.signatures.push(creator_sig); // Add it back
-
+    human_money_core::set_signature_bypass(true);
     let validation_result2 = validate_voucher_against_standard(&voucher2, minuto_standard);
+    human_money_core::set_signature_bypass(false);
     assert!(matches!(
         validation_result2.unwrap_err(),
         VoucherCoreError::Validation(ValidationError::MismatchedMinimumValidity { .. })

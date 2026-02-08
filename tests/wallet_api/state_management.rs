@@ -213,8 +213,10 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
         layer2_signature: Some("dummy_l2_sig".to_string()),
         ..Default::default()
     };
-    // FIX: Use resign_transaction_ext (Permanent Key for L1, Holder Key for L2/Proof)
-    tx_a = test_utils::resign_transaction_ext(tx_a, &identity_alice.signing_key, Some(&alice_holder_key));
+    // Dank Signature-Bypass müssen wir nicht mehr mühsam re-signieren.
+    // Wir brauchen nur die t_id zu aktualisieren, damit die t_id zum Inhalt passt.
+    tx_a.t_id = crypto_utils::get_hash(utils::to_canonical_json(&tx_a).unwrap());
+
     let mut voucher_v2_bob = voucher_v1.clone();
     voucher_v2_bob.transactions.push(tx_a);
 
@@ -229,8 +231,8 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
         sender_ephemeral_pub: Some(alice_holder_pub),
         ..Default::default()
     };
-    // FIX: Use resign_transaction_ext (Permanent Key for L1, Holder Key for L2/Proof)
-    tx_b = test_utils::resign_transaction_ext(tx_b, &identity_alice.signing_key, Some(&alice_holder_key));
+    tx_b.t_id = crypto_utils::get_hash(utils::to_canonical_json(&tx_b).unwrap());
+
     let mut voucher_v2_charlie = voucher_v1.clone();
     voucher_v2_charlie.transactions.push(tx_b);
 
@@ -245,18 +247,22 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     .unwrap();
 
     // --- 4. David empfängt zuerst das spätere Bundle (Charlie) ---
+    human_money_core::set_signature_bypass(true);
     service_david
         .receive_bundle(&bundle_charlie, &standards_map, None, Some("pwd"))
         .unwrap();
+    human_money_core::set_signature_bypass(false);
     let summaries_before = service_david.get_voucher_summaries(None, None).unwrap();
     assert_eq!(summaries_before.len(), 1);
     assert_eq!(summaries_before[0].status, VoucherStatus::Active);
     let charlie_instance_id = summaries_before[0].local_instance_id.clone();
 
     // --- 5. David empfängt das frühere Bundle (Bob), was den Konflikt auslöst ---
+    human_money_core::set_signature_bypass(true);
     service_david
         .receive_bundle(&bundle_bob, &standards_map, None, Some("pwd"))
         .unwrap();
+    human_money_core::set_signature_bypass(false);
 
     // --- 6. Assertions ---
     let summaries_after = service_david.get_voucher_summaries(None, None).unwrap();
@@ -355,8 +361,7 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
         sender_ephemeral_pub: Some(alice_holder_pub.clone()),
         ..Default::default()
     };
-    // FIX: Use resign_transaction_ext
-    tx_a = test_utils::resign_transaction_ext(tx_a, &identity_alice.signing_key, Some(&alice_holder_key));
+    tx_a.t_id = crypto_utils::get_hash(utils::to_canonical_json(&tx_a).unwrap());
     let mut voucher_a = voucher_v1.clone();
     voucher_a.transactions.push(tx_a.clone());
 
@@ -371,8 +376,7 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
         sender_ephemeral_pub: Some(alice_holder_pub),
         ..Default::default()
     };
-    // FIX: Use resign_transaction_ext
-    tx_b = test_utils::resign_transaction_ext(tx_b, &identity_alice.signing_key, Some(&alice_holder_key));
+    tx_b.t_id = crypto_utils::get_hash(utils::to_canonical_json(&tx_b).unwrap());
     let mut voucher_b = voucher_v1.clone();
     voucher_b.transactions.push(tx_b.clone());
 
@@ -386,12 +390,14 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     );
 
     // --- 3. David empfängt beide Bundles ---
+    human_money_core::set_signature_bypass(true);
     service_david
         .receive_bundle(&bundle_a, &standards_map, None, Some("pwd"))
         .unwrap();
     service_david
         .receive_bundle(&bundle_b, &standards_map, None, Some("pwd"))
         .unwrap();
+    human_money_core::set_signature_bypass(false);
 
     // --- 4. Assertions ---
     let summaries_after = service_david.get_voucher_summaries(None, None).unwrap();

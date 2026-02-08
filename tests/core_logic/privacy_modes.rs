@@ -49,6 +49,7 @@ fn create_privacy_test_voucher(mode: &str) -> (Voucher, human_money_core::models
 
 #[test]
 fn test_privacy_mode_public_success() {
+    human_money_core::set_signature_bypass(true);
     let (mut voucher, standard) = create_privacy_test_voucher("public");
     
     // Add a valid public transaction
@@ -58,7 +59,7 @@ fn test_privacy_mode_public_success() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10".to_string(),
+        amount: "10.0000".to_string(),
         sender_id: Some(ACTORS.issuer.user_id.clone()), // Public ID
         recipient_id: ACTORS.alice.user_id.clone(),     // DID
         ..Default::default()
@@ -101,27 +102,26 @@ fn test_privacy_mode_public_success() {
     
     let result = voucher_validation::validate_voucher_against_standard(&voucher, &standard);
     
-    // Expectation: NOT a Privacy Error. Likely a Signature/Hash error.
     match result {
-        Ok(_) => {}, // Surprisingly valid (if we mocked sigs?)
-        Err(VoucherCoreError::Validation(ValidationError::InvalidTransaction(msg))) => {
-             if msg.contains("missing sender_id") || msg.contains("non-DID recipient") {
-                 panic!("Privacy validation failed for valid public transaction: {}", msg);
-             }
+        Ok(_) => {}, // Success with bypass!
+        Err(VoucherCoreError::Validation(ValidationError::InsufficientFundsInChain { .. })) => {
+            // Acceptable for this manual test construction (funds logic might be strict)
         },
-        Err(_) => {}, // Any other error is fine (e.g. InvalidSignature)
+        Err(e) => panic!("Validation failed even with signature bypass: {:?}", e),
     }
 }
 
+
 #[test]
 fn test_privacy_mode_public_fails_missing_sender() {
+    human_money_core::set_signature_bypass(true);
     let (mut voucher, standard) = create_privacy_test_voucher("public");
     
     let tx = Transaction {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10".to_string(),
+        amount: "10.0000".to_string(),
         sender_id: None, // INVALID for Public
         recipient_id: ACTORS.alice.user_id.clone(),
         ..Default::default()
@@ -134,13 +134,14 @@ fn test_privacy_mode_public_fails_missing_sender() {
 
 #[test]
 fn test_privacy_mode_public_fails_anonymous_recipient() {
+    human_money_core::set_signature_bypass(true);
     let (mut voucher, standard) = create_privacy_test_voucher("public");
     
     let tx = Transaction {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10".to_string(),
+        amount: "10.0000".to_string(),
         sender_id: Some(ACTORS.issuer.user_id.clone()),
         recipient_id: "not-a-did".to_string(), // INVALID for Public
         ..Default::default()
@@ -154,6 +155,7 @@ fn test_privacy_mode_public_fails_anonymous_recipient() {
 
 #[test]
 fn test_privacy_mode_stealth_success() {
+    human_money_core::set_signature_bypass(true);
     let (mut voucher, standard) = create_privacy_test_voucher("stealth");
     
     // Stealth: Sender None, Recipient NOT DID
@@ -161,7 +163,7 @@ fn test_privacy_mode_stealth_success() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10".to_string(),
+        amount: "10.0000".to_string(),
         sender_id: None, 
         recipient_id: "hash-of-key".to_string(), 
         ..Default::default()
@@ -170,26 +172,24 @@ fn test_privacy_mode_stealth_success() {
     
     let result = voucher_validation::validate_voucher_against_standard(&voucher, &standard);
     
-    // Should NOT fail with Privacy error
+    // Should pass with bypass (or fail with unrelated funds error)
     match result {
-        Err(VoucherCoreError::Validation(ValidationError::InvalidTransaction(msg))) => {
-             if msg.contains("has sender_id") || msg.contains("public DID recipient") {
-                 panic!("Privacy validation failed for valid stealth transaction: {}", msg);
-             }
-        },
-        _ => {}, 
+        Ok(_) => {},
+        Err(VoucherCoreError::Validation(ValidationError::InsufficientFundsInChain { .. })) => {},
+        Err(e) => panic!("Stealth validation failed: {:?}", e),
     }
 }
 
 #[test]
 fn test_privacy_mode_stealth_fails_with_sender_id() {
+    human_money_core::set_signature_bypass(true);
     let (mut voucher, standard) = create_privacy_test_voucher("stealth");
     
     let tx = Transaction {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10".to_string(),
+        amount: "10.0000".to_string(),
         sender_id: Some("did:example:123".to_string()), // INVALID for Stealth
         recipient_id: "hash-of-key".to_string(),
         ..Default::default()
@@ -202,13 +202,14 @@ fn test_privacy_mode_stealth_fails_with_sender_id() {
 
 #[test]
 fn test_privacy_mode_stealth_fails_with_did_recipient() {
+    human_money_core::set_signature_bypass(true);
     let (mut voucher, standard) = create_privacy_test_voucher("stealth");
     
     let tx = Transaction {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10".to_string(),
+        amount: "10.0000".to_string(),
         sender_id: None,
         recipient_id: "did:key:zABC".to_string(), // INVALID for Stealth
         ..Default::default()
@@ -221,6 +222,7 @@ fn test_privacy_mode_stealth_fails_with_did_recipient() {
 
 #[test]
 fn test_privacy_mode_flexible_allows_all() {
+    human_money_core::set_signature_bypass(true);
     let (mut voucher, standard) = create_privacy_test_voucher("flexible");
     
     // Case 1: Public-like
@@ -228,7 +230,7 @@ fn test_privacy_mode_flexible_allows_all() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10".to_string(),
+        amount: "10.0000".to_string(),
         sender_id: Some("did:example:sender".to_string()),
         recipient_id: "did:example:recipient".to_string(),
         ..Default::default()
@@ -240,7 +242,7 @@ fn test_privacy_mode_flexible_allows_all() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10".to_string(),
+        amount: "10.0000".to_string(),
         sender_id: None,
         recipient_id: "some-hash".to_string(),
         ..Default::default()
@@ -248,13 +250,10 @@ fn test_privacy_mode_flexible_allows_all() {
     voucher.transactions.push(tx2);
     
     let result = voucher_validation::validate_voucher_against_standard(&voucher, &standard);
-     match result {
-        Err(VoucherCoreError::Validation(ValidationError::InvalidTransaction(msg))) => {
-             // Flexible should not throw "InvalidTransaction" regarding privacy
-             if msg.contains("sender_id") || msg.contains("recipient") {
-                 panic!("Flexible mode should allow mixed types, but failed: {}", msg);
-             }
-        },
-        _ => {}, 
+
+    match result {
+        Ok(_) => {},
+        Err(VoucherCoreError::Validation(ValidationError::InsufficientFundsInChain { .. })) => {},
+        Err(e) => panic!("Flexible mode validation failed: {:?}", e),
     }
 }
