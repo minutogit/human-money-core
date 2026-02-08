@@ -743,26 +743,33 @@ fn verify_transactions(
         // --- TRAP Validierung ---
         if let Some(trap) = &tx.trap_data {
             // TEST 3: Prevent Trapezoidal Identity Leak
-            // Check if formatted as a curve point (Base58) and not cleartext.
-            // A simple heuristic: Base58 shouldn't contain ':' usually, and definitely not "creator:" or "did:".
             if trap.blinded_id.contains(':') || trap.blinded_id.contains('@') {
                  return Err(ValidationError::TrapDataInvalid { t_id: tx.t_id.clone() }.into());
             }
 
-            // Nur möglich, wenn sender_id (Public Identity) bekannt ist.
+            // GLOBAL CHECK (Context Binding):
+            // The DS-Tag MUST be derived from the transaction context (prev_hash + sender_ephemeral_pub).
+            // This prevents Replay Attacks where a valid Trap is reused in a different transaction context.
+            // This check applies to BOTH Public and Stealth modes.
+            let ds_tag_input = format!(
+                "{}{}",
+                tx.prev_hash,
+                tx.sender_ephemeral_pub.as_deref().unwrap_or("")
+            );
+            let expected_ds_tag = get_hash(ds_tag_input.as_bytes());
+
+            if trap.ds_tag != expected_ds_tag {
+                 return Err(VoucherCoreError::Crypto(
+                     format!("Trap DS-Tag does not match expected input (Context Mismatch/Replay). Expected: {}, Found: {}", expected_ds_tag, trap.ds_tag)
+                 ));
+            }
+
+            // Full ZKP Verification (Only possible if sender_id is known)
             if let Some(sender_id) = &tx.sender_id {
                 if let Ok(signer_pk) = get_pubkey_from_user_id(sender_id) {
                     if let Ok(signer_id_point) = ed25519_pk_to_curve_point(&signer_pk) {
                          let sender_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string();
                          
-                         // FIXED: Independent DS-Tag calculation (No Prefix!)
-                         let ds_tag_input = format!(
-                            "{}{}",
-                            tx.prev_hash,
-                            tx.sender_ephemeral_pub.as_deref().unwrap_or("")
-                        );
-                        let expected_ds_tag = get_hash(ds_tag_input.as_bytes());
-
                         let u_input_varying = format!(
                             "{}{}{}",
                             expected_ds_tag,
