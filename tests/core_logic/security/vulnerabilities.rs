@@ -216,17 +216,22 @@ fn create_hacked_tx(
     identity_key: Option<&ed25519_dalek::SigningKey>,
     mut hacked_tx: Transaction,
 ) -> Transaction {
+    hacked_tx.t_id = "".to_string();
+    hacked_tx.layer2_signature = None;
+    hacked_tx.sender_identity_signature = None;
+
     let tx_json_for_id = to_canonical_json(&hacked_tx).unwrap();
     hacked_tx.t_id = get_hash(tx_json_for_id);
 
-    // 1. Sender Proof Signature (L2): Sign(t_id) with ephemeral key
-    let signature = sign_ed25519(signer_key, hacked_tx.t_id.as_bytes());
-    hacked_tx.sender_proof_signature = bs58::encode(signature.to_bytes()).into_string();
+    // 1. Layer 2 Signature: Sign(t_id raw) with ephemeral key
+    let t_id_raw = bs58::decode(&hacked_tx.t_id).into_vec().unwrap();
+    let l2_sig = sign_ed25519(signer_key, &t_id_raw);
+    hacked_tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 
     // 2. Sender Identity Signature (L1): Optional, if sender_id is present
     if let Some(id_key) = identity_key {
         if hacked_tx.sender_id.is_some() {
-            let sig = sign_ed25519(id_key, hacked_tx.t_id.as_bytes());
+            let sig = sign_ed25519(id_key, &t_id_raw);
             hacked_tx.sender_identity_signature = Some(bs58::encode(sig.to_bytes()).into_string());
         }
     }
@@ -256,7 +261,6 @@ fn add_p2pkh_layer(
     tx: &mut Transaction,
     holder_secret: &ed25519_dalek::SigningKey,
 ) {
-    use ed25519_dalek::Signer;
     let holder_pub = holder_secret.verifying_key();
     let holder_pub_str = bs58::encode(holder_pub.to_bytes()).into_string();
 
@@ -272,32 +276,8 @@ fn add_p2pkh_layer(
     tx.sender_ephemeral_pub = Some(holder_pub_str.clone());
     tx.receiver_ephemeral_pub_hash = Some(next_hash);
     tx.sender_change_anchor_hash = None; // Standard: kein Change
-
-    // Prepare for L2 Signature
-    tx.sender_proof_signature = "".to_string();
     tx.layer2_signature = None;
     tx.t_id = "".to_string();
-
-    let pre_l2_json = to_canonical_json(tx).unwrap();
-    let pre_l2_tid = get_hash(pre_l2_json);
-
-    let l2_payload = if tx.t_type == "init" {
-        let valid_until = tx.valid_until.as_deref().unwrap_or("");
-        format!("{}{}{}", pre_l2_tid, valid_until, holder_pub_str)
-    } else {
-        format!(
-            "{}{}{}{}",
-            pre_l2_tid,
-            holder_pub_str,
-            tx.receiver_ephemeral_pub_hash.as_deref().unwrap_or(""),
-            tx.sender_change_anchor_hash.as_deref().unwrap_or("")
-        )
-    };
-
-    let l2_hash = get_hash(l2_payload);
-    let l2_sig = holder_secret.sign(l2_hash.as_bytes());
-
-    tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 }
 
 // ===================================================================================
@@ -582,8 +562,8 @@ fn test_attack_tamper_transaction_history() {
     println!("--- Angriff 2a: Transaktionshistorie fälschen ---");
     let mut voucher_with_tampered_history = voucher_in_bob_wallet.clone();
     // Manipuliere eine Signatur in der Kette, um sie ungültig zu machen.
-    voucher_with_tampered_history.transactions[0].sender_proof_signature =
-        "invalid_signature".to_string();
+    voucher_with_tampered_history.transactions[0].layer2_signature =
+        Some("invalid_signature".to_string());
 
     // DANK DES SICHERHEITSPATCHES in `voucher_manager` schlägt dieser Aufruf nun fehl,
     // da `create_transaction` den Gutschein vorab validiert.

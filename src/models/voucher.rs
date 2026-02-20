@@ -112,9 +112,6 @@ pub struct Transaction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receiver_ephemeral_pub_hash: Option<String>,
 
-    /// Die Signatur ausgeführt durch den Stealth-Key (Private Key passend zum prev_hash).
-    /// Signiert: Hash(t_id).
-    pub sender_proof_signature: String,
 
     // --- SOZIALER LAYER (Layer 1 - Abhängig vom Privacy Mode) ---
 

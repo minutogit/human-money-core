@@ -130,7 +130,6 @@ Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_
       "t_time": "ISO-8601", // Zeitpunkt der Transaktion
       "prev_hash": "STRING", // Kryptographischer Link zur vorherigen Transaktion
       "receiver_ephemeral_pub_hash": "STRING", // Anker (Schloss) für den Empfänger (Hash des Stealth-Keys)
-      "sender_proof_signature": "STRING", // Beweis des technischen Besitzes (Layer 2 Signatur)
       "sender_id": "STRING, optional", // Identität des Senders (Layer 1 - Public Mode)
       "sender_identity_signature": "STRING, optional", // Soziale Signatur (Layer 1 - Public Mode)
       "recipient_id": "STRING", // Empfänger-ID (did:key oder "Anonym")
@@ -145,7 +144,7 @@ Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_
         "blinded_id": "STRING", // Identitäts-Punkt V = m*U + ID
         "proof": "STRING" // Schnorr-Beweis über Wissen von m
       },
-      "layer2_signature": "STRING, optional" // Optionale Bestätigung durch einen Layer 2 Validator
+      "layer2_signature": "STRING, optional" // Technische Signatur (Layer 2)
     }
   ]
 }
@@ -172,7 +171,7 @@ Die Transaktionskette folgt einem **Commitment-Reveal-Schema (Hybrid P2PKH)**, d
 #### Felder im Detail:
 - **`receiver_ephemeral_pub_hash` (Der Anker / Commitment)**: Dies ist der Hash eines einmaligen Stealth-Keys des Empfängers. Er dient als "Verschluss" der aktuellen Transaktion. Niemand außer dem Empfänger kann diesen Hash einem Nutzer zuordnen.
 - **`sender_ephemeral_pub` (Das Reveal)**: In der *nächsten* Transaktion enthüllt der Sender den Public Key, dessen Hash im `receiver_ephemeral_pub_hash` der vorherigen Transaktion stand. Dies beweist das Recht zum Ausgeben.
-- **`sender_proof_signature` (Technischer Besitz)**: Eine Ed25519-Signatur über die `t_id`, ausgeführt mit dem nun enthüllten Stealth-Key. Sie beweist, dass der Sender den Schlüssel zum "Schloss" besitzt.
+- **`layer2_signature` (Technischer Besitz)**: Eine Ed25519-Signatur über die `t_id`, ausgeführt mit dem nun enthüllten Stealth-Key (`sender_ephemeral_pub`). Sie beweist den technischen Besitz und autorisiert den L2-Lock.
 - **`sender_identity_signature` (Sozialer Besitz)**: Eine optionale Signatur mit dem permanenten Identity-Key. Sie ist im "Stealth" Mode verboten und im "Public" Mode Pflicht.
 - **`privacy_guard` (Verschlüsselter Kanal)**: Ein verschlüsselter Container (RecipientPayload), der via X25519 nur für den Empfänger lesbar ist. Er enthält den `next_key_seed`, damit der Empfänger weiß, welchen Schlüssel er generieren muss, um das Guthaben später weiterzugeben (**Forward Secrecy**).
 - **`sender_change_anchor_hash`**: Bei Teilzahlungen (`split`) wird das Restgeld an einen neuen, vom Sender selbst kontrollierten Anker gesendet.

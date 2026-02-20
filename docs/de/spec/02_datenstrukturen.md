@@ -86,11 +86,6 @@ pub struct Transaction {
     /// Existiert IMMER, auch wenn recipient_id öffentlich ist.
     pub receiver_ephemeral_pub_hash: String,
 
-    /// Die Signatur ausgeführt durch den Stealth-Key (Private Key passend zum prev_hash).
-    /// Beweist den technischen Besitz des Gutscheins.
-    /// Signiert: Hash(t_id).
-    pub sender_proof_signature: String,
-
     // --- SOZIALER LAYER (Layer 1 - Abhängig vom Privacy Mode) ---
 
     /// Die öffentliche Identität des Senders (z.B. "did:key:z6Mk...").
@@ -105,19 +100,11 @@ pub struct Transaction {
     /// Muss vorhanden sein, wenn sender_id gesetzt ist.
     pub sender_identity_signature: Option<String>,
 
-    /// Signatur des Layer-2 Ankers.
-    /// WICHTIG: Der Inhalt (Payload) dieser Signatur hängt vom Transaktionstyp ab!
-    ///
-    /// 1. Typ 'init': 
-    /// Signiert: Hash(pre_l2_tid + valid_until + sender_ephemeral_pub)
-    ///    Signierer: Der Private Key von sender_ephemeral_pub (Genesis).
-    ///    Zweck: Bindet das Ablaufdatum kryptographisch an den Genesis-Key.
-    ///
-    /// 2. Typ 'transfer' / 'split': 
-    ///    Signiert: Hash(pre_l2_tid + sender_ephemeral_pub + receiver_ephemeral_pub_hash + [sender_change_anchor_hash])
-    ///    Signierer: Der Private Key von sender_ephemeral_pub (der gerade enthüllte Key).
-    ///    Zweck: "Staffelstab-Übergabe". Bestätigt, dass der Besitzer des aktuellen Keys
-    ///    die neuen Hashes (Anker) autorisiert hat.
+    /// Die technische Signatur des Senders (Layer 2).
+    /// Beweist den technischen Besitz des Gutscheins.
+    /// Signiert: Die t_id der Transaktion.
+    /// Signierer: Der Private Key von sender_ephemeral_pub (der enthüllte Key).
+    /// Zweck: Autorisierung des L2-Locks und Nachweis des Besitzes.
     pub layer2_signature: Option<String>,
 
     /// An wen geht das Geld (Layer 1)?
@@ -183,7 +170,7 @@ Der Validator prüft Transaktionen basierend auf dem `privacy_mode` des Standard
 
 ### 3.1 Basispfrüfung (Immer)
 - **Hash-Integrität:** Prüfe ob `t_id` korrekt aus dem Inhalt gehasht wurde.
-- **Layer 2 Beweis:** Verifiziere `sender_proof_signature` gegen den bekannten ephemeral Public Key (aus `prev_hash` bzw. Vorläufer-Transaktion).
+- **Layer 2 Beweis:** Verifiziere `layer2_signature` gegen den bekannten ephemeral Public Key (aus `prev_hash` bzw. Vorläufer-Transaktion).
 
 ### 3.2 Modus-Spezifische Prüfung
 
@@ -200,7 +187,7 @@ Der Validator prüft Transaktionen basierend auf dem `privacy_mode` des Standard
 - **Fall A (Sender will transparent sein):**
     - Wenn `sender_id` gesetzt ist: Muss `sender_identity_signature` gültig sein.
 - **Fall B (Sender will anonym bleiben):**
-    - Wenn `sender_id` leer ist: Nur `sender_proof_signature` (Layer 2) ist notwendig.
+    - Wenn `sender_id` leer ist: Nur `layer2_signature` (technisch) ist notwendig.
 - **Empfänger-Wahl:** Das Feld `recipient_id` darf einen `did:key` enthalten (öffentlich addressiert) oder anonym bleiben. Die technische Sicherheit ist durch `receiver_ephemeral_pub_hash` in beiden Fällen gegeben.
 
 ### 3.3 Anwendung in der Praxis (User Story "Flexible")

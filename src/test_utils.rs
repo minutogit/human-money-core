@@ -910,7 +910,6 @@ pub fn create_voucher_for_manipulation(
         recipient_id: voucher.creator_profile.id.as_ref().unwrap().clone(),
         amount: voucher.nominal_value.amount.clone(),
         sender_remaining_amount: None,
-        sender_proof_signature: "".to_string(), // Wird in resign_transaction_ext gesetzt
         sender_identity_signature: None,        // Wird in resign_transaction_ext gesetzt
         // P2PKH SETUP
         receiver_ephemeral_pub_hash: Some(holder_anchor_hash),
@@ -1061,59 +1060,22 @@ pub fn resign_transaction_ext(
     signer_key: &ed25519_dalek::SigningKey,
     l2_signer_key: Option<&ed25519_dalek::SigningKey>,
 ) -> Transaction {
-    // 1. L2 Signature (if needed)
-    if let Some(sender_ephem_pub) = &tx.sender_ephemeral_pub {
-        tx.layer2_signature = None;
-        tx.t_id = "".to_string();
-        tx.sender_proof_signature = "".to_string();
-        tx.sender_identity_signature = None;
-        
-        let tx_json_pre_l2 = to_canonical_json(&tx).unwrap();
-        let pre_l2_tid = crypto_utils::get_hash(tx_json_pre_l2);
-        
-        let l2_payload = if tx.t_type == "init" {
-            format!(
-                "{}{}{}",
-                pre_l2_tid,
-                tx.valid_until.as_deref().unwrap_or(""),
-                sender_ephem_pub
-            )
-        } else {
-            format!(
-                "{}{}{}{}",
-                pre_l2_tid,
-                sender_ephem_pub,
-                tx.receiver_ephemeral_pub_hash.as_deref().unwrap_or(""),
-                tx.sender_change_anchor_hash.as_deref().unwrap_or("")
-            )
-        };
-        let l2_hash = crypto_utils::get_hash(l2_payload);
-
-        // For L2, we either use the provided l2_signer_key (expert mode)
-        // or we use the provided signer_key.
-        let actual_l2_key = l2_signer_key.unwrap_or(signer_key);
-        let l2_sig = crypto_utils::sign_ed25519(actual_l2_key, l2_hash.as_bytes());
-        
-        tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
-    }
-
     tx.t_id = "".to_string();
-    tx.sender_proof_signature = "".to_string();
+    tx.layer2_signature = None;
     tx.sender_identity_signature = None;
     
     // Die t_id muss auf dem kanonischen JSON der gesamten Tx basieren (inkl. ephemeral fields)
     tx.t_id = crypto_utils::get_hash(to_canonical_json(&tx).unwrap());
     
-    // 1. Sender Proof Signature (L2) - signed by Ephemeral Key (l2_signer_key)
-    // If l2_signer_key provided, use it. Otherwise fall back to signer_key (e.g. for simple tests)
+    // 1. Layer 2 Signature: Signiert t_id (raw) mit dem ephemeralen Key
+    let t_id_raw = bs58::decode(&tx.t_id).into_vec().unwrap();
     let proof_key = l2_signer_key.unwrap_or(signer_key);
-    let proof_sig = crypto_utils::sign_ed25519(proof_key, tx.t_id.as_bytes());
-    tx.sender_proof_signature = bs58::encode(proof_sig.to_bytes()).into_string();
+    let l2_sig = crypto_utils::sign_ed25519(proof_key, &t_id_raw);
+    tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 
-    // 2. Sender Identity Signature (L1) - signed by Permanent Key (signer_key)
-    // Only if sender_id is present
+    // 2. Sender Identity Signature (L1): Signiert t_id (raw) mit Sender Permanent Key
     if tx.sender_id.is_some() {
-        let identity_sig = crypto_utils::sign_ed25519(signer_key, tx.t_id.as_bytes());
+        let identity_sig = crypto_utils::sign_ed25519(signer_key, &t_id_raw);
         tx.sender_identity_signature = Some(bs58::encode(identity_sig.to_bytes()).into_string());
     }
 

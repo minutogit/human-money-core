@@ -96,7 +96,7 @@ mod tests {
             valid_until: expired_date,
             t_id: String::new(),
             encrypted_timestamp: 0,
-            sender_signature: String::new(),
+            layer2_signature: String::new(),
         };
         let valid_fp = TransactionFingerprint {
             ds_tag: "valid_key".to_string(),
@@ -105,7 +105,7 @@ mod tests {
             valid_until: valid_date,
             t_id: String::new(),
             encrypted_timestamp: 0,
-            sender_signature: String::new(),
+            layer2_signature: String::new(),
         };
         wallet_state
             .known_fingerprints
@@ -162,7 +162,7 @@ mod tests {
                 blinded_id: String::new(),
                 t_id: format!("tx_{:02}", i), // Padding für korrekte lexikalische Sortierung
                 encrypted_timestamp: 0,
-                sender_signature: String::new(),
+                layer2_signature: String::new(),
                 valid_until: String::new(),
             };
             let mut meta = FingerprintMetadata::default();
@@ -543,7 +543,7 @@ mod tests {
             blinded_id: String::new(),
             t_id: String::new(),
             encrypted_timestamp: 0,
-            sender_signature: String::new(),
+            layer2_signature: String::new(),
             // FIX: Set valid date so cleanup doesn't remove it
             valid_until: (Utc::now() + Duration::days(10)).to_rfc3339(),
         };
@@ -630,7 +630,7 @@ mod tests {
             blinded_id: String::new(),
             t_id: String::new(),
             encrypted_timestamp: 0,
-            sender_signature: String::new(),
+            layer2_signature: String::new(),
             // FIX: Set a valid future date so cleanup does not remove this fingerprint
             valid_until: (Utc::now() + Duration::days(365)).to_rfc3339(),
         };
@@ -794,7 +794,7 @@ mod tests {
                 ds_tag: key.clone(),
                 t_id: String::new(),
                 encrypted_timestamp: 0,
-                sender_signature: String::new(),
+                layer2_signature: String::new(),
                 valid_until: String::new(),
             };
             let meta = FingerprintMetadata {
@@ -902,7 +902,7 @@ mod tests {
             blinded_id: String::new(),
             t_id: String::new(),
             encrypted_timestamp: 0,
-            sender_signature: String::new(),
+            layer2_signature: String::new(),
             valid_until: String::new(),
         };
         let mut meta = FingerprintMetadata {
@@ -980,7 +980,7 @@ mod tests {
                 ds_tag: key.clone(),
                 t_id: String::new(),
                 encrypted_timestamp: 0,
-                sender_signature: String::new(),
+                layer2_signature: String::new(),
                 valid_until: String::new(),
             };
             wallet.fingerprint_metadata.insert(

@@ -5,7 +5,6 @@
 //! Führt zwei Transaktionen aus und zeigt den Vergleich zwischen
 //! den lokalen Gutscheindaten (Wallet) und den im L2-Server gespeicherten Locks.
 
-use human_money_core::app_service::AppService;
 use human_money_core::models::layer2_api::{L2LockRequest, L2Verdict};
 use human_money_core::models::voucher::ValueDefinition;
 use human_money_core::services::voucher_manager::NewVoucherData;

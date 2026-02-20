@@ -45,7 +45,7 @@ mod tests {
             valid_until: expired_date,
             t_id: String::new(),
             encrypted_timestamp: 0,
-            sender_signature: String::new(),
+            layer2_signature: String::new(),
         };
 
         // Füge den Fingerprint beiden relevanten Stores hinzu

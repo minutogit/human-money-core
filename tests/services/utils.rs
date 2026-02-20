@@ -165,15 +165,19 @@ fn test_chronological_validation_with_timezones() {
     // Damit der Fehler isoliert wird, müssen wir die Transaktion neu hashen und signieren.
     let mut tx = voucher.transactions[0].clone();
     tx.t_id = "".to_string(); // Hash-relevante Felder zurücksetzen
-    tx.sender_proof_signature = "".to_string();
+    tx.layer2_signature = None;
+    tx.sender_identity_signature = None;
     tx.t_id = crypto_utils::get_hash(to_canonical_json(&tx).unwrap());
-    let payload = serde_json::json!({ "prev_hash": tx.prev_hash, "sender_id": tx.sender_id, "t_id": tx.t_id });
-    let signature_hash = crypto_utils::get_hash(to_canonical_json(&payload).unwrap());
-    // KORREKTUR: Übergebe den korrekten `signing_key` vom Typ &SigningKey.
-    tx.sender_proof_signature = bs58::encode(
-        crypto_utils::sign_ed25519(&test_user.signing_key, signature_hash.as_bytes()).to_bytes(),
-    )
-    .into_string();
+
+    // KORREKTUR: Signiere t_id raw für L2 (technisch)
+    let t_id_raw = bs58::decode(&tx.t_id).into_vec().unwrap();
+    let l2_sig = crypto_utils::sign_ed25519(&test_user.signing_key, &t_id_raw);
+    tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
+    
+    // KORREKTUR: Signiere t_id raw für Identität (sozial)
+    let identity_sig = crypto_utils::sign_ed25519(&test_user.signing_key, &t_id_raw);
+    tx.sender_identity_signature = Some(bs58::encode(identity_sig.to_bytes()).into_string());
+    
     voucher.transactions[0] = tx;
 
     // 3. Validierung: Die Transaktionszeit (`2020`) liegt nun vor dem Erstellungsdatum (`~2025`).
@@ -269,7 +273,6 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
         recipient_id: creator_id.to_string(),
         amount: amount.to_string(),
         sender_remaining_amount: None,
-        sender_proof_signature: "sig-init".to_string(),
         receiver_ephemeral_pub_hash: None,
         sender_ephemeral_pub: None,
         privacy_guard: None,
@@ -318,7 +321,6 @@ fn test_local_id_after_full_transfer() {
         recipient_id: recipient.user_id.clone(),
         amount: "100".to_string(),
         sender_remaining_amount: None, // Kein Restbetrag
-        sender_proof_signature: "sig-transfer".to_string(),
         receiver_ephemeral_pub_hash: None,
         sender_ephemeral_pub: None,
         privacy_guard: None,
@@ -376,7 +378,6 @@ fn test_local_id_after_split() {
         recipient_id: recipient.user_id.clone(),
         amount: "40".to_string(),
         sender_remaining_amount: Some("60".to_string()),
-        sender_proof_signature: "sig-split".to_string(),
         receiver_ephemeral_pub_hash: None,
         sender_ephemeral_pub: None,
         privacy_guard: None,
@@ -446,7 +447,6 @@ fn test_local_id_changes_on_round_trip() {
         recipient_id: bob.user_id.clone(),
         amount: "100".to_string(),
         sender_remaining_amount: None,
-        sender_proof_signature: "sig-to-bob".to_string(),
         receiver_ephemeral_pub_hash: None,
         sender_ephemeral_pub: None,
         privacy_guard: None,
@@ -490,7 +490,6 @@ fn test_local_id_changes_on_round_trip() {
         recipient_id: alice.user_id.clone(),
         amount: "100".to_string(),
         sender_remaining_amount: None,
-        sender_proof_signature: "sig-to-alice".to_string(),
         receiver_ephemeral_pub_hash: None,
         sender_ephemeral_pub: None,
         privacy_guard: None,

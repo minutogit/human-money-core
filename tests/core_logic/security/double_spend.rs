@@ -42,7 +42,7 @@ fn new_dummy_fingerprint(t_id: &str) -> TransactionFingerprint {
         blinded_id: "".to_string(),
         t_id: t_id.to_string(),
         encrypted_timestamp: 0,
-        sender_signature: "".to_string(),
+        layer2_signature: "".to_string(),
         valid_until: "2099-12-31T23:59:59.999999Z".to_string(),
     }
 }

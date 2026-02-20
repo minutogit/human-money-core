@@ -991,11 +991,8 @@ fn verify_transaction_integrity_and_signature(
 
     // WICHTIG: Um die ID zu validieren, müssen wir die Signaturen entfernen.
     tx_for_tid_calc.t_id = "".to_string();
-    tx_for_tid_calc.sender_proof_signature = "".to_string();
+    tx_for_tid_calc.layer2_signature = None;
     tx_for_tid_calc.sender_identity_signature = None;
-
-    // L2-Logik: Falls eine Layer-2-Signatur vorhanden ist, ist sie Teil des JSONs
-    // und somit Teil der t_id! (Siehe voucher_manager)
 
     let calculated_tid = get_hash(to_canonical_json(&tx_for_tid_calc)?);
     if transaction.t_id != calculated_tid {
@@ -1005,78 +1002,9 @@ fn verify_transaction_integrity_and_signature(
         .into());
     }
 
-    // 2. Sender Proof Signature (L2 - P2PKH)
-    // Muss vorhanden und gültig sein.
-    if transaction.sender_proof_signature.is_empty() {
-         return Err(ValidationError::InvalidTransaction("Missing sender_proof_signature".to_string()).into());
-    }
-    
-    // Verifiziere Proof Sig (Input Key signiert t_id)
-    if let Some(ephem_pub_str) = &transaction.sender_ephemeral_pub {
-        let ephem_pub_bytes = bs58::decode(ephem_pub_str).into_vec().map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
-        let pub_key = ed25519_dalek::VerifyingKey::from_bytes(ephem_pub_bytes.as_slice().try_into().unwrap())
-                .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
-                
-        let sig_bytes = bs58::decode(&transaction.sender_proof_signature).into_vec().map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
-        let signature = Signature::from_bytes(sig_bytes.as_slice().try_into().unwrap());
-        
-        if pub_key.verify(transaction.t_id.as_bytes(), &signature).is_err() {
-            return Err(ValidationError::InvalidTransaction("Invalid sender_proof_signature".to_string()).into());
-        }
-    } else {
-        return Err(ValidationError::InvalidTransaction("Missing sender_ephemeral_pub for proof signature".to_string()).into());
-    }
-
-    // (Init/Transfer distinction handling for L2 signature happens above in L2 block)
-    // (Sender Identity Signature verification happens in block 3 above)
-
-    // 3. Sender Identity Signature (L1)
-    // Nur prüfen wenn sender_id vorhanden.
-    if let Some(sender_id) = &transaction.sender_id {
-         let identity_sig_enc = transaction.sender_identity_signature.as_ref()
-            .ok_or_else(|| ValidationError::InvalidTransaction("Missing sender_identity_signature for public sender".to_string()))?;
-            
-         let pub_key = get_pubkey_from_user_id(sender_id)?;
-         let sig_bytes = bs58::decode(identity_sig_enc).into_vec().map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
-         let signature = Signature::from_bytes(sig_bytes.as_slice().try_into().unwrap());
-         
-         if pub_key.verify(transaction.t_id.as_bytes(), &signature).is_err() {
-            return Err(ValidationError::InvalidTransaction("Invalid sender_identity_signature".to_string()).into());
-         }
-    }
-
-    // 4. Layer-2 Signature Validierung (Optional, wenn vorhanden)
+    // 2. Layer 2 Signature Validierung (Pflichtfeld)
     if let Some(l2_sig) = &transaction.layer2_signature {
-        // P2PKH Logik: Wir verifizieren gegen den SENDER PubKey (der enthüllt wurde),
-        // nicht gegen den Receiver (der jetzt ein Hash ist).
         if let Some(sender_ephem_pub) = &transaction.sender_ephemeral_pub {
-            // Um den Hash für die L2-Signatur zu rekonstruieren, brauchen wir die ID
-            // so wie sie WAR, BEVOR die L2-Signatur hinzugefügt wurde.
-            let mut tx_pre_l2 = tx_for_tid_calc.clone();
-            tx_pre_l2.layer2_signature = None; // Entfernen für pre-l2-hash
-
-            let pre_l2_tid = get_hash(to_canonical_json(&tx_pre_l2)?);
-            
-            // UNTERSCHEIDUNG INIT vs TRANSFER für L2 Hash:
-            // INIT: hash(pre_l2_tid + valid_until + sender_ephem_pub)
-            // TRANSFER: hash(pre_l2_tid + sender_ephem_pub + receiver_ephem_pub_hash + change_anchor)
-            
-            let l2_hash = if transaction.t_type == "init" {
-                 let valid_until = transaction.valid_until.as_deref().unwrap_or("");
-                 let l2_payload = format!("{}{}{}", pre_l2_tid, valid_until, sender_ephem_pub);
-                 get_hash(l2_payload)
-            } else {
-                 let l2_payload = format!(
-                    "{}{}{}{}",
-                    pre_l2_tid,
-                    sender_ephem_pub,
-                    transaction.receiver_ephemeral_pub_hash.as_deref().unwrap_or(""),
-                    transaction.sender_change_anchor_hash.as_deref().unwrap_or("")
-                );
-                get_hash(l2_payload)
-            };
-
-            // Dekodiere Key & Sig
             let ephem_pub_bytes = bs58::decode(sender_ephem_pub).into_vec().map_err(|_| {
                 ValidationError::SignatureDecodeError("Invalid ephemeral pubkey".into())
             })?;
@@ -1084,7 +1012,6 @@ fn verify_transaction_integrity_and_signature(
                 ValidationError::SignatureDecodeError("Invalid l2 signature".into())
             })?;
 
-            // Verifiziere (Low-Level-Call wäre besser, hier manuell via dalek Wrapper logic)
             let ephem_key = ed25519_dalek::VerifyingKey::from_bytes(
                 ephem_pub_bytes.as_slice().try_into().unwrap(),
             )
@@ -1093,15 +1020,37 @@ fn verify_transaction_integrity_and_signature(
             })?;
             let signature = Signature::from_bytes(l2_sig_bytes.as_slice().try_into().unwrap());
 
-            if ephem_key.verify(l2_hash.as_bytes(), &signature).is_err() {
-                return Err(ValidationError::InvalidSignature {
-                    signer_id: "Layer2-Anchor".to_string(),
-                }
-                .into());
+            // NEU: Signatur prüft direkt die t_id (raw bytes)
+            let t_id_raw = bs58::decode(&transaction.t_id).into_vec().map_err(|_| {
+                ValidationError::SignatureDecodeError("Invalid t_id format".into())
+            })?;
+            if ephem_key.verify(&t_id_raw, &signature).is_err() {
+                return Err(ValidationError::InvalidTransaction("Invalid layer2_signature (Technical Proof)".to_string()).into());
             }
+        } else {
+            return Err(ValidationError::InvalidTransaction("Missing sender_ephemeral_pub for L2 signature".to_string()).into());
         }
+    } else {
+        return Err(ValidationError::InvalidTransaction("Missing layer2_signature".to_string()).into());
     }
 
-    // 3. (Alte sender_signature Logik entfernt - wird jetzt durch sender_proof_signature und sender_identity_signature oben abgedeckt)
+    // 3. Sender Identity Signature (L1) - Nur prüfen wenn sender_id vorhanden
+    if let Some(sender_id) = &transaction.sender_id {
+         let identity_sig_enc = transaction.sender_identity_signature.as_ref()
+            .ok_or_else(|| ValidationError::InvalidTransaction("Missing sender_identity_signature for public sender".to_string()))?;
+            
+         let pub_key = get_pubkey_from_user_id(sender_id)?;
+         let sig_bytes = bs58::decode(identity_sig_enc).into_vec().map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
+         let signature = Signature::from_bytes(sig_bytes.as_slice().try_into().unwrap());
+         
+         // NEU: Signatur prüft direkt die t_id (raw bytes)
+         let t_id_raw = bs58::decode(&transaction.t_id).into_vec().map_err(|_| {
+             ValidationError::SignatureDecodeError("Invalid t_id format".into())
+         })?;
+         if pub_key.verify(&t_id_raw, &signature).is_err() {
+            return Err(ValidationError::InvalidTransaction("Invalid sender_identity_signature".to_string()).into());
+         }
+    }
+
     Ok(())
 }

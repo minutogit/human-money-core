@@ -167,7 +167,7 @@ fn prevent_trapezoidal_identity_leak() {
     tx.t_id = get_hash(to_canonical_json(&tx).unwrap());
     
     // Bypass requires a non-empty signature string for presence check
-    tx.sender_proof_signature = "bypass_sig".to_string();
+    tx.layer2_signature = Some("bypass_sig".to_string());
 
     voucher.transactions.push(tx);
 
@@ -300,7 +300,7 @@ fn prevent_trap_data_replay() {
         sender_ephemeral_pub: Some(sender_ephemeral_pub_tx1),
         receiver_ephemeral_pub_hash: Some(receiver_ephemeral_pub_hash_tx1),
         trap_data: Some(valid_trap.clone()),
-        sender_proof_signature: "bypass".to_string(),
+        layer2_signature: Some("bypass".to_string()),
         privacy_guard: Some("dummy".to_string()), 
         ..Default::default()
     };
@@ -331,7 +331,7 @@ fn prevent_trap_data_replay() {
         // REPLAY: Using EXACTLY the same trap data object from Tx1
         trap_data: Some(valid_trap), 
         
-        sender_proof_signature: "bypass".to_string(),
+        layer2_signature: Some("bypass".to_string()),
         privacy_guard: Some("dummy".to_string()), 
         ..Default::default()
     };
@@ -372,7 +372,7 @@ fn enforce_ephemeral_key_uniqueness() {
         recipient_id: get_hash("r1"),
         amount: "10".to_string(),
         sender_ephemeral_pub: Some(reused_ephemeral_pub.to_string()),
-        sender_proof_signature: "bypass".to_string(),
+        layer2_signature: Some("bypass".to_string()),
         receiver_ephemeral_pub_hash: Some("hash1".to_string()),
         ..Default::default()
     };
@@ -390,7 +390,7 @@ fn enforce_ephemeral_key_uniqueness() {
         amount: "10".to_string(),
         // REUSE!
         sender_ephemeral_pub: Some(reused_ephemeral_pub.to_string()), 
-        sender_proof_signature: "bypass".to_string(),
+        layer2_signature: Some("bypass".to_string()),
         receiver_ephemeral_pub_hash: Some("hash2".to_string()),
         ..Default::default()
     };
@@ -461,7 +461,7 @@ fn prevent_stealth_and_public_input_mixing() {
         sender_id: None, // Anonymous
         recipient_id: get_hash("stealth_recipient"), // Anonymous
         amount: "10".to_string(),
-        sender_proof_signature: "bypass_sig".to_string(),
+        layer2_signature: Some("bypass_sig".to_string()),
         ..Default::default()
     };
     voucher.transactions.push(tx1.clone());

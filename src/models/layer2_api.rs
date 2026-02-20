@@ -159,16 +159,9 @@ pub struct L2LockRequest {
     #[serde(with = "crate::models::layer2_api::base58_32")]
     pub transaction_hash: [u8; 32], // Der Hash der neuen Transaktion (t_id)
     pub is_genesis: bool,
-
-    // --- NEUE FELDER FÜR UNABHÄNGIGE L2 SERVER-VERIFIKATION ---
-    #[serde(with = "crate::models::layer2_api::base58_32")]
-    pub pre_l2_tid: [u8; 32], 
-    
     #[serde(with = "crate::models::layer2_api::base58_32")]
     pub sender_ephemeral_pub: [u8; 32],
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub valid_until: Option<String>, 
+
     
     #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
     pub receiver_ephemeral_pub_hash: Option<[u8; 32]>, 

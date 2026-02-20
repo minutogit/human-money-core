@@ -75,7 +75,7 @@ pub fn create_fingerprint_for_transaction(
         u,
         blinded_id,
         t_id: transaction.t_id.clone(),
-        sender_signature: transaction.sender_proof_signature.clone(),
+        layer2_signature: transaction.layer2_signature.clone().unwrap_or_default(),
         valid_until: valid_until_rounded,
         encrypted_timestamp: encrypt_transaction_timestamp(transaction)?,
     })

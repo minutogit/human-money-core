@@ -11,7 +11,6 @@ pub enum VerdictAction {
     TriggerQuarantine(String),
 }
 
-use crate::services::utils::to_canonical_json;
 
 /// Generiert einen L2LockRequest basierend auf der gegebenen Transaktion.
 pub fn generate_lock_request(
@@ -51,33 +50,11 @@ pub fn generate_lock_request(
         auth_signature: None,
     };
 
-    // --- BERECHNUNG DER PROOF-FELDER FÜR LAYER 2 VERIFIKATION ---
-    let mut tx_for_tid_calc = transaction.clone();
-    tx_for_tid_calc.t_id = "".to_string();
-    tx_for_tid_calc.sender_proof_signature = "".to_string();
-    tx_for_tid_calc.sender_identity_signature = None;
-    tx_for_tid_calc.layer2_signature = None; 
-
-    let pre_l2_tid_str = crypto_utils::get_hash(
-        to_canonical_json(&tx_for_tid_calc)
-            .map_err(|e| VoucherCoreError::DeserializationError(e.to_string()))?
-    );
-
-    let mut pre_l2_tid = [0u8; 32];
-    let decoded_pre_l2 = bs58::decode(&pre_l2_tid_str).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid base58 for pre_l2_tid".to_string()))?;
-    pre_l2_tid.copy_from_slice(&decoded_pre_l2);
-
     let mut sender_ephemeral_pub = [0u8; 32];
     let decoded_sep = bs58::decode(transaction.sender_ephemeral_pub.as_deref().unwrap_or("")).into_vec().unwrap_or_else(|_| vec![0; 32]);
     if decoded_sep.len() == 32 {
         sender_ephemeral_pub.copy_from_slice(&decoded_sep);
     }
-
-    let valid_until = if is_genesis {
-        transaction.valid_until.clone()
-    } else {
-        None
-    };
 
     let receiver_ephemeral_pub_hash = transaction.receiver_ephemeral_pub_hash.as_ref().and_then(|h| {
         bs58::decode(h).into_vec().ok().and_then(|v| {
@@ -114,9 +91,7 @@ pub fn generate_lock_request(
         ds_tag,
         transaction_hash: t_id,
         is_genesis,
-        pre_l2_tid,
         sender_ephemeral_pub,
-        valid_until,
         receiver_ephemeral_pub_hash,
         sender_change_anchor_hash,
         layer2_signature,

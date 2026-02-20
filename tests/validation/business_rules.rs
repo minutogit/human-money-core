@@ -737,7 +737,6 @@ mod behavioral_rules {
             recipient_id: ACTORS.charlie.user_id.clone(),
             amount: "10.0000".to_string(),
             sender_remaining_amount: None,
-            sender_proof_signature: "".to_string(),
             // P2PKH Setup
             receiver_ephemeral_pub_hash: None, 
             sender_ephemeral_pub: Some(sender_ephem_pub_str.clone()),
@@ -752,13 +751,16 @@ mod behavioral_rules {
         let dummy_anchor = Some("DummyHash".to_string());
         invalid_transfer_tx.receiver_ephemeral_pub_hash = dummy_anchor.clone();
 
-        // 2. Generate L2 Signature
+        // 2. Generate L2 Signature (Neu: direkt auf t_id)
+        invalid_transfer_tx.t_id = "".to_string();
+        invalid_transfer_tx.layer2_signature = None;
+        invalid_transfer_tx.sender_identity_signature = None;
+        
         let tx_json = to_canonical_json(&invalid_transfer_tx).unwrap();
-        let pre_l2_tid = crypto_utils::get_hash(tx_json);
-        let l2_payload = format!("{}{}{}{}", pre_l2_tid, sender_ephem_pub_str, dummy_anchor.unwrap_or_default(), "");
-        let l2_hash = crypto_utils::get_hash(l2_payload);
-        use ed25519_dalek::Signer;
-        let l2_sig = sender_ephem_key.sign(l2_hash.as_bytes());
+        invalid_transfer_tx.t_id = crypto_utils::get_hash(tx_json);
+        
+        let t_id_raw = bs58::decode(&invalid_transfer_tx.t_id).into_vec().unwrap();
+        let l2_sig = crypto_utils::sign_ed25519(&sender_ephem_key, &t_id_raw);
         invalid_transfer_tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 
         let signed_tx = invalid_transfer_tx; // Keine Re-Signierung nötig
@@ -1262,7 +1264,7 @@ mod behavioral_rules {
             // Derive Genesis Key to simulate valid Proof Signature update (bypassing Proof check)
             let nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
             let prefix = creator.user_id.split(':').next().unwrap_or(&creator.user_id).to_string();
-            let (genesis_secret, _) = human_money_core::services::crypto_utils::derive_ephemeral_key_pair(
+            let (_genesis_secret, _) = human_money_core::services::crypto_utils::derive_ephemeral_key_pair(
                 &creator.signing_key,
                 &nonce_bytes,
                 "genesis",
@@ -1275,26 +1277,24 @@ mod behavioral_rules {
 
             let tx = corrupted_voucher.transactions[0].clone();
             
-            // Manual resignation protecting OLD layer2_signature
+            // Manual resignation protecting OLD layer2_signature (to simulate an attack)
             let mut manual_tx = tx.clone();
-            manual_tx.layer2_signature = original_l2_sig; // Restore OLD L2 sig
             
-            // 1. Reset ID fields
+            // 1. Calculate t_id (without signatures)
             manual_tx.t_id = "".to_string();
-            manual_tx.sender_proof_signature = "".to_string();
+            manual_tx.layer2_signature = None;
             manual_tx.sender_identity_signature = None;
             
-            // 2. Recalculate ID (includes modified date + OLD L2 sig)
             let canonical_json = to_canonical_json(&manual_tx).unwrap();
             manual_tx.t_id = human_money_core::services::crypto_utils::get_hash(canonical_json);
 
-            // 3. Sign Proof (L2) with Genesis Key
-            let proof_sig = human_money_core::services::crypto_utils::sign_ed25519(&genesis_secret, manual_tx.t_id.as_bytes());
-            manual_tx.sender_proof_signature = bs58::encode(proof_sig.to_bytes()).into_string();
+            // 2. Add the OLD L2 Signature (which doesn't match the new t_id)
+            manual_tx.layer2_signature = original_l2_sig; 
 
-            // 4. Sign Identity (L1) with Creator Key
+            // 3. Sign Identity (L1) with Creator Key to pass that check
             if manual_tx.sender_id.is_some() {
-                 let id_sig = human_money_core::services::crypto_utils::sign_ed25519(&creator.signing_key, manual_tx.t_id.as_bytes());
+                 let t_id_raw = bs58::decode(&manual_tx.t_id).into_vec().unwrap();
+                 let id_sig = human_money_core::services::crypto_utils::sign_ed25519(&creator.signing_key, &t_id_raw);
                  manual_tx.sender_identity_signature = Some(bs58::encode(id_sig.to_bytes()).into_string());
             }
 
@@ -1305,8 +1305,8 @@ mod behavioral_rules {
             // Now we expect specifically the L2 Anchor to fail (hash mismatch for that signature).
             assert!(
                 matches!(result.unwrap_err(),
-                    VoucherCoreError::Validation(ValidationError::InvalidSignature { signer_id })
-                    if signer_id == "Layer2-Anchor"
+                    VoucherCoreError::Validation(ValidationError::InvalidTransaction(msg))
+                    if msg.contains("layer2_signature")
                 ),
                 "Manipulation of valid_until should break Layer 2 signature (hash mismatch)"
             );

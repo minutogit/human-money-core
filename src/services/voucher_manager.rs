@@ -380,49 +380,25 @@ pub fn create_voucher(
         sender_ephemeral_pub: Some(genesis_pub_str.clone()),
         privacy_guard: None,
         trap_data: None, // Init hat keinen Trap (kein Vorgänger)
-        layer2_signature: None, // Wird gleich berechnet
+        layer2_signature: None, // Platzhalter
         valid_until: Some(temp_voucher.valid_until.clone()),
         sender_change_anchor_hash: None,
-        sender_proof_signature: "".to_string(), // Wird später berechnet
         sender_identity_signature: None,
     };
 
-    // --- L2 SIGNATUR (SCHRITT C) ---
-    // 1. Berechne die vorläufige t_id OHNE Signaturen
-    let tx_json_pre_l2 = to_canonical_json(&init_transaction)?;
-    let pre_l2_tid = get_hash(tx_json_pre_l2);
-
-    // 2. Erstelle den L2-Hash: Hash(pre_l2_tid + valid_until + sender_ephemeral_pub)
-    //    Signierer: Der Private Key von sender_ephemeral_pub (Genesis).
-    let l2_payload = format!(
-        "{}{}{}",
-        pre_l2_tid,
-        init_transaction
-            .valid_until
-            .as_ref()
-            .unwrap_or(&"".to_string()),
-        genesis_pub_str
-    );
-    let l2_hash = get_hash(l2_payload);
-
-    // 3. Signiere mit dem ephemeralen Key (Genesis Secret)
-    let l2_sig_bytes = sign_ed25519(&genesis_secret, l2_hash.as_bytes());
-    init_transaction.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
-
-    // --- FINALE T_ID & SENDER SIGNATUREN (SCHRITT D) ---
-    // Die t_id muss nun neu berechnet werden, da layer2_signature Teil des JSON ist.
+    // --- L2 & IDENTITY SIGNATUREN (NEUES MODELL) ---
+    // 1. Berechne die t_id OHNE Signaturen (layer2_signature und sender_identity_signature auf None)
     let tx_json_for_id = to_canonical_json(&init_transaction)?;
     let final_t_id = get_hash(tx_json_for_id);
     init_transaction.t_id = final_t_id;
 
-    // 1. Sender Proof Signature (L2): Signiert Hash(t_id) mit Genesis Key (Ephemeral)
-    // Beweist technischen Besitz/Autorisierung auf L2 Ebene.
-    let proof_sig_bytes = sign_ed25519(&genesis_secret, init_transaction.t_id.as_bytes());
-    init_transaction.sender_proof_signature = bs58::encode(proof_sig_bytes.to_bytes()).into_string();
+    // 2. Layer 2 Signature: Signiert t_id (raw bytes) mit dem ephemeralen Key (Genesis Secret)
+    let t_id_raw = bs58::decode(&init_transaction.t_id).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id hash".to_string()))?;
+    let l2_sig_bytes = sign_ed25519(&genesis_secret, &t_id_raw);
+    init_transaction.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
 
-    // 2. Sender Identity Signature (L1): Signiert Hash(t_id) mit Creator Key (Permanent)
-    // Beweist die Identität des Erstellers (da sender_id gesetzt ist).
-    let identity_sig_bytes = sign_ed25519(creator_signing_key, init_transaction.t_id.as_bytes());
+    // 3. Sender Identity Signature: Signiert t_id (raw bytes) mit Creator Key (Permanent)
+    let identity_sig_bytes = sign_ed25519(creator_signing_key, &t_id_raw);
     init_transaction.sender_identity_signature = Some(bs58::encode(identity_sig_bytes.to_bytes()).into_string());
 
     temp_voucher.signatures.push(creator_sig_obj); // Füge die Creator-Signatur hinzu
@@ -801,42 +777,23 @@ pub fn create_transaction(
         layer2_signature: None,
         valid_until: None,
         sender_change_anchor_hash,
-        sender_proof_signature: "".to_string(),
         sender_identity_signature: None,
     };
 
-    // 5. L2 SIGNATUR
-    // Signiert: Hash(pre_l2_tid + sender_ephemeral_pub + receiver_ephemeral_pub_hash + [sender_change_anchor_hash])
-    // Berechne pre_l2_tid
-    let tx_json_pre_l2 = to_canonical_json(&new_transaction)?;
-    let pre_l2_tid = get_hash(tx_json_pre_l2);
-
-    let l2_payload = format!(
-        "{}{}{}{}",
-        pre_l2_tid,
-        sender_ephemeral_pub,
-        new_transaction.receiver_ephemeral_pub_hash.as_deref().unwrap_or(""),
-        new_transaction.sender_change_anchor_hash.as_deref().unwrap_or("")
-    );
-    let l2_hash = get_hash(l2_payload);
-    
-    // Signiere mit Ephemeral Key (dem Input Key!)
-    let l2_sig_bytes = sign_ed25519(sender_ephemeral_key, l2_hash.as_bytes());
-    new_transaction.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
-
-    // 6. FINALE T_ID & Transaction Signatures
+    // --- L2 & IDENTITY SIGNATUREN (NEUES MODELL) ---
+    // 1. Berechne die t_id OHNE Signaturen
     let tx_json_for_id = to_canonical_json(&new_transaction)?;
     new_transaction.t_id = get_hash(tx_json_for_id);
 
-    // a) Sender Proof Signature (L2): Signiert Hash(t_id) mit Ephemeral Key (Input Key)
-    // Beweist technischen Besitz/Autorisierung auf L2 Ebene.
-    let proof_sig_bytes = sign_ed25519(sender_ephemeral_key, new_transaction.t_id.as_bytes());
-    new_transaction.sender_proof_signature = bs58::encode(proof_sig_bytes.to_bytes()).into_string();
+    // 2. Layer 2 Signature: Signiert t_id (raw bytes) mit dem ephemeralen Key (Input Key)
+    let t_id_raw = bs58::decode(&new_transaction.t_id).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id hash".to_string()))?;
+    let l2_sig_bytes = sign_ed25519(sender_ephemeral_key, &t_id_raw);
+    new_transaction.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
 
-    // b) Sender Identity Signature (L1): Signiert Hash(t_id) mit Sender Permanent Key
+    // 3. Sender Identity Signature (L1): Signiert t_id (raw bytes) mit Sender Permanent Key
     // NUR wenn sender_id gesetzt ist (Public/Flexible Mode).
     if new_transaction.sender_id.is_some() {
-         let identity_sig_bytes = sign_ed25519(sender_permanent_key, new_transaction.t_id.as_bytes());
+         let identity_sig_bytes = sign_ed25519(sender_permanent_key, &t_id_raw);
          new_transaction.sender_identity_signature = Some(bs58::encode(identity_sig_bytes.to_bytes()).into_string());
     }
 

@@ -15,10 +15,7 @@ use crate::models::{
     voucher::Voucher,
 };
 use crate::services::conflict_manager;
-use crate::services::crypto_utils::{
-    get_hash, get_short_hash_from_user_id,
-};
-use crate::services::utils::to_canonical_json;
+use crate::services::crypto_utils::get_short_hash_from_user_id;
 use crate::wallet::ProofOfDoubleSpendSummary;
 use crate::wallet::instance::VoucherStatus;
 use ed25519_dalek::{Signature, Verifier};
@@ -181,12 +178,14 @@ impl Wallet {
                 return Ok(None);
             }
 
-            let signature_payload = serde_json::json!({
-                "prev_hash": &tx.prev_hash, "sender_id": &tx.sender_id, "t_id": &tx.t_id
-            });
-            let signature_payload_hash = get_hash(to_canonical_json(&signature_payload)?);
-            // Use sender_proof_signature (L2) for conflict proof
-            let signature_bytes = bs58::decode(&tx.sender_proof_signature).into_vec()?;
+            let signed_data = tx.t_id.as_bytes();
+            
+            // Use layer2_signature (technical/ephemeral proof) for conflict proof
+            let signature_str = match &tx.layer2_signature {
+                Some(s) => s,
+                None => continue, // Missing L2 signature
+            };
+            let signature_bytes = bs58::decode(signature_str).into_vec()?;
             
             // The signature is ALWAYS signed by the ephemeral key (L2)
             let verification_key = if let Some(pub_str) = &tx.sender_ephemeral_pub {
@@ -203,16 +202,16 @@ impl Wallet {
             } else {
                 continue; // Missing Key
             };
-
+ 
             // Konvertiere Signature Bytes zu Signature Object
             let signature = if let Ok(sig_arr) = signature_bytes.try_into() {
                  Signature::from_bytes(&sig_arr)
             } else {
                  continue;
             };
-
+ 
             if verification_key.verify(
-                signature_payload_hash.as_bytes(),
+                signed_data,
                 &signature,
             ).is_ok() {
                 verified_tx_count += 1;

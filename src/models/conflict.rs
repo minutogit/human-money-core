@@ -37,9 +37,10 @@ pub struct TransactionFingerprint {
     /// `encrypted_nanos = original_nanos ^ hash(prev_hash + t_id)`
     pub encrypted_timestamp: u128,
 
-    /// Die Signatur des Senders. Dient als kryptographischer Beweis, um den
-    /// Betrugsversuch dem Verursacher zweifelsfrei zuordnen zu können.
-    pub sender_signature: String,
+    /// Die technische Signatur (Layer 2) des Senders. Dient als kryptographischer Beweis, 
+    /// um den Betrugsversuch dem Verursacher (Inhaber des ephemeralen Schlüssels) 
+    /// zweifelsfrei zuordnen zu können.
+    pub layer2_signature: String,
 
     /// Das Gültigkeitsdatum des zugehörigen Gutscheins (abgeleitet aus `voucher.valid_until`).
     /// Nach diesem Datum kann der Fingerprint sicher aus dem Speicher entfernt werden.
