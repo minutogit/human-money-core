@@ -1,56 +1,113 @@
 // examples/l2_playground.rs
 // run with: cargo run --example l2_playground
 //!
-//! Playground zur Demonstration der Layer 2 Integration.
-//! Führt zwei Transaktionen aus und zeigt den Vergleich zwischen
-//! den lokalen Gutscheindaten (Wallet) und den im L2-Server gespeicherten Locks.
+//! Playground zur Demonstration der Layer 2 Integration und der "Chain of Authority".
+//! Führt eine Sequenz von Transaktionen aus und zeigt die Verkettung im L2-Netzwerk.
 
-use human_money_core::models::layer2_api::{L2LockRequest, L2Verdict};
+use ed25519_dalek::{VerifyingKey, Signature, Verifier};
+use human_money_core::models::layer2_api::{L2LockRequest, L2Verdict, L2StatusQuery};
 use human_money_core::models::voucher::ValueDefinition;
 use human_money_core::services::voucher_manager::NewVoucherData;
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::test_utils::{self, ACTORS, create_custom_standard, SILVER_STANDARD};
 use human_money_core::models::voucher_standard_definition::PrivacySettings;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tempfile::tempdir;
 
-// Eine einfache Simulation eines L2-Servers zur Anzeige der Rohdaten
-pub struct L2ServerSimulation {
-    // Key: ds_tag (Base58), Value: transaction_hash (Base58)
-    pub locks: HashMap<String, String>,
+/// Eine verbesserte Simulation eines L2-Nodes, die den aktuellen UTXO-basierten Stand widerspiegelt.
+pub struct MockL2Node {
+    /// Simuliert die L2-Datenbank. Key: ds_tag (Anker), Value: t_id (Transaktions-Hash)
+    pub locks: HashMap<[u8; 32], [u8; 32]>,
+    /// Simuliert das UTXO Modell für P2PKH Anker
+    pub spendable_outputs: HashSet<[u8; 32]>,
 }
 
-impl L2ServerSimulation {
+impl MockL2Node {
     pub fn new() -> Self {
         Self {
             locks: HashMap::new(),
+            spendable_outputs: HashSet::new(),
         }
     }
 
-    pub fn process_request(&mut self, req_bytes: &[u8]) -> Vec<u8> {
+    pub fn handle_lock_request(&mut self, req_bytes: &[u8]) -> Vec<u8> {
         let req: L2LockRequest = serde_json::from_slice(req_bytes).expect("Failed to parse request");
         
-        let ds_tag_str = bs58::encode(req.ds_tag).into_string();
-        let tx_hash_str = bs58::encode(req.transaction_hash).into_string();
+        // --- 1. Autorität Prüfen (layer2_signature) ---
+        // In der Realität würde hier die Signatur gegen den Ephemeral Key geprüft.
+        let ephem_key = VerifyingKey::from_bytes(&req.sender_ephemeral_pub).expect("Invalid key");
+        let signature = Signature::from_bytes(&req.layer2_signature);
+        
+        // Wir simulieren die Prüfung (oder führen sie aus, falls bypass in core deaktiviert ist)
+        if ephem_key.verify(&req.transaction_hash, &signature).is_err() {
+             // Im Beispiel erlauben wir ungültige signaturen für schnelleres prototyping, 
+             // aber ein echter Node würde hier ablehnen.
+        }
 
-        if self.locks.contains_key(&ds_tag_str) {
+        // --- 2. Verkettung Prüfen (P2PKH) ---
+        if !req.is_genesis {
+            let sender_hash_str = human_money_core::services::crypto_utils::get_hash(&req.sender_ephemeral_pub);
+            let mut sender_hash_bytes = [0u8; 32];
+            let decoded_h = bs58::decode(&sender_hash_str).into_vec().unwrap();
+            sender_hash_bytes.copy_from_slice(&decoded_h);
+
+            if !self.spendable_outputs.remove(&sender_hash_bytes) {
+                let verdict = L2Verdict::ConflictFound {
+                    conflicting_t_id: req.transaction_hash // Anker nicht gefunden oder bereits verbraucht
+                };
+                return serde_json::to_vec(&verdict).unwrap();
+            }
+        }
+
+        // --- 3. Double Spend Check via ds_tag ---
+        if let Some(&existing_t_id) = self.locks.get(&req.ds_tag) {
             let verdict = L2Verdict::DoubleSpend {
-                conflicting_t_id: [0u8; 32], // Dummy
+                conflicting_t_id: existing_t_id,
                 proof_signature: [0u8; 64],
             };
             serde_json::to_vec(&verdict).unwrap()
         } else {
-            self.locks.insert(ds_tag_str, tx_hash_str);
+            // Erfolg: Verankern
+            self.locks.insert(req.ds_tag, req.transaction_hash);
+            
+            // Neue UTXOs registrieren (Empfänger und Wechselgeld)
+            if let Some(r) = req.receiver_ephemeral_pub_hash {
+                self.spendable_outputs.insert(r);
+            }
+            if let Some(c) = req.change_ephemeral_pub_hash {
+                self.spendable_outputs.insert(c);
+            }
+
             let verdict = L2Verdict::Ok {
                 signature: [0u8; 64],
             };
             serde_json::to_vec(&verdict).unwrap()
         }
     }
+
+    pub fn handle_status_query(&self, req_bytes: &[u8]) -> Vec<u8> {
+        let req: L2StatusQuery = serde_json::from_slice(req_bytes).unwrap();
+
+        for ds_tag in &req.target_ds_tags {
+            if !self.locks.contains_key(ds_tag) {
+                let verdict = L2Verdict::ConflictFound {
+                    conflicting_t_id: [0u8; 32],
+                };
+                return serde_json::to_vec(&verdict).unwrap();
+            }
+        }
+
+        let verdict = L2Verdict::Verified {
+            signature: [0u8; 64],
+        };
+        serde_json::to_vec(&verdict).unwrap()
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== LAYER 2 INTEGRATION PLAYGROUND ===\n");
+    println!("\x1b[1;36m======================================================\x1b[0m");
+    println!("\x1b[1;36m   LAYER 2 INTEGRATION & CHAIN OF AUTHORITY PLAYGROUND\x1b[0m");
+    println!("\x1b[1;36m======================================================\x1b[0m\n");
 
     let dir = tempdir()?;
     let password = "password123";
@@ -63,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let user_id = app.get_user_id()?;
     let bob_id = test_utils::ACTORS.david.identity.user_id.clone();
 
-    // 1. Standard laden
+    // Standard laden
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
         s.privacy = Some(PrivacySettings { mode: "flexible".to_string() });
     });
@@ -71,10 +128,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut standards_toml = HashMap::new();
     standards_toml.insert(flexible_standard.metadata.uuid.clone(), flexible_toml.clone());
 
-    let mut server = L2ServerSimulation::new();
+    let mut server = MockL2Node::new();
 
     // --- SCHRITT 1: Genesis ---
-    println!("--- SCHRITT 1: Gutschein erstellen (Genesis) ---");
+    println!("\x1b[1;33m[1/3] Genesis: Gutschein erstellen (100 Silber)\x1b[0m");
     app.create_new_voucher(
         &flexible_toml,
         "en",
@@ -87,14 +144,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let voucher_id = app.get_voucher_summaries(None, None)?[0].local_instance_id.clone();
-    
-    // L2 Anker für Genesis
     let req_genesis = app.generate_l2_lock_request(&voucher_id)?;
-    server.process_request(&req_genesis);
-    println!("✅ Genesis anchored on L2.\n");
+    let resp_genesis = server.handle_lock_request(&req_genesis);
+    app.process_l2_response(&resp_genesis, Some(password)).unwrap();
+    println!("✅ Genesis anchored on L2. DS_TAG: \x1b[32m{}\x1b[0m\n", 
+        bs58::encode(serde_json::from_slice::<L2LockRequest>(&req_genesis)?.ds_tag).into_string());
 
     // --- SCHRITT 2: Transaktion 1 ---
-    println!("--- SCHRITT 2: Erste Transaktion (10 an Bob) ---");
+    println!("\x1b[1;33m[2/3] Transaktion 1: 10 Silber an Bob senden\x1b[0m");
     let request1 = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
@@ -106,15 +163,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     app.create_transfer_bundle(request1, &standards_toml, None, Some(password))?;
     
-    let v_id_1 = app.get_voucher_summaries(None, Some(&[human_money_core::VoucherStatus::Active]))?
+    // Die neue Instanz finden (Wechselgeld)
+    let v_id_1 = app.get_voucher_summaries(None, Some(&[human_money_core::wallet::instance::VoucherStatus::Active]))?
         .iter().find(|s| s.current_amount == "90.0000").map(|s| s.local_instance_id.clone()).unwrap();
 
     let req_tx1 = app.generate_l2_lock_request(&v_id_1)?;
-    server.process_request(&req_tx1);
-    println!("✅ Transaction 1 anchored on L2.\n");
+    let resp_tx1 = server.handle_lock_request(&req_tx1);
+    app.process_l2_response(&resp_tx1, Some(password)).unwrap();
+    println!("✅ TX 1 anchored on L2. DS_TAG: \x1b[32m{}\x1b[0m\n", 
+        bs58::encode(serde_json::from_slice::<L2LockRequest>(&req_tx1)?.ds_tag).into_string());
 
     // --- SCHRITT 3: Transaktion 2 ---
-    println!("--- SCHRITT 3: Zweite Transaktion (5 an Bob) ---");
+    println!("\x1b[1;33m[3/3] Transaktion 2: 5 Silber an Bob senden\x1b[0m");
     let request2 = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_id,
         sources: vec![human_money_core::wallet::SourceTransfer {
@@ -126,44 +186,105 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     app.create_transfer_bundle(request2, &standards_toml, None, Some(password))?;
 
-    let v_id_2 = app.get_voucher_summaries(None, Some(&[human_money_core::VoucherStatus::Active]))?
+    let v_id_2 = app.get_voucher_summaries(None, Some(&[human_money_core::wallet::instance::VoucherStatus::Active]))?
         .iter().find(|s| s.current_amount == "85.0000").map(|s| s.local_instance_id.clone()).unwrap();
 
     let req_tx2 = app.generate_l2_lock_request(&v_id_2)?;
-    server.process_request(&req_tx2);
-    println!("✅ Transaction 2 anchored on L2.\n");
+    let resp_tx2 = server.handle_lock_request(&req_tx2);
+    app.process_l2_response(&resp_tx2, Some(password)).unwrap();
+    println!("✅ TX 2 anchored on L2. DS_TAG: \x1b[32m{}\x1b[0m\n", 
+        bs58::encode(serde_json::from_slice::<L2LockRequest>(&req_tx2)?.ds_tag).into_string());
 
-    // --- FINALE AUSGABE ---
-    println!("======================================================");
-    println!("ROHDATEN: LOKALER GUTSCHEIN (Wallet)");
-    println!("======================================================");
+    // --- ANALYSE & VISUALISIERUNG ---
+    println!("\x1b[1;36m======================================================\x1b[0m");
+    println!("\x1b[1;36m               CHAIN OF AUTHORITY ANALYSIS            \x1b[0m");
+    println!("\x1b[1;36m======================================================\x1b[0m");
+    
     let details = app.get_voucher_details(&v_id_2)?;
-    println!("{}", serde_json::to_string_pretty(&details.voucher)?);
-    println!("\n");
+    let voucher = &details.voucher;
 
-    println!("======================================================");
-    println!("ROHDATEN: LAYER 2 SERVER (Lock Table)");
-    println!("======================================================");
-    println!("Erklärung: Der Server speichert pro 'ds_tag' (Double-Spend-Tag)");
-    println!("den Hash der Transaktion, die diesen Tag verbraucht hat.");
-    println!("Wird ein ds_tag mit einem anderen Hash erneut eingereicht -> Double Spend!");
-    println!("");
-    println!("{:<50} | {:<50}", "DS_TAG (Base58)", "TRANSACTION_HASH (Base58)");
-    println!("{:-<50}-|-{:-<50}", "", "");
-    
-    // Wir sortieren für eine stabilere Ausgabe (optional)
-    let mut sorted_locks: Vec<_> = server.locks.iter().collect();
-    sorted_locks.sort_by_key(|a| a.0);
+    println!("\n\x1b[1;37mZusammenfassung der Verkettung (Lokal vs. L2):\x1b[0m\n");
 
-    for (ds_tag, tx_hash) in sorted_locks {
-        println!("{:<50} | {:<50}", ds_tag, tx_hash);
+    let mut active_anchors = Vec::new();
+
+    for (i, tx) in voucher.transactions.iter().enumerate() {
+        let is_genesis = tx.t_type == "init";
+        let type_label = if is_genesis { "GENESIS" } else { "TRANSFER" };
+        println!("\x1b[1;34m[Step {}] {}\x1b[0m", i, type_label);
+        println!("  ├─ TX_ID (t_id):  {}", tx.t_id);
+        
+        // --- 1. Autorität / Input ---
+        if is_genesis {
+            println!("  ├─ Autorität:     \x1b[1;32mInitialer Gutschein (Kein Vorbesitzer)\x1b[0m");
+        } else if let Some(sep) = &tx.sender_ephemeral_pub {
+             let sep_bytes = bs58::decode(sep).into_vec()?;
+             let sep_hash = human_money_core::services::crypto_utils::get_hash(&sep_bytes);
+             
+             let match_found = active_anchors.contains(&sep_hash);
+             let status_indicator = if match_found { "\x1b[32mOK (Match mit vorherigem Output!)\x1b[0m" } else { "\x1b[31mKEIN ANKER GEFUNDEN!\x1b[0m" };
+             
+             println!("  ├─ Auth Key:      {} (Hash: {})", sep, sep_hash);
+             println!("  ├─ CoA Link:      {}", status_indicator);
+        }
+
+        // --- 2. L2 Verankerung ---
+        if let Some(td) = &tx.trap_data {
+            println!("  ├─ DS_TAG (Trap): {}", td.ds_tag);
+            
+            let mut ds_tag_arr = [0u8; 32];
+            let decoded = bs58::decode(&td.ds_tag).into_vec()?;
+            ds_tag_arr.copy_from_slice(&decoded);
+            
+            if let Some(l2_tid) = server.locks.get(&ds_tag_arr) {
+                let l2_tid_str = bs58::encode(l2_tid).into_string();
+                if l2_tid_str == tx.t_id {
+                    println!("  ├─ L2 Status:     \x1b[32mVERANKERT (Match)\x1b[0m");
+                } else {
+                    println!("  ├─ L2 Status:     \x1b[31mKONFLIKT! L2 hat id {}\x1b[0m", l2_tid_str);
+                }
+            } else {
+                println!("  ├─ L2 Status:     \x1b[33mOFFLINE (Nicht im L2)\x1b[0m");
+            }
+        } else if is_genesis {
+            let genesis_ds_tag = human_money_core::services::crypto_utils::get_hash(voucher.voucher_id.as_bytes());
+            println!("  ├─ DS_TAG (Gen):  {}", genesis_ds_tag);
+            
+            let mut ds_tag_arr = [0u8; 32];
+            let decoded = bs58::decode(&genesis_ds_tag).into_vec()?;
+            ds_tag_arr.copy_from_slice(&decoded);
+            
+            if server.locks.contains_key(&ds_tag_arr) {
+                println!("  ├─ L2 Status:     \x1b[32mGENESIS VERANKERT\x1b[0m");
+            }
+        }
+
+        // --- 3. Neue Outputs (Die Anker für die Zukunft) ---
+        active_anchors.clear();
+        println!("  └─ Neue Anker (Outputs):");
+        if let Some(rh) = &tx.receiver_ephemeral_pub_hash {
+            println!("     ├─ Empfänger:  {} \x1b[33m(Wartet auf Signatur im nächsten Schritt)\x1b[0m", rh);
+            active_anchors.push(rh.clone());
+        }
+        if let Some(ch) = &tx.change_ephemeral_pub_hash {
+            println!("     ├─ Wechselgeld: {} \x1b[33m(Wartet auf Signatur im nächsten Schritt)\x1b[0m", ch);
+            active_anchors.push(ch.clone());
+        }
+        if tx.receiver_ephemeral_pub_hash.is_none() && tx.change_ephemeral_pub_hash.is_none() {
+            println!("     └─ Keine neuen Stealth-Anker erzeugt.");
+        }
+        
+        println!("");
     }
-    println!("======================================================\n");
-    
-    println!("VERGLEICHSHINWEIS:");
-    println!("1. Der erste DS_TAG im Server entspricht dem Hash der Voucher-ID (Genesis).");
-    println!("2. Jeder folgende DS_TAG stammt aus den 'trap_data' der vorherigen Transaktion.");
-    println!("3. Die TRANSACTION_HASHES im Server stimmen exakt mit den Hashes der Transaktions-Objekte oben überein.");
+
+    println!("\x1b[1;37mErklärung der 'Chain of Authority' (CoA):\x1b[0m");
+    println!("1. Jede Transaktion generiert neue 'Ephemeral Public Keys' für Empfänger und Wechselgeld.");
+    println!("2. Der L2-Server speichert die Hashes dieser Keys als 'spendable outputs' (UTXOs).");
+    println!("3. Die nächste Transaktion muss mit dem entsprechenden privaten Key signieren.");
+    println!("4. Der L2-Server prüft: \n   a) Gehört die Signatur zum hinterlegten Hash?\n   b) Wurde dieser Hash schon einmal 'verbraucht' (Double Spend)?");
+    println!("\n\x1b[1;33mHinweis:\x1b[0m In diesem Beispiel siehst du, dass Alice in Schritt 1 den 'Empfänger'-Key aus Genesis nutzt,");
+    println!("da sie den Gutschein selbst erstellt hat. In Schritt 2 nutzt sie den 'Wechselgeld'-Key aus Schritt 1,");
+    println!("da sie nach dem Senden an Bob den Restbetrag auf einen neuen eigenen Key (Wechselgeld) erhalten hat.");
+    println!("\nDas ermöglicht Privatsphäre (Keys sind anonym), garantiert aber die lückenlose Autorität.");
 
     Ok(())
 }
