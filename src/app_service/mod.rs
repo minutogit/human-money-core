@@ -67,6 +67,7 @@ pub mod app_signature_handler;
 pub mod command_handler;
 pub mod conflict_handler;
 pub mod data_encryption;
+pub mod l2_facade;
 pub mod lifecycle;
 
 /// Repräsentiert die öffentlich sichtbaren Informationen eines Profils.

@@ -367,4 +367,10 @@ pub enum VoucherCoreError {
     Ed25519(#[from] ed25519_dalek::ed25519::Error),
     #[error("Mismatched signature data: {0}")]
     MismatchedSignatureData(String),
+    #[error("Missing trap data in transaction")]
+    MissingTrapData,
+    #[error("Invalid hash format: {0}")]
+    InvalidHashFormat(String),
+    #[error("L2 Payload Deserialization Error: {0}")]
+    DeserializationError(String),
 }

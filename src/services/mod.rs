@@ -3,6 +3,7 @@ pub mod bundle_processor;
 pub mod conflict_manager;
 pub mod crypto_utils;
 pub mod decimal_utils;
+pub mod l2_gateway;
 pub mod secure_container_manager;
 pub mod signature_manager;
 pub mod standard_manager;
