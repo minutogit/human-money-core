@@ -23,7 +23,8 @@ use crate::models::{
 use crate::services::{
     bundle_processor,
     crypto_utils::{
-        self, create_user_id, generate_ed25519_keypair_for_tests, get_hash, sign_ed25519,
+        self, create_user_id, generate_ed25519_keypair_for_tests, get_hash, get_hash_from_slices,
+        sign_ed25519,
     },
     secure_container_manager, signature_manager,
     utils::to_canonical_json,
@@ -895,11 +896,14 @@ pub fn create_voucher_for_manipulation(
 
     let (_, holder_public) =
         crypto_utils::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "holder", Some(&prefix)).expect("Failed to derive holder key");
-    let holder_pub_str = bs58::encode(holder_public.to_bytes()).into_string();
-    let holder_anchor_hash = crypto_utils::get_hash(holder_pub_str);
+    let _holder_pub_str = bs58::encode(holder_public.to_bytes()).into_string();
+    let holder_anchor_hash = crypto_utils::get_hash(holder_public.to_bytes());
 
-    let prev_hash =
-        crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher.voucher_nonce));
+    let prev_hash = {
+        let v_id_bytes = bs58::decode(&voucher.voucher_id).into_vec().expect("Invalid voucher_id");
+        let v_nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().expect("Invalid voucher_nonce");
+        get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes])
+    };
     
     let mut init_tx = Transaction {
         t_id: "".to_string(),
@@ -914,7 +918,7 @@ pub fn create_voucher_for_manipulation(
         // P2PKH SETUP
         receiver_ephemeral_pub_hash: Some(holder_anchor_hash),
         sender_ephemeral_pub: Some(genesis_pub_str.clone()),
-        sender_change_anchor_hash: None,
+        change_ephemeral_pub_hash: None,
         privacy_guard: None,
         trap_data: None,
         layer2_signature: None,

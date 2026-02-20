@@ -13,7 +13,7 @@ use crate::models::conflict::{
 };
 use crate::models::profile::{UserIdentity, VoucherStore};
 use crate::models::voucher::{Transaction, Voucher};
-use crate::services::crypto_utils::{get_hash, sign_ed25519};
+use crate::services::crypto_utils::{get_hash, get_hash_from_slices, sign_ed25519};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
 use crate::wallet::DoubleSpendCheckResult;
 use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat};
@@ -42,10 +42,14 @@ pub fn create_fingerprint_for_transaction(
             VoucherCoreError::Generic("Failed to calculate next month's date".to_string())
         })?;
 
-        let last_day_of_month = first_of_next_month.pred_opt().unwrap();
+        let last_day_of_month = first_of_next_month.pred_opt().ok_or_else(|| {
+            VoucherCoreError::Generic("Failed to get last day of month".to_string())
+        })?;
         let end_of_month_dt = last_day_of_month
             .and_hms_micro_opt(23, 59, 59, 999999)
-            .unwrap()
+            .ok_or_else(|| {
+                VoucherCoreError::Generic("Failed to set time for end of month".to_string())
+            })?
             .and_utc();
         end_of_month_dt.to_rfc3339_opts(SecondsFormat::Micros, true)
     };
@@ -61,12 +65,20 @@ pub fn create_fingerprint_for_transaction(
             trap.blinded_id.clone()
         )
     } else {
-        // Fallback für 'init' oder Legacy: Manuelle Berechnung
-        // FIXED: Wir verwenden nun NUR noch den `sender_ephemeral_pub` (Genesis Key bei Init),
-        // um den Tag zu berechnen. Dies entspricht der neuen Logik in `voucher_manager`.
-        // `sender_id` wird NICHT mehr verwendet, um Identity-Hopping zu verhindern.
-        let ephem_key = transaction.sender_ephemeral_pub.as_deref().unwrap_or("");
-        let fallback_tag = get_hash(format!("{}{}", transaction.prev_hash, ephem_key));
+        // Falls der Hash kürzer ist, mit Nullen auffüllen.
+        // SECURITY FIX: Use raw bytes for concatenation
+        let prev_hash_bytes = bs58::decode(&transaction.prev_hash).into_vec().map_err(|_| {
+            VoucherCoreError::Generic("Invalid prev_hash format".to_string())
+        })?;
+        let ephem_key_bytes = if let Some(s) = &transaction.sender_ephemeral_pub {
+            bs58::decode(s).into_vec().map_err(|_| {
+                VoucherCoreError::Generic("Invalid sender_ephemeral_pub format".to_string())
+            })?
+        } else {
+            Vec::new()
+        };
+        
+        let fallback_tag = get_hash_from_slices(&[&prev_hash_bytes, &ephem_key_bytes]);
         (fallback_tag, "none".to_string(), "none".to_string())
     };
 
@@ -239,7 +251,20 @@ pub fn create_proof_of_double_spend(
     reporter_identity: &UserIdentity,
 ) -> Result<ProofOfDoubleSpend, VoucherCoreError> {
     // 1. Beweis-Objekt erstellen und signieren.
-    let proof_id = get_hash(format!("{}{}", offender_id, fork_point_prev_hash));
+    // SECURITY FIX: Use raw bytes for proof_id derivation
+    let offender_pk_bytes = if let Some(pos) = offender_id.find("@did:key:z") {
+        bs58::decode(&offender_id[pos + 10..]).into_vec().map_err(|_| {
+            VoucherCoreError::Generic("Invalid offender_id did format".to_string())
+        })?
+    } else {
+        return Err(VoucherCoreError::Generic("Invalid offender_id format (missing DID)".to_string()));
+    };
+    
+    let fork_prev_hash_bytes = bs58::decode(&fork_point_prev_hash).into_vec().map_err(|_| {
+        VoucherCoreError::Generic("Invalid fork_point_prev_hash format".to_string())
+    })?;
+
+    let proof_id = get_hash_from_slices(&[&offender_pk_bytes, &fork_prev_hash_bytes]);
     let reporter_signature_bytes =
         sign_ed25519(&reporter_identity.signing_key, proof_id.as_bytes());
     let reporter_signature = bs58::encode(reporter_signature_bytes.to_bytes()).into_string();
@@ -395,8 +420,15 @@ pub fn encrypt_transaction_timestamp(transaction: &Transaction) -> Result<u128, 
         })? as u128;
 
     // b. Schlüssel (u128) aus dem Hash von prev_hash und t_id ableiten.
-    let key_material = format!("{}{}", transaction.prev_hash, transaction.t_id);
-    let key_hash_b58 = get_hash(key_material);
+    // SECURITY FIX: Use raw bytes for key derivation hash
+    let prev_hash_bytes = bs58::decode(&transaction.prev_hash).into_vec().map_err(|_| {
+        VoucherCoreError::Generic("Invalid prev_hash format".to_string())
+    })?;
+    let t_id_bytes = bs58::decode(&transaction.t_id).into_vec().map_err(|_| {
+        VoucherCoreError::Generic("Invalid t_id format".to_string())
+    })?;
+    
+    let key_hash_b58 = get_hash_from_slices(&[&prev_hash_bytes, &t_id_bytes]);
     let key_hash_bytes = bs58::decode(key_hash_b58).into_vec().map_err(|_| {
         VoucherCoreError::Generic("Failed to decode base58 hash for key derivation".to_string())
     })?;
@@ -426,8 +458,15 @@ pub fn decrypt_transaction_timestamp(
     transaction: &Transaction,
     encrypted_nanos: u128,
 ) -> Result<u128, VoucherCoreError> {
-    let key_material = format!("{}{}", transaction.prev_hash, transaction.t_id);
-    let key_hash_b58 = get_hash(key_material);
+    // SECURITY FIX: Use raw bytes for key derivation hash (identical to encryption)
+    let prev_hash_bytes = bs58::decode(&transaction.prev_hash).into_vec().map_err(|_| {
+        VoucherCoreError::Generic("Invalid prev_hash format".to_string())
+    })?;
+    let t_id_bytes = bs58::decode(&transaction.t_id).into_vec().map_err(|_| {
+        VoucherCoreError::Generic("Invalid t_id format".to_string())
+    })?;
+    
+    let key_hash_b58 = get_hash_from_slices(&[&prev_hash_bytes, &t_id_bytes]);
     let key_hash_bytes = bs58::decode(key_hash_b58).into_vec().map_err(|_| {
         VoucherCoreError::Generic("Failed to decode base58 hash for key derivation".to_string())
     })?;

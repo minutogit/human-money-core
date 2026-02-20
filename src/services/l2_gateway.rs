@@ -68,7 +68,7 @@ pub fn generate_lock_request(
         })
     });
 
-    let sender_change_anchor_hash = transaction.sender_change_anchor_hash.as_ref().and_then(|h| {
+    let change_ephemeral_pub_hash = transaction.change_ephemeral_pub_hash.as_ref().and_then(|h| {
         bs58::decode(h).into_vec().ok().and_then(|v| {
             if v.len() == 32 {
                 let mut arr = [0u8; 32];
@@ -93,7 +93,7 @@ pub fn generate_lock_request(
         is_genesis,
         sender_ephemeral_pub,
         receiver_ephemeral_pub_hash,
-        sender_change_anchor_hash,
+        change_ephemeral_pub_hash,
         layer2_signature,
     })
 }

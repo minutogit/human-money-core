@@ -189,26 +189,25 @@ impl Wallet {
             
             // The signature is ALWAYS signed by the ephemeral key (L2)
             let verification_key = if let Some(pub_str) = &tx.sender_ephemeral_pub {
-                let pub_bytes = bs58::decode(pub_str).into_vec().unwrap_or_default();
-                if let Ok(array) = pub_bytes.try_into() {
-                    if let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(&array) {
-                            vk
-                    } else {
-                            continue; // Invalid Key
-                    }
-                } else {
-                        continue; // Invalid Length
-                }
+                let pub_bytes = bs58::decode(pub_str).into_vec().map_err(|_| {
+                    VoucherCoreError::Crypto("Invalid base58 in sender_ephemeral_pub".to_string())
+                })?;
+                let array: [u8; 32] = pub_bytes.try_into().map_err(|_| {
+                    VoucherCoreError::Crypto("Invalid key length in sender_ephemeral_pub".to_string())
+                })?;
+                ed25519_dalek::VerifyingKey::from_bytes(&array).map_err(|e| {
+                    VoucherCoreError::Crypto(format!("Invalid Ed25519 key: {}", e))
+                })?
             } else {
-                continue; // Missing Key
+                continue; // Missing Key is still a skip for backward compatibility or public mode?
+                // Actually, if it's a conflict proof, both MUST have L2 signatures.
             };
  
             // Konvertiere Signature Bytes zu Signature Object
-            let signature = if let Ok(sig_arr) = signature_bytes.try_into() {
-                 Signature::from_bytes(&sig_arr)
-            } else {
-                 continue;
-            };
+            let sig_arr: [u8; 64] = signature_bytes.try_into().map_err(|_| {
+                 VoucherCoreError::Crypto("Invalid signature length".to_string())
+            })?;
+            let signature = Signature::from_bytes(&sig_arr);
  
             if verification_key.verify(
                 signed_data,

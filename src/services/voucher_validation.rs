@@ -10,7 +10,8 @@ use crate::models::voucher_standard_definition::{
     VoucherStandardDefinition,
 };
 use crate::services::crypto_utils::{
-    ed25519_pk_to_curve_point, get_hash, get_pubkey_from_user_id, verify_ed25519,
+    ed25519_pk_to_curve_point, get_hash, get_hash_from_slices, get_pubkey_from_user_id,
+    verify_ed25519,
 };
 use crate::services::trap_manager::verify_trap;
 use crate::services::utils::to_canonical_json;
@@ -589,17 +590,22 @@ fn verify_voucher_hash(voucher: &Voucher) -> Result<(), VoucherCoreError> {
 }
 
 /// Verifiziert die Integrität, Signaturen und Geschäftslogik der Transaktionsliste. (Weitgehend unverändert)
-fn verify_transactions(
+pub fn verify_transactions(
     voucher: &Voucher,
     _standard: &VoucherStandardDefinition,
 ) -> Result<(), VoucherCoreError> {
     if voucher.transactions.is_empty() {
-        // This is caught by the data-driven `validate_counts` rule, which should require min=1.
-        return Ok(()); // TODO: Sollte dies nicht ein Fehler sein? Oder wird es von `validate_transaction_count` abgefangen?
+        return Err(VoucherCoreError::Validation(ValidationError::InvalidTransaction(
+            "Transaction list is empty.".to_string(),
+        )));
     }
 
     // --- Phase 1: Verify the 'init' transaction basics ---
-    let init_tx = &voucher.transactions[0];
+    let init_tx = voucher.transactions.get(0).ok_or_else(|| {
+        VoucherCoreError::Validation(ValidationError::InvalidTransaction(
+            "Transaction list is empty.".to_string(),
+        ))
+    })?;
     verify_transaction_basics(init_tx, voucher, true)?;
     verify_transaction_integrity_and_signature(init_tx)?;
 
@@ -689,11 +695,15 @@ fn verify_transactions(
                  // Wir müssen PRÜFEN, ob der Hash passt.
                  
                  // Versuch 1: Passt es zum Receiver Hash der Vor-Tx?
-                 let hash_pub = get_hash(revealed_pub.clone());
+                  // SECURITY FIX: Decode Base58 and hash raw bytes
+                  let pub_bytes = bs58::decode(revealed_pub).into_vec().map_err(|_| {
+                      VoucherCoreError::Crypto("Invalid base58 encoding in revealed_pub".to_string())
+                  })?;
+                  let hash_pub = get_hash(pub_bytes);
                  if let Some(prev_recv_hash) = &prev_tx.receiver_ephemeral_pub_hash {
                      if hash_pub == *prev_recv_hash {
                          Some(prev_recv_hash)
-                     } else if let Some(prev_change_hash) = &prev_tx.sender_change_anchor_hash {
+                     } else if let Some(prev_change_hash) = &prev_tx.change_ephemeral_pub_hash {
                          if hash_pub == *prev_change_hash {
                              Some(prev_change_hash)
                          } else {
@@ -710,14 +720,18 @@ fn verify_transactions(
                  if Some(prev_tx.recipient_id.clone()) == tx.sender_id {
                       prev_tx.receiver_ephemeral_pub_hash.as_ref()
                  } else if tx.sender_id.is_some() && tx.sender_id == prev_tx.sender_id {
-                      prev_tx.sender_change_anchor_hash.as_ref()
+                      prev_tx.change_ephemeral_pub_hash.as_ref()
                  } else {
                      // Wenn keine ID Matcht, versuchen wir den Hash-Match (siehe oben)
-                     let hash_pub = get_hash(revealed_pub.clone());
+                     // SECURITY FIX: Decode Base58 and hash raw bytes
+                  let pub_bytes = bs58::decode(revealed_pub).into_vec().map_err(|_| {
+                      VoucherCoreError::Crypto("Invalid base58 encoding in revealed_pub".to_string())
+                  })?;
+                  let hash_pub = get_hash(pub_bytes);
                       if let Some(prev_recv_hash) = &prev_tx.receiver_ephemeral_pub_hash {
                          if hash_pub == *prev_recv_hash {
                              Some(prev_recv_hash)
-                         } else if let Some(prev_change_hash) = &prev_tx.sender_change_anchor_hash {
+                         } else if let Some(prev_change_hash) = &prev_tx.change_ephemeral_pub_hash {
                              if hash_pub == *prev_change_hash {
                                  Some(prev_change_hash)
                              } else {
@@ -751,12 +765,16 @@ fn verify_transactions(
             // The DS-Tag MUST be derived from the transaction context (prev_hash + sender_ephemeral_pub).
             // This prevents Replay Attacks where a valid Trap is reused in a different transaction context.
             // This check applies to BOTH Public and Stealth modes.
-            let ds_tag_input = format!(
-                "{}{}",
-                tx.prev_hash,
-                tx.sender_ephemeral_pub.as_deref().unwrap_or("")
-            );
-            let expected_ds_tag = get_hash(ds_tag_input.as_bytes());
+            
+            // SECURITY FIX: Decode to raw bytes to prevent string malleability
+            let prev_hash_bytes = bs58::decode(&tx.prev_hash).into_vec().map_err(|_| {
+                VoucherCoreError::Crypto("Invalid prev_hash format".to_string())
+            })?;
+            let ephem_pub_bytes = tx.sender_ephemeral_pub.as_ref().map(|s| bs58::decode(s).into_vec()).transpose().map_err(|_| {
+                VoucherCoreError::Crypto("Invalid sender_ephemeral_pub format".to_string())
+            })?.unwrap_or_default();
+
+            let expected_ds_tag = get_hash_from_slices(&[&prev_hash_bytes, &ephem_pub_bytes]);
 
             if trap.ds_tag != expected_ds_tag {
                  return Err(VoucherCoreError::Crypto(
@@ -801,11 +819,18 @@ fn verify_transactions(
             // Wenn wir den Key revealt haben, der zu ChangeHash passt -> Balance = Remaining
             
             // AUSTAUSCH DER LOGIK: Statt ID-Check nun Hash-Check
-            let my_revealed_pub_hash = tx.sender_ephemeral_pub.as_ref().map(|k| get_hash(k.clone())).unwrap_or_default();
+            let my_revealed_pub_hash = if let Some(k) = &tx.sender_ephemeral_pub {
+                let bytes = bs58::decode(k).into_vec().map_err(|_| {
+                    VoucherCoreError::Crypto("Invalid base58 encoding in sender_ephemeral_pub".to_string())
+                })?;
+                get_hash(bytes)
+            } else {
+                "".to_string()
+            };
             
             if Some(&my_revealed_pub_hash) == prev_tx.receiver_ephemeral_pub_hash.as_ref() {
                  Decimal::from_str(&prev_tx.amount)?
-            } else if Some(&my_revealed_pub_hash) == prev_tx.sender_change_anchor_hash.as_ref() {
+            } else if Some(&my_revealed_pub_hash) == prev_tx.change_ephemeral_pub_hash.as_ref() {
                  Decimal::from_str(prev_tx.sender_remaining_amount.as_deref().unwrap_or("0"))?
             } else {
                 // Fallback für alte Logik / Init
@@ -885,8 +910,18 @@ fn verify_transaction_basics(
             )
             .into());
         }
-        let expected_prev_hash =
-            get_hash(format!("{}{}", &voucher.voucher_id, &voucher.voucher_nonce));
+        // SECURITY FIX: Use raw bytes for concatenation to avoid malleability
+        let nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().map_err(|_| {
+            VoucherCoreError::Validation(ValidationError::InvalidTransaction(
+                "Invalid voucher_nonce format".to_string(),
+            ))
+        })?;
+        let voucher_id_bytes = bs58::decode(&voucher.voucher_id).into_vec().map_err(|_| {
+            VoucherCoreError::Validation(ValidationError::InvalidTransaction(
+                "Invalid voucher_id format".to_string(),
+            ))
+        })?;
+        let expected_prev_hash = get_hash_from_slices(&[&voucher_id_bytes, &nonce_bytes]);
         if tx.prev_hash != expected_prev_hash {
             return Err(ValidationError::InvalidTransaction(
                 "Initial transaction has invalid prev_hash.".to_string(),
@@ -977,8 +1012,8 @@ fn verify_transaction_basics(
     Ok(())
 }
 
-/// Hilfsfunktion zur Überprüfung der internen Integrität und Signatur einer Transaktion. (Unverändert)
-fn verify_transaction_integrity_and_signature(
+/// Prüft die kryptographische Integrität und die Signatur einer einzelnen Transaktion.
+pub fn verify_transaction_integrity_and_signature(
     transaction: &Transaction,
 ) -> Result<(), VoucherCoreError> {
     #[cfg(feature = "test-utils")]
@@ -1013,12 +1048,16 @@ fn verify_transaction_integrity_and_signature(
             })?;
 
             let ephem_key = ed25519_dalek::VerifyingKey::from_bytes(
-                ephem_pub_bytes.as_slice().try_into().unwrap(),
+                ephem_pub_bytes.as_slice().try_into().map_err(|_| {
+                    ValidationError::SignatureDecodeError("Invalid ephemeral pubkey length".into())
+                })?,
             )
             .map_err(|_| {
                 ValidationError::SignatureDecodeError("Invalid ephemeral pubkey bytes".into())
             })?;
-            let signature = Signature::from_bytes(l2_sig_bytes.as_slice().try_into().unwrap());
+            let signature = Signature::from_bytes(l2_sig_bytes.as_slice().try_into().map_err(|_| {
+                ValidationError::SignatureDecodeError("Invalid l2 signature length".into())
+            })?);
 
             // NEU: Signatur prüft direkt die t_id (raw bytes)
             let t_id_raw = bs58::decode(&transaction.t_id).into_vec().map_err(|_| {
@@ -1040,8 +1079,10 @@ fn verify_transaction_integrity_and_signature(
             .ok_or_else(|| ValidationError::InvalidTransaction("Missing sender_identity_signature for public sender".to_string()))?;
             
          let pub_key = get_pubkey_from_user_id(sender_id)?;
-         let sig_bytes = bs58::decode(identity_sig_enc).into_vec().map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
-         let signature = Signature::from_bytes(sig_bytes.as_slice().try_into().unwrap());
+          let sig_bytes = bs58::decode(identity_sig_enc).into_vec().map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
+          let signature = Signature::from_bytes(sig_bytes.as_slice().try_into().map_err(|_| {
+              ValidationError::SignatureDecodeError("Invalid identity signature length".into())
+          })?);
          
          // NEU: Signatur prüft direkt die t_id (raw bytes)
          let t_id_raw = bs58::decode(&transaction.t_id).into_vec().map_err(|_| {

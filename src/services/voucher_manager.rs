@@ -8,7 +8,7 @@ use crate::models::voucher::{
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::services::crypto_utils::{
     derive_ephemeral_key_pair, ed25519_pk_to_curve_point, encode_base64, encrypt_data,
-    generate_ephemeral_x25519_keypair, get_hash, get_pubkey_from_user_id,
+    generate_ephemeral_x25519_keypair, get_hash, get_hash_from_slices, get_pubkey_from_user_id,
     perform_diffie_hellman, sign_ed25519,
 };
 use crate::services::trap_manager::{derive_m, generate_trap, hash_to_scalar};
@@ -157,7 +157,7 @@ pub fn create_voucher(
     let nonce_bytes = rand::thread_rng().r#gen::<[u8; 16]>();
     let nonce = bs58::encode(nonce_bytes).into_string();
     let creation_dt = DateTime::parse_from_rfc3339(&creation_date_str)
-        .unwrap()
+        .map_err(|e| VoucherCoreError::Generic(format!("Failed to parse creation date: {}", e)))?
         .with_timezone(&Utc);
 
     let duration_str = data
@@ -359,15 +359,22 @@ pub fn create_voucher(
     //    Key Binding: Der Holder-Key (für die erste Ausgabe) ist ebenfalls an das Präfix des Erstellers gebunden (Self-Issue).
     let (_, holder_public) =
         derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "holder", Some(creator_prefix))?;
-    let holder_pub_str = bs58::encode(holder_public.to_bytes()).into_string();
-    let holder_anchor_hash = get_hash(holder_pub_str);
+    let _holder_pub_str = bs58::encode(holder_public.to_bytes()).into_string();
+    // SECURITY FIX: Use raw bytes for anchor hash to avoid malleability
+    let holder_anchor_hash = get_hash(holder_public.to_bytes());
 
     let mut init_transaction = Transaction {
         t_id: "".to_string(),
-        prev_hash: get_hash(format!(
-            "{}{}",
-            &temp_voucher.voucher_id, &temp_voucher.voucher_nonce
-        )),
+        // SECURITY FIX: Use raw bytes for prev_hash truncation/concatenation
+        prev_hash: {
+            let voucher_id_bytes = bs58::decode(&temp_voucher.voucher_id).into_vec().map_err(|_| {
+                VoucherCoreError::Generic("Invalid voucher_id format".to_string())
+            })?;
+            let nonce_bytes = bs58::decode(&temp_voucher.voucher_nonce).into_vec().map_err(|_| {
+                VoucherCoreError::Generic("Invalid voucher_nonce format".to_string())
+            })?;
+            get_hash_from_slices(&[&voucher_id_bytes, &nonce_bytes])
+        },
         t_type: "init".to_string(),
         t_time: creation_date_str.clone(),
         sender_id: Some(creator_id.clone()), // Init ist immer public
@@ -382,7 +389,7 @@ pub fn create_voucher(
         trap_data: None, // Init hat keinen Trap (kein Vorgänger)
         layer2_signature: None, // Platzhalter
         valid_until: Some(temp_voucher.valid_until.clone()),
-        sender_change_anchor_hash: None,
+        change_ephemeral_pub_hash: None,
         sender_identity_signature: None,
     };
 
@@ -645,10 +652,10 @@ pub fn create_transaction(
     let recipient_signing_key = SigningKey::from_bytes(&recipient_seed);
     let recipient_ephemeral_pub = recipient_signing_key.verifying_key();
     let receiver_ephemeral_pub_hash =
-        Some(get_hash(bs58::encode(recipient_ephemeral_pub.to_bytes()).into_string()));
+        Some(get_hash(recipient_ephemeral_pub.to_bytes()));
 
     // b) Change (falls nötig)
-    let (sender_change_anchor_hash, change_key_seed_opt) = if t_type == "split" {
+    let (change_ephemeral_pub_hash, change_key_seed_opt) = if t_type == "split" {
         // Für das Restgeld generiert der Sender einen NEUEN Key für SICH SELBST.
         // NEU: Deterministische Ableitung via HKDF, damit der Seed nicht gespeichert werden muss.
         // Wir nutzen denselben PRK wie für m (Trap), aber mit anderem Info-String.
@@ -668,7 +675,7 @@ pub fn create_transaction(
 
         let change_signing_key = SigningKey::from_bytes(&change_seed);
         let change_pub = change_signing_key.verifying_key();
-        let change_hash = get_hash(bs58::encode(change_pub.to_bytes()).into_string());
+        let change_hash = get_hash(change_pub.to_bytes());
         (Some(change_hash), Some(bs58::encode(change_seed).into_string()))
     } else {
         (None, None)
@@ -676,36 +683,36 @@ pub fn create_transaction(
 
     // 3. PAYLOAD ENCRYPTION: Sende next_key_seed an Empfänger.
     let encoded_recipient_seed = bs58::encode(recipient_seed).into_string();
-    // Extrahiere Präfix aus sender_id für Payload (Sender-Info).
-    // ID ist "prefix:checksum@did..."
-    let _sender_prefix = sender_id.split(':').next().unwrap_or("unknown").to_string(); // Einfache Extraktion, besser wäre parsing
     
-    // Ziel-Präfix des Empfängers extrahieren (um Verwechslung zu verhindern)
-    let target_prefix = recipient_id.split(':').next().unwrap_or("unknown").to_string();
+    let privacy_guard = if recipient_id.contains(":z") {
+        // Extrahiere Präfix aus sender_id für Payload (Sender-Info).
+        let _sender_prefix = sender_id.split(':').next().unwrap_or("unknown").to_string(); 
+        let target_prefix = recipient_id.split(':').next().unwrap_or("unknown").to_string();
 
-    let payload = RecipientPayload {
-        sender_permanent_did: sender_id.to_string(),
-        target_prefix,
-        timestamp: Utc::now().timestamp() as u64,
-        next_key_seed: encoded_recipient_seed.clone(),
+        let payload = RecipientPayload {
+            sender_permanent_did: sender_id.to_string(),
+            target_prefix,
+            timestamp: Utc::now().timestamp() as u64,
+            next_key_seed: encoded_recipient_seed.clone(),
+        };
+        
+        // Encrypt Payload:
+        let (ephemeral_pk, ephemeral_sk) = generate_ephemeral_x25519_keypair();
+        let recipient_ed_pk = get_pubkey_from_user_id(recipient_id)?;
+        let recipient_x_pk = crate::services::crypto_utils::ed25519_pub_to_x25519(&recipient_ed_pk);
+        let shared_secret = perform_diffie_hellman(ephemeral_sk, &recipient_x_pk)?;
+        let payload_json = to_canonical_json(&payload)?;
+        let encrypted_bytes = encrypt_data(&shared_secret, payload_json.as_bytes())?;
+        
+        let mut privacy_guard_bytes = Vec::new();
+        privacy_guard_bytes.extend_from_slice(ephemeral_pk.as_bytes());
+        privacy_guard_bytes.extend_from_slice(&encrypted_bytes);
+        Some(encode_base64(&privacy_guard_bytes))
+    } else {
+        // Im Stealth-Mode (Empfänger ist ein Hash) gibt es keinen öffentlichen Schlüssel 
+        // für DH. Der Empfänger muss seinen Key-Seed anderweitig (z.B. Offline-Übergabe) erhalten.
+        None
     };
-    
-    // Encrypt Payload:
-    // a) Ephemeral DH Key Pair generate
-    let (ephemeral_pk, ephemeral_sk) = generate_ephemeral_x25519_keypair();
-    // b) Recipient Public Key (Ed25519 -> X25519)
-    let recipient_ed_pk = get_pubkey_from_user_id(recipient_id)?;
-    let recipient_x_pk = crate::services::crypto_utils::ed25519_pub_to_x25519(&recipient_ed_pk);
-    // c) DH
-    let shared_secret = perform_diffie_hellman(ephemeral_sk, &recipient_x_pk)?;
-    // d) Encrypt
-    let payload_json = to_canonical_json(&payload)?;
-    let encrypted_bytes = encrypt_data(&shared_secret, payload_json.as_bytes())?;
-    // e) Pack: [EphemeralPK (32)] + [Nonce+Ciphertext]
-    let mut privacy_guard_bytes = Vec::new();
-    privacy_guard_bytes.extend_from_slice(ephemeral_pk.as_bytes());
-    privacy_guard_bytes.extend_from_slice(&encrypted_bytes);
-    let privacy_guard = Some(encode_base64(&privacy_guard_bytes));
 
     // CHANGE PAYLOAD? Das "Restgeld" bleibt beim Sender.
     // Der Sender MUSS change_key_seed speichern.
@@ -728,17 +735,15 @@ pub fn create_transaction(
     let sender_id_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string(); // "prefix:checksum"
     let amount_str = decimal_utils::format_for_storage(&amount_to_send, decimal_places);
     
-    // CHANGE: Decouple ds_tag from Identity Prefix!
-    // OLD: format!("{}{}{}", prev_hash, sender_ephemeral_pub, sender_id_prefix);
-    // NEW: format!("{}{}", prev_hash, sender_ephemeral_pub);
-    // This prevents "Identity Hopping" attacks where attackers use different prefixes
-    // for the same input to generate different ds_tags.
-    let ds_tag_input = format!(
-        "{}{}",
-        prev_hash,
-        sender_ephemeral_pub
-    );
-    let ds_tag = get_hash(ds_tag_input.as_bytes());
+    // SECURITY FIX: Use raw bytes for ds_tag derivation
+    let prev_hash_bytes = bs58::decode(&prev_hash).into_vec().map_err(|_| {
+        VoucherCoreError::Crypto("Invalid prev_hash format".to_string())
+    })?;
+    let sender_ephem_pub_bytes = bs58::decode(&sender_ephemeral_pub).into_vec().map_err(|_| {
+        VoucherCoreError::Crypto("Invalid sender_ephemeral_pub format".to_string())
+    })?;
+
+    let ds_tag = get_hash_from_slices(&[&prev_hash_bytes, &sender_ephem_pub_bytes]);
 
     // b) Calculate VARYING Challenge U:
     //    Depends on Output (amount, receiver, etc.) via ds_tag.
@@ -776,7 +781,7 @@ pub fn create_transaction(
         trap_data,
         layer2_signature: None,
         valid_until: None,
-        sender_change_anchor_hash,
+        change_ephemeral_pub_hash,
         sender_identity_signature: None,
     };
 
@@ -841,12 +846,14 @@ fn validate_issuance_firewall(
     }
 
     // 3. SAI-Ausnahme-Prüfung (Einlösung / Transfer an sich selbst)
-    // Wir vergleichen die Basis-Public-Keys, nicht die vollen User-IDs
-    let sender_pk = get_pubkey_from_user_id(sender_id)?;
-    let recipient_pk = get_pubkey_from_user_id(recipient_id)?;
+    // Wenn der Empfänger kein DID (z.B. ein Hash) ist, kann es nicht der Ersteller selbst sein.
+    if recipient_id.contains(':') {
+        let sender_pk = get_pubkey_from_user_id(sender_id)?;
+        let recipient_pk = get_pubkey_from_user_id(recipient_id)?;
 
-    if sender_pk == recipient_pk {
-        return Ok(()); // 2. Ausnahme: Interne Übertragung
+        if sender_pk == recipient_pk {
+            return Ok(()); // 2. Ausnahme: Interne Übertragung
+        }
     }
 
     // 4. Zeit-Prüfung (Der Kern)

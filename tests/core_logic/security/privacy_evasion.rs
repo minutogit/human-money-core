@@ -248,7 +248,7 @@ fn prevent_trap_data_replay() {
     // 1. Setup Voucher (Init)
     let (pk, sk) = generate_ed25519_keypair_for_tests(Some("creator_seed"));
     let creator_id = create_user_id(&pk, Some("cre")).unwrap();
-    let my_id_point = human_money_core::services::crypto_utils::ed25519_pk_to_curve_point(&pk).unwrap();
+    let _my_id_point = human_money_core::services::crypto_utils::ed25519_pk_to_curve_point(&pk).unwrap();
     
     let voucher_data = NewVoucherData {
         creator_profile: PublicProfile { id: Some(creator_id.clone()), ..Default::default() },
@@ -272,46 +272,33 @@ fn prevent_trap_data_replay() {
 
     // 2. Derive Link 1 (Init -> Tx1)
     let holder_key_init = derive_holder_key(&voucher, &sk);
-    let sender_ephemeral_pub_tx1 = bs58::encode(holder_key_init.verifying_key().as_bytes()).into_string();
+    let _sender_ephemeral_pub_tx1 = bs58::encode(holder_key_init.verifying_key().as_bytes()).into_string();
 
     // Prepare Link 2 (Tx1 -> Tx2)
     let (pk_tx2, _) = generate_ed25519_keypair_for_tests(Some("tx2_seed")); 
-    let receiver_ephemeral_pub_hash_tx1 = get_hash(&bs58::encode(pk_tx2.as_bytes()).into_string());
+    let receiver_ephemeral_pub_hash_tx1 = human_money_core::services::crypto_utils::get_hash(pk_tx2.as_bytes());
 
-    // 3. Create Tx1 (Valid)
-    let prev_tx_hash = get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap());
+    // 3. Create Tx1 (Valid) via create_transaction
     let amount = "60";
-    
-    // Generate Valid Trap for Tx1
-    let ds_tag_tx1 = get_hash(format!("{}{}", prev_tx_hash, sender_ephemeral_pub_tx1).as_bytes());
-    let u_input_tx1 = format!("{}{}{}", ds_tag_tx1, amount, receiver_ephemeral_pub_hash_tx1);
-    let u_scalar_tx1 = human_money_core::services::trap_manager::hash_to_scalar(u_input_tx1.as_bytes());
-    let m_tx1 = human_money_core::services::trap_manager::derive_m(&prev_tx_hash, sk.as_bytes(), "cre").unwrap();
-    let valid_trap = human_money_core::services::trap_manager::generate_trap(ds_tag_tx1, &u_scalar_tx1, &m_tx1, &my_id_point, "cre").unwrap();
-
-    let tx1 = Transaction {
-        t_id: "tx1_source".to_string(),
-        t_time: human_money_core::services::utils::get_current_timestamp(),
-        t_type: "transfer".to_string(),
-        prev_hash: prev_tx_hash.clone(),
-        sender_id: None,
-        recipient_id: get_hash("recipient1"),
-        amount: amount.to_string(),
-        sender_ephemeral_pub: Some(sender_ephemeral_pub_tx1),
-        receiver_ephemeral_pub_hash: Some(receiver_ephemeral_pub_hash_tx1),
-        trap_data: Some(valid_trap.clone()),
-        layer2_signature: Some("bypass".to_string()),
-        privacy_guard: Some("dummy".to_string()), 
-        ..Default::default()
-    };
-    voucher.transactions.push(tx1.clone());
+    let (mut voucher, secrets) = human_money_core::services::voucher_manager::create_transaction(
+        &voucher,
+        &standard,
+        &creator_id,
+        &sk,
+        &holder_key_init,
+        &receiver_ephemeral_pub_hash_tx1,
+        amount,
+    ).unwrap();
+    let tx1 = voucher.transactions.last().unwrap().clone();
+    let valid_trap = tx1.trap_data.clone().unwrap();
 
     // 4. Create Tx2 (Replay Attack)
     let prev_tx2_hash = get_hash(to_canonical_json(&tx1).unwrap());
     
     // Tx2 MUST have correct sender_ephemeral_pub matching Tx1's output
-    // Tx1 output was pk_tx2.
-    let sender_ephemeral_pub_tx2 = bs58::encode(pk_tx2.as_bytes()).into_string();
+    let user_b_seed = bs58::decode(secrets.recipient_seed).into_vec().unwrap();
+    let sender_ephem_key_tx2 = ed25519_dalek::SigningKey::from_bytes(&user_b_seed.try_into().unwrap());
+    let sender_ephemeral_pub_tx2 = bs58::encode(sender_ephem_key_tx2.verifying_key().to_bytes()).into_string();
     
     // Tx2 Output (Link 3 - Irrelevant for this test, but must exist)
     let receiver_ephemeral_pub_hash_tx2 = get_hash("next_key");

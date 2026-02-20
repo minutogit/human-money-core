@@ -275,7 +275,7 @@ fn add_p2pkh_layer(
 
     tx.sender_ephemeral_pub = Some(holder_pub_str.clone());
     tx.receiver_ephemeral_pub_hash = Some(next_hash);
-    tx.sender_change_anchor_hash = None; // Standard: kein Change
+    tx.change_ephemeral_pub_hash = None; // Standard: kein Change
     tx.layer2_signature = None;
     tx.t_id = "".to_string();
 }

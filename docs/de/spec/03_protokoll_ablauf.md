@@ -113,11 +113,11 @@ Alice (`minuto:bth@did:alice`) sendet Guthaben an Bob.
     
     - **Bob:** Hash seines neuen Keys -> `receiver_ephemeral_pub_hash`.
         
-    - **Alice (Rest):** Hash ihres neuen Keys -> `sender_change_anchor_hash`.
+    - **Alice (Rest):** Hash ihres neuen Keys -> `change_ephemeral_pub_hash`.
         
 5. **L2 Signatur (Payload):**
     
-    `Hash(pre_l2_tid + sender_ephemeral_pub + receiver_ephemeral_pub_hash + [sender_change_anchor_hash])`
+    `Hash(pre_l2_tid + sender_ephemeral_pub + receiver_ephemeral_pub_hash + [change_ephemeral_pub_hash])`
     
     _Dies garantiert: Ich, Alice, autorisiere exakt diese zwei neuen Hashes als rechtmäßige Nachfolger. Der Server prüft nur diese Autorisierung._
     

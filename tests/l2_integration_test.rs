@@ -45,8 +45,7 @@ impl MockL2Node {
 
         // --- 2. Verkettung Prüfen (P2PKH) ---
         if !req.is_genesis {
-            let ephem_pub_str = bs58::encode(req.sender_ephemeral_pub).into_string();
-            let sender_hash_str = human_money_core::services::crypto_utils::get_hash(ephem_pub_str);
+            let sender_hash_str = human_money_core::services::crypto_utils::get_hash(&req.sender_ephemeral_pub);
             let mut sender_hash_bytes = [0u8; 32];
             let decoded_h = bs58::decode(&sender_hash_str).into_vec().unwrap();
             sender_hash_bytes.copy_from_slice(&decoded_h);
@@ -74,7 +73,7 @@ impl MockL2Node {
             if let Some(r) = req.receiver_ephemeral_pub_hash {
                 self.spendable_outputs.insert(r);
             }
-            if let Some(c) = req.sender_change_anchor_hash {
+            if let Some(c) = req.change_ephemeral_pub_hash {
                 self.spendable_outputs.insert(c);
             }
 

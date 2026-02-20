@@ -279,7 +279,7 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
         trap_data: None,
         layer2_signature: None,
         valid_until: None,
-        sender_change_anchor_hash: None,
+        change_ephemeral_pub_hash: None,
     };
     voucher.transactions.push(init_transaction);
     voucher
@@ -327,7 +327,7 @@ fn test_local_id_after_full_transfer() {
         trap_data: None,
         layer2_signature: None,
         valid_until: None,
-        sender_change_anchor_hash: None,
+        change_ephemeral_pub_hash: None,
     };
     voucher.transactions.push(transfer_tx);
 
@@ -384,7 +384,7 @@ fn test_local_id_after_split() {
         trap_data: None,
         layer2_signature: None,
         valid_until: None,
-        sender_change_anchor_hash: None,
+        change_ephemeral_pub_hash: None,
     };
     voucher.transactions.push(split_tx);
 
@@ -453,7 +453,7 @@ fn test_local_id_changes_on_round_trip() {
         trap_data: None,
         layer2_signature: None,
         valid_until: None,
-        sender_change_anchor_hash: None,
+        change_ephemeral_pub_hash: None,
     };
     voucher.transactions.push(tx_to_bob);
 
@@ -496,7 +496,7 @@ fn test_local_id_changes_on_round_trip() {
         trap_data: None,
         layer2_signature: None,
         valid_until: None,
-        sender_change_anchor_hash: None,
+        change_ephemeral_pub_hash: None,
     };
     voucher.transactions.push(tx_to_alice);
 

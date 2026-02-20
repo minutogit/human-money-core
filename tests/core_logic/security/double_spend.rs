@@ -138,7 +138,11 @@ fn test_fingerprint_generation() {
 
     let tx1 = &voucher.transactions[0];
     let ephem_key = tx1.sender_ephemeral_pub.as_deref().unwrap_or("");
-    let expected_hash1 = crypto_utils::get_hash(format!("{}{}", tx1.prev_hash, ephem_key));
+    let expected_hash1 = {
+        let prev_hash_bytes = bs58::decode(&tx1.prev_hash).into_vec().unwrap();
+        let ephem_key_bytes = bs58::decode(ephem_key).into_vec().unwrap();
+        crypto_utils::get_hash_from_slices(&[&prev_hash_bytes, &ephem_key_bytes])
+    };
     assert!(
         wallet
             .own_fingerprints

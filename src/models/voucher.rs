@@ -141,7 +141,7 @@ pub struct Transaction {
     pub sender_ephemeral_pub: Option<String>, // Der enthüllte Key (Preimage) für L2-Signatur
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sender_change_anchor_hash: Option<String>, // Der Anker-Hash für das Restgeld
+    pub change_ephemeral_pub_hash: Option<String>, // Der Anker-Hash für das Restgeld
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub privacy_guard: Option<String>,

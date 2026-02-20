@@ -640,8 +640,10 @@ mod behavioral_rules {
         voucher.voucher_id = crypto_utils::get_hash(to_canonical_json(&voucher_to_hash).unwrap());
 
         if !voucher.transactions.is_empty() {
+            let v_id_bytes = bs58::decode(&voucher.voucher_id).into_vec().unwrap();
+            let v_nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
             voucher.transactions[0].prev_hash =
-                crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher.voucher_nonce));
+                crypto_utils::get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes]);
         }
 
         human_money_core::set_signature_bypass(true);
@@ -744,7 +746,7 @@ mod behavioral_rules {
             trap_data: None,
             layer2_signature: None,
             valid_until: None,
-            sender_change_anchor_hash: None,
+            change_ephemeral_pub_hash: None,
         };
 
         // Create dummy anchor for receiver
@@ -975,10 +977,12 @@ mod behavioral_rules {
             let hash = crypto_utils::get_hash(to_canonical_json(&voucher_to_hash).unwrap());
             voucher.voucher_id = hash;
 
-            // 5. KORREKTUR: Aktualisiere auch die init-Transaktion und kaskadierte Hashes
             if !voucher.transactions.is_empty() {
-                let new_init_prev_hash =
-                    crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher_nonce));
+                let new_init_prev_hash = {
+                    let v_id_bytes = bs58::decode(&voucher.voucher_id).into_vec().unwrap();
+                    let v_nonce_bytes = bs58::decode(&voucher_nonce).into_vec().unwrap();
+                    crypto_utils::get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes])
+                };
                 voucher.transactions[0].prev_hash = new_init_prev_hash;
                 
                 // Wir aktualisieren die t_id, damit die Kette strukturell passt

@@ -41,7 +41,7 @@ Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `human_m
 
 - **Peer-to-Peer Gossip-Protokoll:** Zur dezentralen und anonymisierten Erkennung von Double Spending tauschen Wallets bei jeder Transaktion **Transaktions-Fingerprints** (`ds_tag`) anderer Transaktionen aus. Diese Fingerprints sind deterministisch aus dem Input abgeleitet (`hash(prev_hash + sender_ephemeral_pub)`), was eine O(1) Erkennung von Kollisionen ermöglicht. Eine Heuristik (`depth`, `known_by_peers`) sorgt für eine effiziente Verbreitung.
 
-- **Fokus auf Kernlogik:** Zunächst wird nur die grundlegende Funktionalität der Gutschein- und Transaktionsverwaltung implementiert. Die "Transaction Verification Layer" und "User Trust Verification Layer" (Layer 2 mit Servern) sollen *nicht* implementiert werden, aber die Struktur der Transaktionsketten sollte so optimiert werden, dass eine spätere Erweiterung um diese Layer möglich ist.
+- **Transaction Verification Layer (Layer 2):** Die Bibliothek implementiert nun die Kommunikation und Verifizierung für Layer 2. Dies umfasst die Interaktion mit L2-Gateways, die Validierung von L2-Signaturen und die Handhabung von Quarantäne-Zuständen bei Double-Spending oder Verifizierungsfehlern. Die Struktur ist für eine dezentrale Überprüfung durch "Chain of Authority" (CoA) Knoten optimiert.
 
 - **FFI/WASM-Kompatibilität:** Rust-Typen und -Funktionen müssen so gestaltet sein, dass sie einfach über FFI und WASM exponiert werden können (z.B. durch Verwendung von `#[no_mangle]`, C-kompatiblen Datentypen und `wasm_bindgen`).
 
@@ -136,7 +136,7 @@ Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_
       "amount": "STRING", // Übertragener Teilbetrag
       "sender_remaining_amount": "STRING, optional", // Restguthaben beim Sender (nur bei Teilung)
       "sender_ephemeral_pub": "STRING, optional", // Reveal des Stealth-Keys (Preimage für prev_hash Check)
-      "sender_change_anchor_hash": "STRING, optional", // Neuer Anker für das Wechselgeld des Senders
+      "change_ephemeral_pub_hash": "STRING, optional", // Neuer Anker für das Wechselgeld des Senders
       "privacy_guard": "STRING, optional", // Verschlüsselter RecipientPayload (nur für Empfänger lesbar)
       "trap_data": { // Mathematische Falle bei Double-Spending (Identity Trap)
         "ds_tag": "STRING", // Deterministsicher Fingerprint des Inputs
@@ -171,10 +171,11 @@ Die Transaktionskette folgt einem **Commitment-Reveal-Schema (Hybrid P2PKH)**, d
 #### Felder im Detail:
 - **`receiver_ephemeral_pub_hash` (Der Anker / Commitment)**: Dies ist der Hash eines einmaligen Stealth-Keys des Empfängers. Er dient als "Verschluss" der aktuellen Transaktion. Niemand außer dem Empfänger kann diesen Hash einem Nutzer zuordnen.
 - **`sender_ephemeral_pub` (Das Reveal)**: In der *nächsten* Transaktion enthüllt der Sender den Public Key, dessen Hash im `receiver_ephemeral_pub_hash` der vorherigen Transaktion stand. Dies beweist das Recht zum Ausgeben.
-- **`layer2_signature` (Technischer Besitz)**: Eine Ed25519-Signatur über die `t_id`, ausgeführt mit dem nun enthüllten Stealth-Key (`sender_ephemeral_pub`). Sie beweist den technischen Besitz und autorisiert den L2-Lock.
+- **`layer2_signature` (Technischer Besitz)**: Eine Ed25519-Signatur über die `t_id` (als Roh-Bytes für maximale Robustheit), ausgeführt mit dem nun enthüllten Stealth-Key (`sender_ephemeral_pub`). Sie beweist den technischen Besitz und autorisiert den L2-Lock.
 - **`sender_identity_signature` (Sozialer Besitz)**: Eine optionale Signatur mit dem permanenten Identity-Key. Sie ist im "Stealth" Mode verboten und im "Public" Mode Pflicht.
+- **Privacy Rule: `init` MUST be Public**: Unabhängig vom gewählten Privacy Mode eines Standards MÜSSEN `init` (Genesis) Transaktionen immer öffentlich (`public`) sein, um eine eindeutige Identifizierung des Gutschein-Erstellers zu ermöglichen.
 - **`privacy_guard` (Verschlüsselter Kanal)**: Ein verschlüsselter Container (RecipientPayload), der via X25519 nur für den Empfänger lesbar ist. Er enthält den `next_key_seed`, damit der Empfänger weiß, welchen Schlüssel er generieren muss, um das Guthaben später weiterzugeben (**Forward Secrecy**).
-- **`sender_change_anchor_hash`**: Bei Teilzahlungen (`split`) wird das Restgeld an einen neuen, vom Sender selbst kontrollierten Anker gesendet.
+- **`change_ephemeral_pub_hash`**: Bei Teilzahlungen (`split`) wird das Restgeld an einen neuen, vom Sender selbst kontrollierten Anker gesendet.
 
 #### Sicherheit durch BLAKE3:
 Da ruhende Guthaben nur als BLAKE3-Hashes (`receiver_ephemeral_pub_hash`) vorliegen, bieten sie Schutz vor zukünftigen Preimage-Angriffen durch Quantencomputer. Die Identität bleibt verborgen, bis das Guthaben ausgegeben wird.
@@ -183,8 +184,9 @@ Da ruhende Guthaben nur als BLAKE3-Hashes (`receiver_ephemeral_pub_hash`) vorlie
 
 Ein Betrugsversuch wird durch eine mathematische Falle (**Identity Trap**) basierend auf Schnorr Non-Interactive Zero-Knowledge Proofs (NIZK) erkannt.
 
-- **Double-Spend Tag (`ds_tag`):** Ein deterministischer Identifier des Inputs: `ds_tag = hash(prev_hash + sender_ephemeral_pub)`. Kollidiert dieser Tag bei unterschiedlichen `t_id`s, liegt ein Double-Spend vor.
-- **The Trap:** Innerhalb der `trap_data` wird eine Relation $V = m \cdot U + ID$ genutzt. Wer denselben Input zweimal ausgibt, muss aufgrund der deterministischen Ableitung von $m$ (via HKDF) zwangsläufig seine Identität ($ID$) offenbaren.
+- **Double-Spend Tag (`ds_tag`):** Ein deterministischer Identifier des Inputs: `ds_tag = hash(prev_hash + sender_ephemeral_pub)`. Die Berechnung ist nun präfix-unabhängig, um konsistente Erkennung über alle Privacy-Modi hinweg zu garantieren. Kollidiert dieser Tag bei unterschiedlichen `t_id`s, liegt ein Double-Spend vor.
+- **Mathematisches Hardening:** Die Hash-Berechnungen wurden auf **SHA3-256** (für allgemeine Daten) standardisiert und zentralisiert. Durch die Nutzung von `get_hash_from_slices` wird Malleability verhindert (Längenpräfixe für Segmente). Für interne kryptographische Primitive (HKDF, PBKDF2) wird weiterhin die SHA2-Familie genutzt.
+- **The Trap:** Innerhalb der `trap_data` wird eine Relation $V = m \cdot U + ID$ genutzt. Wer denselben Input zweimal ausgibt, muss aufgrund der deterministischen Ableitung von $m$ (via HKDF) zwangsläufig seine Identität ($ID$) offenbaren. Ein Trap-Replay-Schutz verhindert die missbräuchliche Wiederverwendung von Trap-Beweisen.
 - **Anonymisierte Analyse:** Auf Layer 2 werden nur Fingerprints ausgetauscht. Ein Server sieht keine Klartext-IDs oder Beträge, sondern nur den `ds_tag` und verschlüsselte Zeitstempel.
 - **Beweis:** Ein Double-Spend-Beweis (`ProofOfDoubleSpend`) kombiniert die kollidierenden Transaktionen und ermöglicht die mathematische Extraktion der Täter-ID.
 
@@ -274,6 +276,7 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 │   ├── main.rs
 │   ├── models
 │   │   ├── conflict.rs
+│   │   ├── layer2_api.rs
 │   │   ├── mod.rs
 │   │   ├── profile.rs
 │   │   ├── readme_de.md
@@ -286,6 +289,7 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 │   │   ├── conflict_manager.rs
 │   │   ├── crypto_utils.rs
 │   │   ├── decimal_utils.rs
+│   │   ├── l2_gateway.rs
 │   │   ├── mod.rs
 │   │   ├── secure_container_manager.rs
 │   │   ├── signature_manager.rs
@@ -324,10 +328,14 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 │   │       ├── double_spend_identification.rs
 │   │       ├── double_spend.rs
 │   │       ├── mod.rs
+│   │       ├── privacy_evasion.rs
 │   │       ├── standard_validation.rs
 │   │       ├── state_and_collaboration.rs
+│   │       ├── trap_verification.rs
 │   │       └── vulnerabilities.rs
 │   ├── core_logic_tests.rs
+│   ├── flow_integrity.rs
+│   ├── l2_integration_test.rs
 │   ├── persistence
 │   │   ├── archive.rs
 │   │   ├── file_storage.rs
@@ -354,11 +362,12 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 │   │   ├── business_rules.rs
 │   │   ├── forward_compatibility.rs
 │   │   ├── mod.rs
+│   │   ├── privacy_modes.rs
 │   │   ├── standard_definition.rs
 │   │   └── unit_service.rs
 │   ├── validation_tests.rs
 │   ├── wallet_api
-│   │  ├── general_workflows.rs
+│   │   ├── general_workflows.rs
 │   │   ├── hostile_bundles.rs
 │   │   ├── hostile_standards.rs
 │   │   ├── lifecycle_and_data.rs
@@ -368,7 +377,8 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 │   │   ├── signature_workflows.rs
 │   │   ├── state_management.rs
 │   │   └── transactionality.rs
-│   └── wallet_api_tests.rs
+│   ├── wallet_api_tests.rs
+│   └── security_audit_fixes.rs
 ├── update-docs.sh
 ├── validate_standards.sh
 └── voucher_standards
@@ -649,7 +659,13 @@ Stellt die Kernlogik für den **anonymisierten und weiterleitungs-sicheren** `Se
 - `pub fn create_secure_container(sender_identity: &UserIdentity, recipient_ids: &[String], payload: &[u8], content_type: PayloadType) -> Result<SecureContainer, VoucherCoreError>`: Erstellt einen **anonymen, weiterleitungs-sicheren** `SecureContainer`. Ein symmetrischer Payload-Schlüssel wird für jeden Empfänger **und den Sender selbst** mittels eines **ephemeren Diffie-Hellman-Austauschs (X25519)** und Key-Wrapping verschlüsselt. Der Container enthält keine direkten Identifikatoren und wird als Ganzes signiert.
 - `pub fn open_secure_container(container: &SecureContainer, recipient_identity: &UserIdentity) -> Result<Vec<u8>, VoucherCoreError>`: Entschlüsselt den Payload, indem es versucht, den Payload-Schlüssel mit dem privaten Schlüssel des Nutzers (als Sender oder Empfänger) und dem öffentlichen ephemeren Schlüssel des Containers zu entschlüsseln. Die Signatur des Containers muss vom Aufrufer separat verifiziert werden, da die `sender_id` erst nach der Entschlüsselung bekannt ist.
 
-### `services::signature_manager` Modul
+### `services::l2_gateway` Modul
+Dieses Modul implementiert die Kommunikation mit Layer 2 Instanzen.
+- `pub struct L2Gateway`: Verwaltet die Verbindung und Protokoll-Logik für L2.
+- `pub fn submit_transaction(...)`: Sendet eine Transaktion zur Verifizierung an L2.
+- `pub fn query_verdict(...)`: Fragt ein L2-Urteil für einen Konflikt ab.
+
+### `src/services/signature_manager` Modul
 
 Enthält die zustandslose Geschäftslogik für die Erstellung und kryptographische Validierung von losgelösten Signaturen (`DetachedSignature`).
 
@@ -683,7 +699,7 @@ Dieses Modul stellt die Kernlogik für die Erstellung und Verarbeitung von Gutsc
 - `pub fn round_up_date(date: DateTime<Utc>, rounding_str: &str) -> Result<DateTime<Utc>, VoucherManagerError>`: Hilfsfunktion, um ein Datum auf das Ende des Tages, Monats oder Jahres aufzurunden.
 - `pub fn validate_issuance_firewall(voucher: &Voucher, standard: &VoucherStandardDefinition, sender_id: &str, recipient_id: &str) -> Result<(), VoucherCoreError>`: Prüft die "Zirkulations-Firewall" (`issuance_minimum_validity_duration`).
 - `pub fn get_spendable_balance(voucher: &Voucher, user_id: &str, standard: &VoucherStandardDefinition) -> Result<Decimal, VoucherCoreError>`: Berechnet das ausgebbare Guthaben für einen bestimmten Benutzer.
-- `pub fn create_transaction(voucher: &Voucher, standard: &VoucherStandardDefinition, sender_id: &str, sender_key: &SigningKey, recipient_id: &str, amount_to_send_str: &str) -> Result<Voucher, VoucherCoreError>`: Erstellt eine Kopie des Gutscheins mit einer neuen Transaktion. Die Signatur der Transaktion sichert nun ein minimales Objekt (`{prev_hash, sender_id, t_id}`). Verwendet `decimal_utils` zur **strengen Validierung der Betragspräzision** und zur **kanonischen Formatierung** der Werte. Verwendet explizit den Transaktionstyp "transfer" für einen vollen Transfer. Implementiert eine **"Zirkulations-Firewall" (`issuance_minimum_validity_duration`)**: Verhindert, dass der *ursprüngliche Ersteller* einen Gutschein an einen *Dritten* sendet, wenn die *Restgültigkeit* des Gutscheins die im Standard definierte Mindestgültigkeit unterschreitet. Diese Prüfung gilt *nicht* für nicht-Ersteller oder interne SAI-Transfers (z.B. Creator zu sich selbst).
+- `pub fn create_transaction(voucher: &Voucher, standard: &VoucherStandardDefinition, sender_id: &str, sender_key: &SigningKey, recipient_id: &str, amount_to_send_str: &str) -> Result<Voucher, VoucherCoreError>`: Erstellt eine Kopie des Gutscheins mit einer neuen Transaktion. Die Signatur der Transaktion sichert nun ein minimales Objekt (`{prev_hash, sender_id, t_id}`). Verwendet `decimal_utils` zur **strengen Validierung der Betragspräzision** und zur **kanonischen Formatierung** der Werte. Verwendet explizit den Transaktionstyp "transfer" für einen vollen Transfer. Implementiert eine **"Zirkulations-Firewall" (`issuance_minimum_validity_duration`)**: Verhindert, dass der *ursprüngliche Ersteller* einen Gutschein an einen *Dritten* sendet, wenn die *Restgültigkeit* des Gutscheins die im Standard definierte Mindestgültigkeit unterschreitet. Diese Prüfung gilt *nicht* für nicht-Ersteller oder interne SAI-Transfers (z.B. Creator zu sich selbst). Erfordert bei `init` Transaktionen zwingend eine öffentliche `sender_id`.
 
 ### `services::voucher_validation` Modul
 

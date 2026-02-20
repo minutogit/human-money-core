@@ -381,8 +381,15 @@ impl Wallet {
         // Wir verwenden das 'ds_tag', das exakt so auch in voucher_manager berechnet wird
         // (jetzt unabhängig vom Prefix).
         // Dies macht die proaktive Prüfung 100% konsistent mit der mathematischen Falle.
-        let ds_tag_input = format!("{}{}", prev_hash, ephem_pub_str);
-        let ds_tag = get_hash(ds_tag_input.as_bytes());
+        let ds_tag = {
+            let prev_hash_bytes = bs58::decode(&prev_hash).into_vec().map_err(|_| {
+                VoucherCoreError::Crypto("Invalid prev_hash format".to_string())
+            })?;
+            let ephem_pub_bytes = bs58::decode(&ephem_pub_str).into_vec().map_err(|_| {
+                VoucherCoreError::Crypto("Invalid sender_ephemeral_pub format".to_string())
+            })?;
+            crate::services::crypto_utils::get_hash_from_slices(&[&prev_hash_bytes, &ephem_pub_bytes])
+        };
 
         if self
             .own_fingerprints

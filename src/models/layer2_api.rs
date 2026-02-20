@@ -167,7 +167,7 @@ pub struct L2LockRequest {
     pub receiver_ephemeral_pub_hash: Option<[u8; 32]>, 
 
     #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
-    pub sender_change_anchor_hash: Option<[u8; 32]>,
+    pub change_ephemeral_pub_hash: Option<[u8; 32]>,
     
     #[serde(with = "crate::models::layer2_api::base58_64")]
     pub layer2_signature: [u8; 64], 

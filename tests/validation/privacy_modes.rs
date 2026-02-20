@@ -48,12 +48,16 @@ fn test_public_mode_enforcement() {
     voucher.transactions.truncate(1);
 
     // Mod Init for Linking
-    let secret = "secret_link";
-    let secret_hash = get_hash(secret);
+    let secret = bs58::encode("secret_link_seed").into_string();
+    let secret_hash = get_hash(bs58::decode(&secret).into_vec().unwrap());
     voucher.transactions[0].receiver_ephemeral_pub_hash = Some(secret_hash);
     
     // Fix Genesis Transaction
-    let genesis_prev_hash = get_hash(format!("{}{}", new_voucher_id, voucher.voucher_nonce));
+    let genesis_prev_hash = {
+        let v_id_bytes = bs58::decode(&new_voucher_id).into_vec().unwrap();
+        let v_nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
+        human_money_core::services::crypto_utils::get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes])
+    };
     voucher.transactions[0].prev_hash = genesis_prev_hash;
     let genesis_hash = get_hash(to_canonical_json(&voucher.transactions[0]).unwrap());
     let amount = voucher.transactions[0].amount.clone();
@@ -114,12 +118,18 @@ fn test_stealth_mode_enforcement() {
     voucher.transactions.truncate(1);
 
     // Modify Init to allow Stealth Spending (Set ephemeral hash we know)
-    let secret_key = "secret_key_for_stealth";
-    let secret_key_hash = get_hash(secret_key);
+    let secret_key = bs58::encode("secret_key_for_stealth").into_string();
+    let secret_key_hash = get_hash(bs58::decode(&secret_key).into_vec().unwrap());
     
     // We KEEP recipient_id as Creator (Public) to pass Init rules.
     voucher.transactions[0].receiver_ephemeral_pub_hash = Some(secret_key_hash.clone());
-    voucher.transactions[0].prev_hash = get_hash(format!("{}{}", new_voucher_id, voucher.voucher_nonce));
+    
+    let genesis_prev_hash = {
+        let v_id_bytes = bs58::decode(&new_voucher_id).into_vec().unwrap();
+        let v_nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
+        human_money_core::services::crypto_utils::get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes])
+    };
+    voucher.transactions[0].prev_hash = genesis_prev_hash;
     
     let genesis_hash = get_hash(to_canonical_json(&voucher.transactions[0]).unwrap());
     let amount = voucher.transactions[0].amount.clone();
@@ -184,11 +194,16 @@ fn test_flexible_mode_hybrid_behavior() {
     voucher.transactions.truncate(1);
 
     // Mod Init for Linking
-    let secret = "secret_link_flex";
-    let secret_hash = get_hash(secret);
+    let secret = bs58::encode("secret_link_flex").into_string();
+    let secret_hash = get_hash(bs58::decode(&secret).into_vec().unwrap());
     voucher.transactions[0].receiver_ephemeral_pub_hash = Some(secret_hash);
 
-    voucher.transactions[0].prev_hash = get_hash(format!("{}{}", new_voucher_id, voucher.voucher_nonce));
+    let genesis_prev_hash = {
+        let v_id_bytes = bs58::decode(&new_voucher_id).into_vec().unwrap();
+        let v_nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
+        human_money_core::services::crypto_utils::get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes])
+    };
+    voucher.transactions[0].prev_hash = genesis_prev_hash;
     let genesis_hash = get_hash(to_canonical_json(&voucher.transactions[0]).unwrap());
     let amount = voucher.transactions[0].amount.clone();
 

@@ -101,6 +101,21 @@ pub fn get_hash(input: impl AsRef<[u8]>) -> String {
     bs58::encode(hash_bytes).into_string()
 }
 
+/// Computes a SHA3-256 hash of multiple inputs concatenated and returns it as a base58-encoded string.
+/// This is used to avoid string-based concatenation malleability.
+pub fn get_hash_from_slices(inputs: &[&[u8]]) -> String {
+    use sha3::Digest;
+    let mut hasher = sha3::Sha3_256::new();
+    for input in inputs {
+        // Hängt die Länge des Segments davor (als 4-Byte Little Endian),
+        // macht es unmöglich, Grenzen zu verschieben.
+        hasher.update(&(input.len() as u32).to_le_bytes()); 
+        hasher.update(input);
+    }
+    let hash_bytes = hasher.finalize();
+    bs58::encode(hash_bytes).into_string()
+}
+
 /// Erzeugt einen 4-stelligen, Base58-kodierten Kurz-Hash aus der User ID für
 /// speichereffizientes Tracking von bekannten Peers.
 /// Gibt die letzten 4 Bytes des Hashes als Array zurück, um Speicher zu sparen.
@@ -328,7 +343,9 @@ pub fn decrypt_recipient_payload(
     let (ephemeral_pk_bytes, encrypted_content) = guard_bytes.split_at(32);
 
     // 2. Parse Ephemeral Public Key
-    let ephemeral_pk_arr: [u8; 32] = ephemeral_pk_bytes.try_into().unwrap();
+    let ephemeral_pk_arr: [u8; 32] = ephemeral_pk_bytes.try_into().map_err(|_| {
+        VoucherCoreError::Crypto("Invalid ephemeral public key length (expected 32 bytes)".to_string())
+    })?;
     let ephemeral_pk_x = X25519PublicKey::from(ephemeral_pk_arr);
 
     // 3. Recipient Secret Key conversion (Ed25519 -> X25519)
@@ -376,7 +393,9 @@ pub fn ed25519_sk_to_x25519_sk(ed_sk: &SigningKey) -> StaticSecret {
     hasher.update(&ed_sk.to_bytes());
     let hash = hasher.finalize();
     // Wir müssen dem Compiler den Zieltyp für `try_into` explizit angeben.
-    let key_bytes: [u8; 32] = hash[..32].try_into().expect("SHA512 hash must be 64 bytes");
+    let key_bytes: [u8; 32] = hash[..32]
+        .try_into()
+        .expect("SHA512 hash is guaranteed to be 64 bytes");
     StaticSecret::from(key_bytes)
 }
 
@@ -452,7 +471,7 @@ pub fn perform_diffie_hellman(
     let mut symmetric_key = [0u8; 32];
     // expand sollte hier niemals fehlschlagen, da die Ausgabelänge fix ist.
     hkdf.expand(&info, &mut symmetric_key)
-        .expect("HKDF expansion with valid length should not fail");
+        .map_err(|_| VoucherCoreError::Crypto("HKDF expansion failed".to_string()))?;
 
     Ok(symmetric_key)
 }
