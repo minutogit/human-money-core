@@ -1064,32 +1064,30 @@ pub fn resign_transaction_ext(
     
     // 1. Layer 2 Signature: Signiert den vollen Payload
     let t_id_raw = bs58::decode(&tx.t_id).into_vec().unwrap();
-    let ds_tag_raw = if tx.t_type == "init" {
-        bs58::decode(&tx.prev_hash).into_vec().unwrap_or_default()
-    } else {
-        tx.trap_data.as_ref()
-            .map(|td| bs58::decode(&td.ds_tag).into_vec().unwrap_or_default())
-            .unwrap_or_else(|| bs58::decode(&tx.prev_hash).into_vec().unwrap_or_default())
-    };
+
     let sender_pub_raw = tx.sender_ephemeral_pub.as_ref()
         .map(|s| bs58::decode(s).into_vec().unwrap_or_default())
         .unwrap_or_default();
     let receiver_hash_raw = tx.receiver_ephemeral_pub_hash.as_ref().map(|h| bs58::decode(h).into_vec().unwrap());
     let change_hash_raw = tx.change_ephemeral_pub_hash.as_ref().map(|h| bs58::decode(h).into_vec().unwrap());
 
-    let ds_tag_hex = if tx.t_type == "init" {
-        None
+    let challenge_ds_tag = if tx.t_type == "init" {
+        tx.t_id.clone()
     } else {
-        Some(hex::encode(&ds_tag_raw))
+        tx.trap_data.as_ref().map(|td| td.ds_tag.clone()).unwrap_or_else(|| tx.t_id.clone())
+    };
+
+    let to_32_bytes = |vec: Vec<u8>| -> [u8; 32] {
+        vec[..32].try_into().unwrap()
     };
 
     let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+        &challenge_ds_tag,
         v_id,
-        ds_tag_hex.as_deref(),
-        &t_id_raw[..32].try_into().unwrap(),
-        &sender_pub_raw[..32].try_into().unwrap(),
-        receiver_hash_raw.as_ref().map(|v| v[..32].try_into().unwrap()).as_ref(),
-        change_hash_raw.as_ref().map(|v| v[..32].try_into().unwrap()).as_ref(),
+        &to_32_bytes(t_id_raw.clone()),
+        &to_32_bytes(sender_pub_raw),
+        receiver_hash_raw.as_ref().map(|v| to_32_bytes(v.clone())).as_ref(),
+        change_hash_raw.as_ref().map(|v| to_32_bytes(v.clone())).as_ref(),
         tx.valid_until.as_deref(),
     );
 

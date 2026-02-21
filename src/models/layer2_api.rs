@@ -177,34 +177,67 @@ pub struct L2LockRequest {
     pub valid_until: Option<String>, // Only required when is_genesis = true
 }
 
-/// Request: Abfragen, ob eine Kette sicher ist
+/// Datenstruktur für einen einzelnen Lock-Eintrag auf dem Layer 2.
+/// Dient als kryptografischer Beweis für den Zustand eines Tags.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct L2LockEntry {
+    pub layer2_voucher_id: String,
+    #[serde(with = "crate::models::layer2_api::base58_32")]
+    pub t_id: [u8; 32],
+    #[serde(with = "crate::models::layer2_api::base58_32")]
+    pub sender_ephemeral_pub: [u8; 32],
+    #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
+    pub receiver_ephemeral_pub_hash: Option<[u8; 32]>, 
+    #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
+    pub change_ephemeral_pub_hash: Option<[u8; 32]>,
+    #[serde(with = "crate::models::layer2_api::base58_64")]
+    pub layer2_signature: [u8; 64],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
+}
+
+/// Request: Abfragen des Zustands eines Gutscheins und Abgleich der Transaktionshistorie.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct L2StatusQuery {
     pub auth: L2AuthPayload,
     pub layer2_voucher_id: String,
-    pub target_ds_tags: Vec<String>, // Liste der zu prüfenden Anker (Hex-Strings)
+    /// Der vollständige Base58-String des zu prüfenden Tags (Herausforderung).
+    pub challenge_ds_tag: String,
+    /// Exponentiell ausgedünnte Liste von Vorgänger-Präfixen (10 Zeichen Base58) zur LCA-Suche.
+    pub locator_prefixes: Vec<String>,
 }
 
-/// Response: Das Urteil des L2-Servers
+/// Request: Batch-Upload von mehreren Transaktionen zur Synchronisation.
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct L2BatchLockRequest {
+    pub auth: L2AuthPayload,
+    pub layer2_voucher_id: String,
+    pub locks: Vec<L2LockRequest>,
+}
+
+/// Response: Das Urteil des L2-Servers über den Zustand eines Tags oder der Kette.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type")]
 pub enum L2Verdict {
+    /// Der Tag ist vergeben. Beinhaltet den vollständigen Beweis (LockEntry).
+    Verified {
+        lock_entry: L2LockEntry,
+    },
+    /// Der Server kennt diesen Tag noch nicht, hat aber einen gemeinsamen Ahnen gefunden.
+    MissingLocks {
+        /// Das 10-Zeichen Präfix der letzten gemeinsamen Transaktion.
+        sync_point: String,
+    },
+    /// Der Gutschein (Voucher ID) ist dem Layer 2 System gänzlich unbekannt.
+    UnknownVoucher,
+    /// Veraltet/Fallback: Allgemeine Bestätigung (sollte durch Verified ersetzt werden).
+    #[serde(rename = "Ok")]
     Ok {
         #[serde(with = "crate::models::layer2_api::base58_64")]
         signature: [u8; 64],
     },
-    Verified {
-        #[serde(with = "crate::models::layer2_api::base58_64")]
-        signature: [u8; 64],
-    },
-    DoubleSpend {
-        #[serde(with = "crate::models::layer2_api::base58_32")]
-        conflicting_t_id: [u8; 32],
-        #[serde(with = "crate::models::layer2_api::base58_64")]
-        proof_signature: [u8; 64],
-        // Weitere Beweisdaten können hier später hinzugefügt werden
-    },
-    ConflictFound { // Added for the query endpoint
-        #[serde(with = "crate::models::layer2_api::base58_32")]
-        conflicting_t_id: [u8; 32],
+    /// Die Anfrage wurde vom Server abgelehnt (z.B. ungültige Signatur).
+    Rejected {
+        reason: String,
     },
 }

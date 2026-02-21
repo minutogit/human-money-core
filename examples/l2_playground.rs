@@ -16,8 +16,10 @@ use tempfile::tempdir;
 
 /// Eine verbesserte Simulation eines L2-Nodes, die den aktuellen UTXO-basierten Stand widerspiegelt.
 pub struct MockL2Node {
-    /// Simuliert die L2-Datenbank. Key: layer2_voucher_id, Value: Map von ds_tag -> t_id
-    pub locks: HashMap<String, HashMap<String, [u8; 32]>>,
+    /// Simuliert den RAM-Bloom-Filter (Voucher IDs)
+    pub vouchers: HashSet<String>,
+    /// Simuliert die L2-Datenbank. Key: layer2_voucher_id, Value: Map von ds_tag -> L2LockEntry
+    pub locks: HashMap<String, HashMap<String, human_money_core::models::layer2_api::L2LockEntry>>,
     /// Simuliert das UTXO Modell für P2PKH Anker
     pub spendable_outputs: HashSet<[u8; 32]>,
 }
@@ -25,6 +27,7 @@ pub struct MockL2Node {
 impl MockL2Node {
     pub fn new() -> Self {
         Self {
+            vouchers: HashSet::new(),
             locks: HashMap::new(),
             spendable_outputs: HashSet::new(),
         }
@@ -44,37 +47,35 @@ impl MockL2Node {
              // aber ein echter Node würde hier ablehnen.
         }
 
-        // --- 2. Verkettung Prüfen (P2PKH) ---
-        if !req.is_genesis {
-            let sender_hash_str = human_money_core::services::crypto_utils::get_hash(&req.sender_ephemeral_pub);
-            let mut sender_hash_bytes = [0u8; 32];
-            let decoded_h = bs58::decode(&sender_hash_str).into_vec().unwrap();
-            sender_hash_bytes.copy_from_slice(&decoded_h);
+        // Voucher im "Bloom Filter" registrieren
+        self.vouchers.insert(req.layer2_voucher_id.clone());
 
-            if !self.spendable_outputs.remove(&sender_hash_bytes) {
-                let verdict = L2Verdict::ConflictFound {
-                    conflicting_t_id: req.transaction_hash // Anker nicht gefunden oder bereits verbraucht
-                };
-                return serde_json::to_vec(&verdict).unwrap();
-            }
-        }
-
-        // --- 3. Double Spend Check via ds_tag ---
-        if let Some(ds_tag) = &req.ds_tag {
-            let voucher_locks = self.locks.entry(req.layer2_voucher_id.clone()).or_default();
-            if let Some(&existing_t_id) = voucher_locks.get(ds_tag) {
-                let verdict = L2Verdict::DoubleSpend {
-                    conflicting_t_id: existing_t_id,
-                    proof_signature: [0u8; 64],
-                };
-                return serde_json::to_vec(&verdict).unwrap();
-            }
-            // Erfolg: Verankern
-            voucher_locks.insert(ds_tag.clone(), req.transaction_hash);
+        let ds_tag = if req.is_genesis {
+            bs58::encode(req.transaction_hash).into_string()
         } else {
-            // Genesis/Init: Einfach Container anlegen
-            self.locks.entry(req.layer2_voucher_id.clone()).or_default();
+            req.ds_tag.clone().unwrap_or_else(|| "genesis".to_string())
+        };
+
+        // --- 2. Double Spend Check via ds_tag ---
+        let voucher_locks = self.locks.entry(req.layer2_voucher_id.clone()).or_default();
+        if let Some(entry) = voucher_locks.get(&ds_tag) {
+            let verdict = L2Verdict::Verified {
+                lock_entry: entry.clone(),
+            };
+            return serde_json::to_vec(&verdict).unwrap();
         }
+
+        // Erfolg: Verankern
+        let entry = human_money_core::models::layer2_api::L2LockEntry {
+            layer2_voucher_id: req.layer2_voucher_id.clone(),
+            t_id: req.transaction_hash,
+            sender_ephemeral_pub: req.sender_ephemeral_pub,
+            receiver_ephemeral_pub_hash: req.receiver_ephemeral_pub_hash,
+            change_ephemeral_pub_hash: req.change_ephemeral_pub_hash,
+            layer2_signature: req.layer2_signature,
+            valid_until: req.valid_until.clone(),
+        };
+        voucher_locks.insert(ds_tag, entry);
 
         // Neue UTXOs registrieren (Empfänger und Wechselgeld)
         if let Some(r) = req.receiver_ephemeral_pub_hash {
@@ -93,29 +94,36 @@ impl MockL2Node {
     pub fn handle_status_query(&self, req_bytes: &[u8]) -> Vec<u8> {
         let req: L2StatusQuery = serde_json::from_slice(req_bytes).unwrap();
 
-        let voucher_locks = match self.locks.get(&req.layer2_voucher_id) {
-            Some(v) => v,
-            None => {
-                let verdict = L2Verdict::ConflictFound {
-                    conflicting_t_id: [0u8; 32],
-                };
-                return serde_json::to_vec(&verdict).unwrap();
-            }
-        };
+        // 1. Bloom Filter Check
+        if !self.vouchers.contains(&req.layer2_voucher_id) {
+            return serde_json::to_vec(&L2Verdict::UnknownVoucher).unwrap();
+        }
 
-        for ds_tag in &req.target_ds_tags {
-            if !voucher_locks.contains_key(ds_tag) {
-                let verdict = L2Verdict::ConflictFound {
-                    conflicting_t_id: [0u8; 32],
-                };
-                return serde_json::to_vec(&verdict).unwrap();
+        let voucher_locks = self.locks.get(&req.layer2_voucher_id).unwrap();
+
+        // 2. Direct Lookup (Challenge)
+        if let Some(entry) = voucher_locks.get(&req.challenge_ds_tag) {
+            let verdict = L2Verdict::Verified {
+                lock_entry: entry.clone(),
+            };
+            return serde_json::to_vec(&verdict).unwrap();
+        }
+
+        // 3. Logarithmic Locators
+        for prefix in &req.locator_prefixes {
+            for (ds_tag, _entry) in voucher_locks {
+                if ds_tag.starts_with(prefix) {
+                    let verdict = L2Verdict::MissingLocks {
+                        sync_point: prefix.clone(),
+                    };
+                    return serde_json::to_vec(&verdict).unwrap();
+                }
             }
         }
 
-        let verdict = L2Verdict::Verified {
-            signature: [0u8; 64],
-        };
-        serde_json::to_vec(&verdict).unwrap()
+        serde_json::to_vec(&L2Verdict::MissingLocks {
+            sync_point: "genesis".to_string(),
+        }).unwrap()
     }
 }
 
@@ -161,7 +169,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let voucher_id = app.get_voucher_summaries(None, None)?[0].local_instance_id.clone();
     let req_genesis = app.generate_l2_lock_request(&voucher_id)?;
     let resp_genesis = server.handle_lock_request(&req_genesis);
-    app.process_l2_response(&resp_genesis, Some(password)).unwrap();
+    app.process_l2_response(&voucher_id, &resp_genesis, Some(password)).unwrap();
     println!("✅ Genesis anchored on L2. Voucher ID: \x1b[32m{}\x1b[0m\n", 
         serde_json::from_slice::<L2LockRequest>(&req_genesis)?.layer2_voucher_id);
 
@@ -184,7 +192,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let req_tx1 = app.generate_l2_lock_request(&v_id_1)?;
     let resp_tx1 = server.handle_lock_request(&req_tx1);
-    app.process_l2_response(&resp_tx1, Some(password)).unwrap();
+    app.process_l2_response(&v_id_1, &resp_tx1, Some(password)).unwrap();
     println!("✅ TX 1 anchored on L2. DS_TAG: \x1b[32m{}\x1b[0m\n", 
         serde_json::from_slice::<L2LockRequest>(&req_tx1)?.ds_tag.unwrap_or_default());
 
@@ -206,7 +214,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let req_tx2 = app.generate_l2_lock_request(&v_id_2)?;
     let resp_tx2 = server.handle_lock_request(&req_tx2);
-    app.process_l2_response(&resp_tx2, Some(password)).unwrap();
+    app.process_l2_response(&v_id_2, &resp_tx2, Some(password)).unwrap();
     println!("✅ TX 2 anchored on L2. DS_TAG: \x1b[32m{}\x1b[0m\n", 
         serde_json::from_slice::<L2LockRequest>(&req_tx2)?.ds_tag.unwrap_or_default());
 
@@ -248,12 +256,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  ├─ DS_TAG (Trap): {}", td.ds_tag);
             
             if let Some(voucher_locks) = server.locks.get(&current_v_id) {
-                // Convert ds_tag from base58 (in transaction) to hex (as used in L2 server keys)
-                let decoded_ds = bs58::decode(&td.ds_tag).into_vec()?;
-                let hex_ds = hex::encode(decoded_ds);
+                // Bei Genesis nutzen wir t_id als Key, sonst ds_tag
+                let lookup_key = if is_genesis {
+                    tx.t_id.clone()
+                } else {
+                    td.ds_tag.clone()
+                };
 
-                if let Some(l2_tid) = voucher_locks.get(&hex_ds) {
-                    let l2_tid_str = bs58::encode(l2_tid).into_string();
+                if let Some(entry) = voucher_locks.get(&lookup_key) {
+                    let l2_tid_str = bs58::encode(entry.t_id).into_string();
                     if l2_tid_str == tx.t_id {
                         println!("  ├─ L2 Status:     \x1b[32mVERANKERT (Match)\x1b[0m");
                     } else {

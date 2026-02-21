@@ -2,12 +2,16 @@ use crate::error::VoucherCoreError;
 use crate::models::layer2_api::{L2AuthPayload, L2LockRequest, L2Verdict};
 use crate::models::voucher::Transaction;
 
+use ed25519_dalek::{VerifyingKey, Signature, Verifier};
+
 /// Definiert die Aktion, die der AppService nach der Auswertung des Urteils durchführen soll.
 pub enum VerdictAction {
     /// Das L2-Netzwerk hat die Transaktion als gültig bestätigt.
     ConfirmLocal,
     /// Ein Double-Spend wurde erkannt, das Wallet/der Gutschein muss zwingend in Quarantäne.
     TriggerQuarantine(String),
+    /// Eine Synchronisation ist erforderlich. Beinhaltet den sync_point (Präfix).
+    TriggerSync { sync_point: String },
 }
 
 
@@ -36,9 +40,8 @@ pub fn generate_lock_request(
     } else {
         match &transaction.trap_data {
             Some(td) => {
-                // Konvertiere Base58 ds_tag zu Hex
-                let decoded = bs58::decode(&td.ds_tag).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid base58 for ds_tag".to_string()))?;
-                Some(hex::encode(decoded))
+                // Verwende direkt den Base58 ds_tag aus den TrapData (Spec-Konformität)
+                Some(td.ds_tag.clone())
             },
             None => return Err(VoucherCoreError::MissingTrapData),
         }
@@ -151,9 +154,15 @@ pub fn calculate_layer2_voucher_id(transaction: &Transaction) -> Result<String, 
 
 /// Generiert einen deterministischen Hash des L2-Payloads für die Signaturprüfung.
 pub fn calculate_l2_payload_hash(req: &L2LockRequest) -> [u8; 32] {
+    let challenge_ds_tag = if req.is_genesis {
+        bs58::encode(req.transaction_hash).into_string()
+    } else {
+        req.ds_tag.clone().unwrap_or_default()
+    };
+
     calculate_l2_payload_hash_raw(
+        &challenge_ds_tag,
         &req.layer2_voucher_id,
-        req.ds_tag.as_deref(),
         &req.transaction_hash,
         &req.sender_ephemeral_pub,
         req.receiver_ephemeral_pub_hash.as_ref(),
@@ -164,21 +173,19 @@ pub fn calculate_l2_payload_hash(req: &L2LockRequest) -> [u8; 32] {
 
 /// Innere Logik für das Hashing des L2-Payloads (wird auch vom Wallet genutzt).
 pub fn calculate_l2_payload_hash_raw(
+    challenge_ds_tag: &str,
     layer2_voucher_id: &str,
-    ds_tag: Option<&str>,
     transaction_hash: &[u8; 32],
     sender_pub: &[u8; 32],
     receiver_hash: Option<&[u8; 32]>,
     change_hash: Option<&[u8; 32]>,
     valid_until: Option<&str>,
 ) -> [u8; 32] {
-    use sha2::Digest;
-    let mut hasher = sha2::Sha256::new();
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
     
+    hasher.update(challenge_ds_tag.as_bytes());
     hasher.update(layer2_voucher_id.as_bytes());
-    if let Some(ds) = ds_tag {
-        hasher.update(ds.as_bytes());
-    }
     hasher.update(transaction_hash);
     hasher.update(sender_pub);
     if let Some(r) = receiver_hash {
@@ -197,6 +204,19 @@ pub fn calculate_l2_payload_hash_raw(
     hash
 }
 
+/// Leitet den Challenge-DS-Tag für eine Transaktion ab.
+/// Bei Genesis ist dies die t_id, andernfalls der ds_tag aus den TrapData.
+pub fn derive_challenge_tag(tx: &Transaction) -> Result<String, VoucherCoreError> {
+    if tx.t_type == "init" {
+        Ok(tx.t_id.clone())
+    } else {
+        match &tx.trap_data {
+            Some(td) => Ok(td.ds_tag.clone()),
+            None => Err(VoucherCoreError::MissingTrapData),
+        }
+    }
+}
+
 /// Extrahiert die layer2_voucher_id aus einem Gutschein (basierend auf der Genesis-Tx).
 pub fn extract_layer2_voucher_id(voucher: &crate::models::voucher::Voucher) -> Result<String, VoucherCoreError> {
     if voucher.transactions.is_empty() {
@@ -209,22 +229,97 @@ pub fn extract_layer2_voucher_id(voucher: &crate::models::voucher::Voucher) -> R
 pub fn process_l2_verdict(
     verdict_bytes: &[u8],
     _server_pubkey: &[u8; 32], // Platzhalter für zukünftige Signaturprüfung
+    local_t_id: &str,          // Die lokale t_id der angefragten Transaktion
+    challenge_ds_tag: &str,    // Der für die Abfrage genutzte Challenge-Tag
 ) -> Result<VerdictAction, VoucherCoreError> {
     let verdict: L2Verdict = serde_json::from_slice(verdict_bytes)
         .map_err(|e| VoucherCoreError::DeserializationError(e.to_string()))?;
 
-    // In der Zukunft würde hier `server_pubkey` genutzt werden, 
-    // um die Signatur in `verdict` zu überprüfen.
-
     match verdict {
-        L2Verdict::Ok { .. } | L2Verdict::Verified { .. } => Ok(VerdictAction::ConfirmLocal),
-        L2Verdict::DoubleSpend { conflicting_t_id, .. } => {
-            let t_id_str = bs58::encode(conflicting_t_id).into_string();
-            Ok(VerdictAction::TriggerQuarantine(t_id_str))
+        L2Verdict::Verified { lock_entry } => {
+            // 1. Verifiziere die L2-Signatur mathematisch (Proof of Truth)
+            let ephem_key = VerifyingKey::from_bytes(&lock_entry.sender_ephemeral_pub)
+                .map_err(|_| VoucherCoreError::ValidationFailed("Invalid ephemeral key in lock entry".to_string()))?;
+            let signature = Signature::from_bytes(&lock_entry.layer2_signature);
+
+            // Payload rekonstruieren: challenge_ds_tag + t_id + sender_ephemeral_pub + hashes + ...
+            let payload_hash = calculate_l2_payload_hash_raw(
+                challenge_ds_tag,
+                &lock_entry.layer2_voucher_id,
+                &lock_entry.t_id,
+                &lock_entry.sender_ephemeral_pub,
+                lock_entry.receiver_ephemeral_pub_hash.as_ref(),
+                lock_entry.change_ephemeral_pub_hash.as_ref(),
+                lock_entry.valid_until.as_deref(),
+            );
+
+            #[cfg(feature = "test-utils")]
+            let signature_valid = ephem_key.verify(&payload_hash, &signature).is_ok() || crate::is_signature_bypass_active();
+            #[cfg(not(feature = "test-utils"))]
+            let signature_valid = ephem_key.verify(&payload_hash, &signature).is_ok();
+
+            if !signature_valid {
+                return Err(VoucherCoreError::ValidationFailed("Kryptografischer Beweis des L2-Servers ist ungültig".to_string()));
+            }
+
+            // 2. Vergleiche t_id
+            let server_t_id = bs58::encode(lock_entry.t_id).into_string();
+            if server_t_id == local_t_id {
+                Ok(VerdictAction::ConfirmLocal)
+            } else {
+                // Double-Spend erkannt!
+                Ok(VerdictAction::TriggerQuarantine(server_t_id))
+            }
         }
-        L2Verdict::ConflictFound { conflicting_t_id } => {
-            let t_id_str = bs58::encode(conflicting_t_id).into_string();
-            Ok(VerdictAction::TriggerQuarantine(t_id_str))
+        L2Verdict::MissingLocks { sync_point } => {
+            // Signalisiere, dass wir synchronisieren müssen
+            Ok(VerdictAction::TriggerSync { sync_point })
+        }
+        L2Verdict::UnknownVoucher => {
+            // Signalisiere, dass der Gutschein unbekannt ist (Full Upload nötig)
+            Ok(VerdictAction::TriggerSync { sync_point: "genesis".to_string() })
+        }
+        L2Verdict::Ok { .. } => {
+            // Fallback für alte Implementationen
+            Ok(VerdictAction::ConfirmLocal)
+        }
+        L2Verdict::Rejected { reason } => {
+            Err(VoucherCoreError::ValidationFailed(format!("L2 Server hat die Anfrage abgelehnt: {}", reason)))
         }
     }
+}
+
+/// Generiert die logarithmischen Locators für einen Zustandsabgleich.
+/// Sendet Präfixe der ds_tags (10 Zeichen Base58) in exponentiellen Abständen zurück.
+pub fn generate_locator_prefixes(voucher: &crate::models::voucher::Voucher) -> Vec<String> {
+    let mut prefixes = Vec::new();
+    let n = voucher.transactions.len();
+    if n == 0 { return prefixes; }
+
+    // Wir gehen rückwärts von der aktuellen Transaktion (n-1)
+    let mut step = 1;
+    let mut i = n - 1;
+    
+    while i > 0 {
+        if let Some(td) = &voucher.transactions[i].trap_data {
+            // Nimm die ersten 10 Zeichen des Base58 ds_tags
+            prefixes.push(td.ds_tag.chars().take(10).collect());
+        }
+        
+        if i < step {
+            break;
+        }
+        i -= step;
+        step *= 2; // Exponentielle Abstände: 1, 2, 4, 8, 16...
+    }
+
+    // Immer den ersten (Genesis) Lock mitschicken (falls vorhanden und nicht schon drin)
+    if let Ok(first_tag) = derive_challenge_tag(&voucher.transactions[0]) {
+        let first_prefix: String = first_tag.chars().take(10).collect();
+        if !prefixes.contains(&first_prefix) {
+            prefixes.push(first_prefix);
+        }
+    }
+
+    prefixes
 }

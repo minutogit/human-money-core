@@ -1062,21 +1062,21 @@ pub fn verify_transaction_integrity_and_signature(
                 ValidationError::SignatureDecodeError("Invalid l2 signature length".into())
             })?);
 
-            // NEU: Signatur prüft den gesamten L2-Payload
             let t_id_raw = bs58::decode(&transaction.t_id).into_vec().map_err(|_| {
                 ValidationError::SignatureDecodeError("Invalid t_id format".into())
             })?;
-            
-            let ds_tag_hex = if transaction.t_type == "init" {
-                None
+
+            // Herausfinden des challenge_ds_tag
+            let challenge_ds_tag = if transaction.t_type == "init" {
+                transaction.t_id.clone()
             } else {
-                let ds_tag_str = transaction.trap_data.as_ref().map(|td| &td.ds_tag).ok_or_else(|| {
+                transaction.trap_data.as_ref().map(|td| td.ds_tag.clone()).ok_or_else(|| {
                     ValidationError::InvalidTransaction("Missing trap_data for non-init transaction".to_string())
-                })?;
-                let decoded = bs58::decode(ds_tag_str).into_vec().map_err(|_| {
-                    ValidationError::SignatureDecodeError("Invalid ds_tag format".into())
-                })?;
-                Some(hex::encode(decoded))
+                })?
+            };
+
+            let to_32_bytes = |vec: Vec<u8>| -> Result<[u8; 32], ValidationError> {
+                vec.try_into().map_err(|_| ValidationError::SignatureDecodeError("Hash must be 32 bytes".into()))
             };
 
             let receiver_hash_raw = transaction.receiver_ephemeral_pub_hash.as_ref().map(|h| {
@@ -1091,17 +1091,26 @@ pub fn verify_transaction_integrity_and_signature(
                 })
             }).transpose()?;
 
-            let to_32_bytes = |vec: Vec<u8>| -> Result<[u8; 32], ValidationError> {
-                vec.try_into().map_err(|_| ValidationError::SignatureDecodeError("Hash must be 32 bytes".into()))
+            let t_id_32 = to_32_bytes(t_id_raw)?;
+            let ephem_pub_32 = to_32_bytes(ephem_pub_bytes)?;
+
+            let receiver_hash_32 = match receiver_hash_raw {
+                Some(v) => Some(to_32_bytes(v)?),
+                None => None
+            };
+
+            let change_hash_32 = match change_hash_raw {
+                Some(v) => Some(to_32_bytes(v)?),
+                None => None
             };
 
             let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+                &challenge_ds_tag,
                 layer2_voucher_id,
-                ds_tag_hex.as_deref(),
-                &to_32_bytes(t_id_raw)?,
-                &to_32_bytes(ephem_pub_bytes)?,
-                receiver_hash_raw.as_ref().map(|v| v.as_slice().try_into().unwrap()).as_ref(),
-                change_hash_raw.as_ref().map(|v| v.as_slice().try_into().unwrap()).as_ref(),
+                &t_id_32,
+                &ephem_pub_32,
+                receiver_hash_32.as_ref(),
+                change_hash_32.as_ref(),
                 transaction.valid_until.as_deref(),
             );
 

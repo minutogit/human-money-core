@@ -373,4 +373,6 @@ pub enum VoucherCoreError {
     InvalidHashFormat(String),
     #[error("L2 Payload Deserialization Error: {0}")]
     DeserializationError(String),
+    #[error("Validation failed: {0}")]
+    ValidationFailed(String),
 }

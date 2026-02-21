@@ -14,9 +14,11 @@ use std::collections::HashSet;
 use ed25519_dalek::{VerifyingKey, Signature, Verifier};
 
 pub struct MockL2Node {
-    // Simuliert die L2-Datenbank. 
-    // Key: layer2_voucher_id, Value: (Key: ds_tag, Value: transaction_hash)
-    locks: HashMap<String, HashMap<String, [u8; 32]>>,
+    // Simuliert den RAM-Bloom-Filter (Voucher IDs)
+    vouchers: HashSet<String>,
+    // Simuliert die L2-Datenbank (Key-Value)
+    // Key: ds_tag (Base58), Value: L2LockEntry
+    locks: HashMap<String, HashMap<String, human_money_core::models::layer2_api::L2LockEntry>>,
     // Simuliert das UTXO Modell für P2PKH Anker
     spendable_outputs: HashSet<[u8; 32]>,
 }
@@ -24,6 +26,7 @@ pub struct MockL2Node {
 impl MockL2Node {
     pub fn new() -> Self {
         Self {
+            vouchers: HashSet::new(),
             locks: HashMap::new(),
             spendable_outputs: HashSet::new(),
         }
@@ -39,42 +42,48 @@ impl MockL2Node {
         let payload_hash = human_money_core::services::l2_gateway::calculate_l2_payload_hash(&req);
 
         if !human_money_core::is_signature_bypass_active() && ephem_key.verify(&payload_hash, &signature).is_err() {
-            let verdict = L2Verdict::ConflictFound {
-                conflicting_t_id: req.transaction_hash
+            let verdict = L2Verdict::Rejected {
+                reason: "Invalid signature".to_string(),
             };
             return serde_json::to_vec(&verdict).unwrap();
         }
 
-        // --- 2. Verkettung Prüfen (P2PKH) ---
-        if !req.is_genesis {
-            let sender_hash_str = human_money_core::services::crypto_utils::get_hash(&req.sender_ephemeral_pub);
-            let mut sender_hash_bytes = [0u8; 32];
-            let decoded_h = bs58::decode(&sender_hash_str).into_vec().unwrap();
-            sender_hash_bytes.copy_from_slice(&decoded_h);
+        // Register Voucher in "Bloom Filter"
+        self.vouchers.insert(req.layer2_voucher_id.clone());
 
-            if !self.spendable_outputs.remove(&sender_hash_bytes) {
-                let verdict = L2Verdict::ConflictFound {
-                    conflicting_t_id: req.transaction_hash
-                };
-                return serde_json::to_vec(&verdict).unwrap();
-            }
-        }
-
-        // --- 3. Double Spend Check via ds_tag ---
-        if let Some(ds_tag) = &req.ds_tag {
-            let voucher_locks = self.locks.entry(req.layer2_voucher_id.clone()).or_default();
-            if let Some(&existing_t_id) = voucher_locks.get(ds_tag) {
-                let verdict = L2Verdict::DoubleSpend {
-                    conflicting_t_id: existing_t_id,
-                    proof_signature: [0u8; 64],
-                };
-                return serde_json::to_vec(&verdict).unwrap();
-            }
-            voucher_locks.insert(ds_tag.clone(), req.transaction_hash);
+        let ds_tag = if req.is_genesis {
+            // Bei Genesis nutzen wir die t_id als Key (da kein ds_tag vorhanden)
+            bs58::encode(req.transaction_hash).into_string()
         } else {
-            // init: just register entry point
-            self.locks.entry(req.layer2_voucher_id.clone()).or_default();
+            match &req.ds_tag {
+                Some(ds) => ds.clone(),
+                None => {
+                    let verdict = L2Verdict::Rejected { reason: "Non-genesis must have ds_tag".to_string() };
+                    return serde_json::to_vec(&verdict).unwrap();
+                }
+            }
+        };
+        
+        // --- 2. Double Spend Check via ds_tag ---
+        let voucher_locks = self.locks.entry(req.layer2_voucher_id.clone()).or_default();
+        if let Some(entry) = voucher_locks.get(&ds_tag) {
+            // Wir geben den Beweis zurück
+            let verdict = L2Verdict::Verified {
+                lock_entry: entry.clone(),
+            };
+            return serde_json::to_vec(&verdict).unwrap();
         }
+
+        let entry = human_money_core::models::layer2_api::L2LockEntry {
+            layer2_voucher_id: req.layer2_voucher_id.clone(),
+            t_id: req.transaction_hash,
+            sender_ephemeral_pub: req.sender_ephemeral_pub,
+            receiver_ephemeral_pub_hash: req.receiver_ephemeral_pub_hash,
+            change_ephemeral_pub_hash: req.change_ephemeral_pub_hash,
+            layer2_signature: req.layer2_signature,
+            valid_until: req.valid_until.clone(),
+        };
+        voucher_locks.insert(ds_tag, entry);
             
         // Add new UTXOs
         if let Some(r) = req.receiver_ephemeral_pub_hash {
@@ -93,27 +102,38 @@ impl MockL2Node {
     pub fn handle_status_query(&self, req_bytes: &[u8]) -> Vec<u8> {
         let req: L2StatusQuery = serde_json::from_slice(req_bytes).unwrap();
 
-        let voucher_locks = match self.locks.get(&req.layer2_voucher_id) {
-            Some(v) => v,
-            None => {
-                let verdict = L2Verdict::ConflictFound {
-                    conflicting_t_id: [0u8; 32],
-                };
-                return serde_json::to_vec(&verdict).unwrap();
-            }
-        };
+        // 1. Bloom Filter Check
+        if !self.vouchers.contains(&req.layer2_voucher_id) {
+            let verdict = L2Verdict::UnknownVoucher;
+            return serde_json::to_vec(&verdict).unwrap();
+        }
 
-        for ds_tag in &req.target_ds_tags {
-            if !voucher_locks.contains_key(ds_tag) {
-                let verdict = L2Verdict::ConflictFound {
-                    conflicting_t_id: [0u8; 32],
-                };
-                return serde_json::to_vec(&verdict).unwrap();
+        let voucher_locks = self.locks.get(&req.layer2_voucher_id).unwrap();
+
+        // 2. Direct Lookup (Challenge)
+        if let Some(entry) = voucher_locks.get(&req.challenge_ds_tag) {
+            let verdict = L2Verdict::Verified {
+                lock_entry: entry.clone(),
+            };
+            return serde_json::to_vec(&verdict).unwrap();
+        }
+
+        // 3. Logarithmic Locators (LCA Search)
+        // Wir suchen das erste Präfix, das wir kennen
+        for prefix in &req.locator_prefixes {
+            for (ds_tag, _entry) in voucher_locks {
+                if ds_tag.starts_with(prefix) {
+                    let verdict = L2Verdict::MissingLocks {
+                        sync_point: prefix.clone(),
+                    };
+                    return serde_json::to_vec(&verdict).unwrap();
+                }
             }
         }
 
-        let verdict = L2Verdict::Verified {
-            signature: [0u8; 64],
+        // Nichts gefunden -> Synchronisation ab Genesis
+        let verdict = L2Verdict::MissingLocks {
+            sync_point: "genesis".to_string(),
         };
         serde_json::to_vec(&verdict).unwrap()
     }
@@ -169,7 +189,7 @@ fn test_l2_double_spend_quarantine() {
     let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
     let verdict: L2Verdict = serde_json::from_slice(&resp_genesis).unwrap();
     assert!(matches!(verdict, L2Verdict::Ok { .. }));
-    app.process_l2_response(&resp_genesis, Some(correct_password)).unwrap();
+    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password)).unwrap();
 
     // 2. Status Query
     let query_bytes = app.generate_l2_status_query(&voucher_id).unwrap();
@@ -204,7 +224,7 @@ fn test_l2_double_spend_quarantine() {
     let resp_tx1 = mock_l2.handle_lock_request(&req_tx1);
     let verdict_tx1: L2Verdict = serde_json::from_slice(&resp_tx1).unwrap();
     assert!(matches!(verdict_tx1, L2Verdict::Ok { .. }));
-    app.process_l2_response(&resp_tx1, Some(correct_password)).unwrap();
+    app.process_l2_response(&voucher_id_tx1, &resp_tx1, Some(correct_password)).unwrap();
 
     // L2 Status Query
     let query_bytes_tx1 = app.generate_l2_status_query(&voucher_id_tx1).unwrap();
@@ -242,9 +262,9 @@ fn test_l2_double_spend_quarantine() {
     // 6. Legitime Einlösung (wir kommen zu spät)
     let resp_tx2 = mock_l2.handle_lock_request(&req_valid_bytes);
     let verdict_tx2: L2Verdict = serde_json::from_slice(&resp_tx2).unwrap();
-    assert!(matches!(verdict_tx2, L2Verdict::DoubleSpend { .. } | L2Verdict::ConflictFound { .. }));
+    assert!(matches!(verdict_tx2, L2Verdict::Verified { .. }));
     
-    app.process_l2_response(&resp_tx2, Some(correct_password)).unwrap();
+    app.process_l2_response(&voucher_id_tx2, &resp_tx2, Some(correct_password)).unwrap();
 
     // 7. Finale Prüfung
     let final_details = app.get_voucher_details(&voucher_id_tx2).unwrap();
@@ -301,7 +321,7 @@ fn test_l2_signature_payload_manipulation() {
     let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
     let verdict: L2Verdict = serde_json::from_slice(&resp_genesis).unwrap();
     assert!(matches!(verdict, L2Verdict::Ok { .. }));
-    app.process_l2_response(&resp_genesis, Some(correct_password)).unwrap();
+    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password)).unwrap();
 
     let id_david = test_utils::ACTORS.david.identity.user_id.clone();
 
@@ -344,8 +364,8 @@ fn test_l2_signature_payload_manipulation() {
     // After the protocol fix, the L2 Node should REJECT the manipulated payload
     // because the signature (which signed the old hashes) no longer matches the payload_hash.
     assert!(
-        matches!(verdict_manipulated, L2Verdict::ConflictFound { .. }),
-        "Protocol fix failed: L2 Node should have rejected the manipulated payload (ConflictFound / Signature Error)"
+        matches!(verdict_manipulated, L2Verdict::Rejected { .. }),
+        "Mock logic should return Rejected for invalid signature"
     );
 
     // Verify that the MockL2Node did NOT store the manipulated hash

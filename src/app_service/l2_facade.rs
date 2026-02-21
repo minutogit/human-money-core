@@ -37,7 +37,7 @@ impl AppService {
         serde_json::to_vec(&request).map_err(|e| e.to_string())
     }
 
-    /// Generiert eine L2StatusQuery (Lese-Anfrage) für alle ds_tags eines Gutscheins.
+    /// Generiert eine L2StatusQuery (Lese-Anfrage) für den aktuellen Stand eines Gutscheins.
     pub fn generate_l2_status_query(&self, local_instance_id: &str) -> Result<Vec<u8>, String> {
         let (wallet, _identity) = match &self.state {
             AppState::Unlocked { wallet, identity, .. } => (wallet, identity),
@@ -51,17 +51,13 @@ impl AppService {
         let layer2_voucher_id = l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])
             .map_err(|e| e.to_string())?;
 
-        let mut target_ds_tags = Vec::new();
+        let challenge_ds_tag = if let Some(last_tx) = instance.voucher.transactions.last() {
+            l2_gateway::derive_challenge_tag(last_tx).map_err(|e| e.to_string())?
+        } else {
+            return Err("Voucher has no transactions".to_string());
+        };
 
-        // Alle Transaktionen außer init haben einen ds_tag
-        for tx in &instance.voucher.transactions {
-            if tx.t_type != "init" {
-                if let Some(td) = &tx.trap_data {
-                    let decoded_tx_tag = bs58::decode(&td.ds_tag).into_vec().map_err(|_| "Invalid base58 in tx ds_tag".to_string())?;
-                    target_ds_tags.push(hex::encode(decoded_tx_tag));
-                }
-            }
-        }
+        let locator_prefixes = l2_gateway::generate_locator_prefixes(&instance.voucher);
 
         // TODO: derive proper ephemeral key
         let ephemeral_key = [0u8; 32];
@@ -73,7 +69,8 @@ impl AppService {
         let query = L2StatusQuery {
             auth,
             layer2_voucher_id,
-            target_ds_tags,
+            challenge_ds_tag,
+            locator_prefixes,
         };
 
         serde_json::to_vec(&query).map_err(|e| e.to_string())
@@ -82,12 +79,27 @@ impl AppService {
     /// Verarbeitet ein L2Verdict und führt die entsprechende Aktion auf dem Wallet aus.
     pub fn process_l2_response(
         &mut self,
+        local_instance_id: &str,
         response_bytes: &[u8],
         password: Option<&str>,
     ) -> Result<(), String> {
+        let (wallet, _identity) = match &self.state {
+            AppState::Unlocked { wallet, identity, .. } => (wallet, identity),
+            _ => return Err("Wallet is locked".to_string()),
+        };
+
+        let instance = wallet
+            .get_voucher_instance(local_instance_id)
+            .ok_or_else(|| format!("Voucher {} not found", local_instance_id))?;
+
+        let last_tx = instance.voucher.transactions.last()
+            .ok_or_else(|| "No transactions found".to_string())?;
+        let last_t_id = last_tx.t_id.clone();
+        let challenge_ds_tag = l2_gateway::derive_challenge_tag(last_tx).map_err(|e| e.to_string())?;
+
         let server_pubkey = [0u8; 32]; // Dummy für den Moment
 
-        let action = l2_gateway::process_l2_verdict(response_bytes, &server_pubkey)
+        let action = l2_gateway::process_l2_verdict(response_bytes, &server_pubkey, &last_t_id, &challenge_ds_tag)
             .map_err(|e| e.to_string())?;
 
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
@@ -127,85 +139,80 @@ impl AppService {
                     }
                     VerdictAction::TriggerQuarantine(conflicting_t_id) => {
                         let mut temp_wallet = wallet.clone();
-                        let mut target_instance_id = None;
-                        
-                        for (id, instance) in &temp_wallet.voucher_store.vouchers {
-                            if instance.voucher.transactions.iter().any(|t| t.t_id == conflicting_t_id) {
-                                target_instance_id = Some(id.clone());
-                                break;
+                        temp_wallet.update_voucher_status(
+                            local_instance_id,
+                            VoucherStatus::Quarantined {
+                                reason: format!(
+                                    "Double spend detected for transaction {}",
+                                    conflicting_t_id
+                                ),
+                            },
+                        );
+
+                        // ... Auth logic ...
+                        let auth_method = match password {
+                            Some(pwd_str) => AuthMethod::Password(pwd_str),
+                            None => {
+                                match &session_cache {
+                                    Some(cache) => {
+                                        if std::time::Instant::now() > cache.last_activity + cache.session_duration {
+                                            AuthMethod::SessionKey([0u8; 32])
+                                        } else {
+                                            AuthMethod::SessionKey(cache.session_key)
+                                        }
+                                    }
+                                    None => AuthMethod::SessionKey([0u8; 32]),
+                                }
+                            }
+                        };
+
+                        if let AuthMethod::SessionKey(k) = auth_method {
+                            if k == [0u8; 32] {
+                                self.state = AppState::Unlocked {
+                                    storage,
+                                    wallet,
+                                    identity,
+                                    session_cache,
+                                };
+                                return Err("Session timed out or password required.".to_string());
                             }
                         }
 
-                        if let Some(id) = target_instance_id {
-                            temp_wallet.update_voucher_status(
-                                &id,
-                                VoucherStatus::Quarantined {
-                                    reason: format!(
-                                        "Double spend detected for transaction {}",
-                                        conflicting_t_id
-                                    ),
-                                },
-                            );
-
-                            let auth_method = match password {
-                                Some(pwd_str) => AuthMethod::Password(pwd_str),
-                                None => {
-                                    match &session_cache {
-                                        Some(cache) => {
-                                            if std::time::Instant::now() > cache.last_activity + cache.session_duration {
-                                                AuthMethod::SessionKey([0u8; 32])
-                                            } else {
-                                                AuthMethod::SessionKey(cache.session_key)
-                                            }
-                                        }
-                                        None => AuthMethod::SessionKey([0u8; 32]),
-                                    }
-                                }
-                            };
-
-                            if let AuthMethod::SessionKey(k) = auth_method {
-                                if k == [0u8; 32] {
-                                    self.state = AppState::Unlocked {
-                                        storage,
-                                        wallet,
-                                        identity,
-                                        session_cache,
-                                    };
-                                    return Err("Session timed out or password required.".to_string());
-                                }
-                            }
-
-                            match temp_wallet.save(&mut storage, &identity, &auth_method) {
-                                Ok(_) => (
-                                    Ok(()),
-                                    AppState::Unlocked {
-                                        storage,
-                                        wallet: temp_wallet,
-                                        identity,
-                                        session_cache,
-                                    },
-                                ),
-                                Err(e) => (
-                                    Err(e.to_string()),
-                                    AppState::Unlocked {
-                                        storage,
-                                        wallet,
-                                        identity,
-                                        session_cache,
-                                    },
-                                ),
-                            }
-                        } else {
-                            (
+                        match temp_wallet.save(&mut storage, &identity, &auth_method) {
+                            Ok(_) => (
                                 Ok(()),
+                                AppState::Unlocked {
+                                    storage,
+                                    wallet: temp_wallet,
+                                    identity,
+                                    session_cache,
+                                },
+                            ),
+                            Err(e) => (
+                                Err(e.to_string()),
                                 AppState::Unlocked {
                                     storage,
                                     wallet,
                                     identity,
                                     session_cache,
                                 },
-                            )
+                            ),
                         }
+                    }
+                    VerdictAction::TriggerSync { sync_point } => {
+                        // Hier würde die Synchronisations-Logik starten.
+                        // Im Moment geben wir einen Fehler zurück, der die Sync-Notwendigkeit beschreibt,
+                        // oder wir loggen es einfach.
+                        println!("Sync needed from: {}", sync_point);
+                        (
+                            Ok(()),
+                            AppState::Unlocked {
+                                storage,
+                                wallet,
+                                identity,
+                                session_cache,
+                            },
+                        )
                     }
                 }
             }

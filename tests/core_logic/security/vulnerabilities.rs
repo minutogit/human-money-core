@@ -226,13 +226,7 @@ fn create_hacked_tx(
 
     // 1. Layer 2 Signature: Sign(payload_hash) with ephemeral key
     let t_id_raw = bs58::decode(&hacked_tx.t_id).into_vec().unwrap_or_default();
-    let ds_tag_raw = if hacked_tx.t_type == "init" {
-        bs58::decode(&hacked_tx.prev_hash).into_vec().unwrap_or_default()
-    } else {
-        hacked_tx.trap_data.as_ref()
-            .map(|td| bs58::decode(&td.ds_tag).into_vec().unwrap_or_default())
-            .unwrap_or_else(|| bs58::decode(&hacked_tx.prev_hash).into_vec().unwrap_or_default())
-    };
+
     let sender_pub_raw = hacked_tx.sender_ephemeral_pub.as_ref()
         .map(|s| bs58::decode(s).into_vec().unwrap_or_default())
         .unwrap_or_default();
@@ -248,15 +242,15 @@ fn create_hacked_tx(
         arr
     };
 
-    let ds_tag_hex = if hacked_tx.t_type == "init" {
-        None
+    let challenge_ds_tag = if hacked_tx.t_type == "init" {
+        hacked_tx.t_id.clone()
     } else {
-        Some(hex::encode(&ds_tag_raw))
+        hacked_tx.trap_data.as_ref().map(|td| td.ds_tag.clone()).unwrap_or_else(|| hacked_tx.t_id.clone())
     };
 
     let payload_hash = human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw(
+        &challenge_ds_tag,
         v_id,
-        ds_tag_hex.as_deref(),
         &to_32(t_id_raw.clone()),
         &to_32(sender_pub_raw),
         receiver_hash_raw.as_ref().map(|v| to_32(v.clone())).as_ref(),
