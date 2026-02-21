@@ -406,3 +406,257 @@ fn test_l2_signature_payload_manipulation() {
     // It removes it AFTER signature check. So old_hash should still be there?
     // Actually, it's added during resp_genesis.
 }
+
+#[test]
+fn test_l2_fake_double_spend_protection() {
+    human_money_core::set_signature_bypass(false); // Enable signature check
+    let dir = tempdir().unwrap();
+    let correct_password = "correct_password";
+    let test_user = &ACTORS.test_user;
+    
+    // Setup Service
+    let (mut app, _) = test_utils::setup_service_with_profile(
+        dir.path(),
+        test_user,
+        "Alice",
+        correct_password,
+    );
+    let user_id = app.get_user_id().unwrap();
+
+    let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
+        s.privacy = Some(PrivacySettings { mode: "flexible".to_string() });
+    });
+    let flexible_toml = toml::to_string(&flexible_standard).unwrap();
+    
+    // Create new voucher (Genesis)
+    app.create_new_voucher(
+        &flexible_toml,
+        "en",
+        NewVoucherData {
+            creator_profile: PublicProfile {
+                id: Some(user_id.clone()),
+                ..Default::default()
+            },
+            nominal_value: ValueDefinition {
+                amount: "100".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(correct_password),
+    ).unwrap();
+
+    let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0]
+        .local_instance_id
+        .clone();
+
+    let mut mock_l2 = MockL2Node::new();
+    
+    // Server-Identität im Client konfigurieren
+    app.get_wallet_mut().unwrap().profile.l2_server_pubkey = Some(mock_l2.get_server_pubkey());
+
+    // 1. Genesis Lock
+    let req_genesis = app.generate_l2_lock_request(&voucher_id).unwrap();
+    let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
+    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password)).unwrap();
+
+    let id_david = test_utils::ACTORS.david.identity.user_id.clone();
+
+    // 2. Transaction (Transfer to David)
+    let request_tx1 = human_money_core::wallet::MultiTransferRequest {
+        recipient_id: id_david.clone(),
+        sources: vec![human_money_core::wallet::SourceTransfer {
+            local_instance_id: voucher_id.clone(),
+            amount_to_send: "10".to_string(),
+        }],
+        notes: None,
+        sender_profile_name: None,
+    };
+    let mut standards_toml = HashMap::new();
+    standards_toml.insert(flexible_standard.metadata.uuid.clone(), flexible_toml.clone());
+    
+    app.create_transfer_bundle(request_tx1, &standards_toml, None, Some(correct_password)).unwrap();
+
+    let summaries_after_tx1 = app.get_voucher_summaries(None, Some(&[human_money_core::wallet::instance::VoucherStatus::Active])).unwrap();
+    let voucher_id_tx1 = summaries_after_tx1.last().unwrap().local_instance_id.clone();
+
+    // Legitime Parameter aus der Historie extrahieren
+    let (challenge_ds_tag, l2_voucher_id, expected_ephem_pub) = {
+        let wallet = app.get_wallet_for_test().unwrap();
+        let instance = wallet.get_voucher_instance(&voucher_id_tx1).unwrap();
+        let last_tx = instance.voucher.transactions.last().unwrap();
+        
+        let ds_tag = human_money_core::services::l2_gateway::derive_challenge_tag(last_tx).unwrap();
+        let vid = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0]).unwrap();
+        let ephem_bs58 = last_tx.sender_ephemeral_pub.as_ref().unwrap();
+        let ephem_bytes: [u8; 32] = bs58::decode(ephem_bs58).into_vec().unwrap().try_into().unwrap();
+        
+        (ds_tag, vid, ephem_bytes)
+    };
+
+    // --- Scenario A: Gebrochene Signatur ---
+    // Der Server behauptet einen Double-Spend mit t_id "FAKE", nutzt aber unseren echten Key.
+    // Die Signatur ist aber ungültig (oder einfach Nullen).
+    let mut fake_t_id = [0u8; 32];
+    fake_t_id[0] = 0xEE;
+
+    let malicious_entry_a = human_money_core::models::layer2_api::L2LockEntry {
+        layer2_voucher_id: l2_voucher_id.clone(),
+        t_id: fake_t_id,
+        sender_ephemeral_pub: expected_ephem_pub,
+        receiver_ephemeral_pub_hash: None,
+        change_ephemeral_pub_hash: None,
+        layer2_signature: [0u8; 64], // Ungültig
+        valid_until: None,
+    };
+
+    let resp_a = mock_l2.wrap_and_sign(L2Verdict::Verified { lock_entry: malicious_entry_a });
+    let result_a = app.process_l2_response(&voucher_id_tx1, &resp_a, Some(correct_password));
+    
+    assert!(result_a.is_err(), "Wallet darf mathematisch ungültigen Beweis nicht akzeptieren");
+    assert!(result_a.unwrap_err().contains("ungültig"));
+    
+    // Status prüfen -> muss Active bleiben
+    assert!(matches!(app.get_voucher_details(&voucher_id_tx1).unwrap().status, VoucherStatus::Active));
+
+    // --- Scenario B: Fremder Key / Gefälschter Lock ---
+    // Der Server generiert einen eigenen Key, erstellt einen mathematisch korrekten Lock für t_id "FAKE",
+    // aber dieser Key gehört nicht zu unserer Transaktion.
+    let malicious_key = SigningKey::generate(&mut rand::thread_rng());
+    let malicious_pub = malicious_key.verifying_key().to_bytes();
+
+    let payload_hash_b = human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw(
+        &challenge_ds_tag,
+        &l2_voucher_id,
+        &fake_t_id,
+        &malicious_pub,
+        None,
+        None,
+        None,
+    );
+    let malicious_sig_b = malicious_key.sign(&payload_hash_b).to_bytes();
+
+    let malicious_entry_b = human_money_core::models::layer2_api::L2LockEntry {
+        layer2_voucher_id: l2_voucher_id.clone(),
+        t_id: fake_t_id,
+        sender_ephemeral_pub: malicious_pub,
+        receiver_ephemeral_pub_hash: None,
+        change_ephemeral_pub_hash: None,
+        layer2_signature: malicious_sig_b,
+        valid_until: None,
+    };
+
+    let resp_b = mock_l2.wrap_and_sign(L2Verdict::Verified { lock_entry: malicious_entry_b });
+    let result_b = app.process_l2_response(&voucher_id_tx1, &resp_b, Some(correct_password));
+
+    assert!(result_b.is_err(), "Wallet muss Beweis mit fremdem Key ablehnen");
+    assert!(result_b.unwrap_err().contains("fremden Key"));
+
+    // Status prüfen -> muss Active bleiben
+    assert!(matches!(app.get_voucher_details(&voucher_id_tx1).unwrap().status, VoucherStatus::Active));
+}
+
+#[test]
+fn test_l2_voucher_id_mixup_protection() {
+    human_money_core::set_signature_bypass(false); 
+    let dir = tempdir().unwrap();
+    let correct_password = "correct_password";
+    let test_user = &ACTORS.test_user;
+    
+    // Setup Service
+    let (mut app, _) = test_utils::setup_service_with_profile(
+        dir.path(),
+        test_user,
+        "Alice",
+        correct_password,
+    );
+    let user_id = app.get_user_id().unwrap();
+
+    let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
+        s.privacy = Some(PrivacySettings { mode: "flexible".to_string() });
+    });
+    let flexible_toml = toml::to_string(&flexible_standard).unwrap();
+    
+    // Create new voucher (Genesis)
+    app.create_new_voucher(
+        &flexible_toml,
+        "en",
+        NewVoucherData {
+            creator_profile: PublicProfile {
+                id: Some(user_id.clone()),
+                ..Default::default()
+            },
+            nominal_value: ValueDefinition {
+                amount: "100".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(correct_password),
+    ).unwrap();
+
+    let summaries = app.get_voucher_summaries(None, None).unwrap();
+    let voucher_id = summaries[0].local_instance_id.clone();
+
+    let mut mock_l2 = MockL2Node::new();
+    app.get_wallet_mut().unwrap().profile.l2_server_pubkey = Some(mock_l2.get_server_pubkey());
+
+    // 1. Genesis Lock
+    let req_genesis = app.generate_l2_lock_request(&voucher_id).unwrap();
+    let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
+    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password)).unwrap();
+
+    // Legitime Parameter aus der Historie extrahieren
+    let (_challenge_ds_tag, l2_voucher_id, expected_ephem_pub, t_id) = {
+        let wallet = app.get_wallet_for_test().unwrap();
+        let instance = wallet.get_voucher_instance(&voucher_id).unwrap();
+        let last_tx = instance.voucher.transactions.last().unwrap();
+        
+        let ds_tag = human_money_core::services::l2_gateway::derive_challenge_tag(last_tx).unwrap();
+        let vid = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0]).unwrap();
+        let ephem_bs58 = last_tx.sender_ephemeral_pub.as_ref().unwrap();
+        let ephem_bytes: [u8; 32] = bs58::decode(ephem_bs58).into_vec().unwrap().try_into().unwrap();
+        let tid_bytes: [u8; 32] = bs58::decode(&last_tx.t_id).into_vec().unwrap().try_into().unwrap();
+        
+        (ds_tag, vid, ephem_bytes, tid_bytes)
+    };
+
+    // --- Scenario C: Voucher ID Mix-up ---
+    // Der Server behauptet einen Double-Spend für einen ANDEREN Voucher, nutzt aber dort 
+    // unsere echten Daten (Challenge, Key, Signatur).
+    let mut fake_voucher_id = l2_voucher_id.clone();
+    if fake_voucher_id.starts_with("0") {
+        fake_voucher_id.replace_range(0..1, "1");
+    } else {
+        fake_voucher_id.replace_range(0..1, "0");
+    }
+
+    let mut fake_t_id = t_id;
+    fake_t_id[0] = !fake_t_id[0]; // Andere t_id für Double-Spend Simulation
+
+    // Signiere den gefälschten Lock-Eintrag (damit Math-Check PASSES)
+    // Aber wir nutzen die FALSCHE Voucher ID
+    let _signing_key = SigningKey::from_bytes(&[1u8; 32]); // Dummy key won't work, we need the real ephemeral or bypass
+    // We use signature bypass for simplicity in forging the math-correct lock, 
+    // but the ID check should still fail.
+    human_money_core::set_signature_bypass(true);
+
+    let malicious_entry_c = human_money_core::models::layer2_api::L2LockEntry {
+        layer2_voucher_id: fake_voucher_id, 
+        t_id: fake_t_id,
+        sender_ephemeral_pub: expected_ephem_pub,
+        receiver_ephemeral_pub_hash: None,
+        change_ephemeral_pub_hash: None,
+        layer2_signature: [0u8; 64],
+        valid_until: None,
+    };
+
+    let resp_c = mock_l2.wrap_and_sign(L2Verdict::Verified { lock_entry: malicious_entry_c });
+    let result_c = app.process_l2_response(&voucher_id, &resp_c, Some(correct_password));
+
+    assert!(result_c.is_err(), "Wallet muss Beweis für falsche Voucher ID ablehnen");
+    assert!(result_c.unwrap_err().contains("Mix-up"));
+
+    // Status prüfen -> muss Active bleiben
+    assert!(matches!(app.get_voucher_details(&voucher_id).unwrap().status, VoucherStatus::Active));
+}

@@ -96,10 +96,12 @@ impl AppService {
             .ok_or_else(|| "No transactions found".to_string())?;
         let last_t_id = last_tx.t_id.clone();
         let challenge_ds_tag = l2_gateway::derive_challenge_tag(last_tx).map_err(|e| e.to_string())?;
+        let expected_ephemeral_pub = last_tx.sender_ephemeral_pub.as_deref();
+        let expected_voucher_id = l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0]).map_err(|e| e.to_string())?;
 
         let server_pubkey = wallet.profile.l2_server_pubkey.ok_or_else(|| "L2 server public key not configured in wallet profile".to_string())?;
 
-        let action = l2_gateway::process_l2_verdict(response_bytes, &server_pubkey, &last_t_id, &challenge_ds_tag)
+        let action = l2_gateway::process_l2_verdict(response_bytes, &server_pubkey, &last_t_id, &challenge_ds_tag, expected_ephemeral_pub, &expected_voucher_id)
             .map_err(|e| e.to_string())?;
 
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);

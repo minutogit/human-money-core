@@ -231,6 +231,8 @@ pub fn process_l2_verdict(
     server_pubkey: &[u8; 32],
     local_t_id: &str,          // Die lokale t_id der angefragten Transaktion
     challenge_ds_tag: &str,    // Der für die Abfrage genutzte Challenge-Tag
+    expected_ephemeral_pub: Option<&str>, // Der erwartete Key laut lokaler Historie
+    expected_voucher_id: &str, // Die erwartete Voucher ID
 ) -> Result<VerdictAction, VoucherCoreError> {
     let envelope: L2ResponseEnvelope = serde_json::from_slice(verdict_bytes)
         .map_err(|e| VoucherCoreError::DeserializationError(format!("Invalid response envelope: {}", e)))?;
@@ -262,6 +264,14 @@ pub fn process_l2_verdict(
 
     match verdict {
         L2Verdict::Verified { lock_entry } => {
+            // 0. Verifiziere Voucher ID Match
+            if lock_entry.layer2_voucher_id != expected_voucher_id {
+                return Err(VoucherCoreError::ValidationFailed(format!(
+                    "Voucher ID Mix-up erkannt: L2-Server meldet Beweis für einen anderen Gutschein ({} != {})",
+                    lock_entry.layer2_voucher_id, expected_voucher_id
+                )));
+            }
+
             // 1. Verifiziere die L2-Signatur mathematisch (Proof of Truth)
             let ephem_key = VerifyingKey::from_bytes(&lock_entry.sender_ephemeral_pub)
                 .map_err(|_| VoucherCoreError::ValidationFailed("Invalid ephemeral key in lock entry".to_string()))?;
@@ -285,6 +295,17 @@ pub fn process_l2_verdict(
 
             if !signature_valid {
                 return Err(VoucherCoreError::ValidationFailed("Kryptografischer Beweis des L2-Servers ist ungültig".to_string()));
+            }
+
+            // 2. Verifiziere, dass der Key in der Antwort unserem erwarteten Key entspricht
+            if let Some(expected) = expected_ephemeral_pub {
+                let actual_bs58 = bs58::encode(&lock_entry.sender_ephemeral_pub).into_string();
+                if actual_bs58 != expected {
+                    return Err(VoucherCoreError::ValidationFailed(format!(
+                        "Gefälschter Beweis erkannt: L2-Server meldet Double-Spend mit einem fremden Key ({} != {})",
+                        actual_bs58, expected
+                    )));
+                }
             }
 
             // 2. Vergleiche t_id
