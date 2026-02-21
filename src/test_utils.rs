@@ -925,21 +925,7 @@ pub fn create_voucher_for_manipulation(
         valid_until: Some(valid_until.clone()),
     };
 
-    // B. L2 Signatur berechnen
-    let tx_json_pre_l2 = to_canonical_json(&init_tx).unwrap();
-    let pre_l2_tid = crypto_utils::get_hash(tx_json_pre_l2);
-
-    let l2_payload = format!(
-        "{}{}{}",
-        pre_l2_tid,
-        init_tx.valid_until.as_ref().unwrap_or(&"".to_string()),
-        genesis_pub_str
-    );
-    let l2_hash = crypto_utils::get_hash(l2_payload);
-    let l2_sig_bytes = crypto_utils::sign_ed25519(&genesis_secret, l2_hash.as_bytes());
-    init_tx.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
-
-    // C. Finale ID & Signatur
+    // B. Finale ID & Signatur
     // resign_transaction_ext berechnet t_id und sender_signature neu.
     // Wir übergeben genesis_secret für die L2-Signatur separat.
     voucher
@@ -1071,10 +1057,32 @@ pub fn resign_transaction_ext(
     // Die t_id muss auf dem kanonischen JSON der gesamten Tx basieren (inkl. ephemeral fields)
     tx.t_id = crypto_utils::get_hash(to_canonical_json(&tx).unwrap());
     
-    // 1. Layer 2 Signature: Signiert t_id (raw) mit dem ephemeralen Key
+    // 1. Layer 2 Signature: Signiert den vollen Payload
     let t_id_raw = bs58::decode(&tx.t_id).into_vec().unwrap();
+    let ds_tag_raw = if tx.t_type == "init" {
+        bs58::decode(&tx.prev_hash).into_vec().unwrap_or_default()
+    } else {
+        tx.trap_data.as_ref()
+            .map(|td| bs58::decode(&td.ds_tag).into_vec().unwrap_or_default())
+            .unwrap_or_else(|| bs58::decode(&tx.prev_hash).into_vec().unwrap_or_default())
+    };
+    let sender_pub_raw = tx.sender_ephemeral_pub.as_ref()
+        .map(|s| bs58::decode(s).into_vec().unwrap_or_default())
+        .unwrap_or_default();
+    let receiver_hash_raw = tx.receiver_ephemeral_pub_hash.as_ref().map(|h| bs58::decode(h).into_vec().unwrap());
+    let change_hash_raw = tx.change_ephemeral_pub_hash.as_ref().map(|h| bs58::decode(h).into_vec().unwrap());
+
+    let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+        &t_id_raw[..32].try_into().unwrap(),
+        &ds_tag_raw[..32].try_into().unwrap(),
+        &sender_pub_raw[..32].try_into().unwrap(),
+        receiver_hash_raw.as_ref().map(|v| v[..32].try_into().unwrap()).as_ref(),
+        change_hash_raw.as_ref().map(|v| v[..32].try_into().unwrap()).as_ref(),
+        tx.valid_until.as_deref(),
+    );
+
     let proof_key = l2_signer_key.unwrap_or(signer_key);
-    let l2_sig = crypto_utils::sign_ed25519(proof_key, &t_id_raw);
+    let l2_sig = crypto_utils::sign_ed25519(proof_key, &payload_hash);
     tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 
     // 2. Sender Identity Signature (L1): Signiert t_id (raw) mit Sender Permanent Key

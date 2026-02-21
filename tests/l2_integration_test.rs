@@ -32,11 +32,13 @@ impl MockL2Node {
         let req: L2LockRequest = serde_json::from_slice(req_bytes).unwrap();
         
         // --- 1. Autorität Prüfen (layer2_signature) ---
-        // Die Signatur im neuen Modell unterschreibt direkt die transaction_hash (t_id)
+        // Die Signatur im neuen Modell unterschreibt den gesamten L2-Payload
         let ephem_key = VerifyingKey::from_bytes(&req.sender_ephemeral_pub).expect("Invalid sender_ephemeral_pub key format");
         let signature = Signature::from_bytes(&req.layer2_signature);
         
-        if !human_money_core::is_signature_bypass_active() && ephem_key.verify(&req.transaction_hash, &signature).is_err() {
+        let payload_hash = human_money_core::services::l2_gateway::calculate_l2_payload_hash(&req);
+
+        if !human_money_core::is_signature_bypass_active() && ephem_key.verify(&payload_hash, &signature).is_err() {
             let verdict = L2Verdict::ConflictFound {
                 conflicting_t_id: req.transaction_hash // Use actual tx hash
             };
@@ -233,4 +235,110 @@ fn test_l2_double_spend_quarantine() {
     // 7. Finale Prüfung
     let final_details = app.get_voucher_details(&voucher_id_tx2).unwrap();
     assert!(matches!(final_details.status, VoucherStatus::Quarantined { .. }));
+}
+
+#[test]
+fn test_l2_signature_payload_manipulation() {
+    human_money_core::set_signature_bypass(false); // Enable signature check
+    let dir = tempdir().unwrap();
+    let correct_password = "correct_password";
+    let test_user = &ACTORS.test_user;
+    
+    // Setup Service
+    let (mut app, _) = test_utils::setup_service_with_profile(
+        dir.path(),
+        test_user,
+        "Alice",
+        correct_password,
+    );
+    let user_id = app.get_user_id().unwrap();
+
+    let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
+        s.privacy = Some(PrivacySettings { mode: "flexible".to_string() });
+    });
+    let flexible_toml = toml::to_string(&flexible_standard).unwrap();
+    
+    // Create new voucher (Genesis)
+    app.create_new_voucher(
+        &flexible_toml,
+        "en",
+        NewVoucherData {
+            creator_profile: PublicProfile {
+                id: Some(user_id.clone()),
+                ..Default::default()
+            },
+            nominal_value: ValueDefinition {
+                amount: "100".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(correct_password),
+    ).unwrap();
+
+    let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0]
+        .local_instance_id
+        .clone();
+
+    let mut mock_l2 = MockL2Node::new();
+
+    // 1. Genesis Lock
+    let req_genesis = app.generate_l2_lock_request(&voucher_id).unwrap();
+    let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
+    let verdict: L2Verdict = serde_json::from_slice(&resp_genesis).unwrap();
+    assert!(matches!(verdict, L2Verdict::Ok { .. }));
+    app.process_l2_response(&resp_genesis, Some(correct_password)).unwrap();
+
+    let id_david = test_utils::ACTORS.david.identity.user_id.clone();
+
+    // 2. Transaction
+    let request_tx1 = human_money_core::wallet::MultiTransferRequest {
+        recipient_id: id_david.clone(),
+        sources: vec![human_money_core::wallet::SourceTransfer {
+            local_instance_id: voucher_id.clone(),
+            amount_to_send: "10".to_string(),
+        }],
+        notes: None,
+        sender_profile_name: None,
+    };
+    let mut standards_toml = HashMap::new();
+    standards_toml.insert(flexible_standard.metadata.uuid.clone(), flexible_toml.clone());
+    
+    app.create_transfer_bundle(request_tx1, &standards_toml, None, Some(correct_password)).unwrap();
+
+    let summaries_after_tx1 = app.get_voucher_summaries(None, Some(&[human_money_core::wallet::instance::VoucherStatus::Active])).unwrap();
+    let voucher_id_tx1 = summaries_after_tx1.last().unwrap().local_instance_id.clone();
+
+    // 3. Generiere validen L2LockRequest
+    let req_valid_bytes = app.generate_l2_lock_request(&voucher_id_tx1).unwrap();
+    let mut req_manipulated: L2LockRequest = serde_json::from_slice(&req_valid_bytes).unwrap();
+    
+    // 4. Manipulation: Change receiver_ephemeral_pub_hash
+    // This is the core of the vulnerability: the signature ONLY signs the transaction_hash (t_id).
+    // An attacker can change routing fields like receiver_ephemeral_pub_hash without invalidating the signature.
+    let old_hash = req_manipulated.receiver_ephemeral_pub_hash.unwrap();
+    let mut fake_hash = old_hash;
+    fake_hash[0] = !fake_hash[0]; // Flip bits of the first byte
+    req_manipulated.receiver_ephemeral_pub_hash = Some(fake_hash);
+
+    let req_manipulated_bytes = serde_json::to_vec(&req_manipulated).unwrap();
+    
+    // 5. Send manipulated request to L2 Node
+    let resp_manipulated = mock_l2.handle_lock_request(&req_manipulated_bytes);
+    let verdict_manipulated: L2Verdict = serde_json::from_slice(&resp_manipulated).unwrap();
+
+    // After the protocol fix, the L2 Node should REJECT the manipulated payload
+    // because the signature (which signed the old hashes) no longer matches the payload_hash.
+    assert!(
+        matches!(verdict_manipulated, L2Verdict::ConflictFound { .. }),
+        "Protocol fix failed: L2 Node should have rejected the manipulated payload (ConflictFound / Signature Error)"
+    );
+
+    // Verify that the MockL2Node did NOT store the manipulated hash
+    assert!(!mock_l2.spendable_outputs.contains(&fake_hash));
+    // The old hash was not spent (request was rejected)
+    // Wait, in handle_lock_request, it might have been removed if non-genesis?
+    // In this test, it's non-genesis. Check MockL2Node code.
+    // It removes it AFTER signature check. So old_hash should still be there?
+    // Actually, it's added during resp_genesis.
 }

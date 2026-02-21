@@ -223,9 +223,40 @@ fn create_hacked_tx(
     let tx_json_for_id = to_canonical_json(&hacked_tx).unwrap();
     hacked_tx.t_id = get_hash(tx_json_for_id);
 
-    // 1. Layer 2 Signature: Sign(t_id raw) with ephemeral key
-    let t_id_raw = bs58::decode(&hacked_tx.t_id).into_vec().unwrap();
-    let l2_sig = sign_ed25519(signer_key, &t_id_raw);
+    // 1. Layer 2 Signature: Sign(payload_hash) with ephemeral key
+    let t_id_raw = bs58::decode(&hacked_tx.t_id).into_vec().unwrap_or_default();
+    let ds_tag_raw = if hacked_tx.t_type == "init" {
+        bs58::decode(&hacked_tx.prev_hash).into_vec().unwrap_or_default()
+    } else {
+        hacked_tx.trap_data.as_ref()
+            .map(|td| bs58::decode(&td.ds_tag).into_vec().unwrap_or_default())
+            .unwrap_or_else(|| bs58::decode(&hacked_tx.prev_hash).into_vec().unwrap_or_default())
+    };
+    let sender_pub_raw = hacked_tx.sender_ephemeral_pub.as_ref()
+        .map(|s| bs58::decode(s).into_vec().unwrap_or_default())
+        .unwrap_or_default();
+    let receiver_hash_raw = hacked_tx.receiver_ephemeral_pub_hash.as_ref()
+        .map(|h| bs58::decode(h).into_vec().unwrap_or_default());
+    let change_hash_raw = hacked_tx.change_ephemeral_pub_hash.as_ref()
+        .map(|h| bs58::decode(h).into_vec().unwrap_or_default());
+
+    let to_32 = |v: Vec<u8>| {
+        let mut arr = [0u8; 32];
+        let len = v.len().min(32);
+        arr[..len].copy_from_slice(&v[..len]);
+        arr
+    };
+
+    let payload_hash = human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw(
+        &to_32(t_id_raw.clone()),
+        &to_32(ds_tag_raw),
+        &to_32(sender_pub_raw),
+        receiver_hash_raw.as_ref().map(|v| to_32(v.clone())).as_ref(),
+        change_hash_raw.as_ref().map(|v| to_32(v.clone())).as_ref(),
+        hacked_tx.valid_until.as_deref(),
+    );
+
+    let l2_sig = sign_ed25519(signer_key, &payload_hash);
     hacked_tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 
     // 2. Sender Identity Signature (L1): Optional, if sender_id is present
@@ -257,6 +288,36 @@ fn create_test_voucher_data_with_amount(
 }
 
 /// Fügt P2PKH-Felder (Anchor Reveal, Next Anchor, L2 Signature) zu einer manuellen Transaktion hinzu.
+
+fn generate_valid_trap_for_test(
+    tx: &Transaction,
+    holder_secret: &ed25519_dalek::SigningKey,
+    sender_permanent_key: &ed25519_dalek::SigningKey,
+    sender_id: &str,
+) -> human_money_core::models::voucher::TrapData {
+    use human_money_core::services::trap_manager::{derive_m, generate_trap, hash_to_scalar};
+    use human_money_core::services::crypto_utils::{get_hash_from_slices, ed25519_pk_to_curve_point};
+
+    let prev_hash_bytes = bs58::decode(&tx.prev_hash).into_vec().unwrap_or_default();
+    let holder_pub = holder_secret.verifying_key();
+    let ds_tag = get_hash_from_slices(&[&prev_hash_bytes, &holder_pub.to_bytes()]);
+
+    let u_input_varying = format!(
+        "{}{}{}",
+        ds_tag,
+        tx.amount,
+        tx.receiver_ephemeral_pub_hash.as_deref().unwrap_or("")
+    );
+    let u_scalar = hash_to_scalar(u_input_varying.as_bytes());
+
+    let sender_id_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string();
+    let m = derive_m(&tx.prev_hash, &sender_permanent_key.to_bytes(), &sender_id_prefix).unwrap();
+
+    let my_id_point = ed25519_pk_to_curve_point(&sender_permanent_key.verifying_key()).unwrap();
+
+    generate_trap(ds_tag, &u_scalar, &m, &my_id_point, &sender_id_prefix).unwrap()
+}
+
 fn add_p2pkh_layer(
     tx: &mut Transaction,
     holder_secret: &ed25519_dalek::SigningKey,
@@ -278,6 +339,7 @@ fn add_p2pkh_layer(
     tx.change_ephemeral_pub_hash = None; // Standard: kein Change
     tx.layer2_signature = None;
     tx.t_id = "".to_string();
+
 }
 
 // ===================================================================================
@@ -378,10 +440,12 @@ fn test_attack_tamper_core_data_and_guarantors() {
         recipient_id: ACTORS.victim.user_id.clone(),
         amount: "100".to_string(), // Hacker gibt seinen ursprünglichen Betrag aus
         t_type: "transfer".to_string(),
+        trap_data: None,
         ..Default::default()
     };
     // Diese Transaktion selbst ist valide und wird vom Hacker signiert. Der Betrug liegt im manipulierten Creator-Block.
     add_p2pkh_layer(&mut final_tx, &hacker_holder_secret);
+    final_tx.trap_data = Some(generate_valid_trap_for_test(&final_tx, &hacker_holder_secret, &ACTORS.hacker.signing_key, &ACTORS.hacker.user_id));
     let hacked_tx = create_hacked_tx(&hacker_holder_secret, Some(&ACTORS.hacker.signing_key), final_tx);
     inflated_voucher.transactions.push(hacked_tx);
 
@@ -445,9 +509,11 @@ fn test_attack_tamper_core_data_and_guarantors() {
         recipient_id: ACTORS.victim.user_id.clone(),
         amount: "100".to_string(),
         t_type: "transfer".to_string(),
+        trap_data: None,
         ..Default::default()
     };
     add_p2pkh_layer(&mut final_tx_2, &hacker_holder_secret);
+    final_tx_2.trap_data = Some(generate_valid_trap_for_test(&final_tx_2, &hacker_holder_secret, &ACTORS.hacker.signing_key, &ACTORS.hacker.user_id));
     let final_tx_hacked = create_hacked_tx(&hacker_holder_secret, Some(&ACTORS.hacker.signing_key), final_tx_2);
     tampered_guarantor_voucher.transactions.push(final_tx_hacked);
 
@@ -669,9 +735,11 @@ fn test_attack_create_inconsistent_transaction() {
         recipient_id: ACTORS.victim.user_id.clone(),
         amount: "200".to_string(),
         t_type: "transfer".to_string(),
+        trap_data: None,
         ..Default::default()
     };
     add_p2pkh_layer(&mut overspend_tx_unsigned, &hacker_holder_secret);
+    overspend_tx_unsigned.trap_data = Some(generate_valid_trap_for_test(&overspend_tx_unsigned, &hacker_holder_secret, &ACTORS.hacker.signing_key, &ACTORS.hacker.user_id));
     let overspend_tx = create_hacked_tx(&hacker_holder_secret, Some(&ACTORS.hacker.signing_key), overspend_tx_unsigned);
     overspend_voucher.transactions.push(overspend_tx);
     let hacked_container = create_hacked_bundle_and_container(
@@ -740,9 +808,11 @@ fn test_attack_inconsistent_split_transaction() {
         amount: "30".to_string(),
         sender_remaining_amount: Some("80".to_string()), // Falscher Restbetrag
         t_type: "split".to_string(),
+        trap_data: None,
         ..Default::default()
     };
     add_p2pkh_layer(&mut inconsistent_tx_unsigned, &holder_key);
+    inconsistent_tx_unsigned.trap_data = Some(generate_valid_trap_for_test(&inconsistent_tx_unsigned, &holder_key, &ACTORS.hacker.signing_key, &ACTORS.hacker.user_id));
     let inconsistent_tx = create_hacked_tx(&holder_key, Some(&ACTORS.hacker.signing_key), inconsistent_tx_unsigned);
     inconsistent_split_voucher
         .transactions

@@ -775,7 +775,7 @@ pub fn verify_transactions(
             })?.unwrap_or_default();
 
             let expected_ds_tag = get_hash_from_slices(&[&prev_hash_bytes, &ephem_pub_bytes]);
-
+            
             if trap.ds_tag != expected_ds_tag {
                  return Err(VoucherCoreError::Crypto(
                      format!("Trap DS-Tag does not match expected input (Context Mismatch/Replay). Expected: {}, Found: {}", expected_ds_tag, trap.ds_tag)
@@ -1059,11 +1059,45 @@ pub fn verify_transaction_integrity_and_signature(
                 ValidationError::SignatureDecodeError("Invalid l2 signature length".into())
             })?);
 
-            // NEU: Signatur prüft direkt die t_id (raw bytes)
+            // NEU: Signatur prüft den gesamten L2-Payload
             let t_id_raw = bs58::decode(&transaction.t_id).into_vec().map_err(|_| {
                 ValidationError::SignatureDecodeError("Invalid t_id format".into())
             })?;
-            if ephem_key.verify(&t_id_raw, &signature).is_err() {
+            
+            let ds_tag_str = if transaction.t_type == "init" {
+                &transaction.prev_hash
+            } else {
+                transaction.trap_data.as_ref().map(|td| &td.ds_tag).ok_or_else(|| {
+                    ValidationError::InvalidTransaction("Missing trap_data for non-init transaction".to_string())
+                })?
+            };
+            
+            let ds_tag_raw = bs58::decode(ds_tag_str).into_vec().map_err(|_| {
+                ValidationError::SignatureDecodeError("Invalid ds_tag format".into())
+            })?;
+
+            let receiver_hash_raw = transaction.receiver_ephemeral_pub_hash.as_ref().map(|h| {
+                bs58::decode(h).into_vec().map_err(|_| {
+                    ValidationError::SignatureDecodeError("Invalid receiver_ephemeral_pub_hash encoding".into())
+                })
+            }).transpose()?;
+
+            let change_hash_raw = transaction.change_ephemeral_pub_hash.as_ref().map(|h| {
+                bs58::decode(h).into_vec().map_err(|_| {
+                    ValidationError::SignatureDecodeError("Invalid change_ephemeral_pub_hash encoding".into())
+                })
+            }).transpose()?;
+
+            let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+                t_id_raw[..32].try_into().map_err(|_| ValidationError::SignatureDecodeError("t_id must be 32 bytes".into()))?,
+                ds_tag_raw[..32].try_into().map_err(|_| ValidationError::SignatureDecodeError("ds_tag must be 32 bytes".into()))?,
+                ephem_pub_bytes[..32].try_into().map_err(|_| ValidationError::SignatureDecodeError("ephemeral pubkey must be 32 bytes".into()))?,
+                receiver_hash_raw.as_ref().map(|v| v[..32].try_into().unwrap()).as_ref(),
+                change_hash_raw.as_ref().map(|v| v[..32].try_into().unwrap()).as_ref(),
+                transaction.valid_until.as_deref(),
+            );
+
+            if ephem_key.verify(&payload_hash, &signature).is_err() {
                 return Err(ValidationError::InvalidTransaction("Invalid layer2_signature (Technical Proof)".to_string()).into());
             }
         } else {

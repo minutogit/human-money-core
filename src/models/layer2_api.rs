@@ -171,6 +171,9 @@ pub struct L2LockRequest {
     
     #[serde(with = "crate::models::layer2_api::base58_64")]
     pub layer2_signature: [u8; 64], 
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>, // Only required when is_genesis = true
 }
 
 /// Request: Abfragen, ob eine Kette sicher ist

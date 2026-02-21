@@ -1,7 +1,6 @@
 use crate::error::VoucherCoreError;
 use crate::models::layer2_api::{L2AuthPayload, L2LockRequest, L2Verdict};
 use crate::models::voucher::Transaction;
-use crate::services::crypto_utils;
 
 /// Definiert die Aktion, die der AppService nach der Auswertung des Urteils durchführen soll.
 pub enum VerdictAction {
@@ -14,15 +13,14 @@ pub enum VerdictAction {
 
 /// Generiert einen L2LockRequest basierend auf der gegebenen Transaktion.
 pub fn generate_lock_request(
-    voucher_id: &str,
+    _voucher_id: &str,
     transaction: &Transaction,
     ephemeral_key: &[u8; 32],
 ) -> Result<L2LockRequest, VoucherCoreError> {
     let is_genesis = transaction.t_type == "init";
 
     let ds_tag_str = if is_genesis {
-        // Bei Genesis gibt es keinen Input, daher nehmen wir den ds_tag als Hash der voucher_id
-        crypto_utils::get_hash(voucher_id.as_bytes())
+        transaction.prev_hash.clone()
     } else {
         match &transaction.trap_data {
             Some(td) => td.ds_tag.clone(),
@@ -95,7 +93,51 @@ pub fn generate_lock_request(
         receiver_ephemeral_pub_hash,
         change_ephemeral_pub_hash,
         layer2_signature,
+        valid_until: if is_genesis { transaction.valid_until.clone() } else { None },
     })
+}
+
+/// Generiert einen deterministischen Hash des L2-Payloads für die Signaturprüfung.
+pub fn calculate_l2_payload_hash(req: &L2LockRequest) -> [u8; 32] {
+    calculate_l2_payload_hash_raw(
+        &req.transaction_hash,
+        &req.ds_tag,
+        &req.sender_ephemeral_pub,
+        req.receiver_ephemeral_pub_hash.as_ref(),
+        req.change_ephemeral_pub_hash.as_ref(),
+        req.valid_until.as_deref(),
+    )
+}
+
+/// Innere Logik für das Hashing des L2-Payloads (wird auch vom Wallet genutzt).
+pub fn calculate_l2_payload_hash_raw(
+    transaction_hash: &[u8; 32],
+    ds_tag: &[u8; 32],
+    sender_pub: &[u8; 32],
+    receiver_hash: Option<&[u8; 32]>,
+    change_hash: Option<&[u8; 32]>,
+    valid_until: Option<&str>,
+) -> [u8; 32] {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    
+    hasher.update(transaction_hash);
+    hasher.update(ds_tag);
+    hasher.update(sender_pub);
+    if let Some(r) = receiver_hash {
+        hasher.update(r);
+    }
+    if let Some(c) = change_hash {
+        hasher.update(c);
+    }
+    if let Some(v) = valid_until {
+        hasher.update(v.as_bytes());
+    }
+    
+    let result = hasher.finalize();
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&result);
+    hash
 }
 
 /// Verarbeitet das L2Verdict und bestimmt die darauffolgende Wallet-Aktion.

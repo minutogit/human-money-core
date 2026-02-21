@@ -1,6 +1,5 @@
 use crate::app_service::{AppService, AppState};
 use crate::models::layer2_api::{L2AuthPayload, L2StatusQuery};
-use crate::services::crypto_utils;
 use crate::services::l2_gateway::{self, VerdictAction};
 use crate::storage::{AuthMethod, WalletLockGuard};
 use crate::wallet::instance::VoucherStatus;
@@ -49,8 +48,8 @@ impl AppService {
 
         let mut target_ds_tags = Vec::new();
 
-        // 1. Genesis (Hash der voucher_id)
-        let genesis_hash_str = crypto_utils::get_hash(instance.voucher.voucher_id.as_bytes());
+        // 1. Genesis (Hash der voucher_id + nonce)
+        let genesis_hash_str = instance.voucher.transactions[0].prev_hash.clone();
         let mut genesis_ds_tag = [0u8; 32];
         let decoded = bs58::decode(&genesis_hash_str).into_vec().map_err(|_| "Invalid base58 for genesis ds_tag".to_string())?;
         if decoded.len() == 32 {

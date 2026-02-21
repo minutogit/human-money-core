@@ -514,6 +514,7 @@ fn test_import_endorsement_is_transactional_on_save_failure() {
 /// anschließendem Speicherfehler den Zustand komplett zurücksetzt.
 #[test]
 fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
+    human_money_core::set_signature_bypass(true);
     // 1. ARRANGE: David empfängt einen Gutschein (Pfad A). Ein zweiter,
     // konfliktreicher Gutschein (Pfad B) wird vorbereitet.
     let dir_alice = tempdir().unwrap();

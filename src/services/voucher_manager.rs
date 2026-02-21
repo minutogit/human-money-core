@@ -399,9 +399,30 @@ pub fn create_voucher(
     let final_t_id = get_hash(tx_json_for_id);
     init_transaction.t_id = final_t_id;
 
-    // 2. Layer 2 Signature: Signiert t_id (raw bytes) mit dem ephemeralen Key (Genesis Secret)
+    // 2. Layer 2 Signature: Signiert den L2-Payload-Hash mit dem ephemeralen Key (Genesis Secret)
+    let ds_tag_raw = bs58::decode(&init_transaction.prev_hash).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid ds_tag hash".to_string()))?;
     let t_id_raw = bs58::decode(&init_transaction.t_id).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id hash".to_string()))?;
-    let l2_sig_bytes = sign_ed25519(&genesis_secret, &t_id_raw);
+    
+    let receiver_hash_str = init_transaction.receiver_ephemeral_pub_hash.as_ref()
+        .ok_or_else(|| VoucherCoreError::Validation(crate::error::ValidationError::InvalidTransaction("Genesis transaction missing receiver_ephemeral_pub_hash".to_string())))?;
+    let receiver_hash_raw = bs58::decode(receiver_hash_str).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid receiver hash".to_string()))?;
+    
+    let sender_pub_raw = bs58::decode(&genesis_pub_str).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid genesis_pub format".to_string()))?;
+
+    let to_32_bytes = |vec: Vec<u8>, name: &str| -> Result<[u8; 32], VoucherCoreError> {
+        vec.try_into().map_err(|_| VoucherCoreError::InvalidHashFormat(format!("{} must be 32 bytes", name)))
+    };
+
+    let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+        &to_32_bytes(t_id_raw.clone(), "t_id")?,
+        &to_32_bytes(ds_tag_raw.clone(), "ds_tag")?,
+        &to_32_bytes(sender_pub_raw.clone(), "sender_pub")?,
+        Some(&to_32_bytes(receiver_hash_raw.clone(), "receiver_hash")?),
+        None,
+        init_transaction.valid_until.as_deref(),
+    );
+    
+    let l2_sig_bytes = sign_ed25519(&genesis_secret, &payload_hash);
     init_transaction.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
 
     // 3. Sender Identity Signature: Signiert t_id (raw bytes) mit Creator Key (Permanent)
@@ -763,7 +784,7 @@ pub fn create_transaction(
     // My ID Point
     let my_id_point = ed25519_pk_to_curve_point(&sender_permanent_key.verifying_key())?;
 
-    let trap_data = Some(generate_trap(ds_tag, &u_scalar, &m, &my_id_point, &sender_id_prefix)?);
+    let trap_data = Some(generate_trap(ds_tag.clone(), &u_scalar, &m, &my_id_point, &sender_id_prefix)?);
 
 
     let mut new_transaction = Transaction {
@@ -790,9 +811,40 @@ pub fn create_transaction(
     let tx_json_for_id = to_canonical_json(&new_transaction)?;
     new_transaction.t_id = get_hash(tx_json_for_id);
 
-    // 2. Layer 2 Signature: Signiert t_id (raw bytes) mit dem ephemeralen Key (Input Key)
+    // 2. Layer 2 Signature: Signiert den L2-Payload-Hash mit dem ephemeralen Key (Input Key)
     let t_id_raw = bs58::decode(&new_transaction.t_id).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id hash".to_string()))?;
-    let l2_sig_bytes = sign_ed25519(sender_ephemeral_key, &t_id_raw);
+    let ds_tag_raw = bs58::decode(&ds_tag).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid ds_tag hash".to_string()))?;
+    
+    let to_32_bytes = |vec: Vec<u8>, name: &str| -> Result<[u8; 32], VoucherCoreError> {
+        vec.try_into().map_err(|_| VoucherCoreError::InvalidHashFormat(format!("{} must be 32 bytes", name)))
+    };
+
+    let receiver_hash_raw = if let Some(h) = &new_transaction.receiver_ephemeral_pub_hash {
+        let decoded = bs58::decode(h).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid receiver_hash".to_string()))?;
+        Some(to_32_bytes(decoded, "receiver_hash")?)
+    } else {
+        None
+    };
+    
+    let change_hash_raw = if let Some(h) = &new_transaction.change_ephemeral_pub_hash {
+        let decoded = bs58::decode(h).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid change_hash".to_string()))?;
+        Some(to_32_bytes(decoded, "change_hash")?)
+    } else {
+        None
+    };
+
+    let sender_pub_raw = bs58::decode(&sender_ephemeral_pub).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid sender_ephemeral_pub format".to_string()))?;
+
+    let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+        &to_32_bytes(t_id_raw.clone(), "t_id")?,
+        &to_32_bytes(ds_tag_raw.clone(), "ds_tag")?,
+        &to_32_bytes(sender_pub_raw.clone(), "sender_pub")?,
+        receiver_hash_raw.as_ref().map(|v| &*v),
+        change_hash_raw.as_ref().map(|v| &*v),
+        new_transaction.valid_until.as_deref(),
+    );
+
+    let l2_sig_bytes = sign_ed25519(sender_ephemeral_key, &payload_hash);
     new_transaction.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
 
     // 3. Sender Identity Signature (L1): Signiert t_id (raw bytes) mit Sender Permanent Key
