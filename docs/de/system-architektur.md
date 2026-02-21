@@ -48,12 +48,13 @@ Das Wallet ist die Verwaltungssoftware für den Nutzer und fungiert als persönl
         *   *Begründung:* Dies markiert den Gutschein unmissverständlich als "verbraucht". Er steht für das Gesamtguthaben nicht mehr zur Verfügung, bleibt aber für den Audit-Trail (und die Double-Spend-Erkennung) erhalten.
 
 ### 2.3 Layer 2 Server (Chain of Authority)
-Obwohl `human_money_core` offline-first ist, dient der **Layer 2 Server** als autoritative Instanz zur Absicherung von Transaktionen gegen Double-Spending. Da lokale Dateien beliebig oft kopiert werden können, benötigt das Netzwerk eine Instanz, die die **Eindeutigkeit der Historie** bestätigt.
+Obwohl `human_money_core` offline-first ist, dient der **Layer 2 Server** als autoritative Instanz zur Absicherung von Transaktionen gegen Double-Spending. Da lokale Dateien beliebig oft kopiert werden können, benötigt das Netzwerk eine Instanz, die die **Eindeutigkeit der Historie** bestätigt. Das System nutzt eine asymmetrische **"Dumb Server, Smart Client"-Architektur** für maximale Skalierbarkeit und Sicherheit.
 
-*   **Proof of Lock:** Der Server führt eine lückenlose Liste aller bereits konsumierten Transaktions-Anker (`previous_transaction_hash`). Er fungiert als "Notar", der bestätigt: "Dieser Anker wurde bereits durch Transaktion X eingelöst".
+*   **Proof of Lock & Trustless Verification:** Der Server führt eine lückenlose Liste aller konsumierten Transaktions-Anker (`ds_tag`). Meldet der Server einen Anker als verbraucht, muss er den gesamten Lock-Eintrag inklusive vom Nutzer erstellter L2-Signatur mitsenden. Dies macht den Beweis unumstößlich ("trustless") und schließt lügende L2-Server aus.
 *   **First-Seen-Rule:** Da es keine absolute "Gleichzeitigkeit" gibt, gilt die Transaktion, die zuerst beim Server registriert ("gelockt") wird, als die gültige Fortführung der Kette.
-*   **Erkennung statt Blockade:** Ein Server kann technisch nicht verhindern, dass eine Datei kopiert und weitersendet wird. Er liefert aber den **kryptographischen Beweis** (den Lock-Eintrag), dass ein Anker bereits verbraucht ist. Ein Client, der diesen Beweis sieht, weiß sofort, dass der ihm angebotene Gutschein ein Double-Spend (ungültig) ist und lehnt ihn ab.
-*   **Technische Anonymität:** Der Server sieht dabei nur technische Hashes (Anker). Er weiß nicht, wer an wen sendet, da die soziale Ebene (`did:key`) nur auf dem Client existiert.
+*   **Erkennung statt Blockade:** Ein Server kann Offline-Transaktionen nicht verhindern. Er liefert aber kryptographische Beweise, die der lokale Client überprüft. Bei einem erkannten Double-Spend blockiert der Client selbst die Transaktion.
+*   **Hypereffizient (O(1)):** Der Server operiert größtenteils im Arbeitsspeicher (Bloom-Filter zur Vorabprüfung von L2 Voucher IDs). Der Abgleich fehlender Transaktionen erfolgt blitzschnell über "logarithmische Locators" (10-Zeichen Präfixe der Hashes), die vom Smart Client vorbereitet werden.
+*   **Technische Anonymität:** Der Server sieht dabei nur kryptographische Anker. Er kennt weden Beträge, Token-Metadaten noch die echten Sender oder Empfänger.
 
 ### 2.4 Standards & Governance (Das "Gesetz")
 Standards werden über signierte TOML-Dateien definiert, die als **dezentrales "Gesetzbuch"** für eine Währung fungieren.
@@ -107,6 +108,7 @@ Dieses Projekt folgt einer "Vom Groben zum Feinen" Dokumentationsstruktur:
     *   [2. Datenstrukturen](spec/02_datenstrukturen.md): Transaktions-Formate, Privacy Modes und Identifier.
     *   [3. Protokoll-Ablauf](spec/03_protokoll_ablauf.md): Der Lebenszyklus einer Transaktion (Mint, Transfer, Verkettung).
     *   [4. Kryptographie](spec/04_kryptographie_und_mathematik.md): Mathematische Details, Zero-Knowledge Proofs und Double-Spend Erkennung.
+    *   [5. Layer-2 Synchronisation](spec/05_layer2_synchronisation.md): Das $O(1)$ Kommunikationsprotokoll (Dumb Server, Smart Client) & Workflows.
 
 3.  **Level 3: Code-Dokumentation**
     *   Die Rust-Docs (`cargo doc`) beschreiben die exakte Implementierung der Interfaces.
