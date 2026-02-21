@@ -262,12 +262,13 @@ fn prevent_trap_data_replay() {
     let sig_data1 = create_guarantor_signature_data(&ACTORS.guarantor1.identity, "1", &voucher.voucher_id);
     let sig_data2 = create_guarantor_signature_data(&ACTORS.guarantor2.identity, "2", &voucher.voucher_id);
     
+    let init_t_id = &voucher.transactions[0].t_id;
     let details1 = match &sig_data1 { DetachedSignature::Signature(s) => s.details.clone() };
-    let signed1 = signature_manager::complete_and_sign_detached_signature(sig_data1, &ACTORS.guarantor1.identity, details1, &voucher.voucher_id).unwrap();
+    let signed1 = signature_manager::complete_and_sign_detached_signature(sig_data1, &ACTORS.guarantor1.identity, details1, &voucher.voucher_id, init_t_id).unwrap();
     let DetachedSignature::Signature(s1) = signed1; voucher.signatures.push(s1);
 
     let details2 = match &sig_data2 { DetachedSignature::Signature(s) => s.details.clone() };
-    let signed2 = signature_manager::complete_and_sign_detached_signature(sig_data2, &ACTORS.guarantor2.identity, details2, &voucher.voucher_id).unwrap();
+    let signed2 = signature_manager::complete_and_sign_detached_signature(sig_data2, &ACTORS.guarantor2.identity, details2, &voucher.voucher_id, init_t_id).unwrap();
     let DetachedSignature::Signature(s2) = signed2; voucher.signatures.push(s2);
 
     // 2. Derive Link 1 (Init -> Tx1)

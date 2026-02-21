@@ -11,7 +11,7 @@ use human_money_core::models::secure_container::PayloadType;
 use human_money_core::models::voucher::{
     Collateral, Transaction, ValueDefinition, Voucher, VoucherSignature,
 };
-use human_money_core::services::crypto_utils::{get_hash, sign_ed25519};
+use human_money_core::services::crypto_utils::{get_hash, get_hash_from_slices, sign_ed25519};
 use human_money_core::services::secure_container_manager::create_secure_container;
 use human_money_core::services::utils::get_current_timestamp;
 use human_money_core::services::voucher_manager::{self, NewVoucherData};
@@ -166,7 +166,11 @@ fn create_guarantor_signature(
     let mut sig_obj_for_id = sig_obj.clone();
     sig_obj_for_id.signature_id = "".to_string();
     sig_obj_for_id.signature = "".to_string();
-    let id_hash = get_hash(to_canonical_json(&sig_obj_for_id).unwrap());
+    let init_t_id = &_voucher.transactions[0].t_id;
+    let id_hash = get_hash_from_slices(&[
+        to_canonical_json(&sig_obj_for_id).unwrap().as_bytes(),
+        init_t_id.as_bytes(),
+    ]);
 
     sig_obj.signature_id = id_hash;
     let signature = sign_ed25519(
@@ -1206,7 +1210,11 @@ fn test_attack_fuzzing_random_mutations() {
     let mut sig_obj_for_id = additional_sig.clone();
     sig_obj_for_id.signature_id = "".to_string();
     sig_obj_for_id.signature = "".to_string();
-    additional_sig.signature_id = get_hash(to_canonical_json(&sig_obj_for_id).unwrap());
+    let init_t_id = &master_voucher.transactions[0].t_id;
+    additional_sig.signature_id = get_hash_from_slices(&[
+        to_canonical_json(&sig_obj_for_id).unwrap().as_bytes(),
+        init_t_id.as_bytes(),
+    ]);
     let signature = sign_ed25519(
         &ACTORS.victim.signing_key,
         additional_sig.signature_id.as_bytes(),

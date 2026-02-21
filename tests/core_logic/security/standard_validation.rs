@@ -7,7 +7,7 @@ use self::test_utils::{ACTORS, MINUTO_STANDARD, create_voucher_for_manipulation}
 use super::test_utils;
 use human_money_core::error::ValidationError;
 use human_money_core::models::voucher::{ValueDefinition, Voucher, VoucherSignature};
-use human_money_core::services::crypto_utils::{get_hash, sign_ed25519};
+use human_money_core::services::crypto_utils::{get_hash, get_hash_from_slices, sign_ed25519};
 use human_money_core::services::utils::get_current_timestamp;
 use human_money_core::services::voucher_manager::NewVoucherData;
 use human_money_core::{VoucherCoreError, to_canonical_json, validate_voucher_against_standard};
@@ -72,12 +72,11 @@ mod required_signatures_validation {
         println!("\n[DEBUG TEST CREATE SIG] --- START CREATION ---");
         data_for_id_hash.signature_id = "".to_string();
         data_for_id_hash.signature = "".to_string();
-        let canonical_json_for_creation = to_canonical_json(&data_for_id_hash).unwrap();
-        println!(
-            "[DEBUG TEST CREATE SIG] Canonical JSON for creation:\n{}",
-            canonical_json_for_creation
-        );
-        sig.signature_id = get_hash(&canonical_json_for_creation);
+        let init_t_id = &voucher.transactions[0].t_id;
+        sig.signature_id = get_hash_from_slices(&[
+            to_canonical_json(&data_for_id_hash).unwrap().as_bytes(),
+            init_t_id.as_bytes(),
+        ]);
         println!(
             "[DEBUG TEST CREATE SIG] Generated signature_id: {}",
             sig.signature_id
@@ -231,6 +230,7 @@ mod required_signatures_validation {
 
         // Angriff: Der Ersteller (Alice) versucht, für sich selbst zu bürgen.
         let self_guarantor_sig = create_guarantor_signature_with_time(
+            &voucher,
             creator_identity, // Alice bürgt
             "Alice",
             "guarantor",

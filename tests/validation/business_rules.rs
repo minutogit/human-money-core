@@ -11,7 +11,7 @@ use human_money_core::test_utils;
 use human_money_core::{
     create_transaction, create_voucher, crypto_utils, models::profile::PublicProfile,
     to_canonical_json, validate_voucher_against_standard, NewVoucherData, Transaction,
-    ValueDefinition, VoucherCoreError,
+    ValueDefinition, Voucher, VoucherCoreError,
 };
 
 use human_money_core::test_utils::{
@@ -312,6 +312,7 @@ mod counts_and_group_rules {
         // HINWEIS: create_guarantor_signature_with_time benötigt keine voucher_id mehr
         voucher1.signatures = vec![
             create_guarantor_signature_with_time(
+                &voucher1,
                 &ACTORS.guarantor1,
                 "G1",
                 "guarantor",
@@ -319,6 +320,7 @@ mod counts_and_group_rules {
                 "2026-01-01T12:00:00Z",
             ),
             create_guarantor_signature_with_time(
+                &voucher1,
                 &ACTORS.guarantor2,
                 "G2",
                 "guarantor",
@@ -326,6 +328,7 @@ mod counts_and_group_rules {
                 "2026-01-01T13:00:00Z",
             ),
             create_guarantor_signature_with_time(
+                &voucher1,
                 &ACTORS.male_guarantor,
                 "G3",
                 "guarantor",
@@ -333,6 +336,7 @@ mod counts_and_group_rules {
                 "2026-01-01T14:00:00Z",
             ),
             create_guarantor_signature_with_time(
+                &voucher1,
                 &ACTORS.female_guarantor,
                 "G4",
                 "guarantor",
@@ -364,6 +368,7 @@ mod counts_and_group_rules {
         voucher2.signatures = vec![
             // 1. Erfülle "guarantor" (min=3, max=3)
             create_guarantor_signature_with_time(
+                &voucher2,
                 &ACTORS.guarantor1,
                 "G1",
                 "guarantor",
@@ -371,6 +376,7 @@ mod counts_and_group_rules {
                 "2026-01-01T12:00:00Z",
             ),
             create_guarantor_signature_with_time(
+                &voucher2,
                 &ACTORS.guarantor2,
                 "G2",
                 "guarantor",
@@ -378,14 +384,15 @@ mod counts_and_group_rules {
                 "2026-01-01T13:00:00Z",
             ),
             create_guarantor_signature_with_time(
+                &voucher2,
                 &ACTORS.bob,
                 "G3",
                 "guarantor",
                 "1",
                 "2026-01-01T14:00:00Z",
-            ), // Bob, nicht Alice
-            // 2. Erfülle "A" (min=2, max=2)
+            ), 
             create_guarantor_signature_with_time(
+                &voucher2,
                 &ACTORS.charlie,
                 "A1",
                 "A",
@@ -393,14 +400,15 @@ mod counts_and_group_rules {
                 "2026-01-01T15:00:00Z",
             ),
             create_guarantor_signature_with_time(
+                &voucher2,
                 &ACTORS.david,
                 "A2",
                 "A",
                 "1",
                 "2026-01-01T16:00:00Z",
             ),
-            // 3. Verletze "B" (min=2, max=2, found=1)
             create_guarantor_signature_with_time(
+                &voucher2,
                 &ACTORS.male_guarantor,
                 "B1",
                 "B",
@@ -431,12 +439,14 @@ mod signature_requirements {
         verify_and_parse_standard(&toml_str).unwrap()
     }
     fn create_additional_signature(
+        voucher: &Voucher,
         signer: &human_money_core::UserIdentity,
         description: &str,
     ) -> human_money_core::models::voucher::VoucherSignature {
         use ed25519_dalek::Signer;
         use human_money_core::services::{crypto_utils, utils};
         let mut signature_obj = human_money_core::models::voucher::VoucherSignature {
+            voucher_id: voucher.voucher_id.clone(),
             signer_id: signer.user_id.clone(),
             signature_time: utils::get_current_timestamp(),
             role: description.to_string(),
@@ -444,7 +454,12 @@ mod signature_requirements {
         };
         let mut obj_to_hash = signature_obj.clone();
         obj_to_hash.signature_id = "".to_string();
-        let signature_id = crypto_utils::get_hash(utils::to_canonical_json(&obj_to_hash).unwrap());
+        
+        let init_t_id = &voucher.transactions[0].t_id;
+        let signature_id = crypto_utils::get_hash_from_slices(&[
+            utils::to_canonical_json(&obj_to_hash).unwrap().as_bytes(),
+            init_t_id.as_bytes(),
+        ]);
         let signature = signer.signing_key.sign(signature_id.as_bytes());
         let signature_b58 = bs58::encode(signature.to_bytes()).into_string();
         signature_obj.signature_id = signature_id;
@@ -520,7 +535,7 @@ mod signature_requirements {
             "en",
         );
         let signature_with_wrong_desc =
-            create_additional_signature(approver, "Some other description");
+            create_additional_signature(&voucher, approver, "Some other description");
         voucher.signatures.push(signature_with_wrong_desc);
         let result = validate_voucher_against_standard(&voucher, &standard);
         assert!(matches!(
@@ -575,7 +590,7 @@ mod signature_requirements {
             &creator.signing_key,
             "en",
         );
-        let correct_signature = create_additional_signature(approver, "Official Approval 2025");
+        let correct_signature = create_additional_signature(&voucher, approver, "Official Approval 2025");
         voucher.signatures.push(correct_signature);
         assert!(validate_voucher_against_standard(&voucher, &custom_standard).is_ok());
     }

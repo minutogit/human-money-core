@@ -529,6 +529,9 @@ pub fn add_voucher_to_wallet(
             DetachedSignature::Signature(s) => s.details.clone(),
         };
 
+        // Extrahiere init_t_id
+        let init_t_id = &voucher.transactions[0].t_id;
+
         // 2. Jetzt können 'sig_data1' und 'sig_data2' sicher verschoben (moved) werden,
         //    da keine aktiven Borrows mehr existieren.
         let signed_sig1 = signature_manager::complete_and_sign_detached_signature(
@@ -536,12 +539,14 @@ pub fn add_voucher_to_wallet(
             &crate::test_utils::ACTORS.guarantor1.identity,
             details1,            // Verwende die geklonten Details
             &voucher.voucher_id, // Pass the voucher_id
+            init_t_id,           // Pass init_t_id
         )?;
         let signed_sig2 = signature_manager::complete_and_sign_detached_signature(
             sig_data2, // MOVE
             &crate::test_utils::ACTORS.guarantor2.identity,
             details2,            // Verwende die geklonten Details
             &voucher.voucher_id, // Pass the voucher_id
+            init_t_id,           // Pass init_t_id
         )?;
 
         // HINWEIS: Die 'if let' sind jetzt redundant, da DetachedSignature nur eine Variante hat (oder wir matchen oben).
@@ -860,30 +865,6 @@ pub fn create_voucher_for_manipulation(
     let voucher_hash = crypto_utils::get_hash(voucher_json);
     voucher.voucher_id = voucher_hash.clone();
 
-    // 2. Ersteller-Signatur (role: "creator") erstellen
-    let mut creator_sig_obj = VoucherSignature {
-        voucher_id: voucher_hash.clone(), // Add the voucher_id
-        signature_id: "".to_string(),
-        signer_id: voucher.creator_profile.id.as_ref().unwrap().clone(),
-        signature: "".to_string(), // Placeholder
-        signature_time: creation_date_str.clone(),
-        role: "creator".to_string(),
-        details: None,
-    };
-    // Calculate signature_id from metadata (excluding signature_id and signature fields)
-    let mut sig_to_hash = creator_sig_obj.clone();
-    sig_to_hash.signature_id = "".to_string();
-    sig_to_hash.signature = "".to_string();
-    creator_sig_obj.signature_id = get_hash(to_canonical_json(&sig_to_hash).unwrap());
-    // Create the digital signature by signing the signature_id
-    let digital_signature =
-        crypto_utils::sign_ed25519(signing_key, creator_sig_obj.signature_id.as_bytes());
-    creator_sig_obj.signature = bs58::encode(digital_signature.to_bytes()).into_string();
-
-    // 3. Signatur dem Array hinzufügen
-    voucher.signatures.push(creator_sig_obj);
-
-    // 4. Init-Transaktion erstellen
     // 4. Init-Transaktion erstellen (MIT P2PKH ANKER & L2 SIGNATUR)
 
     // A. Keys ableiten
@@ -898,7 +879,6 @@ pub fn create_voucher_for_manipulation(
 
     let (_, holder_public) =
         crypto_utils::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "holder", Some(&prefix)).expect("Failed to derive holder key");
-    let _holder_pub_str = bs58::encode(holder_public.to_bytes()).into_string();
     let holder_anchor_hash = crypto_utils::get_hash(holder_public.to_bytes());
 
     let prev_hash = {
@@ -907,17 +887,16 @@ pub fn create_voucher_for_manipulation(
         get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes])
     };
     
-    let init_tx = Transaction {
+    let mut init_tx = Transaction {
         t_id: "".to_string(),
         prev_hash,
         t_type: "init".to_string(),
-        t_time: creation_date_str,
+        t_time: creation_date_str.clone(),
         sender_id: Some(voucher.creator_profile.id.as_ref().unwrap().clone()),
         recipient_id: voucher.creator_profile.id.as_ref().unwrap().clone(),
         amount: voucher.nominal_value.amount.clone(),
         sender_remaining_amount: None,
-        sender_identity_signature: None,        // Wird in resign_transaction_ext gesetzt
-        // P2PKH SETUP
+        sender_identity_signature: None,        
         receiver_ephemeral_pub_hash: Some(holder_anchor_hash),
         sender_ephemeral_pub: Some(genesis_pub_str.clone()),
         change_ephemeral_pub_hash: None,
@@ -927,31 +906,51 @@ pub fn create_voucher_for_manipulation(
         valid_until: Some(valid_until.clone()),
     };
 
-    let mut init_tx = init_tx;
     let tx_json_for_id = crate::to_canonical_json(&init_tx).unwrap();
-    init_tx.t_id = crate::crypto_utils::get_hash(tx_json_for_id);
+    let init_t_id = crate::crypto_utils::get_hash(tx_json_for_id);
+    init_tx.t_id = init_t_id.clone();
 
-    // B. Finale ID & Signatur
+    // 2. Ersteller-Signatur (role: "creator") erstellen (JETZT GEBUNDEN)
+    let mut creator_sig_obj = VoucherSignature {
+        voucher_id: voucher_hash.clone(),
+        signature_id: "".to_string(),
+        signer_id: voucher.creator_profile.id.as_ref().unwrap().clone(),
+        signature: "".to_string(),
+        signature_time: creation_date_str.clone(),
+        role: "creator".to_string(),
+        details: None,
+    };
+    
+    creator_sig_obj.signature_id = get_hash_from_slices(&[
+        to_canonical_json(&creator_sig_obj).unwrap().as_bytes(),
+        init_t_id.as_bytes(),
+    ]);
+    
+    let digital_signature =
+        crypto_utils::sign_ed25519(signing_key, creator_sig_obj.signature_id.as_bytes());
+    creator_sig_obj.signature = bs58::encode(digital_signature.to_bytes()).into_string();
+
+    // 3. Signatur dem Array hinzufügen
+    voucher.signatures.push(creator_sig_obj);
+
+    // B. Finale ID & L2 Signatur
     let v_id = crate::services::l2_gateway::calculate_layer2_voucher_id(&init_tx).expect("Failed to calculate v_id");
+    voucher.transactions.push(resign_transaction_ext(init_tx, signing_key, &v_id, Some(&genesis_secret)));
+    
     voucher
-        .transactions
-        .push(resign_transaction_ext(init_tx, signing_key, &v_id, Some(&genesis_secret)));
-    voucher
-
 }
 
 #[allow(dead_code)]
 pub fn create_guarantor_signature_with_time(
+    voucher: &Voucher,
     guarantor_identity: &UserIdentity,
     guarantor_first_name: &str,
-    role: &str, // KORREKTUR: Dieser Parameter wurde fälschlicherweise als 'gender' behandelt
-    guarantor_gender: &str, // HINZUGEFÜGT: Der 'gender'-Parameter wird jetzt separat erwartet
+    role: &str,
+    guarantor_gender: &str,
     signature_time: &str,
 ) -> VoucherSignature {
-    // NOTE: This function is not provided with a voucher, so voucher_id remains empty
-    // It should not be used in validation contexts where voucher_id is required
     let mut signature_data = VoucherSignature {
-        voucher_id: String::new(), // Empty initially, will be filled in during signing
+        voucher_id: voucher.voucher_id.clone(),
         signature_id: "".to_string(),
         signer_id: guarantor_identity.user_id.clone(),
         signature_time: signature_time.to_string(),
@@ -969,7 +968,12 @@ pub fn create_guarantor_signature_with_time(
     let mut data_for_id_hash = signature_data.clone();
     data_for_id_hash.signature_id = "".to_string();
     data_for_id_hash.signature = "".to_string();
-    signature_data.signature_id = get_hash(to_canonical_json(&data_for_id_hash).unwrap());
+    
+    let init_t_id = &voucher.transactions[0].t_id;
+    signature_data.signature_id = get_hash_from_slices(&[
+        to_canonical_json(&data_for_id_hash).unwrap().as_bytes(),
+        init_t_id.as_bytes(),
+    ]);
 
     let digital_signature = sign_ed25519(
         &guarantor_identity.signing_key,
@@ -1008,7 +1012,12 @@ pub fn create_guarantor_signature(
     let mut data_for_id_hash = signature_data.clone();
     data_for_id_hash.signature_id = "".to_string();
     data_for_id_hash.signature = "".to_string();
-    signature_data.signature_id = get_hash(to_canonical_json(&data_for_id_hash).unwrap());
+    
+    let init_t_id = &voucher.transactions[0].t_id;
+    signature_data.signature_id = get_hash_from_slices(&[
+        to_canonical_json(&data_for_id_hash).unwrap().as_bytes(),
+        init_t_id.as_bytes(),
+    ]);
 
     let digital_signature = sign_ed25519(
         &guarantor_identity.signing_key,

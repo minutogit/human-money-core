@@ -9,3 +9,4 @@ pub mod forward_compatibility;
 pub mod standard_definition;
 pub mod unit_service;
 pub mod privacy_modes;
+pub mod signature_reuse;

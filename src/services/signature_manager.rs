@@ -8,7 +8,7 @@ use crate::error::VoucherCoreError;
 use crate::models::profile::{PublicProfile, UserIdentity};
 use crate::models::signature::DetachedSignature;
 use crate::services::crypto_utils::{
-    get_hash, get_pubkey_from_user_id, sign_ed25519, verify_ed25519,
+    get_hash_from_slices, get_pubkey_from_user_id, sign_ed25519, verify_ed25519,
 };
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
 
@@ -29,7 +29,8 @@ pub fn complete_and_sign_detached_signature(
     mut signature_data: DetachedSignature,
     signer_identity: &UserIdentity,
     details: Option<PublicProfile>,
-    voucher_id: &str, // <-- NEUER PARAMETER
+    voucher_id: &str,
+    init_t_id: &str, // <-- NEUER PARAMETER
 ) -> Result<DetachedSignature, VoucherCoreError> {
     let signer_id = match &mut signature_data {
         DetachedSignature::Signature(sig) => {
@@ -113,11 +114,14 @@ pub fn complete_and_sign_detached_signature(
             sig_clone.signature = "".to_string();
             sig_clone.signature_time = signature_time.clone(); // Verwende denselben Zeitstempel
 
-            to_canonical_json(&sig_clone)?
+            to_canonical_json(&sig_clone)?.into_bytes()
         }
     };
 
-    let signature_id = get_hash(signature_json_for_id);
+    let signature_id = get_hash_from_slices(&[
+        signature_json_for_id.as_slice(),
+        init_t_id.as_bytes(),
+    ]);
     let digital_signature = sign_ed25519(&signer_identity.signing_key, signature_id.as_bytes());
     let signature_str = bs58::encode(digital_signature.to_bytes()).into_string();
 
@@ -144,6 +148,7 @@ pub fn complete_and_sign_detached_signature(
 /// Ein leeres `Result`, wenn die Validierung erfolgreich ist.
 pub fn validate_detached_signature(
     signature_data: &DetachedSignature,
+    init_t_id: &str, // <-- NEUER PARAMETER
 ) -> Result<(), VoucherCoreError> {
     // --- BYPASS CHECK START ---
     #[cfg(feature = "test-utils")]
@@ -173,8 +178,10 @@ pub fn validate_detached_signature(
 
     // voucher_id ist nun Teil des Hashings und wird nicht entfernt
 
-    let canonical_json = to_canonical_json(&obj)?;
-    let calculated_sig_id = get_hash(canonical_json);
+    let calculated_sig_id = get_hash_from_slices(&[
+        to_canonical_json(&sig_obj_to_verify)?.as_bytes(),
+        init_t_id.as_bytes(),
+    ]);
 
     if calculated_sig_id != expected_sig_id {
         return Err(VoucherCoreError::Validation(

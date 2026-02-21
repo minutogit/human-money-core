@@ -303,66 +303,6 @@ pub fn create_voucher(
 
     temp_voucher.voucher_id = voucher_hash.clone();
 
-    // --- NEUE SIGNATUR-LOGIK (SCHRITT 3) ---
-    // Ersetzt die alte `creator.signature`-Logik.
-    // Die Signatur wird nun als `VoucherSignature` mit `role: "creator"`
-    // in das `signatures`-Array eingefügt.
-    // Sie signiert *exakt dieselben Daten* wie zuvor (den `voucher_hash`).
-    // KORREKTUR: Sie signiert ihre eigene `signature_id`.
-
-    let mut creator_sig_obj = VoucherSignature {
-        voucher_id: voucher_hash.clone(), // <-- HINZUFÜGEN
-        signature_id: "".to_string(),     // Wird unten berechnet
-        signer_id: creator_id.clone(),
-        signature: "".to_string(), // Platzhalter, wird neu berechnet
-        signature_time: creation_date_str.clone(),
-        role: "creator".to_string(),
-        details: None, // Creator-Details sind bereits im Hauptobjekt
-    };
-
-    // Berechne die `signature_id` (Hash der Signatur-Metadaten)
-    let mut sig_to_hash = creator_sig_obj.clone();
-    sig_to_hash.signature_id = "".to_string();
-    sig_to_hash.signature = "".to_string();
-    // sig_to_hash.voucher_id ist bereits durch das Klonen vorhanden.
-    creator_sig_obj.signature_id = get_hash(to_canonical_json(&sig_to_hash)?);
-
-    // KORREKTUR: Signatur ERST JETZT erstellen, basierend auf der signature_id
-    let creator_signature =
-        sign_ed25519(creator_signing_key, creator_sig_obj.signature_id.as_bytes());
-    creator_sig_obj.signature = bs58::encode(creator_signature.to_bytes()).into_string();
-
-    let decimal_places = verified_standard
-        .validation
-        .as_ref()
-        .and_then(|v| v.behavior_rules.as_ref())
-        .and_then(|b| b.amount_decimal_places)
-        .unwrap_or(2) as u32; // Fallback auf 2, falls nicht definiert
-
-    let initial_amount = Decimal::from_str(&temp_voucher.nominal_value.amount)?;
-
-    // --- L2 ANKER (SCHRITT B) - P2PKH Implementierung ---
-    // 1. Genesis-Key (Sender): Wird SOFORT enthüllt, um die init-Tx zu signieren.
-    //    Dies ist der "Proof of Authorization" für den Start der Kette.
-    let creator_prefix = creator_id.split(':').next().unwrap_or("unknown");
-
-    // --- L2 ANKER (SCHRITT B) - P2PKH Implementierung ---
-    // 1. Genesis-Key (Sender): Wird SOFORT enthüllt, um die init-Tx zu signieren.
-    //    Dies ist der "Proof of Authorization" für den Start der Kette.
-    //    Key Binding: Der Genesis-Key ist an das Präfix des Erstellers gebunden.
-    let (genesis_secret, genesis_public) =
-        derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "genesis", Some(creator_prefix))?;
-    let genesis_pub_str = bs58::encode(genesis_public.to_bytes()).into_string();
-
-    // 2. Holder-Key (Receiver): Wird GEHASHT als Anker für die nächste Tx hinterlegt.
-    //    Wir speichern NICHT den Key selbst, da der Creator ihn jederzeit re-deriven kann.
-    //    Key Binding: Der Holder-Key (für die erste Ausgabe) ist ebenfalls an das Präfix des Erstellers gebunden (Self-Issue).
-    let (_, holder_public) =
-        derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "holder", Some(creator_prefix))?;
-    let _holder_pub_str = bs58::encode(holder_public.to_bytes()).into_string();
-    // SECURITY FIX: Use raw bytes for anchor hash to avoid malleability
-    let holder_anchor_hash = get_hash(holder_public.to_bytes());
-
     let mut init_transaction = Transaction {
         t_id: "".to_string(),
         // SECURITY FIX: Use raw bytes for prev_hash truncation/concatenation
@@ -379,25 +319,66 @@ pub fn create_voucher(
         t_time: creation_date_str.clone(),
         sender_id: Some(creator_id.clone()), // Init ist immer public
         recipient_id: creator_id.clone(), // Init: geht an Creator selbst
-        amount: decimal_utils::format_for_storage(&initial_amount, decimal_places),
+        amount: "".to_string(), // Wird unten befüllt
         sender_remaining_amount: None,
-
-
-        receiver_ephemeral_pub_hash: Some(holder_anchor_hash),
-        sender_ephemeral_pub: Some(genesis_pub_str.clone()),
+        receiver_ephemeral_pub_hash: None, // Wird unten befüllt
+        sender_ephemeral_pub: None, // Wird unten befüllt
         privacy_guard: None,
-        trap_data: None, // Init hat keinen Trap (kein Vorgänger)
-        layer2_signature: None, // Platzhalter
+        trap_data: None, 
+        layer2_signature: None,
         valid_until: Some(temp_voucher.valid_until.clone()),
         change_ephemeral_pub_hash: None,
         sender_identity_signature: None,
     };
 
-    // --- L2 & IDENTITY SIGNATUREN (NEUES MODELL) ---
-    // 1. Berechne die t_id OHNE Signaturen (layer2_signature und sender_identity_signature auf None)
+    let decimal_places = verified_standard
+        .validation
+        .as_ref()
+        .and_then(|v| v.behavior_rules.as_ref())
+        .and_then(|b| b.amount_decimal_places)
+        .unwrap_or(2) as u32; 
+
+    let initial_amount = Decimal::from_str(&temp_voucher.nominal_value.amount)?;
+    init_transaction.amount = decimal_utils::format_for_storage(&initial_amount, decimal_places);
+
+    let creator_prefix = creator_id.split(':').next().unwrap_or("unknown");
+    let (genesis_secret, genesis_public) =
+        derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "genesis", Some(creator_prefix))?;
+    let genesis_pub_str = bs58::encode(genesis_public.to_bytes()).into_string();
+    init_transaction.sender_ephemeral_pub = Some(genesis_pub_str.clone());
+
+    let (_, holder_public) =
+        derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "holder", Some(creator_prefix))?;
+    let holder_anchor_hash = get_hash(holder_public.to_bytes());
+    init_transaction.receiver_ephemeral_pub_hash = Some(holder_anchor_hash);
+
     let tx_json_for_id = to_canonical_json(&init_transaction)?;
-    let final_t_id = get_hash(tx_json_for_id);
-    init_transaction.t_id = final_t_id;
+    let init_t_id = get_hash(tx_json_for_id);
+    init_transaction.t_id = init_t_id.clone();
+
+    // --- NEUE SIGNATUR-LOGIK (SCHRITT 3) ---
+    let mut creator_sig_obj = VoucherSignature {
+        voucher_id: voucher_hash.clone(),
+        signature_id: "".to_string(),     
+        signer_id: creator_id.clone(),
+        signature: "".to_string(), 
+        signature_time: creation_date_str.clone(),
+        role: "creator".to_string(),
+        details: None, 
+    };
+
+    creator_sig_obj.signature_id = get_hash_from_slices(&[
+        to_canonical_json(&creator_sig_obj)?.as_bytes(),
+        init_t_id.as_bytes(),
+    ]);
+    let creator_signature =
+        sign_ed25519(creator_signing_key, creator_sig_obj.signature_id.as_bytes());
+    creator_sig_obj.signature = bs58::encode(creator_signature.to_bytes()).into_string();
+
+
+    // --- L2 & IDENTITY SIGNATUREN (NEUES MODELL) ---
+    // Resigning for Technical Proofs
+
 
     // 2. Layer 2 Signature: Signiert den L2-Payload-Hash mit dem ephemeralen Key (Genesis Secret)
     let t_id_raw = bs58::decode(&init_transaction.t_id).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id hash".to_string()))?;

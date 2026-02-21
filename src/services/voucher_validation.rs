@@ -66,12 +66,14 @@ pub fn validate_voucher_against_standard(
     if let Some(rules) = &standard.validation {
         let voucher_json = serde_json::to_value(voucher)?;
 
+        let init_t_id = voucher.transactions.first().map(|tx| tx.t_id.as_str()).unwrap_or("");
+
         if let Some(count_rules) = &rules.counts {
             // HINWEIS: Signaturen werden jetzt über FieldGroupRules gezählt.
             validate_transaction_count(voucher, count_rules)?;
         }
         if let Some(signature_rules) = &rules.required_signatures {
-            validate_required_signatures(voucher, signature_rules)?;
+            validate_required_signatures(voucher, signature_rules, init_t_id)?;
         }
         if let Some(content_rules) = &rules.content_rules {
             validate_content_rules(&voucher_json, content_rules)?;
@@ -213,12 +215,13 @@ pub fn validate_transaction_count(
 pub fn validate_required_signatures(
     voucher: &Voucher,
     rules: &[RequiredSignatureRule],
+    init_t_id: &str, // <-- NEUER PARAMETER
 ) -> Result<(), ValidationError> {
     // Sammle alle zusätzlichen Signaturen zur einfachen Suche.
     let all_signatures: Vec<_> = voucher
         .signatures
         .iter()
-        .map(|sig| (&sig.signer_id, &sig.role, is_signature_valid(sig)))
+        .map(|sig| (&sig.signer_id, &sig.role, is_signature_valid(sig, init_t_id)))
         .collect();
 
     for rule in rules {
@@ -474,7 +477,10 @@ pub fn get_value_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> 
 }
 
 /// Hilfsfunktion, die prüft, ob eine einzelne zusätzliche Signatur gültig ist. Gibt bool zurück.
-fn is_signature_valid(signature_obj: &VoucherSignature) -> Result<(), ValidationError> {
+fn is_signature_valid(
+    signature_obj: &VoucherSignature,
+    init_t_id: &str, // <-- NEUER PARAMETER
+) -> Result<(), ValidationError> {
     #[cfg(feature = "test-utils")]
     if crate::is_signature_bypass_active() {
         return Ok(());
@@ -483,7 +489,11 @@ fn is_signature_valid(signature_obj: &VoucherSignature) -> Result<(), Validation
     let mut obj_to_verify = signature_obj.clone();
     obj_to_verify.signature_id = "".to_string();
     obj_to_verify.signature = "".to_string();
-    let calculated_id_hash = get_hash(to_canonical_json(&obj_to_verify).unwrap_or_default());
+
+    let calculated_id_hash = get_hash_from_slices(&[
+        to_canonical_json(&obj_to_verify).unwrap_or_default().as_bytes(),
+        init_t_id.as_bytes(),
+    ]);
 
     if calculated_id_hash != signature_obj.signature_id {
         return Err(ValidationError::InvalidSignatureId(
@@ -529,6 +539,13 @@ fn is_signature_valid(signature_obj: &VoucherSignature) -> Result<(), Validation
 fn verify_signatures(voucher: &Voucher) -> Result<(), VoucherCoreError> {
     let mut seen_signers = HashSet::new();
 
+    // Extrahiere die ID der ersten Transaktion (Init-Transaktion)
+    let init_t_id = voucher.transactions.first().map(|tx| tx.t_id.as_str()).ok_or_else(|| {
+        VoucherCoreError::Validation(ValidationError::InvalidTransaction(
+            "Voucher must have at least one (init) transaction.".to_string(),
+        ))
+    })?;
+
     for signature_obj in &voucher.signatures {
         // --- FIX (FEHLER 3): Reihenfolge geändert ---
         // Sicherheitsprüfung, ob der Ersteller versucht, als Bürge zu agieren.
@@ -562,10 +579,7 @@ fn verify_signatures(voucher: &Voucher) -> Result<(), VoucherCoreError> {
         }
 
         // Kryptographische Prüfung der Signatur selbst.
-        // HIER IST DIE ÄNDERUNG: Wir rufen die Funktion auf und leiten den
-        // spezifischen Fehler (z.B. InvalidSignatureId, MismatchedVoucherId,
-        // InvalidSignature) direkt per '?' weiter.
-        is_signature_valid(signature_obj)?;
+        is_signature_valid(signature_obj, init_t_id)?;
     }
     Ok(())
 }

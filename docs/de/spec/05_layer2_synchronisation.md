@@ -56,16 +56,20 @@ Um Bandbreite zu sparen und die Komplexität auf Server-Seite (Index-Suche) zu m
 *   **Sicherheit:** 10 Zeichen in Base58 bieten ca. 58,5 Bits Entropie. Da die Suche immer auf einen spezifischen Gutschein (L2 Voucher ID) eingeschränkt ist, ist die Wahrscheinlichkeit einer Kollision vernachlässigbar klein.
 *   **Effizienz:** Der Server kann diese Präfixe direkt für String-basierte Index-Scans (z. B. `LIKE 'Prefix%'`) nutzen, ohne Binärumwandlungen vornehmen zu müssen. Nur der eigentliche Ziel-Hash (Challenge) bleibt als vollständiger Base58-String erhalten.
 
-### D. Trustless Verification durch vollständige Lock-Einträge
+### D. Trustless Verification durch kryptografische Bindung
 Ein bösartiger Server könnte versuchen, einen Client zu täuschen, indem er behauptet, für einen `ds_tag` sei eine andere `t_id` eingetragen, um so fälschlicherweise einen Double-Spend-Alarm auszulösen.
-*   Um das auszuschließen, reicht es nicht aus, dass der Server nur die `t_id` zurückgibt. Wenn der Server meldet, dass ein Tag vergeben ist, muss er den gesamten Lock-Eintrag (inklusive der `layer2_signature`) als Antwort mitsenden. 
-*   Da der L2-Server die Signatur des Nutzers mathematisch unmöglich fälschen kann, dient die vom Server zurückgelieferte Signatur als unumstößlicher Beweis, dass der Server nicht lügt.
+
+Um dies auszuschließen, nutzt HuMoCo eine strikte kryptografische Bindung (Signature Hardening):
+*   **Proof of Truth:** Wenn der Server meldet, dass ein Tag vergeben ist, muss er den vollständigen `L2LockEntry` (inklusive der `layer2_signature`) mitsenden.
+*   **Payload-Bindung:** Die Signatur des Nutzers (`layer2_signature`) sichert nicht nur die `t_id`, sondern bindet diese untrennbar an die `l2_voucher_id` und den `challenge_ds_tag`.
+*   **Hashing-Logik:** `Hash(challenge_ds_tag + l2_voucher_id + t_id + sender_pub + ...)`. Da der Server die Signatur des Nutzers über diesen spezifischen Payload unmöglich fälschen kann, dient der zurückgelieferte Eintrag als unumstößlicher Beweis.
+*   **Schutz vor Mix-up:** Ein Server kann keinen gültigen Beweis eines anderen Gutscheins oder eines anderen Tags "umbiegen", da die IDs fest im signierten Hash verankert sind.
 
 ### E. Authentizität des L2-Servers (Server Signatures)
-Um zu verhindern, dass ein böswilliger Akteur (oder ein Man-in-the-Middle) gefälschte Verifizierungen oder Double-Spend-Warnungen sendet, nutzt das HuMoCo-Protokoll eine zusätzliche Authentifizierungsebene:
-*   **L2ResponseEnvelope:** Jede Antwort des Servers (das `L2Verdict`) wird in einen Briefumschlag (Envelope) verpackt, der eine kryptografische Signatur des Servers trägt.
-*   **Vertrauensanker:** Der Client (Wallet) verfügt über einen lokal konfigurierten öffentlichen Schlüssel des vertrauenswürdigen L2-Servers (`l2_server_pubkey`). 
-*   **Verifizierung:** Bevor ein Client das Urteil (`L2Verdict`) verarbeitet, validiert er die Signatur des Envelopes. Nur wenn die Authentizität des Servers gewährleistet ist, wird das Urteil akzeptiert.
+Um zu verhindern, dass ein böswilliger Akteur gefälschte Verifizierungen sendet, nutzt das Protokoll eine zusätzliche Authentifizierungsebene:
+*   **L2ResponseEnvelope:** Jede Antwort des Servers (`L2Verdict`) wird in einen Briefumschlag (Envelope) verpackt, der eine Ed25519-Signatur des Servers trägt.
+*   **Vertrauensanker:** Das Wallet verfügt über den konfigurierten `l2_server_pubkey`.
+*   **Verifizierung:** Bevor ein Client das Urteil verarbeitet, validiert er die Server-Signatur des Envelopes. Nur bei erfolgreicher Authentizität wird das Urteil akzeptiert.
 
 ## 3. Die Workflows (Szenarien)
 
@@ -81,11 +85,11 @@ Das Zusammenspiel dieser Komponenten zeigt sich in vier maßgeblichen Workflow-S
     1.  Prüft den Bloom-Filter für die `l2_voucher_id`. Ergebnis: Treffer.
     2.  Sucht in der Key-Value DB nach dem `challenge_ds_tag`. Ergebnis: Nicht gefunden (im Sinne von "noch nicht ausgegeben/neu"). *(Anmerkung: Wenn als "nicht ausgegeben" zu verifizieren: Tag der eingehenden Tx sollte noch kein Lock haben, oder die Applikationslogik lockt ihn in dem Moment.) Im Originalbeispiel sucht er den Tag. Wenn der Tag der vorherigen Tx gesucht wird und dort unsere Tx lockt, ist es "Verified".* Im Betrugsfall wird er mit einer **anderen** Tx gefunden. Wenn vom Server gemeldet wird, der aktuelle eigene wird verriegelt, antwortet er entsprechend.
     *(Korrektur laut Vorgabe - wenn der Gutschein schon gesichert wurde)*: Sucht in der Key-Value DB nach dem `challenge_ds_tag`. Ergebnis: Gefunden.
-*   **Server antwortet:** `L2ResponseEnvelope` (Beinhaltet das signierte `L2Verdict::Verified { lock_entry }`).
+*   **Server antwortet:** `L2ResponseEnvelope` (Beinhaltet das signierte `L2Verdict::Verified { lock_entry }` oder initial ein `L2Verdict::Ok`).
 *   **Client verifiziert:**
     1.  **Server-Authentizität:** Er prüft die Signatur des Envelopes gegen den `l2_server_pubkey`.
-    2.  **Nutzer-Beweis:** Er prüft die Signatur des `lock_entry` (Nutzer-Signatur). Ist sie gültig, sagt der Server die Wahrheit.
-    3.  **T_ID Check:** Danach vergleicht er die `t_id` aus dem Eintrag mit der `t_id` seiner lokalen Gutschein-Datei. Stimmen sie überein, ist die Zahlung garantiert sicher.
+    2.  **Nutzer-Beweis:** Er prüft die Signatur des `lock_entry` mathematisch gegen den rekonsituierten Payload (Härtung).
+    3.  **T_ID Check:** Er vergleicht die `t_id` aus dem Eintrag mit seiner lokalen `t_id`. Stimmen sie überein, ist die Zahlung garantiert sicher.
 
 ### Szenario 2: Die Offline-Synchronisation (Client ist dem Server voraus)
 *   **Kontext:** Der Nutzer hat den Gutschein offline mehrfach weitergegeben. Der Client hat nun den Stand Tiefe 10, aber das L2-Netzwerk kennt bisher nur den Stand bis Tiefe 7.

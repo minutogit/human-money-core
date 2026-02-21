@@ -7,7 +7,7 @@ use super::test_utils;
 use ed25519_dalek::SigningKey;
 use human_money_core::crypto_utils;
 use human_money_core::models::voucher::{Collateral, ValueDefinition, Voucher, VoucherSignature};
-use human_money_core::services::crypto_utils::{create_user_id, get_hash, sign_ed25519};
+use human_money_core::services::crypto_utils::{create_user_id, get_hash_from_slices, sign_ed25519};
 use human_money_core::services::utils::get_current_timestamp;
 use human_money_core::services::voucher_manager::NewVoucherData;
 use human_money_core::services::voucher_manager::get_spendable_balance;
@@ -371,7 +371,11 @@ fn test_serialization_roundtrip_with_special_chars() {
     let mut sig_obj_for_id = sig_obj.clone();
     sig_obj_for_id.signature_id = "".to_string();
     sig_obj_for_id.signature = "".to_string();
-    sig_obj.signature_id = get_hash(to_canonical_json(&sig_obj_for_id).unwrap());
+    let init_t_id = &original_voucher.transactions[0].t_id;
+    sig_obj.signature_id = get_hash_from_slices(&[
+        to_canonical_json(&sig_obj_for_id).unwrap().as_bytes(),
+        init_t_id.as_bytes(),
+    ]);
     let signature = sign_ed25519(&g1_identity.signing_key, sig_obj.signature_id.as_bytes());
     sig_obj.signature = bs58::encode(signature.to_bytes()).into_string();
     original_voucher.signatures.push(sig_obj);
@@ -395,7 +399,11 @@ fn test_serialization_roundtrip_with_special_chars() {
     let mut sig_obj_for_id = sig_obj.clone();
     sig_obj_for_id.signature_id = "".to_string();
     sig_obj_for_id.signature = "".to_string();
-    sig_obj.signature_id = get_hash(to_canonical_json(&sig_obj_for_id).unwrap());
+    let init_t_id = &original_voucher.transactions[0].t_id;
+    sig_obj.signature_id = get_hash_from_slices(&[
+        to_canonical_json(&sig_obj_for_id).unwrap().as_bytes(),
+        init_t_id.as_bytes(),
+    ]);
     let signature = sign_ed25519(
         &second_guarantor_identity.signing_key,
         sig_obj.signature_id.as_bytes(),

@@ -97,12 +97,15 @@ impl Wallet {
             None
         };
 
+        let init_t_id = &voucher_to_sign.transactions[0].t_id;
+
         let signed_signature =
             crate::services::signature_manager::complete_and_sign_detached_signature(
                 signature_data,
                 identity,
                 details,
-                &voucher_to_sign.voucher_id, // <-- HINZUFÜGEN
+                &voucher_to_sign.voucher_id,
+                init_t_id, // <-- HINZUFÜGEN
             )?;
 
         let payload = to_canonical_json(&signed_signature)?;
@@ -140,7 +143,26 @@ impl Wallet {
         }
 
         let signature: DetachedSignature = serde_json::from_slice(&payload)?;
-        crate::services::signature_manager::validate_detached_signature(&signature)?;
+        
+        let signature_obj_inner = match &signature {
+            DetachedSignature::Signature(s) => s,
+        };
+
+        // Wir müssen den Gutschein finden, um die init_t_id für die Validierung zu erhalten
+        let target_instance_for_val = self
+            .voucher_store
+            .vouchers
+            .values()
+            .find(|instance| instance.voucher.voucher_id == signature_obj_inner.voucher_id)
+            .ok_or_else(|| {
+                VoucherCoreError::VoucherNotFound(format!(
+                    "No voucher found matching signature's voucher_id: {}",
+                    signature_obj_inner.voucher_id
+                ))
+            })?;
+        
+        let init_t_id = &target_instance_for_val.voucher.transactions[0].t_id;
+        crate::services::signature_manager::validate_detached_signature(&signature, init_t_id)?;
 
         // Since the voucher_id field has been removed from VoucherSignature,
         // we need to match the signature to a voucher differently.
