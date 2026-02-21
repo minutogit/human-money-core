@@ -43,6 +43,7 @@ fn test_voucher_archiving_on_full_spend() {
             url: None,
             service_offer: None,
             needs: None,
+            l2_server_pubkey: None,
         },
         voucher_store: Default::default(),
         bundle_meta_store: Default::default(),

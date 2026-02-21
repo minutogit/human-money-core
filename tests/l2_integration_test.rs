@@ -1,5 +1,5 @@
 // use human_money_core::app_service::AppService;
-use human_money_core::models::layer2_api::{L2LockRequest, L2Verdict, L2StatusQuery};
+use human_money_core::models::layer2_api::{L2LockRequest, L2Verdict, L2StatusQuery, L2ResponseEnvelope};
 use human_money_core::services::voucher_manager::NewVoucherData;
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::models::voucher::ValueDefinition;
@@ -11,7 +11,7 @@ use tempfile::tempdir;
 
 // --- Mock L2 Node ---
 use std::collections::HashSet;
-use ed25519_dalek::{VerifyingKey, Signature, Verifier};
+use ed25519_dalek::{VerifyingKey, Signature, Verifier, SigningKey, Signer};
 
 pub struct MockL2Node {
     // Simuliert den RAM-Bloom-Filter (Voucher IDs)
@@ -21,6 +21,8 @@ pub struct MockL2Node {
     locks: HashMap<String, HashMap<String, human_money_core::models::layer2_api::L2LockEntry>>,
     // Simuliert das UTXO Modell für P2PKH Anker
     spendable_outputs: HashSet<[u8; 32]>,
+    // Der private Schlüssel des L2-Servers zur Signatur der Urteile
+    server_key: SigningKey,
 }
 
 impl MockL2Node {
@@ -29,7 +31,29 @@ impl MockL2Node {
             vouchers: HashSet::new(),
             locks: HashMap::new(),
             spendable_outputs: HashSet::new(),
+            server_key: SigningKey::generate(&mut rand::thread_rng()),
         }
+    }
+
+    pub fn get_server_pubkey(&self) -> [u8; 32] {
+        self.server_key.verifying_key().to_bytes()
+    }
+
+    fn wrap_and_sign(&self, verdict: L2Verdict) -> Vec<u8> {
+        let verdict_serialized = serde_json::to_vec(&verdict).unwrap();
+        
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&verdict_serialized);
+        let verdict_hash = hasher.finalize();
+
+        let signature = self.server_key.sign(&verdict_hash);
+        
+        let envelope = L2ResponseEnvelope {
+            verdict,
+            server_signature: signature.to_bytes(),
+        };
+        serde_json::to_vec(&envelope).unwrap()
     }
 
     pub fn handle_lock_request(&mut self, req_bytes: &[u8]) -> Vec<u8> {
@@ -45,7 +69,7 @@ impl MockL2Node {
             let verdict = L2Verdict::Rejected {
                 reason: "Invalid signature".to_string(),
             };
-            return serde_json::to_vec(&verdict).unwrap();
+            return self.wrap_and_sign(verdict);
         }
 
         // Register Voucher in "Bloom Filter"
@@ -59,7 +83,7 @@ impl MockL2Node {
                 Some(ds) => ds.clone(),
                 None => {
                     let verdict = L2Verdict::Rejected { reason: "Non-genesis must have ds_tag".to_string() };
-                    return serde_json::to_vec(&verdict).unwrap();
+                    return self.wrap_and_sign(verdict);
                 }
             }
         };
@@ -71,7 +95,7 @@ impl MockL2Node {
             let verdict = L2Verdict::Verified {
                 lock_entry: entry.clone(),
             };
-            return serde_json::to_vec(&verdict).unwrap();
+            return self.wrap_and_sign(verdict);
         }
 
         let entry = human_money_core::models::layer2_api::L2LockEntry {
@@ -96,7 +120,7 @@ impl MockL2Node {
         let verdict = L2Verdict::Ok {
             signature: [0u8; 64],
         };
-        serde_json::to_vec(&verdict).unwrap()
+        self.wrap_and_sign(verdict)
     }
 
     pub fn handle_status_query(&self, req_bytes: &[u8]) -> Vec<u8> {
@@ -105,7 +129,7 @@ impl MockL2Node {
         // 1. Bloom Filter Check
         if !self.vouchers.contains(&req.layer2_voucher_id) {
             let verdict = L2Verdict::UnknownVoucher;
-            return serde_json::to_vec(&verdict).unwrap();
+            return self.wrap_and_sign(verdict);
         }
 
         let voucher_locks = self.locks.get(&req.layer2_voucher_id).unwrap();
@@ -115,7 +139,7 @@ impl MockL2Node {
             let verdict = L2Verdict::Verified {
                 lock_entry: entry.clone(),
             };
-            return serde_json::to_vec(&verdict).unwrap();
+            return self.wrap_and_sign(verdict);
         }
 
         // 3. Logarithmic Locators (LCA Search)
@@ -126,7 +150,7 @@ impl MockL2Node {
                     let verdict = L2Verdict::MissingLocks {
                         sync_point: prefix.clone(),
                     };
-                    return serde_json::to_vec(&verdict).unwrap();
+                    return self.wrap_and_sign(verdict);
                 }
             }
         }
@@ -135,7 +159,7 @@ impl MockL2Node {
         let verdict = L2Verdict::MissingLocks {
             sync_point: "genesis".to_string(),
         };
-        serde_json::to_vec(&verdict).unwrap()
+        self.wrap_and_sign(verdict)
     }
 }
 
@@ -183,19 +207,22 @@ fn test_l2_double_spend_quarantine() {
         .clone();
 
     let mut mock_l2 = MockL2Node::new();
+    
+    // Server-Identität im Client konfigurieren
+    app.get_wallet_mut().unwrap().profile.l2_server_pubkey = Some(mock_l2.get_server_pubkey());
 
     // 1. Genesis Lock
     let req_genesis = app.generate_l2_lock_request(&voucher_id).unwrap();
     let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
-    let verdict: L2Verdict = serde_json::from_slice(&resp_genesis).unwrap();
-    assert!(matches!(verdict, L2Verdict::Ok { .. }));
+    let envelope_genesis: L2ResponseEnvelope = serde_json::from_slice(&resp_genesis).unwrap();
+    assert!(matches!(envelope_genesis.verdict, L2Verdict::Ok { .. }));
     app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password)).unwrap();
 
     // 2. Status Query
     let query_bytes = app.generate_l2_status_query(&voucher_id).unwrap();
     let resp_query = mock_l2.handle_status_query(&query_bytes);
-    let query_verdict: L2Verdict = serde_json::from_slice(&resp_query).unwrap();
-    assert!(matches!(query_verdict, L2Verdict::Verified { .. }));
+    let query_envelope: L2ResponseEnvelope = serde_json::from_slice(&resp_query).unwrap();
+    assert!(matches!(query_envelope.verdict, L2Verdict::Verified { .. }));
 
     let id_david = test_utils::ACTORS.david.identity.user_id.clone();
 
@@ -222,15 +249,15 @@ fn test_l2_double_spend_quarantine() {
     // L2 Lock für die neue Transaktion
     let req_tx1 = app.generate_l2_lock_request(&voucher_id_tx1).unwrap();
     let resp_tx1 = mock_l2.handle_lock_request(&req_tx1);
-    let verdict_tx1: L2Verdict = serde_json::from_slice(&resp_tx1).unwrap();
-    assert!(matches!(verdict_tx1, L2Verdict::Ok { .. }));
+    let envelope_tx1: L2ResponseEnvelope = serde_json::from_slice(&resp_tx1).unwrap();
+    assert!(matches!(envelope_tx1.verdict, L2Verdict::Ok { .. }));
     app.process_l2_response(&voucher_id_tx1, &resp_tx1, Some(correct_password)).unwrap();
 
     // L2 Status Query
     let query_bytes_tx1 = app.generate_l2_status_query(&voucher_id_tx1).unwrap();
     let resp_query_tx1 = mock_l2.handle_status_query(&query_bytes_tx1);
-    let query_verdict_tx1: L2Verdict = serde_json::from_slice(&resp_query_tx1).unwrap();
-    assert!(matches!(query_verdict_tx1, L2Verdict::Verified { .. }));
+    let query_envelope_tx1: L2ResponseEnvelope = serde_json::from_slice(&resp_query_tx1).unwrap();
+    assert!(matches!(query_envelope_tx1.verdict, L2Verdict::Verified { .. }));
 
     // 4. Second Transaction (Transfer to Bob/David again)
     let request_tx2 = human_money_core::wallet::MultiTransferRequest {
@@ -256,13 +283,13 @@ fn test_l2_double_spend_quarantine() {
     
     let req_malicious_bytes = serde_json::to_vec(&req_malicious).unwrap();
     let resp_malicious = mock_l2.handle_lock_request(&req_malicious_bytes);
-    let verdict_malicious: L2Verdict = serde_json::from_slice(&resp_malicious).unwrap();
-    assert!(matches!(verdict_malicious, L2Verdict::Ok { .. })); // L2 Server akzeptiert den Hacker
+    let envelope_malicious: L2ResponseEnvelope = serde_json::from_slice(&resp_malicious).unwrap();
+    assert!(matches!(envelope_malicious.verdict, L2Verdict::Ok { .. })); // L2 Server akzeptiert den Hacker
 
     // 6. Legitime Einlösung (wir kommen zu spät)
     let resp_tx2 = mock_l2.handle_lock_request(&req_valid_bytes);
-    let verdict_tx2: L2Verdict = serde_json::from_slice(&resp_tx2).unwrap();
-    assert!(matches!(verdict_tx2, L2Verdict::Verified { .. }));
+    let envelope_tx2: L2ResponseEnvelope = serde_json::from_slice(&resp_tx2).unwrap();
+    assert!(matches!(envelope_tx2.verdict, L2Verdict::Verified { .. }));
     
     app.process_l2_response(&voucher_id_tx2, &resp_tx2, Some(correct_password)).unwrap();
 
@@ -315,12 +342,15 @@ fn test_l2_signature_payload_manipulation() {
         .clone();
 
     let mut mock_l2 = MockL2Node::new();
+    
+    // Server-Identität im Client konfigurieren
+    app.get_wallet_mut().unwrap().profile.l2_server_pubkey = Some(mock_l2.get_server_pubkey());
 
     // 1. Genesis Lock
     let req_genesis = app.generate_l2_lock_request(&voucher_id).unwrap();
     let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
-    let verdict: L2Verdict = serde_json::from_slice(&resp_genesis).unwrap();
-    assert!(matches!(verdict, L2Verdict::Ok { .. }));
+    let envelope_genesis: L2ResponseEnvelope = serde_json::from_slice(&resp_genesis).unwrap();
+    assert!(matches!(envelope_genesis.verdict, L2Verdict::Ok { .. }));
     app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password)).unwrap();
 
     let id_david = test_utils::ACTORS.david.identity.user_id.clone();
@@ -359,12 +389,12 @@ fn test_l2_signature_payload_manipulation() {
     
     // 5. Send manipulated request to L2 Node
     let resp_manipulated = mock_l2.handle_lock_request(&req_manipulated_bytes);
-    let verdict_manipulated: L2Verdict = serde_json::from_slice(&resp_manipulated).unwrap();
+    let envelope_manipulated: L2ResponseEnvelope = serde_json::from_slice(&resp_manipulated).unwrap();
 
     // After the protocol fix, the L2 Node should REJECT the manipulated payload
     // because the signature (which signed the old hashes) no longer matches the payload_hash.
     assert!(
-        matches!(verdict_manipulated, L2Verdict::Rejected { .. }),
+        matches!(envelope_manipulated.verdict, L2Verdict::Rejected { .. }),
         "Mock logic should return Rejected for invalid signature"
     );
 

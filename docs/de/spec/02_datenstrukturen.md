@@ -164,6 +164,21 @@ Für die symmetrische Verschlüsselung des Payloads wird der Shared Secret aus d
 Wobei `public_key_1` und `public_key_2` die 32-Byte X25519 Public Keys (ephemeral und statisch) in lexikographischer Sortierung sind. Dies stellt sicher, dass beide Parteien denselben Info-String unabhängig von ihrer Rolle berechnen.
 
 
+### 2.4 Layer 2 Response Envelope
+
+Jede Antwort vom Layer 2 Server ist in einen signierten Container verpackt, um die Authentizität des Servers sicherzustellen.
+
+```rust
+pub struct L2ResponseEnvelope {
+    /// Das eigentliche Urteil des Servers (Ok, Verified, MissingLocks, etc.).
+    pub verdict: L2Verdict,
+    
+    /// Die Ed25519-Signatur des Servers über das serialisierte Urteil.
+    /// Der Server nutzt hierfür seinen privaten identity_key.
+    pub server_signature: [u8; 64],
+}
+```
+
 ## 3. Validierungslogik
 
 Der Validator prüft Transaktionen basierend auf dem `privacy_mode` des Standards.

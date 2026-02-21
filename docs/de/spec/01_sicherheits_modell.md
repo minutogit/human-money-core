@@ -73,6 +73,14 @@ Dieses Modell beschreibt, wie das System spezifische Angriffe durch kryptographi
 
     **Konsequenz:** Der letzte *bekannte* Teilnehmer der Kette, der Guthaben an die unbekannte Fake-ID weitergeleitet hat, gerät unter Generalverdacht. Er ist entweder der Angreifer selbst oder hat grob fahrlässig mit einer unvertrauenswürdigen Partei gehandelt. In einem Web of Trust gilt das Prinzip: Wer Werte an Anonyme leitet, haftet sozial für deren Fehlverhalten.
 
+### 2.5 Angriff: "Malicious L2 Server" (Spoofing)
+
+- **Szenario:** Ein Angreifer betreibt einen gefälschten L2-Server oder kapert die Kommunikation. Er sendet gefälschte Double-Spend-Warnungen (`Verified { lock_entry }` mit falscher `t_id`), um Gutscheine unbrauchbar zu machen (Quarantäne).
+
+- **Abwehr (Server-Authentizität):** Jede Antwort des L2-Servers muss in einem `L2ResponseEnvelope` verpackt sein, der vom L2-Node mit einem Ed25519-Schlüssel signiert wurde. Das Wallet verifiziert diese Signatur gegen einen lokal konfigurierten `l2_server_pubkey`.
+
+- **Ergebnis:** Ohne den passenden privaten Schlüssel des vertrauenswürdigen Servers kann kein Angreifer valide Urteile fälschen. Das Wallet ignoriert unsignierte oder falsch signierte Antworten.
+
 ## 3. Zusammenfassung und Sicherheits-Nuancen
 
 |   |   |   |

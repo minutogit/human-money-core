@@ -1,4 +1,4 @@
-use human_money_core::models::layer2_api::{L2LockRequest, L2Verdict, L2StatusQuery, L2LockEntry};
+use human_money_core::models::layer2_api::{L2LockRequest, L2Verdict, L2StatusQuery, L2LockEntry, L2ResponseEnvelope};
 use human_money_core::services::voucher_manager::NewVoucherData;
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::models::voucher::ValueDefinition;
@@ -7,10 +7,13 @@ use human_money_core::models::voucher_standard_definition::PrivacySettings;
 use std::collections::{HashMap, HashSet};
 use tempfile::tempdir;
 
+use ed25519_dalek::{SigningKey, Signer};
+
 // --- Mock L2 Node (Adapted for Sync Protocol) ---
 pub struct MockL2Node {
     vouchers: HashSet<String>,
     locks: HashMap<String, HashMap<String, L2LockEntry>>,
+    server_key: SigningKey,
 }
 
 impl MockL2Node {
@@ -18,7 +21,29 @@ impl MockL2Node {
         Self {
             vouchers: HashSet::new(),
             locks: HashMap::new(),
+            server_key: SigningKey::generate(&mut rand::thread_rng()),
         }
+    }
+
+    pub fn get_server_pubkey(&self) -> [u8; 32] {
+        self.server_key.verifying_key().to_bytes()
+    }
+
+    fn wrap_and_sign(&self, verdict: L2Verdict) -> Vec<u8> {
+        let verdict_serialized = serde_json::to_vec(&verdict).unwrap();
+        
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&verdict_serialized);
+        let verdict_hash = hasher.finalize();
+
+        let signature = self.server_key.sign(&verdict_hash);
+        
+        let envelope = L2ResponseEnvelope {
+            verdict,
+            server_signature: signature.to_bytes(),
+        };
+        serde_json::to_vec(&envelope).unwrap()
     }
 
     pub fn handle_lock_request(&mut self, req_bytes: &[u8]) -> Vec<u8> {
@@ -46,33 +71,33 @@ impl MockL2Node {
         voucher_locks.insert(ds_tag, entry);
 
         let verdict = L2Verdict::Ok { signature: [0u8; 64] };
-        serde_json::to_vec(&verdict).unwrap()
+        self.wrap_and_sign(verdict)
     }
 
     pub fn handle_status_query(&self, req_bytes: &[u8]) -> Vec<u8> {
         let req: L2StatusQuery = serde_json::from_slice(req_bytes).unwrap();
 
         if !self.vouchers.contains(&req.layer2_voucher_id) {
-            return serde_json::to_vec(&L2Verdict::UnknownVoucher).unwrap();
+            return self.wrap_and_sign(L2Verdict::UnknownVoucher);
         }
 
         let voucher_locks = self.locks.get(&req.layer2_voucher_id).unwrap();
 
         // 1. Direct Lookup
         if let Some(entry) = voucher_locks.get(&req.challenge_ds_tag) {
-            return serde_json::to_vec(&L2Verdict::Verified { lock_entry: entry.clone() }).unwrap();
+            return self.wrap_and_sign(L2Verdict::Verified { lock_entry: entry.clone() });
         }
 
         // 2. Locator Search
         for prefix in &req.locator_prefixes {
             for (ds_tag, _entry) in voucher_locks {
                 if ds_tag.starts_with(prefix) {
-                    return serde_json::to_vec(&L2Verdict::MissingLocks { sync_point: prefix.clone() }).unwrap();
+                    return self.wrap_and_sign(L2Verdict::MissingLocks { sync_point: prefix.clone() });
                 }
             }
         }
 
-        serde_json::to_vec(&L2Verdict::MissingLocks { sync_point: "genesis".to_string() }).unwrap()
+        self.wrap_and_sign(L2Verdict::MissingLocks { sync_point: "genesis".to_string() })
     }
 }
 
@@ -97,6 +122,7 @@ fn test_scenario_1_happy_path() {
 
     let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
     let mut mock_l2 = MockL2Node::new();
+    app.get_wallet_mut().unwrap().profile.l2_server_pubkey = Some(mock_l2.get_server_pubkey());
 
     let req_genesis = app.generate_l2_lock_request(&voucher_id).unwrap();
     mock_l2.handle_lock_request(&req_genesis);
@@ -104,10 +130,10 @@ fn test_scenario_1_happy_path() {
     // Query Status (Happy Path)
     let query_bytes = app.generate_l2_status_query(&voucher_id).unwrap();
     let resp_query = mock_l2.handle_status_query(&query_bytes);
-    let verdict: L2Verdict = serde_json::from_slice(&resp_query).unwrap();
+    let envelope: L2ResponseEnvelope = serde_json::from_slice(&resp_query).unwrap();
     
     // Should be Verified
-    assert!(matches!(verdict, L2Verdict::Verified { .. }));
+    assert!(matches!(envelope.verdict, L2Verdict::Verified { .. }));
     
     // Process should confirm local
     app.process_l2_response(&voucher_id, &resp_query, Some(correct_password)).unwrap();
@@ -134,6 +160,7 @@ fn test_scenario_2_offline_sync() {
 
     let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
     let mut mock_l2 = MockL2Node::new();
+    app.get_wallet_mut().unwrap().profile.l2_server_pubkey = Some(mock_l2.get_server_pubkey());
 
     // 1. Lock Genesis on L2
     let req_genesis = app.generate_l2_lock_request(&voucher_id).unwrap();
@@ -165,13 +192,13 @@ fn test_scenario_2_offline_sync() {
     // 3. Query L2 for the latest state (v_id_tx2)
     let query_bytes = app.generate_l2_status_query(&v_id_tx2).unwrap();
     let resp_query = mock_l2.handle_status_query(&query_bytes);
-    let verdict: L2Verdict = serde_json::from_slice(&resp_query).unwrap();
+    let envelope: L2ResponseEnvelope = serde_json::from_slice(&resp_query).unwrap();
 
     // Should indicate MissingLocks with sync_point from Genesis (since only Genesis is known)
-    if let L2Verdict::MissingLocks { sync_point } = verdict {
+    if let L2Verdict::MissingLocks { sync_point } = envelope.verdict {
         assert!(sync_point.len() == 10 || sync_point == "genesis");
     } else {
-        panic!("Expected MissingLocks, got {:?}", verdict);
+        panic!("Expected MissingLocks, got {:?}", envelope.verdict);
     }
 
     // Process output
@@ -199,6 +226,7 @@ fn test_scenario_3_double_spend_detection() {
 
     let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
     let mut mock_l2 = MockL2Node::new();
+    app.get_wallet_mut().unwrap().profile.l2_server_pubkey = Some(mock_l2.get_server_pubkey());
 
     // Lock Genesis
     let req_genesis = app.generate_l2_lock_request(&voucher_id).unwrap();
@@ -257,14 +285,15 @@ fn test_scenario_4_initial_registration() {
 
     let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
     let mock_l2 = MockL2Node::new(); // EMPTY L2
+    app.get_wallet_mut().unwrap().profile.l2_server_pubkey = Some(mock_l2.get_server_pubkey());
 
     // 1. Query L2
     let query_bytes = app.generate_l2_status_query(&voucher_id).unwrap();
     let resp_query = mock_l2.handle_status_query(&query_bytes);
-    let verdict: L2Verdict = serde_json::from_slice(&resp_query).unwrap();
+    let envelope: L2ResponseEnvelope = serde_json::from_slice(&resp_query).unwrap();
 
     // Should be UnknownVoucher
-    assert!(matches!(verdict, L2Verdict::UnknownVoucher));
+    assert!(matches!(envelope.verdict, L2Verdict::UnknownVoucher));
 
     // Process output
     app.process_l2_response(&voucher_id, &resp_query, Some(correct_password)).unwrap();

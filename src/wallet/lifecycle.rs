@@ -49,6 +49,7 @@ impl Wallet {
             url: None,
             service_offer: None,
             needs: None,
+            l2_server_pubkey: None,
         };
 
         let voucher_store = VoucherStore::default();

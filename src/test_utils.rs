@@ -410,6 +410,7 @@ pub fn setup_in_memory_wallet(identity: &UserIdentity) -> Wallet {
         url: None,
         service_offer: None,
         needs: None,
+        l2_server_pubkey: None,
     };
     Wallet {
         profile,
@@ -450,6 +451,7 @@ pub fn create_test_wallet(
         url: None,
         service_offer: None,
         needs: None,
+        l2_server_pubkey: None,
     };
 
     let wallet = Wallet {

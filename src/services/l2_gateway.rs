@@ -1,5 +1,5 @@
 use crate::error::VoucherCoreError;
-use crate::models::layer2_api::{L2AuthPayload, L2LockRequest, L2Verdict};
+use crate::models::layer2_api::{L2AuthPayload, L2LockRequest, L2Verdict, L2ResponseEnvelope};
 use crate::models::voucher::Transaction;
 
 use ed25519_dalek::{VerifyingKey, Signature, Verifier};
@@ -228,12 +228,37 @@ pub fn extract_layer2_voucher_id(voucher: &crate::models::voucher::Voucher) -> R
 /// Verarbeitet das L2Verdict und bestimmt die darauffolgende Wallet-Aktion.
 pub fn process_l2_verdict(
     verdict_bytes: &[u8],
-    _server_pubkey: &[u8; 32], // Platzhalter für zukünftige Signaturprüfung
+    server_pubkey: &[u8; 32],
     local_t_id: &str,          // Die lokale t_id der angefragten Transaktion
     challenge_ds_tag: &str,    // Der für die Abfrage genutzte Challenge-Tag
 ) -> Result<VerdictAction, VoucherCoreError> {
-    let verdict: L2Verdict = serde_json::from_slice(verdict_bytes)
-        .map_err(|e| VoucherCoreError::DeserializationError(e.to_string()))?;
+    let envelope: L2ResponseEnvelope = serde_json::from_slice(verdict_bytes)
+        .map_err(|e| VoucherCoreError::DeserializationError(format!("Invalid response envelope: {}", e)))?;
+
+    // 1. Verifiziere die Server-Authentizität
+    let server_key = VerifyingKey::from_bytes(server_pubkey)
+        .map_err(|_| VoucherCoreError::ValidationFailed("Invalid server public key".to_string()))?;
+    let server_sig = Signature::from_bytes(&envelope.server_signature);
+
+    let verdict_serialized = serde_json::to_vec(&envelope.verdict)
+        .map_err(|e| VoucherCoreError::DeserializationError(format!("Failed to serialize verdict for verification: {}", e)))?;
+    
+    // Wir hashen das Urteil für die Signaturprüfung
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(&verdict_serialized);
+    let verdict_hash = hasher.finalize();
+
+    #[cfg(feature = "test-utils")]
+    let server_sig_valid = server_key.verify(&verdict_hash, &server_sig).is_ok() || crate::is_signature_bypass_active();
+    #[cfg(not(feature = "test-utils"))]
+    let server_sig_valid = server_key.verify(&verdict_hash, &server_sig).is_ok();
+
+    if !server_sig_valid {
+        return Err(VoucherCoreError::ValidationFailed("Server-Signatur ist ungültig (Authentizität fehlgeschlagen)".to_string()));
+    }
+
+    let verdict = envelope.verdict;
 
     match verdict {
         L2Verdict::Verified { lock_entry } => {

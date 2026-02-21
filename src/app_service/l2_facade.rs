@@ -97,7 +97,7 @@ impl AppService {
         let last_t_id = last_tx.t_id.clone();
         let challenge_ds_tag = l2_gateway::derive_challenge_tag(last_tx).map_err(|e| e.to_string())?;
 
-        let server_pubkey = [0u8; 32]; // Dummy für den Moment
+        let server_pubkey = wallet.profile.l2_server_pubkey.ok_or_else(|| "L2 server public key not configured in wallet profile".to_string())?;
 
         let action = l2_gateway::process_l2_verdict(response_bytes, &server_pubkey, &last_t_id, &challenge_ds_tag)
             .map_err(|e| e.to_string())?;

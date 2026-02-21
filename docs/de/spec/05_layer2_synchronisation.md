@@ -61,6 +61,12 @@ Ein bösartiger Server könnte versuchen, einen Client zu täuschen, indem er be
 *   Um das auszuschließen, reicht es nicht aus, dass der Server nur die `t_id` zurückgibt. Wenn der Server meldet, dass ein Tag vergeben ist, muss er den gesamten Lock-Eintrag (inklusive der `layer2_signature`) als Antwort mitsenden. 
 *   Da der L2-Server die Signatur des Nutzers mathematisch unmöglich fälschen kann, dient die vom Server zurückgelieferte Signatur als unumstößlicher Beweis, dass der Server nicht lügt.
 
+### E. Authentizität des L2-Servers (Server Signatures)
+Um zu verhindern, dass ein böswilliger Akteur (oder ein Man-in-the-Middle) gefälschte Verifizierungen oder Double-Spend-Warnungen sendet, nutzt das HuMoCo-Protokoll eine zusätzliche Authentifizierungsebene:
+*   **L2ResponseEnvelope:** Jede Antwort des Servers (das `L2Verdict`) wird in einen Briefumschlag (Envelope) verpackt, der eine kryptografische Signatur des Servers trägt.
+*   **Vertrauensanker:** Der Client (Wallet) verfügt über einen lokal konfigurierten öffentlichen Schlüssel des vertrauenswürdigen L2-Servers (`l2_server_pubkey`). 
+*   **Verifizierung:** Bevor ein Client das Urteil (`L2Verdict`) verarbeitet, validiert er die Signatur des Envelopes. Nur wenn die Authentizität des Servers gewährleistet ist, wird das Urteil akzeptiert.
+
 ## 3. Die Workflows (Szenarien)
 
 Das Zusammenspiel dieser Komponenten zeigt sich in vier maßgeblichen Workflow-Szenarien.
@@ -75,10 +81,11 @@ Das Zusammenspiel dieser Komponenten zeigt sich in vier maßgeblichen Workflow-S
     1.  Prüft den Bloom-Filter für die `l2_voucher_id`. Ergebnis: Treffer.
     2.  Sucht in der Key-Value DB nach dem `challenge_ds_tag`. Ergebnis: Nicht gefunden (im Sinne von "noch nicht ausgegeben/neu"). *(Anmerkung: Wenn als "nicht ausgegeben" zu verifizieren: Tag der eingehenden Tx sollte noch kein Lock haben, oder die Applikationslogik lockt ihn in dem Moment.) Im Originalbeispiel sucht er den Tag. Wenn der Tag der vorherigen Tx gesucht wird und dort unsere Tx lockt, ist es "Verified".* Im Betrugsfall wird er mit einer **anderen** Tx gefunden. Wenn vom Server gemeldet wird, der aktuelle eigene wird verriegelt, antwortet er entsprechend.
     *(Korrektur laut Vorgabe - wenn der Gutschein schon gesichert wurde)*: Sucht in der Key-Value DB nach dem `challenge_ds_tag`. Ergebnis: Gefunden.
-*   **Server antwortet:** `L2Verdict::Verified { lock_entry }` (Beinhaltet `t_id`, `sender_ephemeral_pub` und `layer2_signature`).
+*   **Server antwortet:** `L2ResponseEnvelope` (Beinhaltet das signierte `L2Verdict::Verified { lock_entry }`).
 *   **Client verifiziert:**
-    1.  Er prüft zuerst die Signatur des `lock_entry`. Ist sie gültig, sagt der Server die Wahrheit.
-    2.  Danach vergleicht er die `t_id` aus dem Eintrag mit der `t_id` seiner lokalen Gutschein-Datei. Stimmen sie überein, ist die Zahlung garantiert sicher.
+    1.  **Server-Authentizität:** Er prüft die Signatur des Envelopes gegen den `l2_server_pubkey`.
+    2.  **Nutzer-Beweis:** Er prüft die Signatur des `lock_entry` (Nutzer-Signatur). Ist sie gültig, sagt der Server die Wahrheit.
+    3.  **T_ID Check:** Danach vergleicht er die `t_id` aus dem Eintrag mit der `t_id` seiner lokalen Gutschein-Datei. Stimmen sie überein, ist die Zahlung garantiert sicher.
 
 ### Szenario 2: Die Offline-Synchronisation (Client ist dem Server voraus)
 *   **Kontext:** Der Nutzer hat den Gutschein offline mehrfach weitergegeben. Der Client hat nun den Stand Tiefe 10, aber das L2-Netzwerk kennt bisher nur den Stand bis Tiefe 7.
@@ -87,7 +94,7 @@ Das Zusammenspiel dieser Komponenten zeigt sich in vier maßgeblichen Workflow-S
     1.  Bloom-Filter: Treffer.
     2.  Sucht den Ziel-Hash (Tiefe 10) in der DB. Ergebnis: Nicht gefunden.
     3.  Der Server iteriert durch die `locator_prefixes`: Kennt Tiefe 9? Nein. Kennt Tiefe 8? Nein. Kennt Tiefe 6? Ja!
-*   **Server antwortet:** `L2Verdict::MissingLocks { sync_point: "3J98t1Wp9a" }` (Das 10-Zeichen Präfix der letzten bekannten Transaktion).
+*   **Server antwortet:** `L2ResponseEnvelope` mit `L2Verdict::MissingLocks { sync_point: "3J98t1Wp9a" }`.
 *   **Client arbeitet (Batch-Erstellung):**
     *   Der Client weiß nun genau: "Der Server kennt den Pfad bis Tiefe 6. Ich muss ihm nur die Transaktionen 7, 8, 9 und 10 schicken." Er formt einen `L2BatchLockRequest` mit den Payload-Daten dieser vier Transaktionen.
 *   **Server verarbeitet Batch:** Der Server führt die UTXO-Checks und Krypto-Signaturprüfungen für die Transaktionen 7 bis 10 sequenziell durch und speichert sie in der DB. Er antwortet mit `Success`.
@@ -98,7 +105,7 @@ Das Zusammenspiel dieser Komponenten zeigt sich in vier maßgeblichen Workflow-S
     *   `challenge_ds_tag`: Der Tag aus Tiefe 5A.
 *   **Server arbeitet:**
     *   Sucht den `challenge_ds_tag` in der DB. Ergebnis: Gefunden! (Der Tag ist bereits mit Transaktion 5B belegt).
-*   **Server antwortet:** `L2Verdict::Verified { lock_entry }` (Sendet den kompletten Lock von Transaktion 5B).
+*   **Server antwortet:** `L2ResponseEnvelope` mit `L2Verdict::Verified { lock_entry }`.
 *   **Client verifiziert & blockiert:**
     1.  Der Client validiert die `layer2_signature` aus dem gesendeten `lock_entry`. Da sie gültig ist, ist bewiesen, dass der Server nicht lügt.
     2.  Der Client vergleicht die vom Server erhaltene `t_id` (5B) mit seiner lokalen `t_id` (5A).
@@ -113,13 +120,16 @@ Das Zusammenspiel dieser Komponenten zeigt sich in vier maßgeblichen Workflow-S
     *   `locator_prefixes`: `["GenesisPre"]`.
 *   **Server arbeitet:**
     *   Prüft den Bloom-Filter für die `l2_voucher_id`. Ergebnis: Kein Treffer.
-*   **Server antwortet:** `L2Verdict::UnknownVoucher`
+*   **Server antwortet:** `L2ResponseEnvelope` mit `L2Verdict::UnknownVoucher`
 *   **Client arbeitet (Initialer Upload):** Der Client weiß, dass der Gutschein global unbekannt ist und lädt die Kette ab Genesis hoch. Der Server trägt die `l2_voucher_id` nach dem ersten validen Genesis-Lock in den Bloom-Filter ein.
+*   **Client arbeitet (Initialer Upload):**
+    *   Der Client prüft die Signatur des Envelopes gegen den `l2_server_pubkey`.
+    *   Der Client weiß, dass der Gutschein global unbekannt ist und lädt die Kette ab Genesis hoch. Der Server trägt die `l2_voucher_id` nach dem ersten validen Genesis-Lock in den Bloom-Filter ein.
 
 ## 4. Zusammenfassung der Architektur-Vorteile
 
 Durch dieses Design erreicht `human_money_core` eine perfekte Symbiose aus Dezentralität und Performanz:
 *   **Maximale Serversicherheit:** Der L2-Server ist immun gegen Spam-Angriffe, da er unbekannten "Müll" via Bloom-Filter abweist.
 *   **O(1) Skalierbarkeit:** Der Server benötigt unabhängig von der Baumtiefe nur eine Handvoll Index-Abfragen.
-*   **Vollständige Krypto-Gewissheit:** Die Rückgabe von vollständig signierten Lock-Einträgen entzieht L2-Nodes jegliche Möglichkeit, Double-Spends vorzutäuschen.
+*   **Vollständige Krypto-Gewissheit:** Die Rückgabe von vollständig signierten Lock-Einträgen in Kombination mit der Server-Signatur des Envelopes entzieht sowohl L2-Nodes als auch Angreifern jegliche Möglichkeit, Daten zu manipulieren oder Double-Spends vorzutäuschen.
 *   **Entwicklerfreundlichkeit:** Durch die Nutzung von 10-Zeichen Base58-Präfixen bleibt das Protokoll für Menschen lesbar, einfach zu debuggen und hochperformant in der Datenbank-Suche. Die Trennung in eine hex-basierte `L2 Voucher ID` sorgt für optimale Datenbank-Indizierung.

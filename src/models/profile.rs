@@ -218,6 +218,9 @@ pub struct UserProfile {
     pub service_offer: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub needs: Option<String>,
+    /// Der öffentliche Schlüssel des L2-Servers, dem dieses Wallet vertraut.
+    #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
+    pub l2_server_pubkey: Option<[u8; 32]>,
 }
 
 // Implementiere `Default` für UserProfile, um eine leere Instanz zu erzeugen, die dann gefüllt wird.
@@ -238,6 +241,7 @@ impl Default for UserProfile {
             url: None,
             service_offer: None,
             needs: None,
+            l2_server_pubkey: None,
         }
     }
 }

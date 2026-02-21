@@ -241,3 +241,12 @@ pub enum L2Verdict {
         reason: String,
     },
 }
+
+/// Umschlag für alle L2-Server-Antworten.
+/// Garantiert die Authentizität des Servers durch eine Ed25519-Signatur.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct L2ResponseEnvelope {
+    pub verdict: L2Verdict,
+    #[serde(with = "crate::models::layer2_api::base58_64")]
+    pub server_signature: [u8; 64],
+}
