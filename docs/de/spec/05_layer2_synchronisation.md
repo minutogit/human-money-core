@@ -61,17 +61,98 @@ Ein bösartiger Server könnte versuchen, einen Client zu täuschen, indem er be
 
 Um dies auszuschließen, nutzt HuMoCo eine strikte kryptografische Bindung (Signature Hardening):
 *   **Proof of Truth:** Wenn der Server meldet, dass ein Tag vergeben ist, muss er den vollständigen `L2LockEntry` (inklusive der `layer2_signature`) mitsenden.
-*   **Payload-Bindung:** Die Signatur des Nutzers (`layer2_signature`) sichert nicht nur die `t_id`, sondern bindet diese untrennbar an die `l2_voucher_id` und den `challenge_ds_tag`.
-*   **Hashing-Logik:** `Hash(challenge_ds_tag + l2_voucher_id + t_id + sender_pub + ...)`. Da der Server die Signatur des Nutzers über diesen spezifischen Payload unmöglich fälschen kann, dient der zurückgelieferte Eintrag als unumstößlicher Beweis.
+*   **Payload-Bindung:** Die Signatur des Nutzers (`layer2_signature`) sichert nicht nur die `t_id`, sondern bindet diese untrennbar an die `layer2_voucher_id` und den `challenge_ds_tag`.
+*   **Hashing-Logik:** Der Client serialisiert die Felder strikt in der folgenden Reihenfolge (kodiert als rohe Bytes, gehashed mit SHA-256):
+    1. `challenge_ds_tag` (als Bytes)
+    2. `layer2_voucher_id` (als Bytes)
+    3. `transaction_hash / t_id` (32 Bytes Array)
+    4. `sender_ephemeral_pub` (32 Bytes Array)
+    5. `receiver_ephemeral_pub_hash` (Optional, 32 Bytes Array)
+    6. `change_ephemeral_pub_hash` (Optional, 32 Bytes Array)
+    7. `valid_until` (Optional, als Bytes)
+*   Da der Server die Signatur des Nutzers über diesen spezifischen Payload unmöglich fälschen kann, dient der zurückgelieferte Eintrag als unumstößlicher Beweis.
 *   **Schutz vor Mix-up:** Ein Server kann keinen gültigen Beweis eines anderen Gutscheins oder eines anderen Tags "umbiegen", da die IDs fest im signierten Hash verankert sind.
 
 ### E. Authentizität des L2-Servers (Server Signatures)
 Um zu verhindern, dass ein böswilliger Akteur gefälschte Verifizierungen sendet, nutzt das Protokoll eine zusätzliche Authentifizierungsebene:
-*   **L2ResponseEnvelope:** Jede Antwort des Servers (`L2Verdict`) wird in einen Briefumschlag (Envelope) verpackt, der eine Ed25519-Signatur des Servers trägt.
+*   **L2ResponseEnvelope:** Jede Antwort des Servers (`L2Verdict`) wird in einen Briefumschlag (Envelope) verpackt, der eine Ed25519-Signatur des Servers trägt. Dies gilt auch für Fehler oder Synchronisationspunkte.
 *   **Vertrauensanker:** Das Wallet verfügt über den konfigurierten `l2_server_pubkey`.
-*   **Verifizierung:** Bevor ein Client das Urteil verarbeitet, validiert er die Server-Signatur des Envelopes. Nur bei erfolgreicher Authentizität wird das Urteil akzeptiert.
+*   **Verifizierung:** Bevor ein Client das Urteil verarbeitet, bildet er den SHA-256 Hash der serialisierten `verdict` JSON-Daten. Anschließend validiert er die Server-Signatur (`server_signature`) des Envelopes mit diesem Hash. Nur bei erfolgreicher Authentizität wird das Urteil akzeptiert.
 
-## 3. Die Workflows (Szenarien)
+## 3. Datenstrukturen und API-Payloads
+
+Die Kommunikation zwischen Wallet und L2-Node findet standardmäßig mittels JSON-kodierten Nachrichten (oft transportiert über QUIC oder HTTP/2) statt. Kryptografische Keys und Hashes (Ed25519, SHA-256) werden im L2 Netzwerk, sofern in JSON eingebettet, konsequent in **Base58**-String-Repräsentation (oder seltener als hexadezimaler String für die `layer2_voucher_id`) gesendet, um Interoperabilität zu gewährleisten.
+
+### L2LockRequest (Zustand anmelden)
+Dieser Payload wird vom Client gesendet, um eine neue Transaktion (oder Genesis) auf der L2-Node zu registrieren ("locken").
+
+```json
+{
+  "auth": {
+    "ephemeral_pubkey": "FR2Q... (Base58, 32 Bytes)",
+    "auth_signature": null
+  },
+  "layer2_voucher_id": "bd3a81285da197b...", // Hex-kodiert
+  "ds_tag": "9aXv2Mqn8b... (Base58)", // null bei Genesis-Locks
+  "transaction_hash": "3J98... (Base58, 32 Bytes)",
+  "is_genesis": false,
+  "sender_ephemeral_pub": "5Qx1... (Base58, 32 Bytes)",
+  "receiver_ephemeral_pub_hash": "7mY2... (Base58, 32 Bytes)", // optional
+  "change_ephemeral_pub_hash": null, // optional
+  "layer2_signature": "At92... (Base58, 64 Bytes)",
+  "valid_until": null // optional
+}
+```
+
+### L2StatusQuery (Zustand abfragen)
+Mit dieser Payload fragt das Wallet den Status eines spezifischen Tags ab. Optional schickt es Locator-Brotkrumen für effiziente Missing-Locks-Suchen.
+
+```json
+{
+  "auth": {
+    "ephemeral_pubkey": "FR2Q...",
+    "auth_signature": null
+  },
+  "layer2_voucher_id": "bd3a81285da197b...",
+  "challenge_ds_tag": "abC8xY...", // Der zu prüfende Tag in voller Base58 Länge
+  "locator_prefixes": [
+    "3J98t1Wp9a", // Base58 (erste 10 chars)
+    "9aXv2Mqn8b",
+    "GenesisPre"
+  ]
+}
+```
+
+### L2ResponseEnvelope & L2Verdict (Antwort des Servers)
+Dies ist die generische Hülle (`Envelope`), die für **jede** Serverantwort genutzt wird. Das `verdict` unterscheidet den genauen Status.
+
+```json
+{
+  "verdict": {
+    "type": "Verified",
+    "lock_entry": {
+      "layer2_voucher_id": "bd3a81285da1...",
+      "t_id": "3J98... (Base58)",
+      "sender_ephemeral_pub": "5Qx1... (Base58)",
+      "receiver_ephemeral_pub_hash": "7mY2...",
+      "change_ephemeral_pub_hash": null,
+      "layer2_signature": "At92...",
+      "valid_until": null
+    }
+  },
+  "server_signature": "ZZ88... (Base58, 64 Bytes)"
+}
+```
+
+Mögliche `type`-Werte für `verdict`:
+- `Verified`: Bestätigung eines erfolgreichen oder bereits gesetzten Locks. Gibt stets den vollständigen `lock_entry` zurück.
+- `MissingLocks`: Server fordert Synchronisation ab dem genannten `sync_point`.
+- `UnknownVoucher`: Gutschein ist der L2-Node komplett unbekannt.
+- `Rejected`: Fehlerhafte Anfrage (z.B. Signaturprüfung fehlgeschlagen).
+
+Ein ausführliches, lauffähiges Code-Beispiel einer Mock L2-Node findet sich unter [`examples/l2_mock_node.rs`](../../../../examples/l2_mock_node.rs).
+
+## 4. Die Workflows (Szenarien)
 
 Das Zusammenspiel dieser Komponenten zeigt sich in vier maßgeblichen Workflow-Szenarien.
 

@@ -4,8 +4,8 @@
 //! Playground zur Demonstration der Layer 2 Integration und der "Chain of Authority".
 //! Führt eine Sequenz von Transaktionen aus und zeigt die Verkettung im L2-Netzwerk.
 
-use ed25519_dalek::{VerifyingKey, Signature, Verifier};
-use human_money_core::models::layer2_api::{L2LockRequest, L2Verdict, L2StatusQuery};
+use ed25519_dalek::{VerifyingKey, Signature, Verifier, SigningKey, Signer};
+use human_money_core::models::layer2_api::{L2LockRequest, L2Verdict, L2StatusQuery, L2ResponseEnvelope};
 use human_money_core::models::voucher::ValueDefinition;
 use human_money_core::services::voucher_manager::NewVoucherData;
 use human_money_core::models::profile::PublicProfile;
@@ -22,15 +22,42 @@ pub struct MockL2Node {
     pub locks: HashMap<String, HashMap<String, human_money_core::models::layer2_api::L2LockEntry>>,
     /// Simuliert das UTXO Modell für P2PKH Anker
     pub spendable_outputs: HashSet<[u8; 32]>,
+    /// Server Keypair für Signaturen
+    pub signing_key: SigningKey,
 }
 
 impl MockL2Node {
     pub fn new() -> Self {
+        let mut rng = rand::thread_rng();
+        let signing_key = SigningKey::generate(&mut rng);
         Self {
             vouchers: HashSet::new(),
             locks: HashMap::new(),
             spendable_outputs: HashSet::new(),
+            signing_key,
         }
+    }
+
+    pub fn get_public_key(&self) -> [u8; 32] {
+        self.signing_key.verifying_key().to_bytes()
+    }
+
+    fn wrap_and_sign(&self, verdict: L2Verdict) -> Vec<u8> {
+        let verdict_serialized = serde_json::to_vec(&verdict).unwrap();
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&verdict_serialized);
+        let verdict_hash = hasher.finalize();
+        
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(&verdict_hash);
+
+        let signature = self.signing_key.sign(&hash_arr);
+        let envelope = L2ResponseEnvelope {
+            verdict,
+            server_signature: signature.to_bytes(),
+        };
+        serde_json::to_vec(&envelope).unwrap()
     }
 
     pub fn handle_lock_request(&mut self, req_bytes: &[u8]) -> Vec<u8> {
@@ -62,7 +89,7 @@ impl MockL2Node {
             let verdict = L2Verdict::Verified {
                 lock_entry: entry.clone(),
             };
-            return serde_json::to_vec(&verdict).unwrap();
+            return self.wrap_and_sign(verdict);
         }
 
         // Erfolg: Verankern
@@ -88,7 +115,7 @@ impl MockL2Node {
         let verdict = L2Verdict::Ok {
             signature: [0u8; 64],
         };
-        serde_json::to_vec(&verdict).unwrap()
+        self.wrap_and_sign(verdict)
     }
 
     pub fn handle_status_query(&self, req_bytes: &[u8]) -> Vec<u8> {
@@ -96,7 +123,7 @@ impl MockL2Node {
 
         // 1. Bloom Filter Check
         if !self.vouchers.contains(&req.layer2_voucher_id) {
-            return serde_json::to_vec(&L2Verdict::UnknownVoucher).unwrap();
+            return self.wrap_and_sign(L2Verdict::UnknownVoucher);
         }
 
         let voucher_locks = self.locks.get(&req.layer2_voucher_id).unwrap();
@@ -106,7 +133,7 @@ impl MockL2Node {
             let verdict = L2Verdict::Verified {
                 lock_entry: entry.clone(),
             };
-            return serde_json::to_vec(&verdict).unwrap();
+            return self.wrap_and_sign(verdict);
         }
 
         // 3. Logarithmic Locators
@@ -116,14 +143,14 @@ impl MockL2Node {
                     let verdict = L2Verdict::MissingLocks {
                         sync_point: prefix.clone(),
                     };
-                    return serde_json::to_vec(&verdict).unwrap();
+                    return self.wrap_and_sign(verdict);
                 }
             }
         }
 
-        serde_json::to_vec(&L2Verdict::MissingLocks {
+        self.wrap_and_sign(L2Verdict::MissingLocks {
             sync_point: "genesis".to_string(),
-        }).unwrap()
+        })
     }
 }
 
@@ -152,6 +179,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     standards_toml.insert(flexible_standard.metadata.uuid.clone(), flexible_toml.clone());
 
     let mut server = MockL2Node::new();
+
+    // L2 Server Public Key in Alice's Wallet konfigurieren
+    if let Some(wallet) = app.get_wallet_mut() {
+        wallet.profile.l2_server_pubkey = Some(server.get_public_key());
+    }
 
     // --- SCHRITT 1: Genesis ---
     println!("\x1b[1;33m[1/3] Genesis: Gutschein erstellen (100 Silber)\x1b[0m");
