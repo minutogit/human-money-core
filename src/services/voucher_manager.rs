@@ -400,7 +400,6 @@ pub fn create_voucher(
     init_transaction.t_id = final_t_id;
 
     // 2. Layer 2 Signature: Signiert den L2-Payload-Hash mit dem ephemeralen Key (Genesis Secret)
-    let ds_tag_raw = bs58::decode(&init_transaction.prev_hash).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid ds_tag hash".to_string()))?;
     let t_id_raw = bs58::decode(&init_transaction.t_id).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id hash".to_string()))?;
     
     let receiver_hash_str = init_transaction.receiver_ephemeral_pub_hash.as_ref()
@@ -413,9 +412,12 @@ pub fn create_voucher(
         vec.try_into().map_err(|_| VoucherCoreError::InvalidHashFormat(format!("{} must be 32 bytes", name)))
     };
 
+    let v_id = crate::services::l2_gateway::calculate_layer2_voucher_id(&init_transaction)?;
+
     let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+        &v_id,
+        None, // No ds_tag for init
         &to_32_bytes(t_id_raw.clone(), "t_id")?,
-        &to_32_bytes(ds_tag_raw.clone(), "ds_tag")?,
         &to_32_bytes(sender_pub_raw.clone(), "sender_pub")?,
         Some(&to_32_bytes(receiver_hash_raw.clone(), "receiver_hash")?),
         None,
@@ -835,9 +837,15 @@ pub fn create_transaction(
 
     let sender_pub_raw = bs58::decode(&sender_ephemeral_pub).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid sender_ephemeral_pub format".to_string()))?;
 
+    let v_id = crate::services::l2_gateway::extract_layer2_voucher_id(voucher)?;
+    
+    // ds_tag als Hex-String für die Signatur
+    let ds_tag_hex = hex::encode(&ds_tag_raw);
+
     let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+        &v_id,
+        Some(&ds_tag_hex),
         &to_32_bytes(t_id_raw.clone(), "t_id")?,
-        &to_32_bytes(ds_tag_raw.clone(), "ds_tag")?,
         &to_32_bytes(sender_pub_raw.clone(), "sender_pub")?,
         receiver_hash_raw.as_ref().map(|v| &*v),
         change_hash_raw.as_ref().map(|v| &*v),

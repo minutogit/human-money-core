@@ -215,6 +215,7 @@ fn create_hacked_tx(
     signer_key: &ed25519_dalek::SigningKey,
     identity_key: Option<&ed25519_dalek::SigningKey>,
     mut hacked_tx: Transaction,
+    v_id: &str,
 ) -> Transaction {
     hacked_tx.t_id = "".to_string();
     hacked_tx.layer2_signature = None;
@@ -247,9 +248,16 @@ fn create_hacked_tx(
         arr
     };
 
+    let ds_tag_hex = if hacked_tx.t_type == "init" {
+        None
+    } else {
+        Some(hex::encode(&ds_tag_raw))
+    };
+
     let payload_hash = human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw(
+        v_id,
+        ds_tag_hex.as_deref(),
         &to_32(t_id_raw.clone()),
-        &to_32(ds_tag_raw),
         &to_32(sender_pub_raw),
         receiver_hash_raw.as_ref().map(|v| to_32(v.clone())).as_ref(),
         change_hash_raw.as_ref().map(|v| to_32(v.clone())).as_ref(),
@@ -446,7 +454,8 @@ fn test_attack_tamper_core_data_and_guarantors() {
     // Diese Transaktion selbst ist valide und wird vom Hacker signiert. Der Betrug liegt im manipulierten Creator-Block.
     add_p2pkh_layer(&mut final_tx, &hacker_holder_secret);
     final_tx.trap_data = Some(generate_valid_trap_for_test(&final_tx, &hacker_holder_secret, &ACTORS.hacker.signing_key, &ACTORS.hacker.user_id));
-    let hacked_tx = create_hacked_tx(&hacker_holder_secret, Some(&ACTORS.hacker.signing_key), final_tx);
+    let v_id = human_money_core::services::l2_gateway::extract_layer2_voucher_id(voucher_in_hacker_wallet).unwrap();
+    let hacked_tx = create_hacked_tx(&hacker_holder_secret, Some(&ACTORS.hacker.signing_key), final_tx, &v_id);
     inflated_voucher.transactions.push(hacked_tx);
 
     let hacked_container = create_hacked_bundle_and_container(
@@ -514,7 +523,8 @@ fn test_attack_tamper_core_data_and_guarantors() {
     };
     add_p2pkh_layer(&mut final_tx_2, &hacker_holder_secret);
     final_tx_2.trap_data = Some(generate_valid_trap_for_test(&final_tx_2, &hacker_holder_secret, &ACTORS.hacker.signing_key, &ACTORS.hacker.user_id));
-    let final_tx_hacked = create_hacked_tx(&hacker_holder_secret, Some(&ACTORS.hacker.signing_key), final_tx_2);
+    let v_id = human_money_core::services::l2_gateway::extract_layer2_voucher_id(voucher_in_hacker_wallet).unwrap();
+    let final_tx_hacked = create_hacked_tx(&hacker_holder_secret, Some(&ACTORS.hacker.signing_key), final_tx_2, &v_id);
     tampered_guarantor_voucher.transactions.push(final_tx_hacked);
 
     let hacked_container = create_hacked_bundle_and_container(
@@ -740,7 +750,8 @@ fn test_attack_create_inconsistent_transaction() {
     };
     add_p2pkh_layer(&mut overspend_tx_unsigned, &hacker_holder_secret);
     overspend_tx_unsigned.trap_data = Some(generate_valid_trap_for_test(&overspend_tx_unsigned, &hacker_holder_secret, &ACTORS.hacker.signing_key, &ACTORS.hacker.user_id));
-    let overspend_tx = create_hacked_tx(&hacker_holder_secret, Some(&ACTORS.hacker.signing_key), overspend_tx_unsigned);
+    let v_id = human_money_core::services::l2_gateway::extract_layer2_voucher_id(voucher_in_hacker_wallet).unwrap();
+    let overspend_tx = create_hacked_tx(&hacker_holder_secret, Some(&ACTORS.hacker.signing_key), overspend_tx_unsigned, &v_id);
     overspend_voucher.transactions.push(overspend_tx);
     let hacked_container = create_hacked_bundle_and_container(
         &ACTORS.hacker,
@@ -813,7 +824,8 @@ fn test_attack_inconsistent_split_transaction() {
     };
     add_p2pkh_layer(&mut inconsistent_tx_unsigned, &holder_key);
     inconsistent_tx_unsigned.trap_data = Some(generate_valid_trap_for_test(&inconsistent_tx_unsigned, &holder_key, &ACTORS.hacker.signing_key, &ACTORS.hacker.user_id));
-    let inconsistent_tx = create_hacked_tx(&holder_key, Some(&ACTORS.hacker.signing_key), inconsistent_tx_unsigned);
+    let v_id = human_money_core::services::l2_gateway::extract_layer2_voucher_id(&voucher).unwrap();
+    let inconsistent_tx = create_hacked_tx(&holder_key, Some(&ACTORS.hacker.signing_key), inconsistent_tx_unsigned, &v_id);
     inconsistent_split_voucher
         .transactions
         .push(inconsistent_tx);

@@ -606,8 +606,10 @@ pub fn verify_transactions(
             "Transaction list is empty.".to_string(),
         ))
     })?;
+    let layer2_voucher_id = crate::services::l2_gateway::extract_layer2_voucher_id(voucher)?;
+
     verify_transaction_basics(init_tx, voucher, true)?;
-    verify_transaction_integrity_and_signature(init_tx)?;
+    verify_transaction_integrity_and_signature(init_tx, &layer2_voucher_id)?;
 
     // --- Phase 2: Verify all subsequent transactions in the chain ---
     let mut last_tx_hash = get_hash(to_canonical_json(init_tx)?);
@@ -624,7 +626,7 @@ pub fn verify_transactions(
 
         // Basic and cryptographic checks
         verify_transaction_basics(tx, voucher, false)?;
-        verify_transaction_integrity_and_signature(tx)?;
+        verify_transaction_integrity_and_signature(tx, &layer2_voucher_id)?;
 
         // Chain integrity checks
         if tx.prev_hash != last_tx_hash {
@@ -1015,6 +1017,7 @@ fn verify_transaction_basics(
 /// Prüft die kryptographische Integrität und die Signatur einer einzelnen Transaktion.
 pub fn verify_transaction_integrity_and_signature(
     transaction: &Transaction,
+    layer2_voucher_id: &str,
 ) -> Result<(), VoucherCoreError> {
     #[cfg(feature = "test-utils")]
     if crate::is_signature_bypass_active() {
@@ -1064,17 +1067,17 @@ pub fn verify_transaction_integrity_and_signature(
                 ValidationError::SignatureDecodeError("Invalid t_id format".into())
             })?;
             
-            let ds_tag_str = if transaction.t_type == "init" {
-                &transaction.prev_hash
+            let ds_tag_hex = if transaction.t_type == "init" {
+                None
             } else {
-                transaction.trap_data.as_ref().map(|td| &td.ds_tag).ok_or_else(|| {
+                let ds_tag_str = transaction.trap_data.as_ref().map(|td| &td.ds_tag).ok_or_else(|| {
                     ValidationError::InvalidTransaction("Missing trap_data for non-init transaction".to_string())
-                })?
+                })?;
+                let decoded = bs58::decode(ds_tag_str).into_vec().map_err(|_| {
+                    ValidationError::SignatureDecodeError("Invalid ds_tag format".into())
+                })?;
+                Some(hex::encode(decoded))
             };
-            
-            let ds_tag_raw = bs58::decode(ds_tag_str).into_vec().map_err(|_| {
-                ValidationError::SignatureDecodeError("Invalid ds_tag format".into())
-            })?;
 
             let receiver_hash_raw = transaction.receiver_ephemeral_pub_hash.as_ref().map(|h| {
                 bs58::decode(h).into_vec().map_err(|_| {
@@ -1088,12 +1091,17 @@ pub fn verify_transaction_integrity_and_signature(
                 })
             }).transpose()?;
 
+            let to_32_bytes = |vec: Vec<u8>| -> Result<[u8; 32], ValidationError> {
+                vec.try_into().map_err(|_| ValidationError::SignatureDecodeError("Hash must be 32 bytes".into()))
+            };
+
             let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
-                t_id_raw[..32].try_into().map_err(|_| ValidationError::SignatureDecodeError("t_id must be 32 bytes".into()))?,
-                ds_tag_raw[..32].try_into().map_err(|_| ValidationError::SignatureDecodeError("ds_tag must be 32 bytes".into()))?,
-                ephem_pub_bytes[..32].try_into().map_err(|_| ValidationError::SignatureDecodeError("ephemeral pubkey must be 32 bytes".into()))?,
-                receiver_hash_raw.as_ref().map(|v| v[..32].try_into().unwrap()).as_ref(),
-                change_hash_raw.as_ref().map(|v| v[..32].try_into().unwrap()).as_ref(),
+                layer2_voucher_id,
+                ds_tag_hex.as_deref(),
+                &to_32_bytes(t_id_raw)?,
+                &to_32_bytes(ephem_pub_bytes)?,
+                receiver_hash_raw.as_ref().map(|v| v.as_slice().try_into().unwrap()).as_ref(),
+                change_hash_raw.as_ref().map(|v| v.as_slice().try_into().unwrap()).as_ref(),
                 transaction.valid_until.as_deref(),
             );
 

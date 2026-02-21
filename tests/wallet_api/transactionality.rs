@@ -568,6 +568,8 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
     let alice_holder_key = test_utils::derive_holder_key(&voucher_v1, &identity_alice.signing_key);
     let alice_holder_pub = bs58::encode(alice_holder_key.verifying_key().to_bytes()).into_string();
 
+    let v_id = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&voucher_v1.transactions[0]).unwrap();
+
     // Pfad A (wird zuerst erfolgreich empfangen)
     let mut tx_a = human_money_core::models::voucher::Transaction {
         prev_hash: prev_tx_hash.clone(),
@@ -580,7 +582,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         ..Default::default()
     };
     // FIX: Use resign_transaction_ext with Permanent Key for Identity Signature and Holder Key for Proof Signature
-    tx_a = human_money_core::test_utils::resign_transaction_ext(tx_a, &identity_alice.signing_key, Some(&alice_holder_key));
+    tx_a = human_money_core::test_utils::resign_transaction_ext(tx_a, &identity_alice.signing_key, &v_id, Some(&alice_holder_key));
     let mut voucher_path_a = voucher_v1.clone();
     voucher_path_a.transactions.push(tx_a);
     let bundle_a = human_money_core::test_utils::create_test_bundle(
@@ -603,7 +605,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         ..Default::default()
     };
     // FIX: Use resign_transaction_ext with Permanent Key for Identity Signature and Holder Key for Proof Signature
-    tx_b = human_money_core::test_utils::resign_transaction_ext(tx_b, &identity_alice.signing_key, Some(&alice_holder_key));
+    tx_b = human_money_core::test_utils::resign_transaction_ext(tx_b, &identity_alice.signing_key, &v_id, Some(&alice_holder_key));
     let mut voucher_path_b = voucher_v1.clone();
     voucher_path_b.transactions.push(tx_b);
     let bundle_b = human_money_core::test_utils::create_test_bundle(

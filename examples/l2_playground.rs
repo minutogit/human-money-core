@@ -16,8 +16,8 @@ use tempfile::tempdir;
 
 /// Eine verbesserte Simulation eines L2-Nodes, die den aktuellen UTXO-basierten Stand widerspiegelt.
 pub struct MockL2Node {
-    /// Simuliert die L2-Datenbank. Key: ds_tag (Anker), Value: t_id (Transaktions-Hash)
-    pub locks: HashMap<[u8; 32], [u8; 32]>,
+    /// Simuliert die L2-Datenbank. Key: layer2_voucher_id, Value: Map von ds_tag -> t_id
+    pub locks: HashMap<String, HashMap<String, [u8; 32]>>,
     /// Simuliert das UTXO Modell für P2PKH Anker
     pub spendable_outputs: HashSet<[u8; 32]>,
 }
@@ -34,12 +34,12 @@ impl MockL2Node {
         let req: L2LockRequest = serde_json::from_slice(req_bytes).expect("Failed to parse request");
         
         // --- 1. Autorität Prüfen (layer2_signature) ---
-        // In der Realität würde hier die Signatur gegen den Ephemeral Key geprüft.
         let ephem_key = VerifyingKey::from_bytes(&req.sender_ephemeral_pub).expect("Invalid key");
         let signature = Signature::from_bytes(&req.layer2_signature);
+
+        let payload_hash = human_money_core::services::l2_gateway::calculate_l2_payload_hash(&req);
         
-        // Wir simulieren die Prüfung (oder führen sie aus, falls bypass in core deaktiviert ist)
-        if ephem_key.verify(&req.transaction_hash, &signature).is_err() {
+        if ephem_key.verify(&payload_hash, &signature).is_err() {
              // Im Beispiel erlauben wir ungültige signaturen für schnelleres prototyping, 
              // aber ein echter Node würde hier ablehnen.
         }
@@ -60,36 +60,51 @@ impl MockL2Node {
         }
 
         // --- 3. Double Spend Check via ds_tag ---
-        if let Some(&existing_t_id) = self.locks.get(&req.ds_tag) {
-            let verdict = L2Verdict::DoubleSpend {
-                conflicting_t_id: existing_t_id,
-                proof_signature: [0u8; 64],
-            };
-            serde_json::to_vec(&verdict).unwrap()
-        } else {
+        if let Some(ds_tag) = &req.ds_tag {
+            let voucher_locks = self.locks.entry(req.layer2_voucher_id.clone()).or_default();
+            if let Some(&existing_t_id) = voucher_locks.get(ds_tag) {
+                let verdict = L2Verdict::DoubleSpend {
+                    conflicting_t_id: existing_t_id,
+                    proof_signature: [0u8; 64],
+                };
+                return serde_json::to_vec(&verdict).unwrap();
+            }
             // Erfolg: Verankern
-            self.locks.insert(req.ds_tag, req.transaction_hash);
-            
-            // Neue UTXOs registrieren (Empfänger und Wechselgeld)
-            if let Some(r) = req.receiver_ephemeral_pub_hash {
-                self.spendable_outputs.insert(r);
-            }
-            if let Some(c) = req.change_ephemeral_pub_hash {
-                self.spendable_outputs.insert(c);
-            }
-
-            let verdict = L2Verdict::Ok {
-                signature: [0u8; 64],
-            };
-            serde_json::to_vec(&verdict).unwrap()
+            voucher_locks.insert(ds_tag.clone(), req.transaction_hash);
+        } else {
+            // Genesis/Init: Einfach Container anlegen
+            self.locks.entry(req.layer2_voucher_id.clone()).or_default();
         }
+
+        // Neue UTXOs registrieren (Empfänger und Wechselgeld)
+        if let Some(r) = req.receiver_ephemeral_pub_hash {
+            self.spendable_outputs.insert(r);
+        }
+        if let Some(c) = req.change_ephemeral_pub_hash {
+            self.spendable_outputs.insert(c);
+        }
+
+        let verdict = L2Verdict::Ok {
+            signature: [0u8; 64],
+        };
+        serde_json::to_vec(&verdict).unwrap()
     }
 
     pub fn handle_status_query(&self, req_bytes: &[u8]) -> Vec<u8> {
         let req: L2StatusQuery = serde_json::from_slice(req_bytes).unwrap();
 
+        let voucher_locks = match self.locks.get(&req.layer2_voucher_id) {
+            Some(v) => v,
+            None => {
+                let verdict = L2Verdict::ConflictFound {
+                    conflicting_t_id: [0u8; 32],
+                };
+                return serde_json::to_vec(&verdict).unwrap();
+            }
+        };
+
         for ds_tag in &req.target_ds_tags {
-            if !self.locks.contains_key(ds_tag) {
+            if !voucher_locks.contains_key(ds_tag) {
                 let verdict = L2Verdict::ConflictFound {
                     conflicting_t_id: [0u8; 32],
                 };
@@ -147,8 +162,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let req_genesis = app.generate_l2_lock_request(&voucher_id)?;
     let resp_genesis = server.handle_lock_request(&req_genesis);
     app.process_l2_response(&resp_genesis, Some(password)).unwrap();
-    println!("✅ Genesis anchored on L2. DS_TAG: \x1b[32m{}\x1b[0m\n", 
-        bs58::encode(serde_json::from_slice::<L2LockRequest>(&req_genesis)?.ds_tag).into_string());
+    println!("✅ Genesis anchored on L2. Voucher ID: \x1b[32m{}\x1b[0m\n", 
+        serde_json::from_slice::<L2LockRequest>(&req_genesis)?.layer2_voucher_id);
 
     // --- SCHRITT 2: Transaktion 1 ---
     println!("\x1b[1;33m[2/3] Transaktion 1: 10 Silber an Bob senden\x1b[0m");
@@ -171,7 +186,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let resp_tx1 = server.handle_lock_request(&req_tx1);
     app.process_l2_response(&resp_tx1, Some(password)).unwrap();
     println!("✅ TX 1 anchored on L2. DS_TAG: \x1b[32m{}\x1b[0m\n", 
-        bs58::encode(serde_json::from_slice::<L2LockRequest>(&req_tx1)?.ds_tag).into_string());
+        serde_json::from_slice::<L2LockRequest>(&req_tx1)?.ds_tag.unwrap_or_default());
 
     // --- SCHRITT 3: Transaktion 2 ---
     println!("\x1b[1;33m[3/3] Transaktion 2: 5 Silber an Bob senden\x1b[0m");
@@ -193,7 +208,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let resp_tx2 = server.handle_lock_request(&req_tx2);
     app.process_l2_response(&resp_tx2, Some(password)).unwrap();
     println!("✅ TX 2 anchored on L2. DS_TAG: \x1b[32m{}\x1b[0m\n", 
-        bs58::encode(serde_json::from_slice::<L2LockRequest>(&req_tx2)?.ds_tag).into_string());
+        serde_json::from_slice::<L2LockRequest>(&req_tx2)?.ds_tag.unwrap_or_default());
 
     // --- ANALYSE & VISUALISIERUNG ---
     println!("\x1b[1;36m======================================================\x1b[0m");
@@ -228,33 +243,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // --- 2. L2 Verankerung ---
+        let current_v_id = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&voucher.transactions[0]).unwrap();
         if let Some(td) = &tx.trap_data {
             println!("  ├─ DS_TAG (Trap): {}", td.ds_tag);
             
-            let mut ds_tag_arr = [0u8; 32];
-            let decoded = bs58::decode(&td.ds_tag).into_vec()?;
-            ds_tag_arr.copy_from_slice(&decoded);
-            
-            if let Some(l2_tid) = server.locks.get(&ds_tag_arr) {
-                let l2_tid_str = bs58::encode(l2_tid).into_string();
-                if l2_tid_str == tx.t_id {
-                    println!("  ├─ L2 Status:     \x1b[32mVERANKERT (Match)\x1b[0m");
+            if let Some(voucher_locks) = server.locks.get(&current_v_id) {
+                // Convert ds_tag from base58 (in transaction) to hex (as used in L2 server keys)
+                let decoded_ds = bs58::decode(&td.ds_tag).into_vec()?;
+                let hex_ds = hex::encode(decoded_ds);
+
+                if let Some(l2_tid) = voucher_locks.get(&hex_ds) {
+                    let l2_tid_str = bs58::encode(l2_tid).into_string();
+                    if l2_tid_str == tx.t_id {
+                        println!("  ├─ L2 Status:     \x1b[32mVERANKERT (Match)\x1b[0m");
+                    } else {
+                        println!("  ├─ L2 Status:     \x1b[31mKONFLIKT! L2 hat id {}\x1b[0m", l2_tid_str);
+                    }
                 } else {
-                    println!("  ├─ L2 Status:     \x1b[31mKONFLIKT! L2 hat id {}\x1b[0m", l2_tid_str);
+                    println!("  ├─ L2 Status:     \x1b[33mOFFLINE (Nicht im L2)\x1b[0m");
                 }
             } else {
                 println!("  ├─ L2 Status:     \x1b[33mOFFLINE (Nicht im L2)\x1b[0m");
             }
         } else if is_genesis {
-            let genesis_ds_tag = human_money_core::services::crypto_utils::get_hash(voucher.voucher_id.as_bytes());
-            println!("  ├─ DS_TAG (Gen):  {}", genesis_ds_tag);
+            println!("  ├─ L2 Voucher ID: {}", current_v_id);
             
-            let mut ds_tag_arr = [0u8; 32];
-            let decoded = bs58::decode(&genesis_ds_tag).into_vec()?;
-            ds_tag_arr.copy_from_slice(&decoded);
-            
-            if server.locks.contains_key(&ds_tag_arr) {
+            if server.locks.contains_key(&current_v_id) {
                 println!("  ├─ L2 Status:     \x1b[32mGENESIS VERANKERT\x1b[0m");
+            } else {
+                println!("  ├─ L2 Status:     \x1b[33mOFFLINE (Nicht im L2)\x1b[0m");
             }
         }
 

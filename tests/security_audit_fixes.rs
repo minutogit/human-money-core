@@ -60,7 +60,7 @@ fn test_verify_integrity_malformed_base58_no_panic() {
     tx.layer2_signature = Some(bs58::encode(vec![0; 64]).into_string());
     
     // This should return an error, NOT panic.
-    let result = verify_transaction_integrity_and_signature(&tx);
+    let result = verify_transaction_integrity_and_signature(&tx, "dummy_v_id");
     assert!(result.is_err());
 }
 
@@ -72,6 +72,6 @@ fn test_verify_integrity_wrong_length_no_panic() {
     tx.sender_ephemeral_pub = Some(bs58::encode(vec![1, 2, 3]).into_string()); // Too short
     tx.layer2_signature = Some(bs58::encode(vec![0; 64]).into_string());
     
-    let result = verify_transaction_integrity_and_signature(&tx);
+    let result = verify_transaction_integrity_and_signature(&tx, "dummy_v_id");
     assert!(result.is_err());
 }

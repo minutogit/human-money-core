@@ -905,7 +905,7 @@ pub fn create_voucher_for_manipulation(
         get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes])
     };
     
-    let mut init_tx = Transaction {
+    let init_tx = Transaction {
         t_id: "".to_string(),
         prev_hash,
         t_type: "init".to_string(),
@@ -925,12 +925,15 @@ pub fn create_voucher_for_manipulation(
         valid_until: Some(valid_until.clone()),
     };
 
+    let mut init_tx = init_tx;
+    let tx_json_for_id = crate::to_canonical_json(&init_tx).unwrap();
+    init_tx.t_id = crate::crypto_utils::get_hash(tx_json_for_id);
+
     // B. Finale ID & Signatur
-    // resign_transaction_ext berechnet t_id und sender_signature neu.
-    // Wir übergeben genesis_secret für die L2-Signatur separat.
+    let v_id = crate::services::l2_gateway::calculate_layer2_voucher_id(&init_tx).expect("Failed to calculate v_id");
     voucher
         .transactions
-        .push(resign_transaction_ext(init_tx, signing_key, Some(&genesis_secret)));
+        .push(resign_transaction_ext(init_tx, signing_key, &v_id, Some(&genesis_secret)));
     voucher
 
 }
@@ -1040,14 +1043,16 @@ pub fn create_female_guarantor_signature(voucher: &Voucher) -> VoucherSignature 
 pub fn resign_transaction(
     tx: Transaction,
     signer_key: &ed25519_dalek::SigningKey,
+    v_id: &str,
 ) -> Transaction {
-    resign_transaction_ext(tx, signer_key, None)
+    resign_transaction_ext(tx, signer_key, v_id, None)
 }
 
 #[allow(dead_code)]
 pub fn resign_transaction_ext(
     mut tx: Transaction,
     signer_key: &ed25519_dalek::SigningKey,
+    v_id: &str,
     l2_signer_key: Option<&ed25519_dalek::SigningKey>,
 ) -> Transaction {
     tx.t_id = "".to_string();
@@ -1072,9 +1077,16 @@ pub fn resign_transaction_ext(
     let receiver_hash_raw = tx.receiver_ephemeral_pub_hash.as_ref().map(|h| bs58::decode(h).into_vec().unwrap());
     let change_hash_raw = tx.change_ephemeral_pub_hash.as_ref().map(|h| bs58::decode(h).into_vec().unwrap());
 
+    let ds_tag_hex = if tx.t_type == "init" {
+        None
+    } else {
+        Some(hex::encode(&ds_tag_raw))
+    };
+
     let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+        v_id,
+        ds_tag_hex.as_deref(),
         &t_id_raw[..32].try_into().unwrap(),
-        &ds_tag_raw[..32].try_into().unwrap(),
         &sender_pub_raw[..32].try_into().unwrap(),
         receiver_hash_raw.as_ref().map(|v| v[..32].try_into().unwrap()).as_ref(),
         change_hash_raw.as_ref().map(|v| v[..32].try_into().unwrap()).as_ref(),

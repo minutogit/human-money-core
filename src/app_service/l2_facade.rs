@@ -5,7 +5,6 @@ use crate::storage::{AuthMethod, WalletLockGuard};
 use crate::wallet::instance::VoucherStatus;
 
 impl AppService {
-    /// Generiert einen L2LockRequest für den neuesten Stand eines lokalen Gutscheins.
     pub fn generate_l2_lock_request(&self, local_instance_id: &str) -> Result<Vec<u8>, String> {
         let (wallet, _identity) = match &self.state {
             AppState::Unlocked { wallet, identity, .. } => (wallet, identity),
@@ -22,11 +21,14 @@ impl AppService {
             .last()
             .ok_or_else(|| "No transactions found in voucher".to_string())?;
 
+        // In the new Layer 2 semantics, the voucher id is derived from the first (init) transaction.
+        let l2_voucher_id = l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])
+            .map_err(|e| e.to_string())?;
+
         // TODO: In the future, derive a proper ephemeral key. For now, use dummy bytes.
         let ephemeral_key = [0u8; 32];
-
         let request = l2_gateway::generate_lock_request(
-            &instance.voucher.voucher_id,
+            &l2_voucher_id,
             transaction,
             &ephemeral_key,
         )
@@ -46,27 +48,17 @@ impl AppService {
             .get_voucher_instance(local_instance_id)
             .ok_or_else(|| format!("Voucher {} not found", local_instance_id))?;
 
+        let layer2_voucher_id = l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])
+            .map_err(|e| e.to_string())?;
+
         let mut target_ds_tags = Vec::new();
 
-        // 1. Genesis (Hash der voucher_id + nonce)
-        let genesis_hash_str = instance.voucher.transactions[0].prev_hash.clone();
-        let mut genesis_ds_tag = [0u8; 32];
-        let decoded = bs58::decode(&genesis_hash_str).into_vec().map_err(|_| "Invalid base58 for genesis ds_tag".to_string())?;
-        if decoded.len() == 32 {
-            genesis_ds_tag.copy_from_slice(&decoded);
-            target_ds_tags.push(genesis_ds_tag);
-        }
-
-        // 2. Alle weiteren Transaktionen
+        // Alle Transaktionen außer init haben einen ds_tag
         for tx in &instance.voucher.transactions {
             if tx.t_type != "init" {
                 if let Some(td) = &tx.trap_data {
-                    let mut ds_tag = [0u8; 32];
                     let decoded_tx_tag = bs58::decode(&td.ds_tag).into_vec().map_err(|_| "Invalid base58 in tx ds_tag".to_string())?;
-                    if decoded_tx_tag.len() == 32 {
-                        ds_tag.copy_from_slice(&decoded_tx_tag);
-                        target_ds_tags.push(ds_tag);
-                    }
+                    target_ds_tags.push(hex::encode(decoded_tx_tag));
                 }
             }
         }
@@ -80,6 +72,7 @@ impl AppService {
 
         let query = L2StatusQuery {
             auth,
+            layer2_voucher_id,
             target_ds_tags,
         };
 

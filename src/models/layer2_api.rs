@@ -154,8 +154,9 @@ pub struct L2AuthPayload {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct L2LockRequest {
     pub auth: L2AuthPayload,
-    #[serde(with = "crate::models::layer2_api::base58_32")]
-    pub ds_tag: [u8; 32],           // Deterministischer Hash des Inputs (oder Voucher-ID bei Genesis)
+    pub layer2_voucher_id: String, // Hex string (64 chars), Pflichtfeld
+    pub ds_tag: Option<String>,    // Hex string (64 chars), None bei 'init'
+    
     #[serde(with = "crate::models::layer2_api::base58_32")]
     pub transaction_hash: [u8; 32], // Der Hash der neuen Transaktion (t_id)
     pub is_genesis: bool,
@@ -180,8 +181,8 @@ pub struct L2LockRequest {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct L2StatusQuery {
     pub auth: L2AuthPayload,
-    #[serde(with = "crate::models::layer2_api::base58_32_vec")]
-    pub target_ds_tags: Vec<[u8; 32]>, // Liste der zu prüfenden Anker
+    pub layer2_voucher_id: String,
+    pub target_ds_tags: Vec<String>, // Liste der zu prüfenden Anker (Hex-Strings)
 }
 
 /// Response: Das Urteil des L2-Servers

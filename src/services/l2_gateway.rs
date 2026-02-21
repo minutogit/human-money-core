@@ -19,21 +19,30 @@ pub fn generate_lock_request(
 ) -> Result<L2LockRequest, VoucherCoreError> {
     let is_genesis = transaction.t_type == "init";
 
-    let ds_tag_str = if is_genesis {
-        transaction.prev_hash.clone()
+    let l2_voucher_id = if is_genesis {
+        calculate_layer2_voucher_id(transaction)?
+    } else {
+        // Für Nicht-Genesis Transaktionen muss die ID des Gutscheins bekannt sein.
+        // In der aktuellen Implementierung nehmen wir an, dass sie extern übergeben wird
+        // oder aus dem prev_hash/traps abgeleitet werden kann. 
+        // Für den Moment nehmen wir an, dass `_voucher_id` (sofern im Hex-Format) die ID ist,
+        // oder wir berechnen sie aus dem genesis_hash (prev_hash bei der ersten Tx nach init).
+        // Laut Anforderung wird sie bei jeder L2-Anfrage mitgeschickt.
+        _voucher_id.to_string()
+    };
+
+    let ds_tag = if is_genesis {
+        None
     } else {
         match &transaction.trap_data {
-            Some(td) => td.ds_tag.clone(),
+            Some(td) => {
+                // Konvertiere Base58 ds_tag zu Hex
+                let decoded = bs58::decode(&td.ds_tag).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid base58 for ds_tag".to_string()))?;
+                Some(hex::encode(decoded))
+            },
             None => return Err(VoucherCoreError::MissingTrapData),
         }
     };
-
-    let mut ds_tag = [0u8; 32];
-    let decoded_ds_tag = bs58::decode(&ds_tag_str).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid base58 for ds_tag".to_string()))?;
-    if decoded_ds_tag.len() != 32 {
-        return Err(VoucherCoreError::InvalidHashFormat("ds_tag must be 32 bytes".to_string()));
-    }
-    ds_tag.copy_from_slice(&decoded_ds_tag);
 
     let mut t_id = [0u8; 32];
     let decoded_t_id = bs58::decode(&transaction.t_id).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid base58 for t_id".to_string()))?;
@@ -86,6 +95,7 @@ pub fn generate_lock_request(
 
     Ok(L2LockRequest {
         auth,
+        layer2_voucher_id: l2_voucher_id,
         ds_tag,
         transaction_hash: t_id,
         is_genesis,
@@ -97,11 +107,54 @@ pub fn generate_lock_request(
     })
 }
 
+/// Berechnet die layer2_voucher_id aus einer Genesis-Transaktion.
+pub fn calculate_layer2_voucher_id(transaction: &Transaction) -> Result<String, VoucherCoreError> {
+    if transaction.t_type != "init" {
+        return Err(VoucherCoreError::Generic("Only init transactions can define a voucher id".to_string()));
+    }
+
+    let mut t_id = [0u8; 32];
+    let decoded_t_id = bs58::decode(&transaction.t_id).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid base58 for t_id".to_string()))?;
+    if decoded_t_id.len() != 32 { return Err(VoucherCoreError::InvalidHashFormat("t_id must be 32 bytes".to_string())); }
+    t_id.copy_from_slice(&decoded_t_id);
+
+    let mut sender_pub = [0u8; 32];
+    let decoded_pub = bs58::decode(transaction.sender_ephemeral_pub.as_deref().unwrap_or("")).into_vec().unwrap_or_else(|_| vec![0; 32]);
+    if decoded_pub.len() == 32 { sender_pub.copy_from_slice(&decoded_pub); }
+
+    let receiver_hash = transaction.receiver_ephemeral_pub_hash.as_ref().and_then(|h| {
+        bs58::decode(h).into_vec().ok().and_then(|v| {
+            if v.len() == 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&v);
+                Some(arr)
+            } else {
+                None
+            }
+        })
+    });
+
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(t_id);
+    hasher.update(sender_pub);
+    if let Some(r) = receiver_hash {
+        hasher.update(r);
+    }
+    if let Some(v) = &transaction.valid_until {
+        hasher.update(v.as_bytes());
+    }
+    
+    let result = hasher.finalize();
+    Ok(hex::encode(result))
+}
+
 /// Generiert einen deterministischen Hash des L2-Payloads für die Signaturprüfung.
 pub fn calculate_l2_payload_hash(req: &L2LockRequest) -> [u8; 32] {
     calculate_l2_payload_hash_raw(
+        &req.layer2_voucher_id,
+        req.ds_tag.as_deref(),
         &req.transaction_hash,
-        &req.ds_tag,
         &req.sender_ephemeral_pub,
         req.receiver_ephemeral_pub_hash.as_ref(),
         req.change_ephemeral_pub_hash.as_ref(),
@@ -111,8 +164,9 @@ pub fn calculate_l2_payload_hash(req: &L2LockRequest) -> [u8; 32] {
 
 /// Innere Logik für das Hashing des L2-Payloads (wird auch vom Wallet genutzt).
 pub fn calculate_l2_payload_hash_raw(
+    layer2_voucher_id: &str,
+    ds_tag: Option<&str>,
     transaction_hash: &[u8; 32],
-    ds_tag: &[u8; 32],
     sender_pub: &[u8; 32],
     receiver_hash: Option<&[u8; 32]>,
     change_hash: Option<&[u8; 32]>,
@@ -121,8 +175,11 @@ pub fn calculate_l2_payload_hash_raw(
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
     
+    hasher.update(layer2_voucher_id.as_bytes());
+    if let Some(ds) = ds_tag {
+        hasher.update(ds.as_bytes());
+    }
     hasher.update(transaction_hash);
-    hasher.update(ds_tag);
     hasher.update(sender_pub);
     if let Some(r) = receiver_hash {
         hasher.update(r);
@@ -138,6 +195,14 @@ pub fn calculate_l2_payload_hash_raw(
     let mut hash = [0u8; 32];
     hash.copy_from_slice(&result);
     hash
+}
+
+/// Extrahiert die layer2_voucher_id aus einem Gutschein (basierend auf der Genesis-Tx).
+pub fn extract_layer2_voucher_id(voucher: &crate::models::voucher::Voucher) -> Result<String, VoucherCoreError> {
+    if voucher.transactions.is_empty() {
+        return Err(VoucherCoreError::Generic("Voucher has no transactions".to_string()));
+    }
+    calculate_layer2_voucher_id(&voucher.transactions[0])
 }
 
 /// Verarbeitet das L2Verdict und bestimmt die darauffolgende Wallet-Aktion.
