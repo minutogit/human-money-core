@@ -118,10 +118,8 @@ pub fn complete_and_sign_detached_signature(
         }
     };
 
-    let signature_id = get_hash_from_slices(&[
-        signature_json_for_id.as_slice(),
-        init_t_id.as_bytes(),
-    ]);
+    let signature_id =
+        get_hash_from_slices(&[signature_json_for_id.as_slice(), init_t_id.as_bytes()]);
     let digital_signature = sign_ed25519(&signer_identity.signing_key, signature_id.as_bytes());
     let signature_str = bs58::encode(digital_signature.to_bytes()).into_string();
 

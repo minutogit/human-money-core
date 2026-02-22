@@ -169,7 +169,10 @@ impl Wallet {
         }
 
         // 2. Extrahiere Kerndaten und verifiziere Signaturen.
-        let offender_id = conflicting_transactions[0].sender_id.clone().unwrap_or("anonymous".to_string());
+        let offender_id = conflicting_transactions[0]
+            .sender_id
+            .clone()
+            .unwrap_or("anonymous".to_string());
         let fork_point_prev_hash = conflicting_transactions[0].prev_hash.clone();
 
         let mut verified_tx_count = 0;
@@ -179,40 +182,38 @@ impl Wallet {
             }
 
             let signed_data = tx.t_id.as_bytes();
-            
+
             // Use layer2_signature (technical/ephemeral proof) for conflict proof
             let signature_str = match &tx.layer2_signature {
                 Some(s) => s,
                 None => continue, // Missing L2 signature
             };
             let signature_bytes = bs58::decode(signature_str).into_vec()?;
-            
+
             // The signature is ALWAYS signed by the ephemeral key (L2)
             let verification_key = if let Some(pub_str) = &tx.sender_ephemeral_pub {
                 let pub_bytes = bs58::decode(pub_str).into_vec().map_err(|_| {
                     VoucherCoreError::Crypto("Invalid base58 in sender_ephemeral_pub".to_string())
                 })?;
                 let array: [u8; 32] = pub_bytes.try_into().map_err(|_| {
-                    VoucherCoreError::Crypto("Invalid key length in sender_ephemeral_pub".to_string())
+                    VoucherCoreError::Crypto(
+                        "Invalid key length in sender_ephemeral_pub".to_string(),
+                    )
                 })?;
-                ed25519_dalek::VerifyingKey::from_bytes(&array).map_err(|e| {
-                    VoucherCoreError::Crypto(format!("Invalid Ed25519 key: {}", e))
-                })?
+                ed25519_dalek::VerifyingKey::from_bytes(&array)
+                    .map_err(|e| VoucherCoreError::Crypto(format!("Invalid Ed25519 key: {}", e)))?
             } else {
                 continue; // Missing Key is still a skip for backward compatibility or public mode?
                 // Actually, if it's a conflict proof, both MUST have L2 signatures.
             };
- 
+
             // Konvertiere Signature Bytes zu Signature Object
-            let sig_arr: [u8; 64] = signature_bytes.try_into().map_err(|_| {
-                 VoucherCoreError::Crypto("Invalid signature length".to_string())
-            })?;
+            let sig_arr: [u8; 64] = signature_bytes
+                .try_into()
+                .map_err(|_| VoucherCoreError::Crypto("Invalid signature length".to_string()))?;
             let signature = Signature::from_bytes(&sig_arr);
- 
-            if verification_key.verify(
-                signed_data,
-                &signature,
-            ).is_ok() {
+
+            if verification_key.verify(signed_data, &signature).is_ok() {
                 verified_tx_count += 1;
             }
         }
@@ -265,7 +266,8 @@ impl Wallet {
             })?;
 
             // Berechne den relevanten Fingerprint (die "Kollisions-ID")
-            let fingerprint = conflict_manager::create_fingerprint_for_transaction(last_tx, voucher)?;
+            let fingerprint =
+                conflict_manager::create_fingerprint_for_transaction(last_tx, voucher)?;
             let fingerprint_hash = fingerprint.ds_tag;
 
             // --- KORRIGIERTE LOGIK: Unterscheide Replay vs. Double Spend ---
@@ -347,10 +349,7 @@ impl Wallet {
             for tx in &voucher.transactions {
                 let fingerprint =
                     conflict_manager::create_fingerprint_for_transaction(tx, voucher)?;
-                if let Some(meta) = self
-                    .fingerprint_metadata
-                    .get_mut(&fingerprint.ds_tag)
-                {
+                if let Some(meta) = self.fingerprint_metadata.get_mut(&fingerprint.ds_tag) {
                     meta.known_by_peers.insert(recipient_short_hash);
                 }
             }
@@ -373,8 +372,7 @@ impl Wallet {
             .collect();
 
         // Um eine deterministische (wenngleich nicht perfekt zufällige) Auswahl zu gewährleisten, sortieren wir.
-        all_known_fingerprints
-            .sort_by(|a, b| a.ds_tag.cmp(&b.ds_tag));
+        all_known_fingerprints.sort_by(|a, b| a.ds_tag.cmp(&b.ds_tag));
 
         let mut current_depth = 0;
         while selected_fingerprints.len() < MAX_FINGERPRINTS_TO_SEND {

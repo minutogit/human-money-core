@@ -13,9 +13,9 @@ use crate::services::crypto_utils::{
 };
 use crate::services::trap_manager::{derive_m, generate_trap, hash_to_scalar};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
+use crate::services::{decimal_utils, standard_manager};
 use hkdf::Hkdf;
 use sha2::Sha256;
-use crate::services::{decimal_utils, standard_manager};
 
 use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use ed25519_dalek::SigningKey;
@@ -24,13 +24,12 @@ use rust_decimal::Decimal;
 use std::fmt;
 use std::str::FromStr;
 
-
 /// Enthält die vertraulichen Geheimnisse, die während einer Transaktionserstellung generiert wurden.
 /// Diese MÜSSEN vom Aufrufer (Wallet) sicher gespeichert werden, da sie im Voucher nur verschlüsselt
 /// oder als Hash vorliegen. Ohne diese Geheimnisse können Gelder nicht empfangen oder Restgeld ausgegeben werden.
 #[derive(Debug, Clone)]
 pub struct TransactionSecrets {
-    pub recipient_seed: String,   // BS58 encoded seed for the recipient
+    pub recipient_seed: String,      // BS58 encoded seed for the recipient
     pub change_seed: Option<String>, // BS58 encoded seed for change (if split)
 }
 
@@ -307,24 +306,26 @@ pub fn create_voucher(
         t_id: "".to_string(),
         // SECURITY FIX: Use raw bytes for prev_hash truncation/concatenation
         prev_hash: {
-            let voucher_id_bytes = bs58::decode(&temp_voucher.voucher_id).into_vec().map_err(|_| {
-                VoucherCoreError::Generic("Invalid voucher_id format".to_string())
-            })?;
-            let nonce_bytes = bs58::decode(&temp_voucher.voucher_nonce).into_vec().map_err(|_| {
-                VoucherCoreError::Generic("Invalid voucher_nonce format".to_string())
-            })?;
+            let voucher_id_bytes = bs58::decode(&temp_voucher.voucher_id)
+                .into_vec()
+                .map_err(|_| VoucherCoreError::Generic("Invalid voucher_id format".to_string()))?;
+            let nonce_bytes = bs58::decode(&temp_voucher.voucher_nonce)
+                .into_vec()
+                .map_err(|_| {
+                    VoucherCoreError::Generic("Invalid voucher_nonce format".to_string())
+                })?;
             get_hash_from_slices(&[&voucher_id_bytes, &nonce_bytes])
         },
         t_type: "init".to_string(),
         t_time: creation_date_str.clone(),
         sender_id: Some(creator_id.clone()), // Init ist immer public
-        recipient_id: creator_id.clone(), // Init: geht an Creator selbst
-        amount: "".to_string(), // Wird unten befüllt
+        recipient_id: creator_id.clone(),    // Init: geht an Creator selbst
+        amount: "".to_string(),              // Wird unten befüllt
         sender_remaining_amount: None,
         receiver_ephemeral_pub_hash: None, // Wird unten befüllt
-        sender_ephemeral_pub: None, // Wird unten befüllt
+        sender_ephemeral_pub: None,        // Wird unten befüllt
         privacy_guard: None,
-        trap_data: None, 
+        trap_data: None,
         layer2_signature: None,
         deletable_at: {
             let retention_period = verified_standard
@@ -350,19 +351,27 @@ pub fn create_voucher(
         .as_ref()
         .and_then(|v| v.behavior_rules.as_ref())
         .and_then(|b| b.amount_decimal_places)
-        .unwrap_or(2) as u32; 
+        .unwrap_or(2) as u32;
 
     let initial_amount = Decimal::from_str(&temp_voucher.nominal_value.amount)?;
     init_transaction.amount = decimal_utils::format_for_storage(&initial_amount, decimal_places);
 
     let creator_prefix = creator_id.split(':').next().unwrap_or("unknown");
-    let (genesis_secret, genesis_public) =
-        derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "genesis", Some(creator_prefix))?;
+    let (genesis_secret, genesis_public) = derive_ephemeral_key_pair(
+        creator_signing_key,
+        &nonce_bytes,
+        "genesis",
+        Some(creator_prefix),
+    )?;
     let genesis_pub_str = bs58::encode(genesis_public.to_bytes()).into_string();
     init_transaction.sender_ephemeral_pub = Some(genesis_pub_str.clone());
 
-    let (_, holder_public) =
-        derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "holder", Some(creator_prefix))?;
+    let (_, holder_public) = derive_ephemeral_key_pair(
+        creator_signing_key,
+        &nonce_bytes,
+        "holder",
+        Some(creator_prefix),
+    )?;
     let holder_anchor_hash = get_hash(holder_public.to_bytes());
     init_transaction.receiver_ephemeral_pub_hash = Some(holder_anchor_hash);
 
@@ -373,12 +382,12 @@ pub fn create_voucher(
     // --- NEUE SIGNATUR-LOGIK (SCHRITT 3) ---
     let mut creator_sig_obj = VoucherSignature {
         voucher_id: voucher_hash.clone(),
-        signature_id: "".to_string(),     
+        signature_id: "".to_string(),
         signer_id: creator_id.clone(),
-        signature: "".to_string(), 
+        signature: "".to_string(),
         signature_time: creation_date_str.clone(),
         role: "creator".to_string(),
-        details: None, 
+        details: None,
     };
 
     creator_sig_obj.signature_id = get_hash_from_slices(&[
@@ -389,25 +398,36 @@ pub fn create_voucher(
         sign_ed25519(creator_signing_key, creator_sig_obj.signature_id.as_bytes());
     creator_sig_obj.signature = bs58::encode(creator_signature.to_bytes()).into_string();
 
-
     // --- L2 & IDENTITY SIGNATUREN (NEUES MODELL) ---
     // Resigning for Technical Proofs
 
-
     // 2. Layer 2 Signature: Signiert den L2-Payload-Hash mit dem ephemeralen Key (Genesis Secret)
-    let t_id_raw = bs58::decode(&init_transaction.t_id).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id hash".to_string()))?;
-    
-    let sender_pub_raw = bs58::decode(&genesis_pub_str).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid genesis_pub format".to_string()))?;
+    let t_id_raw = bs58::decode(&init_transaction.t_id)
+        .into_vec()
+        .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id hash".to_string()))?;
+
+    let sender_pub_raw = bs58::decode(&genesis_pub_str).into_vec().map_err(|_| {
+        VoucherCoreError::InvalidHashFormat("Invalid genesis_pub format".to_string())
+    })?;
 
     let v_id = crate::services::l2_gateway::calculate_layer2_voucher_id(&init_transaction)?;
     let challenge_ds_tag = init_transaction.t_id.clone();
-    
-    let receiver_hash_str = init_transaction.receiver_ephemeral_pub_hash.as_ref()
-        .ok_or_else(|| VoucherCoreError::Validation(crate::error::ValidationError::InvalidTransaction("Genesis transaction missing receiver_ephemeral_pub_hash".to_string())))?;
-    let receiver_hash_raw = bs58::decode(receiver_hash_str).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid receiver hash".to_string()))?;
+
+    let receiver_hash_str = init_transaction
+        .receiver_ephemeral_pub_hash
+        .as_ref()
+        .ok_or_else(|| {
+            VoucherCoreError::Validation(crate::error::ValidationError::InvalidTransaction(
+                "Genesis transaction missing receiver_ephemeral_pub_hash".to_string(),
+            ))
+        })?;
+    let receiver_hash_raw = bs58::decode(receiver_hash_str)
+        .into_vec()
+        .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid receiver hash".to_string()))?;
 
     let to_32_bytes = |vec: Vec<u8>, name: &str| -> Result<[u8; 32], VoucherCoreError> {
-        vec.try_into().map_err(|_| VoucherCoreError::InvalidHashFormat(format!("{} must be 32 bytes", name)))
+        vec.try_into()
+            .map_err(|_| VoucherCoreError::InvalidHashFormat(format!("{} must be 32 bytes", name)))
     };
 
     let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
@@ -419,13 +439,14 @@ pub fn create_voucher(
         None,
         init_transaction.deletable_at.as_deref(),
     );
-    
+
     let l2_sig_bytes = sign_ed25519(&genesis_secret, &payload_hash);
     init_transaction.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
 
     // 3. Sender Identity Signature: Signiert t_id (raw bytes) mit Creator Key (Permanent)
     let identity_sig_bytes = sign_ed25519(creator_signing_key, &t_id_raw);
-    init_transaction.sender_identity_signature = Some(bs58::encode(identity_sig_bytes.to_bytes()).into_string());
+    init_transaction.sender_identity_signature =
+        Some(bs58::encode(identity_sig_bytes.to_bytes()).into_string());
 
     temp_voucher.signatures.push(creator_sig_obj); // Füge die Creator-Signatur hinzu
     temp_voucher.transactions.push(init_transaction);
@@ -610,6 +631,22 @@ pub fn create_transaction(
         ("transfer".to_string(), None)
     };
 
+    if let Some(rules) = standard
+        .validation
+        .as_ref()
+        .and_then(|v| v.behavior_rules.as_ref())
+    {
+        if let Some(allowed) = &rules.allowed_t_types {
+            if !allowed.contains(&t_type) {
+                return Err(crate::error::ValidationError::TransactionTypeNotAllowed {
+                    t_type: t_type.clone(),
+                    allowed: allowed.clone(),
+                }
+                .into());
+            }
+        }
+    }
+
     let prev_hash = get_hash(to_canonical_json(voucher.transactions.last().unwrap())?);
     let t_time = get_current_timestamp();
 
@@ -635,7 +672,13 @@ pub fn create_transaction(
             // TODO: Add parameter to control this. For now: Public.
             Some(sender_id.to_string())
         }
-        _ => return Err(VoucherManagerError::Generic(format!("Unknown privacy mode: {}", privacy_mode)).into()),
+        _ => {
+            return Err(VoucherManagerError::Generic(format!(
+                "Unknown privacy mode: {}",
+                privacy_mode
+            ))
+            .into());
+        }
     };
 
     // Validate Recipient ID against Mode
@@ -643,15 +686,21 @@ pub fn create_transaction(
     let recipient_id_check = match privacy_mode {
         "public" => {
             if !recipient_is_did {
-                 return Err(VoucherManagerError::Generic("Public mode requires DID recipient.".to_string()).into());
+                return Err(VoucherManagerError::Generic(
+                    "Public mode requires DID recipient.".to_string(),
+                )
+                .into());
             }
             recipient_id
         }
         "stealth" => {
-             if recipient_is_did {
-                 return Err(VoucherManagerError::Generic("Stealth mode forbids DID recipient.".to_string()).into());
-             }
-             recipient_id
+            if recipient_is_did {
+                return Err(VoucherManagerError::Generic(
+                    "Stealth mode forbids DID recipient.".to_string(),
+                )
+                .into());
+            }
+            recipient_id
         }
         "flexible" => recipient_id, // Both allowed
         _ => recipient_id,
@@ -670,43 +719,52 @@ pub fn create_transaction(
     rand::thread_rng().fill(&mut recipient_seed);
     let recipient_signing_key = SigningKey::from_bytes(&recipient_seed);
     let recipient_ephemeral_pub = recipient_signing_key.verifying_key();
-    let receiver_ephemeral_pub_hash =
-        Some(get_hash(recipient_ephemeral_pub.to_bytes()));
+    let receiver_ephemeral_pub_hash = Some(get_hash(recipient_ephemeral_pub.to_bytes()));
 
     // b) Change (falls nötig)
     let (change_ephemeral_pub_hash, change_key_seed_opt) = if t_type == "split" {
         // Für das Restgeld generiert der Sender einen NEUEN Key für SICH SELBST.
         // NEU: Deterministische Ableitung via HKDF, damit der Seed nicht gespeichert werden muss.
         // Wir nutzen denselben PRK wie für m (Trap), aber mit anderem Info-String.
-        
-        let sender_id_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string(); 
-        
+
+        let sender_id_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string();
+
         let salt = prev_hash.as_bytes();
         let ikm = sender_permanent_key.to_bytes(); // Master Key
         let (prk, _) = Hkdf::<Sha256>::extract(Some(salt), &ikm);
-        let hkdf = Hkdf::<Sha256>::from_prk(&prk).map_err(|_| VoucherCoreError::Crypto("Invalid PRK length".to_string()))?;
-        
+        let hkdf = Hkdf::<Sha256>::from_prk(&prk)
+            .map_err(|_| VoucherCoreError::Crypto("Invalid PRK length".to_string()))?;
+
         // Info-String für Change-Seed: "[prefix]change_seed"
         let info = format!("{}change_seed", sender_id_prefix);
         let mut change_seed = [0u8; 32];
         hkdf.expand(info.as_bytes(), &mut change_seed)
-             .map_err(|_| VoucherCoreError::Crypto("HKDF expand failed for change seed".to_string()))?;
+            .map_err(|_| {
+                VoucherCoreError::Crypto("HKDF expand failed for change seed".to_string())
+            })?;
 
         let change_signing_key = SigningKey::from_bytes(&change_seed);
         let change_pub = change_signing_key.verifying_key();
         let change_hash = get_hash(change_pub.to_bytes());
-        (Some(change_hash), Some(bs58::encode(change_seed).into_string()))
+        (
+            Some(change_hash),
+            Some(bs58::encode(change_seed).into_string()),
+        )
     } else {
         (None, None)
     };
 
     // 3. PAYLOAD ENCRYPTION: Sende next_key_seed an Empfänger.
     let encoded_recipient_seed = bs58::encode(recipient_seed).into_string();
-    
+
     let privacy_guard = if recipient_id.contains(":z") {
         // Extrahiere Präfix aus sender_id für Payload (Sender-Info).
-        let _sender_prefix = sender_id.split(':').next().unwrap_or("unknown").to_string(); 
-        let target_prefix = recipient_id.split(':').next().unwrap_or("unknown").to_string();
+        let _sender_prefix = sender_id.split(':').next().unwrap_or("unknown").to_string();
+        let target_prefix = recipient_id
+            .split(':')
+            .next()
+            .unwrap_or("unknown")
+            .to_string();
 
         let payload = RecipientPayload {
             sender_permanent_did: sender_id.to_string(),
@@ -714,7 +772,7 @@ pub fn create_transaction(
             timestamp: Utc::now().timestamp() as u64,
             next_key_seed: encoded_recipient_seed.clone(),
         };
-        
+
         // Encrypt Payload:
         let (ephemeral_pk, ephemeral_sk) = generate_ephemeral_x25519_keypair();
         let recipient_ed_pk = get_pubkey_from_user_id(recipient_id)?;
@@ -722,13 +780,13 @@ pub fn create_transaction(
         let shared_secret = perform_diffie_hellman(ephemeral_sk, &recipient_x_pk)?;
         let payload_json = to_canonical_json(&payload)?;
         let encrypted_bytes = encrypt_data(&shared_secret, payload_json.as_bytes())?;
-        
+
         let mut privacy_guard_bytes = Vec::new();
         privacy_guard_bytes.extend_from_slice(ephemeral_pk.as_bytes());
         privacy_guard_bytes.extend_from_slice(&encrypted_bytes);
         Some(encode_base64(&privacy_guard_bytes))
     } else {
-        // Im Stealth-Mode (Empfänger ist ein Hash) gibt es keinen öffentlichen Schlüssel 
+        // Im Stealth-Mode (Empfänger ist ein Hash) gibt es keinen öffentlichen Schlüssel
         // für DH. Der Empfänger muss seinen Key-Seed anderweitig (z.B. Offline-Übergabe) erhalten.
         None
     };
@@ -737,13 +795,13 @@ pub fn create_transaction(
     // Der Sender MUSS change_key_seed speichern.
     // Das geschieht hier NICHT im Voucher, sondern muss vom Wallet gehandhabt werden!
     // -> Rückgabewert muss change_key_seed enthalten?
-    // Der Wrapper (AppService/Wallet) muss dies handhaben. 
+    // Der Wrapper (AppService/Wallet) muss dies handhaben.
     // ACHTUNG: Der `Voucher` struct speichert das NICHT.
-    // Lösung: Wir sollten change_key_seed in `sender_remaining_amount` embedded? 
+    // Lösung: Wir sollten change_key_seed in `sender_remaining_amount` embedded?
     // Nein. Wir lassen es hier so, dass wir es NICHT zurückgeben?
     // Das ist ein Problem für die Offline-Fähigkeit.
     // TODO: Über Local Storage nachdenken.
-    // Für jetzt: Wir ignorieren das Speichern des Change-Keys hier (Verlustrisiko!), 
+    // Für jetzt: Wir ignorieren das Speichern des Change-Keys hier (Verlustrisiko!),
     // aber das ist ok da dies nur die Voucher-Erstellung ist.
 
     // 4. TRAP Generation & Identity Recovery Logic
@@ -753,14 +811,14 @@ pub fn create_transaction(
     //    This ensures O(1) detection of Double Spends, independent of the identity used.
     let sender_id_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string(); // "prefix:checksum"
     let amount_str = decimal_utils::format_for_storage(&amount_to_send, decimal_places);
-    
+
     // SECURITY FIX: Use raw bytes for ds_tag derivation
-    let prev_hash_bytes = bs58::decode(&prev_hash).into_vec().map_err(|_| {
-        VoucherCoreError::Crypto("Invalid prev_hash format".to_string())
-    })?;
-    let sender_ephem_pub_bytes = bs58::decode(&sender_ephemeral_pub).into_vec().map_err(|_| {
-        VoucherCoreError::Crypto("Invalid sender_ephemeral_pub format".to_string())
-    })?;
+    let prev_hash_bytes = bs58::decode(&prev_hash)
+        .into_vec()
+        .map_err(|_| VoucherCoreError::Crypto("Invalid prev_hash format".to_string()))?;
+    let sender_ephem_pub_bytes = bs58::decode(&sender_ephemeral_pub)
+        .into_vec()
+        .map_err(|_| VoucherCoreError::Crypto("Invalid sender_ephemeral_pub format".to_string()))?;
 
     let ds_tag = get_hash_from_slices(&[&prev_hash_bytes, &sender_ephem_pub_bytes]);
 
@@ -777,13 +835,22 @@ pub fn create_transaction(
     let u_scalar = hash_to_scalar(u_input_varying.as_bytes());
 
     // m derivation
-    let m = derive_m(&prev_hash, &sender_permanent_key.to_bytes(), &sender_id_prefix)?;
+    let m = derive_m(
+        &prev_hash,
+        &sender_permanent_key.to_bytes(),
+        &sender_id_prefix,
+    )?;
 
     // My ID Point
     let my_id_point = ed25519_pk_to_curve_point(&sender_permanent_key.verifying_key())?;
 
-    let trap_data = Some(generate_trap(ds_tag.clone(), &u_scalar, &m, &my_id_point, &sender_id_prefix)?);
-
+    let trap_data = Some(generate_trap(
+        ds_tag.clone(),
+        &u_scalar,
+        &m,
+        &my_id_point,
+        &sender_id_prefix,
+    )?);
 
     let mut new_transaction = Transaction {
         t_id: "".to_string(),
@@ -810,25 +877,36 @@ pub fn create_transaction(
     new_transaction.t_id = get_hash(tx_json_for_id);
 
     // 2. Layer 2 Signature: Signiert den L2-Payload-Hash mit dem ephemeralen Key (Input Key)
-    let t_id_raw = bs58::decode(&new_transaction.t_id).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id hash".to_string()))?;
-    let sender_pub_raw = bs58::decode(&sender_ephemeral_pub).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid sender_ephemeral_pub format".to_string()))?;
+    let t_id_raw = bs58::decode(&new_transaction.t_id)
+        .into_vec()
+        .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id hash".to_string()))?;
+    let sender_pub_raw = bs58::decode(&sender_ephemeral_pub)
+        .into_vec()
+        .map_err(|_| {
+            VoucherCoreError::InvalidHashFormat("Invalid sender_ephemeral_pub format".to_string())
+        })?;
 
     let v_id = crate::services::l2_gateway::extract_layer2_voucher_id(voucher)?;
-    let challenge_ds_tag = ds_tag.clone(); 
+    let challenge_ds_tag = ds_tag.clone();
 
     let to_32_bytes = |vec: Vec<u8>, name: &str| -> Result<[u8; 32], VoucherCoreError> {
-        vec.try_into().map_err(|_| VoucherCoreError::InvalidHashFormat(format!("{} must be 32 bytes", name)))
+        vec.try_into()
+            .map_err(|_| VoucherCoreError::InvalidHashFormat(format!("{} must be 32 bytes", name)))
     };
 
     let receiver_hash_raw = if let Some(h) = &new_transaction.receiver_ephemeral_pub_hash {
-        let decoded = bs58::decode(h).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid receiver_hash".to_string()))?;
+        let decoded = bs58::decode(h).into_vec().map_err(|_| {
+            VoucherCoreError::InvalidHashFormat("Invalid receiver_hash".to_string())
+        })?;
         Some(to_32_bytes(decoded, "receiver_hash")?)
     } else {
         None
     };
-    
+
     let change_hash_raw = if let Some(h) = &new_transaction.change_ephemeral_pub_hash {
-        let decoded = bs58::decode(h).into_vec().map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid change_hash".to_string()))?;
+        let decoded = bs58::decode(h)
+            .into_vec()
+            .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid change_hash".to_string()))?;
         Some(to_32_bytes(decoded, "change_hash")?)
     } else {
         None
@@ -850,20 +928,21 @@ pub fn create_transaction(
     // 3. Sender Identity Signature (L1): Signiert t_id (raw bytes) mit Sender Permanent Key
     // NUR wenn sender_id gesetzt ist (Public/Flexible Mode).
     if new_transaction.sender_id.is_some() {
-         let identity_sig_bytes = sign_ed25519(sender_permanent_key, &t_id_raw);
-         new_transaction.sender_identity_signature = Some(bs58::encode(identity_sig_bytes.to_bytes()).into_string());
+        let identity_sig_bytes = sign_ed25519(sender_permanent_key, &t_id_raw);
+        new_transaction.sender_identity_signature =
+            Some(bs58::encode(identity_sig_bytes.to_bytes()).into_string());
     }
 
     let mut new_voucher = voucher.clone();
     new_voucher.transactions.push(new_transaction);
 
     crate::services::voucher_validation::validate_voucher_against_standard(&new_voucher, standard)?;
-    
+
     let secrets = TransactionSecrets {
         recipient_seed: encoded_recipient_seed,
         change_seed: change_key_seed_opt,
     };
-    
+
     Ok((new_voucher, secrets))
 }
 

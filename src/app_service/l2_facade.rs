@@ -7,7 +7,9 @@ use crate::wallet::instance::VoucherStatus;
 impl AppService {
     pub fn generate_l2_lock_request(&self, local_instance_id: &str) -> Result<Vec<u8>, String> {
         let (wallet, _identity) = match &self.state {
-            AppState::Unlocked { wallet, identity, .. } => (wallet, identity),
+            AppState::Unlocked {
+                wallet, identity, ..
+            } => (wallet, identity),
             _ => return Err("Wallet is locked".to_string()),
         };
 
@@ -22,17 +24,15 @@ impl AppService {
             .ok_or_else(|| "No transactions found in voucher".to_string())?;
 
         // In the new Layer 2 semantics, the voucher id is derived from the first (init) transaction.
-        let l2_voucher_id = l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])
-            .map_err(|e| e.to_string())?;
+        let l2_voucher_id =
+            l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])
+                .map_err(|e| e.to_string())?;
 
         // TODO: In the future, derive a proper ephemeral key. For now, use dummy bytes.
         let ephemeral_key = [0u8; 32];
-        let request = l2_gateway::generate_lock_request(
-            &l2_voucher_id,
-            transaction,
-            &ephemeral_key,
-        )
-        .map_err(|e| e.to_string())?;
+        let request =
+            l2_gateway::generate_lock_request(&l2_voucher_id, transaction, &ephemeral_key)
+                .map_err(|e| e.to_string())?;
 
         serde_json::to_vec(&request).map_err(|e| e.to_string())
     }
@@ -40,7 +40,9 @@ impl AppService {
     /// Generiert eine L2StatusQuery (Lese-Anfrage) für den aktuellen Stand eines Gutscheins.
     pub fn generate_l2_status_query(&self, local_instance_id: &str) -> Result<Vec<u8>, String> {
         let (wallet, _identity) = match &self.state {
-            AppState::Unlocked { wallet, identity, .. } => (wallet, identity),
+            AppState::Unlocked {
+                wallet, identity, ..
+            } => (wallet, identity),
             _ => return Err("Wallet is locked".to_string()),
         };
 
@@ -48,8 +50,9 @@ impl AppService {
             .get_voucher_instance(local_instance_id)
             .ok_or_else(|| format!("Voucher {} not found", local_instance_id))?;
 
-        let layer2_voucher_id = l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])
-            .map_err(|e| e.to_string())?;
+        let layer2_voucher_id =
+            l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])
+                .map_err(|e| e.to_string())?;
 
         let challenge_ds_tag = if let Some(last_tx) = instance.voucher.transactions.last() {
             l2_gateway::derive_challenge_tag(last_tx).map_err(|e| e.to_string())?
@@ -84,7 +87,9 @@ impl AppService {
         password: Option<&str>,
     ) -> Result<(), String> {
         let (wallet, _identity) = match &self.state {
-            AppState::Unlocked { wallet, identity, .. } => (wallet, identity),
+            AppState::Unlocked {
+                wallet, identity, ..
+            } => (wallet, identity),
             _ => return Err("Wallet is locked".to_string()),
         };
 
@@ -92,17 +97,33 @@ impl AppService {
             .get_voucher_instance(local_instance_id)
             .ok_or_else(|| format!("Voucher {} not found", local_instance_id))?;
 
-        let last_tx = instance.voucher.transactions.last()
+        let last_tx = instance
+            .voucher
+            .transactions
+            .last()
             .ok_or_else(|| "No transactions found".to_string())?;
         let last_t_id = last_tx.t_id.clone();
-        let challenge_ds_tag = l2_gateway::derive_challenge_tag(last_tx).map_err(|e| e.to_string())?;
+        let challenge_ds_tag =
+            l2_gateway::derive_challenge_tag(last_tx).map_err(|e| e.to_string())?;
         let expected_ephemeral_pub = last_tx.sender_ephemeral_pub.as_deref();
-        let expected_voucher_id = l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0]).map_err(|e| e.to_string())?;
+        let expected_voucher_id =
+            l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])
+                .map_err(|e| e.to_string())?;
 
-        let server_pubkey = wallet.profile.l2_server_pubkey.ok_or_else(|| "L2 server public key not configured in wallet profile".to_string())?;
+        let server_pubkey = wallet
+            .profile
+            .l2_server_pubkey
+            .ok_or_else(|| "L2 server public key not configured in wallet profile".to_string())?;
 
-        let action = l2_gateway::process_l2_verdict(response_bytes, &server_pubkey, &last_t_id, &challenge_ds_tag, expected_ephemeral_pub, &expected_voucher_id)
-            .map_err(|e| e.to_string())?;
+        let action = l2_gateway::process_l2_verdict(
+            response_bytes,
+            &server_pubkey,
+            &last_t_id,
+            &challenge_ds_tag,
+            expected_ephemeral_pub,
+            &expected_voucher_id,
+        )
+        .map_err(|e| e.to_string())?;
 
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
@@ -154,18 +175,18 @@ impl AppService {
                         // ... Auth logic ...
                         let auth_method = match password {
                             Some(pwd_str) => AuthMethod::Password(pwd_str),
-                            None => {
-                                match &session_cache {
-                                    Some(cache) => {
-                                        if std::time::Instant::now() > cache.last_activity + cache.session_duration {
-                                            AuthMethod::SessionKey([0u8; 32])
-                                        } else {
-                                            AuthMethod::SessionKey(cache.session_key)
-                                        }
+                            None => match &session_cache {
+                                Some(cache) => {
+                                    if std::time::Instant::now()
+                                        > cache.last_activity + cache.session_duration
+                                    {
+                                        AuthMethod::SessionKey([0u8; 32])
+                                    } else {
+                                        AuthMethod::SessionKey(cache.session_key)
                                     }
-                                    None => AuthMethod::SessionKey([0u8; 32]),
                                 }
-                            }
+                                None => AuthMethod::SessionKey([0u8; 32]),
+                            },
                         };
 
                         if let AuthMethod::SessionKey(k) = auth_method {

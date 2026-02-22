@@ -5,5 +5,5 @@
 
 // Macht die in der Datei implementierten Tests für den Runner sichtbar.
 pub mod hardening;
-mod security_hardening;
 pub mod resilience_and_gossip;
+mod security_hardening;

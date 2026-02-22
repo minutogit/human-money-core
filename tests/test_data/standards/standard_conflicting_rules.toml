@@ -22,22 +22,17 @@ needed_count = 0 # Wird von `counts` überschrieben
 description = ""
 
 [validation]
-# Regel 1: Es müssen exakt 3 Bürgen sein.
-# Veraltete Zählung entfernt.
+[validation.dynamic_rules.guarantor_count]
+expression = "Voucher.signatures.filter(s, has(s.role) && s.role == 'guarantor').size() == 3"
+message = "Must have exactly 3 guarantors"
 
-# NEU: Regeln werden auf `signatures` mit `field = "role"` geprüft.
-# Diese Regeln werden von `tests/validation/unit_service.rs`
-# und `tests/validation/business_rules.rs` verwendet.
-[validation.field_group_rules]
-[validation.field_group_rules.signatures]
-field = "role"
-value_counts = [
-    # Erfordert exakt 3 Bürgen (für den business_rules-Test)
-    { value = "guarantor", min = 3, max = 3 },
-    # Erfordert exakt 2x "A" und 2x "B" (für den unit_service-Test)
-    { value = "A", min = 2, max = 2 },
-    { value = "B", min = 2, max = 2 },
-]
+[validation.dynamic_rules.role_a_count]
+expression = "Voucher.signatures.filter(s, has(s.role) && s.role == 'A').size() == 2"
+message = "Must have exactly 2 'A's"
+
+[validation.dynamic_rules.role_b_count]
+expression = "Voucher.signatures.filter(s, has(s.role) && s.role == 'B').size() == 2"
+message = "Must have exactly 2 'B's"
 
 [signature]
 issuer_id = "did:key:zDummy"

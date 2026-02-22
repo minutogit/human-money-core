@@ -9,8 +9,8 @@ use sha2::{Digest, Sha256, Sha512};
 
 // Symmetrische Verschlüsselung
 use chacha20poly1305::{
-    aead::{Aead, AeadCore, KeyInit},
     ChaCha20Poly1305, Nonce,
+    aead::{Aead, AeadCore, KeyInit},
 };
 
 // Ed25519 Signaturen
@@ -19,9 +19,8 @@ use ed25519_dalek::{
 };
 
 // X25519 Schlüsselvereinbarung
-use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey, StaticSecret};
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
-
+use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey, StaticSecret};
 
 // BIP39 Mnemonic Phrase
 use bip39::{Language, Mnemonic};
@@ -36,7 +35,7 @@ use std::convert::TryInto;
 use std::fmt;
 
 use crate::error::VoucherCoreError;
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 
 /// Generates a mnemonic phrase with a specified word count and language.
 ///
@@ -109,7 +108,7 @@ pub fn get_hash_from_slices(inputs: &[&[u8]]) -> String {
     for input in inputs {
         // Hängt die Länge des Segments davor (als 4-Byte Little Endian),
         // macht es unmöglich, Grenzen zu verschieben.
-        hasher.update(&(input.len() as u32).to_le_bytes()); 
+        hasher.update(&(input.len() as u32).to_le_bytes());
         hasher.update(input);
     }
     let hash_bytes = hasher.finalize();
@@ -296,10 +295,10 @@ pub fn ed25519_pk_to_curve_point(ed_pub: &EdPublicKey) -> Result<EdwardsPoint, V
     CompressedEdwardsY::from_slice(ed_pub.as_bytes())
         .map_err(|_| VoucherCoreError::Crypto("Invalid Ed25519 public key bytes".to_string()))?
         .decompress()
-        .ok_or_else(|| VoucherCoreError::Crypto("Failed to decompress Ed25519 public key point".to_string()))
+        .ok_or_else(|| {
+            VoucherCoreError::Crypto("Failed to decompress Ed25519 public key point".to_string())
+        })
 }
-
-
 
 /// Helper: Baut den deterministischen Info-String für HKDF auf.
 /// info = "human-money-core/x25519-exchange" + sort(pk1, pk2)
@@ -337,14 +336,18 @@ pub fn decrypt_recipient_payload(
 
     // Guard Format: [EphemeralPK (32)] + [Nonce+Ciphertext]
     if guard_bytes.len() < 32 + 12 {
-        return Err(VoucherCoreError::Crypto("Invalid privacy guard length".to_string()));
+        return Err(VoucherCoreError::Crypto(
+            "Invalid privacy guard length".to_string(),
+        ));
     }
 
     let (ephemeral_pk_bytes, encrypted_content) = guard_bytes.split_at(32);
 
     // 2. Parse Ephemeral Public Key
     let ephemeral_pk_arr: [u8; 32] = ephemeral_pk_bytes.try_into().map_err(|_| {
-        VoucherCoreError::Crypto("Invalid ephemeral public key length (expected 32 bytes)".to_string())
+        VoucherCoreError::Crypto(
+            "Invalid ephemeral public key length (expected 32 bytes)".to_string(),
+        )
     })?;
     let ephemeral_pk_x = X25519PublicKey::from(ephemeral_pk_arr);
 

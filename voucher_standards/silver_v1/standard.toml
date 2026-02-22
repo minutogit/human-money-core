@@ -57,4 +57,4 @@ l2_retention_period = "P3M"
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "4afNJSeqjJpSfzB7YZDfMEz5TKzbNVPJDQr8qeTzL3B9KLXu3fQnWdK7hj4QK14u4D39Pe5iABZQ2JWPW9F84wnL"
+signature = "54ionGRh3ceqYm8jF4bLctTHSH4AKrTaBppGXYpn3yDJ6yb2eSbesXv4dEZTGuLsxUu8kxV5qyitPyVjFGdgP43D"

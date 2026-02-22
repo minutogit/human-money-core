@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod base58_32 {
-    use serde::{de, Deserialize, Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer, de};
     use std::convert::TryInto;
 
     pub fn serialize<S>(data: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
@@ -23,7 +23,7 @@ pub mod base58_32 {
 }
 
 pub mod base58_32_vec {
-    use serde::{de, Deserialize, Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer, de};
     use std::convert::TryInto;
 
     pub fn serialize<S>(data: &Vec<[u8; 32]>, serializer: S) -> Result<S::Ok, S::Error>
@@ -56,7 +56,7 @@ pub mod base58_32_vec {
 }
 
 pub mod base58_32_opt {
-    use serde::{de, Deserialize, Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer, de};
     use std::convert::TryInto;
 
     pub fn serialize<S>(data: &Option<[u8; 32]>, serializer: S) -> Result<S::Ok, S::Error>
@@ -88,7 +88,7 @@ pub mod base58_32_opt {
 }
 
 pub mod base58_64 {
-    use serde::{de, Deserialize, Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer, de};
     use std::convert::TryInto;
 
     pub fn serialize<S>(data: &[u8; 64], serializer: S) -> Result<S::Ok, S::Error>
@@ -110,7 +110,7 @@ pub mod base58_64 {
 }
 
 pub mod base58_64_opt {
-    use serde::{de, Deserialize, Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer, de};
     use std::convert::TryInto;
 
     pub fn serialize<S>(data: &Option<[u8; 64]>, serializer: S) -> Result<S::Ok, S::Error>
@@ -145,7 +145,7 @@ pub mod base58_64_opt {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct L2AuthPayload {
     #[serde(with = "crate::models::layer2_api::base58_32")]
-    pub ephemeral_pubkey: [u8; 32],      // Der temporäre Sender-Key
+    pub ephemeral_pubkey: [u8; 32], // Der temporäre Sender-Key
     #[serde(with = "crate::models::layer2_api::base58_64_opt")]
     pub auth_signature: Option<[u8; 64]>, // Platzhalter für die spätere Challenge-Signatur
 }
@@ -156,22 +156,21 @@ pub struct L2LockRequest {
     pub auth: L2AuthPayload,
     pub layer2_voucher_id: String, // Hex string (64 chars), Pflichtfeld
     pub ds_tag: Option<String>,    // Hex string (64 chars), None bei 'init'
-    
+
     #[serde(with = "crate::models::layer2_api::base58_32")]
     pub transaction_hash: [u8; 32], // Der Hash der neuen Transaktion (t_id)
     pub is_genesis: bool,
     #[serde(with = "crate::models::layer2_api::base58_32")]
     pub sender_ephemeral_pub: [u8; 32],
 
-    
     #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
-    pub receiver_ephemeral_pub_hash: Option<[u8; 32]>, 
+    pub receiver_ephemeral_pub_hash: Option<[u8; 32]>,
 
     #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
     pub change_ephemeral_pub_hash: Option<[u8; 32]>,
-    
+
     #[serde(with = "crate::models::layer2_api::base58_64")]
-    pub layer2_signature: [u8; 64], 
+    pub layer2_signature: [u8; 64],
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletable_at: Option<String>, // Only required when is_genesis = true
@@ -187,7 +186,7 @@ pub struct L2LockEntry {
     #[serde(with = "crate::models::layer2_api::base58_32")]
     pub sender_ephemeral_pub: [u8; 32],
     #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
-    pub receiver_ephemeral_pub_hash: Option<[u8; 32]>, 
+    pub receiver_ephemeral_pub_hash: Option<[u8; 32]>,
     #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
     pub change_ephemeral_pub_hash: Option<[u8; 32]>,
     #[serde(with = "crate::models::layer2_api::base58_64")]
@@ -220,9 +219,7 @@ pub struct L2BatchLockRequest {
 #[serde(tag = "type")]
 pub enum L2Verdict {
     /// Der Tag ist vergeben. Beinhaltet den vollständigen Beweis (LockEntry).
-    Verified {
-        lock_entry: L2LockEntry,
-    },
+    Verified { lock_entry: L2LockEntry },
     /// Der Server kennt diesen Tag noch nicht, hat aber einen gemeinsamen Ahnen gefunden.
     MissingLocks {
         /// Das 10-Zeichen Präfix der letzten gemeinsamen Transaktion.
@@ -237,9 +234,7 @@ pub enum L2Verdict {
         signature: [u8; 64],
     },
     /// Die Anfrage wurde vom Server abgelehnt (z.B. ungültige Signatur).
-    Rejected {
-        reason: String,
-    },
+    Rejected { reason: String },
 }
 
 /// Umschlag für alle L2-Server-Antworten.

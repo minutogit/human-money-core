@@ -38,6 +38,7 @@ regex = "1.10.4"
 uuid = { version = "1.8.0", features = ["v4", "serde"] }
 lazy_static = "1.4.0"
 sysinfo = "0.30"
+cel-interpreter = "0.10.0"
 
 [lib]
 name = "human_money_core"

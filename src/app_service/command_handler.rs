@@ -106,6 +106,11 @@ impl AppService {
                                             let reasons = vec![ValidationFailureReason::RequiredSignatureMissing { role_description: validation_err.to_string() }];
                                             (Ok(new_voucher.clone()), VoucherStatus::Incomplete { reasons })
                                         },
+                                    Err(VoucherCoreError::Validation(ValidationError::BusinessRuleViolated(msg))) =>
+                                        {
+                                            let reasons = vec![ValidationFailureReason::BusinessRule { message: msg }];
+                                            (Ok(new_voucher.clone()), VoucherStatus::Incomplete { reasons })
+                                        },
 
                                     // Fall 2: Fataler Fehler
                                     Err(fatal_error) => (Err(fatal_error.to_string()), VoucherStatus::Quarantined { reason: fatal_error.to_string() })

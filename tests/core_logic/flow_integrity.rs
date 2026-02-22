@@ -1,6 +1,6 @@
-use human_money_core::test_utils::{ACTORS, SILVER_STANDARD, create_minuto_voucher_data};
-use human_money_core::{create_voucher, create_transaction, validate_voucher_against_standard};
 use human_money_core::models::profile::PublicProfile;
+use human_money_core::test_utils::{ACTORS, SILVER_STANDARD, create_minuto_voucher_data};
+use human_money_core::{create_transaction, create_voucher, validate_voucher_against_standard};
 
 #[test]
 fn test_init_transfer_split_chain() {
@@ -11,7 +11,7 @@ fn test_init_transfer_split_chain() {
     let charlie = &ACTORS.charlie;
 
     let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
-    
+
     let creator = PublicProfile {
         id: Some(alice.user_id.clone()),
         ..Default::default()
@@ -25,21 +25,26 @@ fn test_init_transfer_split_chain() {
         standard_hash,
         &alice.signing_key,
         "en",
-    ).expect("Voucher creation failed");
+    )
+    .expect("Voucher creation failed");
 
     // Verify Prev Hash of first transaction (Genesis)
     let genesis_tx = &voucher_0.transactions[0];
     // Genesis prev_hash is usually derived from Nonce/Random since there is no previous transaction.
     // Spec says: prev_hash = Hash(VoucherID + Nonce) or similar for Genesis.
     // Let's just assert it exists.
-    assert!(!genesis_tx.prev_hash.is_empty(), "Genesis prev_hash must be present");
+    assert!(
+        !genesis_tx.prev_hash.is_empty(),
+        "Genesis prev_hash must be present"
+    );
 
     // 2. TRANSFER: Alice -> Bob (Full Amount)
     // ---------------------------------------
     // Alice needs to derive the ephemeral key for the first Spend.
     // For Genesis, the "holder" key is derived from the Voucher Seed (which Alice has).
-    let holder_key_0 = human_money_core::test_utils::derive_holder_key(&voucher_0, &alice.signing_key);
-    
+    let holder_key_0 =
+        human_money_core::test_utils::derive_holder_key(&voucher_0, &alice.signing_key);
+
     let (voucher_1, secrets_1) = create_transaction(
         &voucher_0,
         standard,
@@ -48,7 +53,8 @@ fn test_init_transfer_split_chain() {
         &holder_key_0,
         &bob.user_id,
         "50.0", // Full transfer
-    ).expect("Transfer Alice->Bob failed");
+    )
+    .expect("Transfer Alice->Bob failed");
 
     assert_eq!(voucher_1.transactions.len(), 2);
     let _tx_1 = &voucher_1.transactions[1];
@@ -57,7 +63,7 @@ fn test_init_transfer_split_chain() {
     // prev_hash of TX 1 must match Hash(TX 0) -- roughly, or Hash(TX 0 content).
     // The system logic calculates the hash of the previous transaction state.
     // Let's verify continuity:
-    // We cannot easily re-calculate the exact hash here without internal tools, 
+    // We cannot easily re-calculate the exact hash here without internal tools,
     // but we can check checking logic via `validate_voucher`.
     assert!(validate_voucher_against_standard(&voucher_1, standard).is_ok());
 
@@ -75,26 +81,28 @@ fn test_init_transfer_split_chain() {
     // Actually, `create_transaction` returns (Voucher, Vec<Secret>).
     // We need to extract the key for Bob from `voucher_1` using `bob`'s key.
     // BUT: `test_utils` might not have a helper for "receive and decrypt".
-    // `lifecycle.rs` used `derive_holder_key` which cheats by using the voucher seed? 
-    // NO, `derive_holder_key` takes `voucher` and `master_key`. 
+    // `lifecycle.rs` used `derive_holder_key` which cheats by using the voucher seed?
+    // NO, `derive_holder_key` takes `voucher` and `master_key`.
     // If Bob is the recipient, can he derive the key using `derive_holder_key`?
     // `derive_holder_key` implementation in `test_utils` likely re-derives based on knowledge of the seed OR it simulates the recipient flow.
     // Let's check `test_utils::derive_holder_key` if possible.
     // If not, I'll rely on the pattern from `test_split_transaction_cycle_and_balance_check` which used `derive_holder_key` for Alice again?
     // No, in that test Alice sent to Bob. A split was Alice -> Bob (part) + Alice (part).
     // Alice was still the sender.
-    
+
     // Here Bob is the sender. Bob doesn't have the Voucher Seed (Alice created it).
     // So `derive_holder_key` might fail for Bob if it relies on the seed.
     // UNLESS `derive_holder_key` is smart enough to find the key for `Bob` if he is the last recipient.
-    
+
     // Bob needs his key from secrets_1.recipient_seed
-    let bob_seed = bs58::decode(secrets_1.recipient_seed).into_vec().expect("Invalid seed");
-    
+    let bob_seed = bs58::decode(secrets_1.recipient_seed)
+        .into_vec()
+        .expect("Invalid seed");
+
     // wait, create_transaction takes &SigningKey.
     let holder_key_bob_owned = ed25519_dalek::SigningKey::from_bytes(&bob_seed.try_into().unwrap());
     let holder_key_bob = &holder_key_bob_owned;
-    
+
     // Bob sends 10 to Charlie.
     let (voucher_2, _) = create_transaction(
         &voucher_1,
@@ -104,20 +112,21 @@ fn test_init_transfer_split_chain() {
         holder_key_bob, // Use derived key
         &charlie.user_id,
         "10.0",
-        // Check args! Last arg is amount? 
+        // Check args! Last arg is amount?
         // create_transaction signature: (voucher, standard, sender_id, sender_perm, sender_ephem, recipient, amount)
-    ).expect("Split Bob->Charlie failed");
-    
+    )
+    .expect("Split Bob->Charlie failed");
+
     assert_eq!(voucher_2.transactions.len(), 3); // genesis, transfer, split
     let tx_2 = &voucher_2.transactions[2];
     assert_eq!(tx_2.t_type, "split");
-    
+
     // Expectation: Charlie gets an anchor. Bob gets a NEW anchor (change).
     // The `split` transaction usually has MULTIPLE outputs?
     // Or is it one transaction with multiple recipients?
     // The `create_transaction` implementation in `core` normally handles 1 recipient + change.
     // So it logic checks out.
-    
+
     // Check Outputs/Anchors
     // In V4.5, outputs are not explicit list in `Transaction` struct if it's a simple chain.
     // But a Split implies creating TWO standard output states: one for Charlie, one for Bob.
@@ -139,15 +148,15 @@ fn test_init_transfer_split_chain() {
     // The *state* is now split.
     // Charlie gets a copy of `voucher_2` + proof he owns 10.
     // Bob gets a copy of `voucher_2` + proof he owns 40.
-    
+
     // The Expectation "Charlie erhält einen eigenen Anker" means the `Transaction` struct contains data for both.
     // Let's check `Transaction` fields in `tx_2`.
     // If `Transaction` supports split, it might have a list of outputs/hashes.
     // Or `recipient_payloads` is a map/list.
-    
+
     // I will verify that `tx_2` has mechanism for multiple recipients.
     // Since I cannot see the struct, I will rely on `validate_voucher` to ensure the split is valid.
     // And I will assert that `tx_2.t_type == "split"`.
-    
-    assert!(validate_voucher_against_standard(&voucher_2, standard).is_ok()); 
+
+    assert!(validate_voucher_against_standard(&voucher_2, standard).is_ok());
 }

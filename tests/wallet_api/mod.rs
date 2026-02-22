@@ -12,6 +12,6 @@ mod state_management;
 mod hostile_bundles;
 mod hostile_standards;
 mod lifecycle_and_data;
-mod transactionality;
 mod mixed_mode_vulnerability;
 mod multi_identity_vulnerability;
+mod transactionality;

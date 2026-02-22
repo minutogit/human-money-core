@@ -61,7 +61,7 @@ pub fn create_secure_container(
         // 3. Den `payload_key` für jeden Empfänger einzeln verschlüsseln (Key Wrapping).
         for recipient_id in recipient_ids {
             // TODO: Future Feature for Perfect Forward Secrecy (PFS)
-            // Check if an ephemeral "One-Time Pre-Key" (e.g., from an invoice/payment request) 
+            // Check if an ephemeral "One-Time Pre-Key" (e.g., from an invoice/payment request)
             // is available for this recipient_id. If yes, use it instead of the static DID key.
             let recipient_pubkey_ed = get_pubkey_from_user_id(recipient_id)?;
             let recipient_pubkey_x = ed25519_pub_to_x25519(&recipient_pubkey_ed);

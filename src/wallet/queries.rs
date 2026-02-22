@@ -160,7 +160,9 @@ impl Wallet {
                     .map(|tx| {
                         // Wenn wir der Sender sind und ein Restbetrag existiert (Split-Transaktion),
                         // ist dies unser aktuelles Guthaben.
-                        if tx.sender_id.as_ref() == Some(&self.profile.user_id) && tx.sender_remaining_amount.is_some() {
+                        if tx.sender_id.as_ref() == Some(&self.profile.user_id)
+                            && tx.sender_remaining_amount.is_some()
+                        {
                             tx.sender_remaining_amount
                                 .clone()
                                 .unwrap_or_else(|| "0".to_string())

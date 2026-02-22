@@ -26,15 +26,10 @@ needed_count = 3
 description = "Requires 1 'A' and 2 'B's."
 
 [validation]
-[validation.counts]
-# Veraltete Signatur-Zählung entfernt.
+[validation.dynamic_rules.gender_A]
+expression = "Voucher.signatures.filter(s, has(s.details) && has(s.details.gender) && s.details.gender == 'A').size() == 1"
+message = "Exactly one 'A' is required."
 
-[validation.field_group_rules]
-# Regel: Das Feld 'gender' in der Liste 'signatures' muss
-# exakt einmal den Wert "A" und zweimal den Wert "B" enthalten.
-[validation.field_group_rules.signatures]
-field = "details.gender"
-value_counts = [
-    { value = "A", min = 1, max = 1 },
-    { value = "B", min = 2, max = 2 },
-]
+[validation.dynamic_rules.gender_B]
+expression = "Voucher.signatures.filter(s, has(s.details) && has(s.details.gender) && s.details.gender == 'B').size() == 2"
+message = "Exactly two 'B's are required."

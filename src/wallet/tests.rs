@@ -70,12 +70,14 @@ mod local_instance_id_logic {
     fn test_path_dependency_long_chain() {
         // --- Setup ---
         // Alice (100) -> Bob (40)
-        let (standard, _, _, bob, voucher_after_tx1, secrets) = test_utils::setup_voucher_with_one_tx();
+        let (standard, _, _, bob, voucher_after_tx1, secrets) =
+            test_utils::setup_voucher_with_one_tx();
         let charlie = &ACTORS.charlie;
 
         // Recover Bob's ephemeral key from the secrets of the previous transaction
         let bob_seed_bytes = bs58::decode(secrets.recipient_seed).into_vec().unwrap();
-        let bob_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(&bob_seed_bytes.try_into().unwrap());
+        let bob_ephemeral_key =
+            ed25519_dalek::SigningKey::from_bytes(&bob_seed_bytes.try_into().unwrap());
 
         // Bob (40) -> Charlie (40) - Voller Transfer
         let (voucher_after_tx2, _) = create_transaction(
@@ -109,11 +111,13 @@ mod local_instance_id_logic {
     fn test_path_dependency_bounce_back() {
         // --- Setup ---
         // Alice (100) -> Bob (40)
-        let (standard, _, alice, bob, voucher_after_tx1, secrets) = test_utils::setup_voucher_with_one_tx();
+        let (standard, _, alice, bob, voucher_after_tx1, secrets) =
+            test_utils::setup_voucher_with_one_tx();
 
         // Recover Bob's ephemeral key
         let bob_seed_bytes = bs58::decode(secrets.recipient_seed).into_vec().unwrap();
-        let bob_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(&bob_seed_bytes.try_into().unwrap());
+        let bob_ephemeral_key =
+            ed25519_dalek::SigningKey::from_bytes(&bob_seed_bytes.try_into().unwrap());
 
         // Bob (40) -> Alice (40) - Sendet den Betrag zurück
         let (voucher_after_tx2, _) = create_transaction(
@@ -149,12 +153,16 @@ mod local_instance_id_logic {
     fn test_correct_id_for_archived_state() {
         // --- Setup ---
         // --- Setup ---
-        let (standard, _, alice, bob, initial_voucher, secrets) = test_utils::setup_voucher_with_one_tx();
+        let (standard, _, alice, bob, initial_voucher, secrets) =
+            test_utils::setup_voucher_with_one_tx();
 
-        let alice_change_seed = secrets.change_seed.expect("Alice should have received change from split");
+        let alice_change_seed = secrets
+            .change_seed
+            .expect("Alice should have received change from split");
         let alice_change_key_bytes = bs58::decode(alice_change_seed).into_vec().unwrap();
-        let alice_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(&alice_change_key_bytes.try_into().unwrap());
-        
+        let alice_ephemeral_key =
+            ed25519_dalek::SigningKey::from_bytes(&alice_change_key_bytes.try_into().unwrap());
+
         let (voucher_after_full_transfer, _) = create_transaction(
             &initial_voucher,
             standard,

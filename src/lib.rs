@@ -52,7 +52,9 @@ pub use services::voucher_validation::validate_voucher_against_standard;
 // Verhindert physikalisch, dass ein Release-Build mit aktiven Test-Tools erstellt wird.
 // Wenn dieser Fehler auftritt, wurde versucht 'test-utils' im Release-Mode zu nutzen -> VERBOTEN.
 #[cfg(all(not(debug_assertions), feature = "test-utils"))]
-compile_error!("CRITICAL SECURITY FAILURE: The 'test-utils' feature is enabled in a release build! This disables signature verification capabilities. Build aborted.");
+compile_error!(
+    "CRITICAL SECURITY FAILURE: The 'test-utils' feature is enabled in a release build! This disables signature verification capabilities. Build aborted."
+);
 
 // 2. THREAD-LOCAL BYPASS STATE
 #[cfg(feature = "test-utils")]

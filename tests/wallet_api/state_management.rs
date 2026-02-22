@@ -13,9 +13,7 @@ use human_money_core::{
         voucher::ValueDefinition,
     },
     services::{crypto_utils, voucher_manager::NewVoucherData},
-    test_utils::{
-        ACTORS, SILVER_STANDARD, create_test_bundle, generate_signed_standard_toml,
-    },
+    test_utils::{ACTORS, SILVER_STANDARD, create_test_bundle, generate_signed_standard_toml},
 };
 
 use chrono::DateTime;

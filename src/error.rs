@@ -121,6 +121,10 @@ pub enum ValidationError {
     #[error("Content rule failed: Path '{path}' could not be resolved in the voucher.")]
     PathNotFound { path: String },
 
+    /// Eine dynamische CEL-Regel wurde verletzt.
+    #[error("Business rule violated: {0}")]
+    BusinessRuleViolated(String),
+
     // --- Logische & kryptographische Validierungsfehler ---
     /// Die UUID des Standards im Gutschein stimmt nicht mit der UUID der Validierungsdefinition überein.
     #[error("Voucher standard UUID mismatch. Expected: {expected}, Found: {found}")]
@@ -138,11 +142,15 @@ pub enum ValidationError {
     InvalidCreatorId(#[from] GetPubkeyError),
 
     /// Stealth Mode: Eine Identitäts-Signatur wurde gefunden, obwohl der Modus Anonymität vorschreibt.
-    #[error("Privacy Leak: Transaction '{t_id}' contains a sender_identity_signature in stealth mode.")]
+    #[error(
+        "Privacy Leak: Transaction '{t_id}' contains a sender_identity_signature in stealth mode."
+    )]
     StealthSignatureLeak { t_id: String },
 
     /// Flexible Mode: Eine Identitäts-Signatur ist vorhanden, aber die sender_id fehlt (Inkonsistenz).
-    #[error("Data Hygiene: Transaction '{t_id}' contains a signature but no sender_id in flexible mode.")]
+    #[error(
+        "Data Hygiene: Transaction '{t_id}' contains a signature but no sender_id in flexible mode."
+    )]
     FlexibleModeIdentityInconsistency { t_id: String },
 
     /// Trap Data: Die blinded_id (Trap) hat ein ungültiges Format oder enthält verdächtige Daten.
@@ -294,7 +302,7 @@ pub enum ValidationError {
     /// The creator of the voucher is also listed as a guarantor.
     #[error("The creator of the voucher ('{creator_id}') cannot also be a guarantor.")]
     CreatorAsGuarantor { creator_id: String },
-    
+
     /// JSON parsing error within validation context
     #[error("JSON validation error: {0}")]
     Json(#[from] serde_json::Error),

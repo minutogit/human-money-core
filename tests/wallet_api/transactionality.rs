@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use tempfile::tempdir;
 
 use chrono::{Duration, Utc};
+use human_money_core::models::voucher_standard_definition::PrivacySettings;
 use human_money_core::test_utils;
 use human_money_core::{
     VoucherStatus,
@@ -20,9 +21,8 @@ use human_money_core::{
         voucher::ValueDefinition,
     },
     services::{crypto_utils, voucher_manager::NewVoucherData},
-    test_utils::{ACTORS, SILVER_STANDARD, generate_signed_standard_toml, create_custom_standard},
+    test_utils::{ACTORS, SILVER_STANDARD, create_custom_standard, generate_signed_standard_toml},
 };
-use human_money_core::models::voucher_standard_definition::PrivacySettings;
 
 /// Lokale Test-Hilfsfunktion, um einen mock `ProofOfDoubleSpend` zu erzeugen.
 /// HINWEIS: Aus `state_management.rs` kopiert, um Importprobleme zu vermeiden.
@@ -63,9 +63,12 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
 
     // Create a Flexible Silver Standard to allow non-DID recipients
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.privacy = Some(PrivacySettings { mode: "flexible".to_string() });
+        s.privacy = Some(PrivacySettings {
+            mode: "flexible".to_string(),
+        });
     });
-    let flexible_toml = toml::to_string(&flexible_standard).expect("Failed to serialize flexible standard");
+    let flexible_toml =
+        toml::to_string(&flexible_standard).expect("Failed to serialize flexible standard");
 
     let user_id = service.get_user_id().unwrap();
 
@@ -92,12 +95,8 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
         .local_instance_id
         .clone();
     let recipient = &ACTORS.recipient1;
-    let (service_recipient, _) = test_utils::setup_service_with_profile(
-        dir.path(),
-        recipient,
-        "Recipient",
-        "pwd",
-    );
+    let (service_recipient, _) =
+        test_utils::setup_service_with_profile(dir.path(), recipient, "Recipient", "pwd");
     let id_recipient = service_recipient.get_user_id().unwrap();
 
     let request = human_money_core::wallet::MultiTransferRequest {
@@ -184,9 +183,12 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
 
     // Create a Flexible Silver Standard
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.privacy = Some(PrivacySettings { mode: "flexible".to_string() });
+        s.privacy = Some(PrivacySettings {
+            mode: "flexible".to_string(),
+        });
     });
-    let flexible_toml = toml::to_string(&flexible_standard).expect("Failed to serialize flexible standard");
+    let flexible_toml =
+        toml::to_string(&flexible_standard).expect("Failed to serialize flexible standard");
 
     let id_sender = service_sender.get_user_id().unwrap();
     let id_recipient = service_recipient.get_user_id().unwrap();
@@ -226,7 +228,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(
         flexible_standard.metadata.uuid.clone(),
-        flexible_toml.clone(), 
+        flexible_toml.clone(),
     );
 
     let human_money_core::wallet::CreateBundleResult {
@@ -568,7 +570,10 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
     let alice_holder_key = test_utils::derive_holder_key(&voucher_v1, &identity_alice.signing_key);
     let alice_holder_pub = bs58::encode(alice_holder_key.verifying_key().to_bytes()).into_string();
 
-    let v_id = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&voucher_v1.transactions[0]).unwrap();
+    let v_id = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(
+        &voucher_v1.transactions[0],
+    )
+    .unwrap();
 
     // Pfad A (wird zuerst erfolgreich empfangen)
     let mut tx_a = human_money_core::models::voucher::Transaction {
@@ -582,7 +587,12 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         ..Default::default()
     };
     // FIX: Use resign_transaction_ext with Permanent Key for Identity Signature and Holder Key for Proof Signature
-    tx_a = human_money_core::test_utils::resign_transaction_ext(tx_a, &identity_alice.signing_key, &v_id, Some(&alice_holder_key));
+    tx_a = human_money_core::test_utils::resign_transaction_ext(
+        tx_a,
+        &identity_alice.signing_key,
+        &v_id,
+        Some(&alice_holder_key),
+    );
     let mut voucher_path_a = voucher_v1.clone();
     voucher_path_a.transactions.push(tx_a);
     let bundle_a = human_money_core::test_utils::create_test_bundle(
@@ -605,7 +615,12 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         ..Default::default()
     };
     // FIX: Use resign_transaction_ext with Permanent Key for Identity Signature and Holder Key for Proof Signature
-    tx_b = human_money_core::test_utils::resign_transaction_ext(tx_b, &identity_alice.signing_key, &v_id, Some(&alice_holder_key));
+    tx_b = human_money_core::test_utils::resign_transaction_ext(
+        tx_b,
+        &identity_alice.signing_key,
+        &v_id,
+        Some(&alice_holder_key),
+    );
     let mut voucher_path_b = voucher_v1.clone();
     voucher_path_b.transactions.push(tx_b);
     let bundle_b = human_money_core::test_utils::create_test_bundle(

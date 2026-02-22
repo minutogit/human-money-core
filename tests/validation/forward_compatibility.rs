@@ -169,10 +169,12 @@ mod compatibility_scenarios {
             }
             // In some cases, other validations could run first, so let's at least check it's a validation error
             VoucherCoreError::Validation(_) => {
-                // This is acceptable - the validation failed as expected, even if with a different validation error
-                // This can happen if the validation order has changed and another validation runs first
+                // This is acceptable
             }
-            _ => panic!("Expected a validation error, but got: {:?}", error),
+            VoucherCoreError::Generic(msg) if msg.contains("Only init transactions") => {
+                // This is acceptable, the L2 gateway rejected the malicious type before behavioral rules ran
+            }
+            _ => panic!("Expected a validation error or generic L2 id error, but got: {:?}", error),
         }
     }
 

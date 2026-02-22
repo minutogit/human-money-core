@@ -99,22 +99,19 @@ pub struct Transaction {
     pub t_type: String,
     /// Zeitpunkt der Transaktion im ISO 8601-Format.
     pub t_time: String,
-    
+
     // --- TECHNISCHER LAYER (Layer 2 - Immer vorhanden) ---
-    
     /// Der Hash des vorherigen Stealth-Public-Keys oder Transaktions-Hash.
     pub prev_hash: String,
 
     /// Der Hash des ephemeren Public Keys des Empfängers (Stealth Key).
     /// Existiert IMMER, auch wenn recipient_id öffentlich ist.
-    /// Option nur für Abwärtskompatibilität bzw. Init-Sonderfälle, 
+    /// Option nur für Abwärtskompatibilität bzw. Init-Sonderfälle,
     /// aber im Standard-Flow nun Pflicht.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receiver_ephemeral_pub_hash: Option<String>,
 
-
     // --- SOZIALER LAYER (Layer 1 - Abhängig vom Privacy Mode) ---
-
     /// ID des Senders der Transaktion.
     /// Optional, abhängig vom Privacy Mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -128,7 +125,7 @@ pub struct Transaction {
     /// ID des Empfängers der Transaktion.
     /// Kann public (did:key) oder anonymisiert sein.
     pub recipient_id: String,
-    
+
     /// Der Betrag, der bei dieser Transaktion bewegt wurde.
     pub amount: String,
     /// Der Restbetrag beim Sender nach einer Teilung. Nur bei `t_type: "split"` vorhanden.
@@ -136,7 +133,6 @@ pub struct Transaction {
     pub sender_remaining_amount: Option<String>,
 
     // --- Layer 2 & Privacy Fields ---
-    
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_ephemeral_pub: Option<String>, // Der enthüllte Key (Preimage) für L2-Signatur
 

@@ -1,17 +1,19 @@
 // use human_money_core::app_service::AppService;
-use human_money_core::models::layer2_api::{L2LockRequest, L2Verdict, L2StatusQuery, L2ResponseEnvelope};
-use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::models::layer2_api::{
+    L2LockRequest, L2ResponseEnvelope, L2StatusQuery, L2Verdict,
+};
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::models::voucher::ValueDefinition;
-use human_money_core::wallet::instance::VoucherStatus;
-use human_money_core::test_utils::{self, ACTORS, create_custom_standard, SILVER_STANDARD};
 use human_money_core::models::voucher_standard_definition::PrivacySettings;
+use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::test_utils::{self, ACTORS, SILVER_STANDARD, create_custom_standard};
+use human_money_core::wallet::instance::VoucherStatus;
 use std::collections::HashMap;
 use tempfile::tempdir;
 
 // --- Mock L2 Node ---
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use std::collections::HashSet;
-use ed25519_dalek::{VerifyingKey, Signature, Verifier, SigningKey, Signer};
 
 pub struct MockL2Node {
     // Simuliert den RAM-Bloom-Filter (Voucher IDs)
@@ -41,14 +43,14 @@ impl MockL2Node {
 
     fn wrap_and_sign(&self, verdict: L2Verdict) -> Vec<u8> {
         let verdict_serialized = serde_json::to_vec(&verdict).unwrap();
-        
+
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&verdict_serialized);
         let verdict_hash = hasher.finalize();
 
         let signature = self.server_key.sign(&verdict_hash);
-        
+
         let envelope = L2ResponseEnvelope {
             verdict,
             server_signature: signature.to_bytes(),
@@ -58,14 +60,17 @@ impl MockL2Node {
 
     pub fn handle_lock_request(&mut self, req_bytes: &[u8]) -> Vec<u8> {
         let req: L2LockRequest = serde_json::from_slice(req_bytes).unwrap();
-        
+
         // --- 1. Autorität Prüfen (layer2_signature) ---
-        let ephem_key = VerifyingKey::from_bytes(&req.sender_ephemeral_pub).expect("Invalid sender_ephemeral_pub key format");
+        let ephem_key = VerifyingKey::from_bytes(&req.sender_ephemeral_pub)
+            .expect("Invalid sender_ephemeral_pub key format");
         let signature = Signature::from_bytes(&req.layer2_signature);
-        
+
         let payload_hash = human_money_core::services::l2_gateway::calculate_l2_payload_hash(&req);
 
-        if !human_money_core::is_signature_bypass_active() && ephem_key.verify(&payload_hash, &signature).is_err() {
+        if !human_money_core::is_signature_bypass_active()
+            && ephem_key.verify(&payload_hash, &signature).is_err()
+        {
             let verdict = L2Verdict::Rejected {
                 reason: "Invalid signature".to_string(),
             };
@@ -82,12 +87,14 @@ impl MockL2Node {
             match &req.ds_tag {
                 Some(ds) => ds.clone(),
                 None => {
-                    let verdict = L2Verdict::Rejected { reason: "Non-genesis must have ds_tag".to_string() };
+                    let verdict = L2Verdict::Rejected {
+                        reason: "Non-genesis must have ds_tag".to_string(),
+                    };
                     return self.wrap_and_sign(verdict);
                 }
             }
         };
-        
+
         // --- 2. Double Spend Check via ds_tag ---
         let voucher_locks = self.locks.entry(req.layer2_voucher_id.clone()).or_default();
         if let Some(entry) = voucher_locks.get(&ds_tag) {
@@ -108,7 +115,7 @@ impl MockL2Node {
             deletable_at: req.deletable_at.clone(),
         };
         voucher_locks.insert(ds_tag, entry);
-            
+
         // Add new UTXOs
         if let Some(r) = req.receiver_ephemeral_pub_hash {
             self.spendable_outputs.insert(r);
@@ -169,21 +176,19 @@ fn test_l2_double_spend_quarantine() {
     let dir = tempdir().unwrap();
     let correct_password = "correct_password";
     let test_user = &ACTORS.test_user;
-    
+
     // Setup Service
-    let (mut app, _) = test_utils::setup_service_with_profile(
-        dir.path(),
-        test_user,
-        "Alice",
-        correct_password,
-    );
+    let (mut app, _) =
+        test_utils::setup_service_with_profile(dir.path(), test_user, "Alice", correct_password);
     let user_id = app.get_user_id().unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.privacy = Some(PrivacySettings { mode: "flexible".to_string() });
+        s.privacy = Some(PrivacySettings {
+            mode: "flexible".to_string(),
+        });
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
-    
+
     // Create new voucher (Genesis)
     app.create_new_voucher(
         &flexible_toml,
@@ -200,14 +205,15 @@ fn test_l2_double_spend_quarantine() {
             ..Default::default()
         },
         Some(correct_password),
-    ).unwrap();
+    )
+    .unwrap();
 
     let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0]
         .local_instance_id
         .clone();
 
     let mut mock_l2 = MockL2Node::new();
-    
+
     // Server-Identität im Client konfigurieren
     app.get_wallet_mut().unwrap().profile.l2_server_pubkey = Some(mock_l2.get_server_pubkey());
 
@@ -216,7 +222,8 @@ fn test_l2_double_spend_quarantine() {
     let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
     let envelope_genesis: L2ResponseEnvelope = serde_json::from_slice(&resp_genesis).unwrap();
     assert!(matches!(envelope_genesis.verdict, L2Verdict::Ok { .. }));
-    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password)).unwrap();
+    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password))
+        .unwrap();
 
     // 2. Status Query
     let query_bytes = app.generate_l2_status_query(&voucher_id).unwrap();
@@ -237,27 +244,44 @@ fn test_l2_double_spend_quarantine() {
         sender_profile_name: None,
     };
     let mut standards_toml = HashMap::new();
-    standards_toml.insert(flexible_standard.metadata.uuid.clone(), flexible_toml.clone());
-    
-    app.create_transfer_bundle(request_tx1, &standards_toml, None, Some(correct_password)).unwrap();
+    standards_toml.insert(
+        flexible_standard.metadata.uuid.clone(),
+        flexible_toml.clone(),
+    );
+
+    app.create_transfer_bundle(request_tx1, &standards_toml, None, Some(correct_password))
+        .unwrap();
 
     // Hole neue voucher_id (das Wallet erstellt für Split oft neue instances)
     // Einfachheitshalber nehmen wir die zuletzt modifizierte Instanz die noch Aktive ist
-    let summaries_after_tx1 = app.get_voucher_summaries(None, Some(&[human_money_core::wallet::instance::VoucherStatus::Active])).unwrap();
-    let voucher_id_tx1 = summaries_after_tx1.last().unwrap().local_instance_id.clone();
+    let summaries_after_tx1 = app
+        .get_voucher_summaries(
+            None,
+            Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+        )
+        .unwrap();
+    let voucher_id_tx1 = summaries_after_tx1
+        .last()
+        .unwrap()
+        .local_instance_id
+        .clone();
 
     // L2 Lock für die neue Transaktion
     let req_tx1 = app.generate_l2_lock_request(&voucher_id_tx1).unwrap();
     let resp_tx1 = mock_l2.handle_lock_request(&req_tx1);
     let envelope_tx1: L2ResponseEnvelope = serde_json::from_slice(&resp_tx1).unwrap();
     assert!(matches!(envelope_tx1.verdict, L2Verdict::Ok { .. }));
-    app.process_l2_response(&voucher_id_tx1, &resp_tx1, Some(correct_password)).unwrap();
+    app.process_l2_response(&voucher_id_tx1, &resp_tx1, Some(correct_password))
+        .unwrap();
 
     // L2 Status Query
     let query_bytes_tx1 = app.generate_l2_status_query(&voucher_id_tx1).unwrap();
     let resp_query_tx1 = mock_l2.handle_status_query(&query_bytes_tx1);
     let query_envelope_tx1: L2ResponseEnvelope = serde_json::from_slice(&resp_query_tx1).unwrap();
-    assert!(matches!(query_envelope_tx1.verdict, L2Verdict::Verified { .. }));
+    assert!(matches!(
+        query_envelope_tx1.verdict,
+        L2Verdict::Verified { .. }
+    ));
 
     // 4. Second Transaction (Transfer to Bob/David again)
     let request_tx2 = human_money_core::wallet::MultiTransferRequest {
@@ -269,18 +293,28 @@ fn test_l2_double_spend_quarantine() {
         notes: None,
         sender_profile_name: None,
     };
-    app.create_transfer_bundle(request_tx2, &standards_toml, None, Some(correct_password)).unwrap();
+    app.create_transfer_bundle(request_tx2, &standards_toml, None, Some(correct_password))
+        .unwrap();
 
-    let summaries_after_tx2 = app.get_voucher_summaries(None, Some(&[human_money_core::wallet::instance::VoucherStatus::Active])).unwrap();
-    let voucher_id_tx2 = summaries_after_tx2.last().unwrap().local_instance_id.clone();
+    let summaries_after_tx2 = app
+        .get_voucher_summaries(
+            None,
+            Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+        )
+        .unwrap();
+    let voucher_id_tx2 = summaries_after_tx2
+        .last()
+        .unwrap()
+        .local_instance_id
+        .clone();
 
     // Generiere den L2LockRequest req_valid
     let req_valid_bytes = app.generate_l2_lock_request(&voucher_id_tx2).unwrap();
-    
+
     // 5. Double Spend Provokation (Hacker ist schneller)
     let mut req_malicious: L2LockRequest = serde_json::from_slice(&req_valid_bytes).unwrap();
     req_malicious.transaction_hash[0] = !req_malicious.transaction_hash[0]; // Hacker hat anderen tx Hash
-    
+
     let req_malicious_bytes = serde_json::to_vec(&req_malicious).unwrap();
     let resp_malicious = mock_l2.handle_lock_request(&req_malicious_bytes);
     let envelope_malicious: L2ResponseEnvelope = serde_json::from_slice(&resp_malicious).unwrap();
@@ -290,12 +324,16 @@ fn test_l2_double_spend_quarantine() {
     let resp_tx2 = mock_l2.handle_lock_request(&req_valid_bytes);
     let envelope_tx2: L2ResponseEnvelope = serde_json::from_slice(&resp_tx2).unwrap();
     assert!(matches!(envelope_tx2.verdict, L2Verdict::Verified { .. }));
-    
-    app.process_l2_response(&voucher_id_tx2, &resp_tx2, Some(correct_password)).unwrap();
+
+    app.process_l2_response(&voucher_id_tx2, &resp_tx2, Some(correct_password))
+        .unwrap();
 
     // 7. Finale Prüfung
     let final_details = app.get_voucher_details(&voucher_id_tx2).unwrap();
-    assert!(matches!(final_details.status, VoucherStatus::Quarantined { .. }));
+    assert!(matches!(
+        final_details.status,
+        VoucherStatus::Quarantined { .. }
+    ));
 }
 
 #[test]
@@ -304,21 +342,19 @@ fn test_l2_signature_payload_manipulation() {
     let dir = tempdir().unwrap();
     let correct_password = "correct_password";
     let test_user = &ACTORS.test_user;
-    
+
     // Setup Service
-    let (mut app, _) = test_utils::setup_service_with_profile(
-        dir.path(),
-        test_user,
-        "Alice",
-        correct_password,
-    );
+    let (mut app, _) =
+        test_utils::setup_service_with_profile(dir.path(), test_user, "Alice", correct_password);
     let user_id = app.get_user_id().unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.privacy = Some(PrivacySettings { mode: "flexible".to_string() });
+        s.privacy = Some(PrivacySettings {
+            mode: "flexible".to_string(),
+        });
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
-    
+
     // Create new voucher (Genesis)
     app.create_new_voucher(
         &flexible_toml,
@@ -335,14 +371,15 @@ fn test_l2_signature_payload_manipulation() {
             ..Default::default()
         },
         Some(correct_password),
-    ).unwrap();
+    )
+    .unwrap();
 
     let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0]
         .local_instance_id
         .clone();
 
     let mut mock_l2 = MockL2Node::new();
-    
+
     // Server-Identität im Client konfigurieren
     app.get_wallet_mut().unwrap().profile.l2_server_pubkey = Some(mock_l2.get_server_pubkey());
 
@@ -351,7 +388,8 @@ fn test_l2_signature_payload_manipulation() {
     let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
     let envelope_genesis: L2ResponseEnvelope = serde_json::from_slice(&resp_genesis).unwrap();
     assert!(matches!(envelope_genesis.verdict, L2Verdict::Ok { .. }));
-    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password)).unwrap();
+    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password))
+        .unwrap();
 
     let id_david = test_utils::ACTORS.david.identity.user_id.clone();
 
@@ -366,17 +404,30 @@ fn test_l2_signature_payload_manipulation() {
         sender_profile_name: None,
     };
     let mut standards_toml = HashMap::new();
-    standards_toml.insert(flexible_standard.metadata.uuid.clone(), flexible_toml.clone());
-    
-    app.create_transfer_bundle(request_tx1, &standards_toml, None, Some(correct_password)).unwrap();
+    standards_toml.insert(
+        flexible_standard.metadata.uuid.clone(),
+        flexible_toml.clone(),
+    );
 
-    let summaries_after_tx1 = app.get_voucher_summaries(None, Some(&[human_money_core::wallet::instance::VoucherStatus::Active])).unwrap();
-    let voucher_id_tx1 = summaries_after_tx1.last().unwrap().local_instance_id.clone();
+    app.create_transfer_bundle(request_tx1, &standards_toml, None, Some(correct_password))
+        .unwrap();
+
+    let summaries_after_tx1 = app
+        .get_voucher_summaries(
+            None,
+            Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+        )
+        .unwrap();
+    let voucher_id_tx1 = summaries_after_tx1
+        .last()
+        .unwrap()
+        .local_instance_id
+        .clone();
 
     // 3. Generiere validen L2LockRequest
     let req_valid_bytes = app.generate_l2_lock_request(&voucher_id_tx1).unwrap();
     let mut req_manipulated: L2LockRequest = serde_json::from_slice(&req_valid_bytes).unwrap();
-    
+
     // 4. Manipulation: Change receiver_ephemeral_pub_hash
     // This is the core of the vulnerability: the signature ONLY signs the transaction_hash (t_id).
     // An attacker can change routing fields like receiver_ephemeral_pub_hash without invalidating the signature.
@@ -386,10 +437,11 @@ fn test_l2_signature_payload_manipulation() {
     req_manipulated.receiver_ephemeral_pub_hash = Some(fake_hash);
 
     let req_manipulated_bytes = serde_json::to_vec(&req_manipulated).unwrap();
-    
+
     // 5. Send manipulated request to L2 Node
     let resp_manipulated = mock_l2.handle_lock_request(&req_manipulated_bytes);
-    let envelope_manipulated: L2ResponseEnvelope = serde_json::from_slice(&resp_manipulated).unwrap();
+    let envelope_manipulated: L2ResponseEnvelope =
+        serde_json::from_slice(&resp_manipulated).unwrap();
 
     // After the protocol fix, the L2 Node should REJECT the manipulated payload
     // because the signature (which signed the old hashes) no longer matches the payload_hash.
@@ -413,21 +465,19 @@ fn test_l2_fake_double_spend_protection() {
     let dir = tempdir().unwrap();
     let correct_password = "correct_password";
     let test_user = &ACTORS.test_user;
-    
+
     // Setup Service
-    let (mut app, _) = test_utils::setup_service_with_profile(
-        dir.path(),
-        test_user,
-        "Alice",
-        correct_password,
-    );
+    let (mut app, _) =
+        test_utils::setup_service_with_profile(dir.path(), test_user, "Alice", correct_password);
     let user_id = app.get_user_id().unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.privacy = Some(PrivacySettings { mode: "flexible".to_string() });
+        s.privacy = Some(PrivacySettings {
+            mode: "flexible".to_string(),
+        });
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
-    
+
     // Create new voucher (Genesis)
     app.create_new_voucher(
         &flexible_toml,
@@ -444,21 +494,23 @@ fn test_l2_fake_double_spend_protection() {
             ..Default::default()
         },
         Some(correct_password),
-    ).unwrap();
+    )
+    .unwrap();
 
     let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0]
         .local_instance_id
         .clone();
 
     let mut mock_l2 = MockL2Node::new();
-    
+
     // Server-Identität im Client konfigurieren
     app.get_wallet_mut().unwrap().profile.l2_server_pubkey = Some(mock_l2.get_server_pubkey());
 
     // 1. Genesis Lock
     let req_genesis = app.generate_l2_lock_request(&voucher_id).unwrap();
     let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
-    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password)).unwrap();
+    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password))
+        .unwrap();
 
     let id_david = test_utils::ACTORS.david.identity.user_id.clone();
 
@@ -473,24 +525,44 @@ fn test_l2_fake_double_spend_protection() {
         sender_profile_name: None,
     };
     let mut standards_toml = HashMap::new();
-    standards_toml.insert(flexible_standard.metadata.uuid.clone(), flexible_toml.clone());
-    
-    app.create_transfer_bundle(request_tx1, &standards_toml, None, Some(correct_password)).unwrap();
+    standards_toml.insert(
+        flexible_standard.metadata.uuid.clone(),
+        flexible_toml.clone(),
+    );
 
-    let summaries_after_tx1 = app.get_voucher_summaries(None, Some(&[human_money_core::wallet::instance::VoucherStatus::Active])).unwrap();
-    let voucher_id_tx1 = summaries_after_tx1.last().unwrap().local_instance_id.clone();
+    app.create_transfer_bundle(request_tx1, &standards_toml, None, Some(correct_password))
+        .unwrap();
+
+    let summaries_after_tx1 = app
+        .get_voucher_summaries(
+            None,
+            Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+        )
+        .unwrap();
+    let voucher_id_tx1 = summaries_after_tx1
+        .last()
+        .unwrap()
+        .local_instance_id
+        .clone();
 
     // Legitime Parameter aus der Historie extrahieren
     let (challenge_ds_tag, l2_voucher_id, expected_ephem_pub) = {
         let wallet = app.get_wallet_for_test().unwrap();
         let instance = wallet.get_voucher_instance(&voucher_id_tx1).unwrap();
         let last_tx = instance.voucher.transactions.last().unwrap();
-        
+
         let ds_tag = human_money_core::services::l2_gateway::derive_challenge_tag(last_tx).unwrap();
-        let vid = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0]).unwrap();
+        let vid = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(
+            &instance.voucher.transactions[0],
+        )
+        .unwrap();
         let ephem_bs58 = last_tx.sender_ephemeral_pub.as_ref().unwrap();
-        let ephem_bytes: [u8; 32] = bs58::decode(ephem_bs58).into_vec().unwrap().try_into().unwrap();
-        
+        let ephem_bytes: [u8; 32] = bs58::decode(ephem_bs58)
+            .into_vec()
+            .unwrap()
+            .try_into()
+            .unwrap();
+
         (ds_tag, vid, ephem_bytes)
     };
 
@@ -510,14 +582,22 @@ fn test_l2_fake_double_spend_protection() {
         deletable_at: None,
     };
 
-    let resp_a = mock_l2.wrap_and_sign(L2Verdict::Verified { lock_entry: malicious_entry_a });
+    let resp_a = mock_l2.wrap_and_sign(L2Verdict::Verified {
+        lock_entry: malicious_entry_a,
+    });
     let result_a = app.process_l2_response(&voucher_id_tx1, &resp_a, Some(correct_password));
-    
-    assert!(result_a.is_err(), "Wallet darf mathematisch ungültigen Beweis nicht akzeptieren");
+
+    assert!(
+        result_a.is_err(),
+        "Wallet darf mathematisch ungültigen Beweis nicht akzeptieren"
+    );
     assert!(result_a.unwrap_err().contains("ungültig"));
-    
+
     // Status prüfen -> muss Active bleiben
-    assert!(matches!(app.get_voucher_details(&voucher_id_tx1).unwrap().status, VoucherStatus::Active));
+    assert!(matches!(
+        app.get_voucher_details(&voucher_id_tx1).unwrap().status,
+        VoucherStatus::Active
+    ));
 
     // --- Scenario B: Fremder Key / Gefälschter Lock ---
     // Der Server generiert einen eigenen Key, erstellt einen mathematisch korrekten Lock für t_id "FAKE",
@@ -546,37 +626,43 @@ fn test_l2_fake_double_spend_protection() {
         deletable_at: None,
     };
 
-    let resp_b = mock_l2.wrap_and_sign(L2Verdict::Verified { lock_entry: malicious_entry_b });
+    let resp_b = mock_l2.wrap_and_sign(L2Verdict::Verified {
+        lock_entry: malicious_entry_b,
+    });
     let result_b = app.process_l2_response(&voucher_id_tx1, &resp_b, Some(correct_password));
 
-    assert!(result_b.is_err(), "Wallet muss Beweis mit fremdem Key ablehnen");
+    assert!(
+        result_b.is_err(),
+        "Wallet muss Beweis mit fremdem Key ablehnen"
+    );
     assert!(result_b.unwrap_err().contains("fremden Key"));
 
     // Status prüfen -> muss Active bleiben
-    assert!(matches!(app.get_voucher_details(&voucher_id_tx1).unwrap().status, VoucherStatus::Active));
+    assert!(matches!(
+        app.get_voucher_details(&voucher_id_tx1).unwrap().status,
+        VoucherStatus::Active
+    ));
 }
 
 #[test]
 fn test_l2_voucher_id_mixup_protection() {
-    human_money_core::set_signature_bypass(false); 
+    human_money_core::set_signature_bypass(false);
     let dir = tempdir().unwrap();
     let correct_password = "correct_password";
     let test_user = &ACTORS.test_user;
-    
+
     // Setup Service
-    let (mut app, _) = test_utils::setup_service_with_profile(
-        dir.path(),
-        test_user,
-        "Alice",
-        correct_password,
-    );
+    let (mut app, _) =
+        test_utils::setup_service_with_profile(dir.path(), test_user, "Alice", correct_password);
     let user_id = app.get_user_id().unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.privacy = Some(PrivacySettings { mode: "flexible".to_string() });
+        s.privacy = Some(PrivacySettings {
+            mode: "flexible".to_string(),
+        });
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
-    
+
     // Create new voucher (Genesis)
     app.create_new_voucher(
         &flexible_toml,
@@ -593,7 +679,8 @@ fn test_l2_voucher_id_mixup_protection() {
             ..Default::default()
         },
         Some(correct_password),
-    ).unwrap();
+    )
+    .unwrap();
 
     let summaries = app.get_voucher_summaries(None, None).unwrap();
     let voucher_id = summaries[0].local_instance_id.clone();
@@ -604,25 +691,37 @@ fn test_l2_voucher_id_mixup_protection() {
     // 1. Genesis Lock
     let req_genesis = app.generate_l2_lock_request(&voucher_id).unwrap();
     let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
-    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password)).unwrap();
+    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password))
+        .unwrap();
 
     // Legitime Parameter aus der Historie extrahieren
     let (_challenge_ds_tag, l2_voucher_id, expected_ephem_pub, t_id) = {
         let wallet = app.get_wallet_for_test().unwrap();
         let instance = wallet.get_voucher_instance(&voucher_id).unwrap();
         let last_tx = instance.voucher.transactions.last().unwrap();
-        
+
         let ds_tag = human_money_core::services::l2_gateway::derive_challenge_tag(last_tx).unwrap();
-        let vid = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0]).unwrap();
+        let vid = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(
+            &instance.voucher.transactions[0],
+        )
+        .unwrap();
         let ephem_bs58 = last_tx.sender_ephemeral_pub.as_ref().unwrap();
-        let ephem_bytes: [u8; 32] = bs58::decode(ephem_bs58).into_vec().unwrap().try_into().unwrap();
-        let tid_bytes: [u8; 32] = bs58::decode(&last_tx.t_id).into_vec().unwrap().try_into().unwrap();
-        
+        let ephem_bytes: [u8; 32] = bs58::decode(ephem_bs58)
+            .into_vec()
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let tid_bytes: [u8; 32] = bs58::decode(&last_tx.t_id)
+            .into_vec()
+            .unwrap()
+            .try_into()
+            .unwrap();
+
         (ds_tag, vid, ephem_bytes, tid_bytes)
     };
 
     // --- Scenario C: Voucher ID Mix-up ---
-    // Der Server behauptet einen Double-Spend für einen ANDEREN Voucher, nutzt aber dort 
+    // Der Server behauptet einen Double-Spend für einen ANDEREN Voucher, nutzt aber dort
     // unsere echten Daten (Challenge, Key, Signatur).
     let mut fake_voucher_id = l2_voucher_id.clone();
     if fake_voucher_id.starts_with("0") {
@@ -637,12 +736,12 @@ fn test_l2_voucher_id_mixup_protection() {
     // Signiere den gefälschten Lock-Eintrag (damit Math-Check PASSES)
     // Aber wir nutzen die FALSCHE Voucher ID
     let _signing_key = SigningKey::from_bytes(&[1u8; 32]); // Dummy key won't work, we need the real ephemeral or bypass
-    // We use signature bypass for simplicity in forging the math-correct lock, 
+    // We use signature bypass for simplicity in forging the math-correct lock,
     // but the ID check should still fail.
     human_money_core::set_signature_bypass(true);
 
     let malicious_entry_c = human_money_core::models::layer2_api::L2LockEntry {
-        layer2_voucher_id: fake_voucher_id, 
+        layer2_voucher_id: fake_voucher_id,
         t_id: fake_t_id,
         sender_ephemeral_pub: expected_ephem_pub,
         receiver_ephemeral_pub_hash: None,
@@ -651,12 +750,20 @@ fn test_l2_voucher_id_mixup_protection() {
         deletable_at: None,
     };
 
-    let resp_c = mock_l2.wrap_and_sign(L2Verdict::Verified { lock_entry: malicious_entry_c });
+    let resp_c = mock_l2.wrap_and_sign(L2Verdict::Verified {
+        lock_entry: malicious_entry_c,
+    });
     let result_c = app.process_l2_response(&voucher_id, &resp_c, Some(correct_password));
 
-    assert!(result_c.is_err(), "Wallet muss Beweis für falsche Voucher ID ablehnen");
+    assert!(
+        result_c.is_err(),
+        "Wallet muss Beweis für falsche Voucher ID ablehnen"
+    );
     assert!(result_c.unwrap_err().contains("Mix-up"));
 
     // Status prüfen -> muss Active bleiben
-    assert!(matches!(app.get_voucher_details(&voucher_id).unwrap().status, VoucherStatus::Active));
+    assert!(matches!(
+        app.get_voucher_details(&voucher_id).unwrap().status,
+        VoucherStatus::Active
+    ));
 }

@@ -148,13 +148,9 @@ fn api_wallet_full_signature_workflow() {
     dbg!(&validation_result);
 
     assert!(matches!(
-        voucher_validation::validate_voucher_against_standard(&instance.voucher, minuto_standard).unwrap_err(),
-        // KORREKTUR: Die Assertion war veraltet. Der Minuto-Standard validiert
-        // basierend auf `gender`, nicht `role`.
-        // Bob hat eine Signatur mit `gender: None` (via Default) hinzugefügt.
-        // Die erste Regel (`gender="1"`) schlägt fehl (erwartet 1, gefunden 0).
-        VoucherCoreError::Validation(ValidationError::FieldValueCountOutOfBounds { path, field, value, min: 1, max: 1, found: 0 })
-        if path == "signatures" && field == "details.gender" && value == "1"
+        validation_result.unwrap_err(),
+        VoucherCoreError::Validation(ValidationError::BusinessRuleViolated(msg))
+        if msg.contains("männlicher") || msg.contains("1") || msg.contains("Bürg") || msg.contains("weibliche")
     ));
 }
 

@@ -893,7 +893,31 @@ fn api_wallet_rejects_invalid_bundle() {
     .unwrap();
 
     voucher.voucher_standard.template.description = "BAD-FORMAT".to_string(); // Verstößt gegen Regex
+    
+    // UPDATE VOUCHER HASH (verhindert vorzeitigen Abbruch durch InvalidVoucherHash-Check)
+    let voucher_nonce = voucher.voucher_nonce.clone();
+    let mut voucher_to_hash = voucher.clone();
+    voucher_to_hash.voucher_id = "".to_string();
+    voucher_to_hash.transactions.clear();
+    voucher_to_hash.signatures.clear();
+    voucher.voucher_id = human_money_core::services::crypto_utils::get_hash(
+        human_money_core::services::utils::to_canonical_json(&voucher_to_hash).unwrap()
+    );
+    if !voucher.transactions.is_empty() {
+        let v_id_bytes = bs58::decode(&voucher.voucher_id).into_vec().unwrap();
+        let v_nonce_bytes = bs58::decode(&voucher_nonce).into_vec().unwrap();
+        voucher.transactions[0].prev_hash = human_money_core::services::crypto_utils::get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes]);
+        // Aktualisiere auch die Tx Hash, sodass sie valide ist
+        let mut tx_to_hash = voucher.transactions[0].clone();
+        tx_to_hash.t_id = "".to_string();
+        tx_to_hash.sender_identity_signature = None;
+        tx_to_hash.layer2_signature = None;
+        voucher.transactions[0].t_id = human_money_core::services::crypto_utils::get_hash(
+            human_money_core::services::utils::to_canonical_json(&tx_to_hash).unwrap()
+        );
+    }
 
+    human_money_core::set_signature_bypass(true);
     let (bundle_bytes, _header) = alice_wallet
         .create_and_encrypt_transaction_bundle(
             &alice.identity,
@@ -918,6 +942,9 @@ fn api_wallet_rejects_invalid_bundle() {
             received_voucher,
             &standard,
         );
+    
+    human_money_core::set_signature_bypass(false);
+
     assert!(
         validation_result.is_err(),
         "Validation of the manipulated voucher should fail"

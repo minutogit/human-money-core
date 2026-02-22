@@ -853,13 +853,7 @@ mod tests {
         assert_eq!(selected.len(), 5);
         let depths: Vec<u8> = selected
             .iter()
-            .map(|fp| {
-                bundle
-                    .fingerprint_depths
-                    .get(&fp.ds_tag)
-                    .unwrap()
-                    .clone()
-            })
+            .map(|fp| bundle.fingerprint_depths.get(&fp.ds_tag).unwrap().clone())
             .collect();
         assert_eq!(depths.iter().filter(|&&d| d == 0).count(), 2);
         assert_eq!(depths.iter().filter(|&&d| d == 1).count(), 2);

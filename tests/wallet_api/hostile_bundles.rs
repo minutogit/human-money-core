@@ -122,10 +122,10 @@ fn test_rejection_of_broken_transaction_chain() {
     broken_tx.prev_hash = "garbage_hash_value_that_breaks_the_chain".to_string();
 
     // 3. WICHTIG: Dank Signature-Bypass müssen wir keine kryptographische Signatur mehr
-    //    berechnen. Wir brauchen nur die t_id zu aktualisieren, damit die strukturelle 
+    //    berechnen. Wir brauchen nur die t_id zu aktualisieren, damit die strukturelle
     //    Integritätsprüfung (t_id == hash(inhalt)) passt.
     broken_tx.t_id = human_money_core::crypto_utils::get_hash(
-        human_money_core::to_canonical_json(&broken_tx).unwrap()
+        human_money_core::to_canonical_json(&broken_tx).unwrap(),
     );
 
     // Füge die kaputte, aber strukturell konsistente Transaktion hinzu
@@ -145,7 +145,8 @@ fn test_rejection_of_broken_transaction_chain() {
     assert!(result.is_err());
     let err_str = result.unwrap_err();
     assert!(
-        err_str.contains("Transaction chain broken") || err_str.contains("prev_hash does not match"),
+        err_str.contains("Transaction chain broken")
+            || err_str.contains("prev_hash does not match"),
         "Error should complain about broken chain. Got: {}",
         err_str
     );
@@ -202,7 +203,7 @@ fn test_rejection_of_inconsistent_split_math() {
     tx2.sender_remaining_amount = Some("80.0000".to_string()); // Falscher Restbetrag
     // 3. WICHTIG: Dank Signature-Bypass aktualisieren wir nur die t_id.
     tx2.t_id = human_money_core::crypto_utils::get_hash(
-        human_money_core::to_canonical_json(&tx2).unwrap()
+        human_money_core::to_canonical_json(&tx2).unwrap(),
     );
     voucher.transactions.push(tx2);
 

@@ -1,9 +1,9 @@
-use human_money_core::services::trap_manager::{derive_m, generate_trap};
-use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
-use rand::rngs::OsRng;
-use human_money_core::test_utils::setup_voucher_with_one_tx;
+use curve25519_dalek::scalar::Scalar;
+use human_money_core::services::trap_manager::{derive_m, generate_trap};
 use human_money_core::services::voucher_validation::validate_voucher_against_standard;
+use human_money_core::test_utils::setup_voucher_with_one_tx;
+use rand::rngs::OsRng;
 
 #[test]
 fn test_hkdf_determinism() {
@@ -13,7 +13,7 @@ fn test_hkdf_determinism() {
 
     // 1. Run 100 times, must always be identical
     let first_m = derive_m(prev_hash, secret, prefix).unwrap();
-    
+
     for _ in 0..100 {
         let m = derive_m(prev_hash, secret, prefix).unwrap();
         assert_eq!(first_m, m, "HKDF must be deterministic!");
@@ -22,7 +22,7 @@ fn test_hkdf_determinism() {
     // 2. Avalanche Effect: Change one bit in prev_hash
     let prev_hash_modified = "prev_hash_123456788"; // changed last char
     let second_m = derive_m(prev_hash_modified, secret, prefix).unwrap();
-    
+
     assert_ne!(first_m, second_m, "Avalanche effect missing!");
 }
 
@@ -30,39 +30,42 @@ fn test_hkdf_determinism() {
 fn test_trap_identity_recovery() {
     // Mathematical proof: ID = V - (V1-V2)*(U1-U2)^-1 * U1
     // We simulate the Solver Formula using raw scalars/points.
-    
+
     let mut rng = OsRng;
-    
+
     // Fixed Secret ID (as a point)
     let id_scalar = Scalar::random(&mut rng);
     let id_point = id_scalar * ED25519_BASEPOINT_POINT;
-    
+
     // Fixed Secret Slope m
     let m = Scalar::random(&mut rng);
-    
+
     // Transaction A (Input U1)
     let u1 = Scalar::random(&mut rng);
     let v1 = (u1 * m) * ED25519_BASEPOINT_POINT + id_point;
-    
+
     // Transaction B (Input U2) - Same m, same ID!
     let u2 = Scalar::random(&mut rng);
     let v2 = (u2 * m) * ED25519_BASEPOINT_POINT + id_point;
-    
+
     // Solver Logic:
     // 1. Calculate Delta V and Delta U
     // Delta V = V1 - V2 = (m*U1 + ID) - (m*U2 + ID) = m*(U1-U2)
     // Delta U = U1 - U2
     let delta_v = v1 - v2;
     let delta_u = u1 - u2; // Scalar
-    
+
     // 2. Calculate m = Delta V * (Delta U)^-1
     let delta_u_inv = delta_u.invert();
     let m_calculated_point = delta_v * delta_u_inv; // This is m * G
-    
+
     // 3. Extracted ID = V1 - m_calculated * U1
     let id_calculated = v1 - (m_calculated_point * u1);
-    
-    assert_eq!(id_calculated, id_point, "Identity extraction failed mathematically!");
+
+    assert_eq!(
+        id_calculated, id_point,
+        "Identity extraction failed mathematically!"
+    );
 }
 
 #[test]
@@ -73,28 +76,30 @@ fn test_random_slope_attack() {
     // The proof verification on Receiver side might pass if they sign a valid ZKP for the FAKE m.
     // BUT: The Trap logic (Double Spend) will fail to extract the real ID.
     // However, the test here is to prove that the ds_tag is still generated correctly (independent of m).
-    
+
     // Note: In the real system, m is not an input to generate_trap, it is used internally.
     // But generate_trap takes m as argument.
-    
+
     let mut rng = OsRng;
     let u_scalar = Scalar::random(&mut rng);
     let id_point = Scalar::random(&mut rng) * ED25519_BASEPOINT_POINT;
-    
+
     // Case 1: Real m
     let m_real = Scalar::random(&mut rng);
-    let trap_real = generate_trap("tag_1".to_string(), &u_scalar, &m_real, &id_point, "prefix").unwrap();
-    
+    let trap_real =
+        generate_trap("tag_1".to_string(), &u_scalar, &m_real, &id_point, "prefix").unwrap();
+
     // Case 2: Fake m
     let m_fake = Scalar::random(&mut rng);
-    let trap_fake = generate_trap("tag_1".to_string(), &u_scalar, &m_fake, &id_point, "prefix").unwrap();
-    
+    let trap_fake =
+        generate_trap("tag_1".to_string(), &u_scalar, &m_fake, &id_point, "prefix").unwrap();
+
     // The ds_tag MUST be identical (it is passed in, so this test just confirms API usage)
     assert_eq!(trap_real.ds_tag, trap_fake.ds_tag);
-    
+
     // But the Blinded ID (V) will be different!
     assert_ne!(trap_real.blinded_id, trap_fake.blinded_id);
-    
+
     // This confirms that if an attacker varies m, they create a NEW blinded ID V.
     // If they double spend, we have (U1, V1) and (U2, V2).
     // If U1 != U2 (different transactions), we solve.
@@ -115,30 +120,45 @@ fn test_trap_parameter_manipulation_with_bypass() {
 
     human_money_core::set_signature_bypass(true);
 
-    let (standard, _hash, _creator, _recipient, mut voucher, _secrets) = setup_voucher_with_one_tx();
-    
+    let (standard, _hash, _creator, _recipient, mut voucher, _secrets) =
+        setup_voucher_with_one_tx();
+
     // Manipulate the Trap U in the transaction
     // The original U is valid. We overwrite it with random junk.
     // format: just change base58 string to something valid base58 but wrong value
     let wrong_u_scalar = Scalar::random(&mut OsRng);
     let wrong_u_str = bs58::encode(wrong_u_scalar.as_bytes()).into_string();
-    
-    voucher.transactions.last_mut().unwrap().trap_data.as_mut().expect("Trap data missing").u = wrong_u_str;
-    
+
+    voucher
+        .transactions
+        .last_mut()
+        .unwrap()
+        .trap_data
+        .as_mut()
+        .expect("Trap data missing")
+        .u = wrong_u_str;
+
     // Now validate.
     // The signature check is bypassed.
     // But the `verify_trap` logic deep inside `validate_transaction` should check:
     // calculated_u = hash_to_scalar(input)
     // if calculated_u != trap.u -> Error.
-    
+
     let result = validate_voucher_against_standard(&voucher, standard);
-    
-    assert!(result.is_err(), "Manipulation of Trap U must be detected even with signature bypass!");
-    
+
+    assert!(
+        result.is_err(),
+        "Manipulation of Trap U must be detected even with signature bypass!"
+    );
+
     let err_msg = format!("{:?}", result.err());
     // The error should come from verify_trap: "Varying Input Mismatch" or similar
-    assert!(err_msg.contains("Varying Input Mismatch") || err_msg.contains("Trap Scalar U does not match"), 
-            "Error message should indicate Trap U mismatch. Got: {}", err_msg);
+    assert!(
+        err_msg.contains("Varying Input Mismatch")
+            || err_msg.contains("Trap Scalar U does not match"),
+        "Error message should indicate Trap U mismatch. Got: {}",
+        err_msg
+    );
 
     human_money_core::set_signature_bypass(false);
 }

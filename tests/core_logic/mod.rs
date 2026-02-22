@@ -13,8 +13,8 @@
 //! - **`math`**: Stellt die numerische Robustheit von Transaktionen sicher.
 //! - **`security`**: Prüft auf Sicherheitslücken und die Double-Spend-Erkennung.
 
+pub mod flow_integrity;
 pub mod lifecycle;
 pub mod math;
-pub mod security;
 pub mod privacy_modes;
-pub mod flow_integrity;
+pub mod security;

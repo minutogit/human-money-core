@@ -91,7 +91,8 @@ fn test_chained_transaction_math_and_scaling() {
 
     // --- 2. FALL: GANZZAHL-SPLIT VON GANZZAHL-GUTHABEN ---
     // Alice (100) sendet "40" an Bob.
-    let holder_key = human_money_core::test_utils::derive_holder_key(&current_voucher, &alice.signing_key);
+    let holder_key =
+        human_money_core::test_utils::derive_holder_key(&current_voucher, &alice.signing_key);
     let (v, secrets_1) = create_transaction(
         &current_voucher,
         standard,
@@ -121,14 +122,20 @@ fn test_chained_transaction_math_and_scaling() {
     // Alice (60) sendet "10.1234" an Bob.
     // Use change seed from Tx1 for Tx2
     let change_seed_1 = secrets_1.change_seed.expect("Tx1 should have change");
-    let change_key_1 = ed25519_dalek::SigningKey::from_bytes(&bs58::decode(&change_seed_1).into_vec().unwrap().try_into().unwrap());
+    let change_key_1 = ed25519_dalek::SigningKey::from_bytes(
+        &bs58::decode(&change_seed_1)
+            .into_vec()
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
 
     let (v, secrets_2) = create_transaction(
         &current_voucher,
         standard,
         &alice.user_id,
         &alice.signing_key,
-        &change_key_1, 
+        &change_key_1,
         &bob.user_id,
         "10.1234",
     )
@@ -148,14 +155,20 @@ fn test_chained_transaction_math_and_scaling() {
     // Alice (49.8766) sendet "9" an Bob.
     // Use change seed from Tx2 for Tx3
     let change_seed_2 = secrets_2.change_seed.expect("Tx2 should have change");
-    let change_key_2 = ed25519_dalek::SigningKey::from_bytes(&bs58::decode(&change_seed_2).into_vec().unwrap().try_into().unwrap());
+    let change_key_2 = ed25519_dalek::SigningKey::from_bytes(
+        &bs58::decode(&change_seed_2)
+            .into_vec()
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
 
     let (v, secrets_3) = create_transaction(
         &current_voucher,
         standard,
         &alice.user_id,
         &alice.signing_key,
-        &change_key_2, 
+        &change_key_2,
         &bob.user_id,
         "9",
     )
@@ -176,14 +189,20 @@ fn test_chained_transaction_math_and_scaling() {
     // --- 5. FALL: SPLIT MIT WENIGER NACHKOMMASTELLEN ALS ERLAUBT ---
     // Alice (40.8766) sendet "0.87" (2 statt 4 Stellen) an Bob.
     let change_seed_3 = secrets_3.change_seed.expect("Tx3 should have change");
-    let change_key_3 = ed25519_dalek::SigningKey::from_bytes(&bs58::decode(&change_seed_3).into_vec().unwrap().try_into().unwrap());
+    let change_key_3 = ed25519_dalek::SigningKey::from_bytes(
+        &bs58::decode(&change_seed_3)
+            .into_vec()
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
 
     let (v, secrets_4) = create_transaction(
         &current_voucher,
         standard,
         &alice.user_id,
         &alice.signing_key,
-        &change_key_3, 
+        &change_key_3,
         &bob.user_id,
         "0.87",
     )
@@ -204,14 +223,20 @@ fn test_chained_transaction_math_and_scaling() {
     // --- 6. FALL: VOLLER TRANSFER DES RESTGUTHABENS ---
     // Alice (40.0066) sendet ihr komplettes Restguthaben "40.0066" an Bob.
     let change_seed_4 = secrets_4.change_seed.expect("Tx4 should have change");
-    let change_key_4 = ed25519_dalek::SigningKey::from_bytes(&bs58::decode(&change_seed_4).into_vec().unwrap().try_into().unwrap());
+    let change_key_4 = ed25519_dalek::SigningKey::from_bytes(
+        &bs58::decode(&change_seed_4)
+            .into_vec()
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
 
     let (v, secrets_5) = create_transaction(
         &current_voucher,
         standard,
         &alice.user_id,
         &alice.signing_key,
-        &change_key_4, 
+        &change_key_4,
         &bob.user_id,
         "40.0066",
     )
@@ -235,7 +260,13 @@ fn test_chained_transaction_math_and_scaling() {
     // Bob (Guthaben: 40.0066) sendet "10" (Ganzzahl) zurück an Alice.
     // Bob spends the "received" amount from Tx6. He needs recipient_seed from secrets_5.
     let bob_seed = secrets_5.recipient_seed;
-    let bob_key = ed25519_dalek::SigningKey::from_bytes(&bs58::decode(&bob_seed).into_vec().unwrap().try_into().unwrap());
+    let bob_key = ed25519_dalek::SigningKey::from_bytes(
+        &bs58::decode(&bob_seed)
+            .into_vec()
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
 
     let (v, secrets_6) = create_transaction(
         &current_voucher,
@@ -262,7 +293,13 @@ fn test_chained_transaction_math_and_scaling() {
 
     // Bob (Guthaben: 30.0066) sendet "0.0066" (Dezimal) zurück an Alice.
     let bob_change_seed = secrets_6.change_seed.expect("Tx7 should have change");
-    let bob_change_key = ed25519_dalek::SigningKey::from_bytes(&bs58::decode(&bob_change_seed).into_vec().unwrap().try_into().unwrap());
+    let bob_change_key = ed25519_dalek::SigningKey::from_bytes(
+        &bs58::decode(&bob_change_seed)
+            .into_vec()
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
 
     let (v, _) = create_transaction(
         &current_voucher,

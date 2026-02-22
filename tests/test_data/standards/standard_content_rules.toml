@@ -20,17 +20,18 @@ needed_count = 0
 description = ""
 
 [validation]
-[validation.content_rules]
-[validation.content_rules.fixed_fields]
-"voucher_standard.template.divisible" = false
-"nominal_value.unit" = "EUR"
+[validation.dynamic_rules.fixed_fields]
+expression = "Voucher.voucher_standard.template.divisible == false && Voucher.nominal_value.unit == 'EUR'"
+message = "Invalid core fields"
 
-[validation.content_rules.allowed_values]
-"nominal_value.amount" = ["50.00", "100.00"]
+[validation.dynamic_rules.allowed_values]
+expression = "Voucher.nominal_value.amount in ['50.00', '100.00']"
+message = "Invalid amount value"
 
-[validation.content_rules.regex_patterns]
+[validation.dynamic_rules.regex_patterns]
 # Muss mit "INV-" anfangen, gefolgt von 6 Ziffern
-"voucher_standard.template.description" = '^INV-[0-9]{6}$'
+expression = "Voucher.voucher_standard.template.description.matches('^INV-[0-9]{6}$')"
+message = "Description matching failed"
 
 [signature]
 issuer_id = "did:key:z6Mkk7yqnGF3YwTrLpqrW6Hzt36gV5p82nL4s58gG4nEaG9e" # Dummy Key

@@ -28,11 +28,11 @@ use crate::services::{
     },
     secure_container_manager, signature_manager,
     utils::to_canonical_json,
-    voucher_manager::{create_transaction, create_voucher, NewVoucherData},
+    voucher_manager::{NewVoucherData, create_transaction, create_voucher},
 };
 use crate::wallet::Wallet;
 use crate::{
-    models::voucher::Voucher, UserIdentity, VoucherCoreError, VoucherInstance, VoucherStatus,
+    UserIdentity, VoucherCoreError, VoucherInstance, VoucherStatus, models::voucher::Voucher,
 };
 use std::ops::Deref;
 
@@ -377,8 +377,8 @@ pub fn setup_voucher_with_one_tx() -> (
         &initial_voucher,
         standard,
         &creator.user_id,
-        &creator.signing_key,   // Permanent Key (ID/Trap)
-        &holder_key,            // Ephemeral Key (Anchor Resolution)
+        &creator.signing_key, // Permanent Key (ID/Trap)
+        &holder_key,          // Ephemeral Key (Anchor Resolution)
         &recipient.user_id,
         "40.0000",
     )
@@ -643,12 +643,13 @@ pub fn create_transaction_with_auto_decrypt(
     )?;
 
     // Use returned secret directly
-    let seed_bytes = bs58::decode(secrets.recipient_seed).into_vec()
-       .map_err(|e| VoucherCoreError::Crypto(format!("Invalid seed base58: {}", e)))?;
-    
+    let seed_bytes = bs58::decode(secrets.recipient_seed)
+        .into_vec()
+        .map_err(|e| VoucherCoreError::Crypto(format!("Invalid seed base58: {}", e)))?;
+
     let seed_arr: [u8; 32] = seed_bytes.try_into().expect("Seed must be 32 bytes");
     let next_key = SigningKey::from_bytes(&seed_arr);
-    
+
     Ok((new_voucher, next_key))
 }
 
@@ -868,25 +869,38 @@ pub fn create_voucher_for_manipulation(
     // 4. Init-Transaktion erstellen (MIT P2PKH ANKER & L2 SIGNATUR)
 
     // A. Keys ableiten
-    let prefix = voucher.creator_profile.id.as_ref()
+    let prefix = voucher
+        .creator_profile
+        .id
+        .as_ref()
         .and_then(|id| id.split(':').next())
         .map(|s| s.to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
-    let (genesis_secret, genesis_public) =
-        crypto_utils::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "genesis", Some(&prefix)).expect("Failed to derive genesis key");
+    let (genesis_secret, genesis_public) = crypto_utils::derive_ephemeral_key_pair(
+        signing_key,
+        &nonce_bytes,
+        "genesis",
+        Some(&prefix),
+    )
+    .expect("Failed to derive genesis key");
     let genesis_pub_str = bs58::encode(genesis_public.to_bytes()).into_string();
 
     let (_, holder_public) =
-        crypto_utils::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "holder", Some(&prefix)).expect("Failed to derive holder key");
+        crypto_utils::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "holder", Some(&prefix))
+            .expect("Failed to derive holder key");
     let holder_anchor_hash = crypto_utils::get_hash(holder_public.to_bytes());
 
     let prev_hash = {
-        let v_id_bytes = bs58::decode(&voucher.voucher_id).into_vec().expect("Invalid voucher_id");
-        let v_nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().expect("Invalid voucher_nonce");
+        let v_id_bytes = bs58::decode(&voucher.voucher_id)
+            .into_vec()
+            .expect("Invalid voucher_id");
+        let v_nonce_bytes = bs58::decode(&voucher.voucher_nonce)
+            .into_vec()
+            .expect("Invalid voucher_nonce");
         get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes])
     };
-    
+
     let mut init_tx = Transaction {
         t_id: "".to_string(),
         prev_hash,
@@ -896,7 +910,7 @@ pub fn create_voucher_for_manipulation(
         recipient_id: voucher.creator_profile.id.as_ref().unwrap().clone(),
         amount: voucher.nominal_value.amount.clone(),
         sender_remaining_amount: None,
-        sender_identity_signature: None,        
+        sender_identity_signature: None,
         receiver_ephemeral_pub_hash: Some(holder_anchor_hash),
         sender_ephemeral_pub: Some(genesis_pub_str.clone()),
         change_ephemeral_pub_hash: None,
@@ -920,12 +934,12 @@ pub fn create_voucher_for_manipulation(
         role: "creator".to_string(),
         details: None,
     };
-    
+
     creator_sig_obj.signature_id = get_hash_from_slices(&[
         to_canonical_json(&creator_sig_obj).unwrap().as_bytes(),
         init_t_id.as_bytes(),
     ]);
-    
+
     let digital_signature =
         crypto_utils::sign_ed25519(signing_key, creator_sig_obj.signature_id.as_bytes());
     creator_sig_obj.signature = bs58::encode(digital_signature.to_bytes()).into_string();
@@ -934,9 +948,15 @@ pub fn create_voucher_for_manipulation(
     voucher.signatures.push(creator_sig_obj);
 
     // B. Finale ID & L2 Signatur
-    let v_id = crate::services::l2_gateway::calculate_layer2_voucher_id(&init_tx).expect("Failed to calculate v_id");
-    voucher.transactions.push(resign_transaction_ext(init_tx, signing_key, &v_id, Some(&genesis_secret)));
-    
+    let v_id = crate::services::l2_gateway::calculate_layer2_voucher_id(&init_tx)
+        .expect("Failed to calculate v_id");
+    voucher.transactions.push(resign_transaction_ext(
+        init_tx,
+        signing_key,
+        &v_id,
+        Some(&genesis_secret),
+    ));
+
     voucher
 }
 
@@ -968,7 +988,7 @@ pub fn create_guarantor_signature_with_time(
     let mut data_for_id_hash = signature_data.clone();
     data_for_id_hash.signature_id = "".to_string();
     data_for_id_hash.signature = "".to_string();
-    
+
     let init_t_id = &voucher.transactions[0].t_id;
     signature_data.signature_id = get_hash_from_slices(&[
         to_canonical_json(&data_for_id_hash).unwrap().as_bytes(),
@@ -1012,7 +1032,7 @@ pub fn create_guarantor_signature(
     let mut data_for_id_hash = signature_data.clone();
     data_for_id_hash.signature_id = "".to_string();
     data_for_id_hash.signature = "".to_string();
-    
+
     let init_t_id = &voucher.transactions[0].t_id;
     signature_data.signature_id = get_hash_from_slices(&[
         to_canonical_json(&data_for_id_hash).unwrap().as_bytes(),
@@ -1069,36 +1089,51 @@ pub fn resign_transaction_ext(
     tx.t_id = "".to_string();
     tx.layer2_signature = None;
     tx.sender_identity_signature = None;
-    
+
     // Die t_id muss auf dem kanonischen JSON der gesamten Tx basieren (inkl. ephemeral fields)
     tx.t_id = crypto_utils::get_hash(to_canonical_json(&tx).unwrap());
-    
+
     // 1. Layer 2 Signature: Signiert den vollen Payload
     let t_id_raw = bs58::decode(&tx.t_id).into_vec().unwrap();
 
-    let sender_pub_raw = tx.sender_ephemeral_pub.as_ref()
+    let sender_pub_raw = tx
+        .sender_ephemeral_pub
+        .as_ref()
         .map(|s| bs58::decode(s).into_vec().unwrap_or_default())
         .unwrap_or_default();
-    let receiver_hash_raw = tx.receiver_ephemeral_pub_hash.as_ref().map(|h| bs58::decode(h).into_vec().unwrap());
-    let change_hash_raw = tx.change_ephemeral_pub_hash.as_ref().map(|h| bs58::decode(h).into_vec().unwrap());
+    let receiver_hash_raw = tx
+        .receiver_ephemeral_pub_hash
+        .as_ref()
+        .map(|h| bs58::decode(h).into_vec().unwrap());
+    let change_hash_raw = tx
+        .change_ephemeral_pub_hash
+        .as_ref()
+        .map(|h| bs58::decode(h).into_vec().unwrap());
 
     let challenge_ds_tag = if tx.t_type == "init" {
         tx.t_id.clone()
     } else {
-        tx.trap_data.as_ref().map(|td| td.ds_tag.clone()).unwrap_or_else(|| tx.t_id.clone())
+        tx.trap_data
+            .as_ref()
+            .map(|td| td.ds_tag.clone())
+            .unwrap_or_else(|| tx.t_id.clone())
     };
 
-    let to_32_bytes = |vec: Vec<u8>| -> [u8; 32] {
-        vec[..32].try_into().unwrap()
-    };
+    let to_32_bytes = |vec: Vec<u8>| -> [u8; 32] { vec[..32].try_into().unwrap() };
 
     let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
         &challenge_ds_tag,
         v_id,
         &to_32_bytes(t_id_raw.clone()),
         &to_32_bytes(sender_pub_raw),
-        receiver_hash_raw.as_ref().map(|v| to_32_bytes(v.clone())).as_ref(),
-        change_hash_raw.as_ref().map(|v| to_32_bytes(v.clone())).as_ref(),
+        receiver_hash_raw
+            .as_ref()
+            .map(|v| to_32_bytes(v.clone()))
+            .as_ref(),
+        change_hash_raw
+            .as_ref()
+            .map(|v| to_32_bytes(v.clone()))
+            .as_ref(),
         tx.deletable_at.as_deref(),
     );
 
@@ -1302,20 +1337,27 @@ mod tests {
 
 // Helper to derive the holder key for Init transaction
 // Helper to derive the holder key for Init transaction
-pub fn derive_holder_key(voucher: &crate::models::voucher::Voucher, creator_signing_key: &ed25519_dalek::SigningKey) -> ed25519_dalek::SigningKey {
+pub fn derive_holder_key(
+    voucher: &crate::models::voucher::Voucher,
+    creator_signing_key: &ed25519_dalek::SigningKey,
+) -> ed25519_dalek::SigningKey {
     let nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
     let nonce_arr: [u8; 16] = nonce_bytes.try_into().unwrap();
-    
-    let prefix = voucher.creator_profile.id.as_ref()
+
+    let prefix = voucher
+        .creator_profile
+        .id
+        .as_ref()
         .and_then(|id| id.split(':').next())
         .map(|s| s.to_string())
         .unwrap_or_else(|| "unknown".to_string());
-    
+
     let (holder_key, _) = crate::services::crypto_utils::derive_ephemeral_key_pair(
         creator_signing_key,
         &nonce_arr,
         "holder",
-        Some(&prefix)
-    ).unwrap();
+        Some(&prefix),
+    )
+    .unwrap();
     holder_key
 }

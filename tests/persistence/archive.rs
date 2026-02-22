@@ -89,9 +89,7 @@ fn test_voucher_archiving_on_full_spend() {
 
     let voucher_id = voucher.voucher_id.clone();
     let local_id = Wallet::calculate_local_instance_id(&voucher, &alice_identity.user_id).unwrap();
-    
 
-    
     // Füge Voucher direkt mit Seed ein (da add_voucher_instance kein Seed-Argument hat)
     alice_wallet.voucher_store.vouchers.insert(
         local_id.clone(),

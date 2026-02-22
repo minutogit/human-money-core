@@ -20,9 +20,9 @@ use human_money_core::test_utils;
 
 // Deklariert die beiden getrennten Test-Dateien als Module.
 mod double_spend;
+mod double_spend_identification;
+mod privacy_evasion;
 mod standard_validation;
 mod state_and_collaboration;
-mod vulnerabilities;
-mod double_spend_identification;
 mod trap_verification;
-mod privacy_evasion;
+mod vulnerabilities;

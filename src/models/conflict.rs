@@ -37,12 +37,12 @@ pub struct TransactionFingerprint {
     /// `encrypted_nanos = original_nanos ^ hash(prev_hash + t_id)`
     pub encrypted_timestamp: u128,
 
-    /// Die technische Signatur (Layer 2) des Senders. Dient als kryptographischer Beweis, 
-    /// um den Betrugsversuch dem Verursacher (Inhaber des ephemeralen Schlüssels) 
+    /// Die technische Signatur (Layer 2) des Senders. Dient als kryptographischer Beweis,
+    /// um den Betrugsversuch dem Verursacher (Inhaber des ephemeralen Schlüssels)
     /// zweifelsfrei zuordnen zu können.
     pub layer2_signature: String,
 
-    /// Das Datum, ab dem der Fingerprint sicher aus dem Speicher entfernt werden kann 
+    /// Das Datum, ab dem der Fingerprint sicher aus dem Speicher entfernt werden kann
     /// (entspricht `deletable_at` der 'init' Transaktion).
     pub deletable_at: String,
 }

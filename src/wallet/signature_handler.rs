@@ -143,7 +143,7 @@ impl Wallet {
         }
 
         let signature: DetachedSignature = serde_json::from_slice(&payload)?;
-        
+
         let signature_obj_inner = match &signature {
             DetachedSignature::Signature(s) => s,
         };
@@ -160,7 +160,7 @@ impl Wallet {
                     signature_obj_inner.voucher_id
                 ))
             })?;
-        
+
         let init_t_id = &target_instance_for_val.voucher.transactions[0].t_id;
         crate::services::signature_manager::validate_detached_signature(&signature, init_t_id)?;
 

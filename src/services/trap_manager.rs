@@ -63,16 +63,16 @@ pub fn derive_m(
 ) -> Result<Scalar, VoucherCoreError> {
     // Implementierung analog zu crypto_utils, aber spezifisch für Scalar-Ableitung.
     // Wir nutzen HKDF-SHA256.
-    
+
     let salt = prev_hash.as_bytes();
     let ikm = secret_key_bytes;
-    
+
     // HKDF-Extract
     let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm);
-    
+
     // HKDF-Expand
     // Wir benötigen 64 Bytes Output, um einen uniformen Scalar zu erzeugen (wide reduction).
-    let mut okm = [0u8; 64]; 
+    let mut okm = [0u8; 64];
     hkdf.expand(prefix.as_bytes(), &mut okm)
         .map_err(|_| VoucherCoreError::Crypto("HKDF expansion for m failed".to_string()))?;
 
@@ -136,11 +136,11 @@ pub fn generate_trap(
 
     // Serialisierung für Transport (Base58)
     // ds_tag ist bereits ein String (der konstante Index)
-    
+
     // u ist der variierende Scalar
     let u_str = bs58::encode(u_scalar.as_bytes()).into_string();
     let blinded_id_str = bs58::encode(v.compress().as_bytes()).into_string();
-    
+
     // Proof als Tupel (R, s) serialisiert
     // Format: [32 bytes R compressed] || [32 bytes s]
     let mut proof_bytes = Vec::with_capacity(64);
@@ -176,30 +176,54 @@ pub fn verify_trap(
 ) -> Result<(), VoucherCoreError> {
     // 1. Verify DS-Tag (Constant Index)
     if trap_data.ds_tag != expected_ds_tag {
-        return Err(VoucherCoreError::Crypto("Trap DS-Tag does not match expected input (Constant Index Mismatch)".to_string()));
+        return Err(VoucherCoreError::Crypto(
+            "Trap DS-Tag does not match expected input (Constant Index Mismatch)".to_string(),
+        ));
     }
 
     // 2. Parse U (Varying Challenge SCALAR), V (Blinded ID Point)
-    let u_bytes = bs58::decode(&trap_data.u).into_vec().map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
-    let blinded_id_bytes = bs58::decode(&trap_data.blinded_id).into_vec().map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
-    
-    let u_scalar = Scalar::from_bytes_mod_order(u_bytes.try_into().map_err(|_| VoucherCoreError::Crypto("Invalid Scalar U length".to_string()))?);
-    let v_point = CompressedEdwardsY::from_slice(&blinded_id_bytes).map_err(|_| VoucherCoreError::Crypto("Invalid Blinded-ID (V)".to_string()))?.decompress().ok_or(VoucherCoreError::Crypto("Decompression Blinded-ID failed".to_string()))?;
+    let u_bytes = bs58::decode(&trap_data.u)
+        .into_vec()
+        .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+    let blinded_id_bytes = bs58::decode(&trap_data.blinded_id)
+        .into_vec()
+        .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+
+    let u_scalar = Scalar::from_bytes_mod_order(
+        u_bytes
+            .try_into()
+            .map_err(|_| VoucherCoreError::Crypto("Invalid Scalar U length".to_string()))?,
+    );
+    let v_point = CompressedEdwardsY::from_slice(&blinded_id_bytes)
+        .map_err(|_| VoucherCoreError::Crypto("Invalid Blinded-ID (V)".to_string()))?
+        .decompress()
+        .ok_or(VoucherCoreError::Crypto(
+            "Decompression Blinded-ID failed".to_string(),
+        ))?;
 
     // 3. Verify U matches expected varying input (t_id included)
     let calculated_u_scalar = hash_to_scalar(expected_u_input);
     if u_scalar != calculated_u_scalar {
-        return Err(VoucherCoreError::Crypto("Trap Scalar U does not match transaction data (Varying Input Mismatch)".to_string()));
+        return Err(VoucherCoreError::Crypto(
+            "Trap Scalar U does not match transaction data (Varying Input Mismatch)".to_string(),
+        ));
     }
 
     // 4. Parse Proof (R, s)
-    let proof_bytes = bs58::decode(&trap_data.proof).into_vec().map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+    let proof_bytes = bs58::decode(&trap_data.proof)
+        .into_vec()
+        .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
     if proof_bytes.len() != 64 {
         return Err(VoucherCoreError::Crypto("Invalid proof length".to_string()));
     }
     let (r_bytes, s_bytes) = proof_bytes.split_at(32);
-    
-    let commitment_r = CompressedEdwardsY::from_slice(r_bytes).map_err(|_| VoucherCoreError::Crypto("Invalid point R".to_string()))?.decompress().ok_or(VoucherCoreError::Crypto("Decompression R failed".to_string()))?;
+
+    let commitment_r = CompressedEdwardsY::from_slice(r_bytes)
+        .map_err(|_| VoucherCoreError::Crypto("Invalid point R".to_string()))?
+        .decompress()
+        .ok_or(VoucherCoreError::Crypto(
+            "Decompression R failed".to_string(),
+        ))?;
     let s = Scalar::from_bytes_mod_order(s_bytes.try_into().unwrap());
 
     // 5. Verify ZKP: s * X == R + c * Y
@@ -209,12 +233,14 @@ pub fn verify_trap(
     let y_public = v_point - signer_id_point;
 
     let c = calculate_challenge(&x_base, &y_public, &commitment_r, prefix);
-    
+
     let rhs = commitment_r + (c * y_public); // R + c*Y
     let lhs = s * x_base; // s * X
 
     if lhs != rhs {
-        return Err(VoucherCoreError::Crypto("Trap ZKP verification failed".to_string()));
+        return Err(VoucherCoreError::Crypto(
+            "Trap ZKP verification failed".to_string(),
+        ));
     }
 
     Ok(())
@@ -232,6 +258,6 @@ fn calculate_challenge(
     hasher.update(v.compress().as_bytes());
     hasher.update(r.compress().as_bytes());
     hasher.update(prefix.as_bytes());
-    
+
     Scalar::from_hash(hasher)
 }

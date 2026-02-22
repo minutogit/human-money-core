@@ -7,7 +7,9 @@ use super::test_utils;
 use ed25519_dalek::SigningKey;
 use human_money_core::crypto_utils;
 use human_money_core::models::voucher::{Collateral, ValueDefinition, Voucher, VoucherSignature};
-use human_money_core::services::crypto_utils::{create_user_id, get_hash_from_slices, sign_ed25519};
+use human_money_core::services::crypto_utils::{
+    create_user_id, get_hash_from_slices, sign_ed25519,
+};
 use human_money_core::services::utils::get_current_timestamp;
 use human_money_core::services::voucher_manager::NewVoucherData;
 use human_money_core::services::voucher_manager::get_spendable_balance;
@@ -101,7 +103,10 @@ fn test_wallet_state_management_on_split() {
         status: human_money_core::wallet::instance::VoucherStatus::Active,
         local_instance_id: local_id.clone(),
     };
-    wallet_a.voucher_store.vouchers.insert(local_id.clone(), instance_a);
+    wallet_a
+        .voucher_store
+        .vouchers
+        .insert(local_id.clone(), instance_a);
     let original_local_id = wallet_a
         .voucher_store
         .vouchers
@@ -211,7 +216,8 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
     )
     .unwrap();
 
-    let holder_key = self::test_utils::derive_holder_key(&initial_voucher, &eve_identity.signing_key);
+    let holder_key =
+        self::test_utils::derive_holder_key(&initial_voucher, &eve_identity.signing_key);
     let (voucher_for_alice, _) = create_transaction(
         &initial_voucher,
         standard,

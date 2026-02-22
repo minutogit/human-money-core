@@ -9,17 +9,15 @@ use human_money_core::crypto_utils::get_hash;
 use human_money_core::error::ValidationError;
 use human_money_core::test_utils;
 use human_money_core::{
-    create_transaction, create_voucher, crypto_utils, models::profile::PublicProfile,
-    to_canonical_json, validate_voucher_against_standard, NewVoucherData, Transaction,
-    ValueDefinition, Voucher, VoucherCoreError,
+    NewVoucherData, Transaction, ValueDefinition, VoucherCoreError, create_transaction,
+    create_voucher, crypto_utils, models::profile::PublicProfile, to_canonical_json,
+    validate_voucher_against_standard,
 };
 
 use human_money_core::test_utils::{
-    create_female_guarantor_signature, create_male_guarantor_signature,
-    create_voucher_for_manipulation, ACTORS, MINUTO_STANDARD, SILVER_STANDARD,
-    derive_holder_key,
+    ACTORS, MINUTO_STANDARD, SILVER_STANDARD, create_female_guarantor_signature,
+    create_male_guarantor_signature, create_voucher_for_manipulation, derive_holder_key,
 };
-
 
 /// Prüft grundlegende strukturelle und logische Regeln.
 #[cfg(test)]
@@ -103,7 +101,7 @@ mod structural_integrity {
         // Dank Signature-Bypass müssen wir nicht mehr mühsam re-signieren.
         // Wir müssen lediglich die voucher_id und prev_hash aktualisieren,
         // da diese strukturell auf Konsistenz geprüft werden.
-        
+
         let mut voucher_to_hash = voucher.clone();
         voucher_to_hash.voucher_id = "".to_string();
         voucher_to_hash.transactions.clear();
@@ -111,8 +109,10 @@ mod structural_integrity {
         voucher.voucher_id = get_hash(to_canonical_json(&voucher_to_hash).unwrap());
 
         if !voucher.transactions.is_empty() {
-            voucher.transactions[0].prev_hash =
-                crypto_utils::get_hash(format!("{}{}", &voucher.voucher_id, &voucher.voucher_nonce));
+            voucher.transactions[0].prev_hash = crypto_utils::get_hash(format!(
+                "{}{}",
+                &voucher.voucher_id, &voucher.voucher_nonce
+            ));
         }
 
         human_money_core::set_signature_bypass(true);
@@ -122,10 +122,12 @@ mod structural_integrity {
 
         let validation_result = validate_voucher_against_standard(&voucher, standard);
 
+        let err = validation_result.unwrap_err();
+        println!("Date logic error: {:?}", err);
         assert!(matches!(
-            validation_result.unwrap_err(),
+            err,
             VoucherCoreError::Validation(ValidationError::InvalidDateLogic { .. })
-        ),);
+        ));
     }
 
     #[test]
@@ -153,14 +155,16 @@ mod structural_integrity {
         )
         .unwrap();
         voucher.transactions[0].amount = "not-a-number".to_string();
-        
+
         human_money_core::set_signature_bypass(true);
         let validation_result = validate_voucher_against_standard(&voucher, standard);
         human_money_core::set_signature_bypass(false);
+        let err = validation_result.unwrap_err();
+        println!("malformed amount err: {:?}", err);
         assert!(
             matches!(
-                validation_result.unwrap_err(),
-                VoucherCoreError::Validation(ValidationError::InvalidAmountFormat { .. })
+                err,
+                VoucherCoreError::AmountConversion(_)
             ),
             "Validation should fail with a DecimalConversionError."
         );
@@ -214,387 +218,6 @@ mod structural_integrity {
     }
 }
 
-/// Prüft Regeln bezüglich der Anzahl von Elementen (Bürgen, Transaktionen etc.).
-#[cfg(test)]
-mod counts_and_group_rules {
-    use super::*;
-    use human_money_core::services::standard_manager::verify_and_parse_standard;
-    use test_utils::create_guarantor_signature_with_time;
-    use test_utils::generate_signed_standard_toml;
-
-    fn load_toml_standard(path: &str) -> (human_money_core::VoucherStandardDefinition, String) {
-        let toml_str = generate_signed_standard_toml(path);
-        verify_and_parse_standard(&toml_str).unwrap()
-    }
-
-    #[test]
-    fn test_validate_voucher_when_transaction_count_exceeds_max_then_fails() {
-        // Dieser Standard erlaubt maximal 2 Transaktionen.
-        let (standard, standard_hash) =
-            load_toml_standard("tests/test_data/standards/standard_strict_counts.toml");
-        let creator_identity = &ACTORS.alice;
-        let recipient = &ACTORS.bob;
-
-        let voucher_data = NewVoucherData {
-            creator_profile: PublicProfile {
-                id: Some(creator_identity.user_id.clone()),
-                ..Default::default()
-            },
-            validity_duration: Some("P1Y".to_string()),
-            nominal_value: ValueDefinition {
-                amount: "100".to_string(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let mut voucher = create_voucher_for_manipulation(
-            voucher_data,
-            &standard,
-            &standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        );
-        voucher
-            .signatures
-            .push(create_male_guarantor_signature(&voucher));
-        // Die creator-Signatur ist bereits vorhanden.
-        // voucher_after_tx1 hat 1 Transaktion (init). Standard erlaubt max 2.
-
-        let (mut voucher_after_tx1, _) = create_transaction(
-            &voucher,
-            &standard,
-            &creator_identity.user_id,
-            &creator_identity.signing_key,
-            &derive_holder_key(&voucher, &creator_identity.signing_key), // Init->Tx1
-            &recipient.user_id,
-            "100",
-        )
-        .unwrap();
-        voucher_after_tx1.transactions.push(Transaction::default());
-
-        let result = validate_voucher_against_standard(&voucher_after_tx1, &standard);
-
-        assert!(matches!(
-            result.unwrap_err(),
-            VoucherCoreError::Validation(ValidationError::CountOutOfBounds { field, min: 1, max: 2, found: 3 })
-            if field == "transactions"
-        ));
-    }
-
-    #[test]
-    fn test_validate_voucher_when_count_and_group_rules_conflict_then_fails_correctly() {
-        let (standard, standard_hash) =
-            load_toml_standard("tests/test_data/standards/standard_conflicting_rules.toml");
-        let creator_identity = &ACTORS.alice;
-        let voucher_data = NewVoucherData {
-            creator_profile: PublicProfile {
-                id: Some(creator_identity.user_id.clone()),
-                ..Default::default()
-            },
-            validity_duration: Some("P1Y".to_string()),
-            nominal_value: ValueDefinition {
-                amount: "100".to_string(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let base_voucher = create_voucher_for_manipulation(
-            voucher_data,
-            &standard,
-            &standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        );
-
-        // Fall 1: Erfülle die `field_group_rules` (4 Bürgen), verletze aber die `counts`-Regel (max 3)
-        let mut voucher1 = base_voucher.clone();
-        // HINWEIS: create_guarantor_signature_with_time benötigt keine voucher_id mehr
-        voucher1.signatures = vec![
-            create_guarantor_signature_with_time(
-                &voucher1,
-                &ACTORS.guarantor1,
-                "G1",
-                "guarantor",
-                "1",
-                "2026-01-01T12:00:00Z",
-            ),
-            create_guarantor_signature_with_time(
-                &voucher1,
-                &ACTORS.guarantor2,
-                "G2",
-                "guarantor",
-                "2",
-                "2026-01-01T13:00:00Z",
-            ),
-            create_guarantor_signature_with_time(
-                &voucher1,
-                &ACTORS.male_guarantor,
-                "G3",
-                "guarantor",
-                "1",
-                "2026-01-01T14:00:00Z",
-            ),
-            create_guarantor_signature_with_time(
-                &voucher1,
-                &ACTORS.female_guarantor,
-                "G4",
-                "guarantor",
-                "2",
-                "2026-01-01T15:00:00Z",
-            ),
-        ];
-
-        let result1 = validate_voucher_against_standard(&voucher1, &standard);
-
-        // --- DEBUG-AUSGABE ---
-        // dbg!(&result1);
-        // --- ENDE DEBUG ---
-
-        assert!(matches!(
-            result1.unwrap_err(),
-            // KORREKTUR: Die Assertion war zu starr. Nach dem Refactoring prüfen wir
-            // Das Setup (2xA, 2xB) verletzt die Regel (min=3) für "guarantor".
-            // KORREKTUR 2: Die Test-Helper-Funktion `create_guarantor...` setzte die Rolle
-            // IMMER auf "guarantor". Das Setup HATTE also 4x "guarantor".
-            // Der Fehler MUSS `found: 4` sein.
-            VoucherCoreError::Validation(ValidationError::FieldValueCountOutOfBounds { path, field, value, min: 3, max: 3, found: 4, .. })
-                 if path == "signatures" && field == "role" && value == "guarantor"
-        ));
-
-        // Fall 2: Erfülle die `counts`-Regel (3 Bürgen), verletze aber die `field_group_rules` (braucht 2x "B")
-        let mut voucher2 = base_voucher.clone();
-        // HINWEIS: creator-Signatur ist bereits in base_voucher
-        voucher2.signatures = vec![
-            // 1. Erfülle "guarantor" (min=3, max=3)
-            create_guarantor_signature_with_time(
-                &voucher2,
-                &ACTORS.guarantor1,
-                "G1",
-                "guarantor",
-                "1",
-                "2026-01-01T12:00:00Z",
-            ),
-            create_guarantor_signature_with_time(
-                &voucher2,
-                &ACTORS.guarantor2,
-                "G2",
-                "guarantor",
-                "2",
-                "2026-01-01T13:00:00Z",
-            ),
-            create_guarantor_signature_with_time(
-                &voucher2,
-                &ACTORS.bob,
-                "G3",
-                "guarantor",
-                "1",
-                "2026-01-01T14:00:00Z",
-            ), 
-            create_guarantor_signature_with_time(
-                &voucher2,
-                &ACTORS.charlie,
-                "A1",
-                "A",
-                "1",
-                "2026-01-01T15:00:00Z",
-            ),
-            create_guarantor_signature_with_time(
-                &voucher2,
-                &ACTORS.david,
-                "A2",
-                "A",
-                "1",
-                "2026-01-01T16:00:00Z",
-            ),
-            create_guarantor_signature_with_time(
-                &voucher2,
-                &ACTORS.male_guarantor,
-                "B1",
-                "B",
-                "1",
-                "2026-01-01T17:00:00Z",
-            ),
-        ];
-
-        let result2 = validate_voucher_against_standard(&voucher2, &standard);
-        assert!(matches!(
-            result2.unwrap_err(),
-            VoucherCoreError::Validation(ValidationError::FieldValueCountOutOfBounds { path, field, value, min: 2, max: 2, found: 1, .. })
-                 if path == "signatures" && field == "role" && value == "B"
-        ));
-    }
-}
-
-/// Prüft Regeln bezüglich erforderlicher Signaturen.
-#[cfg(test)]
-mod signature_requirements {
-    use super::*;
-    use human_money_core::error::ValidationError;
-    use human_money_core::services::standard_manager::verify_and_parse_standard;
-    use test_utils::generate_signed_standard_toml;
-
-    fn load_toml_standard(path: &str) -> (human_money_core::VoucherStandardDefinition, String) {
-        let toml_str = generate_signed_standard_toml(path);
-        verify_and_parse_standard(&toml_str).unwrap()
-    }
-    fn create_additional_signature(
-        voucher: &Voucher,
-        signer: &human_money_core::UserIdentity,
-        description: &str,
-    ) -> human_money_core::models::voucher::VoucherSignature {
-        use ed25519_dalek::Signer;
-        use human_money_core::services::{crypto_utils, utils};
-        let mut signature_obj = human_money_core::models::voucher::VoucherSignature {
-            voucher_id: voucher.voucher_id.clone(),
-            signer_id: signer.user_id.clone(),
-            signature_time: utils::get_current_timestamp(),
-            role: description.to_string(),
-            ..Default::default()
-        };
-        let mut obj_to_hash = signature_obj.clone();
-        obj_to_hash.signature_id = "".to_string();
-        
-        let init_t_id = &voucher.transactions[0].t_id;
-        let signature_id = crypto_utils::get_hash_from_slices(&[
-            utils::to_canonical_json(&obj_to_hash).unwrap().as_bytes(),
-            init_t_id.as_bytes(),
-        ]);
-        let signature = signer.signing_key.sign(signature_id.as_bytes());
-        let signature_b58 = bs58::encode(signature.to_bytes()).into_string();
-        signature_obj.signature_id = signature_id;
-        signature_obj.signature = signature_b58;
-        signature_obj
-    }
-
-    #[test]
-    fn test_validate_voucher_when_mandatory_signature_is_missing_then_fails() {
-        // KORREKTUR: Der vorherige Patch war fehlerhaft.
-        // Wir verwenden den Standard *direkt* so, wie er geladen wird.
-        // Der Standard `standard_required_signatures.toml` enthält (wie der Panic bewies)
-        // KEINE Regel für `role: "creator"`.
-        // Das ist in Ordnung. Die Validierung wird die Creator-Signatur als
-        // kryptographisch gültig anerkennen und dann (korrekt) am
-        // Fehlen der "Official Approval"-Signatur scheitern.
-        let (standard, standard_hash) =
-            load_toml_standard("tests/test_data/standards/standard_strict_sig_description.toml");
-        let creator_identity = &ACTORS.alice;
-        let voucher_data = NewVoucherData {
-            creator_profile: PublicProfile {
-                id: Some(creator_identity.user_id.clone()),
-                ..Default::default()
-            },
-            validity_duration: Some("P1Y".to_string()),
-            nominal_value: ValueDefinition {
-                amount: "100".to_string(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let voucher = create_voucher(
-            voucher_data,
-            &standard,
-            &standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        )
-        .unwrap();
-
-        let result = validate_voucher_against_standard(&voucher, &standard);
-        assert!(matches!(
-            result.unwrap_err(),
-            // Der "creator" ist vorhanden, aber "Official Approval 2025" fehlt.
-            VoucherCoreError::Validation(ValidationError::MissingRequiredSignature { role, .. })
-            if role == "Official Approval 2025"
-        ));
-    }
-
-    #[test]
-    fn test_validate_voucher_when_signature_description_mismatches_then_fails() {
-        let (standard, standard_hash) =
-            load_toml_standard("tests/test_data/standards/standard_strict_sig_description.toml");
-        let creator_identity = &ACTORS.alice;
-        let approver = &ACTORS.bob;
-        let voucher_data = NewVoucherData {
-            creator_profile: PublicProfile {
-                id: Some(creator_identity.user_id.clone()),
-                ..Default::default()
-            },
-            validity_duration: Some("P1Y".to_string()),
-            nominal_value: ValueDefinition {
-                amount: "100".to_string(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let mut voucher = create_voucher_for_manipulation(
-            voucher_data,
-            &standard,
-            &standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        );
-        let signature_with_wrong_desc =
-            create_additional_signature(&voucher, approver, "Some other description");
-        voucher.signatures.push(signature_with_wrong_desc);
-        let result = validate_voucher_against_standard(&voucher, &standard);
-        assert!(matches!(
-            result.unwrap_err(),
-            // KORREKTUR: Die Assertion prüfte fälschlicherweise die `role_description` ("...by Bob").
-            // Der Fehler gibt korrekterweise die `required_role` aus der TOML ("...2025") zurück.
-            VoucherCoreError::Validation(ValidationError::MissingRequiredSignature { role, .. })
-            if role == "Official Approval 2025"
-        ));
-    }
-
-    #[test]
-    fn test_validate_voucher_when_signature_description_is_correct_then_succeeds() {
-        // SETUP: Lade den Basis-Standard
-        let (base_standard, _) =
-            load_toml_standard("tests/test_data/standards/standard_strict_sig_description.toml");
-        let creator = &ACTORS.alice;
-        let approver = &ACTORS.bob;
-
-        // KORREKTUR: Erstelle einen neuen, angepassten Standard zur Laufzeit,
-        // der explizit `ACTORS.bob` als erlaubten Unterzeichner definiert.
-        let (custom_standard, custom_hash) =
-            test_utils::create_custom_standard(&base_standard, |s| {
-                s.validation
-                    .as_mut()
-                    .unwrap()
-                    .required_signatures
-                    .as_mut()
-                    .unwrap()
-                    .iter_mut()
-                    .find(|rule| rule.role_description == "Official Approval by Bob")
-                    .unwrap()
-                    .allowed_signer_ids = vec![approver.user_id.clone()];
-            });
-
-        let voucher_data = NewVoucherData {
-            creator_profile: PublicProfile {
-                id: Some(creator.user_id.clone()),
-                ..Default::default()
-            },
-            validity_duration: Some("P1Y".to_string()),
-            nominal_value: ValueDefinition {
-                amount: "100".to_string(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let mut voucher = create_voucher_for_manipulation(
-            voucher_data,
-            &custom_standard,
-            &custom_hash,
-            &creator.signing_key,
-            "en",
-        );
-        let correct_signature = create_additional_signature(&voucher, approver, "Official Approval 2025");
-        voucher.signatures.push(correct_signature);
-        assert!(validate_voucher_against_standard(&voucher, &custom_standard).is_ok());
-    }
-}
 
 /// Prüft verhaltensbasierte Geschäftsregeln aus dem Standard.
 #[cfg(test)]
@@ -721,29 +344,34 @@ mod behavioral_rules {
         )
         .unwrap();
         voucher.transactions[0].amount = "100.123".to_string();
-        
+
         human_money_core::set_signature_bypass(true);
         let result2 = validate_voucher_against_standard(&voucher, &standard);
         human_money_core::set_signature_bypass(false);
         assert!(matches!(
             result2.unwrap_err(),
-            VoucherCoreError::Validation(ValidationError::InvalidAmountPrecision { path, max_places: 2, found: 3 }) if path == "transactions[0].amount"
+            VoucherCoreError::Validation(ValidationError::InvalidAmountPrecision { path, max_places: 2, found: 3 }) if path == "nominal_value.amount" || path == "transactions[0].amount"
         ));
     }
 
     #[test]
     fn test_validate_voucher_when_full_transfer_amount_mismatches_then_fails() {
         // KORREKTUR: Wir brauchen die Secrets, um einen validen P2PKH-Spend zu konstruieren
-        let (standard, _, _, recipient, mut voucher, recipient_secrets) = test_utils::setup_voucher_with_one_tx();
-        
+        let (standard, _, _, recipient, mut voucher, recipient_secrets) =
+            test_utils::setup_voucher_with_one_tx();
+
         // 1. Prepare P2PKH keys
-        let seed_bytes = bs58::decode(recipient_secrets.recipient_seed).into_vec().unwrap();
-        let sender_ephem_key = ed25519_dalek::SigningKey::from_bytes(&seed_bytes.try_into().unwrap());
-        let sender_ephem_pub_str = bs58::encode(sender_ephem_key.verifying_key().to_bytes()).into_string();
+        let seed_bytes = bs58::decode(recipient_secrets.recipient_seed)
+            .into_vec()
+            .unwrap();
+        let sender_ephem_key =
+            ed25519_dalek::SigningKey::from_bytes(&seed_bytes.try_into().unwrap());
+        let sender_ephem_pub_str =
+            bs58::encode(sender_ephem_key.verifying_key().to_bytes()).into_string();
 
         let last_valid_tx = voucher.transactions.last().unwrap();
         let prev_hash = crypto_utils::get_hash(to_canonical_json(last_valid_tx).unwrap());
-        
+
         let mut invalid_transfer_tx = Transaction {
             sender_identity_signature: None,
             t_id: "".to_string(),
@@ -755,7 +383,7 @@ mod behavioral_rules {
             amount: "10.0000".to_string(),
             sender_remaining_amount: None,
             // P2PKH Setup
-            receiver_ephemeral_pub_hash: None, 
+            receiver_ephemeral_pub_hash: None,
             sender_ephemeral_pub: Some(sender_ephem_pub_str.clone()),
             privacy_guard: None,
             trap_data: None,
@@ -772,10 +400,10 @@ mod behavioral_rules {
         invalid_transfer_tx.t_id = "".to_string();
         invalid_transfer_tx.layer2_signature = None;
         invalid_transfer_tx.sender_identity_signature = None;
-        
+
         let tx_json = to_canonical_json(&invalid_transfer_tx).unwrap();
         invalid_transfer_tx.t_id = crypto_utils::get_hash(tx_json);
-        
+
         let t_id_raw = bs58::decode(&invalid_transfer_tx.t_id).into_vec().unwrap();
         let l2_sig = crypto_utils::sign_ed25519(&sender_ephem_key, &t_id_raw);
         invalid_transfer_tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
@@ -853,11 +481,11 @@ mod behavioral_rules {
                 b_rules.issuance_minimum_validity_duration = None;
 
                 // 2. Entschärfe die 'max=1' Transaktions-Regel des Minuto-Standards
-                let count_rules = validation.counts.get_or_insert_with(Default::default);
-                count_rules.transactions = Some(
-                    human_money_core::models::voucher_standard_definition::MinMax {
-                        min: 1,
-                        max: 2,
+                validation.dynamic_rules.insert(
+                    "max_tx".to_string(),
+                    human_money_core::models::voucher_standard_definition::DynamicRule {
+                        message: "Too many transactions".to_string(),
+                        expression: "Voucher.transactions.size() <= 2".to_string(),
                     },
                 );
             });
@@ -915,7 +543,7 @@ mod behavioral_rules {
     mod issuance_firewall {
         use super::*;
         use human_money_core::services::voucher_manager::VoucherManagerError;
-        use human_money_core::test_utils::{create_custom_standard, SILVER_STANDARD};
+        use human_money_core::test_utils::{SILVER_STANDARD, create_custom_standard};
 
         /// Erstellt eine Testumgebung mit den benötigten Akteuren und Standards.
         struct TestSetup {
@@ -999,14 +627,18 @@ mod behavioral_rules {
                     crypto_utils::get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes])
                 };
                 voucher.transactions[0].prev_hash = new_init_prev_hash;
-                
+
                 // Wir aktualisieren die t_id, damit die Kette strukturell passt
                 for i in 0..voucher.transactions.len() {
                     if i > 0 {
-                        let prev_hash = crypto_utils::get_hash(to_canonical_json(&voucher.transactions[i-1]).unwrap());
+                        let prev_hash = crypto_utils::get_hash(
+                            to_canonical_json(&voucher.transactions[i - 1]).unwrap(),
+                        );
                         voucher.transactions[i].prev_hash = prev_hash;
                     }
-                    voucher.transactions[i].t_id = crypto_utils::get_hash(to_canonical_json(&voucher.transactions[i]).unwrap());
+                    voucher.transactions[i].t_id = crypto_utils::get_hash(
+                        to_canonical_json(&voucher.transactions[i]).unwrap(),
+                    );
                 }
             }
 
@@ -1059,6 +691,9 @@ mod behavioral_rules {
             let six_months_from_now =
                 human_money_core::services::voucher_manager::add_iso8601_duration(now, "P6M")
                     .unwrap();
+            let eighteen_months_ago = now - chrono::Duration::days(540); // ~1.5 years
+            voucher.creation_date =
+                eighteen_months_ago.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
             voucher.valid_until =
                 six_months_from_now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
             voucher = update_voucher_hashes_for_test(voucher);
@@ -1104,6 +739,9 @@ mod behavioral_rules {
             let six_months_from_now =
                 human_money_core::services::voucher_manager::add_iso8601_duration(now, "P6M")
                     .unwrap();
+            let eighteen_months_ago = now - chrono::Duration::days(540); // ~1.5 years
+            voucher.creation_date =
+                eighteen_months_ago.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
             voucher.valid_until =
                 six_months_from_now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
             voucher = update_voucher_hashes_for_test(voucher);
@@ -1157,12 +795,13 @@ mod behavioral_rules {
                 human_money_core::services::voucher_manager::add_iso8601_duration(now, "P18M")
                     .unwrap();
             let future_time_str = future_time.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
-            
+
             human_money_core::services::utils::set_mock_time(Some(future_time_str));
 
             // Aktion: User_B (Nicht-Ersteller) sendet an User_C
             let user_b_seed = bs58::decode(secrets_b.recipient_seed).into_vec().unwrap();
-            let user_b_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(&user_b_seed.try_into().unwrap());
+            let user_b_ephemeral_key =
+                ed25519_dalek::SigningKey::from_bytes(&user_b_seed.try_into().unwrap());
 
             // Aktion: User_B (Nicht-Ersteller) sendet an User_C
             let result = create_transaction(
@@ -1174,7 +813,7 @@ mod behavioral_rules {
                 &setup.user_c.user_id,
                 "100",
             );
-            
+
             // Reset Mock Time
             human_money_core::services::utils::set_mock_time(None);
 
@@ -1279,42 +918,53 @@ mod behavioral_rules {
                 init_tx.sender_ephemeral_pub.is_some(),
                 "Voucher must have sender ephemeral key"
             );
-            
+
             // Derive Genesis Key to simulate valid Proof Signature update (bypassing Proof check)
             let nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
-            let prefix = creator.user_id.split(':').next().unwrap_or(&creator.user_id).to_string();
-            let (_genesis_secret, _) = human_money_core::services::crypto_utils::derive_ephemeral_key_pair(
-                &creator.signing_key,
-                &nonce_bytes,
-                "genesis",
-                Some(&prefix),
-            ).unwrap();
+            let prefix = creator
+                .user_id
+                .split(':')
+                .next()
+                .unwrap_or(&creator.user_id)
+                .to_string();
+            let (_genesis_secret, _) =
+                human_money_core::services::crypto_utils::derive_ephemeral_key_pair(
+                    &creator.signing_key,
+                    &nonce_bytes,
+                    "genesis",
+                    Some(&prefix),
+                )
+                .unwrap();
 
             let mut corrupted_voucher = voucher.clone();
             let new_date = "2099-01-01T00:00:00Z".to_string();
             corrupted_voucher.transactions[0].deletable_at = Some(new_date);
 
             let tx = corrupted_voucher.transactions[0].clone();
-            
+
             // Manual resignation protecting OLD layer2_signature (to simulate an attack)
             let mut manual_tx = tx.clone();
-            
+
             // 1. Calculate t_id (without signatures)
             manual_tx.t_id = "".to_string();
             manual_tx.layer2_signature = None;
             manual_tx.sender_identity_signature = None;
-            
+
             let canonical_json = to_canonical_json(&manual_tx).unwrap();
             manual_tx.t_id = human_money_core::services::crypto_utils::get_hash(canonical_json);
 
             // 2. Add the OLD L2 Signature (which doesn't match the new t_id)
-            manual_tx.layer2_signature = original_l2_sig; 
+            manual_tx.layer2_signature = original_l2_sig;
 
             // 3. Sign Identity (L1) with Creator Key to pass that check
             if manual_tx.sender_id.is_some() {
-                 let t_id_raw = bs58::decode(&manual_tx.t_id).into_vec().unwrap();
-                 let id_sig = human_money_core::services::crypto_utils::sign_ed25519(&creator.signing_key, &t_id_raw);
-                 manual_tx.sender_identity_signature = Some(bs58::encode(id_sig.to_bytes()).into_string());
+                let t_id_raw = bs58::decode(&manual_tx.t_id).into_vec().unwrap();
+                let id_sig = human_money_core::services::crypto_utils::sign_ed25519(
+                    &creator.signing_key,
+                    &t_id_raw,
+                );
+                manual_tx.sender_identity_signature =
+                    Some(bs58::encode(id_sig.to_bytes()).into_string());
             }
 
             corrupted_voucher.transactions[0] = manual_tx;

@@ -53,7 +53,7 @@ impl MockL2Node {
     /// Verarbeitet eine Anfrage zum Sperren eines Tags (LockRequest)
     pub fn handle_lock_request(&mut self, req_bytes: &[u8]) -> Vec<u8> {
         let req: L2LockRequest = serde_json::from_slice(req_bytes).unwrap();
-        
+
         // Füge die Gutschein-ID dem "Bloom-Filter" hinzu
         self.vouchers.insert(req.layer2_voucher_id.clone());
 
@@ -116,7 +116,7 @@ impl MockL2Node {
             }
         }
 
-        // Falls wir zwar den Gutschein, aber absolut keinen der Locators kennen 
+        // Falls wir zwar den Gutschein, aber absolut keinen der Locators kennen
         // (sollte bei korrekter Genesis-Abhandlung selten passieren)
         self.wrap_and_sign(L2Verdict::MissingLocks {
             sync_point: "genesis".to_string(),
@@ -127,11 +127,11 @@ impl MockL2Node {
 fn main() {
     println!("L2 Mock Node Example initialized.");
     println!("This is a demonstration of how a Human Money Core L2 Node processes requests.");
-    
+
     let node = MockL2Node::new();
     let pubkey_hex = hex::encode(node.get_server_pubkey());
     println!("Server Pubkey (Ed25519): {}", pubkey_hex);
-    
-    // In a real application, here you would start a QUIC or HTTP server 
+
+    // In a real application, here you would start a QUIC or HTTP server
     // and pass the incoming byte streams to `handle_status_query` and `handle_lock_request`.
 }

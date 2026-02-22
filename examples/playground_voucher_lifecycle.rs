@@ -251,7 +251,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     println!("  -> Ersteller empfängt die Signatur von Bürge 1 und fügt sie an...");
-    service_creator.process_and_attach_signature(&response_bundle_from_g1, &standard_toml, Some(password))?;
+    service_creator.process_and_attach_signature(
+        &response_bundle_from_g1,
+        &standard_toml,
+        Some(password),
+    )?;
     let details_after_g1 = service_creator.get_voucher_details(&local_id)?;
     println!(
         "     -> Status nach 1. Signatur: {:?}",
@@ -275,7 +279,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     println!("  -> Ersteller empfängt die Signatur von Bürge 2 und fügt sie an...");
-    service_creator.process_and_attach_signature(&response_bundle_from_g2, &standard_toml, Some(password))?;
+    service_creator.process_and_attach_signature(
+        &response_bundle_from_g2,
+        &standard_toml,
+        Some(password),
+    )?;
 
     // --- 4. Aktivierung des Gutscheins ---
     println!("\n--- SCHRITT 4: Gutschein wird automatisch aktiviert ---");
@@ -359,7 +367,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } = service_recipient.create_transfer_bundle(request, &standards_toml, None, Some(password))?;
 
     // Charlie empfängt das Bundle
-    service_charlie.receive_bundle(&transfer_bundle_to_charlie, &standards_map, None, Some(password))?;
+    service_charlie.receive_bundle(
+        &transfer_bundle_to_charlie,
+        &standards_map,
+        None,
+        Some(password),
+    )?;
 
     // Überprüfe die finalen Kontostände
     let balance_recipient_after_send = service_recipient.get_total_balance_by_currency()?;

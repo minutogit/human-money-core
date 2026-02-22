@@ -33,7 +33,6 @@ fn setup_test_wallet(identity: &UserIdentity, _name: &str, _storage_dir: &Path) 
     setup_in_memory_wallet(identity)
 }
 
-
 /// Erstellt einen leeren Fingerprint für Testzwecke.
 fn new_dummy_fingerprint(t_id: &str) -> TransactionFingerprint {
     TransactionFingerprint {
@@ -100,26 +99,28 @@ fn test_fingerprint_generation() {
         "en",
     )
     .unwrap();
-    let holder_key = human_money_core::test_utils::derive_holder_key(&voucher, &identity.signing_key);
+    let holder_key =
+        human_money_core::test_utils::derive_holder_key(&voucher, &identity.signing_key);
     let (v, _secrets) = voucher_manager::create_transaction(
         &voucher,
         standard,
         &identity.user_id,
         &identity.signing_key, // Sender Permanent Key (ID)
-        &holder_key, // Sender Ephemeral Key (Anchor)
+        &holder_key,           // Sender Ephemeral Key (Anchor)
         &human_money_core::test_utils::ACTORS.bob.user_id,
         "50",
     )
     .unwrap();
-    
 
-    
     let instance = human_money_core::wallet::instance::VoucherInstance {
         voucher: v.clone(),
         status: VoucherStatus::Active,
         local_instance_id: Wallet::calculate_local_instance_id(&v, &identity.user_id).unwrap(),
     };
-    wallet.voucher_store.vouchers.insert(instance.local_instance_id.clone(), instance);
+    wallet
+        .voucher_store
+        .vouchers
+        .insert(instance.local_instance_id.clone(), instance);
 
     // Aktion
     wallet.scan_and_rebuild_fingerprints().unwrap();
@@ -587,7 +588,10 @@ fn test_local_double_spend_detection_lifecycle() {
         status: VoucherStatus::Active,
         local_instance_id: local_id.clone(),
     };
-    alice_wallet.voucher_store.vouchers.insert(local_id, instance);
+    alice_wallet
+        .voucher_store
+        .vouchers
+        .insert(local_id, instance);
 
     // Alice verwendet die neue, korrekte Methode, um den Gutschein an Bob zu senden.
     // Wir klonen die ID, um den immutable borrow auf alice_wallet sofort zu beenden.
@@ -661,11 +665,13 @@ fn test_local_double_spend_detection_lifecycle() {
     let david_identity = &ACTORS.david;
     let mut charlie_wallet = setup_test_wallet(charlie_identity, "charlie", storage_path);
     let mut david_wallet = setup_test_wallet(david_identity, "david", storage_path);
-    
+
     // Hole den Seed aus Bobs Wallet, um den Double Spend zu autorisieren.
     // get_voucher_from_wallet returned nur den Voucher, wir brauchen die Instanz.
     let bob_instance = bob_wallet.voucher_store.vouchers.values().next().unwrap();
-    let bob_ephemeral_key = bob_wallet.rederive_secret_seed(&bob_instance.voucher, bob_identity).unwrap();
+    let bob_ephemeral_key = bob_wallet
+        .rederive_secret_seed(&bob_instance.voucher, bob_identity)
+        .unwrap();
 
     let voucher_from_bob = bob_instance.voucher.clone(); // use instance.voucher instead of helper
 

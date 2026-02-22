@@ -97,38 +97,6 @@ pub struct SignatureBlock {
 
 // --- Neue, erweiterte Validierungs-Strukturen ---
 
-/// Definiert Min/Max-Grenzen für quantitative Prüfungen.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct MinMax {
-    pub min: u32,
-    pub max: u32,
-}
-
-/// Bündelt alle Regeln zur Zählung von Elementen (z.B. Signaturen, Transaktionen).
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
-pub struct CountRules {
-    pub transactions: Option<MinMax>,
-}
-
-/// Definiert eine Regel für eine erforderliche Signatur.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct RequiredSignatureRule {
-    pub role_description: String,
-    pub allowed_signer_ids: Vec<String>,
-    /// Die Rolle (z.B. "guarantor"), die diese Signatur haben muss.
-    pub required_role: String,
-    pub is_mandatory: bool,
-}
-
-/// Bündelt alle Regeln, die den Inhalt von Feldern im Gutschein betreffen.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
-pub struct ContentRules {
-    /// Key ist der JSON-Pfad, z.B. "nominal_value.unit"
-    pub fixed_fields: Option<HashMap<String, serde_json::Value>>,
-    pub allowed_values: Option<HashMap<String, Vec<serde_json::Value>>>,
-    pub regex_patterns: Option<HashMap<String, String>>,
-}
-
 /// Bündelt alle Regeln, die das Verhalten und die Aktionen des Gutscheins steuern.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct BehaviorRules {
@@ -139,36 +107,20 @@ pub struct BehaviorRules {
     pub l2_retention_period: Option<String>,
 }
 
-/// Definiert die exakte Anzahl für einen bestimmten Wert in einer Gruppenprüfung.
+/// Definiert eine dynamische CEL-Regel.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct ValueCountRule {
-    /// Der Wert, der gezählt werden soll (als String, da aus JSON kommend).
-    pub value: String,
-    /// Die minimale Anzahl, die erwartet wird.
-    pub min: u32,
-    /// Die maximale Anzahl, die erwartet wird.
-    pub max: u32,
-}
-
-/// Definiert eine Regel für eine Gruppe von Feldern in einer Objektliste.
-/// Beispiel: "Prüfe das 'gender'-Feld in allen 'guarantor_signatures'".
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct FieldGroupRule {
-    /// Das zu prüfende Feld innerhalb jedes Objekts der Liste (z.B. "gender").
-    pub field: String,
-    /// Eine Liste von Regeln, die die Häufigkeit bestimmter Werte vorschreiben.
-    pub value_counts: Vec<ValueCountRule>,
+pub struct DynamicRule {
+    pub expression: String,
+    pub message: String,
 }
 
 /// Die Hauptstruktur für alle Validierungsregeln.
-/// Alle Felder sind optional, um eine flexible Definition zu ermöglichen.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct Validation {
-    pub counts: Option<CountRules>,
-    pub required_signatures: Option<Vec<RequiredSignatureRule>>,
-    pub content_rules: Option<ContentRules>,
+    #[serde(default)]
     pub behavior_rules: Option<BehaviorRules>,
-    pub field_group_rules: Option<HashMap<String, FieldGroupRule>>,
+    #[serde(default)]
+    pub dynamic_rules: HashMap<String, DynamicRule>,
 }
 
 /// Konfiguration für die Privatsphäre-Modi.

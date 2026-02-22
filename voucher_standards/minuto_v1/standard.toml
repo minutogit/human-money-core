@@ -44,7 +44,6 @@ needed_count = 2
 unit = "Minuto"
 
 [validation]
-[validation.counts]
 [validation.behavior_rules]
 allowed_t_types = [
     "init",
@@ -56,21 +55,17 @@ amount_decimal_places = 0
 issuance_minimum_validity_duration = "P3Y"
 l2_retention_period = "P3M"
 
-# NEU: Erzwingt, dass von den zwei Bürgen exakt einer männlich ('1')
-# und einer weiblich ('2') sein muss, gemäß ISO 5218.
-[validation.field_group_rules]
-[validation.field_group_rules.signatures]
-field = "details.gender"
-value_counts = [
-    # Erzwingt 1x Männlich (ISO 5218)
-    { value = "1", min = 1, max = 1 },
-    # Erzwingt 1x Weiblich (ISO 5218)
-    { value = "2", min = 1, max = 1 },
-]
+[validation.dynamic_rules.gender_balance_male]
+expression = "Voucher.signatures.filter(s, s.role != 'creator' && has(s.details.gender) && s.details.gender == '1').size() == 1"
+message = "Gemäß ISO 5218 wird genau ein männlicher (1) Bürge benötigt."
+
+[validation.dynamic_rules.gender_balance_female]
+expression = "Voucher.signatures.filter(s, s.role != 'creator' && has(s.details.gender) && s.details.gender == '2').size() == 1"
+message = "Gemäß ISO 5218 wird genau eine weibliche (2) Bürgin benötigt."
 
 [signature]
 # Die `did:key` des Herausgebers, die seinen öffentlichen Schlüssel enthält.
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "xaksc6kAf1LEhVpXChz2Sg36TGERrX2UzoX9m92HmBkWoz8akVFwPkpJt2vBeHN9pY5Pe6gEi9EVgXq5gbs4fhC"
+signature = "5NxcEMTVUEvCbbozZmpjinfnLdq1PqSHztKzTYQ7QT36oMGQsuVphimwPRh94AuYUJ2NxhFf6dVXdDjneLXzCZUU"

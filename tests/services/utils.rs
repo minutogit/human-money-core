@@ -11,6 +11,7 @@
 use chrono::{DateTime, Utc};
 use human_money_core::test_utils::{ACTORS, SILVER_STANDARD};
 use human_money_core::{
+    NewVoucherData, VoucherCoreError,
     error::ValidationError,
     services::{
         crypto_utils,
@@ -18,7 +19,6 @@ use human_money_core::{
         voucher_manager::{self, create_voucher},
         voucher_validation::validate_voucher_against_standard,
     },
-    NewVoucherData, VoucherCoreError,
 };
 
 #[test]
@@ -173,11 +173,11 @@ fn test_chronological_validation_with_timezones() {
     let t_id_raw = bs58::decode(&tx.t_id).into_vec().unwrap();
     let l2_sig = crypto_utils::sign_ed25519(&test_user.signing_key, &t_id_raw);
     tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
-    
+
     // KORREKTUR: Signiere t_id raw für Identität (sozial)
     let identity_sig = crypto_utils::sign_ed25519(&test_user.signing_key, &t_id_raw);
     tx.sender_identity_signature = Some(bs58::encode(identity_sig.to_bytes()).into_string());
-    
+
     voucher.transactions[0] = tx;
 
     // 3. Validierung: Die Transaktionszeit (`2020`) liegt nun vor dem Erstellungsdatum (`~2025`).

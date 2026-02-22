@@ -11,11 +11,9 @@ use serde::{Deserialize, Serialize};
 /// Dies ermöglicht es der Benutzeroberfläche, eine präzise To-do-Liste anzuzeigen.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ValidationFailureReason {
-    /// Die Anzahl der Bürgen-Signaturen ist zu niedrig.
-    GuarantorCountLow {
-        required: u32,
-        max: u32,
-        current: u32,
+    /// Eine Geschäftsregel aus dem Standard wurde noch nicht erfüllt.
+    BusinessRule {
+        message: String,
     },
     /// Die Anzahl der zusätzlichen Signaturen ist zu niedrig.
     AdditionalSignatureCountLow { required: u32, current: u32 },

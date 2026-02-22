@@ -120,45 +120,31 @@ default_validity_duration = "P5Y"
 #
 [validation]
 
-# -- Sektion für quantitative Regeln --
-# Legt die minimale und maximale Anzahl für bestimmte Elemente fest.
-[validation.counts]
-# Ein Gutschein muss mindestens 1 Bürgen haben, aber nicht mehr als 3.
-guarantor_signatures = { min = 1, max = 3 }
-# Zusätzliche Signaturen sind optional, aber auf 5 begrenzt.
-additional_signatures = { min = 0, max = 5 }
-# Jeder Gutschein muss die 'init' Transaktion haben (min=1), aber nicht mehr
-# als 100 Transaktionen, um die Dateigröße zu begrenzen.
-transactions = { min = 1, max = 100 }
+# -- Sektion für dynamische Regeln (CEL) --
+# Definiert flexible Geschäftsregeln, die zur Laufzeit ausgewertet werden.
+# Nutzt die Common Expression Language (CEL). Jede Regel hat eine `expression`
+# (die zu true/false evaluiert) und eine `message` (Fehlermeldung bei false).
+[validation.dynamic_rules]
+[validation.dynamic_rules.gender_diversity_male]
+expression = "Voucher.signatures.filter(s, s.role != 'creator' && has(s.details.gender) && s.details.gender == '1').size() == 1"
+message = "Gemäß ISO 5218 wird genau ein männlicher (1) Bürge benötigt."
 
-# -- Sektion für Signatur-Anforderungen --
-# Definiert spezifische, erforderliche Signaturen von bestimmten Parteien.
-[[validation.required_signatures]]
-# Eine menschenlesbare Beschreibung der Rolle des Unterzeichners.
-role_description = "Signatur der ausgebenden Institution"
-# Eine Liste von `did:key`-IDs, die zur Unterzeichnung berechtigt sind.
-allowed_signer_ids = ["did:key:z...", "did:key:z..."]
-# Optional: Die Signatur muss exakt diesen `description`-Text enthalten.
-required_signature_description = "Offizielle Freigabe"
-# Wenn `true`, muss eine passende Signatur zwingend vorhanden sein.
-is_mandatory = true
+[validation.dynamic_rules.gender_diversity_female]
+expression = "Voucher.signatures.filter(s, s.role != 'creator' && has(s.details.gender) && s.details.gender == '2').size() == 1"
+message = "Gemäß ISO 5218 wird genau eine weibliche (2) Bürgin benötigt."
 
-# -- Sektion für Inhalts-Regeln --
-[validation.content_rules]
-# Definiert Felder, die einen exakten, festen Wert haben müssen.
-# Der Key ist ein JSON-Pfad. Der Wert muss ein gültiger JSON-Wert sein.
-[validation.content_rules.fixed_fields]
-"collateral.type" = "Fiat-Währung"
-"divisible" = false
+[validation.dynamic_rules.fixed_collateral_type]
+expression = "has(Voucher.collateral) && Voucher.collateral.type == 'Fiat-Währung'"
+message = "Collateral type must be Fiat-Währung."
 
-# Definiert Felder, deren Wert aus einer vorgegebenen Liste stammen muss.
-[validation.content_rules.allowed_values]
-"nominal_value.amount" = ["25", "50", "100"]
+[validation.dynamic_rules.valid_amount]
+expression = "Voucher.nominal_value.amount in ['25.00', '50.00', '100.00']"
+message = "Nominal value must be exactly 25.00, 50.00 or 100.00."
 
-# Definiert Felder, deren Wert einem bestimmten Regex-Muster entsprechen muss.
-[validation.content_rules.regex_patterns]
-# Beispiel: Eine interne Projekt-ID im Gutschein-Fußnotenfeld.
-"footnote" = '^PROJEKT-202[5-9]-[A-Z0-9]{8}$'
+[validation.dynamic_rules.valid_description]
+# Beispiel für Regular Expressions
+expression = "Voucher.voucher_standard.template.description.matches('^INV-[0-9]{6}$')"
+message = "Description must match the format INV-XXXXXX."
 
 # -- Sektion für Verhaltens-Regeln --
 [validation.behavior_rules]
@@ -181,24 +167,6 @@ amount_decimal_places = 2
 # noch im Layer 2 System vorgehalten wird, bevor er gelöscht werden kann.
 # Wird zur Berechnung von `deletable_at` in der 'init' Transaktion genutzt.
 l2_retention_period = "P3M"
-
-# -- Sektion für Feld-Gruppen-Regeln (für Fortgeschrittene) --
-# Definiert Regeln für die Werteverteilung von Feldern in einer Liste von Objekten.
-# Der Key ist der JSON-Pfad zu einem Array von Objekten im Gutschein.
-[validation.field_group_rules]
-# Beispiel: Regel für das `guarantor_signatures` Array
-[validation.field_group_rules.guarantor_signatures]
-# Das zu prüfende Feld innerhalb jedes Objekts der Liste (z.B. "gender").
-field = "gender"
-# Eine Liste von Regeln, die die Häufigkeit bestimmter Werte vorschreiben.
-# Jede Regel definiert einen `value` und einen erlaubten Bereich (`min`, `max`).
-# Um einen exakten Wert zu erzwingen, setzt man min = max.
-# Diese Regel erzwingt, dass es genau einen Bürgen mit gender='1' (männlich)
-# und genau einen mit gender='2' (weiblich) geben muss, um Diversität zu sichern.
-value_counts = [
-    { value = "1", min = 1, max = 1 },
-    { value = "2", min = 1, max = 1 },
-]
 
 
 # =================================================================================

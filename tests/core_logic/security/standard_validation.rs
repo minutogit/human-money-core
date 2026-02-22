@@ -18,11 +18,29 @@ mod required_signatures_validation {
     use super::*;
 
     fn load_required_sig_standard() -> (human_money_core::VoucherStandardDefinition, String) {
-        // Verwende die neue, robuste lazy_static-Variable
-        (
+        // Verwende die neue, robuste lazy_static-Variable und füge die CEL-Regel hinzu
+        let (mut standard, _hash) = (
             test_utils::REQUIRED_SIG_STANDARD.0.clone(),
             test_utils::REQUIRED_SIG_STANDARD.1.clone(),
-        )
+        );
+
+        let validation = standard.validation.as_mut().unwrap();
+        validation.dynamic_rules.insert(
+            "strict_approver".to_string(),
+            human_money_core::models::voucher_standard_definition::DynamicRule {
+                message: "Official Approver".to_string(),
+                expression: format!("Voucher.signatures.filter(s, s.signer_id == '{}' && s.role == 'Official Approver').size() == 1", ACTORS.charlie.user_id),
+            }
+        );
+
+        // Berechne neuen Hash
+        let mut standard_to_hash = standard.clone();
+        standard_to_hash.signature = None;
+        let new_hash = human_money_core::services::crypto_utils::get_hash(
+            human_money_core::to_canonical_json(&standard_to_hash).unwrap(),
+        );
+
+        (standard, new_hash)
     }
 
     fn create_base_voucher_for_sig_test(
@@ -114,19 +132,14 @@ mod required_signatures_validation {
 
         let result = validate_voucher_against_standard(&voucher, &standard);
 
-        // Aussagekräftigere Assertion für Debugging
         let err = result.unwrap_err();
         match err {
-            VoucherCoreError::Validation(ValidationError::MissingRequiredSignature {
-                role,
-                ..
-            }) => {
-                assert_eq!(
-                    role, "Official Approver",
-                    "The role in the error did not match 'Official Approver'"
-                );
-            }
-            _ => panic!("Expected MissingRequiredSignature, but got {:?}", err),
+            VoucherCoreError::Validation(ValidationError::BusinessRuleViolated(msg))
+                if msg == "Official Approver" => {} // Success
+            _ => panic!(
+                "Expected BusinessRuleViolated('Official Approver'), but got {:?}",
+                err
+            ),
         }
     }
 
@@ -151,19 +164,14 @@ mod required_signatures_validation {
 
         let result = validate_voucher_against_standard(&voucher, &standard);
 
-        // Aussagekräftigere Assertion für Debugging
         let err = result.unwrap_err();
         match err {
-            VoucherCoreError::Validation(ValidationError::MissingRequiredSignature {
-                role,
-                ..
-            }) => {
-                assert_eq!(
-                    role, "Official Approver",
-                    "The role in the error did not match 'Official Approver'"
-                );
-            }
-            _ => panic!("Expected MissingRequiredSignature, but got {:?}", err),
+            VoucherCoreError::Validation(ValidationError::BusinessRuleViolated(msg))
+                if msg == "Official Approver" => {} // Success
+            _ => panic!(
+                "Expected BusinessRuleViolated('Official Approver'), but got {:?}",
+                err
+            ),
         }
     }
 
@@ -185,19 +193,14 @@ mod required_signatures_validation {
 
         let result = validate_voucher_against_standard(&voucher, &standard);
 
-        // Aussagekräftigere Assertion für Debugging
         let err = result.unwrap_err();
         match err {
-            VoucherCoreError::Validation(ValidationError::MissingRequiredSignature {
-                role,
-                ..
-            }) => {
-                assert_eq!(
-                    role, "Official Approver",
-                    "The role in the error did not match 'Official Approver'"
-                );
-            }
-            _ => panic!("Expected MissingRequiredSignature, but got {:?}", err),
+            VoucherCoreError::Validation(ValidationError::BusinessRuleViolated(msg))
+                if msg == "Official Approver" => {} // Success
+            _ => panic!(
+                "Expected BusinessRuleViolated('Official Approver'), but got {:?}",
+                err
+            ),
         }
     }
 
