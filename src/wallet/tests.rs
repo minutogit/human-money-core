@@ -380,7 +380,7 @@ mod conflict_management_api {
             offender_id: offender_id.to_string(),
             fork_point_prev_hash,
             conflicting_transactions: vec![Transaction::default(), Transaction::default()],
-            voucher_valid_until: (Utc::now() + Duration::days(90)).to_rfc3339(),
+            deletable_at: (Utc::now() + Duration::days(90)).to_rfc3339(),
             reporter_id: reporter.user_id.clone(),
             report_timestamp: Utc::now().to_rfc3339(),
             reporter_signature: bs58::encode(signature.to_bytes()).into_string(),

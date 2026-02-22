@@ -136,6 +136,7 @@ pub struct BehaviorRules {
     pub max_creation_validity_duration: Option<String>,
     pub issuance_minimum_validity_duration: Option<String>,
     pub amount_decimal_places: Option<u8>,
+    pub l2_retention_period: Option<String>,
 }
 
 /// Definiert die exakte Anzahl für einen bestimmten Wert in einer Gruppenprüfung.

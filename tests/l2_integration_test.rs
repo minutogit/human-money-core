@@ -105,7 +105,7 @@ impl MockL2Node {
             receiver_ephemeral_pub_hash: req.receiver_ephemeral_pub_hash,
             change_ephemeral_pub_hash: req.change_ephemeral_pub_hash,
             layer2_signature: req.layer2_signature,
-            valid_until: req.valid_until.clone(),
+            deletable_at: req.deletable_at.clone(),
         };
         voucher_locks.insert(ds_tag, entry);
             
@@ -507,7 +507,7 @@ fn test_l2_fake_double_spend_protection() {
         receiver_ephemeral_pub_hash: None,
         change_ephemeral_pub_hash: None,
         layer2_signature: [0u8; 64], // Ungültig
-        valid_until: None,
+        deletable_at: None,
     };
 
     let resp_a = mock_l2.wrap_and_sign(L2Verdict::Verified { lock_entry: malicious_entry_a });
@@ -543,7 +543,7 @@ fn test_l2_fake_double_spend_protection() {
         receiver_ephemeral_pub_hash: None,
         change_ephemeral_pub_hash: None,
         layer2_signature: malicious_sig_b,
-        valid_until: None,
+        deletable_at: None,
     };
 
     let resp_b = mock_l2.wrap_and_sign(L2Verdict::Verified { lock_entry: malicious_entry_b });
@@ -648,7 +648,7 @@ fn test_l2_voucher_id_mixup_protection() {
         receiver_ephemeral_pub_hash: None,
         change_ephemeral_pub_hash: None,
         layer2_signature: [0u8; 64],
-        valid_until: None,
+        deletable_at: None,
     };
 
     let resp_c = mock_l2.wrap_and_sign(L2Verdict::Verified { lock_entry: malicious_entry_c });

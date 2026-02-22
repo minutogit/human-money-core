@@ -69,7 +69,7 @@ impl Wallet {
                     .flatten(),
             )
         {
-            if let Ok(valid_until) = DateTime::parse_from_rfc3339(&fp.valid_until) {
+            if let Ok(valid_until) = DateTime::parse_from_rfc3339(&fp.deletable_at) {
                 if valid_until.with_timezone(&Utc) < now {
                     expired_keys.insert(fp.ds_tag.clone());
                 }
@@ -188,7 +188,7 @@ impl Wallet {
 
         // Schritt 4: Bereinige alte Double-Spend-Beweise mit derselben Frist.
         self.proof_store.proofs.retain(|_, proof| {
-            if let Ok(valid_until) = DateTime::parse_from_rfc3339(&proof.voucher_valid_until) {
+            if let Ok(valid_until) = DateTime::parse_from_rfc3339(&proof.deletable_at) {
                 let purge_date = valid_until.with_timezone(&Utc) + grace_period;
                 return now < purge_date;
             }

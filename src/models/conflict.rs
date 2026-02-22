@@ -42,9 +42,9 @@ pub struct TransactionFingerprint {
     /// zweifelsfrei zuordnen zu können.
     pub layer2_signature: String,
 
-    /// Das Gültigkeitsdatum des zugehörigen Gutscheins (abgeleitet aus `voucher.valid_until`).
-    /// Nach diesem Datum kann der Fingerprint sicher aus dem Speicher entfernt werden.
-    pub valid_until: String,
+    /// Das Datum, ab dem der Fingerprint sicher aus dem Speicher entfernt werden kann 
+    /// (entspricht `deletable_at` der 'init' Transaktion).
+    pub deletable_at: String,
 }
 
 /// Dient als Speichercontainer für alle bekannten Transaktions-Fingerprints, die
@@ -128,9 +128,8 @@ pub struct ProofOfDoubleSpend {
     /// Die vollständigen, widersprüchlichen Transaktionen, die den Betrug beweisen.
     pub conflicting_transactions: Vec<Transaction>,
 
-    /// Das Gültigkeitsdatum des Gutscheins, den dieser Konflikt betrifft.
-    /// Dient der späteren automatischen Bereinigung (`cleanup`).
-    pub voucher_valid_until: String,
+    /// Das Datum, ab dem dieser Beweis gelöscht werden kann.
+    pub deletable_at: String,
 
     // Metadaten zum spezifischen Report dieses Beweises
     pub reporter_id: String,

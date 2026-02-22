@@ -760,7 +760,7 @@ mod behavioral_rules {
             privacy_guard: None,
             trap_data: None,
             layer2_signature: None,
-            valid_until: None,
+            deletable_at: None,
             change_ephemeral_pub_hash: None,
         };
 
@@ -1292,7 +1292,7 @@ mod behavioral_rules {
 
             let mut corrupted_voucher = voucher.clone();
             let new_date = "2099-01-01T00:00:00Z".to_string();
-            corrupted_voucher.transactions[0].valid_until = Some(new_date);
+            corrupted_voucher.transactions[0].deletable_at = Some(new_date);
 
             let tx = corrupted_voucher.transactions[0].clone();
             

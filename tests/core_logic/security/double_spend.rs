@@ -43,7 +43,7 @@ fn new_dummy_fingerprint(t_id: &str) -> TransactionFingerprint {
         t_id: t_id.to_string(),
         encrypted_timestamp: 0,
         layer2_signature: "".to_string(),
-        valid_until: "2099-12-31T23:59:59.999999Z".to_string(),
+        deletable_at: "2099-12-31T23:59:59.999999Z".to_string(),
     }
 }
 
@@ -175,7 +175,7 @@ fn test_fingerprint_generation() {
             .history
             .get(&expected_hash1)
             .unwrap()[0]
-            .valid_until,
+            .deletable_at,
         expected_rounded_valid_until,
         "Der valid_until-Wert im Fingerprint muss dem auf das Monatsende gerundeten Wert entsprechen."
     );
@@ -285,11 +285,11 @@ fn test_cleanup_expired_fingerprints() {
     let mut wallet = setup_in_memory_wallet(&ACTORS.test_user);
 
     let mut expired_fp_hist = new_dummy_fingerprint("t_hist_expired");
-    expired_fp_hist.valid_until = "2020-01-01T00:00:00Z".to_string();
+    expired_fp_hist.deletable_at = "2020-01-01T00:00:00Z".to_string();
     let valid_fp_hist = new_dummy_fingerprint("t_hist_valid");
 
     let mut expired_fp_foreign = new_dummy_fingerprint("t_foreign_expired");
-    expired_fp_foreign.valid_until = "2020-01-01T00:00:00Z".to_string();
+    expired_fp_foreign.deletable_at = "2020-01-01T00:00:00Z".to_string();
     let valid_fp_foreign = new_dummy_fingerprint("t_foreign_valid");
 
     // Füge Fingerprints zu beiden Speichern hinzu

@@ -174,7 +174,7 @@ pub struct L2LockRequest {
     pub layer2_signature: [u8; 64], 
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub valid_until: Option<String>, // Only required when is_genesis = true
+    pub deletable_at: Option<String>, // Only required when is_genesis = true
 }
 
 /// Datenstruktur für einen einzelnen Lock-Eintrag auf dem Layer 2.
@@ -193,7 +193,7 @@ pub struct L2LockEntry {
     #[serde(with = "crate::models::layer2_api::base58_64")]
     pub layer2_signature: [u8; 64],
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub valid_until: Option<String>,
+    pub deletable_at: Option<String>,
 }
 
 /// Request: Abfragen des Zustands eines Gutscheins und Abgleich der Transaktionshistorie.

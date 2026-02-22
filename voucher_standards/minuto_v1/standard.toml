@@ -54,6 +54,7 @@ allowed_t_types = [
 ]
 amount_decimal_places = 0
 issuance_minimum_validity_duration = "P3Y"
+l2_retention_period = "P3M"
 
 # NEU: Erzwingt, dass von den zwei Bürgen exakt einer männlich ('1')
 # und einer weiblich ('2') sein muss, gemäß ISO 5218.
@@ -72,4 +73,4 @@ value_counts = [
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "4DgZhKW75bQ5hxdJDadkxudeLut5x8enFbnQzPdp7opB4ftMM2qK3zy8ypLR1XLeLGcLUkzpHGSAVjwLdzwB1c7a"
+signature = "xaksc6kAf1LEhVpXChz2Sg36TGERrX2UzoX9m92HmBkWoz8akVFwPkpJt2vBeHN9pY5Pe6gEi9EVgXq5gbs4fhC"

@@ -153,7 +153,7 @@ pub struct Transaction {
     pub layer2_signature: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub valid_until: Option<String>,
+    pub deletable_at: Option<String>,
 }
 
 /// Repräsentiert eine universelle Signatur (ehemals AdditionalSignature),

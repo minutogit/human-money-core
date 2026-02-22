@@ -1125,7 +1125,7 @@ pub fn verify_transaction_integrity_and_signature(
                 &ephem_pub_32,
                 receiver_hash_32.as_ref(),
                 change_hash_32.as_ref(),
-                transaction.valid_until.as_deref(),
+                transaction.deletable_at.as_deref(),
             );
 
             if ephem_key.verify(&payload_hash, &signature).is_err() {

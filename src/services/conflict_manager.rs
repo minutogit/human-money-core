@@ -88,7 +88,7 @@ pub fn create_fingerprint_for_transaction(
         blinded_id,
         t_id: transaction.t_id.clone(),
         layer2_signature: transaction.layer2_signature.clone().unwrap_or_default(),
-        valid_until: valid_until_rounded,
+        deletable_at: valid_until_rounded,
         encrypted_timestamp: encrypt_transaction_timestamp(transaction)?,
     })
 }
@@ -247,7 +247,7 @@ pub fn create_proof_of_double_spend(
     offender_id: String,
     fork_point_prev_hash: String,
     conflicting_transactions: Vec<Transaction>,
-    voucher_valid_until: String,
+    deletable_at: String,
     reporter_identity: &UserIdentity,
 ) -> Result<ProofOfDoubleSpend, VoucherCoreError> {
     // 1. Beweis-Objekt erstellen und signieren.
@@ -274,7 +274,7 @@ pub fn create_proof_of_double_spend(
         offender_id,
         fork_point_prev_hash,
         conflicting_transactions,
-        voucher_valid_until,
+        deletable_at,
         reporter_id: reporter_identity.user_id.clone(),
         report_timestamp: get_current_timestamp(),
         reporter_signature,
@@ -330,7 +330,7 @@ pub fn create_and_sign_resolution_endorsement(
 pub fn cleanup_known_fingerprints(known_fingerprints: &mut KnownFingerprints) {
     let now = get_current_timestamp();
     known_fingerprints.foreign_fingerprints.retain(|_, fps| {
-        fps.retain(|fp| fp.valid_until > now);
+        fps.retain(|fp| fp.deletable_at > now);
         !fps.is_empty()
     });
 }
@@ -344,7 +344,7 @@ pub fn cleanup_expired_histories(
 ) {
     own_fingerprints.history.retain(|_, fps| {
         fps.retain(|fp| {
-            if let Ok(valid_until) = DateTime::parse_from_rfc3339(&fp.valid_until)
+            if let Ok(valid_until) = DateTime::parse_from_rfc3339(&fp.deletable_at)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
             {
                 let purge_date = valid_until + *grace_period;
@@ -356,7 +356,7 @@ pub fn cleanup_expired_histories(
     });
     known_fingerprints.local_history.retain(|_, fps| {
         fps.retain(|fp| {
-            if let Ok(valid_until) = DateTime::parse_from_rfc3339(&fp.valid_until)
+            if let Ok(valid_until) = DateTime::parse_from_rfc3339(&fp.deletable_at)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
             {
                 let purge_date = valid_until + *grace_period;

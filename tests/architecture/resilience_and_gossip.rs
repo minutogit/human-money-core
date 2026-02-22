@@ -93,7 +93,7 @@ mod tests {
             ds_tag: "expired_key".to_string(),
             u: String::new(),
             blinded_id: String::new(),
-            valid_until: expired_date,
+            deletable_at: expired_date,
             t_id: String::new(),
             encrypted_timestamp: 0,
             layer2_signature: String::new(),
@@ -102,7 +102,7 @@ mod tests {
             ds_tag: "valid_key".to_string(),
             u: String::new(),
             blinded_id: String::new(),
-            valid_until: valid_date,
+            deletable_at: valid_date,
             t_id: String::new(),
             encrypted_timestamp: 0,
             layer2_signature: String::new(),
@@ -163,7 +163,7 @@ mod tests {
                 t_id: format!("tx_{:02}", i), // Padding für korrekte lexikalische Sortierung
                 encrypted_timestamp: 0,
                 layer2_signature: String::new(),
-                valid_until: String::new(),
+                deletable_at: String::new(),
             };
             let mut meta = FingerprintMetadata::default();
             meta.depth = match i {
@@ -545,7 +545,7 @@ mod tests {
             encrypted_timestamp: 0,
             layer2_signature: String::new(),
             // FIX: Set valid date so cleanup doesn't remove it
-            valid_until: (Utc::now() + Duration::days(10)).to_rfc3339(),
+            deletable_at: (Utc::now() + Duration::days(10)).to_rfc3339(),
         };
 
         // Alice ausloggen
@@ -632,7 +632,7 @@ mod tests {
             encrypted_timestamp: 0,
             layer2_signature: String::new(),
             // FIX: Set a valid future date so cleanup does not remove this fingerprint
-            valid_until: (Utc::now() + Duration::days(365)).to_rfc3339(),
+            deletable_at: (Utc::now() + Duration::days(365)).to_rfc3339(),
         };
 
         // Manipuliere den Zustand direkt im Speicher.
@@ -795,7 +795,7 @@ mod tests {
                 t_id: String::new(),
                 encrypted_timestamp: 0,
                 layer2_signature: String::new(),
-                valid_until: String::new(),
+                deletable_at: String::new(),
             };
             let meta = FingerprintMetadata {
                 depth: if i < 2 {
@@ -903,7 +903,7 @@ mod tests {
             t_id: String::new(),
             encrypted_timestamp: 0,
             layer2_signature: String::new(),
-            valid_until: String::new(),
+            deletable_at: String::new(),
         };
         let mut meta = FingerprintMetadata {
             depth: 0,
@@ -981,7 +981,7 @@ mod tests {
                 t_id: String::new(),
                 encrypted_timestamp: 0,
                 layer2_signature: String::new(),
-                valid_until: String::new(),
+                deletable_at: String::new(),
             };
             wallet.fingerprint_metadata.insert(
                 key.clone(),

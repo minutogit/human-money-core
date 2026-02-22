@@ -326,7 +326,21 @@ pub fn create_voucher(
         privacy_guard: None,
         trap_data: None, 
         layer2_signature: None,
-        valid_until: Some(temp_voucher.valid_until.clone()),
+        deletable_at: {
+            let retention_period = verified_standard
+                .validation
+                .as_ref()
+                .and_then(|v| v.behavior_rules.as_ref())
+                .and_then(|b| b.l2_retention_period.as_ref());
+
+            if let Some(duration) = retention_period {
+                add_iso8601_duration(final_valid_until_dt, duration)
+                    .ok()
+                    .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Micros, true))
+            } else {
+                Some(temp_voucher.valid_until.clone())
+            }
+        },
         change_ephemeral_pub_hash: None,
         sender_identity_signature: None,
     };
@@ -403,7 +417,7 @@ pub fn create_voucher(
         &to_32_bytes(sender_pub_raw.clone(), "sender_pub")?,
         Some(&to_32_bytes(receiver_hash_raw.clone(), "receiver_hash")?),
         None,
-        init_transaction.valid_until.as_deref(),
+        init_transaction.deletable_at.as_deref(),
     );
     
     let l2_sig_bytes = sign_ed25519(&genesis_secret, &payload_hash);
@@ -785,7 +799,7 @@ pub fn create_transaction(
         privacy_guard,
         trap_data,
         layer2_signature: None,
-        valid_until: None,
+        deletable_at: None,
         change_ephemeral_pub_hash,
         sender_identity_signature: None,
     };
@@ -827,7 +841,7 @@ pub fn create_transaction(
         &to_32_bytes(sender_pub_raw.clone(), "sender_pub")?,
         receiver_hash_raw.as_ref().map(|v| &*v),
         change_hash_raw.as_ref().map(|v| &*v),
-        new_transaction.valid_until.as_deref(),
+        new_transaction.deletable_at.as_deref(),
     );
 
     let l2_sig_bytes = sign_ed25519(sender_ephemeral_key, &payload_hash);

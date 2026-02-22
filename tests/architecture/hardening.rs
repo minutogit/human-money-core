@@ -42,7 +42,7 @@ mod tests {
             ds_tag: key.clone(),
             u: String::new(),
             blinded_id: String::new(),
-            valid_until: expired_date,
+            deletable_at: expired_date,
             t_id: String::new(),
             encrypted_timestamp: 0,
             layer2_signature: String::new(),

@@ -50,10 +50,11 @@ allowed_t_types = [
     "transfer",
 ]
 amount_decimal_places = 4
+l2_retention_period = "P3M"
 
 [signature]
 # Die `did:key` des Herausgebers, die seinen öffentlichen Schlüssel enthält.
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "KPGPrWi5kW9F9jukKfyGxwgYgESWFJVpwwRfe7Uj2nUyZA9CK1ijYPBGdsEtFixmJBmZZ7iHePXmcufoFUzq8xa"
+signature = "4afNJSeqjJpSfzB7YZDfMEz5TKzbNVPJDQr8qeTzL3B9KLXu3fQnWdK7hj4QK14u4D39Pe5iABZQ2JWPW9F84wnL"

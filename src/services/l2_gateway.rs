@@ -106,7 +106,7 @@ pub fn generate_lock_request(
         receiver_ephemeral_pub_hash,
         change_ephemeral_pub_hash,
         layer2_signature,
-        valid_until: if is_genesis { transaction.valid_until.clone() } else { None },
+        deletable_at: if is_genesis { transaction.deletable_at.clone() } else { None },
     })
 }
 
@@ -144,7 +144,7 @@ pub fn calculate_layer2_voucher_id(transaction: &Transaction) -> Result<String, 
     if let Some(r) = receiver_hash {
         hasher.update(r);
     }
-    if let Some(v) = &transaction.valid_until {
+    if let Some(v) = &transaction.deletable_at {
         hasher.update(v.as_bytes());
     }
     
@@ -167,7 +167,7 @@ pub fn calculate_l2_payload_hash(req: &L2LockRequest) -> [u8; 32] {
         &req.sender_ephemeral_pub,
         req.receiver_ephemeral_pub_hash.as_ref(),
         req.change_ephemeral_pub_hash.as_ref(),
-        req.valid_until.as_deref(),
+        req.deletable_at.as_deref(),
     )
 }
 
@@ -179,7 +179,7 @@ pub fn calculate_l2_payload_hash_raw(
     sender_pub: &[u8; 32],
     receiver_hash: Option<&[u8; 32]>,
     change_hash: Option<&[u8; 32]>,
-    valid_until: Option<&str>,
+    deletable_at: Option<&str>,
 ) -> [u8; 32] {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -194,7 +194,7 @@ pub fn calculate_l2_payload_hash_raw(
     if let Some(c) = change_hash {
         hasher.update(c);
     }
-    if let Some(v) = valid_until {
+    if let Some(v) = deletable_at {
         hasher.update(v.as_bytes());
     }
     
@@ -285,7 +285,7 @@ pub fn process_l2_verdict(
                 &lock_entry.sender_ephemeral_pub,
                 lock_entry.receiver_ephemeral_pub_hash.as_ref(),
                 lock_entry.change_ephemeral_pub_hash.as_ref(),
-                lock_entry.valid_until.as_deref(),
+                lock_entry.deletable_at.as_deref(),
             );
 
             #[cfg(feature = "test-utils")]

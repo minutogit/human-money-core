@@ -100,7 +100,7 @@ impl MockL2Node {
             receiver_ephemeral_pub_hash: req.receiver_ephemeral_pub_hash,
             change_ephemeral_pub_hash: req.change_ephemeral_pub_hash,
             layer2_signature: req.layer2_signature,
-            valid_until: req.valid_until.clone(),
+            deletable_at: req.deletable_at.clone(),
         };
         voucher_locks.insert(ds_tag, entry);
 

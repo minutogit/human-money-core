@@ -78,7 +78,7 @@ fn test_prevent_signature_reuse_in_init() {
         &to_32_bytes(sender_pub_raw),
         Some(&to_32_bytes(receiver_hash_raw)),
         None,
-        bad_tx.valid_until.as_deref(),
+        bad_tx.deletable_at.as_deref(),
     );
     let l2_sig_bytes = human_money_core::services::crypto_utils::sign_ed25519(&genesis_secret, &payload_hash);
     bad_tx.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());

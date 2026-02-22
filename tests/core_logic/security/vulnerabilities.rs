@@ -259,7 +259,7 @@ fn create_hacked_tx(
         &to_32(sender_pub_raw),
         receiver_hash_raw.as_ref().map(|v| to_32(v.clone())).as_ref(),
         change_hash_raw.as_ref().map(|v| to_32(v.clone())).as_ref(),
-        hacked_tx.valid_until.as_deref(),
+        hacked_tx.deletable_at.as_deref(),
     );
 
     let l2_sig = sign_ed25519(signer_key, &payload_hash);

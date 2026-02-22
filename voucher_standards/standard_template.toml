@@ -177,6 +177,11 @@ issuance_minimum_validity_duration = "P6M" # z.B. mindestens 6 Monate
 # Verhindert Präzisionsprobleme und "Staub"-Beträge. 2 für "Währung", 8 für "Krypto".
 amount_decimal_places = 2
 
+# Definiert den Zeitraum, wie lange ein Gutschein nach Ablauf von `valid_until`
+# noch im Layer 2 System vorgehalten wird, bevor er gelöscht werden kann.
+# Wird zur Berechnung von `deletable_at` in der 'init' Transaktion genutzt.
+l2_retention_period = "P3M"
+
 # -- Sektion für Feld-Gruppen-Regeln (für Fortgeschrittene) --
 # Definiert Regeln für die Werteverteilung von Feldern in einer Liste von Objekten.
 # Der Key ist der JSON-Pfad zu einem Array von Objekten im Gutschein.

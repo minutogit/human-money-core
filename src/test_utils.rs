@@ -903,7 +903,7 @@ pub fn create_voucher_for_manipulation(
         privacy_guard: None,
         trap_data: None,
         layer2_signature: None,
-        valid_until: Some(valid_until.clone()),
+        deletable_at: Some(valid_until.clone()),
     };
 
     let tx_json_for_id = crate::to_canonical_json(&init_tx).unwrap();
@@ -1099,7 +1099,7 @@ pub fn resign_transaction_ext(
         &to_32_bytes(sender_pub_raw),
         receiver_hash_raw.as_ref().map(|v| to_32_bytes(v.clone())).as_ref(),
         change_hash_raw.as_ref().map(|v| to_32_bytes(v.clone())).as_ref(),
-        tx.valid_until.as_deref(),
+        tx.deletable_at.as_deref(),
     );
 
     let proof_key = l2_signer_key.unwrap_or(signer_key);

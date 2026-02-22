@@ -40,7 +40,7 @@ fn create_mock_proof_of_double_spend(
         resolutions,
         layer2_verdict: verdict,
         fork_point_prev_hash: "dummy_hash".to_string(),
-        voucher_valid_until: (Utc::now() + Duration::days(365)).to_rfc3339(),
+        deletable_at: (Utc::now() + Duration::days(365)).to_rfc3339(),
         report_timestamp: Utc::now().to_rfc3339(),
         reporter_signature: "dummy_sig".to_string(),
     }

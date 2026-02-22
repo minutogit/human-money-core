@@ -91,7 +91,6 @@ fn test_full_creation_and_validation_cycle() {
         "P3Y"
     );
 
-    // --- DEBUG-Ausgabe hinzugefügt ---
     println!("[DEBUG] Erwartetes Ende: -12-31T23:59:59");
     println!("[DEBUG] Tatsächliches valid_until: {}", voucher.valid_until);
     // --- Ende DEBUG-Ausgabe ---
