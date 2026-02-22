@@ -58,12 +58,15 @@ pub fn validate_voucher_against_standard(
     // 3. Validiere die Gültigkeitsdauer aus dem Standard
     verify_validity_duration(voucher, standard)?;
 
+    // 4. Validiere die erlaubten Transaktionstypen
+    validate_transaction_types(voucher, standard)?;
+
     // Führe die datengesteuerten CEL-Validierungsregeln aus
-    if let Some(rules) = &standard.validation {
+    if !standard.immutable.custom_rules.is_empty() {
         let voucher_json = serde_json::to_value(voucher)?;
         let tx_json = voucher.transactions.last().map(|tx| serde_json::to_value(tx).unwrap());
 
-        for (rule_name, rule) in &rules.dynamic_rules {
+        for (rule_name, rule) in &standard.immutable.custom_rules {
             match crate::services::dynamic_policy_engine::DynamicPolicyEngine::evaluate_rule(
                 &rule.expression,
                 &voucher_json,
@@ -77,17 +80,13 @@ pub fn validate_voucher_against_standard(
     }
 
     // NEU: Validierung des Privacy-Modes
-    let privacy_mode = standard
-        .privacy
-        .as_ref()
-        .map(|p| p.mode.as_str())
-        .unwrap_or("public");
+    let privacy_mode = standard.immutable.features.privacy_mode.as_str();
     validate_privacy_mode(voucher, privacy_mode)?;
 
     verify_transactions(voucher, standard)?;
 
     // Signaturen als letztes prüfen, da sie auf den IDs/Hashes der anderen Komponenten basieren.
-    verify_signatures(voucher)?;
+    verify_signatures(voucher, standard)?;
     Ok(())
 }
 
@@ -135,18 +134,18 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &str) -> Result<(), VoucherCor
                     .into());
                 }
             }
-            "stealth" => {
+            "private" => {
                 // 1. sender_id darf NICHT vorhanden sein.
                 if tx.sender_id.is_some() {
                     return Err(ValidationError::InvalidTransaction(format!(
-                        "Transaction {} has sender_id in 'stealth' mode.",
+                        "Transaction {} has sender_id in 'private' mode.",
                         tx.t_id
                     ))
                     .into());
                 }
                 // 2. sender_identity_signature darf NICHT vorhanden sein (Test 1).
                 if tx.sender_identity_signature.is_some() {
-                    return Err(ValidationError::StealthSignatureLeak {
+                    return Err(ValidationError::PrivateSignatureLeak {
                         t_id: tx.t_id.clone(),
                     }
                     .into());
@@ -154,7 +153,7 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &str) -> Result<(), VoucherCor
                 // 3. recipient_id darf KEINE DID sein (muss anonym sein).
                 if tx.recipient_id.starts_with("did:") {
                     return Err(ValidationError::InvalidTransaction(format!(
-                        "Transaction {} has public DID recipient in 'stealth' mode.",
+                        "Transaction {} has public DID recipient in 'private' mode.",
                         tx.t_id
                     ))
                     .into());
@@ -179,22 +178,38 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &str) -> Result<(), VoucherCor
     Ok(())
 }
 
+/// Überprüft, ob alle Transaktionen im Gutschein einen vom Standard erlaubten Typ haben.
+pub fn validate_transaction_types(
+    voucher: &Voucher,
+    standard: &VoucherStandardDefinition,
+) -> Result<(), VoucherCoreError> {
+    let allowed = &standard.immutable.features.allowed_t_types;
+    for tx in &voucher.transactions {
+        if !tx.t_type.is_empty() && !allowed.contains(&tx.t_type) {
+            return Err(ValidationError::TransactionTypeNotAllowed {
+                t_type: tx.t_type.clone(),
+                allowed: allowed.clone(),
+            }
+            .into());
+        }
+    }
+    Ok(())
+}
+
 /// Stellt sicher, dass der Gutschein zum richtigen Standard gehört (UUID und Hash-Abgleich).
 fn verify_standard_identity(
     voucher: &Voucher,
     standard: &VoucherStandardDefinition,
 ) -> Result<(), VoucherCoreError> {
-    if voucher.voucher_standard.uuid != standard.metadata.uuid {
+    if voucher.voucher_standard.uuid != standard.immutable.identity.uuid {
         return Err(ValidationError::StandardUuidMismatch {
-            expected: standard.metadata.uuid.clone(),
+            expected: standard.immutable.identity.uuid.clone(),
             found: voucher.voucher_standard.uuid.clone(),
         }
         .into());
     }
 
-    let mut standard_to_hash = standard.clone();
-    standard_to_hash.signature = None;
-    let expected_hash = get_hash(to_canonical_json(&standard_to_hash)?);
+    let expected_hash = get_hash(to_canonical_json(&standard.immutable)?);
 
     if voucher.voucher_standard.standard_definition_hash != expected_hash {
         return Err(VoucherCoreError::Standard(
@@ -208,18 +223,13 @@ fn verify_validity_duration(
     voucher: &Voucher,
     standard: &VoucherStandardDefinition,
 ) -> Result<(), VoucherCoreError> {
-    let standard_min_duration = standard
-        .validation
-        .as_ref()
-        .and_then(|v| v.behavior_rules.as_ref())
-        .and_then(|b| b.issuance_minimum_validity_duration.clone())
-        .unwrap_or_default();
+    let standard_min_duration = standard.immutable.issuance.issuance_minimum_validity_duration.clone();
 
     // 1. Prüfe, ob die im Gutschein gespeicherte Regel mit der aktuellen Regel des Standards übereinstimmt.
     if voucher
         .voucher_standard
         .template
-        .standard_minimum_issuance_validity
+        .issuance_minimum_validity_duration
         != standard_min_duration
     {
         return Err(ValidationError::MismatchedMinimumValidity {
@@ -227,7 +237,7 @@ fn verify_validity_duration(
             found: voucher
                 .voucher_standard
                 .template
-                .standard_minimum_issuance_validity
+                .issuance_minimum_validity_duration
                 .clone(),
         }
         .into());
@@ -259,12 +269,7 @@ fn verify_validity_duration(
         }
     }
 
-    let standard_max_duration = standard
-        .validation
-        .as_ref()
-        .and_then(|v| v.behavior_rules.as_ref())
-        .and_then(|b| b.max_creation_validity_duration.clone())
-        .unwrap_or_default();
+    let standard_max_duration = standard.immutable.issuance.validity_duration_range.get(1).cloned().unwrap_or_default();
 
     if !standard_max_duration.is_empty() {
         let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date)
@@ -360,8 +365,11 @@ fn is_signature_valid(
 }
 
 /// Verifiziert die kryptographische Gültigkeit, Einzigartigkeit und chronologische
-/// Korrektheit aller Signaturen in der `signatures`-Liste.
-fn verify_signatures(voucher: &Voucher) -> Result<(), VoucherCoreError> {
+/// Korrektheit aller Signaturen in der `signatures`-Liste sowie die Standard-Regeln zu Rollen und Anzahl.
+fn verify_signatures(
+    voucher: &Voucher,
+    standard: &VoucherStandardDefinition,
+) -> Result<(), VoucherCoreError> {
     let mut seen_signers = HashSet::new();
 
     // Extrahiere die ID der ersten Transaktion (Init-Transaktion)
@@ -375,23 +383,41 @@ fn verify_signatures(voucher: &Voucher) -> Result<(), VoucherCoreError> {
             ))
         })?;
 
+    let allowed_roles = standard.immutable.issuance.allowed_signature_roles.as_slice();
+
+    let min_sigs = standard.immutable.issuance.additional_signatures_range.get(0).copied().unwrap_or(0);
+
+    let max_sigs = standard.immutable.issuance.additional_signatures_range.get(1).copied().unwrap_or(0);
+
+    let mut additional_sig_count = 0;
+
     for signature_obj in &voucher.signatures {
         // --- FIX (FEHLER 3): Reihenfolge geändert ---
-        // Sicherheitsprüfung, ob der Ersteller versucht, als Bürge zu agieren.
+        // Sicherheitsprüfung, ob der Ersteller versucht, als zusätzlicher Unterzeichner (z.B. Bürge) zu agieren.
         // Muss VOR der Duplikatsprüfung stattfinden.
-        if signature_obj.role == "guarantor"
-            && Some(&signature_obj.signer_id) == voucher.creator_profile.id.as_ref()
-        {
-            return Err(ValidationError::CreatorAsGuarantor {
-                creator_id: voucher.creator_profile.id.clone().unwrap_or_default(),
+        if signature_obj.role != "creator" {
+            if Some(&signature_obj.signer_id) == voucher.creator_profile.id.as_ref() {
+                return Err(ValidationError::CreatorAsAdditionalSigner {
+                    creator_id: voucher.creator_profile.id.clone().unwrap_or_default(),
+                }
+                .into());
             }
-            .into());
+
+            if !allowed_roles.contains(&signature_obj.role) {
+                return Err(ValidationError::BusinessRuleViolated(format!(
+                    "Role '{}' is not an allowed signature role.",
+                    signature_obj.role
+                ))
+                .into());
+            }
+
+            additional_sig_count += 1;
         }
 
-        // Prüfung auf doppelte Unterzeichner
-        if !seen_signers.insert(&signature_obj.signer_id) {
-            return Err(ValidationError::DuplicateGuarantor {
-                guarantor_id: signature_obj.signer_id.clone(), // Behalte den Fehlertyp bei, auch wenn er "DuplicateSigner" sein sollte
+        // Prüfung auf doppelte Unterzeichner (ein Unterzeichner darf nur einmal pro Rolle signieren)
+        if !seen_signers.insert((signature_obj.signer_id.clone(), signature_obj.role.clone())) {
+            return Err(ValidationError::DuplicateSignature {
+                signer_id: signature_obj.signer_id.clone(),
             }
             .into());
         }
@@ -410,6 +436,17 @@ fn verify_signatures(voucher: &Voucher) -> Result<(), VoucherCoreError> {
         // Kryptographische Prüfung der Signatur selbst.
         is_signature_valid(signature_obj, init_t_id)?;
     }
+
+    if additional_sig_count < min_sigs || additional_sig_count > max_sigs {
+        return Err(ValidationError::CountOutOfBounds {
+            field: "additional_signatures".to_string(),
+            min: min_sigs,
+            max: max_sigs,
+            found: additional_sig_count as usize,
+        }
+        .into());
+    }
+
     Ok(())
 }
 
@@ -443,12 +480,7 @@ pub fn verify_transactions(
         ));
     }
 
-    let allowed_decimal_places = standard
-        .validation
-        .as_ref()
-        .and_then(|v| v.behavior_rules.as_ref())
-        .and_then(|b| b.amount_decimal_places)
-        .unwrap_or(2) as u32;
+    let allowed_decimal_places = standard.immutable.features.amount_decimal_places as u32;
 
     for (i, tx) in voucher.transactions.iter().enumerate() {
         let amt = rust_decimal::Decimal::from_str(&tx.amount)?;
@@ -569,8 +601,8 @@ pub fn verify_transactions(
             let correct_anchor = if prev_tx.recipient_id == tx.sender_id.clone().unwrap_or_default()
             {
                 // Fall: Sender identifiziert sich als Empfänger
-                // ACHTUNG: Wenn sender_id NONE ist (Stealth), matcht das hier nicht auf recipient_id (die ja meist auch Hash/Anon ist).
-                // In Stealth müssen wir rein kryptographisch prüfen.
+                // ACHTUNG: Wenn sender_id NONE ist (Private), matcht das hier nicht auf recipient_id (die ja meist auch Hash/Anon ist).
+                // In Private müssen wir rein kryptographisch prüfen.
                 // Aber: Wir wissen nicht, OB wir der Empfänger waren, außer wir probieren es?
                 // Nein, Validierung ist öffentlich. Jeder muss es prüfen können.
                 // LÖSUNG: Wir können nicht rein an IDs festmachen, wer der Parent war, wenn IDs fehlen.
@@ -652,7 +684,7 @@ pub fn verify_transactions(
             // GLOBAL CHECK (Context Binding):
             // The DS-Tag MUST be derived from the transaction context (prev_hash + sender_ephemeral_pub).
             // This prevents Replay Attacks where a valid Trap is reused in a different transaction context.
-            // This check applies to BOTH Public and Stealth modes.
+            // This check applies to BOTH Public and Private modes.
 
             // SECURITY FIX: Decode to raw bytes to prevent string malleability
             let prev_hash_bytes = bs58::decode(&tx.prev_hash)

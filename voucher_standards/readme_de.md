@@ -105,10 +105,10 @@ footnote = "Gültig nur in teilnehmenden Geschäften."
 primary_redemption_type = "goods"
 
 # Gibt an, ob der Gutschein summierbar ist (für Stapelung)
-is_summable = true
+balances_are_summable = true
 
 # Gibt an, ob der Gutschein teilbar ist
-is_divisible = true
+allow_partial_transfers = true
 
 # Definiert die Währungseinheit für alle Gutscheine
 [template.fixed.nominal_value]

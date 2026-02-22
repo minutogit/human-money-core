@@ -6,171 +6,116 @@
 # Diese Datei dient als umfassende Dokumentation und Kopiervorlage zur Erstellung
 # neuer, signierter Gutschein-Standards. Sie erklärt alle verfügbaren Felder.
 #
-# Ein Standard ist in vier Hauptblöcke unterteilt:
-# 1. [metadata]:    Beschreibt den Standard selbst.
-# 2. [template]:    Definiert Werte, die als Vorlage für neue Gutscheine dienen.
-# 3. [validation]:  Legt Regeln fest, anhand derer Gutscheine validiert werden.
-# 4. [signature]:   Enthält die kryptographische Signatur des Herausgebers.
+# Ein Standard ist in zwei kryptographische Zonen unterteilt:
+# 1. [immutable]:   Der "harte Kern" des Standards. Änderungen hier ändern den Logic-Hash
+#                   und brechen die Kompatibilität zu bestehenden Gutscheinen.
+# 2. [mutable]:     Flexibel anpassbare Metadaten und Vorschlagswerte. Änderungen hier
+#                   ändern nur die Signatur, nicht aber die logische Gültigkeit.
 #
+# =================================================================================
+# IMMUTABLE-ZONE (In Stein gemeißelt)
+# Jede Änderung hier ändert den Logic-Hash!
+# =================================================================================
 
-# =================================================================================
-# Block 1: Metadaten
-# =================================================================================
-#
-# Enthält allgemeine, identifizierende Informationen über den Standard.
-#
-[metadata]
+[immutable.identity]
+# (String) Eine global eindeutige ID für diesen Standard (z.B. v4 UUID).
+uuid = "STANDARD-NAME-V1-YYYY-MM"
 # (String) Der offizielle, menschenlesbare Name des Standards.
 name = "Name des Standards (z.B. Regional-Taler)"
-
-# (String) Eine global eindeutige ID für diesen Standard.
-# Es wird empfohlen, hier eine Version und ein Datum zu verwenden.
-uuid = "STANDARD-NAME-V1-YYYY-MM"
-
 # (String) Eine gängige Abkürzung für die Nennwert-Einheit des Gutscheins.
 abbreviation = "RT"
 
+[immutable.blueprint]
+# (String) Die Einheit des Nennwerts, die für diesen Standard zwingend ist.
+unit = "Regional-Taler"
+# (String) Definiert den primären Zweck, für den der Gutschein eingelöst werden kann.
+primary_redemption_type = "goods_or_services"
+# (String) Die Art der Besicherung.
+collateral_type = "Keine"
+
+[immutable.features]
+# (Boolean) Gibt an, ob der Gutschein teilbar ist.
+allow_partial_transfers = true
+# (Boolean) Gibt an, ob die Nennwerte summierbar sind.
+balances_are_summable = true
+# (Integer) Maximale Anzahl an Nachkommastellen für alle Beträge.
+amount_decimal_places = 2
+# (String) Steuert den Privacy-Modus: "public", "private", oder "flexible".
+privacy_mode = "flexible"
+
+[immutable.issuance]
+# (Array von Strings) Bereich der wählbaren Gesamtlaufzeit.
+validity_duration_range = ["P1Y", "P10Y"]
+# (String) Minimale Restgültigkeit bei Erstellung.
+issuance_minimum_validity_duration = "P6M"
+# (Array von Integern) Bereich der zusätzlich benötigten Signaturen [Min, Max].
+additional_signatures_range = [2, 2]
+# (Array von Strings) Erlaubte Rollen für diese Zusatz-Signaturen.
+allowed_signature_roles = ["guarantor"]
+
+[immutable.transfer]
+# (Boolean) Muss der Empfänger gegenzeichnen (2-Wege), oder reicht Senden (1-Weg)?
+requires_recipient_signature = true
+
+# -- Sektion für dynamische Regeln (CEL) --
+[immutable.custom_rules.gender_diversity_male]
+expression = "Voucher.signatures.filter(s, s.role != 'creator' && has(s.details.gender) && s.details.gender == '1').size() == 1"
+message = "Gemäß ISO 5218 wird genau ein männlicher (1) Bürge benötigt."
+
+[immutable.custom_rules.gender_diversity_female]
+expression = "Voucher.signatures.filter(s, s.role != 'creator' && has(s.details.gender) && s.details.gender == '2').size() == 1"
+message = "Gemäß ISO 5218 wird genau eine weibliche (2) Bürgin benötigt."
+
+[immutable.custom_rules.fixed_collateral_type]
+expression = "has(Voucher.collateral) && Voucher.collateral.type == 'Fiat-Währung'"
+message = "Collateral type must be Fiat-Währung."
+
+[immutable.custom_rules.valid_amount]
+expression = "Voucher.nominal_value.amount in ['25.00', '50.00', '100.00']"
+message = "Nominal value must be exactly 25.00, 50.00 or 100.00."
+
+
+# =================================================================================
+# MUTABLE-ZONE (Erweiterbar)
+# Änderungen hier ändern den Logic-Hash NICHT.
+# =================================================================================
+
+[mutable.metadata]
 # (String) Der Name des offiziellen Herausgebers des Standards.
 issuer_name = "Name des Herausgebers (z.B. Community Council)"
-
 # (String, Optional) Eine URL zur Homepage des Standards oder der Community.
 homepage_url = "https://example.com/standard-info"
-
 # (String, Optional) Eine URL zur technischen Dokumentation des Standards.
 documentation_url = "https://example.com/standard-docs"
-
 # (Array von Strings, Optional) Suchbegriffe zur Kategorisierung.
 keywords = ["keyword1", "keyword2", "community-currency"]
 
 
-# =================================================================================
-# Block 2: Template (Vorlage)
-# =================================================================================
-#
-# Definiert Werte, die bei der Erstellung eines neuen Gutscheins als Vorlage dienen.
-#
-[template.fixed]
-# (Array von Tabellen) Eine menschenlesbare, mehrsprachige Beschreibung.
-# Jede Tabelle muss einen `lang`-Code (ISO 639-1) und den `text` enthalten.
-# Der Platzhalter {{amount}} wird bei der Erstellung automatisch ersetzt.
-# Englisch ("en") sollte als internationaler Fallback immer vorhanden sein.
-[[template.fixed.description]]
-lang = "de"
-text = "Gutschein für Waren oder Dienstleistungen im Wert von {{amount}} Einheiten."
-
-[[template.fixed.description]]
-lang = "en"
-text = "A voucher for goods or services worth {{amount}} units."
-
-# (String, Optional) Ein kurzer Fußnotentext, der auf dem Gutschein angezeigt wird.
-footnote = "Optionaler Fußnotentext."
-
-# (String) Definiert den primären Zweck, für den der Gutschein eingelöst werden kann.
-primary_redemption_type = "goods_or_services"
-
-# (Boolean) Gibt an, ob die Nennwerte von Gutscheinen dieses Standards addierbar sind ("summable").
-#
-# true:  Werte sind wie Währung und repräsentieren eine Menge einer einheitlichen
-#        Einheit (z.B. "Minuten", "Unzen"). Sie können sinnvoll addiert
-#        werden (10 Unzen + 20 Unzen = 30 Unzen).
-#
-# false: Werte sind wie einzigartige Tickets und repräsentieren einen
-#        spezifischen, nicht austauschbaren Anspruch (z.B. "1 Haarschnitt",
-#        "1 Konzertkarte für Platz A1"). Das Addieren der Werte ergibt keinen Sinn.
-is_summable = true
-
-# (Boolean) Gibt an, ob der Gutschein teilbar ist.
-is_divisible = true
-
-# (String, Optional) Regel zur Aufrundung des Gültigkeitsdatums ("P1D", "P1M", "P1Y").
-round_up_validity_to = "P1M"
-
-[template.fixed.nominal_value]
-# (String) Die Einheit des Nennwerts, die für diesen Standard zwingend ist.
-unit = "Regional-Taler"
-
-[template.fixed.collateral]
-# (String) Die Art der Besicherung.
-type = "Keine"
-# (String) Eine allgemeine Beschreibung der Besicherung.
-description = "Dieser Gutschein ist durch das Vertrauen der Gemeinschaft besichert."
-# (String) Die Bedingungen, unter denen die Besicherung eingefordert werden kann.
-redeem_condition = "Nicht zutreffend."
-
-[template.fixed.guarantor_info]
-# (Integer) Die Anzahl der benötigten Bürgen für diesen Gutschein.
-needed_count = 2
-# (String) Eine menschenlesbare Beschreibung der Bürgenanforderungen.
-description = "Zwei Bürgen aus der Community sind erforderlich."
-
-# ---
-
-[template.default]
+[mutable.app_config]
 # (String, Optional) Die Standard-Gültigkeitsdauer im ISO 8601-Format.
 default_validity_duration = "P5Y"
+# (String, Optional) Regel zur Aufrundung des Gültigkeitsdatums ("P1D", "P1M", "P1Y").
+round_up_validity_to = "P1M"
+# (String) Definiert den Zeitraum, wie lange ein Gutschein nach Ablauf von `valid_until` noch im Server gespeichert wird.
+server_history_retention = "P3M"
 
+[mutable.i18n.descriptions]
+# (String) Mehrsprachige Beschreibungen. Der Platzhalter {{amount}} wird bei der Erstellung automatisch ersetzt.
+de = "Gutschein für Waren oder Dienstleistungen im Wert von {{amount}} Einheiten."
+en = "A voucher for goods or services worth {{amount}} units."
 
-# =================================================================================
-# Block 3: Validierungsregeln
-# =================================================================================
-#
-# Legt die Regeln fest, nach denen ein Gutschein dieses Standards validiert wird.
-# Die gesamte `[validation]`-Sektion ist optional. Wenn sie fehlt, werden keine
-# dieser spezifischen Prüfungen durchgeführt.
-#
-[validation]
+[mutable.i18n.footnotes]
+# (String) Mehrsprachige Fußnoten.
+de = "Optionaler Fußnotentext."
+en = "Optional footnote text."
 
-# -- Sektion für dynamische Regeln (CEL) --
-# Definiert flexible Geschäftsregeln, die zur Laufzeit ausgewertet werden.
-# Nutzt die Common Expression Language (CEL). Jede Regel hat eine `expression`
-# (die zu true/false evaluiert) und eine `message` (Fehlermeldung bei false).
-[validation.dynamic_rules]
-[validation.dynamic_rules.gender_diversity_male]
-expression = "Voucher.signatures.filter(s, s.role != 'creator' && has(s.details.gender) && s.details.gender == '1').size() == 1"
-message = "Gemäß ISO 5218 wird genau ein männlicher (1) Bürge benötigt."
-
-[validation.dynamic_rules.gender_diversity_female]
-expression = "Voucher.signatures.filter(s, s.role != 'creator' && has(s.details.gender) && s.details.gender == '2').size() == 1"
-message = "Gemäß ISO 5218 wird genau eine weibliche (2) Bürgin benötigt."
-
-[validation.dynamic_rules.fixed_collateral_type]
-expression = "has(Voucher.collateral) && Voucher.collateral.type == 'Fiat-Währung'"
-message = "Collateral type must be Fiat-Währung."
-
-[validation.dynamic_rules.valid_amount]
-expression = "Voucher.nominal_value.amount in ['25.00', '50.00', '100.00']"
-message = "Nominal value must be exactly 25.00, 50.00 or 100.00."
-
-[validation.dynamic_rules.valid_description]
-# Beispiel für Regular Expressions
-expression = "Voucher.voucher_standard.template.description.matches('^INV-[0-9]{6}$')"
-message = "Description must match the format INV-XXXXXX."
-
-# -- Sektion für Verhaltens-Regeln --
-[validation.behavior_rules]
-# Legt fest, welche Transaktionstypen (`t_type`) erlaubt sind.
-# Z.B. nur volle Transfers, keine Teilungen ('split').
-allowed_t_types = ["init", "transfer"]
-
-# Legt die maximal erlaubte Gültigkeitsdauer ab Erstellung fest (ISO 8601 Duration).
-# Verhindert, dass Gutscheine mit unrealistisch langer Lebensdauer erstellt werden.
-max_creation_validity_duration = "P10Y" # z.B. maximal 10 Jahre
-
-# Legt die Mindestgültigkeitsdauer fest, die ein Gutschein bei seiner Erstellung haben muss.
-issuance_minimum_validity_duration = "P6M" # z.B. mindestens 6 Monate
-
-# Erzwingt eine maximale Anzahl an Nachkommastellen für alle Betragsfelder.
-# Verhindert Präzisionsprobleme und "Staub"-Beträge. 2 für "Währung", 8 für "Krypto".
-amount_decimal_places = 2
-
-# Definiert den Zeitraum, wie lange ein Gutschein nach Ablauf von `valid_until`
-# noch im Layer 2 System vorgehalten wird, bevor er gelöscht werden kann.
-# Wird zur Berechnung von `deletable_at` in der 'init' Transaktion genutzt.
-l2_retention_period = "P3M"
-
+[mutable.i18n.collateral_descriptions]
+# (String) Mehrsprachige Besicherungs-Erklärungen.
+de = "Dieser Gutschein ist durch das Vertrauen der Gemeinschaft besichert. Nicht zutreffend bei Einlösung."
+en = "This voucher is backed by the trust of the community. Not applicable upon redemption."
 
 # =================================================================================
-# Block 4: Kryptographische Signatur (ZWINGEND ERFORDERLICH)
+# Block 3: Kryptographische Signatur (ZWINGEND ERFORDERLICH)
 # =================================================================================
 #
 # Dieser Block enthält die digitale Signatur des Herausgebers, die die

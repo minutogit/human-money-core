@@ -87,7 +87,7 @@ pub struct InvolvedVoucherInfo {
     /// Der Betrag, der von diesem Gutschein gesendet oder empfangen wurde.
     pub amount: String,
     /// Gibt an, ob der Gutschein teilbar ist.
-    pub is_divisible: bool,
+    pub allow_partial_transfers: bool,
 }
 
 /// Das Ergebnis der Erstellung eines Transfer-Bündels.

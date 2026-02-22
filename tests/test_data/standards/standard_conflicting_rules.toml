@@ -1,39 +1,53 @@
-# tests/test_data/standards/standard_conflicting_rules.toml
-# Test-Standard, dessen Regeln logisch miteinander in Konflikt stehen.
-
-[metadata]
-name = "Conflicting Rules Test Standard"
+[immutable.identity]
 uuid = "CONFLICT-TEST-V1"
+name = "Conflicting Rules Test Standard"
 abbreviation = "CFT"
-issuer_name = "Test Council"
 
-[template.fixed]
-primary_redemption_type = "goods_or_services"
-is_summable = false
-is_divisible = false
-[template.fixed.nominal_value]
+[immutable.blueprint]
 unit = "TestUnit"
-[template.fixed.collateral]
-type = ""
-description = ""
-redeem_condition = ""
-[template.fixed.guarantor_info]
-needed_count = 0 # Wird von `counts` überschrieben
-description = ""
+primary_redemption_type = "goods_or_services"
+collateral_type = ""
 
-[validation]
-[validation.dynamic_rules.guarantor_count]
+[immutable.features]
+allow_partial_transfers = false
+balances_are_summable = false
+amount_decimal_places = 2
+privacy_mode = "public"
+allowed_t_types = ["init", "transfer", "split", "merge"]
+
+[immutable.issuance]
+validity_duration_range = ["P0M", "P5Y"]
+issuance_minimum_validity_duration = "P0M"
+additional_signatures_range = [0, 0]
+allowed_signature_roles = ["guarantor"]
+
+[immutable.transfer]
+requires_recipient_signature = false
+
+[immutable.custom_rules.guarantor_count]
 expression = "Voucher.signatures.filter(s, has(s.role) && s.role == 'guarantor').size() == 3"
 message = "Must have exactly 3 guarantors"
 
-[validation.dynamic_rules.role_a_count]
+[immutable.custom_rules.role_a_count]
 expression = "Voucher.signatures.filter(s, has(s.role) && s.role == 'A').size() == 2"
 message = "Must have exactly 2 'A's"
 
-[validation.dynamic_rules.role_b_count]
+[immutable.custom_rules.role_b_count]
 expression = "Voucher.signatures.filter(s, has(s.role) && s.role == 'B').size() == 2"
 message = "Must have exactly 2 'B's"
 
+[mutable.metadata]
+issuer_name = "Test Council"
+
+[mutable.app_config]
+default_validity_duration = "P1Y"
+
+[mutable.i18n]
+descriptions = { en = "Conflicting Rules Test" }
+
 [signature]
-issuer_id = "did:key:zDummy"
-signature = "dummy_signature"
+# Die `did:key` des Herausgebers, die seinen öffentlichen Schlüssel enthält.
+issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
+
+# Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
+signature = "4aq8bYLagSkNiUNA2BDtE5gQhiJMa6XhYz87CKeJomPednr6rfCJfWQsGc96fbijB5kNsg3iHb6ReG5qayN5WWW1"

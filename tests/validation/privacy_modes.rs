@@ -1,5 +1,5 @@
 use human_money_core::models::voucher::Transaction;
-use human_money_core::models::voucher_standard_definition::PrivacySettings;
+
 use human_money_core::services::crypto_utils::get_hash;
 use human_money_core::services::utils::get_current_timestamp;
 use human_money_core::services::voucher_validation::validate_voucher_against_standard;
@@ -12,38 +12,31 @@ fn test_public_mode_enforcement() {
         setup_voucher_with_one_tx();
     let mut standard = standard_ref.clone();
 
-    standard.privacy = Some(PrivacySettings {
-        mode: "public".to_string(),
-    });
+    standard.immutable.features.privacy_mode = "public".to_string();
     // Set matching validity in standard to satisfy validation checks
-    if let Some(val) = &mut standard.validation {
-        if let Some(b) = &mut val.behavior_rules {
-            b.issuance_minimum_validity_duration = Some("P3Y".to_string());
-        }
-    }
+    standard.immutable.issuance.issuance_minimum_validity_duration = "P3Y".to_string();
     // Re-hash standard
     let mut std_no_sig = standard.clone();
     std_no_sig.signature = None;
-    let new_hash = get_hash(to_canonical_json(&std_no_sig).unwrap());
+    let new_hash = get_hash(to_canonical_json(&std_no_sig.immutable).unwrap());
     voucher.voucher_standard.standard_definition_hash = new_hash.clone();
 
     let desc_str = human_money_core::services::standard_manager::get_localized_text(
-        &standard.template.fixed.description,
+        &standard.mutable.i18n.descriptions,
         "en",
     )
     .unwrap_or("")
     .to_string();
 
     voucher.voucher_standard = human_money_core::models::voucher::VoucherStandard {
-        name: standard.metadata.name.clone(),
-        uuid: standard.metadata.uuid.clone(),
+        name: standard.immutable.identity.name.clone(),
+        uuid: standard.immutable.identity.uuid.clone(),
         standard_definition_hash: new_hash,
         template: human_money_core::models::voucher::VoucherTemplateData {
             description: desc_str,
             primary_redemption_type: "goods_or_services".to_string(),
-            divisible: standard.template.fixed.is_divisible,
-            standard_minimum_issuance_validity: "P3Y".to_string(),
-            signature_requirements_description: "none".to_string(),
+            allow_partial_transfers: standard.immutable.features.allow_partial_transfers,
+            issuance_minimum_validity_duration: "P3Y".to_string(),
             footnote: "".to_string(),
         },
     };
@@ -111,21 +104,19 @@ fn test_public_mode_enforcement() {
 }
 
 #[test]
-fn test_stealth_mode_enforcement() {
+fn test_private_mode_enforcement() {
     let (standard_ref, _hash, _creator, _recipient, mut voucher, _secrets) =
         setup_voucher_with_one_tx();
     let mut standard = standard_ref.clone();
 
-    standard.privacy = Some(PrivacySettings {
-        mode: "stealth".to_string(),
-    });
+    standard.immutable.features.privacy_mode = "private".to_string();
 
     let mut std_no_sig = standard.clone();
     std_no_sig.signature = None;
-    let new_hash = get_hash(to_canonical_json(&std_no_sig).unwrap());
+    let new_hash = get_hash(to_canonical_json(&std_no_sig.immutable).unwrap());
     voucher.voucher_standard.standard_definition_hash = new_hash;
 
-    // Recalculate Voucher ID for Stealth
+    // Recalculate Voucher ID for Private
     let mut voucher_header = voucher.clone();
     voucher_header.voucher_id = "".to_string();
     voucher_header.transactions = vec![];
@@ -136,8 +127,8 @@ fn test_stealth_mode_enforcement() {
     // Truncate to Init Only
     voucher.transactions.truncate(1);
 
-    // Modify Init to allow Stealth Spending (Set ephemeral hash we know)
-    let secret_key = bs58::encode("secret_key_for_stealth").into_string();
+    // Modify Init to allow Private Spending (Set ephemeral hash we know)
+    let secret_key = bs58::encode("secret_key_for_private").into_string();
     let secret_key_hash = get_hash(bs58::decode(&secret_key).into_vec().unwrap());
 
     // We KEEP recipient_id as Creator (Public) to pass Init rules.
@@ -156,15 +147,15 @@ fn test_stealth_mode_enforcement() {
     let genesis_hash = get_hash(to_canonical_json(&voucher.transactions[0]).unwrap());
     let amount = voucher.transactions[0].amount.clone();
 
-    // Add Stealth Transfer Transaction
+    // Add Private Transfer Transaction
     let mut tx_1 = Transaction {
-        t_id: "stub_stealth".to_string(),
+        t_id: "stub_private".to_string(),
         prev_hash: genesis_hash,
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
         amount: amount,                                     // Must match exactly
-        sender_id: None,                                    // Correct for Stealth
-        recipient_id: "hash_of_next_key".to_string(),       // Correct for Stealth
+        sender_id: None,                                    // Correct for Private
+        recipient_id: "hash_of_next_key".to_string(),       // Correct for Private
         sender_ephemeral_pub: Some(secret_key.to_string()), // Reveals key -> Links to Init
         ..Default::default()
     };
@@ -178,7 +169,7 @@ fn test_stealth_mode_enforcement() {
 
     assert!(
         result.is_err(),
-        "Stealth mode must reject cleartext sender_id"
+        "Private mode must reject cleartext sender_id"
     );
 
     // Fix it
@@ -191,7 +182,7 @@ fn test_stealth_mode_enforcement() {
     }
     assert!(
         result_ok.is_ok(),
-        "Stealth mode should accept anonymous sender"
+        "Private mode should accept anonymous sender"
     );
 
     human_money_core::set_signature_bypass(false);
@@ -203,12 +194,10 @@ fn test_flexible_mode_hybrid_behavior() {
         setup_voucher_with_one_tx();
     let mut standard = standard_ref.clone();
 
-    standard.privacy = Some(PrivacySettings {
-        mode: "flexible".to_string(),
-    });
+    standard.immutable.features.privacy_mode = "flexible".to_string();
     let mut std_no_sig = standard.clone();
     std_no_sig.signature = None;
-    let new_hash = get_hash(to_canonical_json(&std_no_sig).unwrap());
+    let new_hash = get_hash(to_canonical_json(&std_no_sig.immutable).unwrap());
     voucher.voucher_standard.standard_definition_hash = new_hash;
 
     // Recalculate Voucher ID for Flexible

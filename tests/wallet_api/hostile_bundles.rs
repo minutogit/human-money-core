@@ -134,7 +134,7 @@ fn test_rejection_of_broken_transaction_chain() {
     let bundle = create_test_bundle(&identity_sender, vec![voucher], &id_recipient, None).unwrap();
 
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
+    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
 
     // 2. ACT
     human_money_core::set_signature_bypass(true);
@@ -167,7 +167,7 @@ fn test_rejection_of_inconsistent_split_math() {
         setup_sender_recipient();
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
+    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
 
     // Erstelle einen Gutschein mit 100 (über die öffentliche API)
     let mut voucher = service_sender
@@ -237,7 +237,7 @@ fn test_rejection_of_self_received_bundle() {
 
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
+    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
 
     // Sender erstellt einen neuen Gutschein
     let _ = service_sender // Das zurückgegebene Voucher-Objekt wird nicht direkt benötigt
@@ -331,7 +331,7 @@ fn test_rejection_of_identical_bundle_replay() {
 
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
+    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
 
     // Sender erstellt einen neuen Gutschein
     let _ = service_sender
@@ -418,7 +418,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
 
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
+    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
 
     // Manuelles Erstellen von voucher_A (wie in Test 2.1)
     let voucher_a = service_sender
@@ -508,7 +508,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
     // 1. ARRANGE
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
+    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
 
     // --- Sender (Alice) ---
     let dir_sender = tempdir().unwrap();

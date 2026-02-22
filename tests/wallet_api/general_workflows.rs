@@ -107,7 +107,7 @@ fn api_app_service_full_lifecycle() {
         sender_profile_name: None,
     };
     let mut standards_toml = std::collections::HashMap::new();
-    standards_toml.insert(standard.metadata.uuid.clone(), silver_standard_toml.clone());
+    standards_toml.insert(standard.immutable.identity.uuid.clone(), silver_standard_toml.clone());
     service_alice.unlock_session("password", 60).unwrap();
     let human_money_core::wallet::CreateBundleResult {
         bundle_bytes: transfer_bundle,
@@ -123,7 +123,7 @@ fn api_app_service_full_lifecycle() {
     // --- 6. Bob empfängt den Gutschein ---
     service_bob.unlock_session(password, 60).unwrap();
     let mut standards = std::collections::HashMap::new();
-    standards.insert(standard.metadata.uuid.clone(), silver_standard_toml);
+    standards.insert(standard.immutable.identity.uuid.clone(), silver_standard_toml);
     service_bob
         .receive_bundle(&transfer_bundle, &standards, None, Some("password"))
         .unwrap();
@@ -419,7 +419,7 @@ fn api_wallet_transfer_full_amount() {
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(
-        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.immutable.identity.uuid.clone(),
         minuto_standard.clone(),
     );
 
@@ -437,7 +437,7 @@ fn api_wallet_transfer_full_amount() {
     // KORREKTUR: Die Map muss den Minuto-Standard enthalten.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
-        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.immutable.identity.uuid.clone(),
         minuto_standard.clone(),
     );
     bob_wallet
@@ -490,7 +490,7 @@ fn api_wallet_transfer_split_amount() {
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(
-        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.immutable.identity.uuid.clone(),
         minuto_standard.clone(),
     );
 
@@ -508,7 +508,7 @@ fn api_wallet_transfer_split_amount() {
     // KORREKTUR: Die Map muss den Minuto-Standard enthalten.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
-        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.immutable.identity.uuid.clone(),
         minuto_standard.clone(),
     );
     bob_wallet
@@ -556,7 +556,7 @@ fn api_wallet_transfer_invalid_amount() {
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(
-        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.immutable.identity.uuid.clone(),
         minuto_standard.clone(),
     );
 
@@ -576,7 +576,7 @@ fn api_wallet_transfer_invalid_amount() {
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(
-        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.immutable.identity.uuid.clone(),
         minuto_standard.clone(),
     );
 
@@ -627,7 +627,7 @@ fn api_wallet_transfer_inactive_voucher() {
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(
-        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.immutable.identity.uuid.clone(),
         minuto_standard.clone(),
     );
 
@@ -677,7 +677,7 @@ fn api_wallet_proactive_double_spend_prevention() {
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(
-        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.immutable.identity.uuid.clone(),
         minuto_standard.clone(),
     );
 
@@ -697,7 +697,7 @@ fn api_wallet_proactive_double_spend_prevention() {
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(
-        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.immutable.identity.uuid.clone(),
         minuto_standard.clone(),
     );
 
@@ -857,13 +857,8 @@ fn api_wallet_rejects_invalid_bundle() {
 
     let toml_str = include_str!("../test_data/standards/standard_content_rules.toml");
     let mut standard: VoucherStandardDefinition = toml::from_str(toml_str).unwrap();
-    standard.template.fixed.nominal_value.unit = "EUR".to_string();
-    standard.template.fixed.description = vec![
-        human_money_core::models::voucher_standard_definition::LocalizedText {
-            lang: "en".to_string(),
-            text: "INV-123456".to_string(),
-        },
-    ];
+    standard.immutable.blueprint.unit = "EUR".to_string();
+    standard.mutable.i18n.descriptions = std::collections::HashMap::from([("en".to_string(), "INV-123456".to_string())]);
 
     let voucher_data = NewVoucherData {
         creator_profile: PublicProfile {
@@ -878,10 +873,8 @@ fn api_wallet_rejects_invalid_bundle() {
         ..Default::default()
     };
 
-    let mut standard_to_hash = standard.clone();
-    standard_to_hash.signature = None;
     let standard_hash = human_money_core::services::crypto_utils::get_hash(
-        human_money_core::services::utils::to_canonical_json(&standard_to_hash).unwrap(),
+        human_money_core::services::utils::to_canonical_json(&standard.immutable).unwrap(),
     );
     let mut voucher = human_money_core::services::voucher_manager::create_voucher(
         voucher_data,
@@ -1101,7 +1094,7 @@ fn api_wallet_transfer_multi_source() {
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(
-        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.immutable.identity.uuid.clone(),
         minuto_standard.clone(),
     );
 
@@ -1132,7 +1125,7 @@ fn api_wallet_transfer_multi_source() {
     // KORREKTUR: Die Map muss den Minuto-Standard enthalten.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
-        minuto_standard.metadata.uuid.clone(),
+        minuto_standard.immutable.identity.uuid.clone(),
         minuto_standard.clone(),
     );
     bob_wallet

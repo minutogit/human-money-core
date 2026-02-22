@@ -17,17 +17,12 @@ fn setup_standard(mode: &str) -> (VoucherStandardDefinition, String) {
     let (mut standard, _) = (BASE_STANDARD.0.clone(), BASE_STANDARD.1.clone());
 
     // Set privacy mode
-    standard.privacy = Some(
-        human_money_core::models::voucher_standard_definition::PrivacySettings {
-            mode: mode.to_string(),
-            ..Default::default()
-        },
-    );
+    standard.immutable.features.privacy_mode = mode.to_string();
 
     // Re-hash standard
     let mut standard_to_hash = standard.clone();
     standard_to_hash.signature = None;
-    let hash = get_hash(to_canonical_json(&standard_to_hash).unwrap());
+    let hash = get_hash(to_canonical_json(&standard_to_hash.immutable).unwrap());
 
     (standard, hash)
 }
@@ -75,25 +70,25 @@ fn create_valid_voucher(standard: &VoucherStandardDefinition, standard_hash: &st
     voucher
 }
 
-// 1. Test: detect_silent_signature_leak_in_stealth_mode
-// Scenario: Privacy mode is "stealth". `sender_id` is None (correct).
+// 1. Test: detect_silent_signature_leak_in_private_mode
+// Scenario: Privacy mode is "private". `sender_id` is None (correct).
 // However, `sender_identity_signature` is PRESENT.
 // Even if it's "valid" or "invalid", its mere presence is a leak of information (signature uniqueness).
 // We use bypass to fill it with "bypass_sig" to prove that we fail on the *structure*, not the verification.
 #[test]
-fn detect_silent_signature_leak_in_stealth_mode() {
+fn detect_silent_signature_leak_in_private_mode() {
     set_signature_bypass(true);
-    let (standard, standard_hash) = setup_standard("stealth");
+    let (standard, standard_hash) = setup_standard("private");
     let mut voucher = create_valid_voucher(&standard, &standard_hash);
 
-    // Add a transaction that simulates Stealth Mode but LEAKS a signature
+    // Add a transaction that simulates Private Mode but LEAKS a signature
     let mut tx = human_money_core::models::voucher::Transaction {
         t_id: "tx_leak".to_string(),
         t_time: human_money_core::services::utils::get_current_timestamp(),
         t_type: "transfer".to_string(),
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
-        sender_id: None,                               // Correct for Stealth
-        recipient_id: get_hash("some_anon_recipient"), // Correct for Stealth
+        sender_id: None,                               // Correct for Private
+        recipient_id: get_hash("some_anon_recipient"), // Correct for Private
         amount: "10".to_string(),
         ..Default::default()
     };
@@ -108,13 +103,13 @@ fn detect_silent_signature_leak_in_stealth_mode() {
     let result = validate_voucher_against_standard(&voucher, &standard);
 
     let err =
-        result.expect_err("Stealth mode should reject transaction with sender_identity_signature");
+        result.expect_err("Private mode should reject transaction with sender_identity_signature");
     assert!(
         matches!(
             err,
-            VoucherCoreError::Validation(ValidationError::StealthSignatureLeak { .. })
+            VoucherCoreError::Validation(ValidationError::PrivateSignatureLeak { .. })
         ),
-        "Expected StealthSignatureLeak, got {:?}",
+        "Expected PrivateSignatureLeak, got {:?}",
         err
     );
 }
@@ -160,14 +155,14 @@ fn enforce_identity_consistency_in_flexible_mode() {
 }
 
 // 3. Test: prevent_trapezoidal_identity_leak
-// Scenario: Stealth mode uses TrapData (Zero-Knowledge-like Proof).
+// Scenario: Private mode uses TrapData (Zero-Knowledge-like Proof).
 // The `blinded_id` field inside TrapData MUST be a hash/blinded value, NOT a cleartext DID.
 // We use bypass to skip the cryptographic proof verification so we can inject a cleartext ID
 // and verify existing privacy checks catch it.
 #[test]
 fn prevent_trapezoidal_identity_leak() {
     set_signature_bypass(true);
-    let (standard, standard_hash) = setup_standard("stealth");
+    let (standard, standard_hash) = setup_standard("private");
     let mut voucher = create_valid_voucher(&standard, &standard_hash);
 
     let mut tx = human_money_core::models::voucher::Transaction {
@@ -286,7 +281,7 @@ fn prevent_trap_data_replay() {
     };
 
     set_signature_bypass(true);
-    let (standard, standard_hash) = setup_standard("stealth");
+    let (standard, standard_hash) = setup_standard("private");
 
     // 1. Setup Voucher (Init)
     let (pk, sk) = generate_ed25519_keypair_for_tests(Some("creator_seed"));
@@ -425,7 +420,7 @@ fn prevent_trap_data_replay() {
 #[test]
 fn enforce_ephemeral_key_uniqueness() {
     set_signature_bypass(true);
-    let (standard, standard_hash) = setup_standard("stealth");
+    let (standard, standard_hash) = setup_standard("private");
     let mut voucher = create_valid_voucher(&standard, &standard_hash);
 
     let reused_ephemeral_pub = "ephemeral_key_12345";
@@ -515,24 +510,24 @@ fn verify_encryption_padding_constancy() {
     }
 }
 
-// 8. Test: prevent_stealth_and_public_input_mixing
+// 8. Test: prevent_private_and_public_input_mixing
 // Scenario: "Mix-Mode Dusting".
 #[test]
-fn prevent_stealth_and_public_input_mixing() {
+fn prevent_private_and_public_input_mixing() {
     set_signature_bypass(true);
     let (standard, standard_hash) = setup_standard("flexible"); // Mixed mode allows both
     let mut voucher = create_valid_voucher(&standard, &standard_hash);
 
-    // Tx1: Stealth Transaction (Anonymous Output)
+    // Tx1: Private Transaction (Anonymous Output)
     let prev_hash1 = get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap());
 
     let tx1 = human_money_core::models::voucher::Transaction {
-        t_id: "tx_stealth".to_string(),
+        t_id: "tx_private".to_string(),
         t_time: human_money_core::services::utils::get_current_timestamp(),
         t_type: "transfer".to_string(),
         prev_hash: prev_hash1,
         sender_id: None,                             // Anonymous
-        recipient_id: get_hash("stealth_recipient"), // Anonymous
+        recipient_id: get_hash("private_recipient"), // Anonymous
         amount: "10".to_string(),
         layer2_signature: Some("bypass_sig".to_string()),
         ..Default::default()
@@ -548,7 +543,7 @@ fn prevent_stealth_and_public_input_mixing() {
         t_type: "transfer".to_string(),
         prev_hash: prev_hash2,
 
-        // MIXING: Previous output was anonymous (Stealth), but now we attach a Public Identity.
+        // MIXING: Previous output was anonymous (Private), but now we attach a Public Identity.
         sender_id: Some("did:key:zPublicUser".to_string()),
 
         recipient_id: "did:key:zRecipient".to_string(),
@@ -572,7 +567,7 @@ fn prevent_stealth_and_public_input_mixing() {
 
     if result.is_ok() {
         panic!(
-            "Validation allowed mixing Stealth Input with Public Sender ID! Privacy linkage occurred."
+            "Validation allowed mixing Private Input with Public Sender ID! Privacy linkage occurred."
         );
     } else {
         println!("System successfully prevented mixing: {:?}", result.err());

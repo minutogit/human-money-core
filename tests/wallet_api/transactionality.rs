@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use tempfile::tempdir;
 
 use chrono::{Duration, Utc};
-use human_money_core::models::voucher_standard_definition::PrivacySettings;
+
 use human_money_core::test_utils;
 use human_money_core::{
     VoucherStatus,
@@ -63,9 +63,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
 
     // Create a Flexible Silver Standard to allow non-DID recipients
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.privacy = Some(PrivacySettings {
-            mode: "flexible".to_string(),
-        });
+        s.immutable.features.privacy_mode = "flexible".to_string();
     });
     let flexible_toml =
         toml::to_string(&flexible_standard).expect("Failed to serialize flexible standard");
@@ -111,7 +109,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
 
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(
-        flexible_standard.metadata.uuid.clone(),
+        flexible_standard.immutable.identity.uuid.clone(),
         flexible_toml.clone(),
     );
 
@@ -183,9 +181,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
 
     // Create a Flexible Silver Standard
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.privacy = Some(PrivacySettings {
-            mode: "flexible".to_string(),
-        });
+        s.immutable.features.privacy_mode = "flexible".to_string();
     });
     let flexible_toml =
         toml::to_string(&flexible_standard).expect("Failed to serialize flexible standard");
@@ -227,7 +223,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
 
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(
-        flexible_standard.metadata.uuid.clone(),
+        flexible_standard.immutable.identity.uuid.clone(),
         flexible_toml.clone(),
     );
 
@@ -239,7 +235,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         .unwrap();
 
     let mut standards_map = HashMap::new();
-    standards_map.insert(flexible_standard.metadata.uuid.clone(), flexible_toml);
+    standards_map.insert(flexible_standard.immutable.identity.uuid.clone(), flexible_toml);
 
     // 2. ACT: Versuche, das Bundle mit falschem Passwort zu empfangen.
     let result = service_recipient.receive_bundle(
@@ -285,7 +281,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     let mut standards_map = HashMap::new();
-    standards_map.insert(silver_standard.metadata.uuid.clone(), silver_toml.clone());
+    standards_map.insert(silver_standard.immutable.identity.uuid.clone(), silver_toml.clone());
 
     let signer = &ACTORS.guarantor1;
     let (mut service_signer, _) =
@@ -307,7 +303,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
                 },
                 nominal_value: ValueDefinition {
                     amount: "100".to_string(),
-                    unit: silver_standard.template.fixed.nominal_value.unit.clone(),
+                    unit: silver_standard.immutable.blueprint.unit.clone(),
                     ..Default::default()
                 },
                 validity_duration: Some("P1Y".to_string()),
@@ -359,7 +355,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let detached_sig1 = service_signer
         .create_detached_signature_response_bundle(
             &voucher_from_request,
-            "additional_signer",
+            "guarantor",
             true,
             &id_creator,
         )
@@ -406,7 +402,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let detached_sig2 = service_signer
         .create_detached_signature_response_bundle(
             &voucher_from_request2,
-            "additional_signer",
+            "guarantor",
             true,
             &id_creator,
         )
@@ -532,7 +528,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
 
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.metadata.uuid.clone(), silver_toml.clone());
+    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
 
     // FIX: Explizite Voucher-Daten anstelle von Default::default() verwenden, um Panic zu vermeiden.
     let id_alice = service_alice.get_user_id().unwrap();

@@ -297,7 +297,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- 5. Transfer eines Teilbetrags ---
     println!("\n--- SCHRITT 5: Ersteller sendet 25 Minuto an den Empfänger ---");
     let mut standards_map = HashMap::new();
-    standards_map.insert(standard.metadata.uuid.clone(), standard_toml.clone());
+    standards_map.insert(standard.immutable.identity.uuid.clone(), standard_toml.clone());
 
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: recipient_id.clone(),
@@ -309,7 +309,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         sender_profile_name: None,
     };
     let mut standards_toml = std::collections::HashMap::new();
-    standards_toml.insert(standard.metadata.uuid.clone(), standard_toml.clone());
+    standards_toml.insert(standard.immutable.identity.uuid.clone(), standard_toml.clone());
     let human_money_core::wallet::CreateBundleResult {
         bundle_bytes: transfer_bundle,
         ..
@@ -360,7 +360,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         sender_profile_name: None,
     };
     let mut standards_toml = std::collections::HashMap::new();
-    standards_toml.insert(standard.metadata.uuid.clone(), standard_toml.clone());
+    standards_toml.insert(standard.immutable.identity.uuid.clone(), standard_toml.clone());
     let human_money_core::wallet::CreateBundleResult {
         bundle_bytes: transfer_bundle_to_charlie,
         ..

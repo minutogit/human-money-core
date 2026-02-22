@@ -1,59 +1,43 @@
-# tests/test_data/standards/standard_required_signatures.toml
-
-# Test-Standard zur isolierten Prüfung der `required_signatures`.
-
-[metadata]
-name = "Required Signatures Test Standard"
+[immutable.identity]
 uuid = "REQSIG-TEST-V1"
+name = "Required Signatures Test Standard"
 abbreviation = "RSG"
+
+[immutable.blueprint]
+unit = "TestUnit"
+primary_redemption_type = "goods_or_services"
+collateral_type = ""
+
+[immutable.features]
+allow_partial_transfers = false
+balances_are_summable = false
+amount_decimal_places = 2
+privacy_mode = "public"
+
+allowed_t_types = ["init", "transfer", "split", "merge"]
+[immutable.issuance]
+validity_duration_range = ["P0M", "P1Y"]
+issuance_minimum_validity_duration = "P0M"
+additional_signatures_range = [1, 1]
+allowed_signature_roles = ["Official Approver"]
+
+[immutable.transfer]
+requires_recipient_signature = false
+
+[immutable.custom_rules]
+
+[mutable.metadata]
 issuer_name = "Test Council"
 
-[template.fixed]
-primary_redemption_type = "goods_or_services"
-is_summable = false
-is_divisible = false
+[mutable.app_config]
+default_validity_duration = "P1Y"
 
-[template.fixed.nominal_value]
-unit = "TestUnit"
-
-[template.fixed.collateral]
-type = ""
-description = ""
-redeem_condition = ""
-
-[template.fixed.guarantor_info]
-needed_count = 0
-description = ""
-
-[validation]
-# Definiert eine zwingend erforderliche Signatur von einer "Behörde".
-[[validation.required_signatures]]
-role_description = "Official stamp from the authority"
-#
-# HINWEIS: Die IDs wurden auf das neue Format aktualisiert.
-# SIE MÜSSEN DIESE PLATZHALTER DURCH DIE TATSÄCHLICHEN USER-IDS
-# AUS IHRER `ACTORS`-STRUKTUR (z.B. ACTORS.issuer, ACTORS.charlie) ERSETZEN.
-#
-# ALT: "is@did:key:z6MkewugjgTidpn3FHpFV2vSgvqSKYimMcdf6ezLKp8tMJCW"
-# ALT: "did:key:z6Mkn8Gg3d2b3r1s4t5u6v7w8x9y0z1a2b3c4d5e6f7g8h9i"
-#
-allowed_signer_ids = [
-    "is:ABC@did:key:z...bitte-ersetzen-durch-ACTORS.issuer-id",
-    "ch:XYZ@did:key:z...bitte-ersetzen-durch-ACTORS.charlie-id"
-]
-# GEÄNDERT: 'required_signature_description' wurde zu 'required_role' umbenannt.
-required_role = "Official Approver"
-is_mandatory = true
-
-# Definiert eine optionale Signatur
-[[validation.required_signatures]]
-role_description = "Optional quality check"
-allowed_signer_ids = ["dummy:123@did:key:z...dummy-key-fuer-optionalen-check"] # Dummy-Key
-# GEÄNDERT: 'required_signature_description' wurde zu 'required_role' umbenannt.
-required_role = "Quality Inspector"
-is_mandatory = false
+[mutable.i18n]
+descriptions = { en = "Required Signatures Test" }
 
 [signature]
-# Diese Signatur ist ein Platzhalter und wird im Test-Setup zur Laufzeit ersetzt.
-issuer_id = "did:key:zDummy"
-signature = "dummy_signature"
+# Die `did:key` des Herausgebers, die seinen öffentlichen Schlüssel enthält.
+issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
+
+# Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
+signature = "61yJrxfNbzqABSuwbbmADG1sUQHaJDdy3ENiKowqe7r3geQ26TpqszfTiy89vrP36P9WVFDdSkH8Y7JQvDENu9yj"

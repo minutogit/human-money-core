@@ -127,7 +127,7 @@ fn test_wallet_state_management_on_split() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(standard.metadata.uuid.clone(), standard.clone());
+    standards.insert(standard.immutable.identity.uuid.clone(), standard.clone());
 
     let human_money_core::wallet::CreateBundleResult {
         bundle_bytes: bundle_to_b,
@@ -139,7 +139,7 @@ fn test_wallet_state_management_on_split() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
     wallet_b
@@ -266,7 +266,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_map = std::collections::HashMap::new();
     standards_map.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
 

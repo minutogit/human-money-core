@@ -187,9 +187,9 @@ mod compatibility_scenarios {
         // 2. Modifiziere ein EXISTIERENDES Feld. Dies ändert den Hash-Wert der Struktur,
         // aber die Signatur bleibt die alte. Dadurch wird die Signatur ungültig.
         standard_struct
-            .metadata
-            .keywords
-            .push("modified-for-test".to_string());
+            .immutable.identity
+            .name
+            .push_str("modified-for-test");
 
         // 3. Serialisiere die modifizierte Struktur mit der nun veralteten Signatur in einen String.
         let toml_str_with_invalid_sig = toml::to_string(&standard_struct).unwrap();

@@ -109,7 +109,7 @@ pub enum ValidationError {
 
     /// Es wurde versucht, einen nicht teilbaren Gutschein zu teilen.
     #[error("The voucher is not divisible and a split transaction was attempted.")]
-    VoucherNotDivisible,
+    VoucherPartialTransferNotAllowed,
 
     /// Die Gültigkeitsdauer des Gutscheins überschreitet die im Standard definierte Maximaldauer.
     #[error(
@@ -141,11 +141,11 @@ pub enum ValidationError {
     #[error("Invalid creator ID: {0}")]
     InvalidCreatorId(#[from] GetPubkeyError),
 
-    /// Stealth Mode: Eine Identitäts-Signatur wurde gefunden, obwohl der Modus Anonymität vorschreibt.
+    /// Private Mode: Eine Identitäts-Signatur wurde gefunden, obwohl der Modus Anonymität vorschreibt.
     #[error(
-        "Privacy Leak: Transaction '{t_id}' contains a sender_identity_signature in stealth mode."
+        "Privacy Leak: Transaction '{t_id}' contains a sender_identity_signature in private mode."
     )]
-    StealthSignatureLeak { t_id: String },
+    PrivateSignatureLeak { t_id: String },
 
     /// Flexible Mode: Eine Identitäts-Signatur ist vorhanden, aber die sender_id fehlt (Inkonsistenz).
     #[error(
@@ -215,9 +215,9 @@ pub enum ValidationError {
         valid_until: String,
     },
 
-    /// Ein Bürge hat versucht, mehrfach für denselben Gutschein zu bürgen.
-    #[error("Duplicate guarantor found: {guarantor_id}. Each guarantor can only sign once.")]
-    DuplicateGuarantor { guarantor_id: String },
+    /// Ein Unterzeichner hat versucht, mehrfach für dieselbe Rolle zu unterschreiben.
+    #[error("Duplicate signature found for signer: {signer_id}. A signer can only sign once per role.")]
+    DuplicateSignature { signer_id: String },
 
     /// Ein Zeitstempel in der Kette ist nicht chronologisch korrekt.
     #[error(
@@ -299,9 +299,9 @@ pub enum ValidationError {
         found: u32,
     },
 
-    /// The creator of the voucher is also listed as a guarantor.
-    #[error("The creator of the voucher ('{creator_id}') cannot also be a guarantor.")]
-    CreatorAsGuarantor { creator_id: String },
+    /// The creator of the voucher is also listed as an additional signer.
+    #[error("The creator of the voucher ('{creator_id}') cannot also be an additional signer.")]
+    CreatorAsAdditionalSigner { creator_id: String },
 
     /// JSON parsing error within validation context
     #[error("JSON validation error: {0}")]

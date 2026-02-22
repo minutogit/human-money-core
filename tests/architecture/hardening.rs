@@ -151,7 +151,7 @@ mod tests {
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(
-            SILVER_STANDARD.0.metadata.uuid.clone(),
+            SILVER_STANDARD.0.immutable.identity.uuid.clone(),
             toml::to_string(&SILVER_STANDARD.0).unwrap(),
         );
         alice_service

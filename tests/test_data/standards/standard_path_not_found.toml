@@ -1,32 +1,46 @@
-# tests/test_data/standards/standard_path_not_found.toml
-
-# Test-Standard zur isolierten Prüfung des PathNotFound-Fehlers.
-
-[metadata]
-name = "Path Not Found Test Standard"
+[immutable.identity]
 uuid = "PNF-TEST-V1"
+name = "Path Not Found Test Standard"
 abbreviation = "PNF"
+
+[immutable.blueprint]
+unit = "TestUnit"
+primary_redemption_type = "goods_or_services"
+collateral_type = ""
+
+[immutable.features]
+allow_partial_transfers = true
+balances_are_summable = true
+amount_decimal_places = 2
+privacy_mode = "public"
+allowed_t_types = ["init", "transfer", "split", "merge"]
+
+[immutable.issuance]
+validity_duration_range = ["P0M", "P5Y"]
+issuance_minimum_validity_duration = "P0M"
+additional_signatures_range = [0, 0]
+allowed_signature_roles = ["guarantor"]
+
+[immutable.transfer]
+requires_recipient_signature = false
+
+[immutable.custom_rules.non_existent_field]
+# Diese Regel zielt auf ein Feld, das im Basis-Gutschein nicht existiert.
+expression = "Voucher.some_sub_field == 'X'"
+message = "Field some_sub_field is required"
+
+[mutable.metadata]
 issuer_name = "Test Council"
 
-[template.fixed]
-primary_redemption_type = "goods_or_services"
-is_summable = true
-is_divisible = true
-[template.fixed.nominal_value]
-unit = "TestUnit"
-[template.fixed.collateral]
-type = ""
-description = ""
-redeem_condition = ""
-[template.fixed.guarantor_info]
-needed_count = 0
-description = ""
+[mutable.app_config]
+default_validity_duration = "P1Y"
 
-[validation]
-[validation.field_group_rules]
-# Diese Regel zielt auf ein Feld, das im Basis-Gutschein nicht existiert.
-[validation.field_group_rules.non_existent_field]
-field = "some_sub_field"
-value_counts = [
-    { value = "X", min = 1, max = 1 },
-]
+[mutable.i18n]
+descriptions = { en = "Path Not Found Test" }
+
+[signature]
+# Die `did:key` des Herausgebers, die seinen öffentlichen Schlüssel enthält.
+issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
+
+# Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
+signature = "pGGi15AjrAX8qpWqn2sPDMTBW44YisH8wnaLTf3VUjWEbwYeriAPmfXcUCQFXRX79UZAjc12PUAQ9SkFetXzzYT"

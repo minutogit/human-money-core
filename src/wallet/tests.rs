@@ -264,7 +264,7 @@ mod instance_state_behavior {
             sender_profile_name: None,
         };
         let mut standards_map = std::collections::HashMap::new();
-        standards_map.insert(standard.metadata.uuid.clone(), standard.clone());
+        standards_map.insert(standard.immutable.identity.uuid.clone(), standard.clone());
         let transfer_result =
             wallet.execute_multi_transfer_and_bundle(alice, &standards_map, request, None);
         assert!(

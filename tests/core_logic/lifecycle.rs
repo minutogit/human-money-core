@@ -68,7 +68,7 @@ fn test_full_creation_and_validation_cycle() {
     // unabhängig vom Zustand der globalen MINUTO_STANDARD-Variable.
     let (minuto_standard_with_rounding, standard_hash) =
         create_custom_standard(&MINUTO_STANDARD.0, |s| {
-            s.template.fixed.round_up_validity_to = Some("end_of_year".to_string());
+            s.mutable.app_config.round_up_validity_to = Some("end_of_year".to_string());
         });
 
     // 2. Erstellung
@@ -87,7 +87,7 @@ fn test_full_creation_and_validation_cycle() {
         voucher
             .voucher_standard
             .template
-            .standard_minimum_issuance_validity,
+            .issuance_minimum_validity_duration,
         "P3Y"
     );
 
@@ -252,9 +252,9 @@ fn test_validation_fails_on_missing_required_field() {
     // 2. Manipuliere den Standard zur Laufzeit, um eine content_rule hinzuzufügen,
     // die das Vorhandensein des optionalen Feldes `creator.phone` erzwingt.
     let mut standard = minuto_standard.clone();
-    let validation = standard.validation.get_or_insert_with(Default::default);
+    
 
-    validation.dynamic_rules.insert(
+    standard.immutable.custom_rules.insert(
         "creator_phone_required".to_string(),
         human_money_core::models::voucher_standard_definition::DynamicRule {
             message: "Missing creator phone".to_string(),
@@ -266,7 +266,7 @@ fn test_validation_fails_on_missing_required_field() {
     // Gutscheinerstellung verwendet werden, um einen `StandardHashMismatch` zu vermeiden.
     let mut standard_to_hash = standard.clone();
     standard_to_hash.signature = None;
-    let new_hash = get_hash(to_canonical_json(&standard_to_hash).unwrap());
+    let new_hash = get_hash(to_canonical_json(&standard_to_hash.immutable).unwrap());
 
     let mut voucher = human_money_core::test_utils::create_voucher_for_manipulation(
         voucher_data,
@@ -322,17 +322,15 @@ fn test_validation_fails_on_inconsistent_unit() {
     // KORREKTUR: Der Test muss den Standard VOR der Gutscheinerstellung modifizieren,
     // um Hash-Fehler zu vermeiden.
     let mut standard_with_rule = silver_standard.clone();
-    let validation = standard_with_rule
-        .validation
-        .get_or_insert_with(Default::default);
+    
 
-    validation.dynamic_rules.insert(
+    standard_with_rule.immutable.custom_rules.insert(
         "fixed_unit".to_string(),
         human_money_core::models::voucher_standard_definition::DynamicRule {
             message: "nominal_value.unit incorrect".to_string(),
             expression: format!(
                 "Voucher.nominal_value.unit == '{}'",
-                silver_standard.template.fixed.nominal_value.unit
+                silver_standard.immutable.blueprint.unit
             ),
         },
     );
@@ -340,7 +338,7 @@ fn test_validation_fails_on_inconsistent_unit() {
     // Hash des modifizierten Standards berechnen.
     let mut standard_to_hash = standard_with_rule.clone();
     standard_to_hash.signature = None;
-    let new_hash = get_hash(to_canonical_json(&standard_to_hash).unwrap());
+    let new_hash = get_hash(to_canonical_json(&standard_to_hash.immutable).unwrap());
 
     // Erstelle den Gutschein mit dem ORIGINALEN Standard, der eine korrekte Einheit setzt.
     let mut voucher = create_voucher(
@@ -461,7 +459,7 @@ fn test_canonical_json_is_deterministic_and_sorted() {
     // anstatt einen hartkodierten String zu verwenden.
     let expected_json = format!(
         r#"{{"abbreviation":"{}","amount":"60","description":"Qualitative Leistung","unit":"{}"}}"#,
-        minuto_standard.metadata.abbreviation, minuto_standard.template.fixed.nominal_value.unit
+        minuto_standard.immutable.identity.abbreviation, minuto_standard.immutable.blueprint.unit
     );
     assert_eq!(canonical_json, expected_json);
 }
@@ -558,7 +556,7 @@ fn test_validation_succeeds_with_extra_fields_in_json() {
 fn test_split_transaction_cycle_and_balance_check() {
     // 1. Setup: Silber-Standard, da er teilbar ist und keine Bürgen benötigt.
     let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
-    assert!(silver_standard.template.fixed.is_divisible);
+    assert!(silver_standard.immutable.features.allow_partial_transfers);
 
     // 2. Erstelle Sender und Empfänger
     let sender = &ACTORS.alice;
@@ -681,7 +679,7 @@ fn test_fails_to_create_forbidden_transaction_type() {
     // Da der Standard zur Laufzeit geladen wird, müssen wir den Hash für die Erstellung manuell berechnen.
     let mut standard_to_hash = standard.clone();
     standard_to_hash.signature = None;
-    let standard_hash = get_hash(to_canonical_json(&standard_to_hash).unwrap());
+    let standard_hash = get_hash(to_canonical_json(&standard_to_hash.immutable).unwrap());
 
     // 2. Erstelle einen Gutschein, der nach diesem Standard gültig ist.
     let sender = &ACTORS.alice;
@@ -728,16 +726,16 @@ fn test_fails_to_create_forbidden_transaction_type() {
 }
 
 #[test]
-fn test_split_fails_on_non_divisible_voucher() {
+fn test_split_fails_on_non_allow_partial_transfers_voucher() {
     // Manipuliere den Standard, um ihn nicht-teilbar zu machen
     let (mut standard, _) = (SILVER_STANDARD.0.clone(), SILVER_STANDARD.1.clone());
-    standard.template.fixed.is_divisible = false;
-    assert!(!standard.template.fixed.is_divisible);
+    standard.immutable.features.allow_partial_transfers = false;
+    assert!(!standard.immutable.features.allow_partial_transfers);
 
     // Da der Standard manipuliert wurde, muss der Konsistenz-Hash neu berechnet werden.
     let mut standard_to_hash = standard.clone();
     standard_to_hash.signature = None;
-    let new_hash = get_hash(to_canonical_json(&standard_to_hash).unwrap());
+    let new_hash = get_hash(to_canonical_json(&standard_to_hash.immutable).unwrap());
 
     let sender = &ACTORS.alice;
     let recipient = &ACTORS.bob;
@@ -772,7 +770,7 @@ fn test_split_fails_on_non_divisible_voucher() {
 
     assert!(matches!(
         split_result.unwrap_err(),
-        VoucherCoreError::Manager(VoucherManagerError::VoucherNotDivisible)
+        VoucherCoreError::Manager(VoucherManagerError::VoucherPartialTransferNotAllowed)
     ));
 }
 
@@ -849,7 +847,7 @@ fn test_validity_duration_rules() {
     voucher2
         .voucher_standard
         .template
-        .standard_minimum_issuance_validity = "P1Y".to_string(); // Standard erwartet P3Y
+        .issuance_minimum_validity_duration = "P1Y".to_string(); // Standard erwartet P3Y
 
     // Dank Signature-Bypass benötigen wir keine Re-Signierung.
     // Wir müssen nur die voucher_id aktualisieren, damit die strukturelle Integrität gewahrt bleibt.
@@ -1166,7 +1164,7 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
 
@@ -1203,7 +1201,7 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
     bob_wallet

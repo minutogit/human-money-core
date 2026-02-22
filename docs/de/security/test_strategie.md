@@ -27,7 +27,7 @@ Wir überprüfen die Qualität unserer Tests, indem wir den Code absichtlich "ka
 3.  **Erwartung:** Mindestens ein Test **MUSS** fehlschlagen ("mutant killed").
 4.  **Fehlerfall:** Wenn die Tests trotz Sabotage grün bleiben ("mutant survived"), haben wir eine Testlücke.
 
-**Ziel:** Sicherstellen, dass kritische Checks (wie der `ds_tag`-Check im Stealth Mode) nicht unbemerkt entfernt werden können.
+**Ziel:** Sicherstellen, dass kritische Checks (wie der `ds_tag`-Check im Private Mode) nicht unbemerkt entfernt werden können.
 
 ## 3. Negative Testing & Invarianz-Prüfung
 

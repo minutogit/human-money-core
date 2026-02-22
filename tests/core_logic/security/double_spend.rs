@@ -387,7 +387,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
 
     let mut standards_map = HashMap::new();
     // KORREKTUR: Die Map muss UUID -> TOML-Inhalt enthalten (für spätere Transfer-Aufrufe).
-    standards_map.insert(standard.metadata.uuid.clone(), silver_toml_str.to_string());
+    standards_map.insert(standard.immutable.identity.uuid.clone(), silver_toml_str.to_string());
 
     // 2. Sender erhält einen initialen Gutschein.
     let voucher_data = new_test_voucher_data(app_service.get_user_id().unwrap());
@@ -614,7 +614,7 @@ fn test_local_double_spend_detection_lifecycle() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(standard.metadata.uuid.clone(), standard.clone());
+    standards.insert(standard.immutable.identity.uuid.clone(), standard.clone());
 
     let human_money_core::wallet::CreateBundleResult {
         bundle_bytes: bundle_to_bob,
@@ -625,7 +625,7 @@ fn test_local_double_spend_detection_lifecycle() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
     bob_wallet
@@ -725,7 +725,7 @@ fn test_local_double_spend_detection_lifecycle() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_charlie = std::collections::HashMap::new();
     standards_for_charlie.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
     charlie_wallet
@@ -755,7 +755,7 @@ fn test_local_double_spend_detection_lifecycle() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_david = std::collections::HashMap::new();
     standards_for_david.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
     david_wallet
@@ -794,7 +794,7 @@ fn test_local_double_spend_detection_lifecycle() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(standard.metadata.uuid.clone(), standard.clone());
+    standards.insert(standard.immutable.identity.uuid.clone(), standard.clone());
 
     let human_money_core::wallet::CreateBundleResult {
         bundle_bytes: bundle_to_alice_1,
@@ -817,7 +817,7 @@ fn test_local_double_spend_detection_lifecycle() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_alice = std::collections::HashMap::new();
     standards_for_alice.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
     let result1 = alice_wallet
@@ -864,7 +864,7 @@ fn test_local_double_spend_detection_lifecycle() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(standard.metadata.uuid.clone(), standard.clone());
+    standards.insert(standard.immutable.identity.uuid.clone(), standard.clone());
 
     let human_money_core::wallet::CreateBundleResult {
         bundle_bytes: bundle_to_alice_2,
@@ -876,7 +876,7 @@ fn test_local_double_spend_detection_lifecycle() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_alice_2 = std::collections::HashMap::new();
     standards_for_alice_2.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
     let result2 = alice_wallet
@@ -954,7 +954,7 @@ fn test_local_double_spend_detection_lifecycle() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(standard.metadata.uuid.clone(), standard.clone());
+    standards.insert(standard.immutable.identity.uuid.clone(), standard.clone());
 
     let transfer_attempt = alice_wallet.execute_multi_transfer_and_bundle(
         alice_identity,

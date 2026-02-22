@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // We need to parse to get UUID
     let (std_def, _) =
         human_money_core::services::standard_manager::verify_and_parse_standard(&standard_toml)?;
-    standards_map.insert(std_def.metadata.uuid.clone(), standard_toml.clone());
+    standards_map.insert(std_def.immutable.identity.uuid.clone(), standard_toml.clone());
 
     let voucher_id;
     let local_instance_id;

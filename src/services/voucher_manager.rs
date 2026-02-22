@@ -36,8 +36,8 @@ pub struct TransactionSecrets {
 // Definiert die Fehler, die im `voucher_manager`-Modul auftreten können.
 #[derive(Debug)]
 pub enum VoucherManagerError {
-    /// Der Gutschein ist laut Standard nicht teilbar.
-    VoucherNotDivisible,
+    /// Der Gutschein erlaubt laut Standard keine Teilbeträge.
+    VoucherPartialTransferNotAllowed,
     /// Das verfügbare Guthaben ist für die Transaktion nicht ausreichend.
     InsufficientFunds { available: Decimal, needed: Decimal },
     /// Der Betrag hat mehr Nachkommastellen als vom Standard erlaubt.
@@ -55,8 +55,8 @@ pub enum VoucherManagerError {
 impl fmt::Display for VoucherManagerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VoucherManagerError::VoucherNotDivisible => {
-                write!(f, "Voucher is not divisible according to its standard.")
+            VoucherManagerError::VoucherPartialTransferNotAllowed => {
+                write!(f, "Voucher does not allow partial transfers according to its standard.")
             }
             VoucherManagerError::InsufficientFunds { available, needed } => {
                 write!(
@@ -129,25 +129,24 @@ pub fn create_voucher(
     // SICHERHEITSPATCH: Validiere kritische Template-Werte aus dem Standard,
     // um sicherzustellen, dass keine ungültigen Gutscheine erstellt werden.
     if verified_standard
-        .template
-        .fixed
-        .nominal_value
+        .immutable
+        .blueprint
         .unit
         .is_empty()
     {
         return Err(VoucherManagerError::InvalidTemplateValue(
-            "template.fixed.nominal_value.unit cannot be empty".to_string(),
+            "immutable.blueprint.unit cannot be empty".to_string(),
         )
         .into());
     }
     if verified_standard
-        .template
-        .fixed
+        .immutable
+        .blueprint
         .primary_redemption_type
         .is_empty()
     {
         return Err(VoucherManagerError::InvalidTemplateValue(
-            "template.fixed.primary_redemption_type cannot be empty".to_string(),
+            "immutable.blueprint.primary_redemption_type cannot be empty".to_string(),
         )
         .into());
     }
@@ -163,8 +162,8 @@ pub fn create_voucher(
         .validity_duration
         .as_deref()
         .or(verified_standard
-            .template
-            .default
+            .mutable
+            .app_config
             .default_validity_duration
             .as_deref())
         .ok_or_else(|| {
@@ -175,11 +174,7 @@ pub fn create_voucher(
 
     let initial_valid_until_dt = add_iso8601_duration(creation_dt, duration_str)?;
 
-    let min_duration_opt = verified_standard
-        .validation
-        .as_ref()
-        .and_then(|v| v.behavior_rules.as_ref())
-        .and_then(|b| b.issuance_minimum_validity_duration.as_ref());
+    let min_duration_opt = Some(&verified_standard.immutable.issuance.issuance_minimum_validity_duration);
 
     // Verhindert die Erstellung von Gutscheinen, die sofort gegen die "Firewall"-Regel
     // verstoßen würden ("Dead-on-Arrival").
@@ -197,37 +192,30 @@ pub fn create_voucher(
     }
 
     let final_valid_until_dt =
-        if let Some(rounding_str) = &verified_standard.template.fixed.round_up_validity_to {
+        if let Some(rounding_str) = &verified_standard.mutable.app_config.round_up_validity_to {
             round_up_date(initial_valid_until_dt, rounding_str)?
         } else {
             initial_valid_until_dt
         };
     let mut final_nominal_value = data.nominal_value;
-    final_nominal_value.unit = verified_standard.template.fixed.nominal_value.unit.clone();
+    final_nominal_value.unit = verified_standard.immutable.blueprint.unit.clone();
 
     // Prioritize user-defined abbreviation. Fallback to standard's metadata abbreviation.
     if final_nominal_value.abbreviation.is_none() {
-        final_nominal_value.abbreviation = Some(verified_standard.metadata.abbreviation.clone());
+        final_nominal_value.abbreviation = Some(verified_standard.immutable.identity.abbreviation.clone());
     }
 
     // KORRIGIERT: Collateral wird NUR befüllt, wenn der Standard es erlaubt
     // UND der Benutzer (data) es bereitstellt.
-    let final_collateral = if !verified_standard.template.fixed.collateral.type_.is_empty() {
+    let final_collateral = if !verified_standard.immutable.blueprint.collateral_type.is_empty() {
         // Standard allows it. Now check if user provided it.
         data.collateral.map(|user_collateral| {
             // User provided it. Use their values but enforce standard's type/condition.
             Collateral {
                 value: user_collateral.value, // Take the user's value block directly
                 // Enforce standard's type and condition
-                collateral_type: Some(verified_standard.template.fixed.collateral.type_.clone()),
-                redeem_condition: Some(
-                    verified_standard
-                        .template
-                        .fixed
-                        .collateral
-                        .redeem_condition
-                        .clone(),
-                ),
+                collateral_type: Some(verified_standard.immutable.blueprint.collateral_type.clone()),
+                redeem_condition: None,
             }
         }) // .map() gracefully handles None -> None
     } else {
@@ -235,7 +223,7 @@ pub fn create_voucher(
     };
 
     let description_template = standard_manager::get_localized_text(
-        &verified_standard.template.fixed.description,
+        &verified_standard.mutable.i18n.descriptions,
         lang_preference,
     )
     .unwrap_or(""); // Fallback auf leeren String, falls Liste leer ist
@@ -243,35 +231,19 @@ pub fn create_voucher(
     let final_description = description_template.replace("{{amount}}", &final_nominal_value.amount);
 
     let voucher_standard = VoucherStandard {
-        name: verified_standard.metadata.name.clone(),
-        uuid: verified_standard.metadata.uuid.clone(),
+        name: verified_standard.immutable.identity.name.clone(),
+        uuid: verified_standard.immutable.identity.uuid.clone(),
         standard_definition_hash: standard_hash.to_string(),
         template: crate::models::voucher::VoucherTemplateData {
             description: final_description.clone(),
             primary_redemption_type: verified_standard
-                .template
-                .fixed
+                .immutable
+                .blueprint
                 .primary_redemption_type
                 .clone(),
-            divisible: verified_standard.template.fixed.is_divisible,
-            standard_minimum_issuance_validity: verified_standard
-                .validation
-                .as_ref()
-                .and_then(|v| v.behavior_rules.as_ref())
-                .and_then(|b| b.issuance_minimum_validity_duration.clone())
-                .unwrap_or_default(),
-            signature_requirements_description: verified_standard
-                .template
-                .fixed
-                .guarantor_info
-                .description
-                .clone(),
-            footnote: verified_standard
-                .template
-                .fixed
-                .footnote
-                .clone()
-                .unwrap_or_default(),
+            allow_partial_transfers: verified_standard.immutable.features.allow_partial_transfers,
+            issuance_minimum_validity_duration: verified_standard.immutable.issuance.issuance_minimum_validity_duration.clone(),
+            footnote: standard_manager::get_localized_text(&verified_standard.mutable.i18n.footnotes, lang_preference).unwrap_or("").to_string(),
         },
     };
 
@@ -328,11 +300,7 @@ pub fn create_voucher(
         trap_data: None,
         layer2_signature: None,
         deletable_at: {
-            let retention_period = verified_standard
-                .validation
-                .as_ref()
-                .and_then(|v| v.behavior_rules.as_ref())
-                .and_then(|b| b.l2_retention_period.as_ref());
+            let retention_period = verified_standard.mutable.app_config.server_history_retention.as_ref();
 
             if let Some(duration) = retention_period {
                 add_iso8601_duration(final_valid_until_dt, duration)
@@ -346,12 +314,7 @@ pub fn create_voucher(
         sender_identity_signature: None,
     };
 
-    let decimal_places = verified_standard
-        .validation
-        .as_ref()
-        .and_then(|v| v.behavior_rules.as_ref())
-        .and_then(|b| b.amount_decimal_places)
-        .unwrap_or(2) as u32;
+    let decimal_places = verified_standard.immutable.features.amount_decimal_places as u32;
 
     let initial_amount = Decimal::from_str(&temp_voucher.nominal_value.amount)?;
     init_transaction.amount = decimal_utils::format_for_storage(&initial_amount, decimal_places);
@@ -590,12 +553,7 @@ pub fn create_transaction(
 
     validate_issuance_firewall(voucher, standard, sender_id, recipient_id)?;
 
-    let decimal_places = standard
-        .validation
-        .as_ref()
-        .and_then(|v| v.behavior_rules.as_ref())
-        .and_then(|b| b.amount_decimal_places)
-        .unwrap_or(2) as u32;
+    let decimal_places = standard.immutable.features.amount_decimal_places as u32;
 
     let spendable_balance = get_spendable_balance(voucher, sender_id, standard)?;
     let amount_to_send = Decimal::from_str(amount_to_send_str)?;
@@ -616,8 +574,8 @@ pub fn create_transaction(
     }
 
     let (t_type, sender_remaining_amount) = if amount_to_send < spendable_balance {
-        if !voucher.voucher_standard.template.divisible {
-            return Err(VoucherManagerError::VoucherNotDivisible.into());
+        if !voucher.voucher_standard.template.allow_partial_transfers {
+            return Err(VoucherManagerError::VoucherPartialTransferNotAllowed.into());
         }
         let remaining = spendable_balance - amount_to_send;
         (
@@ -631,36 +589,26 @@ pub fn create_transaction(
         ("transfer".to_string(), None)
     };
 
-    if let Some(rules) = standard
-        .validation
-        .as_ref()
-        .and_then(|v| v.behavior_rules.as_ref())
-    {
-        if let Some(allowed) = &rules.allowed_t_types {
-            if !allowed.contains(&t_type) {
-                return Err(crate::error::ValidationError::TransactionTypeNotAllowed {
-                    t_type: t_type.clone(),
-                    allowed: allowed.clone(),
-                }
-                .into());
-            }
+    if !standard.immutable.features.allowed_t_types.contains(&t_type) {
+        return Err(crate::error::ValidationError::TransactionTypeNotAllowed {
+            t_type,
+            allowed: standard.immutable.features.allowed_t_types.clone(),
         }
+        .into());
     }
+
+
 
     let prev_hash = get_hash(to_canonical_json(voucher.transactions.last().unwrap())?);
     let t_time = get_current_timestamp();
 
     // PRIVACY MODE CHECK
-    let privacy_mode = standard
-        .privacy
-        .as_ref()
-        .map(|p| p.mode.as_str())
-        .unwrap_or("public"); // Default to public if not specified
+    let privacy_mode = standard.immutable.features.privacy_mode.as_str();
 
     // Determine Sender ID Visibility
     let final_sender_id = match privacy_mode {
         "public" => Some(sender_id.to_string()),
-        "stealth" => None,
+        "private" => None,
         "flexible" => {
             // Flexible: Sender decides. For now, we mimic "public" behavior if passed,
             // later we might want an explict flag in `create_transaction` args.
@@ -693,10 +641,10 @@ pub fn create_transaction(
             }
             recipient_id
         }
-        "stealth" => {
+        "private" => {
             if recipient_is_did {
                 return Err(VoucherManagerError::Generic(
-                    "Stealth mode forbids DID recipient.".to_string(),
+                    "Private mode forbids DID recipient.".to_string(),
                 )
                 .into());
             }
@@ -786,7 +734,7 @@ pub fn create_transaction(
         privacy_guard_bytes.extend_from_slice(&encrypted_bytes);
         Some(encode_base64(&privacy_guard_bytes))
     } else {
-        // Im Stealth-Mode (Empfänger ist ein Hash) gibt es keinen öffentlichen Schlüssel
+        // Im Private-Mode (Empfänger ist ein Hash) gibt es keinen öffentlichen Schlüssel
         // für DH. Der Empfänger muss seinen Key-Seed anderweitig (z.B. Offline-Übergabe) erhalten.
         None
     };
@@ -957,11 +905,7 @@ fn validate_issuance_firewall(
     recipient_id: &str,
 ) -> Result<(), VoucherCoreError> {
     // 1. Regel extrahieren
-    let min_duration_str = match standard
-        .validation
-        .as_ref()
-        .and_then(|v| v.behavior_rules.as_ref())
-        .and_then(|b| b.issuance_minimum_validity_duration.as_ref())
+    let min_duration_str = match Some(&standard.immutable.issuance.issuance_minimum_validity_duration)
     {
         Some(duration) if !duration.is_empty() => duration,
         _ => return Ok(()), // 3. Ausnahme: Regel nicht definiert
@@ -1035,12 +979,7 @@ pub fn get_spendable_balance(
     };
 
     let last_tx = voucher.transactions.last().unwrap();
-    let decimal_places = standard
-        .validation
-        .as_ref()
-        .and_then(|v| v.behavior_rules.as_ref())
-        .and_then(|b| b.amount_decimal_places)
-        .unwrap_or(2) as u32;
+    let decimal_places = standard.immutable.features.amount_decimal_places as u32;
 
     let balance_str = if last_tx.recipient_id == user_id {
         &last_tx.amount

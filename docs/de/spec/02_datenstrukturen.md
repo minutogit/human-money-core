@@ -16,7 +16,7 @@ tags:
 
 Das System trennt strikt zwischen **technischer Sicherheit (Layer 2)** und **sozialer Identität (Layer 1)**.
 
-- **Layer 2 (Technischer Layer):** Jede Transaktion verwendet immer ephemere Schlüssel und kryptographische Anker, um Double-Spending durch das Layer 2 verhindern zu können. Das zentrale Feld hierfür ist `receiver_ephemeral_pub_hash` (der "Stealth Key" / Anker für die nächste Transaktion). Dies ist der unveränderliche Unterbau.
+- **Layer 2 (Technischer Layer):** Jede Transaktion verwendet immer ephemere Schlüssel und kryptographische Anker, um Double-Spending durch das Layer 2 verhindern zu können. Das zentrale Feld hierfür ist `receiver_ephemeral_pub_hash` (der "Private Key" / Anker für die nächste Transaktion). Dies ist der unveränderliche Unterbau.
 - **Layer 1 (Sozialer Layer):** Die Offenlegung der Identität (`did:key`) in den Feldern `sender_id` und `recipient_id` ist ein optionales Overlay. Ein Sender kann entscheiden (oder durch den Standard gezwungen werden), ob diese Felder mit lesbaren DIDs gefüllt werden oder leer/anonym bleiben.
 
 **Merksatz:** Das Netzwerk validiert technisch immer Anonym (Zero-Knowledge bzgl. Identität), aber sozial optional Transparent.
@@ -30,7 +30,7 @@ In der `standard.toml` (bzw. `VoucherStandardDefinition`) wird der Modus über d
 | Modus | Wert (TOML) | Beschreibung | Sender-Identität (sender_id) | Empfänger-Identität (recipient_id) |
 | :--- | :--- | :--- | :--- | :--- |
 | Öffentlich | `"public"` | Transparenz ist erzwungen. | **PFLICHT** (`did:key`) | **PFLICHT** (`did:key`) |
-| Diskret | `"stealth"` | Identitäten sind verboten. | **VERBOTEN** (None/Hash) | **VERBOTEN** (None/Hash) |
+| Diskret | `"private"` | Identitäten sind verboten. | **VERBOTEN** (None/Hash) | **VERBOTEN** (None/Hash) |
 | Flexibel | `"flexible"` | Sender entscheidet. | **OPTIONAL** | **OPTIONAL** (Darf `did:key` sein) |
 
 **Hinweis:** Unabhängig von diesen Feldern ist der technische Anker `receiver_ephemeral_pub_hash` immer vorhanden und sichert die Transaktion.
@@ -41,7 +41,7 @@ In der `standard.toml` (bzw. `VoucherStandardDefinition`) wird der Modus über d
 
 ```toml
 [privacy]
-# Optionen: "public", "stealth", "flexible"
+# Optionen: "public", "private", "flexible"
 mode = "flexible"
 ```
 
@@ -77,11 +77,11 @@ pub struct Transaction {
 
     // --- TECHNISCHER LAYER (Layer 2 - Immer vorhanden) ---
     
-    /// Der Hash des vorherigen Stealth-Public-Keys oder Transaktions-Hash.
+    /// Der Hash des vorherigen Private-Public-Keys oder Transaktions-Hash.
     /// Dient als Anker in der Kette.
     pub prev_hash: String,
 
-    /// Der Hash des ephemeren Public Keys des Empfängers (Stealth Key).
+    /// Der Hash des ephemeren Public Keys des Empfängers (Private Key).
     /// Dies ist der Anker für die nächste Transaktion.
     /// Existiert IMMER, auch wenn recipient_id öffentlich ist.
     pub receiver_ephemeral_pub_hash: String,
@@ -90,7 +90,7 @@ pub struct Transaction {
 
     /// Die öffentliche Identität des Senders (z.B. "did:key:z6Mk...").
     /// - public: ZWINGEND
-    /// - stealth: LEER (None)
+    /// - private: LEER (None)
     /// - flexible: OPTIONAL
     pub sender_id: Option<String>,
 
@@ -109,7 +109,7 @@ pub struct Transaction {
 
     /// An wen geht das Geld (Layer 1)?
     /// - public: Muss ein `did:key` sein.
-    /// - stealth: Darf KEIN `did:key` sein (z.B. leer oder Hash).
+    /// - private: Darf KEIN `did:key` sein (z.B. leer oder Hash).
     /// - flexible: Darf ein `did:key` sein ODER leer/Hash.
     pub recipient_id: String,
 
@@ -194,7 +194,7 @@ Der Validator prüft Transaktionen basierend auf dem `privacy_mode` des Standard
 - **Prüfung B:** Ist `sender_id` ein gültiger `did:key`? Falls Nein → **FEHLER**.
 - **Prüfung C:** Verifiziere `sender_identity_signature` mit `sender_id` gegen `t_id`. Falls ungültig → **FEHLER**.
 
-**Modus: "stealth"**
+**Modus: "private"**
 - **Prüfung A:** Ist `sender_id` vorhanden? Falls `Some(...)` → **FEHLER**.
 - **Prüfung B:** Enthält `recipient_id` einen `did:key`? Falls Ja → **FEHLER** (Empfänger muss geschützt werden).
 
@@ -214,19 +214,19 @@ Der Standard ist "flexible".
 1. Alice setzt ihre `sender_id` auf ihren `did:key`.
 2. Alice signiert mit ihrem Identity Key (`sender_identity_signature`).
 3. Alice trägt Bobs DID in `recipient_id` ein (damit jeder sieht: "Ging an Bob").
-4. **Technischer Hintergrund:** Alice berechnet trotzdem lokal einen Stealth Key aus Bobs DID und schreibt dessen Hash in `receiver_ephemeral_pub_hash`.
+4. **Technischer Hintergrund:** Alice berechnet trotzdem lokal einen Private Key aus Bobs DID und schreibt dessen Hash in `receiver_ephemeral_pub_hash`.
 
 **Ergebnis:**
 - **Layer 1 (Sozial):** Jeder sieht "Alice -> Bob".
 - **Layer 2 (Technik):** Das Netzwerk sieht einen kryptographischen Anker (`receiver_ephemeral_pub_hash`), der das Double-Spending verhindert.
 
-Bob kann den Gutschein später weiterverwenden, indem er den Stealth-Key (Private Key) ableitet. Ob er sich dabei dann selbst als "Bob" im `sender_id` Feld offenbart, ist seine Entscheidung (da Modus "Flexible").
+Bob kann den Gutschein später weiterverwenden, indem er den Private-Key (Private Key) ableitet. Ob er sich dabei dann selbst als "Bob" im `sender_id` Feld offenbart, ist seine Entscheidung (da Modus "Flexible").
 
 ## 4. Design-Exkurs: Teilbarkeit vs. Split-Recht
 
-Eine Besonderheit im Standard ist die Koexistenz von `is_divisible` (Eigenschaft) und dem Transaktionstyp `"split"` (Berechtigung). Diese Trennung ermöglicht präzise Kontrolle über das Verhalten von Werten.
+Eine Besonderheit im Standard ist die Koexistenz von `allow_partial_transfers` (Eigenschaft) und dem Transaktionstyp `"split"` (Berechtigung). Diese Trennung ermöglicht präzise Kontrolle über das Verhalten von Werten.
 
-| `is_divisible` | `"split"` erlaubt? | Bedeutung & Nutzen |
+| `allow_partial_transfers` | `"split"` erlaubt? | Bedeutung & Nutzen |
 | :--- | :--- | :--- |
 | **`true`** | **Ja** | ✅ **Standard Währung:** Der Wert ist teilbar und darf geteilt werden (z.B. Minuto). |
 | **`false`** | **Nein** | ✅ **Unteilbares Gut:** Der Wert ist atomar (z.B. Konzert-Ticket). |

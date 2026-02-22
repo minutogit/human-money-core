@@ -210,7 +210,7 @@ impl Wallet {
             let unit = voucher.nominal_value.unit.clone();
 
             // 5. Akkumuliere den Wert, basierend auf 'is_summable'
-            if standard.template.fixed.is_summable {
+            if standard.immutable.features.balances_are_summable {
                 let current_sum = transfer_summary
                     .summable_amounts
                     .entry(unit)
@@ -238,12 +238,10 @@ impl Wallet {
             involved_vouchers_details.push(super::types::InvolvedVoucherInfo {
                 local_instance_id: local_id.clone(),
                 voucher_id: voucher.voucher_id.clone(),
-                standard_name: standard.metadata.name.clone(),
+                standard_name: standard.immutable.identity.name.clone(),
                 unit: voucher.nominal_value.unit.clone(),
                 amount: last_tx.amount.clone(),
-                // HINWEIS: Wir verwenden voucher.voucher_standard.template.divisible, da dies der korrekte
-                // Pfad laut Gutschein-JSON-Struktur ist.
-                is_divisible: voucher.voucher_standard.template.divisible,
+                allow_partial_transfers: voucher.voucher_standard.template.allow_partial_transfers,
             });
             // --- Ende TransferSummary-Logik ---
         }
@@ -517,12 +515,10 @@ impl Wallet {
             involved_sources_details.push(super::types::InvolvedVoucherInfo {
                 local_instance_id: source.local_instance_id.clone(),
                 voucher_id: instance.voucher.voucher_id.clone(),
-                standard_name: standard_definition.metadata.name.clone(),
+                standard_name: standard_definition.immutable.identity.name.clone(),
                 unit: instance.voucher.nominal_value.unit.clone(),
                 amount: source.amount_to_send.clone(),
-                // HINWEIS: Wir verwenden voucher.voucher_standard.template.divisible, da dies der korrekte
-                // Pfad laut Gutschein-JSON-Struktur ist.
-                is_divisible: instance.voucher.voucher_standard.template.divisible,
+                allow_partial_transfers: instance.voucher.voucher_standard.template.allow_partial_transfers,
             });
 
             // Führe die Kernoperation auf der temporären Wallet-Instanz aus.

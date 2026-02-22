@@ -1,38 +1,43 @@
-# tests/test_data/standards/standard_behavior_rules.toml
-# Test-Standard zur isolierten Prüfung der `behavior_rules`.
-
-[metadata]
-name = "Behavior Rules Test Standard"
+[immutable.identity]
 uuid = "BEHAVE-TEST-V1"
+name = "Behavior Rules Test Standard"
 abbreviation = "BEH"
+
+[immutable.blueprint]
+unit = "TestUnit"
+primary_redemption_type = "goods_or_services"
+collateral_type = ""
+
+[immutable.features]
+allow_partial_transfers = true
+balances_are_summable = true
+amount_decimal_places = 2
+privacy_mode = "public"
+allowed_t_types = ["init", "transfer", "split", "merge"]
+
+[immutable.issuance]
+validity_duration_range = ["P0M", "P5Y"]
+issuance_minimum_validity_duration = "P1Y"
+additional_signatures_range = [0, 0]
+allowed_signature_roles = ["guarantor"]
+
+[immutable.transfer]
+requires_recipient_signature = false
+
+[immutable.custom_rules]
+
+[mutable.metadata]
 issuer_name = "Test Council"
 
-[template.fixed]
-primary_redemption_type = "goods_or_services"
-is_summable = true
-is_divisible = true
+[mutable.app_config]
+default_validity_duration = "P1Y"
 
-[template.fixed.nominal_value]
-unit = "TestUnit"
-
-[template.fixed.collateral]
-type = ""
-description = ""
-redeem_condition = ""
-
-[template.fixed.guarantor_info]
-needed_count = 0
-description = ""
-
-[validation]
-[validation.behavior_rules]
-# Ein Gutschein muss bei Erstellung mindestens 1 Jahr (P1Y) gültig sein.
-issuance_minimum_validity_duration = "P1Y"
-# Die Gültigkeit darf maximal 5 Jahre betragen.
-max_creation_validity_duration = "P5Y"
-# Beträge dürfen maximal 2 Nachkommastellen haben.
-amount_decimal_places = 2
+[mutable.i18n]
+descriptions = { en = "Behavior Rules Test" }
 
 [signature]
-issuer_id = "did:key:zDummy"
-signature = "dummy_signature"
+# Die `did:key` des Herausgebers, die seinen öffentlichen Schlüssel enthält.
+issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
+
+# Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
+signature = "2CzdssBReZHVg3XT7wq14iWw6eNN48yZbEqcU2hGS7BnsN2Rcje52U9SD9Cdu1LwGjCXhHhGkQdyk4x21yipcP9X"

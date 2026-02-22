@@ -62,7 +62,7 @@ Standards werden über signierte TOML-Dateien definiert, die als **dezentrales "
 *   **Technisch:** Die Datei konfiguriert starre Regeln für die Software:
     *   **Währungs-Logik:** Ist es "Geld" (addierbar/teilbar) oder ein "Ticket"? Wie viele Nachkommastellen?
     *   **Governance-Regeln:** Definition von Signaturanforderungen (z.B. "Mindestens 3 Bürgen, davon einer aus der Gruppe 'Vorstand'"). Diese Regeln werden vom Core-System automatisiert gegen die Profildaten der Unterzeichner validiert.
-    *   **Privatsphäre-Level:** Der Standard erzwingt den Modus: `Public` (Sender muss stets sichtbar sein), `Stealth` (Sender muss anonym sein) oder `Flexible`.
+    *   **Privatsphäre-Level:** Der Standard erzwingt den Modus: `Public` (Sender muss stets sichtbar sein), `Private` (Sender muss anonym sein) oder `Flexible`.
     *   **Sicherheits-Anker:** Definierte Pflicht-Signaturen (z.B. "Nur gültig mit Unterschrift des Kassenwarts").
     *   **Immutability:** Jeder Gutschein speichert den Hash seines Standards. Ändert sich auch nur ein Zeichen im "Gesetz", gilt dies als neuer Standard. Eine nachträgliche Regeländerung für existierende Gutscheine ist somit kryptographisch unmöglich.
 
@@ -77,8 +77,8 @@ Ein Nutzer (Emittent) erstellt einen Gutschein. Dieser ist initial durch sein ei
     *   **Anchor:** In der vorhergehenden Transaktion wurde ein Hash hinterlegt.
     *   **Pre-Image:** Um den Gutschein weiterzugeben, muss der Sender den zum Hash passenden öffentlichen Schlüssel (Pre-Image) enthüllen und damit die Transaktion signieren. Dies beweist den rechtmäßigen Besitz, ohne dass die Identität (`did:key`) zwingend offengelegt werden muss.
 3.  **Privacy Guard:** Der Sender verschlüsselt Metadaten (wie seine eigene permanente DID und den Seed für den nächsten Wechsel-Key) für den Empfänger mittels X25519 (Diffie-Hellman). Dies gewährleistet "Forward Secrecy" und einen sicheren Informationsfluss zwischen den Parteien.
-4.  **Anonymität vs. Vertrauen:** Im Gutschein selbst können sich Nutzer durch **Stealth Keys** anonymisieren. Dadurch ist in der Historie nicht direkt ersichtlich, wer den Gutschein besessen hat. Da die Identität jedoch als soziale Abschreckung gegen Betrug dient, kommen bei Stealth Keys mathematische Fallen zum Einsatz: Diese offenbaren die Identität des Senders **nur im Falle eines Betrugs** (Double Spend).
-5.  **Inhalt:** Auf dem Gutschein selbst gehen Transaktionen entweder an öffentliche `did:keys` (Transparent) oder an verschleierte Schlüssel (Stealth), je nach gewählter Privatsphäre.
+4.  **Anonymität vs. Vertrauen:** Im Gutschein selbst können sich Nutzer durch **Private Keys** anonymisieren. Dadurch ist in der Historie nicht direkt ersichtlich, wer den Gutschein besessen hat. Da die Identität jedoch als soziale Abschreckung gegen Betrug dient, kommen bei Private Keys mathematische Fallen zum Einsatz: Diese offenbaren die Identität des Senders **nur im Falle eines Betrugs** (Double Spend).
+5.  **Inhalt:** Auf dem Gutschein selbst gehen Transaktionen entweder an öffentliche `did:keys` (Transparent) oder an verschleierte Schlüssel (Private), je nach gewählter Privatsphäre.
 
 ### 3.3 Konfliktlösung und Sicherheit
 Das System bietet je nach Modus und Ebene unterschiedliche Schutzmechanismen:
@@ -87,7 +87,7 @@ Das System bietet je nach Modus und Ebene unterschiedliche Schutzmechanismen:
 *   **Anonyme Fingerprints:** Um Double-Spends auch ohne Preisgabe der Historie zu erkennen, tauschen Wallets und Server **Fingerprints** aus.
     *   Ein Fingerprint enthält den Double-Spend-Tag (Hash aus Kontext und Key), ein gerundetes Ablaufdatum (zur Ununterscheidbarkeit) und einen via XOR verschlüsselten Zeitstempel (nur für Inhaber der Transaktion entschlüsselbar).
 *   **Offline (Layer 1 - Öffentlich):** Bei Transaktionen an `did:keys` ist die Historie für jeden Besitzer des Gutscheins sichtbar. Ein Double-Spend würde **verzögert** auffallen (sobald die Pfade wieder zusammenlaufen) und sozial geahndet (Reputationsverlust), da die Identität klar ist.
-*   **Offline (Layer 1 - Stealth):** Da hier keine Identitäten sichtbar sind, greift die **mathematische Falle**. Wer denselben Stealth-Zustand zweimal ausgibt, enthüllt rechnerisch seinen privaten Schlüssel.
+*   **Offline (Layer 1 - Private):** Da hier keine Identitäten sichtbar sind, greift die **mathematische Falle**. Wer denselben Private-Zustand zweimal ausgibt, enthüllt rechnerisch seinen privaten Schlüssel.
 
 ## 4. Die zwei Ebenen (Layers)
 

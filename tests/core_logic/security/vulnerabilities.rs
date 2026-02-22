@@ -413,7 +413,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(standard.metadata.uuid.clone(), standard.clone());
+    standards.insert(standard.immutable.identity.uuid.clone(), standard.clone());
 
     let human_money_core::wallet::CreateBundleResult {
         bundle_bytes: container_to_hacker,
@@ -424,7 +424,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_hacker = std::collections::HashMap::new();
     standards_for_hacker.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
     hacker_wallet
@@ -494,7 +494,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_victim = std::collections::HashMap::new();
     standards_for_victim.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
     let process_result = victim_wallet.process_encrypted_transaction_bundle(
@@ -576,7 +576,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_victim = std::collections::HashMap::new();
     standards_for_victim.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
     let process_result = victim_wallet.process_encrypted_transaction_bundle(
@@ -646,7 +646,7 @@ fn test_attack_tamper_transaction_history() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(standard.metadata.uuid.clone(), standard.clone());
+    standards.insert(standard.immutable.identity.uuid.clone(), standard.clone());
 
     let human_money_core::wallet::CreateBundleResult {
         bundle_bytes: container_to_bob,
@@ -657,7 +657,7 @@ fn test_attack_tamper_transaction_history() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
     bob_wallet_hacker
@@ -753,7 +753,7 @@ fn test_attack_create_inconsistent_transaction() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(standard.metadata.uuid.clone(), standard.clone());
+    standards.insert(standard.immutable.identity.uuid.clone(), standard.clone());
 
     let human_money_core::wallet::CreateBundleResult {
         bundle_bytes: container_to_hacker,
@@ -764,7 +764,7 @@ fn test_attack_create_inconsistent_transaction() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_hacker = std::collections::HashMap::new();
     standards_for_hacker.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
     hacker_wallet
@@ -829,7 +829,7 @@ fn test_attack_create_inconsistent_transaction() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_victim = std::collections::HashMap::new();
     standards_for_victim.insert(
-        SILVER_STANDARD.0.metadata.uuid.clone(),
+        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
         SILVER_STANDARD.0.clone(),
     );
     let process_result = victim_wallet.process_encrypted_transaction_bundle(
@@ -1283,7 +1283,7 @@ fn test_attack_fuzzing_random_mutations() {
         voucher_id: master_voucher.voucher_id.clone(),
         signer_id: ACTORS.victim.user_id.clone(),
         signature_time: get_current_timestamp(),
-        role: "A valid additional signature".to_string(),
+        role: "guarantor".to_string(),
         ..Default::default()
     };
     let mut sig_obj_for_id = additional_sig.clone();

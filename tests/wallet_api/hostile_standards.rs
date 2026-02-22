@@ -17,9 +17,9 @@ use tempfile::tempdir;
 fn test_disallowed_transaction_type() {
     // 1. ARRANGE: Standard erstellen, der "split" verbietet
     let (hostile_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        if let Some(validation) = &mut s.validation {
-            if let Some(behavior) = &mut validation.behavior_rules {
-                behavior.allowed_t_types = Some(vec!["init".to_string(), "transfer".to_string()]);
+        if true {
+            if true {
+                s.immutable.features.allow_partial_transfers = false;
             }
         }
     });
@@ -54,7 +54,7 @@ fn test_disallowed_transaction_type() {
         .clone();
     assert_eq!(
         voucher.voucher_standard.uuid,
-        hostile_standard.metadata.uuid
+        hostile_standard.immutable.identity.uuid
     );
 
     // 2. ACT: Versuche einen Split-Transfer
@@ -70,7 +70,7 @@ fn test_disallowed_transaction_type() {
 
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(
-        hostile_standard.metadata.uuid.clone(),
+        hostile_standard.immutable.identity.uuid.clone(),
         hostile_standard_toml.clone(),
     );
 
@@ -80,7 +80,7 @@ fn test_disallowed_transaction_type() {
     assert!(result.is_err());
     let error_string = result.unwrap_err();
     assert!(
-        error_string.contains("type 'split' is not allowed"),
+        error_string.contains("allow partial transfers"),
         "Error message should indicate that 'split' is not allowed. Got: {}",
         error_string
     );
@@ -92,9 +92,9 @@ fn test_disallowed_transaction_type() {
 fn test_violation_of_max_creation_validity() {
     // 1. ARRANGE: Standard mit maximaler Gültigkeit von 1 Jahr erstellen
     let (hostile_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        if let Some(validation) = &mut s.validation {
-            if let Some(behavior) = &mut validation.behavior_rules {
-                behavior.max_creation_validity_duration = Some("P1Y".to_string());
+        if true {
+            if true {
+                s.immutable.issuance.validity_duration_range = vec!["P0M".to_string(), "P1Y".to_string()];
             }
         }
     });

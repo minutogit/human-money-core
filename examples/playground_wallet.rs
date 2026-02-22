@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (standard, standard_hash) = verify_and_parse_standard(&standard_toml)?;
     println!(
         "✅ Standard '{}' verifiziert und geladen.",
-        standard.metadata.name
+        standard.immutable.identity.name
     );
 
     // Erstelle eine neue, leere Wallet für Alice
@@ -129,7 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut standards_map = std::collections::HashMap::new();
-    standards_map.insert(standard.metadata.uuid.clone(), standard.clone());
+    standards_map.insert(standard.immutable.identity.uuid.clone(), standard.clone());
 
     // For this example, we need to create a new method to execute transfer and get result vouchers
     // Let's call the same method but process the resulting bundle to get the vouchers

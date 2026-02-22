@@ -217,9 +217,8 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
             template: VoucherTemplateData {
                 description: "A test voucher".to_string(),
                 primary_redemption_type: "SERVICE".to_string(),
-                divisible: true,
-                standard_minimum_issuance_validity: "P1Y".to_string(),
-                signature_requirements_description: "".to_string(),
+                allow_partial_transfers: true,
+                issuance_minimum_validity_duration: "P1Y".to_string(),
                 footnote: "".to_string(),
             },
         },

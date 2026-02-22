@@ -101,10 +101,10 @@ pub struct Transaction {
     pub t_time: String,
 
     // --- TECHNISCHER LAYER (Layer 2 - Immer vorhanden) ---
-    /// Der Hash des vorherigen Stealth-Public-Keys oder Transaktions-Hash.
+    /// Der Hash des vorherigen Private-Public-Keys oder Transaktions-Hash.
     pub prev_hash: String,
 
-    /// Der Hash des ephemeren Public Keys des Empfängers (Stealth Key).
+    /// Der Hash des ephemeren Public Keys des Empfängers (Private Key).
     /// Existiert IMMER, auch wenn recipient_id öffentlich ist.
     /// Option nur für Abwärtskompatibilität bzw. Init-Sonderfälle,
     /// aber im Standard-Flow nun Pflicht.
@@ -184,11 +184,9 @@ pub struct VoucherTemplateData {
     /// Der primäre Einlösezweck, übernommen vom Standard (z.B. "goods_or_services").
     pub primary_redemption_type: String,
     /// Gibt an, ob der Gutschein in kleinere Einheiten aufgeteilt werden kann.
-    pub divisible: bool,
+    pub allow_partial_transfers: bool,
     /// Die bei der Erstellung gültige Mindestgültigkeitsdauer aus dem Standard (ISO 8601 Duration).
-    pub standard_minimum_issuance_validity: String,
-    /// Eine menschenlesbare Beschreibung der Signaturanforderungen (früher Bürgenanforderungen), übernommen vom Standard.
-    pub signature_requirements_description: String,
+    pub issuance_minimum_validity_duration: String,
     /// Ein optionaler Fußnotentext, der vom Standard vorgegeben wird.
     pub footnote: String,
 }

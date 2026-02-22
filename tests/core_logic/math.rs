@@ -41,14 +41,7 @@ fn test_chained_transaction_math_and_scaling() {
     let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     assert_eq!(
         standard
-            .validation
-            .as_ref()
-            .unwrap()
-            .behavior_rules
-            .as_ref()
-            .unwrap()
-            .amount_decimal_places
-            .unwrap(),
+            .immutable.features.amount_decimal_places,
         4,
         "This test requires the silver standard with 4 decimal places."
     );

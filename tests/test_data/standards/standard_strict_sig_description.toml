@@ -1,57 +1,46 @@
-# tests/test_data/standards/standard_strict_sig_description.toml
-#
-# Dieser Standard wird verwendet, um die Validierungsregel `required_role` zu testen (ehemals `required_signature_description`).
-# Er verlangt eine zwingend erforderliche Signatur von einer bestimmten Partei (Bob),
-# die eine exakte Rolle (ehemals Beschreibung) enthalten muss.
-
-[metadata]
-name = "Signature Description Test Standard"
+[immutable.identity]
 uuid = "SIG-DESC-TEST-V1-2025"
+name = "Signature Description Test Standard"
 abbreviation = "SDT"
+
+[immutable.blueprint]
+unit = "TestUnit"
+primary_redemption_type = "goods"
+collateral_type = "None"
+
+[immutable.features]
+allow_partial_transfers = false
+balances_are_summable = false
+amount_decimal_places = 2
+privacy_mode = "public"
+allowed_t_types = ["init", "transfer", "split", "merge"]
+
+[immutable.issuance]
+validity_duration_range = ["P0M", "P5Y"]
+issuance_minimum_validity_duration = "P0M"
+additional_signatures_range = [0, 10]
+allowed_signature_roles = ["Official Approval 2025", "guarantor"]
+
+[immutable.transfer]
+requires_recipient_signature = false
+
+[immutable.custom_rules.bob_approval]
+expression = "Voucher.signatures.exists(s, s.signer_id == 'issuer:1oB@did:key:z6Mkoim7ZGcaKdoeD41USV5gmxfiVXXiPDeYt4T9rnEB5zfM' && s.role == 'Official Approval 2025')"
+message = "Official Approval 2025 by Bob is required"
+
+[mutable.metadata]
 issuer_name = "VoucherCore Test Suite"
 homepage_url = "https://example.com"
 
-[template]
-[template.fixed]
-is_divisible = false
-primary_redemption_type = "goods"
-is_summable = false
+[mutable.app_config]
+default_validity_duration = "P1Y"
 
-[template.fixed.nominal_value]
-unit = "TestUnit"
+[mutable.i18n]
+descriptions = { en = "Signature Description Test" }
 
-[template.fixed.collateral]
-type = "None"
-description = "Test collateral"
-redeem_condition = "None"
+[signature]
+# Die `did:key` des Herausgebers, die seinen öffentlichen Schlüssel enthält.
+issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
-[template.fixed.guarantor_info]
-needed_count = 0
-description = "No guarantors needed"
-
-
-[validation]
-# Mindestens eine Transaktion (die 'init'-Transaktion) muss existieren.
-[validation.counts]
-transactions = { min = 1, max = 10 }
-# GEÄNDERT: Die Zählung von 'guarantor_signatures' wurde aus [validation.counts] entfernt.
-# guarantor_signatures = { min = 0, max = 0 } # <-- ENTFERNT
-
-# NEU: Die 'guarantor_signatures'-Regel wird in 'field_group_rules' abgebildet.
-[validation.field_group_rules]
-[validation.field_group_rules.signatures]
-field = "role"
-value_counts = [
-    # Erzwingt, dass 0 Signaturen die Rolle "guarantor" haben dürfen.
-    { value = "guarantor", min = 0, max = 0 }
-]
-
-
-# Eine Signatur von Bob ist erforderlich, und sie MUSS eine bestimmte Rolle haben.
-# Die User-ID von Bob aus dem Test-Setup wird hier hartkodiert.
-[[validation.required_signatures]]
-role_description = "Official Approval by Bob"
-allowed_signer_ids = ["issuer:1oB@did:key:z6Mkoim7ZGcaKdoeD41USV5gmxfiVXXiPDeYt4T9rnEB5zfM"]
-# GEÄNDERT: 'required_signature_description' wurde zu 'required_role' umbenannt.
-required_role = "Official Approval 2025"
-is_mandatory = true
+# Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
+signature = "4tBsXZacvaw2rcDEm15Z9V7tYtGuTWobfXEQvUSHNXV5S7RpFdWwFJk8yUMauAGco8ZqxeG3VkVEfH1LK9peELt"

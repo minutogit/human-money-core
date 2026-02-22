@@ -1,35 +1,49 @@
-# tests/test_data/standards/standard_field_group_rules.toml
-
-# Test-Standard zur isolierten Prüfung der `field_group_rules`.
-
-[metadata]
-name = "Field Group Rules Test Standard"
+[immutable.identity]
 uuid = "FGR-TEST-V1"
+name = "Field Group Rules Test Standard"
 abbreviation = "FGR"
-issuer_name = "Test Council"
 
-[template.fixed]
-primary_redemption_type = "goods_or_services"
-is_summable = true
-is_divisible = true
-
-[template.fixed.nominal_value]
+[immutable.blueprint]
 unit = "TestUnit"
+primary_redemption_type = "goods_or_services"
+collateral_type = ""
 
-[template.fixed.collateral]
-type = ""
-description = ""
-redeem_condition = ""
+[immutable.features]
+allow_partial_transfers = true
+balances_are_summable = true
+amount_decimal_places = 2
+privacy_mode = "public"
+allowed_t_types = ["init", "transfer", "split", "merge"]
 
-[template.fixed.guarantor_info]
-needed_count = 3
-description = "Requires 1 'A' and 2 'B's."
+[immutable.issuance]
+validity_duration_range = ["P0M", "P5Y"]
+issuance_minimum_validity_duration = "P0M"
+additional_signatures_range = [3, 3]
+allowed_signature_roles = ["guarantor"]
 
-[validation]
-[validation.dynamic_rules.gender_A]
+[immutable.transfer]
+requires_recipient_signature = false
+
+[immutable.custom_rules.gender_A]
 expression = "Voucher.signatures.filter(s, has(s.details) && has(s.details.gender) && s.details.gender == 'A').size() == 1"
 message = "Exactly one 'A' is required."
 
-[validation.dynamic_rules.gender_B]
+[immutable.custom_rules.gender_B]
 expression = "Voucher.signatures.filter(s, has(s.details) && has(s.details.gender) && s.details.gender == 'B').size() == 2"
 message = "Exactly two 'B's are required."
+
+[mutable.metadata]
+issuer_name = "Test Council"
+
+[mutable.app_config]
+default_validity_duration = "P1Y"
+
+[mutable.i18n]
+descriptions = { en = "Field Group Rules Test" }
+
+[signature]
+# Die `did:key` des Herausgebers, die seinen öffentlichen Schlüssel enthält.
+issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
+
+# Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
+signature = "3h88HvdfTUFfVUZfzPBFq8XGJb6WL15F1bGecMtwbV2ReJ6yw38PUun2ygVMmKGAXPjMSLN9EzZfNEEXSaCDLryb"

@@ -423,10 +423,10 @@ mod behavioral_rules {
     }
 
     #[test]
-    fn test_create_transaction_when_voucher_is_not_divisible_then_fails_on_split() {
-        let (non_divisible_standard, hash) =
+    fn test_create_transaction_when_voucher_is_not_allow_partial_transfers_then_fails_on_split() {
+        let (non_allow_partial_transfers_standard, hash) =
             test_utils::create_custom_standard(&SILVER_STANDARD.0, |s| {
-                s.template.fixed.is_divisible = false;
+                s.immutable.features.allow_partial_transfers = false;
             });
         let identity = &ACTORS.alice;
         let voucher = create_voucher(
@@ -442,7 +442,7 @@ mod behavioral_rules {
                 },
                 ..Default::default()
             },
-            &non_divisible_standard,
+            &non_allow_partial_transfers_standard,
             &hash,
             &identity.signing_key,
             "en",
@@ -451,7 +451,7 @@ mod behavioral_rules {
 
         let result = create_transaction(
             &voucher,
-            &non_divisible_standard,
+            &non_allow_partial_transfers_standard,
             &identity.user_id,
             &identity.signing_key,
             &derive_holder_key(&voucher, &identity.signing_key),
@@ -460,7 +460,7 @@ mod behavioral_rules {
         );
         assert!(matches!(
             result.unwrap_err(),
-            VoucherCoreError::Manager(VoucherManagerError::VoucherNotDivisible)
+            VoucherCoreError::Manager(VoucherManagerError::VoucherPartialTransferNotAllowed)
         ));
     }
 
@@ -470,18 +470,17 @@ mod behavioral_rules {
             test_utils::create_custom_standard(&MINUTO_STANDARD.0, |s| {
                 // KORREKTUR: Verwende `get_or_insert_with` statt `unwrap()`, um robust
                 // gegen `None`-Werte in der Standard-Definition zu sein.
-                let validation = s.validation.get_or_insert_with(Default::default);
+                
 
                 // 1. Setze die Regel, die wir testen wollen (nur 'init' erlaubt)
-                let b_rules = validation
-                    .behavior_rules
-                    .get_or_insert_with(Default::default);
-                b_rules.allowed_t_types = Some(vec!["init".to_string()]);
+                s.immutable.features.allowed_t_types = vec!["init".to_string()];
+                
+                s.immutable.features.allow_partial_transfers = false;
                 // 3. (FIX) Deaktiviere die Issuance-Firewall, damit der Test nicht daran scheitert.
-                b_rules.issuance_minimum_validity_duration = None;
+                s.immutable.issuance.issuance_minimum_validity_duration = "".to_string();
 
                 // 2. Entschärfe die 'max=1' Transaktions-Regel des Minuto-Standards
-                validation.dynamic_rules.insert(
+                s.immutable.custom_rules.insert(
                     "max_tx".to_string(),
                     human_money_core::models::voucher_standard_definition::DynamicRule {
                         message: "Too many transactions".to_string(),
@@ -572,11 +571,8 @@ mod behavioral_rules {
 
             // Standard A: Mit 1-Jahres-Firewall
             let (standard_a, hash_a) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-                let validation = s.validation.get_or_insert_with(Default::default);
-                let behavior = validation
-                    .behavior_rules
-                    .get_or_insert_with(Default::default);
-                behavior.issuance_minimum_validity_duration = Some("P1Y".to_string());
+                s.immutable.issuance.issuance_minimum_validity_duration = "P1Y".to_string();
+                s.immutable.issuance.validity_duration_range = vec!["P1Y".to_string(), "P2Y".to_string()];
             });
 
             TestSetup {

@@ -3,7 +3,7 @@ use human_money_core::models::layer2_api::{
 };
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::models::voucher::ValueDefinition;
-use human_money_core::models::voucher_standard_definition::PrivacySettings;
+
 use human_money_core::services::voucher_manager::NewVoucherData;
 use human_money_core::test_utils::{self, ACTORS, SILVER_STANDARD};
 use std::collections::{HashMap, HashSet};
@@ -125,9 +125,7 @@ fn test_scenario_1_happy_path() {
 
     // Create and Lock Genesis
     let (flexible_standard, _) = test_utils::create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.privacy = Some(PrivacySettings {
-            mode: "flexible".to_string(),
-        });
+        s.immutable.features.privacy_mode = "public".to_string();
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
     let user_id = app.get_user_id().unwrap();
@@ -185,9 +183,7 @@ fn test_scenario_2_offline_sync() {
 
     // Create Voucher
     let (flexible_standard, _) = test_utils::create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.privacy = Some(PrivacySettings {
-            mode: "flexible".to_string(),
-        });
+        s.immutable.features.privacy_mode = "public".to_string();
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
     let user_id = app.get_user_id().unwrap();
@@ -223,7 +219,7 @@ fn test_scenario_2_offline_sync() {
     let id_david = test_utils::ACTORS.david.identity.user_id.clone();
     let mut standards_toml = HashMap::new();
     standards_toml.insert(
-        flexible_standard.metadata.uuid.clone(),
+        flexible_standard.immutable.identity.uuid.clone(),
         flexible_toml.clone(),
     );
 
@@ -314,9 +310,7 @@ fn test_scenario_3_double_spend_detection() {
 
     // Create Voucher
     let (flexible_standard, _) = test_utils::create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.privacy = Some(PrivacySettings {
-            mode: "flexible".to_string(),
-        });
+        s.immutable.features.privacy_mode = "public".to_string();
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
     let user_id = app.get_user_id().unwrap();
@@ -352,7 +346,7 @@ fn test_scenario_3_double_spend_detection() {
     let id_david = test_utils::ACTORS.david.identity.user_id.clone();
     let mut standards_toml = HashMap::new();
     standards_toml.insert(
-        flexible_standard.metadata.uuid.clone(),
+        flexible_standard.immutable.identity.uuid.clone(),
         flexible_toml.clone(),
     );
     app.create_transfer_bundle(
@@ -420,9 +414,7 @@ fn test_scenario_4_initial_registration() {
 
     // Create Voucher
     let (flexible_standard, _) = test_utils::create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.privacy = Some(PrivacySettings {
-            mode: "flexible".to_string(),
-        });
+        s.immutable.features.privacy_mode = "public".to_string();
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
     let user_id = app.get_user_id().unwrap();

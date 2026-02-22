@@ -27,10 +27,7 @@ fn create_privacy_test_voucher(
     let mut standard = SILVER_STANDARD.0.clone();
 
     // Construct PrivacySettings equivalent
-    let privacy_settings = human_money_core::models::voucher_standard_definition::PrivacySettings {
-        mode: mode.to_string(),
-    };
-    standard.privacy = Some(privacy_settings);
+    standard.immutable.features.privacy_mode = mode.to_string();
 
     // We need to re-hash the standard because validation checks hash
     // BUT: `create_voucher` takes standard and hash.
@@ -39,7 +36,7 @@ fn create_privacy_test_voucher(
 
     let mut standard_no_sig = standard.clone();
     standard_no_sig.signature = None;
-    let new_std_hash = get_hash(to_canonical_json(&standard_no_sig).unwrap());
+    let new_std_hash = get_hash(to_canonical_json(&standard_no_sig.immutable).unwrap());
 
     let voucher = voucher_manager::create_voucher(
         data,
@@ -164,11 +161,11 @@ fn test_privacy_mode_public_fails_anonymous_recipient() {
 }
 
 #[test]
-fn test_privacy_mode_stealth_success() {
+fn test_privacy_mode_private_success() {
     human_money_core::set_signature_bypass(true);
-    let (mut voucher, standard) = create_privacy_test_voucher("stealth");
+    let (mut voucher, standard) = create_privacy_test_voucher("private");
 
-    // Stealth: Sender None, Recipient NOT DID
+    // Private: Sender None, Recipient NOT DID
     let tx = Transaction {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
@@ -186,21 +183,21 @@ fn test_privacy_mode_stealth_success() {
     match result {
         Ok(_) => {}
         Err(VoucherCoreError::Validation(ValidationError::InsufficientFundsInChain { .. })) => {}
-        Err(e) => panic!("Stealth validation failed: {:?}", e),
+        Err(e) => panic!("Private validation failed: {:?}", e),
     }
 }
 
 #[test]
-fn test_privacy_mode_stealth_fails_with_sender_id() {
+fn test_privacy_mode_private_fails_with_sender_id() {
     human_money_core::set_signature_bypass(true);
-    let (mut voucher, standard) = create_privacy_test_voucher("stealth");
+    let (mut voucher, standard) = create_privacy_test_voucher("private");
 
     let tx = Transaction {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
         amount: "10.0000".to_string(),
-        sender_id: Some("did:example:123".to_string()), // INVALID for Stealth
+        sender_id: Some("did:example:123".to_string()), // INVALID for Private
         recipient_id: "hash-of-key".to_string(),
         ..Default::default()
     };
@@ -209,14 +206,14 @@ fn test_privacy_mode_stealth_fails_with_sender_id() {
     let result = voucher_validation::validate_voucher_against_standard(&voucher, &standard);
     assert!(
         matches!(result, Err(VoucherCoreError::Validation(ValidationError::InvalidTransaction(msg))) if msg.contains("has sender_id")),
-        "Should fail if sender_id is present in stealth mode"
+        "Should fail if sender_id is present in private mode"
     );
 }
 
 #[test]
-fn test_privacy_mode_stealth_fails_with_did_recipient() {
+fn test_privacy_mode_private_fails_with_did_recipient() {
     human_money_core::set_signature_bypass(true);
-    let (mut voucher, standard) = create_privacy_test_voucher("stealth");
+    let (mut voucher, standard) = create_privacy_test_voucher("private");
 
     let tx = Transaction {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
@@ -224,7 +221,7 @@ fn test_privacy_mode_stealth_fails_with_did_recipient() {
         t_type: "transfer".to_string(),
         amount: "10.0000".to_string(),
         sender_id: None,
-        recipient_id: "did:key:zABC".to_string(), // INVALID for Stealth
+        recipient_id: "did:key:zABC".to_string(), // INVALID for Private
         ..Default::default()
     };
     voucher.transactions.push(tx);
@@ -232,7 +229,7 @@ fn test_privacy_mode_stealth_fails_with_did_recipient() {
     let result = voucher_validation::validate_voucher_against_standard(&voucher, &standard);
     assert!(
         matches!(result, Err(VoucherCoreError::Validation(ValidationError::InvalidTransaction(msg))) if msg.contains("public DID recipient")),
-        "Should fail if recipient is DID in stealth mode"
+        "Should fail if recipient is DID in private mode"
     );
 }
 
@@ -253,7 +250,7 @@ fn test_privacy_mode_flexible_allows_all() {
     };
     voucher.transactions.push(tx1);
 
-    // Case 2: Stealth-like
+    // Case 2: Private-like
     let tx2 = Transaction {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),

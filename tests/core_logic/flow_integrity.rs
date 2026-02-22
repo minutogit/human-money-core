@@ -17,7 +17,7 @@ fn test_init_transfer_split_chain() {
         ..Default::default()
     };
     let mut voucher_data = create_minuto_voucher_data(creator);
-    voucher_data.nominal_value.amount = "50.0".to_string(); // Silver is divisible
+    voucher_data.nominal_value.amount = "50.0".to_string(); // Silver is allow_partial_transfers
 
     let voucher_0 = create_voucher(
         voucher_data,

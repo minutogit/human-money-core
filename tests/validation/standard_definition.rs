@@ -7,7 +7,7 @@
 use ed25519_dalek::Signer;
 use human_money_core::VoucherCoreError;
 use human_money_core::error::StandardDefinitionError;
-use human_money_core::models::voucher_standard_definition::LocalizedText;
+
 use human_money_core::services::standard_manager::{get_localized_text, verify_and_parse_standard};
 use human_money_core::services::voucher_validation::validate_voucher_against_standard;
 use human_money_core::services::{crypto_utils, utils, voucher_manager};
@@ -91,47 +91,51 @@ mod parsing_and_verification {
 
     #[test]
     fn test_get_localized_text_when_direct_match_exists_then_returns_it() {
-        let texts = vec![
-            LocalizedText {
-                lang: "de".to_string(),
-                text: "Hallo".to_string(),
-            },
-            LocalizedText {
-                lang: "en".to_string(),
-                text: "Hello".to_string(),
-            },
-        ];
+        let mut texts = std::collections::HashMap::new();
+        texts.insert("de".to_string(), "Hallo".to_string());
+        texts.insert("en".to_string(), "Hello".to_string());
         assert_eq!(get_localized_text(&texts, "de"), Some("Hallo"));
     }
 
     #[test]
     fn test_get_localized_text_when_no_match_then_falls_back_to_english() {
-        let texts = vec![
-            LocalizedText {
-                lang: "de".to_string(),
-                text: "Hallo".to_string(),
-            },
-            LocalizedText {
-                lang: "en".to_string(),
-                text: "Hello".to_string(),
-            },
-        ];
+        let mut texts = std::collections::HashMap::new();
+        texts.insert("de".to_string(), "Hallo".to_string());
+        texts.insert("en".to_string(), "Hello".to_string());
         assert_eq!(get_localized_text(&texts, "fr"), Some("Hello"));
     }
 
     #[test]
     fn test_get_localized_text_when_no_english_then_falls_back_to_first() {
-        let texts = vec![
-            LocalizedText {
-                lang: "de".to_string(),
-                text: "Hallo".to_string(),
-            },
-            LocalizedText {
-                lang: "es".to_string(),
-                text: "Hola".to_string(),
-            },
-        ];
+        let mut texts = std::collections::HashMap::new();
+        texts.insert("de".to_string(), "Hallo".to_string());
+        texts.insert("es".to_string(), "Hola".to_string());
         assert_eq!(get_localized_text(&texts, "fr"), Some("Hallo"));
+    }
+
+    #[test]
+    fn test_logic_hash_behavior_when_immutable_or_mutable_changed() {
+        let (base_standard, original_hash) = MINUTO_STANDARD.clone();
+
+        // 1. Change an immutable field
+        let (_immutable_changed_standard, new_hash_immutable) =
+            human_money_core::test_utils::create_custom_standard(&base_standard, |s| {
+                s.immutable.features.amount_decimal_places = 99; // Change from 0 to 99
+            });
+        assert_ne!(
+            original_hash, new_hash_immutable,
+            "Logic hash must change when immutable field changes"
+        );
+
+        // 2. Change a mutable field
+        let (_mutable_changed_standard, new_hash_mutable) =
+            human_money_core::test_utils::create_custom_standard(&base_standard, |s| {
+                s.mutable.metadata.issuer_name = "Modified Issuer Name".to_string();
+            });
+        assert_eq!(
+            original_hash, new_hash_mutable,
+            "Logic hash must NOT change when mutable field changes"
+        );
     }
 }
 
@@ -274,7 +278,7 @@ mod security_hardening {
             generate_signed_standard_toml("voucher_standards/minuto_v1/standard.toml");
         let original_sig_line = format!(
             "signature = \"{}\"",
-            MINUTO_STANDARD.0.signature.as_ref().unwrap().signature
+            MINUTO_STANDARD.0.signature.as_ref().unwrap().signature.clone()
         );
         let placeholder_sig_line = "signature = \"This-is-an-invalid-placeholder-signature\"";
         toml_str = toml_str.replace(&original_sig_line, placeholder_sig_line);
@@ -291,7 +295,7 @@ mod security_hardening {
             generate_signed_standard_toml("voucher_standards/minuto_v1/standard.toml");
         let original_sig_line = format!(
             "signature = \"{}\"",
-            MINUTO_STANDARD.0.signature.as_ref().unwrap().signature
+            MINUTO_STANDARD.0.signature.as_ref().unwrap().signature.clone()
         );
         toml_str = toml_str.replace(&original_sig_line, "signature = \"\"");
         let result = verify_and_parse_standard(&toml_str);
@@ -306,7 +310,7 @@ mod security_hardening {
         let raw_toml_str = include_str!("../../voucher_standards/minuto_v1/standard.toml");
         let manipulated_toml = raw_toml_str
             .replace(
-                &format!("uuid = \"{}\"", MINUTO_STANDARD.0.metadata.uuid),
+                &format!("uuid = \"{}\"", MINUTO_STANDARD.0.immutable.identity.uuid),
                 "uuid = 12345",
             )
             .replace(
@@ -321,7 +325,7 @@ mod security_hardening {
     fn test_create_voucher_when_standard_template_is_incomplete_then_fails() {
         let (incomplete_standard, hash) =
             human_money_core::test_utils::create_custom_standard(&MINUTO_STANDARD.0, |s| {
-                s.template.fixed.nominal_value.unit = "".to_string();
+                s.immutable.blueprint.unit = "".to_string();
             });
         let new_voucher_data = NewVoucherData {
             creator_profile: human_money_core::models::profile::PublicProfile {

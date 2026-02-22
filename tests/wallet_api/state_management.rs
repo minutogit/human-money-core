@@ -165,7 +165,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
         generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let (standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     let mut standards_map = HashMap::new();
-    standards_map.insert(standard.metadata.uuid.clone(), silver_standard_toml.clone());
+    standards_map.insert(standard.immutable.identity.uuid.clone(), silver_standard_toml.clone());
 
     // --- 2. Alice erstellt einen Gutschein (V1) ---
     let voucher_v1 = service_alice
@@ -315,7 +315,7 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
         generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let (standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     let mut standards_map = HashMap::new();
-    standards_map.insert(standard.metadata.uuid.clone(), silver_standard_toml.clone());
+    standards_map.insert(standard.immutable.identity.uuid.clone(), silver_standard_toml.clone());
 
     let voucher_v1 = service_alice
         .create_new_voucher(
@@ -433,7 +433,7 @@ fn api_wallet_save_and_load_fidelity() {
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     let mut standards_map = HashMap::new();
-    standards_map.insert(silver_standard.metadata.uuid.clone(), silver_toml.clone());
+    standards_map.insert(silver_standard.immutable.identity.uuid.clone(), silver_toml.clone());
 
     // --- 2. Wallet A in komplexen Zustand versetzen ---
     {
@@ -481,7 +481,7 @@ fn api_wallet_save_and_load_fidelity() {
             sender_profile_name: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
-        standards_toml.insert(silver_standard.metadata.uuid.clone(), silver_toml.clone());
+        standards_toml.insert(silver_standard.immutable.identity.uuid.clone(), silver_toml.clone());
         service_a
             .create_transfer_bundle(request, &standards_toml, None, Some(password))
             .unwrap();
@@ -527,7 +527,7 @@ fn api_wallet_save_and_load_fidelity() {
             };
 
             let mut standards_toml = std::collections::HashMap::new();
-            standards_toml.insert(silver_standard.metadata.uuid.clone(), silver_toml.clone());
+            standards_toml.insert(silver_standard.immutable.identity.uuid.clone(), silver_toml.clone());
 
             let human_money_core::wallet::CreateBundleResult { bundle_bytes, .. } = service_bob
                 .create_transfer_bundle(request, &standards_toml, None, Some("pwd"))
@@ -556,7 +556,7 @@ fn api_wallet_save_and_load_fidelity() {
             sender_profile_name: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
-        standards_toml.insert(silver_standard.metadata.uuid.clone(), silver_toml.clone());
+        standards_toml.insert(silver_standard.immutable.identity.uuid.clone(), silver_toml.clone());
         service_a
             .create_transfer_bundle(request, &standards_toml, None, Some(password))
             .unwrap();
@@ -753,7 +753,7 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
     let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
     let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     let mut standards_map = HashMap::new();
-    standards_map.insert(silver_standard.metadata.uuid.clone(), silver_toml.clone());
+    standards_map.insert(silver_standard.immutable.identity.uuid.clone(), silver_toml.clone());
 
     let (mut service_initial, profile_info) =
         test_utils::setup_service_with_profile(dir.path(), alice, "Alice Concurrent", password);

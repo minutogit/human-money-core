@@ -10,7 +10,7 @@ use human_money_core::models::layer2_api::{
 };
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::models::voucher::ValueDefinition;
-use human_money_core::models::voucher_standard_definition::PrivacySettings;
+
 use human_money_core::services::voucher_manager::NewVoucherData;
 use human_money_core::test_utils::{self, ACTORS, SILVER_STANDARD, create_custom_standard};
 use std::collections::{HashMap, HashSet};
@@ -171,14 +171,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Standard laden
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.privacy = Some(PrivacySettings {
-            mode: "flexible".to_string(),
-        });
+        s.immutable.features.privacy_mode = "private".to_string();
     });
     let flexible_toml = toml::to_string(&flexible_standard)?;
     let mut standards_toml = HashMap::new();
     standards_toml.insert(
-        flexible_standard.metadata.uuid.clone(),
+        flexible_standard.immutable.identity.uuid.clone(),
         flexible_toml.clone(),
     );
 
@@ -385,7 +383,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             active_anchors.push(ch.clone());
         }
         if tx.receiver_ephemeral_pub_hash.is_none() && tx.change_ephemeral_pub_hash.is_none() {
-            println!("     └─ Keine neuen Stealth-Anker erzeugt.");
+            println!("     └─ Keine neuen Private-Anker erzeugt.");
         }
 
         println!("");

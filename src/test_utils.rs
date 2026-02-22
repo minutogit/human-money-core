@@ -194,7 +194,9 @@ lazy_static! {
             signature: bs58::encode(signature.to_bytes()).into_string(),
         };
         standard.signature = Some(signature_block);
-        (standard, hash_to_sign)
+        let canonical_json_immutable = to_canonical_json(&standard.immutable).unwrap();
+        let logic_hash = get_hash(canonical_json_immutable.as_bytes());
+        (standard, logic_hash)
     };
 
     /// Lädt den Silber-Standard und signiert ihn zur Laufzeit für die Tests.
@@ -210,7 +212,9 @@ lazy_static! {
         let hash = get_hash(canonical_json.as_bytes());
         let signature = sign_ed25519(&issuer.identity.signing_key, hash.as_bytes());
         standard.signature = Some(SignatureBlock { issuer_id: issuer.identity.user_id.clone(), signature: bs58::encode(signature.to_bytes()).into_string() });
-        (standard, hash)
+        let canonical_json_immutable = to_canonical_json(&standard.immutable).unwrap();
+        let logic_hash = get_hash(canonical_json_immutable.as_bytes());
+        (standard, logic_hash)
     };
 
     /// Lädt den `required_signatures`-Test-Standard und signiert ihn zur Laufzeit.
@@ -265,7 +269,9 @@ lazy_static! {
             signature: bs58::encode(signature.to_bytes()).into_string(),
         };
         standard.signature = Some(signature_block);
-        (standard, hash_to_sign)
+        let canonical_json_immutable = to_canonical_json(&standard.immutable).unwrap();
+        let logic_hash = get_hash(canonical_json_immutable.as_bytes());
+        (standard, logic_hash)
     };
 }
 
@@ -329,7 +335,10 @@ pub fn create_custom_standard(
         signature: bs58::encode(signature.to_bytes()).into_string(),
     });
 
-    (standard, hash)
+    let canonical_json_immutable = to_canonical_json(&standard.immutable).unwrap();
+    let logic_hash = get_hash(canonical_json_immutable.as_bytes());
+
+    (standard, logic_hash)
 }
 
 #[allow(dead_code)]
@@ -495,9 +504,7 @@ pub fn add_voucher_to_wallet(
         ..Default::default()
     };
 
-    let mut standard_to_hash = standard.clone();
-    standard_to_hash.signature = None;
-    let standard_hash = get_hash(to_canonical_json(&standard_to_hash)?);
+    let standard_hash = get_hash(to_canonical_json(&standard.immutable)?);
 
     let mut voucher = create_voucher_for_manipulation(
         new_voucher_data,
@@ -770,7 +777,7 @@ pub fn create_voucher_for_manipulation(
         crate::services::voucher_manager::add_iso8601_duration(creation_dt.into(), duration_str)
             .expect("Failed to calculate validity in test helper");
 
-    if let Some(rule) = &standard.template.fixed.round_up_validity_to {
+    if let Some(rule) = &standard.mutable.app_config.round_up_validity_to {
         if rule == "end_of_year" {
             use chrono::{Datelike, TimeZone};
             let rounded_date =
@@ -787,17 +794,17 @@ pub fn create_voucher_for_manipulation(
     let voucher_nonce = bs58::encode(nonce_bytes).into_string();
 
     let description_template = crate::services::standard_manager::get_localized_text(
-        &standard.template.fixed.description,
+        &standard.mutable.i18n.descriptions,
         lang_preference,
     )
     .unwrap_or("");
     let final_description = description_template.replace("{{amount}}", &data.nominal_value.amount);
 
     let mut final_nominal_value = data.nominal_value;
-    final_nominal_value.unit = standard.template.fixed.nominal_value.unit.clone();
-    final_nominal_value.abbreviation = Some(standard.metadata.abbreviation.clone());
+    final_nominal_value.unit = standard.immutable.blueprint.unit.clone();
+    final_nominal_value.abbreviation = Some(standard.immutable.identity.abbreviation.clone());
 
-    let final_collateral = if !standard.template.fixed.collateral.type_.is_empty() {
+    let final_collateral = if !standard.immutable.blueprint.collateral_type.is_empty() {
         Some(Collateral {
             value: ValueDefinition {
                 unit: data
@@ -817,8 +824,8 @@ pub fn create_voucher_for_manipulation(
                     .as_ref()
                     .and_then(|c| c.value.description.clone()),
             },
-            collateral_type: Some(standard.template.fixed.collateral.type_.clone()),
-            redeem_condition: Some(standard.template.fixed.collateral.redeem_condition.clone()),
+            collateral_type: Some(standard.immutable.blueprint.collateral_type.clone()),
+            redeem_condition: None,
         })
     } else {
         None
@@ -826,26 +833,15 @@ pub fn create_voucher_for_manipulation(
 
     let mut voucher = Voucher {
         voucher_standard: crate::models::voucher::VoucherStandard {
-            name: standard.metadata.name.clone(),
-            uuid: standard.metadata.uuid.clone(),
+            name: standard.immutable.identity.name.clone(),
+            uuid: standard.immutable.identity.uuid.clone(),
             standard_definition_hash: standard_hash.to_string(),
             template: crate::models::voucher::VoucherTemplateData {
                 description: final_description,
                 primary_redemption_type: "goods_or_services".to_string(),
-                divisible: standard.template.fixed.is_divisible,
-                standard_minimum_issuance_validity: standard
-                    .validation
-                    .as_ref()
-                    .and_then(|v| v.behavior_rules.as_ref())
-                    .and_then(|b| b.issuance_minimum_validity_duration.clone())
-                    .unwrap_or_default(),
-                signature_requirements_description: standard
-                    .template
-                    .fixed
-                    .guarantor_info
-                    .description
-                    .clone(),
-                footnote: standard.template.fixed.footnote.clone().unwrap_or_default(),
+                allow_partial_transfers: standard.immutable.features.allow_partial_transfers,
+                issuance_minimum_validity_duration: standard.immutable.issuance.issuance_minimum_validity_duration.clone(),
+                footnote: crate::services::standard_manager::get_localized_text(&standard.mutable.i18n.footnotes, lang_preference).unwrap_or("").to_string(),
             },
         },
         voucher_id: "".to_string(),

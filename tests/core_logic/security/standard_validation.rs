@@ -24,9 +24,8 @@ mod required_signatures_validation {
             test_utils::REQUIRED_SIG_STANDARD.1.clone(),
         );
 
-        let validation = standard.validation.as_mut().unwrap();
-        validation.dynamic_rules.insert(
-            "strict_approver".to_string(),
+        standard.immutable.custom_rules.insert(
+            "test_rule".to_string(),
             human_money_core::models::voucher_standard_definition::DynamicRule {
                 message: "Official Approver".to_string(),
                 expression: format!("Voucher.signatures.filter(s, s.signer_id == '{}' && s.role == 'Official Approver').size() == 1", ACTORS.charlie.user_id),
@@ -37,7 +36,7 @@ mod required_signatures_validation {
         let mut standard_to_hash = standard.clone();
         standard_to_hash.signature = None;
         let new_hash = human_money_core::services::crypto_utils::get_hash(
-            human_money_core::to_canonical_json(&standard_to_hash).unwrap(),
+            human_money_core::to_canonical_json(&standard_to_hash.immutable).unwrap(),
         );
 
         (standard, new_hash)
@@ -263,7 +262,7 @@ mod required_signatures_validation {
         // `voucher_validation.rs` prüfen wir nun auf den spezifischeren, korrekten Fehler.
         assert!(matches!(
             validation_result.unwrap_err(),
-            VoucherCoreError::Validation(ValidationError::CreatorAsGuarantor { .. })
+            VoucherCoreError::Validation(ValidationError::CreatorAsAdditionalSigner { .. })
         ));
     }
 }

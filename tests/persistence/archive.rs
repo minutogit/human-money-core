@@ -113,7 +113,7 @@ fn test_voucher_archiving_on_full_spend() {
     };
 
     let mut standards = std::collections::HashMap::new();
-    standards.insert(standard.metadata.uuid.clone(), standard.clone());
+    standards.insert(standard.immutable.identity.uuid.clone(), standard.clone());
 
     let human_money_core::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
         .execute_multi_transfer_and_bundle(

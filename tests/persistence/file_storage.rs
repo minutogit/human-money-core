@@ -358,7 +358,7 @@ fn test_save_and_load_with_bundle_history() {
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(
-        silver_standard.metadata.uuid.clone(),
+        silver_standard.immutable.identity.uuid.clone(),
         silver_standard.clone(),
     );
 

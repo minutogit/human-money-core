@@ -69,7 +69,7 @@ Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_
 
 - **`[template]`**: Definiert Werte (z.B. die `unit` des Nennwerts), die bei der Erstellung eines neuen Gutscheins direkt in diesen kopiert werden.
 
-- **`[validation]`**: Beinhaltet Regeln (z.B. `required_voucher_fields`, `guarantor_rules`), die zur Überprüfung eines Gutscheins verwendet werden.
+- **`[validation]`**: Beinhaltet feste Verhaltensregeln (`behavior_rules`) sowie dynamische, durch die CEL-Engine (Common Expression Language) evaluierte Geschäftsregeln (`dynamic_rules`), die zur detaillierten Überprüfung eines Gutscheins verwendet werden.
 
 ```json
 {
@@ -706,11 +706,8 @@ Dieses Modul stellt die Kernlogik für die Erstellung und Verarbeitung von Gutsc
 Dieses Modul enthält die Logik zur Validierung eines `Voucher`-Objekts gegen die Regeln seines Standards. **Die Validierungslogik wurde erheblich gehärtet.**
 
 - `pub fn validate_voucher_against_standard(voucher: &Voucher, standard: &VoucherStandardDefinition) -> Result<(), VoucherCoreError>`: Führt eine umfassende Prüfung des Gutscheins durch, inklusive der korrekten Verkettung unter Einbeziehung des `voucher_nonce`, der Validierung der vereinfachten Transaktions-Signatur und neuer Geschäftsregeln (z.B. keine Transaktionen an sich selbst).
-- `pub fn validate_transaction_count(voucher: &Voucher, rules: &CountRules) -> Result<(), ValidationError>`: Prüft die quantitativen Regeln aus dem Standard (z.B. Anzahl der Transaktionen).
-- `pub fn validate_required_signatures(voucher: &Voucher, rules: &[RequiredSignatureRule]) -> Result<(), ValidationError>`: Prüft, ob alle im Standard geforderten Signaturen vorhanden und kryptographisch gültig sind.
-- `pub fn validate_content_rules(voucher_json: &Value, rules: &ContentRules) -> Result<(), ValidationError>`: Prüft die Inhaltsregeln (feste Werte, erlaubte Werte, Regex-Muster).
-- `pub fn validate_behavior_rules(voucher: &Voucher, rules: &BehaviorRules, creation_dt: chrono::DateTime<chrono::Utc>, valid_until_dt: chrono::DateTime<chrono::Utc>) -> Result<(), ValidationError>`: Prüft Verhaltensregeln (erlaubte Transaktionstypen, Gültigkeitsdauer).
-- `pub fn validate_field_group_rules(voucher_json: &Value, rules: &HashMap<String, FieldGroupRule>) -> Result<(), ValidationError>`: Prüft Regeln, die sich auf die Werteverteilung von Feldern in einer Liste von Objekten beziehen.
+- Nutzt die **CEL-Engine** (`DynamicPolicyEngine`), um datengesteuerte Geschäftsregeln (`dynamic_rules`) auszuwerten. Dies ersetzt die alten, hartkodierten Zähl- und Inhaltsprüfungen (wie `CountRules` oder `FieldGroupRule`) durch hochflexible, vom Standard-Ersteller definierte Ausdrücke.
+- `pub fn validate_behavior_rules(...) -> Result<(), ValidationError>`: Prüft die systemkritischen Kern-Verhaltensregeln (`behavior_rules`), wie erlaubte Transaktionstypen und Gültigkeitsgrenzen.
 - Überprüft die **Konsistenz des eingebetteten Standard-Hashes** mit dem Hash des aktuellen Standard-Objekts, um sicherzustellen, dass der Gutschein immer gegen die exakte Version des Standards validiert wird, mit der er erstellt wurde.
 - Überprüft, ob der **Transaktionstyp** (`t_type`) laut Standard erlaubt ist.
 - Überprüft die Integrität und kryptographische Gültigkeit aller **zusätzlichen Signaturen** (`additional_signatures`).
@@ -781,9 +778,7 @@ Das Wallet-Modul und die AppService-Schnittstelle wurden um neue Informationsstr
   - `TemplateFixed`, `TemplateDefault`: Feste und standardmäßige Vorlagen.
   - `VoucherTemplate`: Vorlage für neue Gutscheine.
   - `SignatureBlock`: Kryptographische Signatur des Standards.
-  - `MinMax`, `CountRules`, `RequiredSignatureRule`: Validierungsregeln.
-  - `ContentRules`, `BehaviorRules`: Inhalts- und Verhaltensregeln.
-  - `ValueCountRule`, `FieldGroupRule`: Gruppenprüfungen.
+  - `DynamicRule`, `BehaviorRules`: Strukturen für die CEL-basierten dynamischen Regeln und die festen Verhaltensregeln.
   - `Validation`: Hauptstruktur für Validierungsregeln.
 
 ### `tests/` Verzeichnis - Wichtige Sicherheits- & Architekturtests
