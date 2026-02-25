@@ -50,10 +50,7 @@ fn test_prevent_signature_reuse_in_init() {
     ));
 
     // Validate voucher1 - this must succeed
-    assert!(
-        validate_voucher_against_standard(&voucher1, &standard).is_ok(),
-        "Voucher 1 must be valid"
-    );
+    validate_voucher_against_standard(&voucher1, &standard).unwrap();
 
     // The attacker modifies the init transaction to create a separate parallel copy
     // of the voucher on Layer 2 (e.g. by changing the initial t_time slightly, changing the transaction hash)
@@ -128,4 +125,115 @@ fn test_prevent_signature_reuse_in_init() {
         result.is_err(),
         "VULNERABILITY: Voucher 2 with stolen guarantor signatures from Voucher 1 was accepted!"
     );
+}
+
+#[test]
+fn test_reject_same_key_different_prefix() {
+    set_signature_bypass(false);
+    let (standard, standard_hash) = (BASE_STANDARD.0.clone(), BASE_STANDARD.1.clone());
+
+    let identity = &ACTORS.issuer; // Creator
+    let creator = human_money_core::models::profile::PublicProfile {
+        id: Some(identity.user_id.clone()),
+        ..Default::default()
+    };
+    let voucher_data = create_minuto_voucher_data(creator.clone());
+
+    let mut voucher = create_voucher(
+        voucher_data,
+        &standard,
+        &standard_hash,
+        &identity.signing_key,
+        "en",
+    )
+    .unwrap();
+
+    let g1 = &ACTORS.guarantor1;
+    voucher.signatures.push(create_guarantor_signature(
+        &voucher,
+        g1,
+        "G1",
+        "guarantor",
+        "1",
+    ));
+
+    // Create a fake guarantor 2 that uses the CREATOR'S key but a different prefix
+    let mut fake_g2 = identity.clone();
+    fake_g2.identity.user_id = format!("private:fake@{}", identity.user_id.split('@').last().unwrap());
+    
+    voucher.signatures.push(create_guarantor_signature(
+        &voucher,
+        &fake_g2,
+        "G2",
+        "guarantor",
+        "2",
+    ));
+
+    let result = validate_voucher_against_standard(&voucher, &standard);
+    assert!(
+        result.is_err(),
+        "Voucher accepted despite creator's key being reused for guarantor role!"
+    );
+    
+    if let Err(human_money_core::error::VoucherCoreError::Validation(human_money_core::error::ValidationError::DuplicateIdentityDetected { .. })) = result {
+        // Expected
+    } else {
+        panic!("Expected DuplicateIdentityDetected error, got {:?}", result);
+    }
+}
+
+#[test]
+fn test_reject_two_guarantors_same_key() {
+    set_signature_bypass(false);
+    let (standard, standard_hash) = (BASE_STANDARD.0.clone(), BASE_STANDARD.1.clone());
+
+    let identity = &ACTORS.issuer;
+    let creator = human_money_core::models::profile::PublicProfile {
+        id: Some(identity.user_id.clone()),
+        ..Default::default()
+    };
+    let voucher_data = create_minuto_voucher_data(creator.clone());
+
+    let mut voucher = create_voucher(
+        voucher_data,
+        &standard,
+        &standard_hash,
+        &identity.signing_key,
+        "en",
+    )
+    .unwrap();
+
+    // Use guarantor1
+    let g1 = &ACTORS.guarantor1;
+    voucher.signatures.push(create_guarantor_signature(
+        &voucher,
+        g1,
+        "G1",
+        "guarantor",
+        "1",
+    ));
+
+    // Use guarantor1's key again but different prefix
+    let mut fake_g2 = g1.clone();
+    fake_g2.identity.user_id = format!("private:fake@{}", g1.user_id.split('@').last().unwrap());
+    
+    voucher.signatures.push(create_guarantor_signature(
+        &voucher,
+        &fake_g2,
+        "G2",
+        "guarantor",
+        "2",
+    ));
+
+    let result = validate_voucher_against_standard(&voucher, &standard);
+    assert!(
+        result.is_err(),
+        "Voucher accepted despite identical guarantor keys!"
+    );
+    
+    if let Err(human_money_core::error::VoucherCoreError::Validation(human_money_core::error::ValidationError::DuplicateIdentityDetected { .. })) = result {
+        // Expected
+    } else {
+        panic!("Expected DuplicateIdentityDetected error, got {:?}", result);
+    }
 }

@@ -81,6 +81,14 @@ Dieses Modell beschreibt, wie das System spezifische Angriffe durch kryptographi
 
 - **Ergebnis:** Ohne den passenden privaten Schlüssel des vertrauenswürdigen Servers kann kein Angreifer valide Urteile fälschen. Das Wallet ignoriert unsignierte oder falsch signierte Antworten.
 
+### 2.6 Angriff: "Role-Obfuscation" (Rollen-Verschleierung)
+
+- **Szenario:** Ein Angreifer versucht, die Regeln eines Gutscheins zu umgehen, indem er mehrere Rollen gleichzeitig einnimmt (z. B. Ersteller und Bürge). Er nutzt dabei unterschiedliche User-ID-Instanzen (`firma:abc@did:key:xyz...` und `privat:xyz@did:key:xyz...`), die jedoch auf demselben kryptographischen Schlüssel basieren.
+
+- **Abwehr (Public Key Firewall):** Die Validierungs-Engine arbeitet auf Layer 1 strikt auf den extrahierten 32-Byte Public Keys. Jede did:key Identität darf pro Gutschein-Container exakt eine Signatur leisten.
+
+- **Ergebnis:** Die Verschleierung der Identität durch unterschiedliche Präfixe oder Aliase schlägt fehl, da der Core die binäre Identität vergleicht. Dies erzwingt die ökonomische Trennung der Akteure.
+
 ## 3. Zusammenfassung und Sicherheits-Nuancen
 
 |   |   |   |

@@ -367,7 +367,7 @@ fn verify_signatures(
     voucher: &Voucher,
     standard: &VoucherStandardDefinition,
 ) -> Result<(), VoucherCoreError> {
-    let mut seen_signers = HashSet::new();
+    let mut seen_signers: HashSet<[u8; 32]> = HashSet::new();
 
     // Extrahiere die ID der ersten Transaktion (Init-Transaktion)
     let init_t_id = voucher
@@ -389,16 +389,20 @@ fn verify_signatures(
     let mut additional_sig_count = 0;
 
     for signature_obj in &voucher.signatures {
-        // --- FIX (FEHLER 3): Reihenfolge geändert ---
-        // Sicherheitsprüfung, ob der Ersteller versucht, als zusätzlicher Unterzeichner (z.B. Bürge) zu agieren.
-        // Muss VOR der Duplikatsprüfung stattfinden.
+        // --- ANTI-SIGNATURE-REUSE-FIREWALL (Rationale) ---
+        // Ein Gutschein-Standard (wie Minuto) verlangt oft unabhängige Bürgen.
+        // Um zu verhindern, dass ein Nutzer sich selbst besichert oder mehrere Bürgen-Rollen
+        // gleichzeitig einnimmt (Sybil-Angriff auf den Gutschein), erzwingen wir die
+        // Eindeutigkeit der kryptographischen Identität.
+        //
+        // WICHTIG: Wir prüfen hier den 32-Byte Public Key direkt. Ein Vergleich der 
+        // signer_id Strings würde nicht ausreichen, da ein Nutzer unterschiedliche IDs
+        // (mit verschiedenen Präfixen) für denselben Schlüssel verwenden könnte.
+        // --- SIGNATURE ROLE VALIDATION ---
         if signature_obj.role != "creator" {
-            if Some(&signature_obj.signer_id) == voucher.creator_profile.id.as_ref() {
-                return Err(ValidationError::CreatorAsAdditionalSigner {
-                    creator_id: voucher.creator_profile.id.clone().unwrap_or_default(),
-                }
-                .into());
-            }
+            // Note: We no longer need to check if the creator is trying to sign again here, 
+            // because the `DuplicateIdentityDetected` check below will catch it if they try 
+            // to use the same cryptographic key for multiple roles.
 
             if !allowed_roles.contains(&signature_obj.role) {
                 return Err(ValidationError::BusinessRuleViolated(format!(
@@ -411,13 +415,18 @@ fn verify_signatures(
             additional_sig_count += 1;
         }
 
-        // Prüfung auf doppelte Unterzeichner (ein Unterzeichner darf nur einmal pro Rolle signieren)
-        if !seen_signers.insert((signature_obj.signer_id.clone(), signature_obj.role.clone())) {
-            return Err(ValidationError::DuplicateSignature {
+        let pk = match get_pubkey_from_user_id(&signature_obj.signer_id) {
+            Ok(pk) => pk,
+            Err(e) => return Err(ValidationError::InvalidCreatorId(e).into()),
+        };
+
+        if !seen_signers.insert(pk.to_bytes()) {
+            return Err(ValidationError::DuplicateIdentityDetected {
                 signer_id: signature_obj.signer_id.clone(),
             }
             .into());
         }
+
         // Prüfung auf chronologische Korrektheit der Signatur.
         // Eine Signatur kann nicht vor der Erstellung des Gutscheins existieren.
         if signature_obj.signature_time < voucher.creation_date {

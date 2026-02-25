@@ -219,6 +219,10 @@ pub enum ValidationError {
     #[error("Duplicate signature found for signer: {signer_id}. A signer can only sign once per role.")]
     DuplicateSignature { signer_id: String },
 
+    /// Eine Identität (Public Key) wurde mehrfach als Ersteller oder Unterzeichner verwendet, auch wenn die ID abweicht.
+    #[error("Duplicate identity detected for signer: {signer_id}. The underlying cryptographic key is already in use for this voucher.")]
+    DuplicateIdentityDetected { signer_id: String },
+
     /// Ein Zeitstempel in der Kette ist nicht chronologisch korrekt.
     #[error(
         "Invalid time order for {entity} '{id}': timestamp '{time2}' is not after previous timestamp '{time1}'."

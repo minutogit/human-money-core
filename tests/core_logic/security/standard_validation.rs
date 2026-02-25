@@ -258,11 +258,12 @@ mod required_signatures_validation {
         }
         // --- Ende DEBUG-Ausgabe ---
 
-        // HINWEIS: Mit der Implementierung von `CreatorAsGuarantor` in `error.rs` und
-        // `voucher_validation.rs` prüfen wir nun auf den spezifischeren, korrekten Fehler.
+        // HINWEIS: Mit der Implementierung der "Anti-Signature-Reuse-Firewall"
+        // in `voucher_validation.rs` prüfen wir nun auf den kryptographischen 
+        // Schlüssel, der den Fehler `DuplicateIdentityDetected` auslöst.
         assert!(matches!(
             validation_result.unwrap_err(),
-            VoucherCoreError::Validation(ValidationError::CreatorAsAdditionalSigner { .. })
+            VoucherCoreError::Validation(ValidationError::DuplicateIdentityDetected { .. })
         ));
     }
 }

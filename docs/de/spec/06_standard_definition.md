@@ -44,6 +44,12 @@ Um eine Währung systemübergreifend zu verfolgen und abzusichern, nutzt der Cor
 * **Definition:** Der SHA-256 Hash der `[immutable]` Zone.
 * **Zweck:** Wird bei der Initialisierung (`init`) eines Gutscheins fest in den Header des Gutscheins geschrieben. Der Core-Validator prüft bei jeder Transaktion: *Passt der Logic-Hash im Gutschein zu dem Logic-Hash der `standard.toml`, die zur Validierung herangezogen wird?* Dies garantiert, dass niemand die Spielregeln eines *bereits existierenden* Gutscheins nachträglich ändern kann.
 
+### 3.3 Eindeutigkeit der Unterzeichner (Anti-Signature-Reuse-Firewall)
+* **Mechanismus:** Bei der Erstellung und Validierung eines Gutscheins wird streng geprüft, dass ein kryptographischer Schlüssel (`did:key`) niemals mehrfach in unterschiedlichen Rollen (z.B. als Ersteller und zeitgleich als Bürge, oder als zwei separate Bürgen) auftritt.
+* **Ökonomische Ratio:** Dies verhindert Zirkelschlüsse und "Sich-selbst-Besicherung" (Self-Guarantee). Ein Gutschein ist nur so stark wie die Unabhängigkeit seiner Unterzeichner.
+* **Präfix-Unabhängigkeit:** Die Prüfung erfolgt ausschließlich auf Ebene der extrahierten 32-Byte Public Keys. Unterschiedliche User-IDs, die denselben Schlüssel lediglich durch abweichende Präfixe verschleiern (z.B. `firma:123@did:key:abc...` und `privat:456@did:key:abc...`), werden erkannt und führen zur sofortigen Ungültigkeit des Gutscheins.
+* **Core-Regel:** Dies ist eine harte, auf Layer 1 des `human_money_core` verankerte Sicherheitsregel. Sie kann durch keinerlei CEL-Regeln aufgeweicht oder umgangen werden.
+
 ---
 
 ## 4. Mehrsprachigkeit und i18n-Autarkie
