@@ -6,7 +6,7 @@ abbreviation = "PNF"
 [immutable.blueprint]
 unit = "TestUnit"
 primary_redemption_type = "goods_or_services"
-collateral_type = ""
+collateral_type = "personal_guarantee"
 
 [immutable.features]
 allow_partial_transfers = true
@@ -21,8 +21,6 @@ issuance_minimum_validity_duration = "P0M"
 additional_signatures_range = [0, 0]
 allowed_signature_roles = ["guarantor"]
 
-[immutable.transfer]
-requires_recipient_signature = false
 
 [immutable.custom_rules.non_existent_field]
 # Diese Regel zielt auf ein Feld, das im Basis-Gutschein nicht existiert.
@@ -43,4 +41,4 @@ descriptions = { en = "Path Not Found Test" }
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "pGGi15AjrAX8qpWqn2sPDMTBW44YisH8wnaLTf3VUjWEbwYeriAPmfXcUCQFXRX79UZAjc12PUAQ9SkFetXzzYT"
+signature = "3L6Dmv1NqXPiJG52xV7jGoknaU4EaAJurWQxr3K1ydv4HVYtX2YqzGf8AUqCX9hLqc4yvMM56V8TFWjRcszNMVcY"

@@ -183,7 +183,7 @@ fn test_l2_double_spend_quarantine() {
     let user_id = app.get_user_id().unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = "public".to_string();
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
 
@@ -347,7 +347,7 @@ fn test_l2_signature_payload_manipulation() {
     let user_id = app.get_user_id().unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = "public".to_string();
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
 
@@ -468,7 +468,7 @@ fn test_l2_fake_double_spend_protection() {
     let user_id = app.get_user_id().unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = "public".to_string();
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
 
@@ -651,7 +651,7 @@ fn test_l2_voucher_id_mixup_protection() {
     let user_id = app.get_user_id().unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = "public".to_string();
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
 

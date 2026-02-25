@@ -139,17 +139,8 @@ pub fn create_voucher(
         )
         .into());
     }
-    if verified_standard
-        .immutable
-        .blueprint
-        .primary_redemption_type
-        .is_empty()
-    {
-        return Err(VoucherManagerError::InvalidTemplateValue(
-            "immutable.blueprint.primary_redemption_type cannot be empty".to_string(),
-        )
-        .into());
-    }
+    // Enums are strictly typed, so they are never "empty" in the sense a string could be.
+    // The TOML parser will ensure they match one of the valid variants.
 
     let creation_date_str = get_current_timestamp();
     let nonce_bytes = rand::thread_rng().r#gen::<[u8; 16]>();
@@ -191,6 +182,20 @@ pub fn create_voucher(
         }
     }
 
+    // CHECK MAX RANGE
+    if let Some(max_duration_str) = verified_standard.immutable.issuance.validity_duration_range.get(1) {
+        if !max_duration_str.is_empty() {
+            let max_allowed_dt = add_iso8601_duration(creation_dt, max_duration_str)?;
+            if initial_valid_until_dt > max_allowed_dt {
+                return Err(VoucherManagerError::InvalidValidityDuration(format!(
+                    "Initial validity ({}) exceeds the maximum allowed standard validity ({}).",
+                    initial_valid_until_dt.to_rfc3339(),
+                    max_allowed_dt.to_rfc3339()
+                )).into());
+            }
+        }
+    }
+
     let final_valid_until_dt =
         if let Some(rounding_str) = &verified_standard.mutable.app_config.round_up_validity_to {
             round_up_date(initial_valid_until_dt, rounding_str)?
@@ -207,20 +212,18 @@ pub fn create_voucher(
 
     // KORRIGIERT: Collateral wird NUR befüllt, wenn der Standard es erlaubt
     // UND der Benutzer (data) es bereitstellt.
-    let final_collateral = if !verified_standard.immutable.blueprint.collateral_type.is_empty() {
-        // Standard allows it. Now check if user provided it.
-        data.collateral.map(|user_collateral| {
-            // User provided it. Use their values but enforce standard's type/condition.
-            Collateral {
-                value: user_collateral.value, // Take the user's value block directly
-                // Enforce standard's type and condition
-                collateral_type: Some(verified_standard.immutable.blueprint.collateral_type.clone()),
-                redeem_condition: None,
-            }
-        }) // .map() gracefully handles None -> None
-    } else {
-        None // Standard forbids it.
-    };
+    // KORRIGIERT: Collateral wird befüllt, wenn der Benutzer (data) es bereitstellt.
+    let final_collateral = data.collateral.map(|user_collateral| {
+        let col_type_str = serde_json::to_value(&verified_standard.immutable.blueprint.collateral_type)
+            .ok()
+            .and_then(|v| v.as_str().map(|s| s.to_string()));
+        
+        Collateral {
+            value: user_collateral.value,
+            collateral_type: col_type_str,
+            redeem_condition: None,
+        }
+    });
 
     let description_template = standard_manager::get_localized_text(
         &verified_standard.mutable.i18n.descriptions,
@@ -236,11 +239,10 @@ pub fn create_voucher(
         standard_definition_hash: standard_hash.to_string(),
         template: crate::models::voucher::VoucherTemplateData {
             description: final_description.clone(),
-            primary_redemption_type: verified_standard
-                .immutable
-                .blueprint
-                .primary_redemption_type
-                .clone(),
+            primary_redemption_type: serde_json::to_value(&verified_standard.immutable.blueprint.primary_redemption_type)
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_default(),
             allow_partial_transfers: verified_standard.immutable.features.allow_partial_transfers,
             issuance_minimum_validity_duration: verified_standard.immutable.issuance.issuance_minimum_validity_duration.clone(),
             footnote: standard_manager::get_localized_text(&verified_standard.mutable.i18n.footnotes, lang_preference).unwrap_or("").to_string(),
@@ -603,36 +605,25 @@ pub fn create_transaction(
     let t_time = get_current_timestamp();
 
     // PRIVACY MODE CHECK
-    let privacy_mode = standard.immutable.features.privacy_mode.as_str();
+    use crate::models::voucher_standard_definition::PrivacyMode;
+    let privacy_mode = &standard.immutable.features.privacy_mode;
 
     // Determine Sender ID Visibility
     let final_sender_id = match privacy_mode {
-        "public" => Some(sender_id.to_string()),
-        "private" => None,
-        "flexible" => {
-            // Flexible: Sender decides. For now, we mimic "public" behavior if passed,
-            // later we might want an explict flag in `create_transaction` args.
-            // Assumption: If this function is called with a sender_id, we use it?
-            // Or should we add an Argument `suppress_identity`?
+        PrivacyMode::Public => Some(sender_id.to_string()),
+        PrivacyMode::Private => None,
+        PrivacyMode::Flexible => {
+            // Flexible: Sender decides.
             // For this implementation: We use sender_id as explicit intent to be public.
-            // (If we wanted anonymous, caller should handle it, but here we require sender_id for Trap generation anyway).
-            // Let's assume for Flexible we default to Public unless configured otherwise.
-            // TODO: Add parameter to control this. For now: Public.
             Some(sender_id.to_string())
         }
-        _ => {
-            return Err(VoucherManagerError::Generic(format!(
-                "Unknown privacy mode: {}",
-                privacy_mode
-            ))
-            .into());
-        }
     };
+
 
     // Validate Recipient ID against Mode
     let recipient_is_did = recipient_id.starts_with("did:") || recipient_id.contains("@did:");
     let recipient_id_check = match privacy_mode {
-        "public" => {
+        PrivacyMode::Public => {
             if !recipient_is_did {
                 return Err(VoucherManagerError::Generic(
                     "Public mode requires DID recipient.".to_string(),
@@ -641,7 +632,7 @@ pub fn create_transaction(
             }
             recipient_id
         }
-        "private" => {
+        PrivacyMode::Private => {
             if recipient_is_did {
                 return Err(VoucherManagerError::Generic(
                     "Private mode forbids DID recipient.".to_string(),
@@ -650,8 +641,7 @@ pub fn create_transaction(
             }
             recipient_id
         }
-        "flexible" => recipient_id, // Both allowed
-        _ => recipient_id,
+        PrivacyMode::Flexible => recipient_id, // Both allowed
     };
 
     // 1. REVEAL: Der aktuelle Ephemeral Key wird veröffentlicht.

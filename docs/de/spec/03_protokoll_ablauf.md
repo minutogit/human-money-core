@@ -130,3 +130,11 @@ Alice (`minuto:bth@did:alice`) sendet Guthaben an Bob.
 - **Proof:** Implementiere das Schnorr-Protokoll strikt nach Definition, um Interoperabilität zu gewährleisten.
     
 - **Neu:** Beachte die Privacy-Regeln aus Teil 2!
+    
+## 4. Zukünftige Erweiterungen (TODOs)
+
+### 4.1 Signierte Empfangsbestätigung (Signed Receipt)
+**Konzept:** Für kritische Zahlungen oder geschäftliche Transaktionen soll optional eine kryptografisch signierte Quittung vom Empfänger angefordert werden können. 
+- Dies dient als rechtssicherer Nachweis des Erhalts.
+- Ermöglicht dem Empfänger eine Prüfung der Transaktionsdetails (Betrag, Verwendungszweck) vor der finalen Annahme.
+- Muss so implementiert werden, dass es den atomaren Charakter der Transaktion nicht gefährdet (z.B. via Layer-2-Handshake vor der On-Chain/Ledger-Finalisierung).

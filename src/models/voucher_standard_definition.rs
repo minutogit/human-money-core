@@ -22,10 +22,38 @@ pub struct ImmutableIdentity {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PrimaryRedemptionType {
+    #[default]
+    GoodsOrServices,
+    Time,
+    PhysicalAsset,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CollateralType {
+    #[default]
+    PersonalGuarantee,
+    FiatBacked,
+    CryptoBacked,
+    PhysicalAsset,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PrivacyMode {
+    #[default]
+    Public,
+    Private,
+    Flexible,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct ImmutableBlueprint {
     pub unit: String,
-    pub primary_redemption_type: String,
-    pub collateral_type: String,
+    pub primary_redemption_type: PrimaryRedemptionType,
+    pub collateral_type: CollateralType,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
@@ -33,7 +61,7 @@ pub struct ImmutableFeatures {
     pub allow_partial_transfers: bool,
     pub balances_are_summable: bool,
     pub amount_decimal_places: u8,
-    pub privacy_mode: String,
+    pub privacy_mode: PrivacyMode,
     pub allowed_t_types: Vec<String>,
 }
 
@@ -45,10 +73,7 @@ pub struct ImmutableIssuance {
     pub allowed_signature_roles: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-pub struct ImmutableTransfer {
-    pub requires_recipient_signature: bool,
-}
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct ImmutableZone {
@@ -56,7 +81,6 @@ pub struct ImmutableZone {
     pub blueprint: ImmutableBlueprint,
     pub features: ImmutableFeatures,
     pub issuance: ImmutableIssuance,
-    pub transfer: ImmutableTransfer,
     #[serde(default)]
     pub custom_rules: HashMap<String, DynamicRule>,
 }

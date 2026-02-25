@@ -12,7 +12,7 @@ fn test_public_mode_enforcement() {
         setup_voucher_with_one_tx();
     let mut standard = standard_ref.clone();
 
-    standard.immutable.features.privacy_mode = "public".to_string();
+    standard.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     // Set matching validity in standard to satisfy validation checks
     standard.immutable.issuance.issuance_minimum_validity_duration = "P3Y".to_string();
     // Re-hash standard
@@ -109,7 +109,7 @@ fn test_private_mode_enforcement() {
         setup_voucher_with_one_tx();
     let mut standard = standard_ref.clone();
 
-    standard.immutable.features.privacy_mode = "private".to_string();
+    standard.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Private;
 
     let mut std_no_sig = standard.clone();
     std_no_sig.signature = None;
@@ -194,7 +194,7 @@ fn test_flexible_mode_hybrid_behavior() {
         setup_voucher_with_one_tx();
     let mut standard = standard_ref.clone();
 
-    standard.immutable.features.privacy_mode = "flexible".to_string();
+    standard.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Flexible;
     let mut std_no_sig = standard.clone();
     std_no_sig.signature = None;
     let new_hash = get_hash(to_canonical_json(&std_no_sig.immutable).unwrap());

@@ -125,7 +125,7 @@ fn test_scenario_1_happy_path() {
 
     // Create and Lock Genesis
     let (flexible_standard, _) = test_utils::create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = "public".to_string();
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
     let user_id = app.get_user_id().unwrap();
@@ -183,7 +183,7 @@ fn test_scenario_2_offline_sync() {
 
     // Create Voucher
     let (flexible_standard, _) = test_utils::create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = "public".to_string();
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
     let user_id = app.get_user_id().unwrap();
@@ -310,7 +310,7 @@ fn test_scenario_3_double_spend_detection() {
 
     // Create Voucher
     let (flexible_standard, _) = test_utils::create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = "public".to_string();
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
     let user_id = app.get_user_id().unwrap();
@@ -414,7 +414,7 @@ fn test_scenario_4_initial_registration() {
 
     // Create Voucher
     let (flexible_standard, _) = test_utils::create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = "public".to_string();
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
     let user_id = app.get_user_id().unwrap();

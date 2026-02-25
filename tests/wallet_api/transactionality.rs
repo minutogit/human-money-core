@@ -63,7 +63,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
 
     // Create a Flexible Silver Standard to allow non-DID recipients
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = "flexible".to_string();
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Flexible;
     });
     let flexible_toml =
         toml::to_string(&flexible_standard).expect("Failed to serialize flexible standard");
@@ -181,7 +181,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
 
     // Create a Flexible Silver Standard
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = "flexible".to_string();
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Flexible;
     });
     let flexible_toml =
         toml::to_string(&flexible_standard).expect("Failed to serialize flexible standard");
@@ -667,4 +667,121 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         conflicts_after.is_empty(),
         "No conflict proof should be left in memory after failed operation"
     );
+}
+
+/// Test 7.6: Prüft, dass das `balances_are_summable` Flag im Standard korrekt
+/// die Aggregation in der `TransferSummary` beeinflusst.
+#[test]
+fn test_balances_are_summable_behavior() {
+    let dir_recipient = tempdir().unwrap();
+    let dir_sender = tempdir().unwrap();
+    
+    let test_user = &ACTORS.test_user;
+    let sender_user = &ACTORS.sender;
+
+    let (mut service, _) = test_utils::setup_service_with_profile(
+        dir_recipient.path(),
+        test_user,
+        "Recipient",
+        "pwd",
+    );
+    let (mut service_sender, _) = test_utils::setup_service_with_profile(
+        dir_sender.path(),
+        sender_user,
+        "Sender",
+        "pwd",
+    );
+
+    let user_id = service.get_user_id().unwrap();
+    let sender_id = service_sender.get_user_id().unwrap();
+
+    // 1. Summable Standard erstellen (balances_are_summable = true)
+    let (summable_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
+        s.immutable.identity.uuid = "SUMMABLE-V1".to_string();
+        s.immutable.identity.name = "Summable Standard".to_string();
+        s.immutable.blueprint.unit = "EUR".to_string();
+        s.immutable.features.balances_are_summable = true;
+    });
+    let summable_toml = toml::to_string(&summable_standard).unwrap();
+
+    // 2. Non-Summable Standard erstellen (balances_are_summable = false)
+    let (non_summable_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
+        s.immutable.identity.uuid = "NON-SUMMABLE-V1".to_string();
+        s.immutable.identity.name = "Non-Summable Standard".to_string();
+        s.immutable.blueprint.unit = "ITEM".to_string();
+        s.immutable.features.balances_are_summable = false;
+    });
+    let non_summable_toml = toml::to_string(&non_summable_standard).unwrap();
+
+    let mut standards_map = HashMap::new();
+    standards_map.insert("SUMMABLE-V1".to_string(), summable_toml.clone());
+    standards_map.insert("NON-SUMMABLE-V1".to_string(), non_summable_toml.clone());
+
+    // 3. Vouchers für beide Standards im SENDER wallet erstellen
+    // Summable: 2x 10.0
+    for _ in 0..2 {
+        service_sender.create_new_voucher(
+            &summable_toml,
+            "en",
+            NewVoucherData {
+                creator_profile: PublicProfile { id: Some(sender_id.clone()), ..Default::default() },
+                nominal_value: ValueDefinition {
+                    amount: "10.0".to_string(),
+                    unit: "EUR".to_string(),
+                    abbreviation: None,
+                    description: None,
+                },
+                ..Default::default()
+            },
+            Some("pwd"),
+        ).unwrap();
+    }
+
+    // Non-Summable: 2x 1.0
+    for _ in 0..2 {
+        service_sender.create_new_voucher(
+            &non_summable_toml,
+            "en",
+            NewVoucherData {
+                creator_profile: PublicProfile { id: Some(sender_id.clone()), ..Default::default() },
+                nominal_value: ValueDefinition {
+                    amount: "1.0".to_string(),
+                    unit: "ITEM".to_string(),
+                    abbreviation: None,
+                    description: None,
+                },
+                ..Default::default()
+            },
+            Some("pwd"),
+        ).unwrap();
+    }
+
+    // 4. Sender überträgt alle Gutscheine an Recipient
+    let source_vouchers = service_sender.get_voucher_summaries(None, None).unwrap();
+    let sources = source_vouchers.into_iter().map(|s| human_money_core::wallet::SourceTransfer {
+        local_instance_id: s.local_instance_id,
+        amount_to_send: s.current_amount,
+    }).collect::<Vec<_>>();
+
+    let request = human_money_core::wallet::MultiTransferRequest {
+        recipient_id: user_id.clone(),
+        sources,
+        notes: None,
+        sender_profile_name: None,
+    };
+
+    let bundle_res = service_sender.create_transfer_bundle(request, &standards_map, None, Some("pwd")).unwrap();
+
+    // 5. Bundle im Recipient-Wallet verarbeiten
+    let result = service.receive_bundle(&bundle_res.bundle_bytes, &standards_map, None, Some("pwd")).unwrap();
+
+    // 6. ASSERT TransferSummary
+    // Summable (EUR): 10.0 + 10.0 = 20.0 (in summable_amounts)
+    // Hinweis: current_amount in summaries wird mit 4 Nachkommastellen formatiert, daher "20.0000"
+    assert_eq!(result.transfer_summary.summable_amounts.get("EUR").unwrap(), "20.0000");
+    assert!(!result.transfer_summary.countable_items.contains_key("EUR"));
+
+    // Non-Summable (ITEM): 2 items (in countable_items)
+    assert_eq!(*result.transfer_summary.countable_items.get("ITEM").unwrap(), 2);
+    assert!(!result.transfer_summary.summable_amounts.contains_key("ITEM"));
 }

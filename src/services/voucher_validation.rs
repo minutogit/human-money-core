@@ -79,8 +79,7 @@ pub fn validate_voucher_against_standard(
         }
     }
 
-    // NEU: Validierung des Privacy-Modes
-    let privacy_mode = standard.immutable.features.privacy_mode.as_str();
+    let privacy_mode = &standard.immutable.features.privacy_mode;
     validate_privacy_mode(voucher, privacy_mode)?;
 
     verify_transactions(voucher, standard)?;
@@ -91,7 +90,9 @@ pub fn validate_voucher_against_standard(
 }
 
 /// Validiert die Einhaltung des Privacy-Modes für alle Transaktionen.
-fn validate_privacy_mode(voucher: &Voucher, mode: &str) -> Result<(), VoucherCoreError> {
+fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standard_definition::PrivacyMode) -> Result<(), VoucherCoreError> {
+    use crate::models::voucher_standard_definition::PrivacyMode;
+
     for (i, tx) in voucher.transactions.iter().enumerate() {
         // Init-Transaktion (Index 0) ist IMMER public (Creator ist bekannt).
         if i == 0 {
@@ -116,7 +117,7 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &str) -> Result<(), VoucherCor
         }
 
         match mode {
-            "public" => {
+            PrivacyMode::Public => {
                 // 1. sender_id muss vorhanden sein.
                 if tx.sender_id.is_none() {
                     return Err(ValidationError::InvalidTransaction(format!(
@@ -134,7 +135,7 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &str) -> Result<(), VoucherCor
                     .into());
                 }
             }
-            "private" => {
+            PrivacyMode::Private => {
                 // 1. sender_id darf NICHT vorhanden sein.
                 if tx.sender_id.is_some() {
                     return Err(ValidationError::InvalidTransaction(format!(
@@ -159,7 +160,7 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &str) -> Result<(), VoucherCor
                     .into());
                 }
             }
-            "flexible" => {
+            PrivacyMode::Flexible => {
                 // Check consistency: If anonymous (no sender_id), there must be no identity signature (Test 2).
                 if tx.sender_id.is_none() && tx.sender_identity_signature.is_some() {
                     return Err(ValidationError::FlexibleModeIdentityInconsistency {
@@ -168,15 +169,11 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &str) -> Result<(), VoucherCor
                     .into());
                 }
             }
-            _ => {
-                return Err(VoucherCoreError::Standard(
-                    StandardDefinitionError::InvalidMode(mode.to_string()),
-                ));
-            }
         }
     }
     Ok(())
 }
+
 
 /// Überprüft, ob alle Transaktionen im Gutschein einen vom Standard erlaubten Typ haben.
 pub fn validate_transaction_types(

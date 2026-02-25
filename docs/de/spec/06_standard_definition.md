@@ -93,10 +93,6 @@ Diese Variablen werden vom `human_money_core` direkt in performante Rust-Structs
 | `additional_signatures_range` | Array[Integer] | Anzahl benötigter Mitunterzeichner bei der Erstellung. Bsp: `[2, 3]` (2 bis 3 Bürgen). `[0, 0]` für keine.                                                                                                                                      |
 | `allowed_signature_roles` | Array[String] | Welche Rollen dürfen mitunterzeichnen? (Meist `"guarantor"`, optional `"auditor"` etc.).                                                                                                                                                        |
 
-#### 5.1.5 Transfer (Weitergabebedingungen)
-| Feld | Typ | Beschreibung |
-|---|---|---|
-| `requires_recipient_signature` | Boolean | Wenn `true`, ist eine Transaktion ein 2-Wege-Handshake (Sender signiert Intent -> Empfänger signiert Annahme). Erhöht Sicherheit und verhindert Spam. Wenn `false`, 1-Wege-Transfer (Airdrop-Style). |
 
 #### 5.1.6 Custom Rules (Deep-Inspection via CEL)
 Hier wird die Common Expression Language (CEL) für Sonderregeln eingebettet. Der Core evaluiert diese gegen den aktuellen Status des Gutscheins.
@@ -167,8 +163,6 @@ issuance_minimum_validity_duration = "P1Y"
 additional_signatures_range = [2, 2]
 allowed_signature_roles = ["guarantor"]
 
-[immutable.transfer]
-requires_recipient_signature = true # 2-Wege Handshake für Transfers erzwungen
 
 # --- DEEP INSPECTION (Dynamische Regeln) ---
 # CEL Expressions für komplexe Validierungslogik, die über Fast-Path hinausgeht.

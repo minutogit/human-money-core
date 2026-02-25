@@ -348,3 +348,113 @@ mod security_hardening {
         assert!(matches!(result.unwrap_err(), VoucherCoreError::Manager(_)));
     }
 }
+
+/// Prüft die Einhaltung spezifischer Parameter-Einschränkungen.
+#[cfg(test)]
+mod specific_parameter_constraints {
+    use super::*;
+    use human_money_core::models::voucher::ValueDefinition;
+    use human_money_core::services::voucher_manager::NewVoucherData;
+    use human_money_core::services::voucher_manager::create_voucher;
+
+    #[test]
+    fn test_validity_duration_range_enforcement() {
+        // 1. Erstelle einen Standard mit validity_duration_range: 1 Jahr bis 3 Jahre
+        let (standard, hash) =
+            human_money_core::test_utils::create_custom_standard(&SILVER_STANDARD.0, |s| {
+                s.immutable.issuance.validity_duration_range = vec!["P1Y".to_string(), "P3Y".to_string()];
+            });
+
+        let creator = &ACTORS.alice.identity;
+
+        // 2. Versuche einen Gutschein mit 4 Jahren (unzulässig) zu erstellen
+        let data_invalid = NewVoucherData {
+            creator_profile: human_money_core::models::profile::PublicProfile {
+                id: Some(creator.user_id.clone()),
+                ..Default::default()
+            },
+            nominal_value: ValueDefinition {
+                amount: "100".to_string(),
+                ..Default::default()
+            },
+            validity_duration: Some("P4Y".to_string()),
+            ..Default::default()
+        };
+        let result_invalid = create_voucher(data_invalid, &standard, &hash, &creator.signing_key, "en");
+        assert!(result_invalid.is_err(), "Voucher with 4 years should be rejected (max 3 allowed)");
+
+        // 3. Versuche einen Gutschein mit 2 Jahren (zulässig) zu erstellen
+        let data_valid = NewVoucherData {
+            creator_profile: human_money_core::models::profile::PublicProfile {
+                id: Some(creator.user_id.clone()),
+                ..Default::default()
+            },
+            nominal_value: ValueDefinition {
+                amount: "100".to_string(),
+                ..Default::default()
+            },
+            validity_duration: Some("P2Y".to_string()),
+            ..Default::default()
+        };
+        let result_valid = create_voucher(data_valid, &standard, &hash, &creator.signing_key, "en");
+        assert!(result_valid.is_ok(), "Voucher with 2 years should be accepted");
+    }
+
+    #[test]
+    fn test_allowed_signature_roles_enforcement() {
+        // 1. Erstelle einen Standard, der nur die Rolle "Official Approver" erlaubt
+        let (standard, _hash) =
+            human_money_core::test_utils::create_custom_standard(&SILVER_STANDARD.0, |s| {
+                s.immutable.issuance.allowed_signature_roles = vec!["Official Approver".to_string()];
+            });
+
+        let identity = &ACTORS.alice;
+        let mut wallet = setup_in_memory_wallet(identity);
+        add_voucher_to_wallet(&mut wallet, identity, "100", &standard, false).unwrap();
+        
+        let mut voucher = wallet.voucher_store.vouchers.values().next().unwrap().voucher.clone();
+
+        // 2. Füge eine Signatur mit der Rolle "Hacker" hinzu
+        use human_money_core::models::voucher::VoucherSignature;
+        voucher.signatures.push(VoucherSignature {
+            role: "Hacker".to_string(),
+            signer_id: ACTORS.hacker.user_id.clone(),
+            ..Default::default()
+        });
+
+        // 3. Validierung gegen Standard muss fehlschlagen
+        let result = validate_voucher_against_standard(&voucher, &standard);
+        assert!(result.is_err(), "Signature with role 'Hacker' should be rejected");
+        assert!(result.unwrap_err().to_string().contains("is not an allowed signature role"));
+    }
+
+    #[test]
+    fn test_invalid_enum_parsing() {
+        // 1. Test invalid primary_redemption_type
+        let invalid_toml_1 = SILVER_STANDARD.0.clone();
+        let mut toml_str_1 = toml::to_string(&invalid_toml_1).unwrap();
+        // Suchen nach dem exakten Variant-Namen (snake_case)
+        toml_str_1 = toml_str_1.replace("primary_redemption_type = \"goods_or_services\"", "primary_redemption_type = \"magic\"");
+        
+        let result_1 = verify_and_parse_standard(&toml_str_1);
+        assert!(result_1.is_err(), "Invalid primary_redemption_type 'magic' should fail parsing");
+
+        // 2. Test invalid collateral_type
+        let invalid_toml_2 = SILVER_STANDARD.0.clone();
+        let mut toml_str_2 = toml::to_string(&invalid_toml_2).unwrap();
+        toml_str_2 = toml_str_2.replace("collateral_type = \"physical_asset\"", "collateral_type = \"gold_bars\"");
+        
+        let result_2 = verify_and_parse_standard(&toml_str_2);
+        assert!(result_2.is_err(), "Invalid collateral_type 'gold_bars' should fail parsing");
+
+        // 3. Test invalid privacy_mode
+        let invalid_toml_3 = SILVER_STANDARD.0.clone();
+        let mut toml_str_3 = toml::to_string(&invalid_toml_3).unwrap();
+        // SILVER_STANDARD uses "flexible" privacy mode
+        toml_str_3 = toml_str_3.replace("privacy_mode = \"flexible\"", "privacy_mode = \"super_secret\"");
+        
+        let result_3 = verify_and_parse_standard(&toml_str_3);
+        assert!(result_3.is_err(), "Invalid privacy_mode 'super_secret' should fail parsing");
+    }
+}
+

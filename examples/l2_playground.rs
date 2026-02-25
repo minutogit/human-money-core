@@ -171,7 +171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Standard laden
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = "private".to_string();
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Private;
     });
     let flexible_toml = toml::to_string(&flexible_standard)?;
     let mut standards_toml = HashMap::new();

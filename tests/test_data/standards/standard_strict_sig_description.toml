@@ -5,8 +5,8 @@ abbreviation = "SDT"
 
 [immutable.blueprint]
 unit = "TestUnit"
-primary_redemption_type = "goods"
-collateral_type = "None"
+primary_redemption_type = "goods_or_services"
+collateral_type = "personal_guarantee"
 
 [immutable.features]
 allow_partial_transfers = false
@@ -21,8 +21,6 @@ issuance_minimum_validity_duration = "P0M"
 additional_signatures_range = [0, 10]
 allowed_signature_roles = ["Official Approval 2025", "guarantor"]
 
-[immutable.transfer]
-requires_recipient_signature = false
 
 [immutable.custom_rules.bob_approval]
 expression = "Voucher.signatures.exists(s, s.signer_id == 'issuer:1oB@did:key:z6Mkoim7ZGcaKdoeD41USV5gmxfiVXXiPDeYt4T9rnEB5zfM' && s.role == 'Official Approval 2025')"
@@ -43,4 +41,4 @@ descriptions = { en = "Signature Description Test" }
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "4tBsXZacvaw2rcDEm15Z9V7tYtGuTWobfXEQvUSHNXV5S7RpFdWwFJk8yUMauAGco8ZqxeG3VkVEfH1LK9peELt"
+signature = "32T8jBvkDqDm4XcqmE81gVkPcRc6v9htGT8McLLScp2CtDkzE7BHiciYvRcoJoT9jVJESNR6W666hkkvUctpVVxu"

@@ -17,7 +17,12 @@ fn setup_standard(mode: &str) -> (VoucherStandardDefinition, String) {
     let (mut standard, _) = (BASE_STANDARD.0.clone(), BASE_STANDARD.1.clone());
 
     // Set privacy mode
-    standard.immutable.features.privacy_mode = mode.to_string();
+    standard.immutable.features.privacy_mode = match mode {
+        "public" => human_money_core::models::voucher_standard_definition::PrivacyMode::Public,
+        "private" => human_money_core::models::voucher_standard_definition::PrivacyMode::Private,
+        "flexible" => human_money_core::models::voucher_standard_definition::PrivacyMode::Flexible,
+        _ => panic!("Unknown privacy mode: {}", mode),
+    };
 
     // Re-hash standard
     let mut standard_to_hash = standard.clone();

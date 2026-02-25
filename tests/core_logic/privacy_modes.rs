@@ -27,7 +27,12 @@ fn create_privacy_test_voucher(
     let mut standard = SILVER_STANDARD.0.clone();
 
     // Construct PrivacySettings equivalent
-    standard.immutable.features.privacy_mode = mode.to_string();
+    standard.immutable.features.privacy_mode = match mode {
+        "public" => human_money_core::models::voucher_standard_definition::PrivacyMode::Public,
+        "private" => human_money_core::models::voucher_standard_definition::PrivacyMode::Private,
+        "flexible" => human_money_core::models::voucher_standard_definition::PrivacyMode::Flexible,
+        _ => panic!("Unknown privacy mode: {}", mode),
+    };
 
     // We need to re-hash the standard because validation checks hash
     // BUT: `create_voucher` takes standard and hash.

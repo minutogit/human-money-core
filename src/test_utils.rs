@@ -804,32 +804,30 @@ pub fn create_voucher_for_manipulation(
     final_nominal_value.unit = standard.immutable.blueprint.unit.clone();
     final_nominal_value.abbreviation = Some(standard.immutable.identity.abbreviation.clone());
 
-    let final_collateral = if !standard.immutable.blueprint.collateral_type.is_empty() {
-        Some(Collateral {
-            value: ValueDefinition {
-                unit: data
-                    .collateral
-                    .as_ref()
-                    .map_or(String::new(), |c| c.value.unit.clone()),
-                amount: data
-                    .collateral
-                    .as_ref()
-                    .map_or(String::new(), |c| c.value.amount.clone()),
-                abbreviation: data
-                    .collateral
-                    .as_ref()
-                    .and_then(|c| c.value.abbreviation.clone()),
-                description: data
-                    .collateral
-                    .as_ref()
-                    .and_then(|c| c.value.description.clone()),
-            },
-            collateral_type: Some(standard.immutable.blueprint.collateral_type.clone()),
-            redeem_condition: None,
-        })
-    } else {
-        None
-    };
+    let final_collateral = Some(Collateral {
+        value: ValueDefinition {
+            unit: data
+                .collateral
+                .as_ref()
+                .map_or(String::new(), |c| c.value.unit.clone()),
+            amount: data
+                .collateral
+                .as_ref()
+                .map_or(String::new(), |c| c.value.amount.clone()),
+            abbreviation: data
+                .collateral
+                .as_ref()
+                .and_then(|c| c.value.abbreviation.clone()),
+            description: data
+                .collateral
+                .as_ref()
+                .and_then(|c| c.value.description.clone()),
+        },
+        collateral_type: serde_json::to_value(&standard.immutable.blueprint.collateral_type)
+            .ok()
+            .and_then(|v| v.as_str().map(|s| s.to_string())),
+        redeem_condition: None,
+    });
 
     let mut voucher = Voucher {
         voucher_standard: crate::models::voucher::VoucherStandard {
@@ -838,7 +836,10 @@ pub fn create_voucher_for_manipulation(
             standard_definition_hash: standard_hash.to_string(),
             template: crate::models::voucher::VoucherTemplateData {
                 description: final_description,
-                primary_redemption_type: "goods_or_services".to_string(),
+                primary_redemption_type: serde_json::to_value(&standard.immutable.blueprint.primary_redemption_type)
+                    .ok()
+                    .and_then(|v| v.as_str().map(|s| s.to_string()))
+                    .unwrap_or_default(),
                 allow_partial_transfers: standard.immutable.features.allow_partial_transfers,
                 issuance_minimum_validity_duration: standard.immutable.issuance.issuance_minimum_validity_duration.clone(),
                 footnote: crate::services::standard_manager::get_localized_text(&standard.mutable.i18n.footnotes, lang_preference).unwrap_or("").to_string(),

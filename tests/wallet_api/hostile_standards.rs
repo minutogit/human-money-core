@@ -129,7 +129,7 @@ fn test_violation_of_max_creation_validity() {
     assert!(result.is_err());
     let error_string = result.unwrap_err();
     assert!(
-        error_string.contains("validity duration is too long"),
+        error_string.contains("exceeds the maximum allowed standard validity"),
         "Error message should indicate that validity is too long. Got: {}",
         error_string
     );

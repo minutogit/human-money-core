@@ -6,7 +6,7 @@ abbreviation = "RSG"
 [immutable.blueprint]
 unit = "TestUnit"
 primary_redemption_type = "goods_or_services"
-collateral_type = ""
+collateral_type = "personal_guarantee"
 
 [immutable.features]
 allow_partial_transfers = false
@@ -21,8 +21,6 @@ issuance_minimum_validity_duration = "P0M"
 additional_signatures_range = [1, 1]
 allowed_signature_roles = ["Official Approver"]
 
-[immutable.transfer]
-requires_recipient_signature = false
 
 [immutable.custom_rules]
 
@@ -40,4 +38,4 @@ descriptions = { en = "Required Signatures Test" }
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "61yJrxfNbzqABSuwbbmADG1sUQHaJDdy3ENiKowqe7r3geQ26TpqszfTiy89vrP36P9WVFDdSkH8Y7JQvDENu9yj"
+signature = "3h4BpjsBbfzWGrFvhzv4sWdYhWtvHhkM2spYx2kXSfrdVDqbETFQAtygXxRXzkKZDiN72bUvooRp7XYo1ciSAt7d"
