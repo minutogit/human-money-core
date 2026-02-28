@@ -363,7 +363,7 @@ fn is_signature_valid(
 
 /// Verifiziert die kryptographische Gültigkeit, Einzigartigkeit und chronologische
 /// Korrektheit aller Signaturen in der `signatures`-Liste sowie die Standard-Regeln zu Rollen und Anzahl.
-fn verify_signatures(
+pub fn verify_signatures(
     voucher: &Voucher,
     standard: &VoucherStandardDefinition,
 ) -> Result<(), VoucherCoreError> {
@@ -459,7 +459,7 @@ fn verify_signatures(
 /// --- NEUE FUNKTION (FIX FÜR FEHLER 4) ---
 /// Verifiziert, dass der `voucher_id` (der Hash der Stammdaten) mit den
 /// tatsächlichen Stammdaten übereinstimmt.
-fn verify_voucher_hash(voucher: &Voucher) -> Result<(), VoucherCoreError> {
+pub fn verify_voucher_hash(voucher: &Voucher) -> Result<(), VoucherCoreError> {
     let mut voucher_to_hash = voucher.clone();
     // Entferne die Felder, die nicht Teil des ursprünglichen Hashes sind.
     voucher_to_hash.voucher_id = "".to_string();
@@ -546,7 +546,7 @@ pub fn verify_transactions(
             .into());
         }
         // Prüfe chronologische Reihenfolge
-        if tx.t_time < last_tx_time {
+        if tx.t_time <= last_tx_time {
             return Err(ValidationError::InvalidTimeOrder {
                 entity: "Transaction".to_string(),
                 id: tx.t_id.clone(),

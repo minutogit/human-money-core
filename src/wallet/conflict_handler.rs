@@ -229,13 +229,19 @@ impl Wallet {
         let voucher_valid_until = voucher.valid_until.clone();
 
         // 4. Rufe den Service auf, um das Beweis-Objekt zu erstellen.
-        let proof = conflict_manager::create_proof_of_double_spend(
+        let mut proof = conflict_manager::create_proof_of_double_spend(
             offender_id,
             fork_point_prev_hash,
             conflicting_transactions,
             voucher_valid_until,
             identity,
         )?;
+
+        // Falls wir den Beweis bereits kennen und ein L2-Urteil haben, übernehmen!
+        if let Some(existing_proof) = self.proof_store.proofs.get(&proof.proof_id) {
+            proof.layer2_verdict = existing_proof.layer2_verdict.clone();
+            proof.resolutions = existing_proof.resolutions.clone();
+        }
 
         Ok(Some(proof))
     }

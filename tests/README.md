@@ -4,6 +4,19 @@ This document provides an overview of the integration and unit tests within the 
 
 ---
 
+## Robustheit & Mutation Testing
+
+Um die Robustheit unserer Test-Suite gegen logische Fehler zu validieren, nutzen wir `cargo-mutants`. Diese Methode hilft dabei, "Regressions-Lücken" zu finden, die dann durch gezielte Integritäts-Tests (siehe `tests/validation/logic_integrity.rs`) geschlossen werden.
+
+### Durchführung
+Nutze das bereitgestellte Automatisierungs-Skript:
+```bash
+./scripts/run_mutation_tests.sh
+```
+Dieses Skript prüft gezielt die Module `trap_manager`, `voucher_validation` und `transaction_handler`.
+
+---
+
 ### `tests/wallet_api/hostile_bundles.rs`
 This file contains tests that harden the `AppService` against receiving hostile or internally inconsistent voucher bundles.
 
@@ -182,6 +195,24 @@ This file ensures that the library is robust against future changes to data stru
 -   `test_validate_voucher_with_unknown_fields_in_json_then_succeeds`: Ensures that `validate_voucher_against_standard` succeeds even if the voucher JSON contains unknown fields, demonstrating forward compatibility.
 -   `test_validate_voucher_when_t_type_is_unknown_then_fails`: Verifies that `validate_voucher_against_standard` fails if a transaction has an unknown `t_type` (e.g., "merge"), indicating a violation of allowed transaction types.
 -   `test_parse_standard_with_unknown_fields_in_toml_then_succeeds`: Checks that `toml::from_str` can successfully parse a standard TOML string even if it contains unknown fields, demonstrating forward compatibility for standard definitions.
+
+### `tests/validation/logic_integrity.rs`
+This file contains deep integrity tests for the core validation logic, specifically hardening the system against subtle edge cases and potential logical regression.
+
+-   `test_valid_until_matches_creation_date`: Verifies that a voucher is valid even if `valid_until` is exactly equal to its `creation_date`.
+-   `test_transaction_type_validation`: Ensures that only allowed transaction types (e.g., `init`, `transfer`, `split`) are accepted and invalid ones are rejected.
+-   `test_signature_count_limits`: Verifies that the number of additional signatures is within the bounds defined by the standard.
+-   `test_transaction_amount_precision`: Ensures that transaction amounts (and remaining amounts) do not exceed the decimal precision allowed by the standard.
+-   `test_transaction_monotonic_time`: Verifies that all transactions in a chain have strictly monotonic (strictly increasing) timestamps.
+-   `test_p2pkh_recipient_match`: Ensures that the recipient of a transaction matches the sender of the subsequent transaction in a P2PKH chain.
+-   `test_p2pkh_change_output_verification`: Verifies correctly linked ephemeral public keys when spending change from a previous transaction.
+-   `test_p2pkh_recipient_id_fallback`: Tests the fallback logic for verifying ownership using the recipient's public ID.
+-   `test_p2pkh_sender_id_fallback`: Tests the fallback logic for verifying change-spending using the sender's public ID.
+-   `test_p2pkh_hash_fallback_match`: Verifies that ownership can be proven via hash matching of ephemeral keys when explicit IDs are not used.
+-   `test_trap_data_privacy_validation`: Teats that TrapData does not leak sensitive information like emails or system paths in its `blinded_id`.
+-   `test_balance_attribution_logic`: Verifies the heuristic used to attribute unspent funds correctly to a user's balance.
+-   `test_init_transaction_party_rules`: Ensures that for `init` transactions, both sender and recipient are correctly identified as the creator.
+-   `test_p2pkh_identity_match_isolation`: Verifies that identity-based fallback correctly handles cases where cryptographic hash-linkage is deliberately sabotaged.
 
 ### `tests/validation/business_rules.rs`
 This file contains integration tests that verify the correct application of complex business rules and the logical consistency of a `Voucher` object.

@@ -8,3 +8,4 @@ todo.md
 /.opencode/agent/
 
 /.ag-config
+/mutants.out*/

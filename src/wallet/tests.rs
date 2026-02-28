@@ -764,3 +764,209 @@ mod key_derivation_logic {
         );
     }
 }
+
+/// Bündelt Tests für die Transaction-Handler Logik und Mutanten-Abwehr.
+#[test]
+fn test_execute_single_transfer_fingerprint_history() {
+        // Mutant-Abwehr: Stellt sicher, dass _execute_single_transfer die local_history (own_fingerprints.history)
+        // mit dem neuen Fingerprint mutiert. Wenn ein ! gelöscht wurde, bleibt die Liste leer oder enthält ihn nicht.
+        // Das ! ist essentiell: if !history_entry.contains(...) { push(...) }
+        
+        let (standard, _, alice, bob, voucher, _) = crate::test_utils::setup_voucher_with_one_tx();
+        let mut wallet = setup_in_memory_wallet(&alice);
+        
+        // Füge Voucher dem Store hinzu
+        let local_id = super::Wallet::calculate_local_instance_id(&voucher, &alice.user_id).unwrap();
+        wallet.add_voucher_instance(local_id.clone(), voucher, VoucherStatus::Active);
+        
+        // Leere History zur Sicherheit
+        wallet.own_fingerprints.history.clear();
+        assert!(wallet.own_fingerprints.history.is_empty());
+        
+        // Aktion
+        let result = wallet._execute_single_transfer(
+            &alice,
+            standard,
+            &local_id,
+            &bob.user_id,
+            "40",
+            None
+        ).unwrap();
+        
+        // Erwartet: Die erstellte Transaktion (letzte) produzierte einen Fingerprint, 
+        // der in die History eingefügt wurde.
+        let tx = result.transactions.last().unwrap();
+        let created_fp = crate::services::conflict_manager::create_fingerprint_for_transaction(tx, &result).unwrap();
+        
+        let hist_entry_opts = wallet.own_fingerprints.history.get(&created_fp.ds_tag);
+        assert!(hist_entry_opts.is_some(), "ds_tag must be in history");
+        let hist_entry = hist_entry_opts.unwrap();
+        assert!(hist_entry.contains(&created_fp), "History must contain the freshly generated fingerprint");
+    }
+
+    #[test]
+    fn test_rederive_secret_seed_logic() {
+        // Mutant-Abwehr: && versus || in rederive_secret_seed in Zeile 640
+        // "if last_tx.t_type == "init" && last_tx.sender_id.as_ref() == Some(&identity.user_id)"
+        // Wir erzeugen eine Situation, bei der "t_type" != "init" ist (z.B. "transfer"),
+        // aber sender_id == identity.user_id. Bei korrekter Logik (&&) greift der Block nicht und 
+        // wirft später Err("No valid strategy found") - als letzten Fallback. 
+        // Wir setzen die Nonce dabei auf valide Werte, damit eventuelle Folgefehler in der fehlerhaften
+        // Ausführung kein Err durch base58 Error auslösen (wodurch die Mutante überleben würde!).
+        let identity = &ACTORS.alice;
+        let wallet = setup_in_memory_wallet(identity);
+        
+        let mut dummy_voucher = crate::models::voucher::Voucher::default();
+        dummy_voucher.voucher_nonce = bs58::encode(vec![0u8; 32]).into_string(); 
+        
+        let mut tx = crate::models::voucher::Transaction::default();
+        tx.t_type = "transfer".to_string(); // Wichtig: NICHT "init"
+        tx.sender_id = Some(identity.user_id.clone()); // Wichtig: == identity.user_id
+        tx.sender_remaining_amount = None; // Damit der Split-Zweig (oben in der Funktion) ignoriert wird
+        
+        dummy_voucher.transactions.push(tx);
+        
+        let result = wallet.rederive_secret_seed(&dummy_voucher, identity);
+        
+        assert!(result.is_err(), "rederive_secret_seed should fail for a non-init, non-split transfer if logic is &&");
+        assert!(result.unwrap_err().to_string().contains("No valid strategy found"), "Muss mit 'No valid strategy found' fehlschlagen. Mutante || nutzt falschen Branch.");
+    }
+
+    #[test]
+    fn test_process_encrypted_bundle_l2_verdict_logic() {
+        // Mutant-Abwehr: process_encrypted_transaction_bundle evaluiert Urteil (== vs !=)
+        // Setzt Valid auf Active und Invalid auf Quarantined. Die Mutante macht das Gegenteil.
+        
+        use std::collections::HashMap;
+
+        let alice = &ACTORS.alice;
+        let charlie = &ACTORS.charlie;
+        let mut wallet_alice = setup_in_memory_wallet(alice);
+        let mut wallet_charlie = setup_in_memory_wallet(charlie);
+        
+        // 1. Setup voucher (Alice creates)
+        let data = crate::services::voucher_manager::NewVoucherData {
+            validity_duration: Some("P5Y".to_string()),
+            creator_profile: crate::models::profile::PublicProfile {
+                id: Some(alice.user_id.clone()),
+                ..Default::default()
+            },
+            nominal_value: crate::models::voucher::ValueDefinition {
+                amount: "100".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (standard, hash) = (&crate::test_utils::SILVER_STANDARD.0, &crate::test_utils::SILVER_STANDARD.1);
+        let mut standards_map = HashMap::new();
+        standards_map.insert(standard.immutable.identity.uuid.clone(), standard.clone());
+
+        let voucher = crate::services::voucher_manager::create_voucher(data, standard, hash, &alice.signing_key, "en").unwrap();
+        let local_id = super::Wallet::calculate_local_instance_id(&voucher, &alice.user_id).unwrap();
+        wallet_alice.add_voucher_instance(local_id.clone(), voucher.clone(), VoucherStatus::Active);
+
+        struct DummyArchive;
+        impl crate::archive::VoucherArchive for DummyArchive {
+            fn archive_voucher(&self, _v: &crate::models::voucher::Voucher, _o: &str, _s: &crate::models::voucher_standard_definition::VoucherStandardDefinition) -> Result<(), crate::archive::ArchiveError> { Ok(()) }
+            fn get_archived_voucher(&self, _id: &str) -> Result<crate::models::voucher::Voucher, crate::archive::ArchiveError> { Err(crate::archive::ArchiveError::NotFound) }
+            fn find_transaction_by_id(&self, _t: &str) -> Result<Option<(crate::models::voucher::Voucher, crate::models::voucher::Transaction)>, crate::archive::ArchiveError> { Ok(None) }
+            fn find_voucher_by_tx_id(&self, _t: &str) -> Result<Option<crate::models::voucher::Voucher>, crate::archive::ArchiveError> { Ok(None) }
+        }
+
+        // 2. Transfer Alice -> Charlie (TX1)
+        let request1 = crate::wallet::MultiTransferRequest {
+            recipient_id: charlie.user_id.clone(),
+            sources: vec![crate::wallet::SourceTransfer { local_instance_id: local_id.clone(), amount_to_send: "50".to_string() }],
+            notes: None, sender_profile_name: None,
+        };
+        let mut tmp_wallet = wallet_alice.clone(); 
+        
+        let bundle_tx1 = tmp_wallet.execute_multi_transfer_and_bundle(alice, &standards_map, request1, Some(&DummyArchive)).unwrap();
+        wallet_charlie.process_encrypted_transaction_bundle(charlie, &bundle_tx1.bundle_bytes, Some(&DummyArchive), &standards_map).unwrap();
+
+        // 3. Fake a proof with an L2 Verdict in Charlie's store.
+        let tx1_id = wallet_charlie.voucher_store.vouchers.values().next().unwrap().voucher.transactions.last().unwrap().t_id.clone();
+        
+        // Wir erzeugen einen Double Spend
+        // Alice versucht nochmal denselben Voucher locally zu spenden.
+        let request2 = crate::wallet::MultiTransferRequest {
+            recipient_id: charlie.user_id.clone(),
+            sources: vec![crate::wallet::SourceTransfer { local_instance_id: local_id.clone(), amount_to_send: "20".to_string() }],
+            notes: None, sender_profile_name: None,
+        };
+        let bundle_tx2 = wallet_alice.execute_multi_transfer_and_bundle(alice, &standards_map, request2, Some(&DummyArchive)).unwrap();
+        
+        // Damit verify_and_create_proof das L2 Urteil holt, pflegen wir es in den Store unter der erzeugten Konflik-ID ein.
+        // ID ist get_hash(offender_id + fork_point_prev_hash)
+        let offender_id = alice.user_id.clone();
+        let init_tx = wallet_charlie.voucher_store.vouchers.values().next().unwrap().voucher.transactions[0].clone();
+        let fork_hash = init_tx.t_id.clone();
+        let expected_proof_id = crate::services::crypto_utils::get_hash(format!("{}{}", offender_id, fork_hash));
+        
+        let fake_proof = crate::models::conflict::ProofOfDoubleSpend {
+            proof_id: expected_proof_id.clone(),
+            offender_id: offender_id.clone(),
+            fork_point_prev_hash: fork_hash,
+            conflicting_transactions: vec![],
+            deletable_at: "".to_string(),
+            reporter_id: "system".to_string(),
+            report_timestamp: "now".to_string(),
+            reporter_signature: "".to_string(),
+            resolutions: None,
+            layer2_verdict: Some(crate::models::conflict::Layer2Verdict {
+                verdict_timestamp: "now".to_string(),
+                valid_transaction_id: tx1_id.clone(), // TX1 IST DIE VALID!
+                server_id: "".to_string(),
+                server_signature: "".to_string(),
+            }),
+        };
+        wallet_charlie.proof_store.proofs.insert(fake_proof.proof_id.clone(), fake_proof);
+        
+        // WICHTIG: Damit `verify_and_create_proof` die Transaktion im DummyArchive findet, überschreiben wir 
+        // temporär die find_transaction_in_stores funktion? Nein, wir modifizieren das Archive
+        struct TestArchive {
+            v: crate::models::voucher::Voucher,
+        }
+        impl crate::archive::VoucherArchive for TestArchive {
+            fn archive_voucher(&self, _v: &crate::models::voucher::Voucher, _o: &str, _s: &crate::models::voucher_standard_definition::VoucherStandardDefinition) -> Result<(), crate::archive::ArchiveError> { Ok(()) }
+            fn get_archived_voucher(&self, _id: &str) -> Result<crate::models::voucher::Voucher, crate::archive::ArchiveError> { Err(crate::archive::ArchiveError::NotFound) }
+            fn find_transaction_by_id(&self, _t: &str) -> Result<Option<(crate::models::voucher::Voucher, crate::models::voucher::Transaction)>, crate::archive::ArchiveError> {
+                for tx in &self.v.transactions {
+                    if tx.t_id == *_t {
+                        return Ok(Some((self.v.clone(), tx.clone())));
+                    }
+                }
+                Ok(None)
+             }
+            fn find_voucher_by_tx_id(&self, _t: &str) -> Result<Option<crate::models::voucher::Voucher>, crate::archive::ArchiveError> { Ok(Some(self.v.clone())) }
+        }
+        
+        // Das Bundle tx2 enthält beide Transaktionsketten (im history baum), wir verarbeiten es.
+        // Das Dummy Archive muss Voucher A zurueckgeben, da verify_and_create_proof danach sucht.
+        let v_tmp = wallet_charlie.voucher_store.vouchers.values().next().unwrap().voucher.clone();
+        
+        // Da die zweite Transaktion im bundle_tx2 liegt, greifen wir sie ab und legen sie dem Archive bei 
+        let _process_res = wallet_charlie.process_encrypted_transaction_bundle(charlie, &bundle_tx2.bundle_bytes, Some(&TestArchive{v: v_tmp}), &standards_map);
+        
+        // Assert:
+        // Charlie hat nun tx1 (ACTIVE) und tx2 (QUARANTINED) in seinem Store.
+        let mut active_count = 0;
+        let mut quarantined_count = 0;
+        for (_, instance) in wallet_charlie.voucher_store.vouchers.iter() {
+            let last_tx_id = &instance.voucher.transactions.last().unwrap().t_id;
+            match instance.status {
+                VoucherStatus::Active => {
+                    active_count += 1;
+                    assert_eq!(*last_tx_id, tx1_id, "Only tx1_id should be active");
+                },
+                VoucherStatus::Quarantined { .. } => {
+                    quarantined_count += 1;
+                    assert_ne!(*last_tx_id, tx1_id, "The double spend tx2 should be quarantined");
+                },
+                _ => {}
+            }
+        }
+        assert_eq!(active_count, 1);
+        assert_eq!(quarantined_count, 1);
+        
+    }

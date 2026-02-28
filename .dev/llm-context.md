@@ -791,6 +791,10 @@ Um die Robustheit des Systems zu gewährleisten, wurden spezialisierte Tests imp
 - **Mixed Mode Vulnerability (`tests/wallet_api/mixed_mode_vulnerability.rs`)**: Stellt sicher, dass der Wechsel zwischen Public- und Stealth-Modus keine Sicherheitslücken (z.B. durch unterschiedliche Fingerprints) aufreißt.
 - **Multi-Identity Vulnerability (`tests/wallet_api/multi_identity_vulnerability.rs`)**: Verifiziert, dass ein Nutzer nicht mehrere Identitäten innerhalb desselben ökonomischen Kontextes missbräuchlich verwenden kann.
 
+### Automatisierung & Workflows
+
+- **Automatisierte Test-Härtung (`scripts/run_mutation_tests.sh`)**: Ein Tool zur Durchführung von Mutationstests für sicherheitskritische Module. Es stellt sicher, dass jede logische Code-Änderung in `trap_manager.rs`, `voucher_validation.rs` und `transaction_handler.rs` zuverlässig von der Test-Suite erkannt wird.
+
 ## 8. Dokumentation
 
 - **Haupt-Spezifikation**: `docs/de/spec/Spezifikation - Hybride Privatsphäre und Offline-Sicherheit für digitale Gutscheine.md` - Das maßgebliche Dokument für das gesamte Protokolldesign.

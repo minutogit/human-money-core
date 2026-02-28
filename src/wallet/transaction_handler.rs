@@ -347,7 +347,7 @@ impl Wallet {
     /// Führt die Zustandsveränderung für EINEN Gutschein im Wallet durch.
     ///
     /// Diese Funktion ist die Core-Logik des Transfers. Sie führt KEIN Bundling durch.
-    fn _execute_single_transfer(
+    pub(super) fn _execute_single_transfer(
         &mut self,
         identity: &UserIdentity,
         standard_definition: &VoucherStandardDefinition,

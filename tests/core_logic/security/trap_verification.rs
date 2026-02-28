@@ -162,3 +162,77 @@ fn test_trap_parameter_manipulation_with_bypass() {
 
     human_money_core::set_signature_bypass(false);
 }
+
+#[test]
+fn test_hash_to_curve_not_default() {
+    // Dieser Test stellt sicher, dass `hash_to_curve` (auch wenn deprecated) nicht einfach 
+    // den Default-Wert der EdwardsPoint Kurve zurückgibt. Ein trivialer Punkt auf der Kurve 
+    // hebelt die Sicherheit von Elliptic Curve Cryptography komplett aus.
+    #[allow(deprecated)]
+    let point = human_money_core::services::trap_manager::hash_to_curve(b"test_input");
+    let default_point = curve25519_dalek::edwards::EdwardsPoint::default();
+    assert_ne!(point, default_point, "hash_to_curve must not return the default identity point");
+}
+
+#[test]
+fn test_calculate_challenge_not_zero() {
+    // Dieser Test beweist mathematisch, dass unsere Implementierung eine Challenge ungleich 0 erzwingt.
+    // Wenn die Challenge c = 0 ist, kann ein Angreifer das Geheimnis m ignorieren und einfach s zufällig wählen 
+    // (s * X == R + 0 * Y wird zu s * X == R). Indem wir aktiv genau diese Fälschung konstruieren 
+    // und verlangen, dass der Verifier sie ablehnt, erhärten wir das System.
+    
+    use human_money_core::services::trap_manager::hash_to_scalar;
+    
+    let mut rng = OsRng;
+    
+    // Zufällige Eingabewerte
+    let u_input = b"test_u_input";
+    let expected_ds_tag = "test_tag";
+    let u_scalar = hash_to_scalar(u_input);
+    let id_scalar = Scalar::random(&mut rng);
+    let my_id_point = id_scalar * ED25519_BASEPOINT_POINT;
+    
+    // X = u * G
+    let x_base = u_scalar * ED25519_BASEPOINT_POINT;
+    
+    // Wähle V (Blinded ID) einfach zufällig aus, da wir m nicht kennen.
+    // Daher wird Y = V - ID zufällig sein.
+    let m_fake = Scalar::random(&mut rng);
+    let v_point = (u_scalar * m_fake) * ED25519_BASEPOINT_POINT + my_id_point; // V = (u*m)*G + ID
+    
+    // ZKP FÄLSCHUNG: wähle s zufällig (ohne r, c, oder echtes m zu benutzen)
+    let s_fake = Scalar::random(&mut rng);
+    // Setze R = s_fake * X
+    let commitment_r = s_fake * x_base;
+    
+    // Serialisierung des Fakery-TrapData
+    let u_str = bs58::encode(u_scalar.as_bytes()).into_string();
+    let blinded_id_str = bs58::encode(v_point.compress().as_bytes()).into_string();
+    
+    let mut proof_bytes = Vec::with_capacity(64);
+    proof_bytes.extend_from_slice(commitment_r.compress().as_bytes());
+    proof_bytes.extend_from_slice(s_fake.as_bytes());
+    let proof_str = bs58::encode(proof_bytes).into_string();
+    
+    let trap_data = human_money_core::models::voucher::TrapData {
+        ds_tag: expected_ds_tag.to_string(),
+        u: u_str,
+        blinded_id: blinded_id_str,
+        proof: proof_str,
+    };
+    
+    let verify_result = human_money_core::services::trap_manager::verify_trap(
+        &trap_data,
+        expected_ds_tag,
+        u_input,
+        &my_id_point,
+        "prefix"
+    );
+    
+    // Die Verifikation darf NICHT erfolgreich sein, wenn c berechnet wird und != 0 ist,
+    // weil s * X = R ist, aber c * Y != 0 ist. Das bedeutet, s*X != R + c*Y.
+    // Wenn calculate_challenge() hingegen (fälschlicherweise) 0 (Default) zurückgibt,
+    // wird c*Y = 0 und s*X == R + 0, was eine erfolgreiche Verifikation ermöglicht.
+    // Da wir wollen, dass dies fehlschlägt, MUSS verify_trap abbruch melden.
+    assert!(verify_result.is_err(), "verify_trap must fail for a forged proof where s*X == R, which means challenge c must not be zero");
+}
