@@ -131,8 +131,8 @@ pub fn get_short_hash_from_user_id(user_id: &str) -> [u8; 4] {
     if len >= 4 {
         // 2. Die letzten 4 Bytes kopieren (beste Streuung)
         short_hash.copy_from_slice(&hash_bytes[len - 4..]);
-    } else if len > 0 {
-        // Notfall: Falls der Hash kürzer ist, mit Nullen auffüllen.
+    } else if len > 0 { // mutants: skip -- unreachable: SHA3-256 always produces 32 bytes, base58 never yields <4 bytes
+        // Fallback: pad with leading zeros if hash is unexpectedly short.
         short_hash[4 - len..].copy_from_slice(&hash_bytes);
     }
     short_hash
@@ -688,12 +688,8 @@ pub fn create_user_id(
     {
         return Err(UserIdError::InvalidPrefixChars);
     }
-    if prefix.starts_with('-') || prefix.ends_with('-') {
-        return Err(UserIdError::InvalidPrefixStartEnd);
-    }
-    if prefix.contains("--") {
-        return Err(UserIdError::PrefixHasConsecutiveSeparators);
-    }
+    // Bindestrich und Doppelpunkt dürfen nicht am Anfang oder Ende stehen
+    // und nicht doppelt aufeinander folgen.
     if prefix.starts_with('-')
         || prefix.ends_with('-')
         || prefix.starts_with(':')

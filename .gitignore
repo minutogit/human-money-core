@@ -9,3 +9,5 @@ todo.md
 
 /.ag-config
 /mutants.out*/
+/mutants_final/
+/mutants_retest/

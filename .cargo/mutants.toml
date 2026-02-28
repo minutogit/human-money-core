@@ -1,0 +1,28 @@
+# .cargo/mutants.toml
+# Suppressions für bekannte, akzeptierte Mutanten in cargo mutants.
+#
+# Jeder Eintrag ist entweder:
+#   (A) semantisch äquivalent – das Verhalten ändert sich nicht
+#   (B) strukturell nicht testbar – kein realer Eingabepfad erreicht ihn
+#
+# Regex matcht gegen die Beschreibung aus `cargo mutants --list`.
+# Doku: https://mutants.rs/configuration.html
+
+# (A) build_hkdf_info: `< vs <=` beim lexikographischen Key-Vergleich.
+# Äquivalent, weil X25519-Keys im realen Betrieb nie identisch sind (2^-256).
+# Kommutativität ist vollständig durch Tests abgedeckt.
+exclude_re = ["replace < with <= in build_hkdf_info"]
+
+# (A) validate_user_id: `|| → &&` in der multi-condition Präfix-Prüfung.
+# Einzelne OR-Bedingungen werden durch create_user_id vollständig getestet.
+# In validate_user_id werden crafted IDs mit ungültigem Präfix von
+# get_pubkey_from_user_id früher abgewiesen (InvalidDidFormat), bevor
+# dieser Block erreicht wird.
+[[exclude_re]]
+value = "replace \\|\\| with && in validate_user_id"
+
+# (B) GetPubkeyError::ConversionFailed: ed25519_dalek::SignatureError hat
+# keinen öffentlichen Konstruktor → kann in Tests nicht erzeugt werden.
+# source() für DecodingFailed (mit bs58::Error) ist vollständig getestet.
+[[exclude_re]]
+value = "delete match arm GetPubkeyError::ConversionFailed"

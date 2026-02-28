@@ -5,4 +5,5 @@
 //! Diese Struktur hilft, die Tests thematisch zu gruppieren.
 
 pub mod crypto;
+pub mod crypto_properties;
 pub mod utils;

@@ -369,3 +369,4 @@ fn test_static_encryption_flow() {
     assert!(result.is_err(), "Decryption should fail with a wrong key");
     println!("SUCCESS: Decryption correctly failed with the wrong key.");
 }
+

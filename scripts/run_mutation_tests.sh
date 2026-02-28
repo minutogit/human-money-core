@@ -17,6 +17,7 @@ fi
 
 # Definiere die kritischen Dateien für gezielte Tests (Sicherheits-Hotspots)
 CRITICAL_FILES=(
+    "src/services/crypto_utils.rs"
     "src/services/trap_manager.rs"
     "src/services/voucher_validation.rs"
     "src/wallet/transaction_handler.rs"
