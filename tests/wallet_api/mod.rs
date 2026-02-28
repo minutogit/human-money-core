@@ -16,3 +16,7 @@ mod mixed_mode_vulnerability;
 mod multi_identity_vulnerability;
 mod transactionality;
 mod conflict_detection;
+mod local_ids;
+mod voucher_states;
+mod maintenance;
+mod conflict_management;

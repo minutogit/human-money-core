@@ -207,6 +207,18 @@ mod tests {
         assert!(service.get_user_id().is_err());
     }
 
+    /// **Test 4.2: Passphrase beeinflusst Schlüsselableitung** (Plan C)
+    #[test]
+    fn test_passphrase_affects_keypair() {
+        use human_money_core::Wallet;
+        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        
+        let (_, id1) = Wallet::new_from_mnemonic(mnemonic, None, Some("test")).unwrap();
+        let (_, id2) = Wallet::new_from_mnemonic(mnemonic, Some("secret-passphrase"), Some("test")).unwrap();
+        
+        assert_ne!(id1.user_id, id2.user_id, "Different passphrases must result in different UserIDs");
+    }
+
     /// **Test 5: test_login_fails_with_wrong_password()**
     /// (Unverändert, da `login` keine Session-Logik verwendet)
     #[test]

@@ -1,0 +1,93 @@
+// tests/wallet_api/conflict_management.rs
+// cargo test --test wallet_api_tests wallet_api::conflict_management
+//!
+//! Testet die Wallet-Methoden zur Verwaltung von Konfliktbeweisen
+//! (List-Conflicts, Get-Proof, Add-Resolution, Cleanup).
+
+use human_money_core::test_utils::ACTORS;
+use human_money_core::models::voucher::Transaction;
+use human_money_core::models::conflict::{ProofOfDoubleSpend, ResolutionEndorsement};
+use human_money_core::services::crypto_utils;
+use human_money_core::test_utils::setup_in_memory_wallet;
+use chrono::{Utc, Duration};
+use bs58;
+
+fn create_mock_proof(offender_id: &str) -> ProofOfDoubleSpend {
+    let reporter = &ACTORS.victim;
+    let fork_point_prev_hash = "fork_hash_123".to_string();
+    let proof_id = crypto_utils::get_hash(format!("{}{}", offender_id, fork_point_prev_hash));
+    let signature = crypto_utils::sign_ed25519(&reporter.signing_key, proof_id.as_bytes());
+
+    ProofOfDoubleSpend {
+        proof_id,
+        offender_id: offender_id.to_string(),
+        fork_point_prev_hash,
+        conflicting_transactions: vec![Transaction::default(), Transaction::default()],
+        deletable_at: (Utc::now() + Duration::days(90)).to_rfc3339(),
+        reporter_id: reporter.user_id.clone(),
+        report_timestamp: Utc::now().to_rfc3339(),
+        reporter_signature: bs58::encode(signature.to_bytes()).into_string(),
+        resolutions: None,
+        layer2_verdict: None,
+    }
+}
+
+#[test]
+fn test_wallet_list_and_get_conflicts() {
+    let alice = &ACTORS.alice;
+    let mut wallet = setup_in_memory_wallet(alice);
+
+    let proof1 = create_mock_proof("offender1");
+    let proof2 = create_mock_proof("offender2");
+    wallet.proof_store.proofs.insert(proof1.proof_id.clone(), proof1.clone());
+    wallet.proof_store.proofs.insert(proof2.proof_id.clone(), proof2.clone());
+
+    let list = wallet.list_conflicts();
+    assert_eq!(list.len(), 2);
+
+    let fetched = wallet.get_proof_of_double_spend(&proof1.proof_id).unwrap();
+    assert_eq!(fetched.offender_id, "offender1");
+}
+
+#[test]
+fn test_wallet_add_resolution_endorsement() {
+    let alice = &ACTORS.alice;
+    let mut wallet = setup_in_memory_wallet(alice);
+    let proof = create_mock_proof("offender1");
+    wallet.proof_store.proofs.insert(proof.proof_id.clone(), proof.clone());
+
+    let victim = &ACTORS.victim;
+    let endorsement = ResolutionEndorsement {
+        endorsement_id: "e123".to_string(),
+        proof_id: proof.proof_id.clone(),
+        victim_id: victim.user_id.clone(),
+        resolution_timestamp: Utc::now().to_rfc3339(),
+        notes: Some("Settled".to_string()),
+        victim_signature: "sig".to_string(),
+    };
+
+    wallet.add_resolution_endorsement(endorsement).unwrap();
+
+    let updated = wallet.get_proof_of_double_spend(&proof.proof_id).unwrap();
+    assert_eq!(updated.resolutions.as_ref().unwrap().len(), 1);
+}
+
+#[test]
+fn test_cleanup_proofs_removes_expired_only() {
+    let alice = &ACTORS.alice;
+    let mut wallet = setup_in_memory_wallet(alice);
+
+    let mut proof_old = create_mock_proof("old");
+    proof_old.deletable_at = (Utc::now() - Duration::days(1)).to_rfc3339();
+    
+    let mut proof_new = create_mock_proof("new");
+    proof_new.deletable_at = (Utc::now() + Duration::days(1)).to_rfc3339();
+
+    wallet.proof_store.proofs.insert(proof_old.proof_id.clone(), proof_old.clone());
+    wallet.proof_store.proofs.insert(proof_new.proof_id.clone(), proof_new.clone());
+
+    wallet.cleanup_storage(0);
+
+    assert!(!wallet.proof_store.proofs.contains_key(&proof_old.proof_id));
+    assert!(wallet.proof_store.proofs.contains_key(&proof_new.proof_id));
+}
