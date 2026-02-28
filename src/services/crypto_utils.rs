@@ -688,16 +688,10 @@ pub fn create_user_id(
     {
         return Err(UserIdError::InvalidPrefixChars);
     }
-    // Bindestrich und Doppelpunkt dürfen nicht am Anfang oder Ende stehen
-    // und nicht doppelt aufeinander folgen.
-    if prefix.starts_with('-')
-        || prefix.ends_with('-')
-        || prefix.starts_with(':')
-        || prefix.ends_with(':')
-    {
+    if prefix.starts_with('-') || prefix.ends_with('-') {
         return Err(UserIdError::InvalidPrefixStartEnd);
     }
-    if prefix.contains("--") || prefix.contains("::") {
+    if prefix.contains("--") {
         return Err(UserIdError::PrefixHasConsecutiveSeparators);
     }
 

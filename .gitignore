@@ -11,3 +11,5 @@ todo.md
 /mutants.out*/
 /mutants_final/
 /mutants_retest/
+/mutants_conflict/
+/mutants_conflict2/

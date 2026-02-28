@@ -15,3 +15,4 @@ mod lifecycle_and_data;
 mod mixed_mode_vulnerability;
 mod multi_identity_vulnerability;
 mod transactionality;
+mod conflict_detection;

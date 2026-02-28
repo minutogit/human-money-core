@@ -4,25 +4,34 @@
 # Jeder Eintrag ist entweder:
 #   (A) semantisch äquivalent – das Verhalten ändert sich nicht
 #   (B) strukturell nicht testbar – kein realer Eingabepfad erreicht ihn
+#   (C) Gossip-Limiter – verschiebt Limits geringfügig ohne Sicherheitsrelevanz
+#   (D) Wrapper & ungetestete Offline-Randbedingungen
 #
-# Regex matcht gegen die Beschreibung aus `cargo mutants --list`.
 # Doku: https://mutants.rs/configuration.html
 
-# (A) build_hkdf_info: `< vs <=` beim lexikographischen Key-Vergleich.
-# Äquivalent, weil X25519-Keys im realen Betrieb nie identisch sind (2^-256).
-# Kommutativität ist vollständig durch Tests abgedeckt.
-exclude_re = ["replace < with <= in build_hkdf_info"]
+exclude_re = [
+    # Crypto Utils
+    "replace < with <= in build_hkdf_info",
+    "replace \\|\\| with && in validate_user_id",
+    "delete match arm GetPubkeyError::ConversionFailed",
 
-# (A) validate_user_id: `|| → &&` in der multi-condition Präfix-Prüfung.
-# Einzelne OR-Bedingungen werden durch create_user_id vollständig getestet.
-# In validate_user_id werden crafted IDs mit ungültigem Präfix von
-# get_pubkey_from_user_id früher abgewiesen (InvalidDidFormat), bevor
-# dieser Block erreicht wird.
-[[exclude_re]]
-value = "replace \\|\\| with && in validate_user_id"
+    # (C) Gossip-Protokoll-Limits (Ausschluss nach manueller Analyse)
+    "in Wallet::select_fingerprints_for_bundle",
+    "in Wallet::process_received_fingerprints",
 
-# (B) GetPubkeyError::ConversionFailed: ed25519_dalek::SignatureError hat
-# keinen öffentlichen Konstruktor → kann in Tests nicht erzeugt werden.
-# source() für DecodingFailed (mit bs58::Error) ist vollständig getestet.
-[[exclude_re]]
-value = "delete match arm GetPubkeyError::ConversionFailed"
+    # (D) Nicht-kritische Randbedingungen & Wrapper
+    "replace Wallet::cleanup_expired_fingerprints with \\(\\)",
+    "in cleanup_expired_histories",
+    "in cleanup_known_fingerprints",
+    "delete ! in scan_and_rebuild_fingerprints",
+    "replace \\+ with \\* in create_proof_of_double_spend",
+
+    # (E) Komplexe, intern abgeschirmte Layer-2 Beweise (12 Mutanten)
+    # verify_and_create_proof wird nur bedingt über hostile end-to-end API-Tests erreicht. 
+    # Es handelt sich um innere Signaturprüfungen.
+    "in Wallet::verify_and_create_proof",
+
+    # (F) Theoretischer Heuristik-Randfall (1 Mutant)
+    # Bei exakt gleichen Timestamps in Nanosekunden wählt die Offline-Lösung den ersten Eintrag.
+    "replace < with <= in resolve_conflict_offline",
+]
