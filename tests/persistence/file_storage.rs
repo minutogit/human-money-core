@@ -620,3 +620,259 @@ fn test_storage_reentrancy_same_process() {
         res.err()
     );
 }
+
+// ============================================================================
+// Erweiterte Speicher-Tests
+// Überprüft Randfall-Verhalten von FileStorage: Lock-Lifecycle, Pfadkorrektheit,
+// Profil-Existenzprüfung sowie Persistenz von Fingerprint-Datenstrukturen.
+// ============================================================================
+
+use human_money_core::models::conflict::{
+    FingerprintMetadata, KnownFingerprints, OwnFingerprints, TransactionFingerprint,
+};
+use std::collections::HashMap;
+
+/// Erstellt einen minimalen `TransactionFingerprint` für Tests.
+fn dummy_fingerprint(key: &str) -> TransactionFingerprint {
+    TransactionFingerprint {
+        ds_tag: key.to_string(),
+        u: "u_value".to_string(),
+        blinded_id: "blinded".to_string(),
+        t_id: "tid".to_string(),
+        encrypted_timestamp: 0,
+        layer2_signature: "sig".to_string(),
+        deletable_at: "2099-01-01".to_string(),
+    }
+}
+
+/// Hilfsfunktion: Erstellt einen vollständig initialisierten FileStorage mit gespeichertem Wallet.
+fn setup_file_storage_with_wallet(
+    user_storage_path: std::path::PathBuf,
+    identity: &human_money_core::UserIdentity,
+    password: &str,
+) -> FileStorage {
+    let mut storage = FileStorage::new(user_storage_path);
+    let wallet = setup_in_memory_wallet(identity);
+    wallet
+        .save(&mut storage, identity, &AuthMethod::Password(password))
+        .expect("Initial wallet save failed");
+    storage
+}
+
+/// Prüft, dass die `.wallet.lock`-Datei nach einem vollständigen Schreibvorgang
+/// (lock → write → unlock) wieder gelöscht wurde.
+///
+/// Ein korrekt implementiertes `unlock()` muss die Lock-Datei entfernen;
+/// bleibt sie bestehen, ist der Unlock-Pfad defekt.
+#[test]
+fn test_lock_file_is_deleted_after_unlock() {
+    let temp_dir = tempdir().expect("tempdir");
+    let identity = &ACTORS.alice;
+    let password = "lock-test-pw";
+    let path = temp_dir.path().join("lock_test_wallet");
+
+    let mut storage = setup_file_storage_with_wallet(path, identity, password);
+
+    // Führe einen Schreibvorgang durch – dieser ruft intern lock() und unlock() auf.
+    storage
+        .save_arbitrary_data(
+            &identity.user_id,
+            &AuthMethod::Password(password),
+            "lock_test",
+            b"payload",
+        )
+        .expect("save_arbitrary_data should succeed");
+
+    // Nach dem Schreiben MUSS die Lock-Datei wieder entfernt worden sein.
+    assert!(
+        !storage.get_lock_file_path().exists(),
+        ".wallet.lock muss nach unlock() gelöscht sein, existiert aber noch!"
+    );
+}
+
+/// Prüft, dass `get_lock_file_path()` den korrekten, storage-spezifischen Pfad
+/// zurückgibt: Dateiname muss `.wallet.lock` sein und das übergeordnete
+/// Verzeichnis muss dem konfigurierten Storage-Pfad entsprechen.
+#[test]
+fn test_get_lock_file_path_is_correct() {
+    let temp_dir = tempdir().expect("tempdir");
+    let storage_path = temp_dir.path().join("lock_path_wallet");
+    let storage = FileStorage::new(storage_path.clone());
+
+    let lock_path = storage.get_lock_file_path();
+
+    // Der Dateiname muss exakt ".wallet.lock" sein.
+    assert_eq!(
+        lock_path.file_name().and_then(|n| n.to_str()),
+        Some(".wallet.lock"),
+        "Lock-Dateiname muss '.wallet.lock' sein"
+    );
+
+    // Das übergeordnete Verzeichnis muss der storage-Pfad sein.
+    assert_eq!(
+        lock_path.parent().expect("must have parent"),
+        storage_path,
+        "Lock-Datei muss im korrekten Wallet-Verzeichnis liegen"
+    );
+}
+
+/// Prüft, dass `profile_exists()` in allen relevanten Zuständen den korrekten
+/// booleschen Wert liefert: `false` vor dem ersten Speichern, `true` danach,
+/// und wieder `false` nachdem die Profil-Datei manuell entfernt wurde.
+#[test]
+fn test_profile_exists_returns_correct_booleans() {
+    let temp_dir = tempdir().expect("tempdir");
+    let identity = &ACTORS.alice;
+    let password = "exists-test-pw";
+    let path = temp_dir.path().join("exists_wallet");
+    let mut storage = FileStorage::new(path.clone());
+
+    // Vor dem Speichern existiert kein Profil.
+    assert!(
+        !storage.profile_exists(),
+        "profile_exists() muss false zurückgeben, bevor das Profil gespeichert wurde"
+    );
+
+    // Speichern, um das Profil anzulegen.
+    let wallet = setup_in_memory_wallet(identity);
+    wallet
+        .save(&mut storage, identity, &AuthMethod::Password(password))
+        .expect("save");
+
+    // Nach dem Speichern existiert das Profil.
+    assert!(
+        storage.profile_exists(),
+        "profile_exists() muss true zurückgeben, nachdem das Profil gespeichert wurde"
+    );
+
+    // Manuell löschen → wieder false.
+    fs::remove_file(path.join("profile.enc")).expect("remove profile.enc");
+    assert!(
+        !storage.profile_exists(),
+        "profile_exists() muss false zurückgeben, nachdem profile.enc gelöscht wurde"
+    );
+}
+
+/// Prüft, dass `KnownFingerprints` korrekt gespeichert und wieder geladen werden.
+/// Nach dem Laden müssen alle gespeicherten Einträge vollständig und inhaltlich
+/// identisch vorhanden sein.
+#[test]
+fn test_known_fingerprints_persist_and_load() {
+    let temp_dir = tempdir().expect("tempdir");
+    let identity = &ACTORS.alice;
+    let password = "kfp-test-pw";
+    let path = temp_dir.path().join("kfp_wallet");
+
+    let mut storage = setup_file_storage_with_wallet(path, identity, password);
+    let auth = AuthMethod::Password(password);
+
+    // Erstelle einen KnownFingerprints-Store mit einem konkreten Eintrag.
+    let mut store = KnownFingerprints::default();
+    store
+        .local_history
+        .insert("voucher-abc".to_string(), vec![dummy_fingerprint("tag-1")]);
+
+    // Speichern.
+    storage
+        .save_known_fingerprints(&identity.user_id, &auth, &store)
+        .expect("save_known_fingerprints should succeed");
+
+    // Laden und prüfen.
+    let loaded = storage
+        .load_known_fingerprints(&identity.user_id, &auth)
+        .expect("load_known_fingerprints should succeed");
+
+    assert!(
+        loaded.local_history.contains_key("voucher-abc"),
+        "'voucher-abc' muss nach dem Laden in local_history vorhanden sein"
+    );
+    assert_eq!(
+        loaded.local_history["voucher-abc"].len(),
+        1,
+        "Es muss genau 1 Fingerprint in local_history['voucher-abc'] sein"
+    );
+    assert_eq!(
+        loaded.local_history["voucher-abc"][0].ds_tag,
+        "tag-1",
+        "Der ds_tag des geladenen Fingerprints muss 'tag-1' sein"
+    );
+}
+
+/// Prüft, dass `OwnFingerprints` korrekt gespeichert und wieder geladen werden.
+/// Analog zu `test_known_fingerprints_persist_and_load`, jedoch für die eigene
+/// Fingerprint-Historie.
+#[test]
+fn test_own_fingerprints_persist_and_load() {
+    let temp_dir = tempdir().expect("tempdir");
+    let identity = &ACTORS.alice;
+    let password = "ofp-test-pw";
+    let path = temp_dir.path().join("ofp_wallet");
+
+    let mut storage = setup_file_storage_with_wallet(path, identity, password);
+    let auth = AuthMethod::Password(password);
+
+    // Erstelle einen OwnFingerprints-Store mit einem konkreten Eintrag in der Historie.
+    let mut store = OwnFingerprints::default();
+    store
+        .history
+        .insert("voucher-xyz".to_string(), vec![dummy_fingerprint("own-tag-1")]);
+
+    // Speichern.
+    storage
+        .save_own_fingerprints(&identity.user_id, &auth, &store)
+        .expect("save_own_fingerprints should succeed");
+
+    // Laden und prüfen.
+    let loaded = storage
+        .load_own_fingerprints(&identity.user_id, &auth)
+        .expect("load_own_fingerprints should succeed");
+
+    assert!(
+        loaded.history.contains_key("voucher-xyz"),
+        "'voucher-xyz' muss nach dem Laden in OwnFingerprints::history vorhanden sein"
+    );
+    assert_eq!(
+        loaded.history["voucher-xyz"][0].ds_tag,
+        "own-tag-1",
+        "Der ds_tag des geladenen Fingerprints muss 'own-tag-1' sein"
+    );
+}
+
+/// Prüft, dass der `CanonicalMetadataStore` (eine `HashMap<String, FingerprintMetadata>`)
+/// korrekt gespeichert und wieder geladen wird, inklusive aller Feldwerte.
+#[test]
+fn test_fingerprint_metadata_persists_and_loads() {
+    let temp_dir = tempdir().expect("tempdir");
+    let identity = &ACTORS.alice;
+    let password = "fpm-test-pw";
+    let path = temp_dir.path().join("fpm_wallet");
+
+    let mut storage = setup_file_storage_with_wallet(path, identity, password);
+    let auth = AuthMethod::Password(password);
+
+    // Erstelle einen CanonicalMetadataStore (= HashMap<String, FingerprintMetadata>) mit Inhalt.
+    let mut metadata_store: HashMap<String, FingerprintMetadata> = HashMap::new();
+    let mut meta = FingerprintMetadata::default();
+    meta.depth = 3;
+    metadata_store.insert("ds_tag_sentinel".to_string(), meta);
+
+    // Speichern.
+    storage
+        .save_fingerprint_metadata(&identity.user_id, &auth, &metadata_store)
+        .expect("save_fingerprint_metadata should succeed");
+
+    // Laden und prüfen.
+    let loaded = storage
+        .load_fingerprint_metadata(&identity.user_id, &auth)
+        .expect("load_fingerprint_metadata should succeed");
+
+    assert!(
+        loaded.contains_key("ds_tag_sentinel"),
+        "'ds_tag_sentinel' muss nach dem Laden im CanonicalMetadataStore vorhanden sein"
+    );
+    assert_eq!(
+        loaded["ds_tag_sentinel"].depth,
+        3,
+        "depth muss nach dem Laden den gespeicherten Wert 3 haben"
+    );
+}

@@ -34,4 +34,8 @@ exclude_re = [
     # (F) Theoretischer Heuristik-Randfall (1 Mutant)
     # Bei exakt gleichen Timestamps in Nanosekunden wählt die Offline-Lösung den ersten Eintrag.
     "replace < with <= in resolve_conflict_offline",
+
+    # (B) Nicht erreichbar im Test-Build – get_argon2 liegt hinter #[cfg(not(test))] und
+    # wird durch das SHA256-Stub in Tests vollständig ersetzt. Kein Testpfad erreicht diesen Code.
+    "replace get_argon2 -> ",
 ]
