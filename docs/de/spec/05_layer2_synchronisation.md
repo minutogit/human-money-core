@@ -69,7 +69,7 @@ Um dies auszuschließen, nutzt HuMoCo eine strikte kryptografische Bindung (Sign
     4. `sender_ephemeral_pub` (32 Bytes Array)
     5. `receiver_ephemeral_pub_hash` (Optional, 32 Bytes Array)
     6. `change_ephemeral_pub_hash` (Optional, 32 Bytes Array)
-    7. `valid_until` (Optional, als Bytes)
+    7. `deletable_at` (Optional, als Bytes)
 *   Da der Server die Signatur des Nutzers über diesen spezifischen Payload unmöglich fälschen kann, dient der zurückgelieferte Eintrag als unumstößlicher Beweis.
 *   **Schutz vor Mix-up:** Ein Server kann keinen gültigen Beweis eines anderen Gutscheins oder eines anderen Tags "umbiegen", da die IDs fest im signierten Hash verankert sind.
 
@@ -100,7 +100,7 @@ Dieser Payload wird vom Client gesendet, um eine neue Transaktion (oder Genesis)
   "receiver_ephemeral_pub_hash": "7mY2... (Base58, 32 Bytes)", // optional
   "change_ephemeral_pub_hash": null, // optional
   "layer2_signature": "At92... (Base58, 64 Bytes)",
-  "valid_until": null // optional
+  "deletable_at": null // optional
 }
 ```
 
@@ -137,7 +137,7 @@ Dies ist die generische Hülle (`Envelope`), die für **jede** Serverantwort gen
       "receiver_ephemeral_pub_hash": "7mY2...",
       "change_ephemeral_pub_hash": null,
       "layer2_signature": "At92...",
-      "valid_until": null
+      "deletable_at": null
     }
   },
   "server_signature": "ZZ88... (Base58, 64 Bytes)"
@@ -170,7 +170,7 @@ Das Zusammenspiel dieser Komponenten zeigt sich in vier maßgeblichen Workflow-S
 *   **Client verifiziert:**
     1.  **Server-Authentizität:** Er prüft die Signatur des Envelopes gegen den `l2_server_pubkey`.
     2.  **Nutzer-Beweis:** Er prüft die Signatur des `lock_entry` mathematisch gegen den rekonsituierten Payload (Härtung).
-    3.  **T_ID Check:** Er vergleicht die `t_id` aus dem Eintrag mit seiner lokalen `t_id`. Stimmen sie überein, ist die Zahlung garantiert sicher.
+    3.  **T_ID Check:** Er vergleicht die `t_id` aus dem Eintrag mit seiner lokalen `t_id`. Stimmen sie überein, ist die Zahlung garantiert sicher, da der Client nun den Beweis hat, dass seine Transaktion als der offizielle und einzig gültige Lock im L2-Netzwerk verankert ist.
 
 ### Szenario 2: Die Offline-Synchronisation (Client ist dem Server voraus)
 *   **Kontext:** Der Nutzer hat den Gutschein offline mehrfach weitergegeben. Der Client hat nun den Stand Tiefe 10, aber das L2-Netzwerk kennt bisher nur den Stand bis Tiefe 7.
