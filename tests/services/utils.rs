@@ -202,6 +202,225 @@ use human_money_core::models::voucher::{
     Address, Collateral, Transaction, ValueDefinition, Voucher, VoucherStandard,
     VoucherTemplateData,
 };
+
+// -------------------------------------------------------------------------
+// Additional edge-case tests for ISO 8601 duration parsing, date rounding,
+// and the issuance circulation firewall.
+// -------------------------------------------------------------------------
+
+/// Verifies that `add_iso8601_duration` rejects strings that violate the ISO 8601 duration
+/// format independently:
+/// - A string with the wrong leading character but correct length must be rejected.
+/// - A string with the correct 'P' prefix but insufficient length must be rejected.
+/// - A well-formed string ('P1Y') must be accepted.
+///
+/// Each condition of the format guard is exercised in isolation so that both
+/// halves of the combined check are confirmed to be necessary.
+#[test]
+fn test_iso8601_duration_rejects_each_format_violation_independently() {
+    let now = chrono::Utc::now();
+
+    // Wrong leading character, but length ≥ 3 – violates the prefix rule only.
+    let result = voucher_manager::add_iso8601_duration(now, "ABC");
+    assert!(
+        result.is_err(),
+        "Expected Err for 'ABC' (wrong prefix, correct length), but got Ok"
+    );
+
+    // Correct 'P' prefix, but length < 3 – violates the length rule only.
+    let result2 = voucher_manager::add_iso8601_duration(now, "P");
+    assert!(
+        result2.is_err(),
+        "Expected Err for 'P' (correct prefix, too short), but got Ok"
+    );
+
+    // Valid format must succeed.
+    let result3 = voucher_manager::add_iso8601_duration(now, "P1Y");
+    assert!(result3.is_ok(), "Expected Ok for valid 'P1Y', got Err");
+}
+
+/// Verifies that `add_iso8601_duration` correctly handles month additions that cross
+/// a year boundary, i.e. when the source date is in the last months of the year.
+///
+/// The month arithmetic in this function determines the number of days in the target
+/// month by looking ahead to the first day of the *following* month. When the target
+/// month is December this look-ahead must reference January of the *next* year.
+/// The following cases confirm this year-rollover path:
+///   - November start → December target (no year change, sanity check)
+///   - December start → January target (year increments)
+///   - December 31st  → January 31st   (year increments, full-month clamp)
+#[test]
+fn test_iso8601_duration_month_addition_across_year_boundary() {
+    let test_cases = vec![
+        // Sanity: November + 1 month → December (no year change)
+        ("2025-11-15T12:00:00Z", "P1M", "2025-12-15T12:00:00Z"),
+        // Core case: December + 1 month → January of the following year
+        ("2025-12-15T12:00:00Z", "P1M", "2026-01-15T12:00:00Z"),
+        // Edge case: last day of December + 1 month → last day of January (year rollover)
+        ("2025-12-31T12:00:00Z", "P1M", "2026-01-31T12:00:00Z"),
+    ];
+
+    for (start_str, duration_str, expected_str) in test_cases {
+        let start = chrono::DateTime::parse_from_rfc3339(start_str)
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let expected = chrono::DateTime::parse_from_rfc3339(expected_str)
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+
+        let result = voucher_manager::add_iso8601_duration(start, duration_str)
+            .unwrap_or_else(|e| panic!("Unexpected error for '{}': {:?}", start_str, e));
+
+        assert_eq!(
+            result.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            expected.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            "Failed for: {} + {}",
+            start_str,
+            duration_str
+        );
+    }
+}
+
+/// Verifies that `round_up_date` with rule `P1M` correctly rounds a December date to
+/// the last moment of December (i.e. `2025-12-31T23:59:59.999999999Z`).
+///
+/// The function works by computing `first_of_next_month - 1ns`. For a December input
+/// the "next month" is January of the *following* year, so the year must be incremented
+/// when building this reference date. This test confirms that the year-rollover path
+/// produces the correct end-of-December timestamp.
+#[test]
+fn test_round_up_date_p1m_correctly_handles_december() {
+    // A December date rounded to P1M must yield the last nanosecond of December.
+    let start = chrono::DateTime::parse_from_rfc3339("2025-12-15T10:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let expected = chrono::DateTime::parse_from_rfc3339("2025-12-31T23:59:59.999999999Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+
+    let result = voucher_manager::round_up_date(start, "P1M")
+        .expect("round_up_date should not fail for December with P1M");
+
+    assert_eq!(
+        result, expected,
+        "round_up_date for December + P1M should yield 2025-12-31T23:59:59.999999999Z"
+    );
+}
+
+/// Verifies the issuance circulation firewall: when a standard defines
+/// `issuance_minimum_validity_duration`, the creator may only forward a voucher to a
+/// third party while the remaining validity exceeds that minimum.
+///
+/// Two cases are checked:
+/// - A voucher with P2Y validity (well above the P1Y minimum) must be allowed through.
+/// - A voucher with only P1D validity (well below the P1Y minimum) must be rejected.
+///
+/// Note: the voucher with insufficient validity is intentionally created against a
+/// no-minimum standard so that `create_voucher` itself does not block it; only the
+/// subsequent `create_transaction` call enforces the firewall rule.
+#[test]
+fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
+    let (base_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+
+    // Build a standard that requires at least P1Y of remaining validity for the creator.
+    let (standard_with_p1y, standard_hash) =
+        human_money_core::test_utils::create_custom_standard(base_standard, |s| {
+            s.immutable.issuance.issuance_minimum_validity_duration = "P1Y".to_string();
+        });
+
+    let creator = &ACTORS.alice;
+    let recipient = &ACTORS.bob;
+
+    // --- Case 1: validity P2Y (well above minimum P1Y) -- must be allowed ---
+    let voucher_data_allowed = NewVoucherData {
+        creator_profile: human_money_core::models::profile::PublicProfile {
+            id: Some(creator.user_id.clone()),
+            ..Default::default()
+        },
+        nominal_value: ValueDefinition {
+            amount: "100".to_string(),
+            ..Default::default()
+        },
+        validity_duration: Some("P2Y".to_string()),
+        ..Default::default()
+    };
+
+    let voucher_allowed = create_voucher(
+        voucher_data_allowed,
+        &standard_with_p1y,
+        &standard_hash,
+        &creator.signing_key,
+        "en",
+    )
+    .expect("create_voucher with P2Y should succeed");
+
+    let holder_key_allowed =
+        human_money_core::test_utils::derive_holder_key(&voucher_allowed, &creator.signing_key);
+
+    let result_allowed = human_money_core::services::voucher_manager::create_transaction(
+        &voucher_allowed,
+        &standard_with_p1y,
+        &creator.user_id,
+        &creator.signing_key,
+        &holder_key_allowed,
+        &recipient.user_id,
+        "10",
+    );
+
+    assert!(
+        result_allowed.is_ok(),
+        "Voucher with P2Y validity (above P1Y minimum) should be allowed through the firewall, got: {:?}",
+        result_allowed.err()
+    );
+
+    // --- Case 2: validity P1D (well below minimum P1Y) -- must be blocked ---
+    // Create with a no-minimum standard so that create_voucher itself does not reject it.
+    let (standard_no_min, hash_no_min) =
+        human_money_core::test_utils::create_custom_standard(base_standard, |s| {
+            s.immutable.issuance.issuance_minimum_validity_duration = "P0Y".to_string();
+        });
+
+    let voucher_data_short = NewVoucherData {
+        creator_profile: human_money_core::models::profile::PublicProfile {
+            id: Some(creator.user_id.clone()),
+            ..Default::default()
+        },
+        nominal_value: ValueDefinition {
+            amount: "100".to_string(),
+            ..Default::default()
+        },
+        validity_duration: Some("P1D".to_string()), // Only 1 day – well below P1Y
+        ..Default::default()
+    };
+
+    let voucher_short = create_voucher(
+        voucher_data_short,
+        &standard_no_min,
+        &hash_no_min,
+        &creator.signing_key,
+        "en",
+    )
+    .expect("create_voucher with P1D on no-min standard should succeed");
+
+    let holder_key_short =
+        human_money_core::test_utils::derive_holder_key(&voucher_short, &creator.signing_key);
+
+    // Attempt the transaction against the stricter P1Y standard -- firewall must block it.
+    let result_short = human_money_core::services::voucher_manager::create_transaction(
+        &voucher_short,
+        &standard_with_p1y,
+        &creator.user_id,
+        &creator.signing_key,
+        &holder_key_short,
+        &recipient.user_id,
+        "10",
+    );
+
+    assert!(
+        result_short.is_err(),
+        "Voucher with only P1D validity must be blocked by the P1Y issuance firewall"
+    );
+}
 use human_money_core::services::crypto_utils::get_hash;
 use human_money_core::services::utils::get_current_timestamp;
 use human_money_core::wallet::Wallet;
