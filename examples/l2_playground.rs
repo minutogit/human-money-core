@@ -171,7 +171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Standard laden
     let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Private;
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Flexible;
     });
     let flexible_toml = toml::to_string(&flexible_standard)?;
     let mut standards_toml = HashMap::new();
@@ -210,12 +210,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .local_instance_id
         .clone();
     let req_genesis = app.generate_l2_lock_request(&voucher_id)?;
+    let parsed_genesis = serde_json::from_slice::<L2LockRequest>(&req_genesis)?;
     let resp_genesis = server.handle_lock_request(&req_genesis);
     app.process_l2_response(&voucher_id, &resp_genesis, Some(password))
         .unwrap();
     println!(
         "✅ Genesis anchored on L2. Voucher ID: \x1b[32m{}\x1b[0m\n",
-        serde_json::from_slice::<L2LockRequest>(&req_genesis)?.layer2_voucher_id
+        parsed_genesis.layer2_voucher_id
     );
 
     // --- SCHRITT 2: Transaktion 1 ---
@@ -243,14 +244,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     let req_tx1 = app.generate_l2_lock_request(&v_id_1)?;
+    let parsed_tx1 = serde_json::from_slice::<L2LockRequest>(&req_tx1)?;
     let resp_tx1 = server.handle_lock_request(&req_tx1);
     app.process_l2_response(&v_id_1, &resp_tx1, Some(password))
         .unwrap();
     println!(
         "✅ TX 1 anchored on L2. DS_TAG: \x1b[32m{}\x1b[0m\n",
-        serde_json::from_slice::<L2LockRequest>(&req_tx1)?
-            .ds_tag
-            .unwrap_or_default()
+        parsed_tx1.ds_tag.clone().unwrap_or_default()
     );
 
     // --- SCHRITT 3: Transaktion 2 ---
@@ -277,15 +277,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     let req_tx2 = app.generate_l2_lock_request(&v_id_2)?;
+    let parsed_tx2 = serde_json::from_slice::<L2LockRequest>(&req_tx2)?;
     let resp_tx2 = server.handle_lock_request(&req_tx2);
     app.process_l2_response(&v_id_2, &resp_tx2, Some(password))
         .unwrap();
     println!(
         "✅ TX 2 anchored on L2. DS_TAG: \x1b[32m{}\x1b[0m\n",
-        serde_json::from_slice::<L2LockRequest>(&req_tx2)?
-            .ds_tag
-            .unwrap_or_default()
+        parsed_tx2.ds_tag.clone().unwrap_or_default()
     );
+
+    // Alle Requests zur späteren Analyse bündeln
+    let all_requests: Vec<(&str, &[u8], &L2LockRequest)> = vec![
+        ("Genesis", req_genesis.as_slice(), &parsed_genesis),
+        ("TX 1 (Split -10)", req_tx1.as_slice(), &parsed_tx1),
+        ("TX 2 (Split -5)", req_tx2.as_slice(), &parsed_tx2),
+    ];
 
     // --- ANALYSE & VISUALISIERUNG ---
     println!("\x1b[1;36m======================================================\x1b[0m");
@@ -410,6 +416,168 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "\nDas ermöglicht Privatsphäre (Keys sind anonym), garantiert aber die lückenlose Autorität."
     );
+
+    // =========================================================================
+    // SEKTION 2: L2 LOCK REQUEST FELDER (Was wird gesendet?)
+    // =========================================================================
+    println!("\n\x1b[1;36m======================================================\x1b[0m");
+    println!("\x1b[1;36m         L2 LOCK REQUEST – ALLE FELDER PRO TX         \x1b[0m");
+    println!("\x1b[1;36m======================================================\x1b[0m");
+    println!("\x1b[90m(Dies sind die Rohdaten, die der Client an den L2-Server sendet)\x1b[0m\n");
+
+    for (label, raw_bytes, req) in &all_requests {
+        let json_size = raw_bytes.len();
+        println!("\x1b[1;34m┌─ {} ({} Bytes JSON)\x1b[0m", label, json_size);
+        println!("│  \x1b[1;37mIdentifikation:\x1b[0m");
+        println!("│    layer2_voucher_id      = \x1b[33m{}\x1b[0m", req.layer2_voucher_id);
+        println!("│    is_genesis             = \x1b[33m{}\x1b[0m", req.is_genesis);
+        println!("│    ds_tag                 = \x1b[33m{}\x1b[0m",
+            req.ds_tag.as_deref().unwrap_or("\x1b[90m(keiner – Genesis)\x1b[0m\x1b[33m"));
+        println!("│  \x1b[1;37mKryptographie:\x1b[0m");
+        println!("│    transaction_hash       = \x1b[32m{}\x1b[0m  \x1b[90m[32 Bytes | t_id]\x1b[0m",
+            bs58::encode(req.transaction_hash).into_string());
+        println!("│    sender_ephemeral_pub   = \x1b[32m{}\x1b[0m  \x1b[90m[32 Bytes | Ed25519 PubKey]\x1b[0m",
+            bs58::encode(req.sender_ephemeral_pub).into_string());
+        println!("│    layer2_signature       = \x1b[32m{}\x1b[0m  \x1b[90m[64 Bytes | Ed25519 Sig]\x1b[0m",
+            bs58::encode(req.layer2_signature).into_string());
+        println!("│  \x1b[1;37mUTXO-Anker (Outputs):\x1b[0m");
+        match req.receiver_ephemeral_pub_hash {
+            Some(h) => println!("│    receiver_ephem_hash    = \x1b[32m{}\x1b[0m  \x1b[90m[32 Bytes]\x1b[0m",
+                bs58::encode(h).into_string()),
+            None => println!("│    receiver_ephem_hash    = \x1b[90m(kein)\x1b[0m"),
+        }
+        match req.change_ephemeral_pub_hash {
+            Some(h) => println!("│    change_ephem_hash      = \x1b[32m{}\x1b[0m  \x1b[90m[32 Bytes]\x1b[0m",
+                bs58::encode(h).into_string()),
+            None => println!("│    change_ephem_hash      = \x1b[90m(kein)\x1b[0m"),
+        }
+        println!("│  \x1b[1;37mAuth-Payload:\x1b[0m");
+        println!("│    auth.ephemeral_pubkey  = \x1b[32m{}\x1b[0m  \x1b[90m[32 Bytes]\x1b[0m",
+            bs58::encode(req.auth.ephemeral_pubkey).into_string());
+        println!("│    auth.auth_signature    = \x1b[90m{}\x1b[0m",
+            req.auth.auth_signature.map(|_| "(vorhanden [64 Bytes])").unwrap_or("(kein – Platzhalter)"));
+        match &req.deletable_at {
+            Some(d) => println!("│    deletable_at           = \x1b[33m{}\x1b[0m  \x1b[90m[nur bei Genesis]\x1b[0m", d),
+            None => println!("│    deletable_at           = \x1b[90m(kein)\x1b[0m"),
+        }
+        println!("└─────────────────────────────────────────────────────\n");
+    }
+
+    // =========================================================================
+    // SEKTION 3: L2 LOCK ENTRIES (Was speichert der Server?)
+    // =========================================================================
+    println!("\x1b[1;36m======================================================\x1b[0m");
+    println!("\x1b[1;36m      L2 GESPEICHERTE LOCK ENTRIES (Server-RAM)       \x1b[0m");
+    println!("\x1b[1;36m======================================================\x1b[0m");
+    println!("\x1b[90m(Dies sind die Einträge, die der L2-Server in seiner Datenbank hält)\x1b[0m\n");
+
+    let mut total_lock_bytes: usize = 0;
+    let mut entry_count = 0usize;
+
+    for (voucher_id_str, ds_map) in &server.locks {
+        println!("\x1b[1;37mLayer2-Voucher-ID:\x1b[0m \x1b[33m{}\x1b[0m", voucher_id_str);
+        println!("  Anzahl Locks: \x1b[32m{}\x1b[0m\n", ds_map.len());
+
+        for (ds_tag_key, entry) in ds_map {
+            entry_count += 1;
+            let entry_json = serde_json::to_vec(entry).unwrap();
+            let entry_bytes = entry_json.len();
+            total_lock_bytes += entry_bytes;
+
+            // Größen der einzelnen Felder berechnen
+            let f_voucher_id   = entry.layer2_voucher_id.len();
+            let f_t_id         = 32usize;
+            let f_sender_pub   = 32usize;
+            let f_recv_hash    = if entry.receiver_ephemeral_pub_hash.is_some() { 32 } else { 0 };
+            let f_change_hash  = if entry.change_ephemeral_pub_hash.is_some() { 32 } else { 0 };
+            let f_sig          = 64usize;
+            let f_deletable    = entry.deletable_at.as_ref().map(|s| s.len()).unwrap_or(0);
+            let fixed_total    = f_t_id + f_sender_pub + f_recv_hash + f_change_hash + f_sig;
+
+            println!("  \x1b[1;34m┌─ DS-Tag (Schlüssel): {}\x1b[0m", ds_tag_key);
+            println!("  │  \x1b[1;37mGespeicherte Felder:\x1b[0m");
+            println!("  │    layer2_voucher_id      {} Bytes  \x1b[90m(Hex-String)\x1b[0m", f_voucher_id);
+            println!("  │    t_id                   {} Bytes  \x1b[90m(raw [u8;32] = Transaktions-Hash)\x1b[0m", f_t_id);
+            println!("  │    sender_ephemeral_pub   {} Bytes  \x1b[90m(raw [u8;32] = Einmal-PubKey)\x1b[0m", f_sender_pub);
+            if f_recv_hash > 0 {
+                println!("  │    receiver_ephem_hash   {} Bytes  \x1b[90m(raw [u8;32] = UTXO Empfänger)\x1b[0m", f_recv_hash);
+            } else {
+                println!("  │    receiver_ephem_hash    \x1b[90m– nicht gesetzt\x1b[0m");
+            }
+            if f_change_hash > 0 {
+                println!("  │    change_ephem_hash      {} Bytes  \x1b[90m(raw [u8;32] = UTXO Wechselgeld)\x1b[0m", f_change_hash);
+            } else {
+                println!("  │    change_ephem_hash      \x1b[90m– nicht gesetzt\x1b[0m");
+            }
+            println!("  │    layer2_signature       {} Bytes  \x1b[90m(raw [u8;64] = Ed25519 Beweis)\x1b[0m", f_sig);
+            if f_deletable > 0 {
+                println!("  │    deletable_at           {} Bytes  \x1b[90m(ISO8601-String, nur Genesis)\x1b[0m",
+                    f_deletable);
+            } else {
+                println!("  │    deletable_at           \x1b[90m– nicht gesetzt\x1b[0m");
+            }
+            println!("  │");
+            println!("  │  \x1b[1;37mSpeicher-Aufschlüsselung:\x1b[0m");
+            println!("  │    Feste kryptograph. Nutzdaten  {:>4} Bytes  \x1b[90m(t_id + pub + hashes + sig)\x1b[0m", fixed_total);
+            println!("  │    Voucher-ID (String-Overhead)  {:>4} Bytes", f_voucher_id);
+            println!("  │    Zeitstempel (deletable_at)    {:>4} Bytes", f_deletable);
+            println!("  │    JSON-Serialisierungsrahmen    {:>4} Bytes  \x1b[90m(Keys, Anführungszeichen, etc.)\x1b[0m",
+                entry_bytes.saturating_sub(fixed_total + f_voucher_id + f_deletable));
+            println!("  │    \x1b[1;32m──────────────────────────────────────────\x1b[0m");
+            println!("  │    \x1b[1;32mEintrag gesamt (JSON):            {:>4} Bytes\x1b[0m", entry_bytes);
+            println!("  └─────────────────────────────────────────────────────\n");
+        }
+    }
+
+    // =========================================================================
+    // SEKTION 4: SPEICHERVERBRAUCH GESAMT-ÜBERSICHT
+    // =========================================================================
+    println!("\x1b[1;36m======================================================\x1b[0m");
+    println!("\x1b[1;36m           SPEICHERVERBRAUCH – GESAMTÜBERSICHT        \x1b[0m");
+    println!("\x1b[1;36m======================================================\x1b[0m\n");
+
+    let avg_bytes = if entry_count > 0 { total_lock_bytes / entry_count } else { 0 };
+
+    // Bloom-Filter (vereinfacht: 1 Bit pro Element mit k=7 Hash-Funktionen bei 1% Fehlerrate)
+    // m = -n * ln(p) / (ln(2))^2 → bei p=0.01, n=entry_count
+    let bloom_bits = if entry_count > 0 {
+        let n = entry_count as f64;
+        let p = 0.01_f64;
+        (-n * p.ln() / (2.0_f64.ln().powi(2))).ceil() as usize
+    } else { 0 };
+    let bloom_bytes = (bloom_bits + 7) / 8;
+
+    println!("  \x1b[1;37m┌─ Lock-Datenbank (HashMap)\x1b[0m");
+    println!("  │    Gespeicherte Voucher-IDs:     {:>4}", server.locks.len());
+    println!("  │    Gespeicherte Lock-Einträge:   {:>4}", entry_count);
+    println!("  │    Ø Bytes pro Eintrag (JSON):   {:>4} Bytes", avg_bytes);
+    println!("  │    Gesamt Lock-DB (JSON):        {:>4} Bytes  ≈ {:.1} KB",
+        total_lock_bytes, total_lock_bytes as f64 / 1024.0);
+    println!("  │");
+    println!("  │  \x1b[1;37m┌─ RAM Bloom-Filter (Voucher-IDs)\x1b[0m");
+    println!("  │  │    Eingetragene Voucher:          {:>4}", server.vouchers.len());
+    println!("  │  │    Bit-Array für 1% Fehlerrate:   {:>4} Bits  = {} Bytes",
+        bloom_bits, bloom_bytes);
+    println!("  │  └─");
+    println!("  │");
+    println!("  │  \x1b[1;37m┌─ UTXO-Anker (spendable_outputs)\x1b[0m");
+    let utxo_bytes = server.spendable_outputs.len() * 32;
+    println!("  │  │    Eingetragene Outputs:          {:>4}   (je 32 Bytes = [u8;32])",
+        server.spendable_outputs.len());
+    println!("  │  │    Speicher (raw):                {:>4} Bytes  ≈ {:.1} KB",
+        utxo_bytes, utxo_bytes as f64 / 1024.0);
+    println!("  │  └─");
+    println!("  │");
+    let grand_total = total_lock_bytes + bloom_bytes + utxo_bytes;
+    println!("  │  \x1b[1;32m──────────────────────────────────────────────────\x1b[0m");
+    println!("  │  \x1b[1;32mGesamt-RAM-Footprint (geschätzt):  {:>5} Bytes  ≈ {:.1} KB\x1b[0m",
+        grand_total, grand_total as f64 / 1024.0);
+    println!("  └─");
+
+    println!("\n\x1b[90mHinweis: Produktiv-Implementierungen würden die Locks binär kodieren\x1b[0m");
+    println!("\x1b[90m(z.B. als feste Byte-Arrays ohne JSON-Overhead), was den Speicherbedarf\x1b[0m");
+    println!("\x1b[90mpro Eintrag auf ≈ {} Bytes reduzieren würde.\x1b[0m\n",
+        32 + 32 + 32 + 32 + 64); // t_id + sender_pub + recv_hash + change_hash + sig
 
     Ok(())
 }
