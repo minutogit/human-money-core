@@ -11,12 +11,12 @@ use crate::wallet::instance::VoucherStatus;
 use crate::{AuthMethod, ValidationFailureReason, VoucherCoreError};
 
 impl AppService {
-    /// Erstellt ein Bundle, um einen Gutschein zur Unterzeichnung an einen Bürgen zu senden.
+    /// Erstellt ein Bundle, um einen Gutschein zur Unterzeichnung an einen weiteren Teilnehmer (z. B. Bürge, Notar) zu senden.
     ///
     /// Diese Operation verändert den Wallet-Zustand nicht und erfordert kein Speichern.
     ///
     /// # Returns
-    /// Die serialisierten Bytes des `SecureContainer`, bereit zum Versand an den Bürgen.
+    /// Die serialisierten Bytes des `SecureContainer`, bereit zum Versand an den Unterzeichner.
     ///
     /// # Errors
     /// Schlägt fehl, wenn das Wallet gesperrt ist oder der angeforderte Gutschein nicht existiert.
@@ -35,43 +35,135 @@ impl AppService {
             .map_err(|e| e.to_string())
     }
 
+    /// Öffnet einen empfangenen `SecureContainer`, der eine Signaturanfrage enthält,
+    /// und gibt den Gutschein zur Überprüfung (Preview) zurück.
+    ///
+    /// Diese Operation verändert den Wallet-Zustand nicht.
+    ///
+    /// # Returns
+    /// Das `Voucher`-Objekt, das unterzeichnet werden soll.
+    pub fn open_voucher_signing_request(&self, container_bytes: &[u8]) -> Result<Voucher, String> {
+        let identity = match &self.state {
+            AppState::Unlocked { identity, .. } => identity,
+            AppState::Locked => return Err("Wallet is locked".to_string()),
+        };
+
+        let container: crate::models::secure_container::SecureContainer =
+            serde_json::from_slice(container_bytes).map_err(|e| e.to_string())?;
+
+        if !matches!(
+            container.c,
+            crate::models::secure_container::PayloadType::VoucherForSigning
+        ) {
+            return Err("Invalid payload type: expected VoucherForSigning".to_string());
+        }
+
+        let payload = crate::services::secure_container_manager::open_secure_container(
+            &container, identity,
+        )
+        .map_err(|e| e.to_string())?;
+
+        let voucher: Voucher = serde_json::from_slice(&payload).map_err(|e| e.to_string())?;
+        Ok(voucher)
+    }
+
     /// Erstellt eine losgelöste Signatur als Antwort auf eine Signaturanfrage.
     ///
-    /// Diese Operation wird vom Bürgen aufgerufen und verändert dessen Wallet-Zustand nicht.
+    /// Diese Operation wird vom Unterzeichner aufgerufen und speichert den bezeugten Gutschein
+    /// im lokalen Wallet unter dem Status `Endorsed` als rechtssicheres Logbuch.
     ///
     /// # Returns
     /// Die serialisierten Bytes des `SecureContainer` mit der Signatur, bereit für den Rückversand.
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Wallet des Bürgen gesperrt ist.
+    /// Schlägt fehl, wenn das Wallet des Unterzeichners gesperrt ist oder das Speichern fehlschlägt.
     pub fn create_detached_signature_response_bundle(
-        &self,
+        &mut self,
         voucher_to_sign: &Voucher,
         role: &str,
         include_details: bool,
         original_sender_id: &str,
+        password: Option<&str>,
     ) -> Result<Vec<u8>, String> {
-        let identity = match &self.state {
-            AppState::Unlocked { identity, .. } => identity,
-            AppState::Locked => return Err("Wallet is locked".to_string()),
-        };
-        let wallet = self.get_wallet()?;
+        let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
-        // Erstelle das Wrapper-Objekt mit den Metadaten
-        let signature_data = DetachedSignature::Signature(VoucherSignature {
-            role: role.to_string(),
-            ..Default::default()
-        });
-
-        wallet
-            .create_detached_signature_response(
+        let (result, new_state) = match current_state {
+            AppState::Unlocked {
+                mut storage,
+                wallet,
                 identity,
-                voucher_to_sign,
-                signature_data,
-                include_details,
-                original_sender_id,
-            )
-            .map_err(|e| e.to_string())
+                session_cache,
+            } => {
+                let auth_method = match password {
+                    Some(pwd_str) => crate::AuthMethod::Password(pwd_str),
+                    None => {
+                        let session_key = self.get_session_key().map_err(|e| e.to_string())?;
+                        crate::AuthMethod::SessionKey(session_key)
+                    }
+                };
+
+                // Erstelle das Wrapper-Objekt mit den Metadaten
+                let signature_data = DetachedSignature::Signature(VoucherSignature {
+                    role: role.to_string(),
+                    ..Default::default()
+                });
+
+                // Erstelle die Signatur
+                let bundle_bytes = wallet
+                    .create_detached_signature_response(
+                        &identity,
+                        voucher_to_sign,
+                        signature_data,
+                        include_details,
+                        original_sender_id,
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                // Speichere den bezeugten Gutschein im lokalen Wallet
+                let mut temp_wallet = wallet.clone();
+                // Für Endorsed-Gutscheine verwenden wir eine andere ID-Generierung,
+                // da der Unterzeichner keine Ownership-History für den Gutschein hat.
+                // Wir verwenden voucher_id + signer_id + role als deterministische ID.
+                use crate::services::crypto_utils::get_hash_from_slices;
+                let voucher_id_bytes = voucher_to_sign.voucher_id.as_bytes();
+                let signer_id_bytes = temp_wallet.profile.user_id.as_bytes();
+                let role_bytes = role.as_bytes();
+                let local_id = get_hash_from_slices(&[voucher_id_bytes, signer_id_bytes, role_bytes]);
+                temp_wallet.add_voucher_instance(
+                    local_id,
+                    voucher_to_sign.clone(),
+                    crate::wallet::instance::VoucherStatus::Endorsed {
+                        role: role.to_string(),
+                    },
+                );
+
+                // Speichere den Wallet-Zustand
+                match temp_wallet.save(&mut storage, &identity, &auth_method) {
+                    Ok(_) => (
+                        Ok(bundle_bytes),
+                        AppState::Unlocked {
+                            storage,
+                            wallet: temp_wallet,
+                            identity,
+                            session_cache,
+                        },
+                    ),
+                    Err(e) => (
+                        Err(e.to_string()),
+                        AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        },
+                    ),
+                }
+            }
+            AppState::Locked => (Err("Wallet is locked".to_string()), AppState::Locked),
+        };
+
+        self.state = new_state;
+        result
     }
 
     /// Verarbeitet eine empfangene losgelöste Signatur, fügt sie dem lokalen Gutschein hinzu und speichert den Zustand.

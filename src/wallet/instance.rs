@@ -40,6 +40,10 @@ pub enum VoucherStatus {
     /// Der Gutschein wurde aufgrund eines fatalen Validierungsfehlers oder eines
     /// verifizierten Double-Spend-Konflikts gesperrt. Er kann nicht mehr verwendet werden.
     Quarantined { reason: String },
+    /// Der Gutschein wurde vom Nutzer als Dritter (z.B. als Bürge oder Notar) unterzeichnet.
+    /// Der Gutschein gehört dem Nutzer nicht, wird aber als rechtssicheres Logbuch für
+    /// eingegangene soziale Verpflichtungen archiviert.
+    Endorsed { role: String },
 }
 
 /// Dient als Wrapper im Wallet, der die rohen `Voucher`-Daten mit ihrem

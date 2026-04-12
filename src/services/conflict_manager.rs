@@ -100,6 +100,14 @@ pub fn scan_and_rebuild_fingerprints(
     let mut known = KnownFingerprints::default();
 
     for instance in voucher_store.vouchers.values() {
+        // Ignoriere Endorsed-Gutscheine beim Fingerprint-Scan, da diese dem Nutzer
+        // nicht gehören und nicht zur Double-Spend-Erkennung beitragen dürfen.
+        if matches!(
+            instance.status,
+            crate::wallet::instance::VoucherStatus::Endorsed { .. }
+        ) {
+            continue;
+        }
         for tx in &instance.voucher.transactions {
             let fingerprint = create_fingerprint_for_transaction(tx, &instance.voucher)?;
             // DEBUG: Log the components of the hash being generated

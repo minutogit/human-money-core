@@ -358,6 +358,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
             "guarantor",
             true,
             &id_creator,
+            Some(correct_password),
         )
         .unwrap();
 
@@ -405,6 +406,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
             "guarantor",
             true,
             &id_creator,
+            Some(correct_password),
         )
         .unwrap();
 

@@ -399,6 +399,7 @@ fn api_app_service_full_signature_workflow() {
             "notary", // Role (basierend auf `create_additional_signature_data`)
             true,     // include_details
             &service_creator.get_user_id().unwrap(),
+            Some(password),
         )
         .unwrap();
 
@@ -619,6 +620,7 @@ fn test_full_guarantor_workflow_via_app_service() {
             "guarantor",
             true, // include_details
             &service_creator.get_user_id().unwrap(),
+            Some(password),
         )
         .expect("Failed to create signature response from G1");
     service_creator
@@ -651,6 +653,7 @@ fn test_full_guarantor_workflow_via_app_service() {
             "guarantor",
             true, // include_details
             &service_creator.get_user_id().unwrap(),
+            Some(password),
         )
         .expect("Failed to create signature response from G2");
     service_creator

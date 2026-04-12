@@ -50,8 +50,10 @@ impl Wallet {
 
                 // Der aktuelle Betrag steht in der letzten Transaktion.
                 // Bei einem Split ist es `sender_remaining_amount`, sonst `amount`.
-                // Ein archivierter Gutschein hat für den Besitzer immer den Betrag 0.
-                let current_amount = if matches!(instance.status, VoucherStatus::Archived) {
+                // Ein archivierter oder bezeugter Gutschein hat für den Besitzer immer den Betrag 0.
+                let current_amount = if matches!(instance.status, VoucherStatus::Archived)
+                    || matches!(instance.status, VoucherStatus::Endorsed { .. })
+                {
                     "0".to_string()
                 } else {
                     voucher

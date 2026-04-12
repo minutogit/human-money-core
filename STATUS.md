@@ -3,7 +3,7 @@ project: human-money-core
 version: "0.2.0"
 phase: "active-development"
 health: "green"
-last_updated: "2026-04-05"
+last_updated: "2026-04-12"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -35,6 +35,7 @@ The core library is stable and feature-rich. Current focus areas:
 - L2 gateway integration testing (playground & stress tests)
 - Voucher validation hardening (edge-case tests for ISO 8601, date rounding)
 - Security: Anti-Signature-Reuse-Firewall implemented
+- **New**: 'Endorsed' voucher status for persistent guarantor signature tracking
 
 ## Architecture
 
@@ -55,6 +56,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] L2 retention period and `deletable_at` refactoring
 - [x] Comprehensive mutation testing tools
 - [x] Edge-case tests (ISO 8601 parsing, date rounding, persistence)
+- [x] 'Endorsed' voucher status & persistent signature logging workflow
 
 ## Next Milestones
 

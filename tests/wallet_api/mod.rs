@@ -5,6 +5,7 @@
 
 pub mod general_workflows;
 pub mod signature_workflows;
+mod endorsed_vouchers;
 
 // Deklariert das neue Modul für komplexe Zustands- und Konflikttests.
 mod state_management;

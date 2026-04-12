@@ -84,4 +84,23 @@ impl AppService {
     pub fn get_user_id(&self) -> Result<String, String> {
         Ok(self.get_wallet()?.get_user_id().to_string())
     }
+
+    /// Hilfsfunktion für Apps: Extrahiert die Liste der erlaubten Signatur-Rollen
+    /// aus einem Gutschein-Standard (TOML).
+    ///
+    /// # Arguments
+    /// * `standard_toml_content` - Der Inhalt der Standard-Definitionsdatei (TOML).
+    ///
+    /// # Returns
+    /// Ein `Vec<String>` mit den Rollen-Namen (z.B. ["guarantor", "notary", "approver"]).
+    pub fn get_allowed_signature_roles_from_standard(
+        &self,
+        standard_toml_content: &str,
+    ) -> Result<Vec<String>, String> {
+        let (verified_standard, _) = crate::services::standard_manager::verify_and_parse_standard(
+            standard_toml_content,
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(verified_standard.immutable.issuance.allowed_signature_roles)
+    }
 }

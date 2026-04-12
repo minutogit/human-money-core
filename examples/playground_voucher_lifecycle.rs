@@ -248,6 +248,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "guarantor",
         true,
         &creator_id,
+        Some(password),
     )?;
 
     println!("  -> Ersteller empfängt die Signatur von Bürge 1 und fügt sie an...");
@@ -276,6 +277,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "guarantor",
         true,
         &creator_id,
+        Some(password),
     )?;
 
     println!("  -> Ersteller empfängt die Signatur von Bürge 2 und fügt sie an...");
