@@ -49,6 +49,7 @@ impl Wallet {
             url: None,
             service_offer: None,
             needs: None,
+            picture_url: None,
             l2_server_pubkey: None,
         };
 

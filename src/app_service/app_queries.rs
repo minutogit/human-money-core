@@ -123,6 +123,7 @@ impl AppService {
             url: profile.url.clone(),
             service_offer: profile.service_offer.clone(),
             needs: profile.needs.clone(),
+            picture_url: profile.picture_url.clone(),
         })
     }
 }

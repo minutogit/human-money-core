@@ -184,6 +184,10 @@ pub struct PublicProfile {
     /// Eine textuelle Beschreibung der gesuchten Dienstleistungen oder Waren.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub needs: Option<String>,
+
+    /// URL zu einem Profilbild (optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub picture_url: Option<String>,
 }
 
 /// Die Hauptstruktur, die den gesamten Zustand eines Nutzer-Wallets repräsentiert.
@@ -218,6 +222,8 @@ pub struct UserProfile {
     pub service_offer: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub needs: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub picture_url: Option<String>,
     /// Der öffentliche Schlüssel des L2-Servers, dem dieses Wallet vertraut.
     #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
     pub l2_server_pubkey: Option<[u8; 32]>,
@@ -241,6 +247,7 @@ impl Default for UserProfile {
             url: None,
             service_offer: None,
             needs: None,
+            picture_url: None,
             l2_server_pubkey: None,
         }
     }

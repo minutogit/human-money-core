@@ -92,6 +92,7 @@ impl Wallet {
                 url: self.profile.url.clone(),
                 service_offer: self.profile.service_offer.clone(),
                 needs: self.profile.needs.clone(),
+                picture_url: self.profile.picture_url.clone(),
             })
         } else {
             None

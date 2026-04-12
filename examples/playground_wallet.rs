@@ -65,6 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             url: None,
             service_offer: None,
             needs: None,
+            picture_url: None,
             l2_server_pubkey: None,
         },
         voucher_store: Default::default(),

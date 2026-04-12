@@ -107,6 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         url: Some("https://www.buergen.de".to_string()),
         service_offer: None,
         needs: None,
+        picture_url: None,
     };
 
     // Aktualisieren des Profils für Bürge 1
@@ -149,6 +150,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         url: Some("https://www.buergin.de".to_string()),
         service_offer: None,
         needs: None,
+        picture_url: None,
     };
 
     // Aktualisieren des Profils für Bürge 2
@@ -205,6 +207,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         url: Some("https://www.mustermann.de".to_string()),
         service_offer: Some("Biete Webdesign und Beratung".to_string()),
         needs: Some("Suche Minuto-Gutscheine".to_string()),
+        picture_url: None,
     };
 
     let voucher_data = NewVoucherData {
