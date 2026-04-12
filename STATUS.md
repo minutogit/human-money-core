@@ -57,6 +57,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] Comprehensive mutation testing tools
 - [x] Edge-case tests (ISO 8601 parsing, date rounding, persistence)
 - [x] 'Endorsed' voucher status & persistent signature logging workflow
+- [x] User profile management (metadata retrieval and updates)
 
 ## Next Milestones
 

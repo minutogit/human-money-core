@@ -62,6 +62,7 @@ use std::time::{Duration, Instant};
 
 // Deklaration der neuen Handler als öffentliche Sub-Module.
 // Jede Datei enthält einen `impl AppService`-Block für ihren spezifischen Bereich.
+pub mod app_profile_handler;
 pub mod app_queries;
 pub mod app_signature_handler;
 pub mod command_handler;

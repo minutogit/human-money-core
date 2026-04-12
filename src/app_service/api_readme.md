@@ -64,6 +64,10 @@ These methods manage the application state and user profiles.
 * **Description:** Locks the wallet and clears all sensitive data (like private keys and session keys) from memory.
 * **State:** Transitions from `Unlocked` -> `Locked`.
 
+#### `pub fn update_public_profile(&mut self, profile: PublicProfile, password: Option<&str>) -> Result<(), String>`
+* **Description:** Updates the public profile metadata (first name, last name, address, gender, etc.) of the wallet owner and persists changes.
+* **Auth:** Requires `password: Option<&str>`.
+
 ---
 
 ### 2. Session Management (Optional Auth)
@@ -148,6 +152,9 @@ These methods read data from the `Unlocked` wallet and do not require authentica
 
 #### `pub fn get_user_id(&self) -> Result<String, String>`
 * **Description:** Returns the unique user ID (e.g., `did:key:...`) of the unlocked profile.
+
+#### `pub fn get_public_profile(&self) -> Result<PublicProfile, String>`
+* **Description:** Returns the complete public profile metadata (first name, last name, organization, etc.) of the current wallet owner.
 
 #### `pub fn get_voucher_summaries(...) -> Result<Vec<VoucherSummary>, String>`
 * **Description:** Returns a list of all vouchers in the wallet, with optional filters for status or standard UUID.

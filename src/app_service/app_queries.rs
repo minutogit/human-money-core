@@ -4,6 +4,7 @@
 use super::{AppService, AppState};
 use crate::wallet::{AggregatedBalance, instance::VoucherStatus};
 use crate::wallet::{VoucherDetails, VoucherSummary, Wallet};
+use crate::models::profile::PublicProfile;
 
 impl AppService {
     // --- Datenabfragen (Queries) ---
@@ -102,5 +103,26 @@ impl AppService {
         )
         .map_err(|e| e.to_string())?;
         Ok(verified_standard.immutable.issuance.allowed_signature_roles)
+    }
+
+    /// Returns the public profile of the wallet owner.
+    pub fn get_public_profile(&self) -> Result<PublicProfile, String> {
+        let wallet = self.get_wallet()?;
+        let profile = &wallet.profile;
+        Ok(PublicProfile {
+            id: Some(profile.user_id.clone()),
+            first_name: profile.first_name.clone(),
+            last_name: profile.last_name.clone(),
+            organization: profile.organization.clone(),
+            community: profile.community.clone(),
+            address: profile.address.clone(),
+            gender: profile.gender.clone(),
+            email: profile.email.clone(),
+            phone: profile.phone.clone(),
+            coordinates: profile.coordinates.clone(),
+            url: profile.url.clone(),
+            service_offer: profile.service_offer.clone(),
+            needs: profile.needs.clone(),
+        })
     }
 }
