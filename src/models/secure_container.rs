@@ -32,6 +32,46 @@ impl Default for PayloadType {
     }
 }
 
+/// Definiert die Art der Verschlüsselung für den Container.
+///
+/// Durch das `Default` Trait wird Abwärtskompatibilität gewährleistet:
+/// Alte Container ohne das `et` Feld werden automatisch als `Asymmetric` geparst.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum EncryptionType {
+    /// Standard: Verschlüsselt mit ephemeral key und DID(s) des Empfängers (asymmetrisch).
+    Asymmetric,
+    /// Verschlüsselt mit einem Einweg-Passwort/PIN via PBKDF2 (symmetrisch).
+    Symmetric,
+    /// Unverschlüsselt (Klartext, nur für Signaturanfragen und andere nicht-finanzielle Payloads!).
+    None,
+}
+
+impl Default for EncryptionType {
+    /// Der Standard ist `Asymmetric`, um Abwärtskompatibilität zu gewährleisten.
+    fn default() -> Self {
+        EncryptionType::Asymmetric
+    }
+}
+
+/// Konfiguration für die Container-Verschlüsselung.
+///
+/// Dieses Enum wird verwendet, um die Art der Verschlüsselung beim Erstellen
+/// eines SecureContainer zu konfigurieren. Es wird direkt durch die API-Schichten
+/// bis in die Wallet-Ebene durchgereicht.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
+pub enum ContainerConfig {
+    /// Asymmetrische Verschlüsselung mit einer einzelnen DID.
+    TargetDid(String),
+    /// Asymmetrische Verschlüsselung mit mehreren DIDs.
+    TargetDids(Vec<String>),
+    /// Symmetrische Verschlüsselung mit einem Passwort/PIN.
+    Password(String),
+    /// Keine Verschlüsselung (Klartext, nur für nicht-finanzielle Payloads!).
+    Cleartext,
+}
+
 /// Enthält einen verschlüsselten Payload-Schlüssel für einen Empfänger oder den Sender.
 ///
 /// - `r`: Wrapped key für einen Empfänger (`recipient`).
@@ -69,6 +109,13 @@ pub struct SecureContainer {
     /// `tag`: Die digitale Signatur des Senders (Ed25519), die die `id` (`i`) unterzeichnet
     /// und somit die Authentizität und Integrität des gesamten Containers sicherstellt.
     pub t: String,
+    /// `encryption_type`: Konfiguration der Verschlüsselung (Asymmetric, Symmetric, None).
+    /// Durch `#[serde(default)]` ist dieses Feld optional in bestehenden JSONs.
+    #[serde(default)]
+    pub et: EncryptionType,
+    /// `salt`: Salt für die PBKDF2 Ableitung (nur bei Symmetric gesetzt).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub salt: Option<String>,
 }
 
 /// Implementiert `Drop`, um sensible Felder im `SecureContainer` sicher zu löschen.

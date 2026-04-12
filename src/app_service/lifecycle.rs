@@ -30,6 +30,11 @@ impl AppService {
         })
     }
 
+    /// Returns true if the service is in the `Unlocked` state.
+    pub fn is_wallet_unlocked(&self) -> bool {
+        matches!(self.state, AppState::Unlocked { .. })
+    }
+
     /// Listet alle verfügbaren, im Basisverzeichnis konfigurierten Profile auf.
     ///
     /// Liest die zentrale `profiles.json`-Datei und gibt eine Liste von `ProfileInfo`-

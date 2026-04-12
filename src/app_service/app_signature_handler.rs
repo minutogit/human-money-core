@@ -4,11 +4,12 @@
 //! wie das Anfordern, Erstellen und Anhängen von losgelösten Signaturen.
 
 use super::{AppService, AppState};
+use crate::models::secure_container::ContainerConfig;
 use crate::models::signature::DetachedSignature;
 use crate::models::voucher::{Voucher, VoucherSignature};
 use crate::services::voucher_validation;
 use crate::wallet::instance::VoucherStatus;
-use crate::{AuthMethod, ValidationFailureReason, VoucherCoreError};
+use crate::{ValidationFailureReason, VoucherCoreError};
 
 impl AppService {
     /// Erstellt ein Bundle, um einen Gutschein zur Unterzeichnung an einen weiteren Teilnehmer (z. B. Bürge, Notar) zu senden.
@@ -23,7 +24,7 @@ impl AppService {
     pub fn create_signing_request_bundle(
         &self,
         local_instance_id: &str,
-        recipient_id: &str,
+        config: ContainerConfig,
     ) -> Result<Vec<u8>, String> {
         let wallet = self.get_wallet()?;
         let identity = match &self.state {
@@ -31,7 +32,7 @@ impl AppService {
             AppState::Locked => return Err("Wallet is locked".to_string()),
         };
         wallet
-            .create_signing_request(identity, local_instance_id, recipient_id)
+            .create_signing_request(identity, local_instance_id, config)
             .map_err(|e| e.to_string())
     }
 
@@ -42,7 +43,11 @@ impl AppService {
     ///
     /// # Returns
     /// Das `Voucher`-Objekt, das unterzeichnet werden soll.
-    pub fn open_voucher_signing_request(&self, container_bytes: &[u8]) -> Result<Voucher, String> {
+    pub fn open_voucher_signing_request(
+        &self,
+        container_bytes: &[u8],
+        password: Option<&str>,
+    ) -> Result<Voucher, String> {
         let identity = match &self.state {
             AppState::Unlocked { identity, .. } => identity,
             AppState::Locked => return Err("Wallet is locked".to_string()),
@@ -59,7 +64,7 @@ impl AppService {
         }
 
         let payload = crate::services::secure_container_manager::open_secure_container(
-            &container, identity,
+            &container, identity, password,
         )
         .map_err(|e| e.to_string())?;
 
@@ -82,9 +87,18 @@ impl AppService {
         voucher_to_sign: &Voucher,
         role: &str,
         include_details: bool,
-        original_sender_id: &str,
+        config: ContainerConfig,
         password: Option<&str>,
     ) -> Result<Vec<u8>, String> {
+        // BUG-FIX: Determine AuthMethod BEFORE state replacement
+        let auth_method = match password {
+            Some(pwd_str) => crate::AuthMethod::Password(pwd_str),
+            None => {
+                let session_key = self.get_session_key().map_err(|e| e.to_string())?;
+                crate::AuthMethod::SessionKey(session_key)
+            }
+        };
+
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
         let (result, new_state) = match current_state {
@@ -94,14 +108,6 @@ impl AppService {
                 identity,
                 session_cache,
             } => {
-                let auth_method = match password {
-                    Some(pwd_str) => crate::AuthMethod::Password(pwd_str),
-                    None => {
-                        let session_key = self.get_session_key().map_err(|e| e.to_string())?;
-                        crate::AuthMethod::SessionKey(session_key)
-                    }
-                };
-
                 // Erstelle das Wrapper-Objekt mit den Metadaten
                 let signature_data = DetachedSignature::Signature(VoucherSignature {
                     role: role.to_string(),
@@ -115,7 +121,7 @@ impl AppService {
                         voucher_to_sign,
                         signature_data,
                         include_details,
-                        original_sender_id,
+                        config,
                     )
                     .map_err(|e| e.to_string())?;
 
@@ -170,7 +176,9 @@ impl AppService {
     ///
     /// # Arguments
     /// * `container_bytes` - Die rohen Bytes des `SecureContainer`, der die Signatur enthält.
-    /// * `password` - Das Passwort, um den aktualisierten Wallet-Zustand zu speichern.
+    /// * `standard_toml_content` - Der Inhalt des Standards für die Validierung.
+    /// * `container_password` - Optionales Passwort zum Öffnen des Containers (für symmetrische Verschlüsselung).
+    /// * `wallet_password` - Das Passwort, um den aktualisierten Wallet-Zustand zu speichern.
     ///
     /// # Errors
     /// Schlägt fehl, wenn das Wallet gesperrt ist, die Signatur ungültig ist, der zugehörige Gutschein nicht gefunden
@@ -179,9 +187,18 @@ impl AppService {
         &mut self,
         container_bytes: &[u8],
         standard_toml_content: &str,
-        password: Option<&str>,
+        container_password: Option<&str>,
+        wallet_password: Option<&str>,
     ) -> Result<(), String> {
-        println!("[DEBUG SIG] process_and_attach_signature called.");
+        // BUG-FIX: Determine AuthMethod BEFORE state replacement
+        let auth_method = match wallet_password {
+            Some(pwd_str) => crate::AuthMethod::Password(pwd_str),
+            None => {
+                let session_key = self.get_session_key().map_err(|e| e.to_string())?;
+                crate::AuthMethod::SessionKey(session_key)
+            }
+        };
+
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
         let (result, new_state) = match current_state {
@@ -204,28 +221,11 @@ impl AppService {
                         },
                     ),
                     Ok((verified_standard, _)) => {
-                        let auth_method;
-
-                        match password {
-                            Some(pwd_str) => {
-                                println!(
-                                    "[DEBUG SIG] process_and_attach: Mode A (Some(password)) detected."
-                                );
-                                // KORREKTUR: Modus A verwendet AuthMethod::Password
-                                auth_method = AuthMethod::Password(pwd_str);
-                            }
-                            None => {
-                                println!("[DEBUG SIG] process_and_attach: Mode B (None) detected.");
-                                let session_key = self.get_session_key()
-                                    .map_err(|e| { println!("[DEBUG SIG] process_and_attach: Mode B: get_session_key FAILED: {}", e); e })?;
-                                auth_method = AuthMethod::SessionKey(session_key);
-                            }
-                        }
                         // --- BEGINN DER TRANSAKTION ---
                         let mut temp_wallet = wallet.clone();
 
                         // 1. Signatur an die temporäre Wallet-Instanz anhängen.
-                        match temp_wallet.process_and_attach_signature(&identity, container_bytes) {
+                        match temp_wallet.process_and_attach_signature(&identity, container_bytes, container_password) {
                             Err(e) => (
                                 Err(e.to_string()),
                                 AppState::Unlocked {

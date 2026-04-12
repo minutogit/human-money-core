@@ -245,9 +245,9 @@ impl AppService {
         password: Option<&str>,
     ) -> Result<CreateBundleResult, String> {
         println!("[DEBUG CMD] create_transfer_bundle called.");
-        let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
-        // Parse die TOML-Definitionen hier
+        // Parse die TOML-Definitionen BEVOR der State bewegt wird,
+        // damit ein Fehler hier den State nicht verwaist.
         let mut verified_definitions = HashMap::new();
         for (uuid, toml_content) in standard_definitions_toml {
             match standard_manager::verify_and_parse_standard(toml_content) {
@@ -257,6 +257,8 @@ impl AppService {
                 Err(e) => return Err(e.to_string()),
             }
         }
+
+        let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
         let (result, new_state) = match current_state {
             AppState::Unlocked {
@@ -448,7 +450,16 @@ impl AppService {
                         Ok((def, _hash)) => {
                             verified_definitions.insert(uuid.clone(), def);
                         }
-                        Err(e) => return Err(e.to_string()),
+                        Err(e) => {
+                            // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
+                            self.state = AppState::Unlocked {
+                                storage,
+                                wallet,
+                                identity,
+                                session_cache,
+                            };
+                            return Err(e.to_string());
+                        }
                     }
                 }
 

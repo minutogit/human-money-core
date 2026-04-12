@@ -727,7 +727,7 @@ pub fn debug_open_container(
 ) -> Result<Voucher, VoucherCoreError> {
     let container: crate::models::secure_container::SecureContainer =
         serde_json::from_slice(container_bytes)?;
-    let payload = secure_container_manager::open_secure_container(&container, recipient_identity)?;
+    let payload = secure_container_manager::open_secure_container(&container, recipient_identity, None)?;
     let voucher: Voucher = serde_json::from_slice(&payload)?;
     Ok(voucher)
 }

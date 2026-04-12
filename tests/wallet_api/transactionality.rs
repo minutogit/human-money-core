@@ -17,7 +17,7 @@ use human_money_core::{
     models::{
         conflict::{ProofOfDoubleSpend, ResolutionEndorsement},
         profile::PublicProfile,
-        secure_container::SecureContainer,
+        secure_container::{ContainerConfig, SecureContainer},
         voucher::ValueDefinition,
     },
     services::{crypto_utils, voucher_manager::NewVoucherData},
@@ -328,7 +328,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
 
     // 1. Signatur von externem Unterzeichner vorbereiten (Additional Signature)
     let bundle_req = service_creator
-        .create_signing_request_bundle(&local_id, &id_signer)
+        .create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(id_signer.clone()))
         .unwrap();
 
     let (_, signer_identity_ref) = service_signer.get_unlocked_mut_for_test();
@@ -337,6 +337,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let payload = human_money_core::services::secure_container_manager::open_secure_container(
         &request_container,
         &signer_identity,
+        None,
     )
     .unwrap();
     let voucher_from_request: human_money_core::models::voucher::Voucher =
@@ -357,14 +358,14 @@ fn test_attach_signature_is_transactional_on_save_failure() {
             &voucher_from_request,
             "guarantor",
             true,
-            &id_creator,
+            ContainerConfig::TargetDid(id_creator.clone()),
             Some(correct_password),
         )
         .unwrap();
 
     // FIX: Das 2. Argument ist der Standard-TOML, nicht die local_id.
     service_creator
-        .process_and_attach_signature(&detached_sig1, &silver_toml, Some(correct_password))
+        .process_and_attach_signature(&detached_sig1, &silver_toml, None, Some(correct_password))
         .expect("First signature attachment failed. The utility logic should now be correct.");
 
     let details_mid = service_creator.get_voucher_details(&local_id).unwrap();
@@ -379,7 +380,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let bundle_req2 = service_creator
         .create_signing_request_bundle(
             &local_id,
-            &id_signer, // Erneut dieselbe ID, was in der Praxis zu einem Fehler führen könnte, aber hier nur das Rollback testet
+            ContainerConfig::TargetDid(id_signer.clone()), // Erneut dieselbe ID, was in der Praxis zu einem Fehler führen könnte, aber hier nur das Rollback testet
         )
         .unwrap();
 
@@ -389,6 +390,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let payload2 = human_money_core::services::secure_container_manager::open_secure_container(
         &request_container2,
         &signer_identity2,
+        None,
     )
     .unwrap();
     let voucher_from_request2: human_money_core::models::voucher::Voucher =
@@ -405,7 +407,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
             &voucher_from_request2,
             "guarantor",
             true,
-            &id_creator,
+            ContainerConfig::TargetDid(id_creator.clone()),
             Some(correct_password),
         )
         .unwrap();
@@ -414,6 +416,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let result = service_creator.process_and_attach_signature(
         &detached_sig2,
         &silver_toml,
+        None,
         Some("WRONG_PASSWORD"),
     );
 

@@ -106,31 +106,39 @@ These methods modify the wallet state and require authentication.
 
 Methods for handling multi-role signatures (e.g., guarantors, notaries).
 
-#### `pub fn create_signing_request_bundle(local_instance_id: &str, recipient_id: &str) -> Result<Vec<u8>, String>`
+#### `pub fn create_signing_request_bundle(local_instance_id: &str, config: ContainerConfig) -> Result<Vec<u8>, String>`
 * **Description:** Creates an encrypted bundle to send a voucher to another user (e.g., a guarantor) requesting their signature.
 * **Parameters:**
     * `local_instance_id`: The local ID of the voucher to be signed.
-    * `recipient_id`: The User ID (DID) of the person who should sign the voucher.
+    * `config`: The encryption configuration. Use `ContainerConfig::TargetDid(did)` for a specific recipient, `TargetDids(vec)` for multiple, `Password(pass)` for symmetric encryption, or `Cleartext` for unencrypted transmission.
+* **Auth:** Read-only (if wallet is unlocked), no password needed.
+
+#### `pub fn open_voucher_signing_request(container_bytes: &[u8], password: Option<&str>) -> Result<Voucher, String>`
+* **Description:** (Called by the signer). Opens a received signature request bundle and returns the voucher part so the user can preview what they are signing.
+* **Parameters:**
+    * `container_bytes`: The received encrypted bundle.
+    * `password`: Optional password if the container was symmetrically encrypted.
 * **Auth:** Read-only, no password needed.
 
-#### `pub fn open_voucher_signing_request(container_bytes: &[u8]) -> Result<Voucher, String>`
-* **Description:** (Called by the signer/guarantor). Opens a received signature request bundle and returns the voucher part so the user can preview what they are signing.
-* **Auth:** Read-only, no password needed.
-
-#### `pub fn create_detached_signature_response_bundle(voucher_to_sign: &Voucher, role: &str, include_details: bool, original_sender_id: &str, password: Option<&str>) -> Result<Vec<u8>, String>`
-* **Description:** (Called by the signer/guarantor). Creates an encrypted response bundle containing only the detached signature. Additionally, stores the endorsed voucher in the signer's wallet with status `Endorsed` as a legal record of the obligation.
+#### `pub fn create_detached_signature_response_bundle(voucher_to_sign: &Voucher, role: &str, include_details: bool, config: ContainerConfig, password: Option<&str>) -> Result<Vec<u8>, String>`
+* **Description:** (Called by the signer). Creates an encrypted response bundle containing only the detached signature. Additionally, stores the endorsed voucher in the signer's wallet with status `Endorsed` as a legal record.
 * **Parameters:**
     * `voucher_to_sign`: The voucher object received in the signing request.
-    * `role`: The semantic role of the signer (e.g., `"guarantor"`, `"notary"`, `"Official Approver"`). This MUST match one of the `allowed_signature_roles` in the voucher's standard.
-    * `include_details`: If `true`, the signer's public profile (name, etc.) is embedded in the signature.
-    * `original_sender_id`: The User ID of the person who requested the signature (to encrypt the response for them).
-    * `password`: The password for authentication (or `None` if using a session). Required because this operation modifies the wallet state by storing the endorsed voucher.
+    * `role`: The semantic role of the signer (e.g., `"guarantor"`, `"notary"`).
+    * `include_details`: If `true`, the signer's public profile is embedded.
+    * `config`: Encryption configuration for the response (usually returning to the requester).
+    * `password`: The password for authentication (Wallet Password).
 * **Auth:** Requires `password: Option<&str>`.
 
-#### `pub fn process_and_attach_signature(container_bytes: &[u8], standard_toml_content: &str, password: Option<&str>) -> Result<(), String>`
-* **Description:** Receives a signature response bundle, validates it against the standard, and attaches it to the local voucher.
-* **Status Behavior:** If this signature fulfills the last missing requirement of the standard, the voucher status automatically transitions from `Incomplete` to `Active`.
-* **Auth:** Requires `password: Option<&str>`.
+#### `pub fn process_and_attach_signature(container_bytes: &[u8], standard_toml_content: &str, container_password: Option<&str>, wallet_password: Option<&str>) -> Result<(), String>`
+* **Description:** Receives a signature response bundle, validates it, and attaches it locally.
+* **Parameters:**
+    * `container_bytes`: The received encrypted signature bundle.
+    * `standard_toml_content`: The voucher's standard definition (TOML).
+    * `container_password`: Optional password to decrypt the response bundle.
+    * `wallet_password`: Optional password to unlock the local wallet for saving.
+* **Status Behavior:** If this signature fulfills the last missing requirement, status transitions to `Active`.
+* **Auth:** Requires `wallet_password: Option<&str>`.
 
 ---
 

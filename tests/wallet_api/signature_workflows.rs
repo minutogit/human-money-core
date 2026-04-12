@@ -12,7 +12,7 @@ use human_money_core::{
     error::ValidationError,
     models::{
         profile::PublicProfile,
-        secure_container::SecureContainer,
+        secure_container::{ContainerConfig, SecureContainer},
         signature::DetachedSignature,
         voucher::{ValueDefinition, Voucher, VoucherSignature},
     },
@@ -101,7 +101,7 @@ fn api_wallet_full_signature_workflow() {
     );
 
     let request_container_bytes = alice_wallet
-        .create_signing_request(&alice.identity, &local_id, &bob.identity.user_id)
+        .create_signing_request(&alice.identity, &local_id, ContainerConfig::TargetDid(bob.identity.user_id.clone()))
         .unwrap();
     let request_file_path: PathBuf = temp_dir.path().join("request.secure");
     fs::write(&request_file_path, request_container_bytes).unwrap();
@@ -109,7 +109,7 @@ fn api_wallet_full_signature_workflow() {
     let received_request_bytes = fs::read(&request_file_path).unwrap();
     let container: SecureContainer = serde_json::from_slice(&received_request_bytes).unwrap();
     let decrypted_payload =
-        secure_container_manager::open_secure_container(&container, &bob.identity).unwrap();
+        secure_container_manager::open_secure_container(&container, &bob.identity, None).unwrap();
     let voucher_from_alice: Voucher = serde_json::from_slice(&decrypted_payload).unwrap();
 
     let guarantor_metadata = VoucherSignature {
@@ -122,7 +122,7 @@ fn api_wallet_full_signature_workflow() {
             &voucher_from_alice,
             DetachedSignature::Signature(guarantor_metadata),
             true, // include_details
-            &alice.identity.user_id,
+            ContainerConfig::TargetDid(alice.identity.user_id.clone()),
         )
         .unwrap();
     let response_file_path: PathBuf = temp_dir.path().join("response.secure");
@@ -130,7 +130,7 @@ fn api_wallet_full_signature_workflow() {
 
     let received_response_bytes = fs::read(&response_file_path).unwrap();
     alice_wallet
-        .process_and_attach_signature(&alice.identity, &received_response_bytes)
+        .process_and_attach_signature(&alice.identity, &received_response_bytes, None)
         .unwrap();
 
     let instance = alice_wallet.voucher_store.vouchers.get(&local_id).unwrap();
@@ -170,11 +170,11 @@ fn api_wallet_signature_fail_wrong_recipient() {
     let (_, local_id) = setup_voucher_for_alice(&mut alice_wallet, &alice.identity);
 
     let request_bytes = alice_wallet
-        .create_signing_request(&alice.identity, &local_id, &bob.identity.user_id)
+        .create_signing_request(&alice.identity, &local_id, ContainerConfig::TargetDid(bob.identity.user_id.clone()))
         .unwrap();
 
     let container: SecureContainer = serde_json::from_slice(&request_bytes).unwrap();
-    let result = secure_container_manager::open_secure_container(&container, &eve.identity);
+    let result = secure_container_manager::open_secure_container(&container, &eve.identity, None);
 
     assert!(matches!(
         result.unwrap_err(),
@@ -209,7 +209,7 @@ fn api_wallet_signature_fail_tampered_container() {
             &voucher,
             DetachedSignature::Signature(guarantor_metadata),
             true, // include_details
-            &alice.identity.user_id,
+            ContainerConfig::TargetDid(alice.identity.user_id.clone()),
         )
         .unwrap();
 
@@ -224,7 +224,7 @@ fn api_wallet_signature_fail_tampered_container() {
     container.p = chars.into_iter().collect();
     let tampered_bytes = serde_json::to_vec(&container).unwrap();
 
-    let result = alice_wallet.process_and_attach_signature(&alice.identity, &tampered_bytes);
+    let result = alice_wallet.process_and_attach_signature(&alice.identity, &tampered_bytes, None);
 
     assert!(matches!(
         result.unwrap_err(),
@@ -282,11 +282,11 @@ fn api_wallet_signature_fail_mismatched_voucher_id() {
             &voucher_b,
             DetachedSignature::Signature(guarantor_metadata),
             true, // include_details
-            &alice.identity.user_id,
+            ContainerConfig::TargetDid(alice.identity.user_id.clone()),
         )
         .unwrap();
 
-    let result = alice_wallet.process_and_attach_signature(&alice.identity, &response_bytes);
+    let result = alice_wallet.process_and_attach_signature(&alice.identity, &response_bytes, None);
 
     assert!(matches!(
         result.unwrap_err(),
@@ -309,11 +309,11 @@ fn api_wallet_signature_fail_wrong_payload_type() {
     let (_, local_id) = setup_voucher_for_alice(&mut alice_wallet, &alice.identity);
 
     let request_container_bytes = alice_wallet
-        .create_signing_request(&alice.identity, &local_id, &alice.identity.user_id)
+        .create_signing_request(&alice.identity, &local_id, ContainerConfig::TargetDid(alice.identity.user_id.clone()))
         .unwrap();
 
     let result =
-        alice_wallet.process_and_attach_signature(&alice.identity, &request_container_bytes);
+        alice_wallet.process_and_attach_signature(&alice.identity, &request_container_bytes, None);
 
     assert!(matches!(
         result.unwrap_err(),
@@ -377,7 +377,7 @@ fn api_app_service_full_signature_workflow() {
         .clone();
 
     let request_bytes = service_creator
-        .create_signing_request_bundle(&local_id, &id_guarantor)
+        .create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(id_guarantor.clone()))
         .unwrap();
 
     let voucher_to_sign = {
@@ -398,13 +398,13 @@ fn api_app_service_full_signature_workflow() {
             &voucher_to_sign,
             "notary", // Role (basierend auf `create_additional_signature_data`)
             true,     // include_details
-            &service_creator.get_user_id().unwrap(),
+            ContainerConfig::TargetDid(service_creator.get_user_id().unwrap()),
             Some(password),
         )
         .unwrap();
 
     service_creator
-        .process_and_attach_signature(&response_bytes, &silver_standard_toml, Some(password))
+        .process_and_attach_signature(&response_bytes, &silver_standard_toml, None, Some(password))
         .unwrap();
 
     let details = service_creator.get_voucher_details(&local_id).unwrap();
@@ -453,7 +453,7 @@ fn api_wallet_signature_roundtrip_minuto_required() {
 
     // Alice erstellt eine Signaturanfrage für Bob
     let request_bytes = alice_wallet
-        .create_signing_request(&alice.identity, &voucher_id, &bob.identity.user_id)
+        .create_signing_request(&alice.identity, &voucher_id, ContainerConfig::TargetDid(bob.identity.user_id.clone()))
         .unwrap();
 
     // Bob verarbeitet die Anfrage und erstellt eine Antwort
@@ -481,13 +481,13 @@ fn api_wallet_signature_roundtrip_minuto_required() {
             &voucher_for_signing,
             signature_data_enum,
             true,
-            &alice.identity.user_id,
+            ContainerConfig::TargetDid(alice.identity.user_id.clone()),
         )
         .unwrap();
 
     // Alice verarbeitet die Signatur-Antwort
     alice_wallet
-        .process_and_attach_signature(&alice.identity, &response_bytes)
+        .process_and_attach_signature(&alice.identity, &response_bytes, None)
         .unwrap();
 
     // Assert: Der Gutschein hat jetzt genau eine Signatur von Bob
@@ -598,7 +598,7 @@ fn test_full_guarantor_workflow_via_app_service() {
 
     // --- Signatur von Bürge 1 ---
     let _request_bundle_1 = service_creator
-        .create_signing_request_bundle(&local_id, &g1_id)
+        .create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g1_id.clone()))
         .expect("Failed to create signing request for G1");
 
     // KORREKTUR: Wir müssen das Profil von G1 (Bürge 1) mit den
@@ -619,12 +619,12 @@ fn test_full_guarantor_workflow_via_app_service() {
             &details_before.voucher,
             "guarantor",
             true, // include_details
-            &service_creator.get_user_id().unwrap(),
+            ContainerConfig::TargetDid(service_creator.get_user_id().unwrap()),
             Some(password),
         )
         .expect("Failed to create signature response from G1");
     service_creator
-        .process_and_attach_signature(&response_bundle_1, &minuto_standard_toml, Some(password))
+        .process_and_attach_signature(&response_bundle_1, &minuto_standard_toml, None, Some(password))
         .expect("Failed to attach G1's signature");
     let details_mid = service_creator.get_voucher_details(&local_id).unwrap();
     assert!(matches!(
@@ -634,7 +634,7 @@ fn test_full_guarantor_workflow_via_app_service() {
 
     // --- Signatur von Bürge 2 ---
     let _request_bundle_2 = service_creator
-        .create_signing_request_bundle(&local_id, &g2_id)
+        .create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g2_id.clone()))
         .expect("Failed to create signing request for G2");
 
     // KORREKTUR: Wir müssen das Profil von G2 (Bürge 2) mit den
@@ -652,12 +652,12 @@ fn test_full_guarantor_workflow_via_app_service() {
             &details_mid.voucher,
             "guarantor",
             true, // include_details
-            &service_creator.get_user_id().unwrap(),
+            ContainerConfig::TargetDid(service_creator.get_user_id().unwrap()),
             Some(password),
         )
         .expect("Failed to create signature response from G2");
     service_creator
-        .process_and_attach_signature(&response_bundle_2, &minuto_standard_toml, Some(password))
+        .process_and_attach_signature(&response_bundle_2, &minuto_standard_toml, None, Some(password))
         .expect("Failed to attach G2's signature");
 
     // --- 5. Assertion 3: Überprüfung des finalen `Active`-Zustands ---
@@ -729,7 +729,7 @@ fn api_wallet_signature_roundtrip_silver_optional() {
     .unwrap();
 
     let request_bytes = alice_wallet
-        .create_signing_request(&alice.identity, &voucher_id, &bob.identity.user_id)
+        .create_signing_request(&alice.identity, &voucher_id, ContainerConfig::TargetDid(bob.identity.user_id.clone()))
         .unwrap();
 
     let voucher_for_signing = debug_open_container(&request_bytes, &bob.identity).unwrap();
@@ -750,12 +750,12 @@ fn api_wallet_signature_roundtrip_silver_optional() {
             &voucher_for_signing,
             signature_data_enum,
             false, // include_details
-            &alice.identity.user_id,
+            ContainerConfig::TargetDid(alice.identity.user_id.clone()),
         )
         .unwrap();
 
     alice_wallet
-        .process_and_attach_signature(&alice.identity, &response_bytes)
+        .process_and_attach_signature(&alice.identity, &response_bytes, None)
         .unwrap();
 
     let final_instance = alice_wallet
@@ -768,4 +768,93 @@ fn api_wallet_signature_roundtrip_silver_optional() {
     // Details sollten `None` sein, da `include_details: false`
     // KORREKTUR: Index 1
     assert!(final_instance.voucher.signatures[1].details.is_none());
+}
+
+/// Testet die Signaturanfrage und -antwort via symmetrischer Verschlüsselung (Passwort).
+#[test]
+fn api_app_service_symmetric_signature_workflow() {
+    human_money_core::set_signature_bypass(true);
+    let silver_standard_toml =
+        generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let dir_creator = tempdir().unwrap();
+    let dir_guarantor = tempdir().unwrap();
+    let wallet_password = "wallet-password";
+    let container_password = "container-password";
+
+    let creator = &ACTORS.alice;
+    let guarantor = &ACTORS.guarantor1;
+    let (mut service_creator, _) =
+        test_utils::setup_service_with_profile(dir_creator.path(), creator, "Creator", wallet_password);
+    let (mut service_guarantor, profile_guarantor) = test_utils::setup_service_with_profile(
+        dir_guarantor.path(),
+        guarantor,
+        "Guarantor",
+        wallet_password,
+    );
+
+    // 1. Creator erstellt einen Gutschein
+    let _voucher = service_creator
+        .create_new_voucher(
+            &silver_standard_toml,
+            "en",
+            NewVoucherData {
+                creator_profile: PublicProfile {
+                    id: Some(service_creator.get_user_id().unwrap()),
+                    ..Default::default()
+                },
+                nominal_value: ValueDefinition {
+                    amount: "50".to_string(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(wallet_password),
+        )
+        .unwrap();
+    let local_id = service_creator.get_voucher_summaries(None, None).unwrap()[0]
+        .local_instance_id
+        .clone();
+
+    // 2. Creator erstellt eine Signaturanfrage, die mit einem PASSWORT verschlüsselt ist (statt DID)
+    let request_bytes = service_creator
+        .create_signing_request_bundle(&local_id, ContainerConfig::Password(container_password.to_string()))
+        .unwrap();
+
+    // 3. Bürge öffnet den Container mit demselben Passwort
+    service_guarantor.login(&profile_guarantor.folder_name, wallet_password, false).unwrap();
+    let unlocked_guarantor = service_guarantor.get_unlocked_mut_for_test();
+    let guarantor_identity = unlocked_guarantor.1;
+
+    let request_container: SecureContainer = serde_json::from_slice(&request_bytes).unwrap();
+    let opened_payload = human_money_core::services::secure_container_manager::open_secure_container(
+        &request_container,
+        guarantor_identity,
+        Some(container_password),
+    ).expect("Symmetric container opening failed");
+    
+    let voucher_to_sign: human_money_core::models::voucher::Voucher = serde_json::from_slice(&opened_payload).unwrap();
+
+    // 4. Bürge erstellt eine Antwort, die ebenfalls mit demselben PASSWORT verschlüsselt ist
+    let response_bytes = service_guarantor
+        .create_detached_signature_response_bundle(
+            &voucher_to_sign,
+            "notary",
+            true,
+            ContainerConfig::Password(container_password.to_string()),
+            Some(wallet_password),
+        )
+        .unwrap();
+
+    // 5. Creator fügt die Antwort an und nutzt dabei das PASSWORT zur Entschlüsselung
+    service_creator
+        .process_and_attach_signature(
+            &response_bytes,
+            &silver_standard_toml,
+            Some(container_password),
+            Some(wallet_password),
+        )
+        .expect("Attaching symmetric signature response failed");
+
+    let details = service_creator.get_voucher_details(&local_id).unwrap();
+    assert_eq!(details.voucher.signatures.len(), 2);
 }

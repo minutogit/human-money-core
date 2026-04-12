@@ -56,7 +56,7 @@ pub fn create_and_encrypt_bundle(
 
     let secure_container = create_secure_container(
         identity,
-        &[recipient_id.to_string()],
+        crate::models::secure_container::ContainerConfig::TargetDid(recipient_id.to_string()),
         &signed_bundle_bytes,
         PayloadType::TransactionBundle, // content type
     )?;
@@ -82,7 +82,7 @@ pub fn open_and_verify_bundle(
         return Err(VoucherCoreError::InvalidPayloadType);
     }
 
-    let decrypted_bundle_bytes = open_secure_container(&container, identity)?;
+    let decrypted_bundle_bytes = open_secure_container(&container, identity, None)?;
     let bundle: TransactionBundle = serde_json::from_slice(&decrypted_bundle_bytes)?;
 
     // Kaskadierte Verifizierung:

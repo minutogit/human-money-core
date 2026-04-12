@@ -565,6 +565,86 @@ pub fn decrypt_data(
         .map_err(|_| SymmetricEncryptionError::DecryptionFailed)
 }
 
+/// Verschlüsselt Daten symmetrisch mit einem Passwort via PBKDF2 und ChaCha20-Poly1305.
+///
+/// Diese Funktion ist für Einweg-Passwörter (PINs) beim Container-Austausch gedacht.
+/// Sie generiert ein 16-Byte Salt, leitet über PBKDF2 (HMAC-SHA512) einen 32-Byte Key ab
+/// und verschlüsselt die Daten mit ChaCha20-Poly1305.
+///
+/// # Arguments
+///
+/// * `payload` - Die zu verschlüsselnden Daten.
+/// * `password` - Das Passwort (als String).
+///
+/// # Returns
+///
+/// Ein Tupel aus (Ciphertext inkl. Nonce, Salt[16]) oder einen `VoucherCoreError`.
+pub fn encrypt_symmetric_password(
+    payload: &[u8],
+    password: &str,
+) -> Result<(Vec<u8>, [u8; 16]), VoucherCoreError> {
+    // 1. Generiere ein zufälliges 16-Byte Salt
+    let mut salt = [0u8; 16];
+    OsRng.fill_bytes(&mut salt);
+
+    // 2. Leite den Schlüssel via PBKDF2 ab (100_000 Iterationen wie im Master-Key)
+    #[cfg(not(any(test, feature = "test-utils")))]
+    const PBKDF2_ROUNDS: u32 = 100_000;
+    #[cfg(any(test, feature = "test-utils"))]
+    const PBKDF2_ROUNDS: u32 = 1;
+
+    let mut key = [0u8; 32];
+    pbkdf2::<Hmac<Sha512>>(
+        password.as_bytes(),
+        &salt,
+        PBKDF2_ROUNDS,
+        &mut key,
+    )
+    .map_err(|e| VoucherCoreError::Crypto(format!("PBKDF2 key derivation failed: {}", e)))?;
+
+    // 3. Verschlüssele die Daten mit dem abgeleiteten Schlüssel
+    let ciphertext = encrypt_data(&key, payload)
+        .map_err(VoucherCoreError::SymmetricEncryption)?;
+
+    Ok((ciphertext, salt))
+}
+
+/// Entschlüsselt Daten, die mit `encrypt_symmetric_password` verschlüsselt wurden.
+///
+/// # Arguments
+///
+/// * `encrypted_payload` - Der verschlüsselte Payload inkl. Nonce.
+/// * `password` - Das Passwort (als String).
+/// * `salt` - Das 16-Byte Salt, das bei der Verschlüsselung verwendet wurde.
+///
+/// # Returns
+///
+/// Die entschlüsselten Daten oder einen `VoucherCoreError`.
+pub fn decrypt_symmetric_password(
+    encrypted_payload: &[u8],
+    password: &str,
+    salt: &[u8; 16],
+) -> Result<Vec<u8>, VoucherCoreError> {
+    // 1. Leite den Schlüssel via PBKDF2 ab (gleiche Iterationen wie bei Verschlüsselung)
+    #[cfg(not(any(test, feature = "test-utils")))]
+    const PBKDF2_ROUNDS: u32 = 100_000;
+    #[cfg(any(test, feature = "test-utils"))]
+    const PBKDF2_ROUNDS: u32 = 1;
+
+    let mut key = [0u8; 32];
+    pbkdf2::<Hmac<Sha512>>(
+        password.as_bytes(),
+        salt,
+        PBKDF2_ROUNDS,
+        &mut key,
+    )
+    .map_err(|e| VoucherCoreError::Crypto(format!("PBKDF2 key derivation failed: {}", e)))?;
+
+    // 2. Entschlüssele die Daten
+    decrypt_data(&key, encrypted_payload)
+        .map_err(VoucherCoreError::SymmetricEncryption)
+}
+
 /// Signs a message with an Ed25519 signing key.
 ///
 /// # Arguments

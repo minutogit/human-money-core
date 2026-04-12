@@ -4,6 +4,7 @@
 //! Testet das Verhalten von Gutscheinen in verschiedenen Status-Zuständen,
 //! insbesondere die Einschränkungen für Quarantäne.
 
+use human_money_core::models::secure_container::ContainerConfig;
 use human_money_core::test_utils::{ACTORS, MINUTO_STANDARD, setup_in_memory_wallet, add_voucher_to_wallet};
 use human_money_core::{VoucherStatus, VoucherCoreError};
 
@@ -42,7 +43,7 @@ fn test_quarantined_voucher_behavior() {
     );
 
     // 2. Test create_signing_request
-    let signing_request_result = wallet.create_signing_request(alice, &local_id, &ACTORS.guarantor1.user_id);
+    let signing_request_result = wallet.create_signing_request(alice, &local_id, ContainerConfig::TargetDid(ACTORS.guarantor1.user_id.clone()));
     assert!(
         matches!(
             signing_request_result,

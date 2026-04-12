@@ -275,7 +275,7 @@ impl Wallet {
             serde_json::from_slice::<SecureContainer>(container_bytes)
         {
             if matches!(deserialized_container.c, PayloadType::DetachedSignature) {
-                self.process_and_attach_signature(identity, container_bytes)?;
+                self.process_and_attach_signature(identity, container_bytes, None)?;
                 return Ok(ProcessBundleResult::default());
             }
         }

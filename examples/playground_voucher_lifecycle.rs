@@ -19,6 +19,7 @@
 //! 7.  **Rohdaten-Ausgabe:** Der finale Zustand des Gutscheins wird als JSON ausgegeben.
 
 use human_money_core::app_service::AppService;
+use human_money_core::models::secure_container::ContainerConfig;
 use human_money_core::models::voucher::ValueDefinition;
 use human_money_core::{NewVoucherData, VoucherStatus, verify_and_parse_standard};
 use std::collections::HashMap;
@@ -237,7 +238,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // **Teil A: Bürge 1**
     println!("\n  -> Ersteller sendet Signaturanfrage an Bürge 1...");
-    let _request_bundle_to_g1 = service_creator.create_signing_request_bundle(&local_id, &g1_id)?;
+    let _request_bundle_to_g1 = service_creator.create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g1_id.clone()))?;
     // In einer echten App würde `request_bundle_to_g1` nun z.B. via QR-Code übertragen.
 
     println!("  -> Bürge 1 empfängt die Anfrage, signiert und sendet die Signatur zurück...");
@@ -247,7 +248,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &created_voucher,
         "guarantor",
         true,
-        &creator_id,
+        ContainerConfig::TargetDid(creator_id.clone()),
         Some(password),
     )?;
 
@@ -255,6 +256,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     service_creator.process_and_attach_signature(
         &response_bundle_from_g1,
         &standard_toml,
+        None,
         Some(password),
     )?;
     let details_after_g1 = service_creator.get_voucher_details(&local_id)?;
@@ -269,14 +271,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // **Teil B: Bürge 2**
     println!("\n  -> Ersteller sendet Signaturanfrage an Bürge 2...");
-    let _request_bundle_to_g2 = service_creator.create_signing_request_bundle(&local_id, &g2_id)?;
+    let _request_bundle_to_g2 = service_creator.create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g2_id.clone()))?;
 
     println!("  -> Bürge 2 empfängt, signiert und sendet zurück...");
     let response_bundle_from_g2 = service_g2.create_detached_signature_response_bundle(
         &created_voucher,
         "guarantor",
         true,
-        &creator_id,
+        ContainerConfig::TargetDid(creator_id.clone()),
         Some(password),
     )?;
 
@@ -284,6 +286,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     service_creator.process_and_attach_signature(
         &response_bundle_from_g2,
         &standard_toml,
+        None,
         Some(password),
     )?;
 

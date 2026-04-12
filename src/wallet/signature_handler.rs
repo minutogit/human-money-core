@@ -5,7 +5,7 @@
 
 use super::Wallet;
 use crate::models::profile::UserIdentity;
-use crate::models::secure_container::{PayloadType, SecureContainer};
+use crate::models::secure_container::{ContainerConfig, PayloadType, SecureContainer};
 use crate::models::signature::DetachedSignature;
 use crate::models::voucher::Voucher;
 use crate::services::utils::to_canonical_json;
@@ -22,7 +22,7 @@ impl Wallet {
     /// # Arguments
     /// * `identity` - Die Identität des anfragenden Gutschein-Besitzers.
     /// * `local_instance_id` - Die ID des Gutscheins im lokalen `voucher_store`.
-    /// * `recipient_id` - Die User ID des potenziellen Unterzeichners.
+    /// * `config` - Die Verschlüsselungskonfiguration (TargetDid, Password, oder Cleartext).
     ///
     /// # Returns
     /// Die serialisierten Bytes des `SecureContainer`.
@@ -30,7 +30,7 @@ impl Wallet {
         &self,
         identity: &UserIdentity,
         local_instance_id: &str,
-        recipient_id: &str,
+        config: ContainerConfig,
     ) -> Result<Vec<u8>, VoucherCoreError> {
         let instance = self.voucher_store.vouchers.get(local_instance_id).ok_or(
             VoucherCoreError::VoucherNotFound(local_instance_id.to_string()),
@@ -48,7 +48,7 @@ impl Wallet {
 
         let container = crate::services::secure_container_manager::create_secure_container(
             identity,
-            &[recipient_id.to_string()],
+            config,
             payload.as_bytes(),
             PayloadType::VoucherForSigning,
         )?;
@@ -64,7 +64,7 @@ impl Wallet {
     /// * `voucher_to_sign` - Der Gutschein, der unterzeichnet werden soll (vom Client validiert).
     /// * `signature_data` - Die vom Client vorbereiteten Metadaten der Signatur.
     /// * `include_details` - Ob die `PublicProfile`-Daten des Unterzeichners eingebettet werden sollen.
-    /// * `original_sender_id` - Die User ID des ursprünglichen Anfragers (Empfänger der Antwort).
+    /// * `config` - Die Verschlüsselungskonfiguration (TargetDid, Password, oder Cleartext).
     ///
     /// # Returns
     /// Die serialisierten Bytes des `SecureContainer` mit der Signatur.
@@ -74,7 +74,7 @@ impl Wallet {
         voucher_to_sign: &Voucher,
         signature_data: DetachedSignature,
         include_details: bool,
-        original_sender_id: &str,
+        config: ContainerConfig,
     ) -> Result<Vec<u8>, VoucherCoreError> {
         // Stelle die optionalen Profil-Details zusammen
         let details = if include_details {
@@ -112,7 +112,7 @@ impl Wallet {
 
         let container = crate::services::secure_container_manager::create_secure_container(
             identity,
-            &[original_sender_id.to_string()],
+            config,
             payload.as_bytes(),
             PayloadType::DetachedSignature,
         )?;
@@ -126,17 +126,19 @@ impl Wallet {
     /// # Arguments
     /// * `identity` - Die Identität des Empfängers.
     /// * `container_bytes` - Die empfangenen Container-Daten.
+    /// * `password` - Optionales Passwort für symmetrische Verschlüsselung.
     ///
     /// # Returns
-    /// Ein `Result`, das bei Erfolg leer ist.
+    /// Ein `Result`, das bei Erfolg die aktualisierte Instance ID enthält.
     pub fn process_and_attach_signature(
         &mut self,
         identity: &UserIdentity,
         container_bytes: &[u8],
+        password: Option<&str>,
     ) -> Result<String, VoucherCoreError> {
         let container: SecureContainer = serde_json::from_slice(container_bytes)?;
         let payload =
-            crate::services::secure_container_manager::open_secure_container(&container, identity)?;
+            crate::services::secure_container_manager::open_secure_container(&container, identity, password)?;
 
         if !matches!(container.c, PayloadType::DetachedSignature) {
             return Err(VoucherCoreError::InvalidPayloadType);

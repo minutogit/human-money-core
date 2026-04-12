@@ -8,7 +8,7 @@
 
 // --- Tests from test_secure_container.rs ---
 use human_money_core::VoucherCoreError;
-use human_money_core::models::secure_container::PayloadType;
+use human_money_core::models::secure_container::{ContainerConfig, PayloadType};
 use human_money_core::services::secure_container_manager::{
     ContainerManagerError, create_secure_container, open_secure_container,
 };
@@ -32,7 +32,7 @@ fn test_multi_recipient_secure_container() {
 
     let container = create_secure_container(
         &alice_identity,
-        &recipient_ids,
+        ContainerConfig::TargetDids(recipient_ids),
         secret_payload,
         PayloadType::Generic("test_message".to_string()),
     )
@@ -41,7 +41,7 @@ fn test_multi_recipient_secure_container() {
     // --- 3. VERIFICATION BY RECIPIENTS ---
 
     // Bob versucht, den Container zu öffnen.
-    let bob_payload = open_secure_container(&container, &bob_identity).unwrap();
+    let bob_payload = open_secure_container(&container, &bob_identity, None).unwrap();
     assert_eq!(bob_payload, secret_payload);
     assert_eq!(
         container.c,
@@ -50,7 +50,7 @@ fn test_multi_recipient_secure_container() {
     println!("SUCCESS: Bob successfully opened the container.");
 
     // Carol versucht, denselben Container zu öffnen.
-    let carol_payload = open_secure_container(&container, &carol_identity).unwrap();
+    let carol_payload = open_secure_container(&container, &carol_identity, None).unwrap();
     assert_eq!(carol_payload, secret_payload);
     assert_eq!(
         container.c,
@@ -61,7 +61,7 @@ fn test_multi_recipient_secure_container() {
     // --- 4. VERIFICATION FAILURE BY UNAUTHORIZED USER ---
 
     // David versucht, den Container zu öffnen. Dies muss fehlschlagen.
-    let david_result = open_secure_container(&container, david_identity);
+    let david_result = open_secure_container(&container, david_identity, None);
     assert!(david_result.is_err());
 
     // Überprüfe, ob der Fehler der richtige ist.
@@ -90,7 +90,7 @@ fn test_sender_can_reopen_container() {
     // Sender erstellt einen Container für den Empfänger.
     let container = create_secure_container(
         sender,
-        &[recipient.user_id.clone()],
+        ContainerConfig::TargetDids(vec![recipient.user_id.clone()]),
         payload,
         PayloadType::TransactionBundle,
     )
@@ -98,7 +98,7 @@ fn test_sender_can_reopen_container() {
 
     // --- 3. VERIFICATION BY RECIPIENT (Standardfall) ---
     // Der Empfänger kann den Container öffnen.
-    let recipient_payload = open_secure_container(&container, recipient).unwrap();
+    let recipient_payload = open_secure_container(&container, recipient, None).unwrap();
     assert_eq!(
         recipient_payload, payload,
         "Recipient should be able to open the container"
@@ -106,7 +106,7 @@ fn test_sender_can_reopen_container() {
 
     // --- 4. VERIFICATION BY SENDER (Wichtiger Testfall) ---
     // Der Sender muss denselben Container ebenfalls öffnen können.
-    let sender_payload = open_secure_container(&container, sender).unwrap();
+    let sender_payload = open_secure_container(&container, sender, None).unwrap();
     assert_eq!(
         sender_payload, payload,
         "Sender should be able to re-open their own container"

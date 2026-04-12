@@ -11,6 +11,7 @@ mod tests {
     use human_money_core::services::voucher_manager::NewVoucherData;
     use human_money_core::test_utils;
     use human_money_core::test_utils::{ACTORS, generate_signed_standard_toml, TestUser};
+    use human_money_core::models::secure_container::ContainerConfig;
     use human_money_core::wallet::instance::VoucherStatus;
     use tempfile::tempdir;
 
@@ -97,7 +98,7 @@ mod tests {
                 &voucher_to_sign,
                 "guarantor",
                 true,
-                &ACTORS.alice.user_id,
+                ContainerConfig::TargetDid(ACTORS.alice.user_id.clone()),
                 Some(PASSWORD),
             )
             .expect("Signature creation should succeed");
@@ -165,7 +166,7 @@ mod tests {
                 &voucher_to_sign,
                 "guarantor",
                 true,
-                &ACTORS.alice.user_id,
+                ContainerConfig::TargetDid(ACTORS.alice.user_id.clone()),
                 Some(PASSWORD),
             )
             .expect("Signature creation should succeed");
@@ -213,7 +214,7 @@ mod tests {
                 &voucher_to_sign,
                 "guarantor",
                 true,
-                &ACTORS.alice.user_id,
+                ContainerConfig::TargetDid(ACTORS.alice.user_id.clone()),
                 Some(PASSWORD),
             )
             .expect("Signature creation should succeed");
