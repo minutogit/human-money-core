@@ -62,6 +62,29 @@ pub fn validate_voucher_against_standard(
     validate_transaction_types(voucher, standard)?;
 
     // Führe die datengesteuerten CEL-Validierungsregeln aus
+    let failing_rules = get_failing_custom_rules(voucher, standard)?;
+    if !failing_rules.is_empty() {
+        // Halt on the first one to match existing behavior, or just report one
+        return Err(ValidationError::BusinessRuleViolated(failing_rules[0].clone()).into());
+    }
+
+
+    let privacy_mode = &standard.immutable.features.privacy_mode;
+    validate_privacy_mode(voucher, privacy_mode)?;
+
+    verify_transactions(voucher, standard)?;
+
+    // Signaturen als letztes prüfen, da sie auf den IDs/Hashes der anderen Komponenten basieren.
+    verify_signatures(voucher, standard)?;
+    Ok(())
+}
+
+/// Sammelt alle fehlgeschlagenen, datengesteuerten CEL-Validierungsregeln aus dem Standard
+pub fn get_failing_custom_rules(
+    voucher: &Voucher,
+    standard: &VoucherStandardDefinition,
+) -> Result<Vec<String>, VoucherCoreError> {
+    let mut failing = Vec::new();
     if !standard.immutable.custom_rules.is_empty() {
         let voucher_json = serde_json::to_value(voucher)?;
         let tx_json = voucher.transactions.last().map(|tx| serde_json::to_value(tx).unwrap());
@@ -72,21 +95,13 @@ pub fn validate_voucher_against_standard(
                 &voucher_json,
                 tx_json.as_ref(),
             ) {
-                Ok(true) => {}
-                Ok(false) => return Err(ValidationError::BusinessRuleViolated(rule.message.clone()).into()),
-                Err(e) => return Err(ValidationError::BusinessRuleViolated(format!("CEL Error in {}: {:?}", rule_name, e)).into()),
+                Ok(true) => {} // Regel erfüllt
+                Ok(false) => failing.push(rule.message.clone()),
+                Err(e) => failing.push(format!("CEL Error in {}: {:?}", rule_name, e)),
             }
         }
     }
-
-    let privacy_mode = &standard.immutable.features.privacy_mode;
-    validate_privacy_mode(voucher, privacy_mode)?;
-
-    verify_transactions(voucher, standard)?;
-
-    // Signaturen als letztes prüfen, da sie auf den IDs/Hashes der anderen Komponenten basieren.
-    verify_signatures(voucher, standard)?;
-    Ok(())
+    Ok(failing)
 }
 
 /// Validiert die Einhaltung des Privacy-Modes für alle Transaktionen.

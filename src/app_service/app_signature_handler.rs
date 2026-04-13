@@ -325,6 +325,32 @@ impl AppService {
         self.state = new_state;
         result
     }
+
+    /// Evaluates the impact of a proposed signature (role and the user's current profile)
+    ///
+    /// # Returns
+    /// The `SignatureImpact` detailing if the role is allowed, and any resulting conflicts, resolved rules, or gentle hints.
+    pub fn evaluate_signature_suitability(
+        &self,
+        voucher: &Voucher,
+        role: &str,
+        standard_toml_content: &str,
+    ) -> Result<crate::services::signature_manager::SignatureImpact, String> {
+        let (verified_standard, _) = crate::services::standard_manager::verify_and_parse_standard(
+            standard_toml_content,
+        )
+        .map_err(|e| e.to_string())?;
+
+        let profile = self.get_public_profile()?;
+        
+        crate::services::signature_manager::evaluate_signature_impact(
+            voucher,
+            &verified_standard,
+            role,
+            &profile,
+        )
+        .map_err(|e| e.to_string())
+    }
 }
 
 
