@@ -936,3 +936,34 @@ pub fn get_pubkey_from_user_id(user_id: &str) -> Result<EdPublicKey, GetPubkeyEr
 
     EdPublicKey::from_bytes(&key_bytes_array).map_err(GetPubkeyError::ConversionFailed)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_user_id() {
+        let (pub_key, _) = generate_ed25519_keypair_for_tests(None);
+        let valid_id = create_user_id(&pub_key, Some("valid-prefix")).unwrap();
+
+        assert!(validate_user_id(&valid_id));
+
+        // Let's test the prefix mutations manually
+        // If we replace prefix chars with invalid
+        let invalid_id = valid_id.replace("valid-prefix", "invalid_prefix");
+        assert!(!validate_user_id(&invalid_id));
+
+        let invalid_id2 = valid_id.replace("valid-prefix", "-invalid");
+        assert!(!validate_user_id(&invalid_id2));
+
+        let invalid_id3 = valid_id.replace("valid-prefix", "invalid--");
+        assert!(!validate_user_id(&invalid_id3));
+    }
+
+    #[test]
+    fn test_get_short_hash_from_user_id() {
+        let short_hash = get_short_hash_from_user_id("test_user");
+        assert_eq!(short_hash.len(), 4);
+    }
+}
+

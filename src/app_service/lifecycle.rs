@@ -347,3 +347,5 @@ impl AppService {
         Err("Wallet is locked.".to_string())
     }
 }
+
+

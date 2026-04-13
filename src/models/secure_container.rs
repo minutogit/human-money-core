@@ -127,3 +127,26 @@ impl Drop for SecureContainer {
         self.t.zeroize();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_secure_container_drop() {
+        // We just ensure that drop doesn't panic.
+        // Verifying actual zeroization requires unsafe memory inspection which is beyond unit tests.
+        let container = SecureContainer {
+            i: "id".to_string(),
+            c: PayloadType::TransactionBundle,
+            esk: "ephem".to_string(),
+            wk: vec![WrappedKey::default()],
+            p: "payload".to_string(),
+            t: "tag".to_string(),
+            et: EncryptionType::Asymmetric,
+            salt: None,
+        };
+        drop(container);
+    }
+}
+

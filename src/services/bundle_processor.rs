@@ -127,3 +127,72 @@ fn verify_bundle_signature(bundle: &TransactionBundle) -> Result<(), VoucherCore
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::secure_container::ContainerConfig;
+    use crate::services::crypto_utils::generate_ed25519_keypair_for_tests;
+
+    #[test]
+    fn test_verify_container_signature_invalid() {
+        let (pub_key1, sign_key1) = generate_ed25519_keypair_for_tests(None);
+        let id1 = crate::models::profile::UserIdentity {
+            user_id: crate::services::crypto_utils::create_user_id(&pub_key1, Some("test")).unwrap(),
+            signing_key: sign_key1,
+            public_key: pub_key1,
+        };
+
+        let (pub_key2, _sign_key2) = generate_ed25519_keypair_for_tests(None);
+        let id2_str = crate::services::crypto_utils::create_user_id(&pub_key2, Some("test2")).unwrap();
+
+        let mut container = create_secure_container(
+            &id1,
+            ContainerConfig::TargetDid(id2_str),
+            b"test_payload",
+            PayloadType::TransactionBundle,
+        )
+        .unwrap();
+
+        // Mutate signature
+        let mut sig_bytes = decode_base64(&container.t).unwrap();
+        sig_bytes[0] ^= 0xFF; // Flip bits
+        container.t = crate::services::crypto_utils::encode_base64(&sig_bytes);
+
+        let result = verify_container_signature(&mut container, &id1.user_id);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            VoucherCoreError::Validation(ValidationError::InvalidContainerSignature)
+        ));
+    }
+
+    #[test]
+    fn test_verify_bundle_signature_invalid() {
+        let (pub_key, sign_key) = generate_ed25519_keypair_for_tests(None);
+        let user_id = crate::services::crypto_utils::create_user_id(&pub_key, Some("test")).unwrap();
+
+        let mut bundle = TransactionBundle {
+            bundle_id: "test".to_string(),
+            sender_id: user_id,
+            recipient_id: "test2".to_string(),
+            vouchers: vec![],
+            timestamp: "0".to_string(),
+            notes: None,
+            sender_signature: "".to_string(),
+            forwarded_fingerprints: vec![],
+            fingerprint_depths: std::collections::HashMap::new(),
+            sender_profile_name: None,
+        };
+
+        let signature = sign_ed25519(&sign_key, b"different_data");
+        bundle.sender_signature = bs58::encode(signature.to_bytes()).into_string();
+
+        let result = verify_bundle_signature(&bundle);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            VoucherCoreError::Validation(ValidationError::InvalidBundleSignature)
+        ));
+    }
+}
