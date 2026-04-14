@@ -198,10 +198,9 @@ impl Wallet {
         {
             // Stillschweigend ignorieren oder Fehler zurückgeben
             return Err(VoucherCoreError::MismatchedSignatureData(
-                // TODO: Besserer Fehlertyp
                 format!(
-                    "Signature {} already attached to voucher {}",
-                    signature_obj.signature_id, signature_obj.voucher_id
+                    "Signature {} already attached to voucher {} [LOCAL_ID:{}]",
+                    signature_obj.signature_id, signature_obj.voucher_id, target_instance.local_instance_id
                 ),
             ));
         }

@@ -134,8 +134,8 @@ Methods for handling multi-role signatures (e.g., guarantors, notaries).
     * `password`: The password for authentication (Wallet Password).
 * **Auth:** Requires `password: Option<&str>`.
 
-#### `pub fn process_and_attach_signature(container_bytes: &[u8], standard_toml_content: &str, container_password: Option<&str>, wallet_password: Option<&str>) -> Result<(), String>`
-* **Description:** Receives a signature response bundle, validates it, and attaches it locally.
+#### `pub fn process_and_attach_signature(container_bytes: &[u8], standard_toml_content: &str, container_password: Option<&str>, wallet_password: Option<&str>) -> Result<String, String>`
+* **Description:** Receives a signature response bundle, validates it, and attaches it locally. Returns the local instance ID of the updated voucher.
 * **Parameters:**
     * `container_bytes`: The received encrypted signature bundle.
     * `standard_toml_content`: The voucher's standard definition (TOML).

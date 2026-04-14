@@ -189,7 +189,7 @@ impl AppService {
         standard_toml_content: &str,
         container_password: Option<&str>,
         wallet_password: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         // BUG-FIX: Determine AuthMethod BEFORE state replacement
         let auth_method = match wallet_password {
             Some(pwd_str) => crate::AuthMethod::Password(pwd_str),
@@ -256,7 +256,7 @@ impl AppService {
                                 let (operation_result, new_status) = match validation_result {
                                     Ok(_) => {
                                         // Validierung erfolgreich! Der Gutschein ist jetzt Active.
-                                        (Ok(()), VoucherStatus::Active)
+                                        (Ok(updated_instance_id.clone()), VoucherStatus::Active)
                                     }
                                     Err(VoucherCoreError::Validation(validation_err)) => {
                                         // Das ist KEIN fataler Fehler. Die Operation war erfolgreich,
@@ -268,7 +268,7 @@ impl AppService {
                                                 role_description: validation_err.to_string(),
                                             },
                                         ];
-                                        (Ok(()), VoucherStatus::Incomplete { reasons })
+                                        (Ok(updated_instance_id.clone()), VoucherStatus::Incomplete { reasons })
                                     }
                                     Err(fatal_error) => {
                                         // DAS ist ein fataler Fehler (z.B. Standard-Mismatch, Crypto-Fehler).
