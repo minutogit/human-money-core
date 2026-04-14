@@ -144,6 +144,20 @@ Methods for handling multi-role signatures (e.g., guarantors, notaries).
 * **Status Behavior:** If this signature fulfills the last missing requirement, status transitions to `Active`.
 * **Auth:** Requires `wallet_password: Option<&str>`.
 
+#### `pub fn remove_voucher_signature(local_instance_id: &str, signature_id: &str, wallet_password: Option<&str>) -> Result<(), String>`
+* **Description:** Removes an additional signature (e.g., from a guarantor or witness) from a voucher. This operation can only be performed by the voucher creator and only while the voucher is not yet in circulation (i.e., has only the initial `init` transaction).
+* **Parameters:**
+    * `local_instance_id`: The local ID of the voucher in the wallet.
+    * `signature_id`: The unique ID of the signature to remove.
+    * `wallet_password`: Optional password to unlock the wallet for saving changes.
+* **Business Rules:**
+    * Only the voucher creator can remove signatures.
+    * Signatures can only be removed if the voucher has exactly one transaction (the `init` transaction).
+    * The creator's signature (role `"creator"`) cannot be removed.
+    * The voucher must be in `Active` or `Incomplete` status.
+* **Status Behavior:** After removal, the voucher status is set to `Incomplete` to trigger re-validation against the standard.
+* **Auth:** Requires `wallet_password: Option<&str>`.
+
 ---
 
 ### 5. Data Queries (Read-Only)

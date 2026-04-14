@@ -387,4 +387,10 @@ pub enum VoucherCoreError {
     DeserializationError(String),
     #[error("Validation failed: {0}")]
     ValidationFailed(String),
+    #[error("Only the creator of the voucher can remove signatures.")]
+    NotTheCreator,
+    #[error("Cannot remove signatures from a voucher that is already in circulation (has more than one transaction).")]
+    VoucherAlreadyInCirculation,
+    #[error("Cannot remove the creator's signature from a voucher.")]
+    CannotRemoveCreatorSignature,
 }

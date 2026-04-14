@@ -209,4 +209,101 @@ impl Wallet {
 
         Ok(target_instance.local_instance_id.clone())
     }
+
+    /// Entfernt eine Zusatzsignatur (z. B. von Bürgen oder Zeugen) von einem Gutschein.
+    ///
+    /// Dieser Vorgang darf nur vom Ersteller des Gutscheins ausgeführt werden und nur,
+    /// solange der Gutschein noch nicht in Umlauf ist (nur eine init-Transaktion vorhanden).
+    ///
+    /// # Arguments
+    /// * `identity` - Die Identität des anfragenden Nutzers (muss der Ersteller sein).
+    /// * `local_instance_id` - Die ID des Gutscheins im lokalen `voucher_store`.
+    /// * `signature_id` - Die ID der zu entfernenden Signatur.
+    ///
+    /// # Returns
+    /// Ein `Result`, das bei Erfolg `Ok(())` zurückgibt.
+    ///
+    /// # Errors
+    /// * `VoucherNotFound` - Der Gutschein wurde nicht gefunden.
+    /// * `VoucherNotActive` - Der Gutschein hat nicht den Status Active oder Incomplete.
+    /// * `NotTheCreator` - Die anfragende Identität ist nicht der Ersteller des Gutscheins.
+    /// * `VoucherAlreadyInCirculation` - Der Gutschein hat bereits mehr als eine Transaktion (ist im Umlauf).
+    /// * `CannotRemoveCreatorSignature` - Es wurde versucht, die Kern-Signatur des Erstellers zu entfernen.
+    pub fn remove_signature(
+        &mut self,
+        identity: &UserIdentity,
+        local_instance_id: &str,
+        signature_id: &str,
+    ) -> Result<(), VoucherCoreError> {
+        let instance = self
+            .voucher_store
+            .vouchers
+            .get_mut(local_instance_id)
+            .ok_or_else(|| VoucherCoreError::VoucherNotFound(local_instance_id.to_string()))?;
+
+        // 1. Status-Prüfung: Nur Active oder Incomplete erlaubt
+        if !matches!(
+            instance.status,
+            VoucherStatus::Active | VoucherStatus::Incomplete { .. }
+        ) {
+            return Err(VoucherCoreError::VoucherNotActive(instance.status.clone()));
+        }
+
+        // 2. History-Prüfung: Nur eine init-Transaktion erlaubt
+        if instance.voucher.transactions.len() != 1 {
+            return Err(VoucherCoreError::VoucherAlreadyInCirculation);
+        }
+        let first_transaction = &instance.voucher.transactions[0];
+        if first_transaction.t_type != "init" {
+            return Err(VoucherCoreError::VoucherAlreadyInCirculation);
+        }
+
+        // 3. Identity-Prüfung: Nur der Ersteller darf Signaturen entfernen
+        let creator_id = instance
+            .voucher
+            .creator_profile
+            .id
+            .as_ref()
+            .ok_or_else(|| VoucherCoreError::Generic("Creator profile has no ID".to_string()))?;
+        if &identity.user_id != creator_id {
+            return Err(VoucherCoreError::NotTheCreator);
+        }
+
+        // 4. Rollen-Prüfung: Finde die Signatur und prüfe, ob sie entfernt werden darf
+        let signature_to_remove = instance
+            .voucher
+            .signatures
+            .iter()
+            .find(|sig| sig.signature_id == signature_id)
+            .ok_or_else(|| {
+                VoucherCoreError::Generic(format!(
+                    "Signature with ID {} not found",
+                    signature_id
+                ))
+            })?;
+
+        if signature_to_remove.role == "creator" {
+            return Err(VoucherCoreError::CannotRemoveCreatorSignature);
+        }
+
+        // 5. Signatur entfernen
+        instance
+            .voucher
+            .signatures
+            .retain(|sig| sig.signature_id != signature_id);
+
+        // 6. Status-Reevaluierung: Wenn Signaturen fehlen, setze auf Incomplete
+        // Hinweis: Eine vollständige Validierung gegen den Standard erfordert Zugriff auf den Standard,
+        // was auf dieser Ebene nicht verfügbar ist. Wir setzen konservativ auf Incomplete,
+        // wenn Signaturen entfernt wurden. Die App-Service-Schicht kann bei Bedarf neu validieren.
+        if !matches!(instance.status, VoucherStatus::Incomplete { .. }) {
+            instance.status = VoucherStatus::Incomplete {
+                reasons: vec![crate::ValidationFailureReason::RequiredSignatureMissing {
+                    role_description: "Signature removed, validation against standard required".to_string(),
+                }],
+            };
+        }
+
+        Ok(())
+    }
 }

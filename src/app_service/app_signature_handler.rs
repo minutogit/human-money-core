@@ -351,6 +351,91 @@ impl AppService {
         )
         .map_err(|e| e.to_string())
     }
+
+    /// Entfernt eine Zusatzsignatur (z. B. von Bürgen oder Zeugen) von einem Gutschein.
+    ///
+    /// Dieser Vorgang darf nur vom Ersteller des Gutscheins ausgeführt werden und nur,
+    /// solange der Gutschein noch nicht in Umlauf ist (nur eine init-Transaktion vorhanden).
+    ///
+    /// # Arguments
+    /// * `local_instance_id` - Die ID des Gutscheins im lokalen Wallet.
+    /// * `signature_id` - Die ID der zu entfernenden Signatur.
+    /// * `wallet_password` - Das Passwort, um den aktualisierten Wallet-Zustand zu speichern.
+    ///
+    /// # Returns
+    /// Ein `Result`, das bei Erfolg `Ok(())` zurückgibt.
+    ///
+    /// # Errors
+    /// Schlägt fehl, wenn das Wallet gesperrt ist, die Signatur nicht entfernt werden kann
+    /// (z. B. weil der Gutschein bereits im Umlauf ist oder die anfragende Identität nicht der Ersteller ist),
+    /// oder der Speicherzugriff misslingt.
+    pub fn remove_voucher_signature(
+        &mut self,
+        local_instance_id: &str,
+        signature_id: &str,
+        wallet_password: Option<&str>,
+    ) -> Result<(), String> {
+        // Determine AuthMethod BEFORE state replacement
+        let auth_method = match wallet_password {
+            Some(pwd_str) => crate::AuthMethod::Password(pwd_str),
+            None => {
+                let session_key = self.get_session_key().map_err(|e| e.to_string())?;
+                crate::AuthMethod::SessionKey(session_key)
+            }
+        };
+
+        let current_state = std::mem::replace(&mut self.state, AppState::Locked);
+
+        let (result, new_state) = match current_state {
+            AppState::Unlocked {
+                mut storage,
+                wallet,
+                identity,
+                session_cache,
+            } => {
+                let mut temp_wallet = wallet.clone();
+
+                match temp_wallet.remove_signature(&identity, local_instance_id, signature_id) {
+                    Err(e) => (
+                        Err(e.to_string()),
+                        AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        },
+                    ),
+                    Ok(_) => {
+                        // Versuchen, die Änderungen zu speichern
+                        match temp_wallet.save(&mut storage, &identity, &auth_method) {
+                            Ok(_) => (
+                                Ok(()),
+                                AppState::Unlocked {
+                                    storage,
+                                    wallet: temp_wallet,
+                                    identity,
+                                    session_cache,
+                                },
+                            ),
+                            Err(e) => (
+                                Err(e.to_string()),
+                                AppState::Unlocked {
+                                    storage,
+                                    wallet,
+                                    identity,
+                                    session_cache,
+                                },
+                            ),
+                        }
+                    }
+                }
+            }
+            AppState::Locked => (Err("Wallet is locked.".to_string()), AppState::Locked),
+        };
+
+        self.state = new_state;
+        result
+    }
 }
 
 

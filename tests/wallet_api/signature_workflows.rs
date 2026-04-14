@@ -858,3 +858,557 @@ fn api_app_service_symmetric_signature_workflow() {
     let details = service_creator.get_voucher_details(&local_id).unwrap();
     assert_eq!(details.voucher.signatures.len(), 2);
 }
+
+// --- 3. Signature Removal Tests ---
+
+/// Testet das erfolgreiche Entfernen einer Zusatzsignatur im Incomplete-Status.
+///
+/// ### Szenario:
+/// 1. Gutschein wird erstellt (Status Incomplete), eine Zusatzsignatur (Bürge) wird angehängt.
+/// 2. remove_signature wird vom Creator für die angehängte Signatur-ID aufgerufen.
+/// 3. Erwartung: Ok(()). Die signatures-Liste ist danach reduziert.
+#[test]
+fn test_remove_signature_success_incomplete_state() {
+    human_money_core::set_signature_bypass(true);
+    let alice = &ACTORS.alice;
+    let bob = &ACTORS.bob;
+    let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
+    let bob_wallet = setup_in_memory_wallet(&bob.identity);
+    let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
+
+    // Erstelle einen Gutschein im Incomplete-Status
+    let voucher_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        false,
+    )
+    .unwrap();
+
+    // Füge eine Bürgen-Signatur hinzu
+    let request_bytes = alice_wallet
+        .create_signing_request(
+            &alice.identity,
+            &voucher_id,
+            ContainerConfig::TargetDid(bob.identity.user_id.clone()),
+        )
+        .unwrap();
+
+    let voucher_for_signing = debug_open_container(&request_bytes, &bob.identity).unwrap();
+
+    let signature_data_enum = test_utils::create_guarantor_signature_data(
+        &bob.identity,
+        "1",
+        &voucher_for_signing.voucher_id,
+    );
+
+    let response_bytes = bob_wallet
+        .create_detached_signature_response(
+            &bob.identity,
+            &voucher_for_signing,
+            signature_data_enum,
+            false,
+            ContainerConfig::TargetDid(alice.identity.user_id.clone()),
+        )
+        .unwrap();
+
+    alice_wallet
+        .process_and_attach_signature(&alice.identity, &response_bytes, None)
+        .unwrap();
+
+    let instance_before = alice_wallet
+        .voucher_store
+        .vouchers
+        .get(&voucher_id)
+        .unwrap();
+    // 2 Signaturen: creator + bob
+    assert_eq!(instance_before.voucher.signatures.len(), 2);
+    let bob_signature_id = instance_before.voucher.signatures[1].signature_id.clone();
+
+    // Entferne die Signatur
+    let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, &bob_signature_id);
+    assert!(result.is_ok());
+
+    // Überprüfe, dass die Signatur entfernt wurde
+    let instance_after = alice_wallet
+        .voucher_store
+        .vouchers
+        .get(&voucher_id)
+        .unwrap();
+    assert_eq!(instance_after.voucher.signatures.len(), 1);
+    assert_eq!(instance_after.voucher.signatures[0].role, "creator");
+}
+
+/// Testet das erfolgreiche Entfernen einer überschüssigen Signatur im Active-Status.
+///
+/// ### Szenario:
+/// 1. Gutschein wird erstellt, erhält genügend Signaturen um in den Status Active zu wechseln.
+/// 2. Eine zusätzliche (überschüssige) Signatur wird angehängt.
+/// 3. remove_signature wird vom Creator für die überschüssige Signatur aufgerufen.
+/// 4. Erwartung: Ok(()). Die Signatur ist entfernt. Der Status bleibt Active.
+#[test]
+fn test_remove_signature_success_active_state() {
+    human_money_core::set_signature_bypass(true);
+    let alice = &ACTORS.alice;
+    let bob = &ACTORS.bob;
+    let charlie = &ACTORS.charlie;
+    let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
+    let bob_wallet = setup_in_memory_wallet(&bob.identity);
+    let charlie_wallet = setup_in_memory_wallet(&charlie.identity);
+    let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
+
+    // Erstelle einen Gutschein
+    let voucher_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        false,
+    )
+    .unwrap();
+
+    // Füge zwei Bürgen-Signaturen hinzu (Minuto benötigt 2)
+    for (signer, wallet) in [(&bob.identity, &bob_wallet), (&charlie.identity, &charlie_wallet)] {
+        let request_bytes = alice_wallet
+            .create_signing_request(
+                &alice.identity,
+                &voucher_id,
+                ContainerConfig::TargetDid(signer.user_id.clone()),
+            )
+            .unwrap();
+
+        let voucher_for_signing = debug_open_container(&request_bytes, signer).unwrap();
+
+        let signature_data_enum = test_utils::create_guarantor_signature_data(
+            signer,
+            "1",
+            &voucher_for_signing.voucher_id,
+        );
+
+        let response_bytes = wallet
+            .create_detached_signature_response(
+                signer,
+                &voucher_for_signing,
+                signature_data_enum,
+                false,
+                ContainerConfig::TargetDid(alice.identity.user_id.clone()),
+            )
+            .unwrap();
+
+        alice_wallet
+            .process_and_attach_signature(&alice.identity, &response_bytes, None)
+            .unwrap();
+    }
+
+    // Füge eine dritte (überschüssige) Signatur hinzu
+    let request_bytes = alice_wallet
+        .create_signing_request(
+            &alice.identity,
+            &voucher_id,
+            ContainerConfig::TargetDid(bob.identity.user_id.clone()),
+        )
+        .unwrap();
+
+    let voucher_for_signing = debug_open_container(&request_bytes, &bob.identity).unwrap();
+
+    let signature_data_enum = test_utils::create_guarantor_signature_data(
+        &bob.identity,
+        "1",
+        &voucher_for_signing.voucher_id,
+    );
+
+    let response_bytes = bob_wallet
+        .create_detached_signature_response(
+            &bob.identity,
+            &voucher_for_signing,
+            signature_data_enum,
+            false,
+            ContainerConfig::TargetDid(alice.identity.user_id.clone()),
+        )
+        .unwrap();
+
+    alice_wallet
+        .process_and_attach_signature(&alice.identity, &response_bytes, None)
+        .unwrap();
+
+    let instance_before = alice_wallet
+        .voucher_store
+        .vouchers
+        .get(&voucher_id)
+        .unwrap();
+    // 4 Signaturen: creator + 2 required guarantors + 1 extra
+    assert_eq!(instance_before.voucher.signatures.len(), 4);
+    let extra_signature_id = instance_before.voucher.signatures[3].signature_id.clone();
+
+    // Entferne die überschüssige Signatur
+    let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, &extra_signature_id);
+    assert!(result.is_ok());
+
+    // Überprüfe, dass die Signatur entfernt wurde
+    let instance_after = alice_wallet
+        .voucher_store
+        .vouchers
+        .get(&voucher_id)
+        .unwrap();
+    assert_eq!(instance_after.voucher.signatures.len(), 3);
+    // Der Status sollte sich nicht ändern (oder werden wir konservativ auf Incomplete setzen)
+    // Da wir konservativ auf Incomplete setzen, erwarten wir Incomplete
+    assert!(matches!(
+        instance_after.status,
+        VoucherStatus::Incomplete { .. }
+    ));
+}
+
+/// Testet, dass das Entfernen einer Signatur den Status auf Incomplete setzt.
+///
+/// ### Szenario:
+/// 1. Gutschein benötigt laut Standard exakt 2 Bürgen. Er hat 2 Bürgen und befindet sich im Status Active.
+/// 2. remove_signature wird erfolgreich für einen der Bürgen aufgerufen.
+/// 3. Erwartung: Ok(()). Der Löschvorgang ist erfolgreich, aber der Status wechselt auf Incomplete.
+#[test]
+fn test_remove_signature_triggers_status_downgrade() {
+    human_money_core::set_signature_bypass(true);
+    let alice = &ACTORS.alice;
+    let bob = &ACTORS.male_guarantor;
+    let charlie = &ACTORS.female_guarantor;
+    let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
+    let bob_wallet = setup_in_memory_wallet(&bob.identity);
+    let charlie_wallet = setup_in_memory_wallet(&charlie.identity);
+    let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
+
+    // Erstelle einen Gutschein
+    let voucher_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        false,
+    )
+    .unwrap();
+
+    // Füge zwei Bürgen-Signaturen hinzu (Minuto benötigt 2: 1 männlich, 1 weiblich)
+    for (signer, wallet) in [(&bob.identity, &bob_wallet), (&charlie.identity, &charlie_wallet)] {
+        let request_bytes = alice_wallet
+            .create_signing_request(
+                &alice.identity,
+                &voucher_id,
+                ContainerConfig::TargetDid(signer.user_id.clone()),
+            )
+            .unwrap();
+
+        let voucher_for_signing = debug_open_container(&request_bytes, signer).unwrap();
+
+        let signature_data_enum = test_utils::create_guarantor_signature_data(
+            signer,
+            &if signer.user_id == bob.identity.user_id { "1" } else { "2" },
+            &voucher_for_signing.voucher_id,
+        );
+
+        let response_bytes = wallet
+            .create_detached_signature_response(
+                signer,
+                &voucher_for_signing,
+                signature_data_enum,
+                false,
+                ContainerConfig::TargetDid(alice.identity.user_id.clone()),
+            )
+            .unwrap();
+
+        alice_wallet
+            .process_and_attach_signature(&alice.identity, &response_bytes, None)
+            .unwrap();
+    }
+
+    let instance_before = alice_wallet
+        .voucher_store
+        .vouchers
+        .get(&voucher_id)
+        .unwrap();
+    // 3 Signaturen: creator + 2 guarantors
+    assert_eq!(instance_before.voucher.signatures.len(), 3);
+    // Status sollte Active sein (da Minuto-Anforderungen erfüllt)
+    // Wir setzen den Status manuell auf Active für den Test
+    alice_wallet.update_voucher_status(&voucher_id, VoucherStatus::Active);
+
+    let instance_after_update = alice_wallet
+        .voucher_store
+        .vouchers
+        .get(&voucher_id)
+        .unwrap();
+    assert_eq!(instance_after_update.status, VoucherStatus::Active);
+
+    let guarantor_signature_id = instance_after_update.voucher.signatures[1].signature_id.clone();
+
+    // Entferne einen der Bürgen
+    let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, &guarantor_signature_id);
+    assert!(result.is_ok());
+
+    // Überprüfe, dass der Status auf Incomplete gewechselt ist
+    let instance_final = alice_wallet
+        .voucher_store
+        .vouchers
+        .get(&voucher_id)
+        .unwrap();
+    assert!(matches!(
+        instance_final.status,
+        VoucherStatus::Incomplete { .. }
+    ));
+    assert_eq!(instance_final.voucher.signatures.len(), 2);
+}
+
+/// Testet, dass die Creator-Signatur nicht entfernt werden kann.
+///
+/// ### Szenario:
+/// 1. Gutschein (Status Incomplete oder Active) enthält eine Signatur mit der Rolle creator.
+/// 2. remove_signature wird vom Creator für diese Signatur-ID aufgerufen.
+/// 3. Erwartung: Err(CannotRemoveCreatorSignature).
+#[test]
+fn test_remove_signature_fails_creator_signature() {
+    human_money_core::set_signature_bypass(true);
+    let alice = &ACTORS.alice;
+    let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
+    let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
+
+    let voucher_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        false,
+    )
+    .unwrap();
+
+    let instance = alice_wallet
+        .voucher_store
+        .vouchers
+        .get(&voucher_id)
+        .unwrap();
+    let creator_signature_id = instance.voucher.signatures[0].signature_id.clone();
+
+    // Versuche, die Creator-Signatur zu entfernen
+    let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, &creator_signature_id);
+
+    assert!(matches!(
+        result.unwrap_err(),
+        VoucherCoreError::CannotRemoveCreatorSignature
+    ));
+
+    // Überprüfe, dass die Signatur noch vorhanden ist
+    let instance_after = alice_wallet
+        .voucher_store
+        .vouchers
+        .get(&voucher_id)
+        .unwrap();
+    assert_eq!(instance_after.voucher.signatures.len(), 1);
+}
+
+/// Testet, dass nur der Creator Signaturen entfernen kann.
+///
+/// ### Szenario:
+/// 1. Gutschein wird von Identität A (Creator) erstellt.
+/// 2. Identität B versucht, eine Signatur zu entfernen.
+/// 3. Erwartung: Err(NotTheCreator).
+#[test]
+fn test_remove_signature_fails_not_the_creator() {
+    human_money_core::set_signature_bypass(true);
+    let alice = &ACTORS.alice;
+    let bob = &ACTORS.bob;
+    let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
+    let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
+
+    let voucher_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        false,
+    )
+    .unwrap();
+
+    // Bob versucht, eine Signatur zu entfernen
+    let result = alice_wallet.remove_signature(&bob.identity, &voucher_id, "any-signature-id");
+
+    assert!(matches!(result.unwrap_err(), VoucherCoreError::NotTheCreator));
+}
+
+/// Testet, dass Signaturen nicht entfernt werden können, wenn der Gutschein bereits via Transfer in Umlauf ist.
+///
+/// ### Szenario:
+/// 1. Creator erstellt Gutschein, hängt Signatur an, und tätigt einen vollständigen Transfer.
+/// 2. remove_signature wird vom Creator aufgerufen.
+/// 3. Erwartung: Err(VoucherAlreadyInCirculation).
+#[test]
+fn test_remove_signature_fails_already_in_circulation_via_transfer() {
+    human_money_core::set_signature_bypass(true);
+    let alice = &ACTORS.alice;
+    let bob = &ACTORS.bob;
+    let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
+    let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
+
+    let voucher_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        true,
+    )
+    .unwrap();
+
+    // Simuliere einen Transfer durch Hinzufügen einer zweiten Transaktion
+    let instance = alice_wallet
+        .voucher_store
+        .vouchers
+        .get_mut(&voucher_id)
+        .unwrap();
+    
+    // Füge eine Dummy-Transaktion hinzu, um Umlauf zu simulieren
+    let mut dummy_tx = instance.voucher.transactions[0].clone();
+    dummy_tx.t_id = format!("{}-2", dummy_tx.t_id);
+    dummy_tx.t_type = String::new(); // leer = voller Transfer
+    dummy_tx.prev_hash = instance.voucher.transactions[0].t_id.clone();
+    instance.voucher.transactions.push(dummy_tx);
+
+    // Versuche, eine Signatur zu entfernen
+    let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, "any-signature-id");
+
+    assert!(matches!(
+        result.unwrap_err(),
+        VoucherCoreError::VoucherAlreadyInCirculation
+    ));
+}
+
+/// Testet, dass Signaturen nicht entfernt werden können, wenn der Gutschein bereits via Split in Umlauf ist.
+///
+/// ### Szenario:
+/// 1. Creator erstellt Gutschein und teilt (split) den Gutschein.
+/// 2. remove_signature wird vom Creator aufgerufen.
+/// 3. Erwartung: Err(VoucherAlreadyInCirculation).
+#[test]
+fn test_remove_signature_fails_already_in_circulation_via_split() {
+    human_money_core::set_signature_bypass(true);
+    let alice = &ACTORS.alice;
+    let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
+    let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
+
+    let voucher_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        true,
+    )
+    .unwrap();
+
+    // Simuliere einen Split durch Hinzufügen einer zweiten Transaktion
+    let instance = alice_wallet
+        .voucher_store
+        .vouchers
+        .get_mut(&voucher_id)
+        .unwrap();
+    
+    // Füge eine Dummy-Transaktion hinzu, um Umlauf zu simulieren
+    let mut dummy_tx = instance.voucher.transactions[0].clone();
+    dummy_tx.t_id = format!("{}-2", dummy_tx.t_id);
+    dummy_tx.t_type = "split".to_string();
+    dummy_tx.prev_hash = instance.voucher.transactions[0].t_id.clone();
+    instance.voucher.transactions.push(dummy_tx);
+
+    // Versuche, eine Signatur zu entfernen
+    let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, "any-signature-id");
+
+    assert!(matches!(
+        result.unwrap_err(),
+        VoucherCoreError::VoucherAlreadyInCirculation
+    ));
+}
+
+/// Testet, dass Signaturen nicht aus einem ungültigen Zustand entfernt werden können.
+///
+/// ### Szenario:
+/// 1. Gutschein existiert in einem ungültigen Zustand (z.B. Quarantined).
+/// 2. remove_signature wird aufgerufen.
+/// 3. Erwartung: Err(VoucherNotActive).
+#[test]
+fn test_remove_signature_fails_invalid_state() {
+    human_money_core::set_signature_bypass(true);
+    let alice = &ACTORS.alice;
+    let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
+    let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
+
+    let voucher_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        true,
+    )
+    .unwrap();
+
+    // Setze den Gutschein auf Quarantined
+    alice_wallet.update_voucher_status(
+        &voucher_id,
+        VoucherStatus::Quarantined {
+            reason: "Test quarantine".to_string(),
+        },
+    );
+
+    // Versuche, eine Signatur zu entfernen
+    let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, "any-signature-id");
+
+    assert!(matches!(
+        result.unwrap_err(),
+        VoucherCoreError::VoucherNotActive(VoucherStatus::Quarantined { .. })
+    ));
+}
+
+/// Testet das Entfernen einer nicht existierenden Signatur-ID.
+///
+/// ### Szenario:
+/// 1. Gutschein mit Signatur ID sig-123.
+/// 2. remove_signature wird mit signature_id = "sig-999" aufgerufen.
+/// 3. Erwartung: Err(Generic) mit Nachricht "Signature with ID ... not found".
+#[test]
+fn test_remove_signature_non_existent_signature_id() {
+    human_money_core::set_signature_bypass(true);
+    let alice = &ACTORS.alice;
+    let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
+    let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
+
+    let voucher_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        minuto_standard,
+        true,
+    )
+    .unwrap();
+
+    // Versuche, eine nicht existierende Signatur zu entfernen
+    let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, "sig-999");
+
+    assert!(matches!(
+        result.unwrap_err(),
+        VoucherCoreError::Generic(msg) if msg.contains("not found")
+    ));
+}
+
+/// Testet das Entfernen einer Signatur von einem nicht existierenden Gutschein.
+///
+/// ### Szenario:
+/// 1. Aufruf von remove_signature mit einer local_instance_id, die nicht existiert.
+/// 2. Erwartung: Err(VoucherNotFound).
+#[test]
+fn test_remove_signature_non_existent_voucher_id() {
+    human_money_core::set_signature_bypass(true);
+    let alice = &ACTORS.alice;
+    let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
+
+    // Versuche, eine Signatur von einem nicht existierenden Gutschein zu entfernen
+    let result = alice_wallet.remove_signature(&alice.identity, "non-existent-voucher", "sig-123");
+
+    assert!(matches!(
+        result.unwrap_err(),
+        VoucherCoreError::VoucherNotFound(_)
+    ));
+}
