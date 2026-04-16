@@ -28,7 +28,6 @@ impl AppService {
         data: NewVoucherData,
         password: Option<&str>,
     ) -> Result<Voucher, String> {
-        println!("[DEBUG CMD] create_new_voucher called.");
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
         let (result, new_state) = match current_state {
@@ -244,7 +243,6 @@ impl AppService {
         archive: Option<&dyn VoucherArchive>,
         password: Option<&str>,
     ) -> Result<CreateBundleResult, String> {
-        println!("[DEBUG CMD] create_transfer_bundle called.");
 
         // Parse die TOML-Definitionen BEVOR der State bewegt wird,
         // damit ein Fehler hier den State nicht verwaist.

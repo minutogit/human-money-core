@@ -110,14 +110,6 @@ pub fn scan_and_rebuild_fingerprints(
         }
         for tx in &instance.voucher.transactions {
             let fingerprint = create_fingerprint_for_transaction(tx, &instance.voucher)?;
-            // DEBUG: Log the components of the hash being generated
-            println!(
-                "[Scan/Rebuild] Gen FP for t_id: '{}'. Using prev_hash: '{}', sender_id: '{}'. Resulting ds_tag: '{}'",
-                tx.t_id,
-                tx.prev_hash,
-                tx.sender_id.as_deref().unwrap_or("anon"),
-                fingerprint.ds_tag
-            );
 
             // Jede Transaktion wird zur allgemeinen lokalen Historie hinzugefügt.
             // KORREKTUR: Duplikate verhindern. Ein Vec wird verwendet, um die Reihenfolge
@@ -174,21 +166,14 @@ pub fn check_for_double_spend(
         std::collections::HashSet<TransactionFingerprint>,
     > = HashMap::new();
 
-    println!("[DEBUG CONFLICT_MANAGER] Quellen werden zusammengeführt...");
     let sources = [
         &own_fingerprints.history,
         &known_fingerprints.local_history,
         &known_fingerprints.foreign_fingerprints,
     ];
 
-    for (i, source) in sources.iter().enumerate() {
+    for source in sources.iter() {
         for (hash, fps) in *source {
-            println!(
-                "[DEBUG CONFLICT_MANAGER] Quelle[{}]: Hash '{}' mit {} Fingerprints gefunden.",
-                i,
-                hash,
-                fps.len()
-            );
             let entry = all_fingerprints_map.entry(hash.clone()).or_default();
             for fp in fps {
                 entry.insert(fp.clone());
@@ -196,11 +181,6 @@ pub fn check_for_double_spend(
         }
     }
 
-    // 2. Jede Gruppe von Fingerprints auf Konflikte prüfen (mehr als eine eindeutige t_id).
-    println!(
-        "[DEBUG CONFLICT_MANAGER] Prüfe {} eindeutige Hashes auf Konflikte...",
-        all_fingerprints_map.len()
-    );
     for (hash, fps_set) in all_fingerprints_map {
         let fps_vec: Vec<TransactionFingerprint> = fps_set.into_iter().collect();
         let unique_t_ids = fps_vec
@@ -208,23 +188,10 @@ pub fn check_for_double_spend(
             .map(|fp| &fp.t_id)
             .collect::<std::collections::HashSet<_>>();
 
-        println!(
-            "[DEBUG CONFLICT_MANAGER] Hash '{}' hat {} eindeutige t_ids.",
-            hash,
-            unique_t_ids.len()
-        );
         if unique_t_ids.len() > 1 {
-            println!(
-                "[DEBUG CONFLICT_MANAGER] -> KONFLIKT für Hash '{}' entdeckt!",
-                hash
-            );
             // 3. Einen Konflikt als "verifizierbar" einstufen, wenn der Wallet-Besitzer
             // mindestens eine der beteiligten Transaktionen selbst kennt (aus seiner Historie).
             let is_verifiable = known_fingerprints.local_history.contains_key(&hash);
-            println!(
-                "[DEBUG CONFLICT_MANAGER] -> Klassifizierung: Ist verifizierbar? (local_history enthält den Hash) -> {}",
-                is_verifiable
-            );
             if is_verifiable {
                 result.verifiable_conflicts.insert(hash.clone(), fps_vec);
             } else {

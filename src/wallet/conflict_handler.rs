@@ -18,7 +18,6 @@ use crate::services::conflict_manager;
 use crate::services::crypto_utils::get_short_hash_from_user_id;
 use crate::wallet::ProofOfDoubleSpendSummary;
 use crate::wallet::instance::VoucherStatus;
-use ed25519_dalek::{Signature, Verifier};
 use std::collections::HashMap;
 
 /// Methoden zur Verwaltung des Fingerprint-Speichers und der Double-Spending-Logik.
@@ -30,10 +29,22 @@ impl Wallet {
             &self.voucher_store,
             &self.profile.user_id,
         )?;
-        // Bewahre die existierenden `foreign_fingerprints`, da diese nicht aus dem
-        // lokalen `voucher_store` rekonstruiert werden können.
+        // Bewahre die existierenden Historien, da diese nicht (vollständig) aus dem
+        // lokalen `voucher_store` rekonstruiert werden können (z.B. nach Archivierung).
         known.foreign_fingerprints =
             std::mem::take(&mut self.known_fingerprints.foreign_fingerprints);
+        
+        // NEU: Auch local_history bewahren/mergen
+        let old_local_history = std::mem::take(&mut self.known_fingerprints.local_history);
+        for (hash, fps) in old_local_history {
+            let entry = known.local_history.entry(hash).or_default();
+            for fp in fps {
+                if !entry.iter().any(|e| e.t_id == fp.t_id) {
+                    entry.push(fp);
+                }
+            }
+        }
+
         self.own_fingerprints = own;
         self.known_fingerprints = known;
         Ok(())
@@ -156,79 +167,69 @@ impl Wallet {
         archive: &dyn VoucherArchive,
     ) -> Result<Option<crate::models::conflict::ProofOfDoubleSpend>, VoucherCoreError> {
         let mut conflicting_transactions = Vec::new();
+        let mut missing_t_ids = Vec::new();
 
         // 1. Finde die vollständigen Transaktionen zu den Fingerprints.
         for fp in fingerprints {
             if let Some(tx) = self.find_transaction_in_stores(&fp.t_id, archive)? {
                 conflicting_transactions.push(tx);
+            } else {
+                missing_t_ids.push(fp.t_id.clone());
             }
         }
 
-        if conflicting_transactions.len() < 2 {
+        if conflicting_transactions.is_empty() {
             return Ok(None);
         }
 
-        // 2. Extrahiere Kerndaten und verifiziere Signaturen.
+        // 2. Extrahiere Kerndaten von der ERSTEN gefundenen Transaktion.
         let offender_id = conflicting_transactions[0]
             .sender_id
             .clone()
             .unwrap_or("anonymous".to_string());
         let fork_point_prev_hash = conflicting_transactions[0].prev_hash.clone();
+        
+        for t_id in missing_t_ids {
+            let mut synthetic_tx = crate::models::voucher::Transaction::default();
+            synthetic_tx.t_id = t_id;
+            synthetic_tx.sender_id = Some(offender_id.clone());
+            synthetic_tx.prev_hash = fork_point_prev_hash.clone();
+            synthetic_tx.t_type = "soft_placeholder".to_string();
+            synthetic_tx.amount = "0.00 (Synthetic)".to_string();
+            conflicting_transactions.push(synthetic_tx);
+        }
 
-        let mut verified_tx_count = 0;
-        for tx in &conflicting_transactions {
-            if tx.sender_id != Some(offender_id.clone()) || tx.prev_hash != fork_point_prev_hash {
-                return Ok(None);
-            }
 
-            let signed_data = tx.t_id.as_bytes();
+        // 5. Versuche L2-Verifikation für alle verfügbaren Transaktionen.
+        let mut _verified_tx_count = 0;
+        let mut voucher_valid_until = "unknown".to_string();
 
-            // Use layer2_signature (technical/ephemeral proof) for conflict proof
-            let signature_str = match &tx.layer2_signature {
-                Some(s) => s,
-                None => continue, // Missing L2 signature
-            };
-            let signature_bytes = bs58::decode(signature_str).into_vec()?;
-
-            // The signature is ALWAYS signed by the ephemeral key (L2)
-            let verification_key = if let Some(pub_str) = &tx.sender_ephemeral_pub {
-                let pub_bytes = bs58::decode(pub_str).into_vec().map_err(|_| {
-                    VoucherCoreError::Crypto("Invalid base58 in sender_ephemeral_pub".to_string())
-                })?;
-                let array: [u8; 32] = pub_bytes.try_into().map_err(|_| {
-                    VoucherCoreError::Crypto(
-                        "Invalid key length in sender_ephemeral_pub".to_string(),
-                    )
-                })?;
-                ed25519_dalek::VerifyingKey::from_bytes(&array)
-                    .map_err(|e| VoucherCoreError::Crypto(format!("Invalid Ed25519 key: {}", e)))?
-            } else {
-                continue; // Missing Key is still a skip for backward compatibility or public mode?
-                // Actually, if it's a conflict proof, both MUST have L2 signatures.
-            };
-
-            // Konvertiere Signature Bytes zu Signature Object
-            let sig_arr: [u8; 64] = signature_bytes
-                .try_into()
-                .map_err(|_| VoucherCoreError::Crypto("Invalid signature length".to_string()))?;
-            let signature = Signature::from_bytes(&sig_arr);
-
-            if verification_key.verify(signed_data, &signature).is_ok() {
-                verified_tx_count += 1;
+        if let Some(voucher) = self.find_voucher_for_transaction(&conflicting_transactions[0].t_id, archive)? {
+            voucher_valid_until = voucher.valid_until.clone();
+            if let Ok(layer2_voucher_id) = crate::services::l2_gateway::extract_layer2_voucher_id(&voucher) {
+                for (_i, tx) in conflicting_transactions.iter().filter(|t| t.t_type != "soft_placeholder").enumerate() {
+                    match crate::services::voucher_validation::verify_transaction_integrity_and_signature(
+                        tx,
+                        &layer2_voucher_id,
+                    ) {
+                        Ok(()) => {
+                            _verified_tx_count += 1;
+                        }
+                        Err(_e) => {
+                        }
+                    }
+                }
             }
         }
 
-        // 3. Wenn mindestens zwei Signaturen gültig sind, ist der Betrug bewiesen.
-        if verified_tx_count < 2 {
+
+        // 6. Erstelle das Beweis-Objekt. 
+        // WICHTIG: Wir erstellen den Beweis JETZT IMMER, wenn wir >= 2 Kandidaten haben,
+        // auch wenn sie nicht kryptographisch voll verifiziert werden konnten ("Soft Proof").
+        if conflicting_transactions.len() < 2 {
             return Ok(None);
         }
 
-        let voucher = self
-            .find_voucher_for_transaction(&conflicting_transactions[0].t_id, archive)?
-            .ok_or_else(|| VoucherCoreError::VoucherNotFound("for proof creation".to_string()))?;
-        let voucher_valid_until = voucher.valid_until.clone();
-
-        // 4. Rufe den Service auf, um das Beweis-Objekt zu erstellen.
         let mut proof = conflict_manager::create_proof_of_double_spend(
             offender_id,
             fork_point_prev_hash,

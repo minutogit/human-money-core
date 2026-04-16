@@ -173,10 +173,6 @@ impl Wallet {
                                 // STATLESS: Wir müssen den Seed hier nicht mehr speichern oder cachen.
                                 // Er wird bei Bedarf re-deriviert.
                             } else {
-                                println!(
-                                    "[Warning] Payload target prefix mismatch: {} vs {}",
-                                    payload.target_prefix, identity.user_id
-                                );
                             }
                         }
                     }
@@ -263,12 +259,8 @@ impl Wallet {
         )?;
 
         // Die Fingerprint-Stores werden bei jeder Änderung neu aus dem VoucherStore aufgebaut.
-        let (own, known) = conflict_manager::scan_and_rebuild_fingerprints(
-            &self.voucher_store,
-            &identity.user_id,
-        )?;
-        self.own_fingerprints = own;
-        self.known_fingerprints = known;
+        // WICHTIG: Verwende die Wallet-Methode, die die Historie bewahrt.
+        self.scan_and_rebuild_fingerprints()?;
 
         // Wenn eine Signatur empfangen wird, muss der Status des Gutscheins aktualisiert werden
         if let Ok(deserialized_container) =
@@ -285,52 +277,61 @@ impl Wallet {
             &self.known_fingerprints,
         );
 
-        for (_conflict_hash, fingerprints) in &check_result.verifiable_conflicts {
-            if let Some(archive_backend) = archive {
-                // Die Logik zum Verifizieren und Erstellen von Beweisen ist nun hier im Wallet.
-                let verified_proof =
-                    self.verify_and_create_proof(identity, fingerprints, archive_backend)?;
 
-                if let Some(proof) = verified_proof {
-                    // Der Beweis wurde erfolgreich erstellt und kann nun verwendet werden.
-                    if let Some(verdict) = &proof.layer2_verdict {
-                        // Logik zur Verarbeitung eines L2-Urteils
-                        for tx in &proof.conflicting_transactions {
-                            let instance_id_opt = self
-                                .find_local_voucher_by_tx_id(&tx.t_id)
-                                .map(|i| i.local_instance_id.clone());
-                            if let Some(instance_id) = instance_id_opt {
-                                if let Some(instance_mut) =
-                                    self.voucher_store.vouchers.get_mut(&instance_id)
+        // Sammle alle Konflikte (sowohl verifizierbare als auch Warnungen) zur Verarbeitung.
+        let mut all_conflicts = check_result.verifiable_conflicts.clone();
+        for (hash, fps) in &check_result.unverifiable_warnings {
+            all_conflicts.insert(hash.clone(), fps.clone());
+        }
+
+        for (_conflict_hash, fingerprints) in &all_conflicts {
+            // find_transaction_in_stores durchsucht zuerst den lokalen voucher_store.
+            // Da beide Konflikt-Transaktionen lokal vorhanden sind, wird das Archive
+            // als Fallback nicht benötigt. Ein NoOpArchive dient als Platzhalter.
+            let noop = crate::archive::file_archive::NoOpArchive;
+            let archive_ref: &dyn VoucherArchive = match archive {
+                Some(a) => a,
+                None => &noop,
+            };
+            
+            let verified_proof =
+                self.verify_and_create_proof(identity, fingerprints, archive_ref)?;
+
+            if let Some(proof) = verified_proof {
+                // Der Beweis wurde erfolgreich erstellt und kann nun verwendet werden.
+                if let Some(verdict) = &proof.layer2_verdict {
+                    // Logik zur Verarbeitung eines L2-Urteils
+                    for tx in &proof.conflicting_transactions {
+                        let instance_id_opt = self
+                            .find_local_voucher_by_tx_id(&tx.t_id)
+                            .map(|i| i.local_instance_id.clone());
+                        if let Some(instance_id) = instance_id_opt {
+                            if let Some(instance_mut) =
+                                self.voucher_store.vouchers.get_mut(&instance_id)
+                            {
+                                instance_mut.status = if tx.t_id == verdict.valid_transaction_id
                                 {
-                                    instance_mut.status = if tx.t_id == verdict.valid_transaction_id
-                                    {
-                                        VoucherStatus::Active
-                                    } else {
-                                        VoucherStatus::Quarantined {
-                                            reason: "L2 verdict".to_string(),
-                                        }
-                                    };
-                                }
+                                    VoucherStatus::Active
+                                } else {
+                                    VoucherStatus::Quarantined {
+                                        reason: "L2 verdict".to_string(),
+                                    }
+                                };
                             }
                         }
-                    } else {
-                        // Offline-Konfliktlösung, wenn kein L2-Urteil vorliegt
-                        resolve_conflict_offline(&mut self.voucher_store, fingerprints);
                     }
-                    // WICHTIG: Den erstellten Beweis persistent speichern.
-                    self.proof_store
-                        .proofs
-                        .insert(proof.proof_id.clone(), proof);
                 } else {
-                    // Todo klären
-                    // Fallback: Wenn kein strikter kryptographischer Beweis erstellt werden kann
-                    // (z.B. weil Daten fehlen), MUSS dennoch lokal aufgeräumt werden.
+                    // Offline-Konfliktlösung, wenn kein L2-Urteil vorliegt
                     resolve_conflict_offline(&mut self.voucher_store, fingerprints);
                 }
+                // WICHTIG: Den erstellten Beweis persistent speichern.
+                // WICHTIG: Den erstellten Beweis persistent speichern.
+                self.proof_store
+                    .proofs
+                    .insert(proof.proof_id.clone(), proof);
             } else {
-                // KORREKTUR: Dieser `else`-Block fehlte. Er stellt sicher, dass die Offline-Logik auch
-                // dann greift, wenn kein Layer-2-Backend (`archive`) konfiguriert ist.
+                // Fallback: Wenn kein strikter kryptographischer Beweis erstellt werden kann
+                // (z.B. weil Daten fehlen), MUSS dennoch lokal aufgeräumt werden.
                 resolve_conflict_offline(&mut self.voucher_store, fingerprints);
             }
         }
