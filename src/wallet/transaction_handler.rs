@@ -33,7 +33,7 @@ impl Wallet {
         recipient_id: &str,
         notes: Option<String>,
         forwarded_fingerprints: Vec<crate::models::conflict::TransactionFingerprint>,
-        fingerprint_depths: HashMap<String, u8>,
+        fingerprint_depths: HashMap<String, i8>,
         sender_profile_name: Option<String>,
     ) -> Result<(Vec<u8>, TransactionBundleHeader), VoucherCoreError> {
         for v in &vouchers {
@@ -173,10 +173,6 @@ impl Wallet {
                                 // STATLESS: Wir müssen den Seed hier nicht mehr speichern oder cachen.
                                 // Er wird bei Bedarf re-deriviert.
                             } else {
-                                println!(
-                                    "[Warning] Payload target prefix mismatch: {} vs {}",
-                                    payload.target_prefix, identity.user_id
-                                );
                             }
                         }
                     }
@@ -263,12 +259,8 @@ impl Wallet {
         )?;
 
         // Die Fingerprint-Stores werden bei jeder Änderung neu aus dem VoucherStore aufgebaut.
-        let (own, known) = conflict_manager::scan_and_rebuild_fingerprints(
-            &self.voucher_store,
-            &identity.user_id,
-        )?;
-        self.own_fingerprints = own;
-        self.known_fingerprints = known;
+        // WICHTIG: Verwende die Wallet-Methode, die die Historie bewahrt.
+        self.scan_and_rebuild_fingerprints()?;
 
         // Wenn eine Signatur empfangen wird, muss der Status des Gutscheins aktualisiert werden
         if let Ok(deserialized_container) =
@@ -285,16 +277,29 @@ impl Wallet {
             &self.known_fingerprints,
         );
 
-        for (_conflict_hash, fingerprints) in &check_result.verifiable_conflicts {
-            if let Some(archive_backend) = archive {
-                // Die Logik zum Verifizieren und Erstellen von Beweisen ist nun hier im Wallet.
-                let verified_proof =
-                    self.verify_and_create_proof(identity, fingerprints, archive_backend)?;
+
+        // Sammle alle Konflikte (sowohl verifizierbare als auch Warnungen) zur Verarbeitung.
+        let mut all_conflicts = check_result.verifiable_conflicts.clone();
+        for (hash, fps) in &check_result.unverifiable_warnings {
+            all_conflicts.insert(hash.clone(), fps.clone());
+        }
+
+        for (_conflict_hash, fingerprints) in &all_conflicts {
+            // find_transaction_in_stores durchsucht zuerst den lokalen voucher_store.
+            // Da beide Konflikt-Transaktionen lokal vorhanden sind, wird das Archive
+            // als Fallback nicht benötigt. Ein NoOpArchive dient als Platzhalter.
+            let noop = crate::archive::file_archive::NoOpArchive;
+            let archive_ref: &dyn VoucherArchive = match archive {
+                Some(a) => a,
+                None => &noop,
+            };
+            
+            let verified_proof =
+                self.verify_and_create_proof(identity, fingerprints, archive_ref)?;
 
                 if let Some(proof) = verified_proof {
-                    // Der Beweis wurde erfolgreich erstellt und kann nun verwendet werden.
+                    // Logik zur Verarbeitung eines L2-Urteils
                     if let Some(verdict) = &proof.layer2_verdict {
-                        // Logik zur Verarbeitung eines L2-Urteils
                         for tx in &proof.conflicting_transactions {
                             let instance_id_opt = self
                                 .find_local_voucher_by_tx_id(&tx.t_id)
@@ -318,19 +323,43 @@ impl Wallet {
                         // Offline-Konfliktlösung, wenn kein L2-Urteil vorliegt
                         resolve_conflict_offline(&mut self.voucher_store, fingerprints);
                     }
-                    // WICHTIG: Den erstellten Beweis persistent speichern.
+
+                    // --- Bestimmung der Rolle (Opfer vs. Zeuge) ---
+                    // REFINEMENT: Wir sind nur ein Opfer, wenn wir KEINEN aktiven Gutschein für diesen
+                    // Konflikt-Tag haben, aber mindestens einer existiert (der nun in Quarantäne ist).
+                    let mut has_active = false;
+                    let mut has_quarantined = false;
+                    
+                    for tx in &proof.conflicting_transactions {
+                        if let Some(instance) = self.find_local_voucher_by_tx_id(&tx.t_id) {
+                            if matches!(instance.status, VoucherStatus::Active) {
+                                has_active = true;
+                            } else if matches!(instance.status, VoucherStatus::Quarantined { .. }) {
+                                has_quarantined = true;
+                            }
+                        }
+                    }
+                    
+                    let conflict_role = if has_quarantined && !has_active {
+                        crate::models::conflict::ConflictRole::Victim
+                    } else {
+                        crate::models::conflict::ConflictRole::Witness
+                    };
+
+                    // WICHTIG: Den erstellten Beweis persistent im Wrapper speichern.
+                    let entry = crate::models::conflict::ProofStoreEntry {
+                        proof: proof.clone(),
+                        local_override: false,
+                        local_note: None,
+                        conflict_role,
+                    };
+                    
                     self.proof_store
                         .proofs
-                        .insert(proof.proof_id.clone(), proof);
+                        .insert(proof.proof_id.clone(), entry);
                 } else {
-                    // Todo klären
-                    // Fallback: Wenn kein strikter kryptographischer Beweis erstellt werden kann
-                    // (z.B. weil Daten fehlen), MUSS dennoch lokal aufgeräumt werden.
-                    resolve_conflict_offline(&mut self.voucher_store, fingerprints);
-                }
-            } else {
-                // KORREKTUR: Dieser `else`-Block fehlte. Er stellt sicher, dass die Offline-Logik auch
-                // dann greift, wenn kein Layer-2-Backend (`archive`) konfiguriert ist.
+                // Fallback: Wenn kein strikter kryptographischer Beweis erstellt werden kann
+                // (z.B. weil Daten fehlen), MUSS dennoch lokal aufgeräumt werden.
                 resolve_conflict_offline(&mut self.voucher_store, fingerprints);
             }
         }

@@ -28,10 +28,8 @@ impl AppService {
         data: &[u8],
         password: Option<&str>,
     ) -> Result<(), String> {
-        println!("[DEBUG DATA] save_encrypted_data called for '{}'", name);
         return match password {
             Some(pwd_str) => {
-                println!("[DEBUG DATA] Mode A (Some(password)) detected.");
                 match &mut self.state {
                     AppState::Unlocked {
                         storage, identity, ..
@@ -53,7 +51,6 @@ impl AppService {
                 }
             }
             None => {
-                println!("[DEBUG DATA] Mode B (None) detected.");
                 let session_key = self.get_session_key()?;
                 let auth_method = AuthMethod::SessionKey(session_key);
                 match &mut self.state {
@@ -68,10 +65,6 @@ impl AppService {
                             storage
                                 .save_arbitrary_data(&identity.user_id, &auth_method, name, data)
                                 .map_err(|e| {
-                                    println!(
-                                        "[DEBUG DATA] Mode B: save_arbitrary_data FAILED: {}",
-                                        e
-                                    );
                                     e.to_string()
                                 })
                         };
@@ -100,10 +93,8 @@ impl AppService {
         name: &str,
         password: Option<&str>,
     ) -> Result<Vec<u8>, String> {
-        println!("[DEBUG DATA] load_encrypted_data called for '{}'", name);
         return match password {
             Some(pwd_str) => {
-                println!("[DEBUG DATA] Mode A (Some(password)) detected.");
                 match &mut self.state {
                     AppState::Unlocked {
                         storage, identity, ..
@@ -113,7 +104,6 @@ impl AppService {
                         storage
                             .load_arbitrary_data(&identity.user_id, &auth_method, name)
                             .map_err(|e| {
-                                println!("[DEBUG DATA] Mode A: load_arbitrary_data FAILED: {}", e);
                                 e.to_string()
                             })
                     }
@@ -121,7 +111,6 @@ impl AppService {
                 }
             }
             None => {
-                println!("[DEBUG DATA] Mode B (None) detected.");
                 let session_key = self.get_session_key()?;
                 let auth_method = AuthMethod::SessionKey(session_key);
                 match &mut self.state {
@@ -130,7 +119,6 @@ impl AppService {
                     } => storage
                         .load_arbitrary_data(&identity.user_id, &auth_method, name)
                         .map_err(|e| {
-                            println!("[DEBUG DATA] Mode B: load_arbitrary_data FAILED: {}", e);
                             e.to_string()
                         }),
                     AppState::Locked => Err("Wallet is locked.".to_string()),

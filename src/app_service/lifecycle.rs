@@ -273,7 +273,6 @@ impl AppService {
     /// * `password` - Das Passwort zur Verifizierung und Key-Ableitung.
     /// * `duration_seconds` - Die Dauer der Sitzung in Sekunden.
     pub fn unlock_session(&mut self, password: &str, duration_seconds: u64) -> Result<(), String> {
-        println!("[DEBUG LIFECYCLE] Attempting to unlock session...");
         match &mut self.state {
             AppState::Unlocked {
                 storage,
@@ -283,10 +282,6 @@ impl AppService {
             } => {
                 // Verifiziere das Passwort, indem wir versuchen, den Session-Key abzuleiten
                 let session_key = storage.derive_key_for_session(password).map_err(|e| {
-                    println!(
-                        "[DEBUG LIFECYCLE] storage.derive_key_for_session FAILED: {}",
-                        e
-                    );
                     format!("Password verification failed: {}", e)
                 })?;
 
@@ -297,7 +292,6 @@ impl AppService {
                     .test_session_key(&session_key)
                     .map_err(|e| format!("Password verification failed: {}", e))?;
 
-                println!("[DEBUG LIFECYCLE] storage.derive_key_for_session SUCCEEDED.");
                 // Erstelle den Session-Cache
                 *session_cache = Some(super::SessionCache {
                     session_key,

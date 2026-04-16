@@ -233,3 +233,70 @@ Eine Besonderheit im Standard ist die Koexistenz von `allow_partial_transfers` (
 | `false` | Ja | ❌ **Logischer Widerspruch:** Wird technisch verhindert. Semantik (`false`) schlägt Berechtigung. |
 | **`true`** | **Nein** | 💡 **Sonderfall "Change-Only":** Der Wert ist rechnerisch teilbar (Guthaben), darf aber **nicht** aufgeteilt weitergegeben werden. Erlaubt ist nur "Alles oder Nichts". |
 
+## 5. Konfliktmanagement & Reputation (Dezentrales Immunsystem)
+
+Das Human Money Netzwerk nutzt ein dezentrales Reputations- und Konfliktmanagement, um Double-Spends zu bestrafen und bösartige Knoten im Netzwerk zu identifizieren. Da es keinen zentralen Konsens gibt, verwaltet jeder Client lokal einen eigenen `ProofStore`.
+
+### 5.1 Fingerprints & Metadaten (VIP-Gossip)
+
+Um auf kollidierende Transaktionen hinzuweisen, gossipt das Netzwerk anonyme `TransactionFingerprint`s. Die Verbreitung und das Routing werden über getrennte Metadaten (`FingerprintMetadata`) gesteuert.
+
+```rust
+pub struct FingerprintMetadata {
+    /// Die Verbreitungstiefe des Fingerprints im Netzwerk (Anzahl der Hops).
+    /// Datentyp `i8`.
+    /// 
+    /// - Positive Werte (0 bis 127): Organischer Gossip (harmlos)
+    /// - Negative Werte (-1 bis -128): "VIP"-Verbreitung (Betrugserkennung)
+    pub depth: i8,
+    // ...
+}
+```
+
+**Effektive Tiefe & Priorisierung:**
+Damit "toxische" Fingerprints (Betrug) sich schnell im P2P-Netzwerk ausbreiten können, erhalten sie bei der Auswahl für ein Gossip-Bundle einen 2-Hop Vorrang, altern aber dennoch organisch. Logik: `effektive_tiefe = abs(depth) - 2`. Ein VIP-Tag mit `depth: -1` wird also behandelt als hätte er Tiefe `-1`, und wird somit vor einem taufrischen harmlosen Tag (Tiefe `0`) weitergeleitet.
+
+### 5.2 Der Double-Spend Beweis (Fraud Proof)
+
+Lokale oder verifizierte Konflikte werden in einem fälschungssicheren Beweis gespeichert.
+
+```rust
+pub struct ProofOfDoubleSpend {
+    pub proof_id: String,           // Deterministischer Hash des Konflikts
+    pub offender_id: String,        // Identität des Täters
+    pub conflicting_transactions: Vec<Transaction>, // Mindestens 2 verschiedene Pfade
+    pub affected_voucher_name: Option<String>,      
+    pub voucher_standard_uuid: Option<String>,
+    // ...
+}
+```
+
+### 5.3 Der Lokale Zustand (ProofStoreEntry & ConflictRole)
+
+Der Nutzer bewertet empfangene Beweise nicht nur kryptografisch, sondern auch persönlich in Bezug auf sich selbst. Dies wird im `ProofStoreEntry` gekapselt.
+
+```rust
+pub struct ProofStoreEntry {
+    pub proof: ProofOfDoubleSpend,
+    pub local_override: bool,       // Nutzer verzeiht Täter explizit
+    pub conflict_role: ConflictRole,
+}
+
+pub enum ConflictRole {
+    Victim,   // Unser lokales Guthaben wurde direkt beschädigt
+    Witness,  // Wir haben den Konflikt nur passiv/extern beobachtet
+}
+```
+
+### 5.4 Impliziter Reputationsstatus
+
+Basierend auf den vorliegenden, ungeklärten `ProofOfDoubleSpend` Objekten berechnet das System die Reputation dynamisch:
+
+```rust
+pub enum TrustStatus {
+    Clean,                          // Alles ok, keine Betrugsfälle
+    KnownOffender(String),          // Ungelöster Betrugsbeweis liegt vor
+    Resolved(String, bool),         // Konflikt durch Opfer oder manuell geklärt
+}
+```
+

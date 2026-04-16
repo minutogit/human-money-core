@@ -1242,7 +1242,7 @@ fn test_remove_signature_fails_not_the_creator() {
 fn test_remove_signature_fails_already_in_circulation_via_transfer() {
     human_money_core::set_signature_bypass(true);
     let alice = &ACTORS.alice;
-    let bob = &ACTORS.bob;
+    let _bob = &ACTORS.bob;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
     let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 

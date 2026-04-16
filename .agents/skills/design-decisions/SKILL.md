@@ -41,3 +41,13 @@ description: Architectural design decisions for human_money_core including SAI, 
 
 - **Decision:** Signature uniqueness is validated at the Public Key level (32-byte `[u8; 32]`), not at the User-ID string level.
 - **Rationale:** Different prefixes could disguise the same key. `get_pubkey_from_user_id` extracts the actual `EdPublicKey` for comparison.
+
+## Decentralized Conflict & Reputation Management
+
+- **Decision:** Use a purely decentralized "Local Override" mechanism instead of relying on a global consensus or "ResolutionEndorsements" for the MVP.
+- **Rationale:** Global endorsement suffers from Sybil-attacks, lack of incentives for victims to "forgive" publicly, and privacy concerns (de-masking stealth keys). Conflicts are settled socially; users trust contacts locally.
+- **Organic Eviction (VIP Gossip):** 
+  - **Negative Depth:** Fraud proofs are gossiped with negative `depth` values (`i8`) to distinguish them from organic gossip.
+  - **Effective Depth:** Selection for gossip bundles uses `abs(depth) - 2`. This gives new VIP reports a 2-hop "head start" to spread rapidly while allowing them to age naturally if no longer relevant.
+  - **Loop & Replay Protection:** External VIP updates are ignored if the fingerprint is already known locally as a VIP (prevents "fresher" negative depths from keeping zombies alive). Symmetrically arriving fingerprints (pairs with matching negative depth) are prioritized; asymmetric pairs are treated as spam and normalized.
+- **Conflict Roles:** The UI distinguishes between `Victim` (local active voucher was quarantined) and `Witness` (passive detection).

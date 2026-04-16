@@ -25,7 +25,7 @@ pub enum ValidationFailureReason {
 /// Repräsentiert den übergeordneten Lebenszyklus-Zustand eines Gutscheins im Wallet.
 /// Dieser Status wird nicht im Gutschein selbst gespeichert, sondern ist eine
 /// Metainformation, die das Wallet verwaltet.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub enum VoucherStatus {
     /// Der Gutschein ist strukturell korrekt, erfüllt aber noch nicht alle
     /// Validierungsregeln des Standards (z.B. fehlende Signaturen).
@@ -33,6 +33,7 @@ pub enum VoucherStatus {
         reasons: Vec<ValidationFailureReason>,
     },
     /// Der Gutschein ist vollständig valide und kann für Transaktionen verwendet werden.
+    #[default]
     Active,
     /// Der Gutschein wurde vollständig ausgegeben oder an einen anderen Nutzer transferiert.
     /// Er wird nur noch zu historischen Zwecken aufbewahrt.
@@ -48,7 +49,7 @@ pub enum VoucherStatus {
 
 /// Dient als Wrapper im Wallet, der die rohen `Voucher`-Daten mit ihrem
 /// verwalteten Status und anderen wallet-internen Metadaten kombiniert.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct VoucherInstance {
     /// Die vollständigen Daten des Gutscheins.
     pub voucher: Voucher,

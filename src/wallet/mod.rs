@@ -21,6 +21,8 @@ pub mod types;
 // ...
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod reputation_tests;
 
 // NEU: Exportiere alle öffentlichen Typen aus dem types-Modul
 pub use types::*;

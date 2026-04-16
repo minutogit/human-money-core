@@ -126,6 +126,15 @@ impl AppService {
             picture_url: profile.picture_url.clone(),
         })
     }
+
+    /// Prüft den Ruf einer User-ID basierend auf den lokalen Beweisen.
+    /// Wird von der GUI vor Transaktionen aufgerufen, um Warnungen anzuzeigen.
+    pub fn check_reputation(
+        &self,
+        offender_id: &str,
+    ) -> Result<crate::models::conflict::TrustStatus, String> {
+        Ok(self.get_wallet()?.check_reputation(offender_id))
+    }
 }
 
 

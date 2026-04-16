@@ -138,3 +138,29 @@ Alice (`minuto:bth@did:alice`) sendet Guthaben an Bob.
 - Dies dient als rechtssicherer Nachweis des Erhalts.
 - Ermöglicht dem Empfänger eine Prüfung der Transaktionsdetails (Betrag, Verwendungszweck) vor der finalen Annahme.
 - Muss so implementiert werden, dass es den atomaren Charakter der Transaktion nicht gefährdet (z.B. via Layer-2-Handshake vor der On-Chain/Ledger-Finalisierung).
+
+## 5. VIP-Gossip & Double-Spend Erkennung (Dezentrales Immunsystem)
+
+Da es keine zentrale Blockchain gibt, nutzt das P2P-Netzwerk ein modifiziertes Gossip-Protokoll, um Betrugsbeweise zu verbreiten.
+
+### 5.1 Normale vs. VIP Fingerprints
+
+Bei jeder Interaktion tauschen Clients zufällige `TransactionFingerprint`s aus ihrer Historie aus. Jeder Gutschein kann bis zu MAX_FINGERPRINTS_TO_SEND (derzeit 150) Huckepack nehmen.
+Normalerweise altern diese Fingerprints (depth += 1 pro Hop). Trifft ein Client auf zwei unterschiedliche Transaktionen mit demselben `ds_tag`, ist dies der Beweis für einen Double-Spend.
+
+Sobald ein Double-Spend erkannt wird, generiert der Client einen `ProofOfDoubleSpend` und wandelt die beteiligten Fingerprints in **"VIP-Fingerprints"** um.
+
+### 5.2 Der VIP-Status (Negative Tiefe)
+
+Die Tiefe (`depth`) in der `FingerprintMetadata` wird auf einen negativen Wert (z.B. `-1`) gesetzt. 
+Dies triggert drei wichtige Schutzmechanismen:
+
+1. **Effektiver Vorsprung (Head Start):**
+   VIP-Fingerprints drängeln sich bei der Auswahl für das nächste Bundle vor. Die effektive Sortiertiefe berechnet sich als `abs(depth) - 2`. Ein VIP-Tag mit Tiefe `-1` wird behandelt als hätte er Tiefe `-1` (also vor Tiefe `0`). Das stellt sicher, dass Betrugswarnungen wie ein Lauffeuer das Netzwerk durchdringen und "gesunde" Tags verdrängen, wenn das Paketlimit erreicht ist.
+
+2. **Organische Alterung:**
+   Ein VIP-Fingerprint bleibt nicht ewig auf Platz 1. Mit jedem Hop wird er *negativer* (via `saturating_sub(1)`). Ein VIP-Tag mit Tiefe `-10` fällt hinter einen frischen normalen Tag (Tiefe `0`) zurück, da `abs(-10) - 2 = 8`. So wird verhindert, dass alte Warnungen ewig das Netzwerk blockieren (Network Congestion).
+
+3. **Loop-Protection & Symmetrie:**
+   - **Symmetrie-Zwang:** Um Denial-of-Service-Spam zu verhindern, muss ein externer Client einen VIP-Fingerprint immer paarweise (zwei mit dem gleichen `ds_tag`) anliefern. Asymmetrische Lieferungen werden vom Client auf eine normale (positive) Tiefe strafversetzt.
+   - **Loop-Schutz:** Bereits lokal als VIP bekannte Transaktionen ignorieren "frischere" VIP-Updates von außen. Die erste lokale Erkennung bestimmt den natürlichen Alterungsprozess. Endlosschleifen zwischen Knoten werden somit unterbrochen.

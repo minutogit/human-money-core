@@ -38,7 +38,7 @@ mod tests {
     fn create_and_send_fingerprint_bundle(
         sender_service: &mut AppService,
         recipient_id: &str,
-        fingerprints: Vec<(TransactionFingerprint, u8)>, // Tupel von (Fingerprint, depth)
+        fingerprints: Vec<(TransactionFingerprint, i8)>, // Tupel von (Fingerprint, depth)
     ) -> Vec<u8> {
         let (fprints, depths): (Vec<_>, HashMap<_, _>) = fingerprints
             .into_iter()
@@ -46,7 +46,7 @@ mod tests {
             .unzip();
 
         let forwarded_fingerprints = fprints;
-        let fingerprint_depths: HashMap<String, u8> = depths.into_iter().collect();
+        let fingerprint_depths: HashMap<String, i8> = depths.into_iter().collect();
         let (wallet, identity) = sender_service.get_unlocked_mut_for_test();
 
         let (bundle_bytes, _header) = wallet
@@ -851,7 +851,7 @@ mod tests {
         // Die Logik ist "gierig" und sammelt auch Fingerprints mit höherer `depth`,
         // um das Kontingent zu füllen. Daher ist 5 das korrekte Ergebnis.
         assert_eq!(selected.len(), 5);
-        let depths: Vec<u8> = selected
+        let depths: Vec<i8> = selected
             .iter()
             .map(|fp| bundle.fingerprint_depths.get(&fp.ds_tag).unwrap().clone())
             .collect();

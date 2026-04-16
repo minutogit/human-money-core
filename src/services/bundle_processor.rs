@@ -31,7 +31,7 @@ pub fn create_and_encrypt_bundle(
     recipient_id: &str,
     notes: Option<String>,
     forwarded_fingerprints: Vec<TransactionFingerprint>,
-    fingerprint_depths: HashMap<String, u8>,
+    fingerprint_depths: HashMap<String, i8>,
     sender_profile_name: Option<String>,
 ) -> Result<(Vec<u8>, TransactionBundle), VoucherCoreError> {
     let mut bundle = TransactionBundle {

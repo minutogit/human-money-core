@@ -9,6 +9,35 @@ use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::services::utils::to_canonical_json;
 use std::{fs, path::PathBuf};
 
+/// Ein minimaler Platzhalter, der das `VoucherArchive`-Trait implementiert,
+/// aber keine Daten speichert oder findet. Wird verwendet, wenn kein echtes
+/// Archive-Backend konfiguriert ist, damit die Beweis-Erstellung trotzdem
+/// mit den lokalen Daten im voucher_store durchgeführt werden kann.
+pub struct NoOpArchive;
+
+impl VoucherArchive for NoOpArchive {
+    fn archive_voucher(
+        &self,
+        _voucher: &Voucher,
+        _owner_id: &str,
+        _standard: &VoucherStandardDefinition,
+    ) -> Result<(), ArchiveError> {
+        Ok(())
+    }
+    fn get_archived_voucher(&self, _voucher_id: &str) -> Result<Voucher, ArchiveError> {
+        Err(ArchiveError::NotFound)
+    }
+    fn find_transaction_by_id(
+        &self,
+        _t_id: &str,
+    ) -> Result<Option<(Voucher, Transaction)>, ArchiveError> {
+        Ok(None)
+    }
+    fn find_voucher_by_tx_id(&self, _t_id: &str) -> Result<Option<Voucher>, ArchiveError> {
+        Ok(None)
+    }
+}
+
 /// Eine Implementierung des `VoucherArchive`-Traits, die auf dem Dateisystem basiert.
 ///
 /// Die Struktur ist: `base_path/voucher_id/transaction_id.json`

@@ -94,7 +94,7 @@ pub struct TransactionBundle {
     /// Die zugehörigen 'depth'-Werte für die weitergeleiteten Fingerprints.
     /// Key: ds_tag des Fingerprints.
     #[serde(default)]
-    pub fingerprint_depths: HashMap<String, u8>,
+    pub fingerprint_depths: HashMap<String, i8>,
 
     /// Optionaler Profilname des Senders.
     #[serde(default, skip_serializing_if = "Option::is_none")]

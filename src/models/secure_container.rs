@@ -21,6 +21,8 @@ pub enum PayloadType {
     DetachedSignature,
     /// Der Payload ist eine `TrustAssertion` für das Web-of-Trust.
     TrustAssertion,
+    /// Der Payload ist ein `ProofOfDoubleSpend` (Betrugsbeweis).
+    ProofOfDoubleSpend,
     /// Ein generischer Typ für zukünftige, noch nicht definierte Anwendungsfälle.
     Generic(String),
 }
