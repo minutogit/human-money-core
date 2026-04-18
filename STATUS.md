@@ -1,9 +1,9 @@
 ---
 project: human-money-core
-version: "0.2.1"
+version: "0.2.3"
 phase: "active-development"
 health: "green"
-last_updated: "2026-04-12"
+last_updated: "2026-04-18"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -58,6 +58,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] Edge-case tests (ISO 8601 parsing, date rounding, persistence)
 - [x] 'Endorsed' voucher status & persistent signature logging workflow
 - [x] User profile management (metadata retrieval and updates)
+- [x] Decentralized conflict & reputation management (VIP gossip, proof persistence)
 
 ## Next Milestones
 

@@ -43,6 +43,8 @@ fn create_mock_proof_of_double_spend(
         deletable_at: (Utc::now() + Duration::days(365)).to_rfc3339(),
         report_timestamp: Utc::now().to_rfc3339(),
         reporter_signature: "dummy_sig".to_string(),
+        affected_voucher_name: None,
+        voucher_standard_uuid: None,
     }
 }
 
@@ -458,12 +460,15 @@ fn test_import_endorsement_is_transactional_on_save_failure() {
     // Beweis manuell hinzufügen und durch eine andere Operation speichern
     let proof = create_mock_proof_of_double_spend("offender-xyz", &id_victim, None, None);
     let proof_id = proof.proof_id.clone();
+    use human_money_core::models::conflict::{ProofStoreEntry, ConflictRole};
     {
         let (wallet, _identity) = service_reporter.get_unlocked_mut_for_test();
         wallet
             .proof_store
             .proofs
-            .insert(proof.proof_id.clone(), proof);
+            .insert(proof.proof_id.clone(), ProofStoreEntry { 
+                proof: proof.clone(), local_override: false, conflict_role: ConflictRole::Witness 
+            });
     }
     // FIX: `wallet.save` ist nicht direkt nutzbar. Führe eine andere `AppService`-Aktion
     // aus, um den Zustand (inklusive des manuell hinzugefügten Beweises) zu speichern. (Modus A)
@@ -484,7 +489,9 @@ fn test_import_endorsement_is_transactional_on_save_failure() {
     wallet_victim
         .proof_store
         .proofs
-        .insert(proof_for_victim.proof_id.clone(), proof_for_victim);
+        .insert(proof_for_victim.proof_id.clone(), ProofStoreEntry { 
+            proof: proof_for_victim, local_override: false, conflict_role: ConflictRole::Witness 
+        });
     let endorsement = service_victim
         .create_resolution_endorsement(&proof_id, Some("We settled this.".to_string()))
         .unwrap();

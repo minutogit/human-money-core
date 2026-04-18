@@ -227,4 +227,31 @@ impl Wallet {
     pub fn get_user_id(&self) -> &str {
         &self.profile.user_id
     }
+
+    /// Prüft den Ruf einer User-ID basierend auf den lokal gespeicherten Beweisen.
+    ///
+    /// Diese Funktion implementiert das implizite Web-of-Trust. Sie durchsucht den
+    /// `proof_store` nach ungelösten Konflikten, die von der `user_id` verursacht wurden.
+    pub fn check_reputation(&self, offender_id: &str) -> crate::models::conflict::TrustStatus {
+        use crate::models::conflict::TrustStatus;
+
+        let mut latest_resolved = None;
+
+        for entry in self.proof_store.proofs.values() {
+            if entry.proof.offender_id == offender_id {
+                let is_officially_resolved = entry.proof.resolutions.as_ref().map_or(false, |r| !r.is_empty())
+                    || entry.proof.layer2_verdict.is_some();
+                
+                if is_officially_resolved || entry.local_override {
+                    // Merke uns das letzte gelöste, falls kein ungelöstes gefunden wird.
+                    latest_resolved = Some(TrustStatus::Resolved(entry.proof.proof_id.clone(), entry.local_override));
+                } else {
+                    // Sobald EIN ungelöster Beweis gefunden wird, ist der Status "KnownOffender".
+                    return TrustStatus::KnownOffender(entry.proof.proof_id.clone());
+                }
+            }
+        }
+
+        latest_resolved.unwrap_or(TrustStatus::Clean)
+    }
 }

@@ -44,7 +44,10 @@ Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `human_m
 
 - **Fokus auf Betrugserkennung, nicht -vermeidung:** Da es kein globales Ledger gibt, kann die Core-Bibliothek nicht verhindern, dass ein Nutzer widersprüchliche Transaktionshistorien (Double Spending) erzeugt. Das System stellt stattdessen sicher, dass jeder Betrugsversuch durch digitale Signaturen kryptographisch beweisbar ist, was eine Erkennung und soziale Sanktionen in einem übergeordneten System (Layer 2) ermöglicht.
 
-- **Peer-to-Peer Gossip-Protokoll:** Zur dezentralen und anonymisierten Erkennung von Double Spending tauschen Wallets bei jeder Transaktion **Transaktions-Fingerprints** (`ds_tag`) anderer Transaktionen aus. Diese Fingerprints sind deterministisch aus dem Input abgeleitet (`hash(prev_hash + sender_ephemeral_pub)`), was eine O(1) Erkennung von Kollisionen ermöglicht. Eine Heuristik (`depth`, `known_by_peers`) sorgt für eine effiziente Verbreitung.
+- **Peer-to-Peer Gossip-Protokoll (VIP-Impfung):** Zur dezentralen Erkennung von Double Spending tauschen Wallets **Transaktions-Fingerprints** (`ds_tag`) aus. Eine Heuristik (`depth` als `i8`) steuert die Verbreitung:
+  - **Normale Fingerprints (positiv):** Altern pro Hop (+1).
+  - **VIP-Fingerprints (negativ):** Starten bei `-1` (Betrugserkennung). Sie erhalten bei der Auswahl einen 2-Hop Vorsprung (`abs(depth) - 2`), um sich wie ein "Lauffeuer" zu verbreiten. 
+  - **Schutz:** Symmetrie-Prüfung (nur Paare werden als VIP akzeptiert) und Loop-Protection (Bestand ist immun gegen "frischere" negative Updates von außen) verhindern Spam und Network Congestion.
 
 - **Transaction Verification Layer (Layer 2):** Die Bibliothek implementiert nun die Kommunikation und Verifizierung für Layer 2. Dies umfasst die Interaktion mit L2-Gateways, die Validierung von L2-Signaturen und die Handhabung von Quarantäne-Zuständen bei Double-Spending oder Verifizierungsfehlern. Die Struktur ist für eine dezentrale Überprüfung durch "Chain of Authority" (CoA) Knoten optimiert.
 
@@ -459,7 +462,9 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
 - `pub fn create_resolution_endorsement(&self, proof_id: &str, notes: Option<String>) -> Result<ResolutionEndorsement, String>`
   - Erstellt eine signierte Beilegungserklärung für einen Konflikt.
 - `pub fn import_resolution_endorsement(&mut self, endorsement: ResolutionEndorsement, password: Option<&str>) -> Result<(), String>`
-  - Importiert eine Beilegungserklärung, fügt sie dem entsprechenden Konfliktbeweis hinzu und speichert den Wallet-Zustand.
+  - Importiert eine Beilegungserklärung, fügt sie dem entsprechenden Konfliktbeweis hinzu und speichert den Wallet-Zustand. Bietet **Import-Schutz**: Lokal bereits existierende Beweise (insb. manuelle Beilegungen) werden nicht überschrieben.
+- `pub fn check_reputation(&self, user_id: &str) -> Result<TrustStatus, String>`
+  - Führt eine Reputationsabfrage im lokalen `ProofStore` durch. Erkennt Wiederholungstäter und berücksichtigt manuelle `local_override` Entscheidungen.
 - `pub fn unlock_session(&mut self, password: &str, duration: chrono::Duration) -> Result<(), String>`: Sperrt eine Session für den angegebenen Zeitraum, um wiederholte Passwort-Eingaben zu vermeiden. Ermöglicht "Remember Password" Funktionalität in Client-Anwendungen.
 
 #### Authentifizierungsmodell
@@ -525,19 +530,8 @@ Das `wallet`-Modul wurde umfassend refaktorisiert, um die Komplexität zu reduzi
   - `pub fn process_and_attach_signature(...)`: Verarbeitet eine empfangene Signatur und fügt sie dem passenden Gutschein hinzu.
 
 - **Konflikt-Management** (`conflict_handler.rs`)
-  - `pub fn scan_and_rebuild_fingerprints(...)`: Durchsucht alle eigenen Gutscheine und aktualisiert den `own_fingerprints`-Store.
-  - `pub fn check_for_double_spend(&self) -> DoubleSpendCheckResult`: Prüft auf Double-Spending-Konflikte, indem es die verschiedenen Fingerprint-Stores zusammenführt.
-  - `pub fn cleanup_expired_fingerprints(&mut self)`: Entfernt alle abgelaufenen Fingerprints aus dem Speicher.
-  - `pub fn export_own_fingerprints(&self) -> Result<Vec<u8>, VoucherCoreError>`: Serialisiert die Historie der eigenen gesendeten Transaktionen für den Export.
-  - `pub fn import_foreign_fingerprints(...) -> Result<usize, VoucherCoreError>`: Importiert und merged fremde Fingerprints in den Speicher.
-  - `pub fn list_conflicts(&self) -> Vec<ProofOfDoubleSpendSummary>`: Gibt eine Liste von Zusammenfassungen aller bekannten Double-Spend-Konflikte zurück.
-  - `pub fn get_proof_of_double_spend(...) -> Result<ProofOfDoubleSpend, VoucherCoreError>`: Ruft einen vollständigen `ProofOfDoubleSpend` anhand seiner ID ab.
-  - `pub fn create_resolution_endorsement(...) -> Result<ResolutionEndorsement, VoucherCoreError>`: Erstellt eine signierte Beilegungserklärung für einen Konflikt.
-  - `pub fn add_resolution_endorsement(...) -> Result<(), VoucherCoreError>`: Fügt eine (extern erhaltene) Beilegungserklärung zu einem bestehenden Konfliktbeweis hinzu.
-  - `pub(super) fn verify_and_create_proof(...)`: Verifiziert einen Konflikt und erstellt einen Beweis. Interne Methode.
-  - `pub(super) fn check_bundle_fingerprints_against_history(...)`: Interne Hilfsfunktion für Layer-2-Replay-Schutz.
-  - `pub fn select_fingerprints_for_bundle(...) -> Result<(Vec<TransactionFingerprint>, HashMap<String, u8>), VoucherCoreError>`: Wählt Fingerprints für die Weiterleitung in einem Bundle aus, basierend auf der Heuristik.
-  - `pub fn process_received_fingerprints(...)`: Verarbeitet empfangene Fingerprints (aktiv und implizit) und aktualisiert die Metadaten.
+  - `pub fn select_fingerprints_for_bundle(...) -> Result<(Vec<TransactionFingerprint>, HashMap<String, i8>), VoucherCoreError>`: Wählt Fingerprints für ein Bundle aus. Nutzt **Effektive Tiefe** (`abs(depth) - 2` für VIPs), um Betrugsbeweise vorrangig zu versenden.
+  - `pub fn process_received_fingerprints(...)`: Verarbeitet empfangene Fingerprints. Implementiert **VIP-Symmetrie-Prüfung** und **Loop-Protection** (Bestands-Immunität gegen Replay-Updates).
 
 - **Voucher Instance Management** (`instance.rs`)
   - `pub enum ValidationFailureReason`: Erfasst den genauen, für den Nutzer behebbaren Grund, warum ein Gutschein als unvollständig (`Incomplete`) eingestuft wird.
@@ -545,7 +539,7 @@ Das `wallet`-Modul wurde umfassend refaktorisiert, um die Komplexität zu reduzi
   - `pub struct VoucherInstance`: Repräsentiert eine Instanz eines Gutscheins mit einem bestimmten Status.
 
 - **Typdefinitionen** (`types.rs`)
-  - Definiert öffentliche Datenstrukturen wie `MultiTransferRequest`, `SourceTransfer`, `TransferSummary`, `ProcessBundleResult`, `DoubleSpendCheckResult`, `InvolvedVoucherInfo`, `CreateBundleResult`, `CleanupReport`, `AggregatedBalance`, `VoucherSummary`, `ProofOfDoubleSpendSummary`, `VoucherDetails`.
+  - Definiert öffentliche Datenstrukturen wie `MultiTransferRequest`, `SourceTransfer`, `TransferSummary`, `ProcessBundleResult`, `DoubleSpendCheckResult`, `InvolvedVoucherInfo`, `CreateBundleResult`, `CleanupReport`, `AggregatedBalance`, `VoucherSummary`, `ProofOfDoubleSpendSummary`, `VoucherDetails`, `TrustStatus`.
 
 - **Tests** (`tests.rs`)
   - Enthält umfassende Unit-Tests für die Wallet-Logik.
@@ -766,11 +760,14 @@ Das Wallet-Modul und die AppService-Schnittstelle wurden um neue Informationsstr
   - `TransactionFingerprint`: Anonymisierter Fingerprint einer Transaktion für Double-Spend-Erkennung.
   - `KnownFingerprints`: Speicher für bekannte Fingerprints (lokal und fremd).
   - `OwnFingerprints`: Kritischer Speicher für eigene Fingerprints.
-  - `FingerprintMetadata`: Dynamische Metadaten für Fingerprints (depth, known_by_peers).
+  - `FingerprintMetadata`: Dynamische Metadaten für Fingerprints (depth als `i8`, known_by_peers).
   - `CanonicalMetadataStore`: Zentraler Speicher für Fingerprint-Metadaten.
-  - `ProofOfDoubleSpend`: Kryptographischer Beweis für Double-Spend.
-  - `ResolutionEndorsement`: Bestätigung einer Konfliktbeilegung.
-  - `ProofStore`: Speicher für Konfliktbeweise.
+  - `ProofOfDoubleSpend`: Kryptographischer Beweis für Double-Spend (inkl. `affected_voucher_name`).
+  - `ResolutionEndorsement`: Bestätigung einer Konfliktbeilegung (Globaler Typ).
+  - `ProofStoreEntry`: Lokaler Wrapper für `ProofOfDoubleSpend` inkl. `local_override` und `ConflictRole`.
+  - `ConflictRole`: Unterscheidung zwischen `Victim` (eigenes Guthaben betroffen) und `Witness` (passive Beobachtung).
+  - `TrustStatus`: Ergebnis der Reputationsprüfung (`Clean`, `KnownOffender`, `Resolved`).
+  - `ProofStore`: Speicher für `ProofStoreEntry` Objekte.
   - `Layer2Verdict`: Signiertes Urteil eines Layer-2-Servers.
 
 - **signature.rs**:

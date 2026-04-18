@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 /// Repräsentiert einen einzelnen, anonymisierten Fingerprint einer Transaktion.
 /// Diese Struktur enthält alle notwendigen Informationen, um einen Double Spend
 /// nachzuweisen und abgelaufene Fingerprints zu verwalten.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct TransactionFingerprint {
     /// Der Double-Spend-Tag (DS-Tag).
     /// Dies ist der primäre Schlüssel, um potenzielle Konflikte zu gruppieren.
@@ -91,7 +91,12 @@ pub struct OwnFingerprints {
 pub struct FingerprintMetadata {
     /// Die Verbreitungstiefe des Fingerprints im Netzwerk (Anzahl der Hops).
     /// Ein niedrigerer Wert bedeutet eine aktuellere, relevantere Information.
-    pub depth: u8,
+    ///
+    /// # MVP-VIP-Mechanik:
+    /// - Positive Werte (0 bis 127): Normale Verbreitung.
+    /// - Negative Werte (-1 bis -128): "VIP"-Verbreitung für toxische Fingerprints (Betrugserkennung).
+    ///   Werden bei der Sortierung/Verdrängung bevorzugt behandelt.
+    pub depth: i8,
 
     /// Ein Set von Hash-Suffixen der Peer-IDs, die diesen Fingerprint bereits
     /// kennen. Dient als effizienter Redundanzfilter beim Senden von Bundles.
@@ -139,6 +144,14 @@ pub struct ProofOfDoubleSpend {
     /// Authentizität dieses Reports zu bestätigen.
     pub reporter_signature: String,
 
+    /// Der Name des betroffenen Gutscheins (optional, zur besseren UI-Darstellung).
+    #[serde(default)]
+    pub affected_voucher_name: Option<String>,
+
+    /// Die Standard-UUID des betroffenen Gutscheins (optional).
+    #[serde(default)]
+    pub voucher_standard_uuid: Option<String>,
+
     /// Eine Liste von Bestätigungen, die belegen, dass der Konflikt
     /// mit den Opfern beigelegt wurde. Kann `None` sein, wenn ungelöst.
     pub resolutions: Option<Vec<ResolutionEndorsement>>,
@@ -147,6 +160,38 @@ pub struct ProofOfDoubleSpend {
     /// Wenn `Some`, überschreibt dieses Urteil die lokale "maximale Vorsicht"-Regel.
     #[serde(default)]
     pub layer2_verdict: Option<Layer2Verdict>,
+}
+
+/// Die Rolle der lokalen Wallet in Bezug auf einen Konflikt.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum ConflictRole {
+    /// Einer der kollidierenden Pfade betrifft einen Gutschein, der lokal aktiv war.
+    Victim,
+    /// Die Kollision wurde passiv erkannt (z.B. über Gossip).
+    #[default]
+    Witness,
+}
+
+/// Der Status der Vertrauenswürdigkeit eines Partners.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TrustStatus {
+    /// Keine negativen Einträge vorhanden.
+    Clean,
+    /// Ungelöster Betrugsbeweis liegt vor. Warnung anzeigen.
+    KnownOffender(String),
+    /// Vorfall gilt als offiziell oder lokal geklärt.
+    Resolved(String, bool),
+}
+
+/// Lokaler Wrapper für einen Double-Spend-Beweis, der private Nutzerentscheidungen speichert.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofStoreEntry {
+    /// Der kryptographische Kernbeweis.
+    pub proof: ProofOfDoubleSpend,
+    /// Hat der Nutzer manuell auf "vertrauen" geklickt?
+    pub local_override: bool,
+    /// War der Nutzer Opfer oder nur Zeuge?
+    pub conflict_role: ConflictRole,
 }
 
 /// Bestätigung durch ein Opfer, dass ein durch eine `proof_id` identifizierter
@@ -184,10 +229,10 @@ pub struct ResolutionEndorsement {
 /// Dient als Speichercontainer für alle kryptographisch bewiesenen Double-Spend-Konflikte.
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ProofStore {
-    /// Eine Sammlung aller `ProofOfDoubleSpend`-Objekte.
+    /// Eine Sammlung aller `ProofStoreEntry`-Objekte.
     /// Der Key ist die deterministische `proof_id` des jeweiligen Konflikts.
     #[serde(default)]
-    pub proofs: HashMap<String, ProofOfDoubleSpend>,
+    pub proofs: HashMap<String, ProofStoreEntry>,
 }
 
 /// Repräsentiert das fälschungssichere Urteil eines Layer-2-Servers über einen Konflikt.
@@ -202,3 +247,4 @@ pub struct Layer2Verdict {
     /// Die Signatur des Servers über dem Hash dieses Verdict-Objekts, um es fälschungssicher zu machen.
     pub server_signature: String,
 }
+

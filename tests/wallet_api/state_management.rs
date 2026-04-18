@@ -41,6 +41,8 @@ fn create_mock_proof_of_double_spend(
         deletable_at: (Utc::now() + Duration::days(365)).to_rfc3339(),
         report_timestamp: Utc::now().to_rfc3339(),
         reporter_signature: "dummy_sig".to_string(),
+        affected_voucher_name: None,
+        voucher_standard_uuid: None,
     }
 }
 
@@ -68,10 +70,13 @@ fn api_app_service_full_conflict_resolution_workflow() {
 
     // Test-interne Hilfsfunktion, um den Beweis direkt in den Store zu legen.
     let (wallet, _identity) = service_reporter.get_unlocked_mut_for_test();
+    use human_money_core::models::conflict::{ProofStoreEntry, ConflictRole};
     wallet
         .proof_store
         .proofs
-        .insert(proof.proof_id.clone(), proof);
+        .insert(proof.proof_id.clone(), ProofStoreEntry { 
+            proof: proof.clone(), local_override: false, conflict_role: ConflictRole::Witness 
+        });
 
     // --- 3. Aktion 1 (Reporter): Konflikt als ungelöst listen ---
     let conflicts_before = service_reporter.list_conflicts().unwrap();
@@ -85,7 +90,9 @@ fn api_app_service_full_conflict_resolution_workflow() {
     wallet_victim
         .proof_store
         .proofs
-        .insert(proof_for_victim.proof_id.clone(), proof_for_victim);
+        .insert(proof_for_victim.proof_id.clone(), ProofStoreEntry { 
+            proof: proof_for_victim, local_override: false, conflict_role: ConflictRole::Witness 
+        });
 
     let endorsement = service_victim
         .create_resolution_endorsement(&proof_id, Some("We settled this.".to_string()))

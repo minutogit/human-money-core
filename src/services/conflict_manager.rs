@@ -256,6 +256,8 @@ pub fn create_proof_of_double_spend(
         reporter_id: reporter_identity.user_id.clone(),
         report_timestamp: get_current_timestamp(),
         reporter_signature,
+        affected_voucher_name: None,
+        voucher_standard_uuid: None,
         resolutions: None,
         layer2_verdict: None,
     };

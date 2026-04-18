@@ -183,8 +183,8 @@ impl Wallet {
         });
 
         // Schritt 4: Bereinige alte Double-Spend-Beweise mit derselben Frist.
-        self.proof_store.proofs.retain(|_, proof| {
-            if let Ok(valid_until) = DateTime::parse_from_rfc3339(&proof.deletable_at) {
+        self.proof_store.proofs.retain(|_, entry| {
+            if let Ok(valid_until) = DateTime::parse_from_rfc3339(&entry.proof.deletable_at) {
                 let purge_date = valid_until.with_timezone(&Utc) + grace_period;
                 return now < purge_date;
             }
@@ -240,7 +240,7 @@ impl Wallet {
                 }
 
                 // Schritt 5: Metadaten initialisieren oder mit "min gewinnt"-Regel aktualisieren
-                let depth_in_chain = (tx_count - 1 - i) as u8;
+                let depth_in_chain = (tx_count - 1 - i) as i8;
                 let meta = self
                     .fingerprint_metadata
                     .entry(fingerprint.ds_tag)
@@ -249,7 +249,8 @@ impl Wallet {
                 // Wende die "geringste depth gewinnt"-Regel an. Ein kleinerer Wert bedeutet
                 // einen kürzeren, relevanteren Pfad im Netzwerk. Der Wert 0 ist der
                 // initiale Default und wird immer überschrieben.
-                if depth_in_chain < meta.depth || meta.depth == 0 {
+                // ACHTUNG: VIP-Fingerprints (negativ) gewinnen immer gegen positive.
+                if meta.depth == 0 || depth_in_chain < meta.depth {
                     meta.depth = depth_in_chain;
                 }
                 meta.known_by_peers = std::collections::HashSet::new(); // `known_by_peers` wird zurückgesetzt

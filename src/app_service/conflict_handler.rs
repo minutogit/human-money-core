@@ -56,6 +56,68 @@ impl AppService {
         }
     }
 
+    /// Setzt den lokalen Override für einen spezifischen Konflikt.
+    ///
+    /// # Errors
+    /// Schlägt fehl, wenn das Wallet gesperrt ist oder der Beweis nicht existiert.
+    pub fn set_conflict_local_override(&mut self, proof_id: &str, value: bool) -> Result<(), String> {
+        if let AppState::Unlocked { wallet, .. } = &mut self.state {
+            wallet
+                .set_conflict_local_override(proof_id, value)
+                .map_err(|e| e.to_string())
+        } else {
+            Err("Wallet is locked.".to_string())
+        }
+    }
+
+    /// Importiert einen Beweis aus einem Base64-kodierten JSON-String (Klartext-Export).
+    ///
+    /// # Immunitätsd-Regel:
+    /// Lokale Entscheidungen (Overrides) werden durch den Import niemals überschrieben.
+    pub fn import_proof_from_json(&mut self, json_base64: &str) -> Result<(), String> {
+        if let AppState::Unlocked { wallet, .. } = &mut self.state {
+            let json_bytes = bs58::decode(json_base64)
+                .into_vec()
+                .map_err(|_| "Invalid base64 encoding".to_string())?;
+            let proof: ProofOfDoubleSpend =
+                serde_json::from_slice(&json_bytes).map_err(|e| e.to_string())?;
+
+            wallet.import_proof(proof).map_err(|e| e.to_string())
+        } else {
+            Err("Wallet is locked.".to_string())
+        }
+    }
+
+    /// Importiert einen Beweis aus einem `SecureContainer` (Sicherer Austausch).
+    pub fn import_proof_from_container(&mut self, container_bytes: &[u8]) -> Result<(), String> {
+        if let AppState::Unlocked {
+            wallet, identity, ..
+        } = &mut self.state
+        {
+            let container: crate::models::secure_container::SecureContainer =
+                serde_json::from_slice(container_bytes).map_err(|e| e.to_string())?;
+
+            if container.c != crate::models::secure_container::PayloadType::ProofOfDoubleSpend {
+                return Err("Container does not contain a Double-Spend-Proof.".to_string());
+            }
+
+            // Wallet-Identity wird benötigt, um den Container zu öffnen
+            let decrypted_payload = crate::services::secure_container_manager::open_secure_container(
+                &container,
+                identity,
+                None,
+            )
+            .map_err(|e: crate::error::VoucherCoreError| e.to_string())?;
+
+            let proof: ProofOfDoubleSpend =
+                serde_json::from_slice(&decrypted_payload).map_err(|e| e.to_string())?;
+
+            wallet.import_proof(proof).map_err(|e| e.to_string())
+        } else {
+            Err("Wallet is locked.".to_string())
+        }
+    }
+
     /// Führt die Speicherbereinigung für Fingerprints und deren Metadaten durch.
     ///
     /// Diese Methode implementiert die in der Architektur-Spezifikation definierte

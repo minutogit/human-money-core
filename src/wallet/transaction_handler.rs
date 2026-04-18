@@ -33,7 +33,7 @@ impl Wallet {
         recipient_id: &str,
         notes: Option<String>,
         forwarded_fingerprints: Vec<crate::models::conflict::TransactionFingerprint>,
-        fingerprint_depths: HashMap<String, u8>,
+        fingerprint_depths: HashMap<String, i8>,
         sender_profile_name: Option<String>,
     ) -> Result<(Vec<u8>, TransactionBundleHeader), VoucherCoreError> {
         for v in &vouchers {
@@ -297,39 +297,60 @@ impl Wallet {
             let verified_proof =
                 self.verify_and_create_proof(identity, fingerprints, archive_ref)?;
 
-            if let Some(proof) = verified_proof {
-                // Der Beweis wurde erfolgreich erstellt und kann nun verwendet werden.
-                if let Some(verdict) = &proof.layer2_verdict {
-                    // Logik zur Verarbeitung eines L2-Urteils
+                if let Some(proof) = verified_proof {
+                    // --- Bestimmung der Rolle (Opfer vs. Zeuge) ---
+                    let mut conflict_role = crate::models::conflict::ConflictRole::Witness;
+                    
+                    // Prüfe, ob einer der kollidierenden Pfade einen Gutschein betrifft,
+                    // der lokal im Besitz des Nutzers und "Active" war.
                     for tx in &proof.conflicting_transactions {
-                        let instance_id_opt = self
-                            .find_local_voucher_by_tx_id(&tx.t_id)
-                            .map(|i| i.local_instance_id.clone());
-                        if let Some(instance_id) = instance_id_opt {
-                            if let Some(instance_mut) =
-                                self.voucher_store.vouchers.get_mut(&instance_id)
-                            {
-                                instance_mut.status = if tx.t_id == verdict.valid_transaction_id
-                                {
-                                    VoucherStatus::Active
-                                } else {
-                                    VoucherStatus::Quarantined {
-                                        reason: "L2 verdict".to_string(),
-                                    }
-                                };
+                        if let Some(instance) = self.find_local_voucher_by_tx_id(&tx.t_id) {
+                            // Wenn der Gutschein lokal existiert und in Quarantäne verschoben wurde,
+                            // gilt der Nutzer als Opfer.
+                            if matches!(instance.status, VoucherStatus::Quarantined { .. }) {
+                                conflict_role = crate::models::conflict::ConflictRole::Victim;
+                                break;
                             }
                         }
                     }
+
+                    // Logik zur Verarbeitung eines L2-Urteils
+                    if let Some(verdict) = &proof.layer2_verdict {
+                        for tx in &proof.conflicting_transactions {
+                            let instance_id_opt = self
+                                .find_local_voucher_by_tx_id(&tx.t_id)
+                                .map(|i| i.local_instance_id.clone());
+                            if let Some(instance_id) = instance_id_opt {
+                                if let Some(instance_mut) =
+                                    self.voucher_store.vouchers.get_mut(&instance_id)
+                                {
+                                    instance_mut.status = if tx.t_id == verdict.valid_transaction_id
+                                    {
+                                        VoucherStatus::Active
+                                    } else {
+                                        VoucherStatus::Quarantined {
+                                            reason: "L2 verdict".to_string(),
+                                        }
+                                    };
+                                }
+                            }
+                        }
+                    } else {
+                        // Offline-Konfliktlösung, wenn kein L2-Urteil vorliegt
+                        resolve_conflict_offline(&mut self.voucher_store, fingerprints);
+                    }
+
+                    // WICHTIG: Den erstellten Beweis persistent im Wrapper speichern.
+                    let entry = crate::models::conflict::ProofStoreEntry {
+                        proof: proof.clone(),
+                        local_override: false,
+                        conflict_role,
+                    };
+                    
+                    self.proof_store
+                        .proofs
+                        .insert(proof.proof_id.clone(), entry);
                 } else {
-                    // Offline-Konfliktlösung, wenn kein L2-Urteil vorliegt
-                    resolve_conflict_offline(&mut self.voucher_store, fingerprints);
-                }
-                // WICHTIG: Den erstellten Beweis persistent speichern.
-                // WICHTIG: Den erstellten Beweis persistent speichern.
-                self.proof_store
-                    .proofs
-                    .insert(proof.proof_id.clone(), proof);
-            } else {
                 // Fallback: Wenn kein strikter kryptographischer Beweis erstellt werden kann
                 // (z.B. weil Daten fehlen), MUSS dennoch lokal aufgeräumt werden.
                 resolve_conflict_offline(&mut self.voucher_store, fingerprints);
