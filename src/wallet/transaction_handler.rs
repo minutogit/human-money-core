@@ -298,22 +298,6 @@ impl Wallet {
                 self.verify_and_create_proof(identity, fingerprints, archive_ref)?;
 
                 if let Some(proof) = verified_proof {
-                    // --- Bestimmung der Rolle (Opfer vs. Zeuge) ---
-                    let mut conflict_role = crate::models::conflict::ConflictRole::Witness;
-                    
-                    // Prüfe, ob einer der kollidierenden Pfade einen Gutschein betrifft,
-                    // der lokal im Besitz des Nutzers und "Active" war.
-                    for tx in &proof.conflicting_transactions {
-                        if let Some(instance) = self.find_local_voucher_by_tx_id(&tx.t_id) {
-                            // Wenn der Gutschein lokal existiert und in Quarantäne verschoben wurde,
-                            // gilt der Nutzer als Opfer.
-                            if matches!(instance.status, VoucherStatus::Quarantined { .. }) {
-                                conflict_role = crate::models::conflict::ConflictRole::Victim;
-                                break;
-                            }
-                        }
-                    }
-
                     // Logik zur Verarbeitung eines L2-Urteils
                     if let Some(verdict) = &proof.layer2_verdict {
                         for tx in &proof.conflicting_transactions {
@@ -340,10 +324,33 @@ impl Wallet {
                         resolve_conflict_offline(&mut self.voucher_store, fingerprints);
                     }
 
+                    // --- Bestimmung der Rolle (Opfer vs. Zeuge) ---
+                    // REFINEMENT: Wir sind nur ein Opfer, wenn wir KEINEN aktiven Gutschein für diesen
+                    // Konflikt-Tag haben, aber mindestens einer existiert (der nun in Quarantäne ist).
+                    let mut has_active = false;
+                    let mut has_quarantined = false;
+                    
+                    for tx in &proof.conflicting_transactions {
+                        if let Some(instance) = self.find_local_voucher_by_tx_id(&tx.t_id) {
+                            if matches!(instance.status, VoucherStatus::Active) {
+                                has_active = true;
+                            } else if matches!(instance.status, VoucherStatus::Quarantined { .. }) {
+                                has_quarantined = true;
+                            }
+                        }
+                    }
+                    
+                    let conflict_role = if has_quarantined && !has_active {
+                        crate::models::conflict::ConflictRole::Victim
+                    } else {
+                        crate::models::conflict::ConflictRole::Witness
+                    };
+
                     // WICHTIG: Den erstellten Beweis persistent im Wrapper speichern.
                     let entry = crate::models::conflict::ProofStoreEntry {
                         proof: proof.clone(),
                         local_override: false,
+                        local_note: None,
                         conflict_role,
                     };
                     

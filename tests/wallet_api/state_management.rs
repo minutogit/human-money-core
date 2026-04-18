@@ -75,7 +75,7 @@ fn api_app_service_full_conflict_resolution_workflow() {
         .proof_store
         .proofs
         .insert(proof.proof_id.clone(), ProofStoreEntry { 
-            proof: proof.clone(), local_override: false, conflict_role: ConflictRole::Witness 
+            proof: proof.clone(), local_override: false, local_note: None, conflict_role: ConflictRole::Witness 
         });
 
     // --- 3. Aktion 1 (Reporter): Konflikt als ungelöst listen ---
@@ -91,7 +91,7 @@ fn api_app_service_full_conflict_resolution_workflow() {
         .proof_store
         .proofs
         .insert(proof_for_victim.proof_id.clone(), ProofStoreEntry { 
-            proof: proof_for_victim, local_override: false, conflict_role: ConflictRole::Witness 
+            proof: proof_for_victim, local_override: false, local_note: None, conflict_role: ConflictRole::Witness 
         });
 
     let endorsement = service_victim

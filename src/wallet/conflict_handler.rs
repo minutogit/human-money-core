@@ -89,6 +89,7 @@ impl Wallet {
                     is_resolved: proof.resolutions.as_ref().map_or(false, |v| !v.is_empty()),
                     has_l2_verdict: proof.layer2_verdict.is_some(),
                     local_override: entry.local_override,
+                    local_note: entry.local_note.clone(),
                     conflict_role: entry.conflict_role,
                     affected_voucher_name: proof.affected_voucher_name.clone(),
                     voucher_standard_uuid: proof.voucher_standard_uuid.clone(),
@@ -166,11 +167,17 @@ impl Wallet {
 
     /// Setzt den lokalen Override für einen Konflikt.
     /// Dies erlaubt es dem Nutzer, einem Täter trotz eines Beweises lokal wieder zu vertrauen.
-    pub fn set_conflict_local_override(&mut self, proof_id: &str, value: bool) -> Result<(), VoucherCoreError> {
+    pub fn set_conflict_local_override(
+        &mut self,
+        proof_id: &str,
+        value: bool,
+        note: Option<String>,
+    ) -> Result<(), VoucherCoreError> {
         let entry = self.proof_store.proofs.get_mut(proof_id).ok_or_else(|| {
             VoucherCoreError::Generic(format!("Proof with ID '{}' not found.", proof_id))
         })?;
         entry.local_override = value;
+        entry.local_note = note;
         Ok(())
     }
 
@@ -185,10 +192,33 @@ impl Wallet {
             return Ok(());
         }
 
+        // --- Bestimmung der Rolle (Opfer vs. Zeuge) ---
+        // REFINEMENT: Wir sind nur ein Opfer, wenn wir KEINEN aktiven Gutschein für diesen
+        // Konflikt-Tag haben, aber mindestens einer existiert (der nun in Quarantäne ist).
+        let mut has_active = false;
+        let mut has_quarantined = false;
+        
+        for tx in &proof.conflicting_transactions {
+            if let Some(instance) = self.find_local_voucher_by_tx_id(&tx.t_id) {
+                if matches!(instance.status, VoucherStatus::Active) {
+                    has_active = true;
+                } else if matches!(instance.status, VoucherStatus::Quarantined { .. }) {
+                    has_quarantined = true;
+                }
+            }
+        }
+        
+        let conflict_role = if has_quarantined && !has_active {
+            crate::models::conflict::ConflictRole::Victim
+        } else {
+            crate::models::conflict::ConflictRole::Witness
+        };
+
         let entry = crate::models::conflict::ProofStoreEntry {
             proof,
             local_override: false,
-            conflict_role: crate::models::conflict::ConflictRole::Witness,
+            local_note: None,
+            conflict_role,
         };
 
         self.proof_store.proofs.insert(entry.proof.proof_id.clone(), entry);

@@ -467,7 +467,7 @@ fn test_import_endorsement_is_transactional_on_save_failure() {
             .proof_store
             .proofs
             .insert(proof.proof_id.clone(), ProofStoreEntry { 
-                proof: proof.clone(), local_override: false, conflict_role: ConflictRole::Witness 
+                proof: proof.clone(), local_override: false, local_note: None, conflict_role: ConflictRole::Witness 
             });
     }
     // FIX: `wallet.save` ist nicht direkt nutzbar. Führe eine andere `AppService`-Aktion
@@ -490,7 +490,7 @@ fn test_import_endorsement_is_transactional_on_save_failure() {
         .proof_store
         .proofs
         .insert(proof_for_victim.proof_id.clone(), ProofStoreEntry { 
-            proof: proof_for_victim, local_override: false, conflict_role: ConflictRole::Witness 
+            proof: proof_for_victim, local_override: false, local_note: None, conflict_role: ConflictRole::Witness 
         });
     let endorsement = service_victim
         .create_resolution_endorsement(&proof_id, Some("We settled this.".to_string()))

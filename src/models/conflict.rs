@@ -173,14 +173,18 @@ pub enum ConflictRole {
 }
 
 /// Der Status der Vertrauenswürdigkeit eines Partners.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TrustStatus {
     /// Keine negativen Einträge vorhanden.
     Clean,
     /// Ungelöster Betrugsbeweis liegt vor. Warnung anzeigen.
     KnownOffender(String),
     /// Vorfall gilt als offiziell oder lokal geklärt.
-    Resolved(String, bool),
+    Resolved {
+        proof_id: String,
+        is_local: bool,
+        note: Option<String>,
+    },
 }
 
 /// Lokaler Wrapper für einen Double-Spend-Beweis, der private Nutzerentscheidungen speichert.
@@ -190,6 +194,9 @@ pub struct ProofStoreEntry {
     pub proof: ProofOfDoubleSpend,
     /// Hat der Nutzer manuell auf "vertrauen" geklickt?
     pub local_override: bool,
+    /// Optionale Notiz des Nutzers zur manuellen Klärung.
+    #[serde(default)]
+    pub local_note: Option<String>,
     /// War der Nutzer Opfer oder nur Zeuge?
     pub conflict_role: ConflictRole,
 }

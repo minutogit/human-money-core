@@ -35,6 +35,7 @@ mod tests {
         let entry = ProofStoreEntry {
             proof: proof.clone(),
             local_override: true,
+            local_note: Some("Clear manual resolution".to_string()),
             conflict_role: ConflictRole::Victim,
         };
 
@@ -63,6 +64,7 @@ mod tests {
         wallet.proof_store.proofs.insert(proof_id.to_string(), ProofStoreEntry {
             proof: proof.clone(),
             local_override: true,
+            local_note: None,
             conflict_role: ConflictRole::Victim,
         });
 
@@ -213,7 +215,7 @@ mod tests {
         // Proof A: Gelöst via Override
         let proof_a = create_dummy_proof("proof_a", offender);
         wallet.import_proof(proof_a).unwrap();
-        wallet.set_conflict_local_override("proof_a", true).unwrap();
+        wallet.set_conflict_local_override("proof_a", true, Some("Resolved A".to_string())).unwrap();
 
         // Proof B: Ungelöst
         let proof_b = create_dummy_proof("proof_b", offender);

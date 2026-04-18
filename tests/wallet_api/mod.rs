@@ -22,4 +22,5 @@ mod voucher_states;
 mod maintenance;
 mod conflict_management;
 mod proof_persistence;
+mod role_integration;
 

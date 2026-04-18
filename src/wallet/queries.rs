@@ -244,7 +244,11 @@ impl Wallet {
                 
                 if is_officially_resolved || entry.local_override {
                     // Merke uns das letzte gelöste, falls kein ungelöstes gefunden wird.
-                    latest_resolved = Some(TrustStatus::Resolved(entry.proof.proof_id.clone(), entry.local_override));
+                    latest_resolved = Some(TrustStatus::Resolved {
+                        proof_id: entry.proof.proof_id.clone(),
+                        is_local: entry.local_override,
+                        note: entry.local_note.clone(),
+                    });
                 } else {
                     // Sobald EIN ungelöster Beweis gefunden wird, ist der Status "KnownOffender".
                     return TrustStatus::KnownOffender(entry.proof.proof_id.clone());

@@ -174,6 +174,8 @@ pub struct ProofOfDoubleSpendSummary {
     pub is_resolved: bool,
     pub has_l2_verdict: bool,
     pub local_override: bool,
+    #[serde(default)]
+    pub local_note: Option<String>,
     pub conflict_role: crate::models::conflict::ConflictRole,
     #[serde(default)]
     pub affected_voucher_name: Option<String>,
