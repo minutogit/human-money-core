@@ -215,13 +215,13 @@ fn api_wallet_signature_fail_tampered_container() {
 
     let mut container: SecureContainer = serde_json::from_slice(&response_bytes).unwrap();
 
-    // Manipuliere den Base64-String des Payloads, um einen AEAD-Fehler zu provozieren.
-    let mut chars: Vec<char> = container.p.chars().collect();
+    // Manipuliere den Base64-String des Ciphertexts, um einen AEAD-Fehler zu provozieren.
+    let mut chars: Vec<char> = container.ciphertext.chars().collect();
     if chars.len() > 10 {
         // Tausche ein Zeichen aus, um die Signatur ungültig zu machen.
         chars[10] = if chars[10] == 'A' { 'B' } else { 'A' };
     }
-    container.p = chars.into_iter().collect();
+    container.ciphertext = chars.into_iter().collect();
     let tampered_bytes = serde_json::to_vec(&container).unwrap();
 
     let result = alice_wallet.process_and_attach_signature(&alice.identity, &tampered_bytes, None);

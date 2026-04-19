@@ -110,6 +110,7 @@ impl AppService {
         let wallet = self.get_wallet()?;
         let profile = &wallet.profile;
         Ok(PublicProfile {
+            protocol_version: Some("v1".to_string()),
             id: Some(profile.user_id.clone()),
             first_name: profile.first_name.clone(),
             last_name: profile.last_name.clone(),

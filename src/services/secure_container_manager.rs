@@ -5,14 +5,15 @@
 
 use crate::error::VoucherCoreError;
 use crate::models::profile::UserIdentity;
-use crate::models::secure_container::{ContainerConfig, EncryptionType, PayloadType, SecureContainer, WrappedKey};
+use crate::models::secure_container::{ContainerConfig, EncryptionType, JweRecipient, PayloadType, SecureContainer};
 use crate::services::crypto_utils::{
-    self, decode_base64, decrypt_symmetric_password, ed25519_pub_to_x25519, ed25519_sk_to_x25519_sk, encode_base64, encrypt_symmetric_password, get_hash,
+    self, decode_base64, decrypt_data_with_aad, decrypt_symmetric_password, ed25519_pub_to_x25519, ed25519_sk_to_x25519_sk, encode_base64, encrypt_data_with_aad, encrypt_symmetric_password, get_hash,
     get_pubkey_from_user_id,
 };
 use crate::services::utils::to_canonical_json;
 use hkdf::Hkdf;
 use rand_core::{OsRng, RngCore};
+use serde_json::json;
 use sha2::Sha256;
 use zeroize::Zeroize;
 
@@ -33,7 +34,11 @@ pub enum ContainerManagerError {
     InvalidEncryptionConfig,
 }
 
-/// Erstellt, verschlüsselt und signiert einen anonymen `SecureContainer` mit konfigurierbarer Verschlüsselung.
+/// Erstellt, verschlüsselt und signiert einen JWE-kompatiblen `SecureContainer` mit konfigurierbarer Verschlüsselung.
+///
+/// Diese Funktion implementiert RFC 7516 JSON Web Encryption (JWE) General Serialization.
+/// Für asymmetrische Verschlüsselung wird ein Protected Header mit alg, enc, typ und epk erstellt,
+/// und die Payload mit dem Protected Header als AAD verschlüsselt.
 ///
 /// # Arguments
 /// * `sender_identity` - Die Identität des Senders, inklusive seiner Schlüssel.
@@ -60,20 +65,32 @@ pub fn create_secure_container(
         _ => Vec::new(),
     };
 
-    let (encryption_type, encrypted_payload_b64, wrapped_keys, salt, esk_b64) = match config {
+    let (encryption_type, protected, recipients, iv, ciphertext, tag, salt) = match config {
         ContainerConfig::TargetDid(_) | ContainerConfig::TargetDids(_) => {
-            // Asymmetrische Verschlüsselung (bestehende Logik)
+            // Asymmetrische Verschlüsselung (JWE-Format)
             let esk_priv_static = x25519_dalek::StaticSecret::random_from_rng(OsRng);
             let esk_pub = x25519_dalek::PublicKey::from(&esk_priv_static);
 
-            let (encrypted_payload_b64, wrapped_keys) = {
+            // Ephemeral Public Key als Base64url für den Protected Header
+            let epk_b64 = encode_base64(esk_pub.as_bytes());
+
+            // Protected Header aufbauen (RFC 7516)
+            let protected_header = json!({
+                "alg": "ECDH-ES+A256KW",
+                "enc": "C20P", // ChaCha20-Poly1305
+                "typ": content_type.to_didcomm_uri(),
+                "epk": epk_b64
+            });
+            let protected_json = serde_json::to_string(&protected_header)
+                .map_err(|e| VoucherCoreError::Crypto(format!("Failed to serialize protected header: {}", e)))?;
+            let protected_b64 = encode_base64(protected_json.as_bytes());
+
+            // Payload-Key generieren und verschlüsseln
+            let (recipients_vec, mut payload_key) = {
                 let mut payload_key = [0u8; 32];
                 OsRng.fill_bytes(&mut payload_key);
 
-                let encrypted_payload = crypto_utils::encrypt_data(&payload_key, payload)?;
-                let encrypted_payload_b64 = encode_base64(&encrypted_payload);
-
-                let mut wrapped_keys = Vec::new();
+                let mut recipients = Vec::new();
 
                 // Key Wrapping für alle Empfänger
                 for recipient_id in recipient_ids {
@@ -84,10 +101,9 @@ pub fn create_secure_container(
                     let kek = derive_kek(shared_secret.as_bytes())?;
                     let encrypted_payload_key = crypto_utils::encrypt_data(&kek, &payload_key)?;
 
-                    wrapped_keys.push(WrappedKey {
-                        r: Some(encode_base64(&encrypted_payload_key)),
-                        m: Some(get_hash(&recipient_id)),
-                        s: None,
+                    recipients.push(JweRecipient {
+                        header: Some(json!({"kid": recipient_id})),
+                        encrypted_key: encode_base64(&encrypted_payload_key),
                     });
                 }
 
@@ -96,18 +112,37 @@ pub fn create_secure_container(
                 let shared_secret_sender = sender_static_sk_x.diffie_hellman(&esk_pub);
                 let kek_sender = derive_kek(shared_secret_sender.as_bytes())?;
                 let encrypted_payload_key_sender = crypto_utils::encrypt_data(&kek_sender, &payload_key)?;
-                wrapped_keys.push(WrappedKey {
-                    s: Some(encode_base64(&encrypted_payload_key_sender)),
-                    r: None,
-                    m: None,
+                recipients.push(JweRecipient {
+                    header: Some(json!({"kid": sender_identity.user_id, "sender": true})),
+                    encrypted_key: encode_base64(&encrypted_payload_key_sender),
                 });
 
-                payload_key.zeroize();
-                (encrypted_payload_b64, wrapped_keys)
+                (recipients, payload_key)
             };
 
-            let esk_b64 = encode_base64(esk_pub.as_bytes());
-            (EncryptionType::Asymmetric, encrypted_payload_b64, wrapped_keys, None, esk_b64)
+            // Payload mit AAD (Protected Header) verschlüsseln
+            // In JWE ist AAD der base64url-encodierte Protected Header String (ASCII)
+            let (nonce_bytes, ciphertext_bytes, tag_bytes) = encrypt_data_with_aad(
+                &payload_key,
+                payload,
+                protected_b64.as_bytes(),
+            ).map_err(VoucherCoreError::SymmetricEncryption)?;
+
+            payload_key.zeroize();
+
+            let iv_b64 = encode_base64(&nonce_bytes);
+            let ciphertext_b64 = encode_base64(&ciphertext_bytes);
+            let tag_b64 = encode_base64(&tag_bytes);
+
+            (
+                EncryptionType::Asymmetric,
+                protected_b64,
+                recipients_vec,
+                iv_b64,
+                ciphertext_b64,
+                tag_b64,
+                None,
+            )
         }
         ContainerConfig::Password(password) => {
             // Symmetrische Verschlüsselung mit Passwort
@@ -115,34 +150,56 @@ pub fn create_secure_container(
             let encrypted_payload_b64 = encode_base64(&ciphertext);
             let salt_b64 = encode_base64(&salt);
 
-            // Keine wrapped_keys bei symmetrischer Verschlüsselung
-            let wrapped_keys = Vec::new();
+            // Leerer Protected Header für symmetrische Verschlüsselung
+            let protected_b64 = String::new();
+            let recipients = Vec::new();
+            let iv_b64 = String::new();
+            let tag_b64 = String::new();
 
-            // Platzhalter für esk (leerer String, da nicht benötigt)
-            let esk_b64 = String::new();
-
-            (EncryptionType::Symmetric, encrypted_payload_b64, wrapped_keys, Some(salt_b64), esk_b64)
+            (
+                EncryptionType::Symmetric,
+                protected_b64,
+                recipients,
+                iv_b64,
+                encrypted_payload_b64,
+                tag_b64,
+                Some(salt_b64),
+            )
         }
         ContainerConfig::Cleartext => {
             // Keine Verschlüsselung (Base64-kodierter Klartext)
             let encrypted_payload_b64 = encode_base64(payload);
-            let wrapped_keys = Vec::new();
-            let esk_b64 = String::new();
 
-            (EncryptionType::None, encrypted_payload_b64, wrapped_keys, None, esk_b64)
+            let protected_b64 = String::new();
+            let recipients = Vec::new();
+            let iv_b64 = String::new();
+            let tag_b64 = String::new();
+
+            (
+                EncryptionType::None,
+                protected_b64,
+                recipients,
+                iv_b64,
+                encrypted_payload_b64,
+                tag_b64,
+                None,
+            )
         }
     };
 
-    // Container zusammenbauen
+    // Container zusammenbauen (JWE-Format)
     let mut container = SecureContainer {
-        i: "".to_string(),
-        c: content_type,
-        esk: esk_b64,
-        wk: wrapped_keys,
-        p: encrypted_payload_b64,
-        t: "".to_string(),
+        protected,
+        unprotected: None,
+        recipients,
+        iv,
+        ciphertext,
+        tag,
+        signature: String::new(),
         et: encryption_type,
         salt,
+        i: String::new(),
+        c: content_type.clone(),
     };
 
     // Die container_id aus dem Hash des kanonischen Inhalts generieren
@@ -151,12 +208,12 @@ pub fn create_secure_container(
 
     // Die container_id signieren
     let signature = crypto_utils::sign_ed25519(&sender_identity.signing_key, container.i.as_bytes());
-    container.t = encode_base64(&signature.to_bytes());
+    container.signature = encode_base64(&signature.to_bytes());
 
     Ok(container)
 }
 
-/// Entschlüsselt den Payload eines `SecureContainer` mit konfigurierbarer Verschlüsselung.
+/// Entschlüsselt den Payload eines JWE-kompatiblen `SecureContainer` mit konfigurierbarer Verschlüsselung.
 /// **Achtung:** Diese Funktion verifiziert NICHT die Signatur des Containers, da
 /// dafür die `sender_id` aus dem (noch verschlüsselten) Payload benötigt wird.
 /// Die Signatur-Verifizierung ist die Verantwortung des Aufrufers (z.B. `bundle_processor`).
@@ -175,50 +232,80 @@ pub fn open_secure_container(
 ) -> Result<Vec<u8>, VoucherCoreError> {
     match container.et {
         EncryptionType::Asymmetric => {
-            // Bestehende Logik für asymmetrische Verschlüsselung
-            let my_id_hash = get_hash(&recipient_identity.user_id);
+            // JWE-Format für asymmetrische Verschlüsselung
             let recipient_x25519_sk = ed25519_sk_to_x25519_sk(&recipient_identity.signing_key);
-            let esk_pub_bytes = decode_base64(&container.esk)?;
+
+            // Protected Header dekodieren und epk extrahieren
+            if container.protected.is_empty() {
+                return Err(VoucherCoreError::Crypto("Protected header is required for asymmetric encryption".to_string()));
+            }
+
+            let protected_bytes = decode_base64(&container.protected)?;
+            let protected_header_json = serde_json::from_slice::<serde_json::Value>(&protected_bytes)
+                .map_err(|e| VoucherCoreError::Crypto(format!("Failed to parse protected header: {}", e)))?;
+
+            let epk_b64 = protected_header_json["epk"]
+                .as_str()
+                .ok_or_else(|| VoucherCoreError::Crypto("Missing epk in protected header".to_string()))?;
+            let esk_pub_bytes = decode_base64(epk_b64)?;
             let esk_pub = x25519_dalek::PublicKey::from(
                 <[u8; 32]>::try_from(esk_pub_bytes)
                     .map_err(|_| VoucherCoreError::Crypto("Invalid ephemeral key length".to_string()))?,
             );
 
-            // Versuche, den Payload-Schlüssel zu entschlüsseln.
-            for wrapped_key in &container.wk {
-                let encrypted_payload_key_b64 = if wrapped_key.s.is_some() {
-                    // Bin ich der Sender?
-                    wrapped_key.s.as_deref()
-                } else if wrapped_key.m.as_deref() == Some(&my_id_hash) {
-                    // Bin ich der Empfänger?
-                    wrapped_key.r.as_deref()
-                } else {
-                    None
-                };
+            // Suche den passenden Empfänger im recipients-Array
+            let mut decrypted_payload_key: Option<[u8; 32]> = None;
 
-                if let Some(b64_key) = encrypted_payload_key_b64 {
-                    let encrypted_payload_key = decode_base64(b64_key)?;
-                    let shared_secret = recipient_x25519_sk.diffie_hellman(&esk_pub);
-                    let kek = derive_kek(shared_secret.as_bytes())?;
+            for recipient in &container.recipients {
+                if let Some(header) = &recipient.header {
+                    let kid = header["kid"].as_str();
+                    let is_sender = header["sender"].as_bool().unwrap_or(false);
 
-                    if let Ok(payload_key_bytes) = crypto_utils::decrypt_data(&kek, &encrypted_payload_key)
-                    {
-                        let payload_key: [u8; 32] = payload_key_bytes.try_into().map_err(|_| {
-                            VoucherCoreError::Crypto(
-                                "Decrypted payload key has incorrect length".to_string(),
-                            )
-                        })?;
+                    let should_try = if is_sender {
+                        // Bin ich der Sender?
+                        kid == Some(&recipient_identity.user_id)
+                    } else {
+                        // Bin ich der Empfänger?
+                        kid == Some(&recipient_identity.user_id)
+                    };
 
-                        let encrypted_payload = decode_base64(&container.p)?;
-                        return Ok(crypto_utils::decrypt_data(
-                            &payload_key,
-                            &encrypted_payload,
-                        )?);
+                    if should_try {
+                        let encrypted_payload_key = decode_base64(&recipient.encrypted_key)?;
+                        let shared_secret = recipient_x25519_sk.diffie_hellman(&esk_pub);
+                        let kek = derive_kek(shared_secret.as_bytes())?;
+
+                        if let Ok(payload_key_bytes) = crypto_utils::decrypt_data(&kek, &encrypted_payload_key) {
+                            if let Ok(key_array) = payload_key_bytes.try_into() {
+                                decrypted_payload_key = Some(key_array);
+                                break;
+                            }
+                        }
                     }
                 }
             }
 
-            Err(ContainerManagerError::NotAnIntendedRecipient.into())
+            let mut payload_key = decrypted_payload_key
+                .ok_or(ContainerManagerError::NotAnIntendedRecipient)?;
+
+            // Ciphertext und Tag dekodieren
+            let iv = decode_base64(&container.iv)?;
+            let ciphertext = decode_base64(&container.ciphertext)?;
+            let tag = decode_base64(&container.tag)?;
+
+            // Protected Header als AAD verwenden
+            let aad = container.protected.as_bytes();
+
+            // Payload mit AAD entschlüsseln
+            let plaintext = decrypt_data_with_aad(
+                &payload_key,
+                &iv,
+                &ciphertext,
+                &tag,
+                aad,
+            ).map_err(VoucherCoreError::SymmetricEncryption)?;
+
+            payload_key.zeroize();
+            Ok(plaintext)
         }
         EncryptionType::Symmetric => {
             // Symmetrische Verschlüsselung mit Passwort
@@ -230,12 +317,13 @@ pub fn open_secure_container(
             let salt_array: [u8; 16] = salt.try_into().map_err(|_| {
                 VoucherCoreError::Crypto("Invalid salt length (expected 16 bytes)".to_string())
             })?;
-            let encrypted_payload = decode_base64(&container.p)?;
+
+            let encrypted_payload = decode_base64(&container.ciphertext)?;
             decrypt_symmetric_password(&encrypted_payload, password, &salt_array)
         }
         EncryptionType::None => {
             // Keine Verschlüsselung (einfach base64-dekodieren)
-            decode_base64(&container.p)
+            decode_base64(&container.ciphertext)
         }
     }
 }
@@ -247,4 +335,205 @@ fn derive_kek(shared_secret: &[u8]) -> Result<[u8; 32], ContainerManagerError> {
     hkdf.expand(b"secure-container-kek", &mut kek)
         .map_err(|e| ContainerManagerError::KeyDerivationError(e.to_string()))?;
     Ok(kek)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::profile::UserIdentity;
+    use crate::services::crypto_utils::{create_user_id, generate_ed25519_keypair_for_tests};
+
+    #[test]
+    fn test_jwe_container_creation_and_opening() {
+        // Erstelle Sender- und Empfänger-Identitäten
+        let (sender_pub, sender_sk) = generate_ed25519_keypair_for_tests(Some("sender_seed"));
+        let sender_id = create_user_id(&sender_pub, Some("sender")).unwrap();
+        let sender_identity = UserIdentity {
+            user_id: sender_id.clone(),
+            signing_key: sender_sk,
+            public_key: sender_pub,
+        };
+
+        let (recipient_pub, recipient_sk) = generate_ed25519_keypair_for_tests(Some("recipient_seed"));
+        let recipient_id = create_user_id(&recipient_pub, Some("recipient")).unwrap();
+        let recipient_identity = UserIdentity {
+            user_id: recipient_id.clone(),
+            signing_key: recipient_sk,
+            public_key: recipient_pub,
+        };
+
+        // Erstelle einen Container mit JWE-Format
+        let payload = b"Test payload data";
+        let config = ContainerConfig::TargetDid(recipient_id.clone());
+        let content_type = PayloadType::TransactionBundle;
+
+        let container = create_secure_container(&sender_identity, config, payload, content_type)
+            .expect("Failed to create container");
+
+        // Verifiziere JWE-Struktur
+        assert!(!container.protected.is_empty(), "Protected header should not be empty");
+        assert!(!container.recipients.is_empty(), "Recipients should not be empty");
+        assert!(!container.iv.is_empty(), "IV should not be empty");
+        assert!(!container.ciphertext.is_empty(), "Ciphertext should not be empty");
+        assert!(!container.tag.is_empty(), "Tag should not be empty");
+        assert!(!container.signature.is_empty(), "Signature should not be empty");
+
+        // Öffne den Container als Empfänger
+        let decrypted_payload = open_secure_container(&container, &recipient_identity, None)
+            .expect("Failed to open container");
+
+        assert_eq!(decrypted_payload, payload, "Decrypted payload should match original");
+    }
+
+    #[test]
+    fn test_jwe_container_sender_can_open() {
+        // Erstelle Sender-Identität
+        let (sender_pub, sender_sk) = generate_ed25519_keypair_for_tests(Some("sender_seed"));
+        let sender_id = create_user_id(&sender_pub, Some("sender")).unwrap();
+        let sender_identity = UserIdentity {
+            user_id: sender_id.clone(),
+            signing_key: sender_sk.clone(),
+            public_key: sender_pub,
+        };
+
+        let (recipient_pub, _) = generate_ed25519_keypair_for_tests(Some("recipient_seed"));
+        let recipient_id = create_user_id(&recipient_pub, Some("recipient")).unwrap();
+
+        // Erstelle einen Container
+        let payload = b"Test payload for sender";
+        let config = ContainerConfig::TargetDid(recipient_id);
+        let content_type = PayloadType::VoucherForSigning;
+
+        let container = create_secure_container(&sender_identity, config, payload, content_type)
+            .expect("Failed to create container");
+
+        // Öffne den Container als Sender (sollte funktionieren dank Double-Key-Wrapping)
+        let decrypted_payload = open_secure_container(&container, &sender_identity, None)
+            .expect("Failed to open container as sender");
+
+        assert_eq!(decrypted_payload, payload, "Decrypted payload should match original");
+    }
+
+    #[test]
+    fn test_jwe_container_multiple_recipients() {
+        let (sender_pub, sender_sk) = generate_ed25519_keypair_for_tests(Some("sender_seed"));
+        let sender_id = create_user_id(&sender_pub, Some("sender")).unwrap();
+        let sender_identity = UserIdentity {
+            user_id: sender_id.clone(),
+            signing_key: sender_sk,
+            public_key: sender_pub,
+        };
+
+        let (recipient1_pub, recipient1_sk) = generate_ed25519_keypair_for_tests(Some("recipient1_seed"));
+        let recipient1_id = create_user_id(&recipient1_pub, Some("recipient1")).unwrap();
+        let recipient1_identity = UserIdentity {
+            user_id: recipient1_id.clone(),
+            signing_key: recipient1_sk,
+            public_key: recipient1_pub,
+        };
+
+        let (recipient2_pub, recipient2_sk) = generate_ed25519_keypair_for_tests(Some("recipient2_seed"));
+        let recipient2_id = create_user_id(&recipient2_pub, Some("recipient2")).unwrap();
+        let recipient2_identity = UserIdentity {
+            user_id: recipient2_id.clone(),
+            signing_key: recipient2_sk,
+            public_key: recipient2_pub,
+        };
+
+        let payload = b"Payload for multiple recipients";
+        let config = ContainerConfig::TargetDids(vec![recipient1_id.clone(), recipient2_id.clone()]);
+        let content_type = PayloadType::TransactionBundle;
+
+        let container = create_secure_container(&sender_identity, config, payload, content_type)
+            .expect("Failed to create container");
+
+        // Beide Empfänger sollten den Container öffnen können
+        let decrypted1 = open_secure_container(&container, &recipient1_identity, None)
+            .expect("Recipient 1 failed to open container");
+        assert_eq!(decrypted1, payload);
+
+        let decrypted2 = open_secure_container(&container, &recipient2_identity, None)
+            .expect("Recipient 2 failed to open container");
+        assert_eq!(decrypted2, payload);
+    }
+
+    #[test]
+    fn test_plaintext_not_allowed_for_financial_payload() {
+        let (sender_pub, sender_sk) = generate_ed25519_keypair_for_tests(Some("sender_seed"));
+        let sender_id = create_user_id(&sender_pub, Some("sender")).unwrap();
+        let sender_identity = UserIdentity {
+            user_id: sender_id,
+            signing_key: sender_sk,
+            public_key: sender_pub,
+        };
+
+        let payload = b"Financial payload";
+        let config = ContainerConfig::Cleartext;
+        let content_type = PayloadType::TransactionBundle;
+
+        let result = create_secure_container(&sender_identity, config, payload, content_type);
+        assert!(result.is_err(), "Should fail for financial payload with cleartext");
+    }
+
+    #[test]
+    fn test_cleartext_allowed_for_non_financial_payload() {
+        let (sender_pub, sender_sk) = generate_ed25519_keypair_for_tests(Some("sender_seed"));
+        let sender_id = create_user_id(&sender_pub, Some("sender")).unwrap();
+        let sender_identity = UserIdentity {
+            user_id: sender_id.clone(),
+            signing_key: sender_sk,
+            public_key: sender_pub,
+        };
+
+        let (recipient_pub, recipient_sk) = generate_ed25519_keypair_for_tests(Some("recipient_seed"));
+        let recipient_id = create_user_id(&recipient_pub, Some("recipient")).unwrap();
+        let recipient_identity = UserIdentity {
+            user_id: recipient_id.clone(),
+            signing_key: recipient_sk,
+            public_key: recipient_pub,
+        };
+
+        let payload = b"Non-financial payload";
+        let config = ContainerConfig::TargetDid(recipient_id);
+        let content_type = PayloadType::DetachedSignature;
+
+        let container = create_secure_container(&sender_identity, config, payload, content_type)
+            .expect("Should succeed for non-financial payload");
+
+        let decrypted = open_secure_container(&container, &recipient_identity, None)
+            .expect("Should open container");
+        assert_eq!(decrypted, payload);
+    }
+
+    #[test]
+    fn test_not_intended_recipient_fails() {
+        let (sender_pub, sender_sk) = generate_ed25519_keypair_for_tests(Some("sender_seed"));
+        let sender_id = create_user_id(&sender_pub, Some("sender")).unwrap();
+        let sender_identity = UserIdentity {
+            user_id: sender_id,
+            signing_key: sender_sk,
+            public_key: sender_pub,
+        };
+
+        let (recipient_pub, _) = generate_ed25519_keypair_for_tests(Some("recipient_seed"));
+        let recipient_id = create_user_id(&recipient_pub, Some("recipient")).unwrap();
+
+        let (other_pub, other_sk) = generate_ed25519_keypair_for_tests(Some("other_seed"));
+        let other_id = create_user_id(&other_pub, Some("other")).unwrap();
+        let other_identity = UserIdentity {
+            user_id: other_id,
+            signing_key: other_sk,
+            public_key: other_pub,
+        };
+
+        let payload = b"Secret payload";
+        let config = ContainerConfig::TargetDid(recipient_id);
+        let content_type = PayloadType::TransactionBundle;
+
+        let container = create_secure_container(&sender_identity, config, payload, content_type)
+            .expect("Failed to create container");
+
+        let result = open_secure_container(&container, &other_identity, None);
+        assert!(result.is_err(), "Non-recipient should not be able to open container");
+    }
 }

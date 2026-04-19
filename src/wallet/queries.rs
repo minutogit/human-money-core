@@ -5,6 +5,8 @@
 
 use super::{AggregatedBalance, VoucherDetails, VoucherSummary, Wallet};
 use crate::error::VoucherCoreError;
+use crate::models::profile::PublicProfile;
+use crate::services::jws_profile_service::export_profile_as_jws;
 use crate::wallet::instance::VoucherStatus;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::Zero;
@@ -257,5 +259,41 @@ impl Wallet {
         }
 
         latest_resolved.unwrap_or(TrustStatus::Clean)
+    }
+
+    /// Exportiert das eigene Profil als JWS Compact Serialization String.
+    ///
+    /// Dies folgt RFC 7515 und erzeugt einen String im Format:
+    /// base64url(header).base64url(payload).base64url(signature)
+    ///
+    /// # Arguments
+    /// * `identity` - Die UserIdentity mit dem privaten Signaturschlüssel.
+    ///
+    /// # Returns
+    /// Ein JWS Compact String oder einen Fehler.
+    pub fn export_profile_jws(
+        &self,
+        identity: &crate::models::profile::UserIdentity,
+    ) -> Result<String, VoucherCoreError> {
+        // Erstelle ein PublicProfile aus dem Wallet-Profil
+        let public_profile = PublicProfile {
+            protocol_version: Some("v1".to_string()),
+            id: Some(self.profile.user_id.clone()),
+            first_name: self.profile.first_name.clone(),
+            last_name: self.profile.last_name.clone(),
+            organization: self.profile.organization.clone(),
+            community: self.profile.community.clone(),
+            address: self.profile.address.clone(),
+            gender: self.profile.gender.clone(),
+            email: self.profile.email.clone(),
+            phone: self.profile.phone.clone(),
+            coordinates: self.profile.coordinates.clone(),
+            url: self.profile.url.clone(),
+            service_offer: self.profile.service_offer.clone(),
+            needs: self.profile.needs.clone(),
+            picture_url: self.profile.picture_url.clone(),
+        };
+
+        export_profile_as_jws(&identity.signing_key, &public_profile)
     }
 }

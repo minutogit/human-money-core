@@ -79,6 +79,7 @@ impl Wallet {
         // Stelle die optionalen Profil-Details zusammen
         let details = if include_details {
             Some(PublicProfile {
+                protocol_version: Some("v1".to_string()),
                 id: None, // `signer_id` ist bereits auf der Hauptebene vorhanden
                 first_name: self.profile.first_name.clone(),
                 last_name: self.profile.last_name.clone(),

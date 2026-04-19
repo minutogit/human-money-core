@@ -100,6 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Erstellen eines vollständigen PublicProfile für Bürge 1 mit Beispielwerten
     let g1_profile = human_money_core::models::profile::PublicProfile {
+        protocol_version: Some("v1".to_string()),
         id: Some(g1_id.clone()),
         first_name: Some("Max".to_string()),
         last_name: Some("Bürger".to_string()),
@@ -143,6 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Erstellen eines vollständigen PublicProfile für Bürge 2 mit Beispielwerten
     let g2_profile = human_money_core::models::profile::PublicProfile {
+        protocol_version: Some("v1".to_string()),
         id: Some(g2_id.clone()),
         first_name: Some("Erika".to_string()),
         last_name: Some("Bürgin".to_string()),
@@ -200,6 +202,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Erstellen eines vollständigen PublicProfile mit Beispielwerten
     let complete_creator_profile = human_money_core::models::profile::PublicProfile {
+        protocol_version: Some("v1".to_string()),
         id: Some(creator_id.clone()),
         first_name: Some("Max".to_string()),
         last_name: Some("Mustermann".to_string()),

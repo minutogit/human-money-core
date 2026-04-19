@@ -539,6 +539,97 @@ pub fn decrypt_data(
         .map_err(|_| SymmetricEncryptionError::DecryptionFailed)
 }
 
+/// Symmetrically encrypts data using ChaCha20-Poly1305 with Additional Authenticated Data (AAD).
+///
+/// This function is used for JWE (JSON Web Encryption) compliance, where the protected header
+/// must be included as AAD in the encryption process. Returns separate nonce, ciphertext, and tag.
+///
+/// # Arguments
+///
+/// * `key` - A 32-byte key for the encryption.
+/// * `data` - The plaintext data to encrypt.
+/// * `aad` - Additional Authenticated Data (e.g., the JWE protected header).
+///
+/// # Returns
+///
+/// A `Result` containing a tuple of (nonce, ciphertext, tag) or a `SymmetricEncryptionError`.
+pub fn encrypt_data_with_aad(
+    key: &[u8; 32],
+    data: &[u8],
+    aad: &[u8],
+) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), SymmetricEncryptionError> {
+    use chacha20poly1305::aead::AeadInPlace;
+
+    let cipher = ChaCha20Poly1305::new(key.into());
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+
+    // Prepare buffer with plaintext
+    let mut buffer = data.to_vec();
+
+    // Encrypt in-place with AAD - returns the tag separately
+    let tag = cipher
+        .encrypt_in_place_detached(&nonce, aad, &mut buffer)
+        .map_err(|_| SymmetricEncryptionError::EncryptionFailed)?;
+
+    Ok((nonce.to_vec(), buffer, tag.to_vec()))
+}
+
+/// Symmetrically decrypts data encrypted with `encrypt_data_with_aad`.
+///
+/// This function expects separate nonce, ciphertext, and tag, along with AAD.
+/// It uses the AEAD properties of ChaCha20-Poly1305 to verify the integrity and
+/// authenticity of the data before returning the plaintext.
+///
+/// # Arguments
+///
+/// * `key` - The 32-byte key used for the encryption.
+/// * `nonce` - The 12-byte nonce.
+/// * `ciphertext` - The ciphertext data.
+/// * `tag` - The 16-byte authentication tag.
+/// * `aad` - Additional Authenticated Data (e.g., the JWE protected header).
+///
+/// # Returns
+///
+/// A `Result` containing the original plaintext data or a `SymmetricEncryptionError` if decryption fails.
+pub fn decrypt_data_with_aad(
+    key: &[u8; 32],
+    nonce: &[u8],
+    ciphertext: &[u8],
+    tag: &[u8],
+    aad: &[u8],
+) -> Result<Vec<u8>, SymmetricEncryptionError> {
+    use chacha20poly1305::aead::AeadInPlace;
+
+    const NONCE_SIZE: usize = 12;
+    const TAG_SIZE: usize = 16;
+
+    if nonce.len() != NONCE_SIZE {
+        return Err(SymmetricEncryptionError::InvalidLength(format!(
+            "Nonce must be exactly {} bytes.",
+            NONCE_SIZE
+        )));
+    }
+
+    if tag.len() != TAG_SIZE {
+        return Err(SymmetricEncryptionError::InvalidLength(format!(
+            "Tag must be exactly {} bytes.",
+            TAG_SIZE
+        )));
+    }
+
+    let cipher = ChaCha20Poly1305::new(key.into());
+    let nonce_obj = Nonce::from_slice(nonce);
+    let tag_array = chacha20poly1305::Tag::from_slice(tag);
+
+    // Decrypt in-place with AAD - ciphertext must be mutable for in-place decryption
+    let mut buffer = ciphertext.to_vec();
+    cipher
+        .decrypt_in_place_detached(nonce_obj, aad, &mut buffer, tag_array)
+        .map_err(|_| SymmetricEncryptionError::DecryptionFailed)?;
+
+    Ok(buffer)
+}
+
 /// Verschlüsselt Daten symmetrisch mit einem Passwort via PBKDF2 und ChaCha20-Poly1305.
 ///
 /// Diese Funktion ist für Einweg-Passwörter (PINs) beim Container-Austausch gedacht.
@@ -932,6 +1023,18 @@ mod tests {
 
         let invalid_id3 = valid_id.replace("valid-prefix", "invalid--");
         assert!(!validate_user_id(&invalid_id3));
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_with_aad() {
+        let key = [0u8; 32];
+        let plaintext = b"Test plaintext";
+        let aad = b"Additional Authenticated Data";
+
+        let (nonce, ciphertext, tag) = encrypt_data_with_aad(&key, plaintext, aad).unwrap();
+        let decrypted = decrypt_data_with_aad(&key, &nonce, &ciphertext, &tag, aad).unwrap();
+
+        assert_eq!(decrypted, plaintext);
     }
 
     #[test]

@@ -16,7 +16,9 @@ use human_money_core::{
 use serde_json;
 
 /// Testet, dass alte Container ohne das `et` Feld korrekt als Asymmetric geparst werden.
+/// DEAKTIVIERT: Nach JWE-Refactoring ist dieses Format nicht mehr unterstützt.
 #[test]
+#[ignore]
 fn test_backward_compatibility_old_containers() {
     let old_container_json = r#"{
         "i": "test123",
@@ -91,7 +93,6 @@ fn test_plaintext_allowed_for_non_financial_payloads() {
     let container = result.unwrap();
     assert_eq!(container.et, EncryptionType::None);
     assert!(container.salt.is_none());
-    assert!(container.esk.is_empty());
 }
 
 /// Testet symmetrische Verschlüsselung mit Passwort.
@@ -124,8 +125,6 @@ fn test_symmetric_encryption() {
 
     assert_eq!(container.et, EncryptionType::Symmetric);
     assert!(container.salt.is_some());
-    assert!(container.esk.is_empty());
-    assert!(container.wk.is_empty());
 
     let decrypted = secure_container_manager::open_secure_container(
         &container,

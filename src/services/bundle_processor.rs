@@ -102,7 +102,7 @@ fn verify_container_signature(
     sender_id: &str,
 ) -> Result<(), VoucherCoreError> {
     let sender_pubkey_ed = get_pubkey_from_user_id(sender_id)?;
-    let signature_bytes = decode_base64(&container.t)?;
+    let signature_bytes = decode_base64(&container.signature)?;
     let signature = Signature::from_slice(&signature_bytes)?;
 
     if !verify_ed25519(&sender_pubkey_ed, container.i.as_bytes(), &signature) {
@@ -155,9 +155,9 @@ mod tests {
         .unwrap();
 
         // Mutate signature
-        let mut sig_bytes = decode_base64(&container.t).unwrap();
+        let mut sig_bytes = decode_base64(&container.signature).unwrap();
         sig_bytes[0] ^= 0xFF; // Flip bits
-        container.t = crate::services::crypto_utils::encode_base64(&sig_bytes);
+        container.signature = crate::services::crypto_utils::encode_base64(&sig_bytes);
 
         let result = verify_container_signature(&mut container, &id1.user_id);
         assert!(result.is_err());

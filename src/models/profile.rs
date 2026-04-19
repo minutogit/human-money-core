@@ -140,6 +140,10 @@ pub struct BundleMetadataStore {
 /// im Creator-Feld wiederverwendet werden kann.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct PublicProfile {
+    /// Protokoll-Versionsnummer (z.B. "v1")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
+
     /// Die User-ID (did:key) des Profilinhabers.
     /// Optional, da es oft redundant zur übergeordneten ID (z.B. signer_id) ist.
     #[serde(skip_serializing_if = "Option::is_none")]
