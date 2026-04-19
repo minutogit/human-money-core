@@ -22,9 +22,10 @@ impl Wallet {
         mnemonic_phrase: &str,
         passphrase: Option<&str>,
         user_prefix: Option<&str>,
+        language: crate::services::mnemonic::MnemonicLanguage,
     ) -> Result<(Self, UserIdentity), VoucherCoreError> {
         let (public_key, signing_key) =
-            crate::services::crypto_utils::derive_ed25519_keypair(mnemonic_phrase, passphrase)?;
+            crate::services::crypto_utils::derive_ed25519_keypair(mnemonic_phrase, passphrase, language)?;
 
         let user_id = create_user_id(&public_key, user_prefix)
             .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;

@@ -6,7 +6,7 @@
 use super::{AppService, AppState, ProfileInfo};
 use crate::storage::{AuthMethod, Storage, file_storage::FileStorage};
 use crate::wallet::Wallet;
-use bip39::Language;
+use crate::services::mnemonic::MnemonicLanguage;
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -62,16 +62,21 @@ impl AppService {
     /// Generiert eine neue BIP-39 Mnemonic-Phrase (Seed-Wörter).
     ///
     /// Diese Methode ist statisch und kann ohne geladenes Wallet aufgerufen werden.
-    pub fn generate_mnemonic(word_count: u32) -> Result<String, String> {
-        crate::services::crypto_utils::generate_mnemonic(word_count as usize, Language::English)
+    pub fn generate_mnemonic(word_count: u32, language: MnemonicLanguage) -> Result<String, String> {
+        crate::services::crypto_utils::generate_mnemonic(word_count as usize, language)
             .map_err(|e| e.to_string())
+    }
+
+    /// Gibt die Wortliste für eine bestimmte Sprache zurück.
+    pub fn get_mnemonic_wordlist(language: MnemonicLanguage) -> Vec<&'static str> {
+        crate::services::mnemonic::MnemonicProcessor::get_wordlist(language)
     }
 
     /// Validiert eine vom Benutzer eingegebene BIP-39 Mnemonic-Phrase.
     ///
     /// Diese Methode ist statisch und kann ohne geladenes Wallet aufgerufen werden.
-    pub fn validate_mnemonic(mnemonic: &str) -> Result<(), String> {
-        crate::services::crypto_utils::validate_mnemonic_phrase(mnemonic)
+    pub fn validate_mnemonic(mnemonic: &str, language: MnemonicLanguage) -> Result<(), String> {
+        crate::services::crypto_utils::validate_mnemonic_phrase(mnemonic, language)
     }
 
     /// Erstellt ein komplett neues Benutzerprofil und Wallet und speichert es verschlüsselt.
@@ -93,6 +98,7 @@ impl AppService {
         passphrase: Option<&str>,
         user_prefix: Option<&str>,
         password: &str,
+        language: MnemonicLanguage,
     ) -> Result<(), String> {
         let mut profiles = self.list_profiles()?;
         if profiles.iter().any(|p| p.profile_name == profile_name) {
@@ -113,7 +119,7 @@ impl AppService {
 
         let mut storage = FileStorage::new(profile_path);
 
-        let (wallet, identity) = Wallet::new_from_mnemonic(mnemonic, passphrase, user_prefix)
+        let (wallet, identity) = Wallet::new_from_mnemonic(mnemonic, passphrase, user_prefix, language)
             .map_err(|e| format!("Failed to create new wallet: {}", e))?;
 
         wallet
@@ -219,6 +225,7 @@ impl AppService {
         mnemonic: &str,
         passphrase: Option<&str>,
         new_password: &str,
+        language: MnemonicLanguage,
     ) -> Result<(), String> {
         let profile_path = self.base_storage_path.join(folder_name);
         if !profile_path.exists() {
@@ -228,7 +235,7 @@ impl AppService {
         let mut storage = FileStorage::new(profile_path);
 
         // 1. Lade das Wallet mit der Mnemonic-Phrase (öffnet das "zweite Schloss").
-        let auth_method = AuthMethod::Mnemonic(mnemonic, passphrase);
+        let auth_method = AuthMethod::Mnemonic(mnemonic, passphrase, language);
         let (wallet, identity) = Wallet::load(&storage, &auth_method).map_err(|e| {
             format!(
                 "Recovery failed (check mnemonic phrase and passphrase): {}",

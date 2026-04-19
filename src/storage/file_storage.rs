@@ -919,8 +919,8 @@ fn get_file_key(
             crypto_utils::decrypt_data(session_key, &container.password_wrapped_key_with_nonce)
                 .map_err(|_| StorageError::AuthenticationFailed)
         }
-        AuthMethod::Mnemonic(mnemonic, passphrase) => {
-            let (_, signing_key) = crypto_utils::derive_ed25519_keypair(mnemonic, *passphrase)
+        AuthMethod::Mnemonic(mnemonic, passphrase, language) => {
+            let (_, signing_key) = crypto_utils::derive_ed25519_keypair(mnemonic, *passphrase, *language)
                 .map_err(|e| {
                     StorageError::Generic(format!("Key derivation from mnemonic failed: {}", e))
                 })?;

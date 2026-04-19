@@ -18,6 +18,7 @@
 //!
 //! ```no_run
 //! use human_money_core::app_service::AppService;
+//! use human_money_core::MnemonicLanguage;
 //! use std::path::Path;
 //! # use human_money_core::services::voucher_manager::NewVoucherData;
 //! # use human_money_core::models::voucher_standard_definition::VoucherStandardDefinition;
@@ -28,7 +29,7 @@
 //!
 //! // 2. Neues Profil erstellen (dies entsperrt das Wallet).
 //! let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-//! app.create_profile("Mein Wallet", &mnemonic, None, Some("user"), "sicheres-passwort-123")
+//! app.create_profile("Mein Wallet", &mnemonic, None, Some("user"), "sicheres-passwort-123", MnemonicLanguage::English)
 //!    .expect("Profil konnte nicht erstellt werden.");
 //!
 //! // 3. Eine Aktion ausführen (z.B. Guthaben prüfen).

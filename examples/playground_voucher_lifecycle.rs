@@ -22,6 +22,7 @@ use human_money_core::app_service::AppService;
 use human_money_core::models::secure_container::ContainerConfig;
 use human_money_core::models::voucher::ValueDefinition;
 use human_money_core::{NewVoucherData, VoucherStatus, verify_and_parse_standard};
+use human_money_core::MnemonicLanguage;
 use std::collections::HashMap;
 use tempfile::tempdir;
 
@@ -45,38 +46,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Erstelle Profile für alle Teilnehmer
     service_creator.create_profile(
         "Creator",
-        &AppService::generate_mnemonic(12)?,
+        &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
         Some("Test".into()),
         Some("creator"),
         password,
+        MnemonicLanguage::English,
     )?;
     service_g1.create_profile(
         "Guarantor 1",
-        &AppService::generate_mnemonic(12)?,
+        &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
         Some("Test".into()),
         Some("g1"),
         password,
+        MnemonicLanguage::English,
     )?;
     service_g2.create_profile(
         "Guarantor 2",
-        &AppService::generate_mnemonic(12)?,
+        &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
         Some("Test".into()),
         Some("g2"),
         password,
+        MnemonicLanguage::English,
     )?;
     service_recipient.create_profile(
         "Recipient",
-        &AppService::generate_mnemonic(12)?,
+        &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
         Some("Test".into()),
         Some("rcp"),
         password,
+        MnemonicLanguage::English,
     )?;
     service_charlie.create_profile(
         "Charlie",
-        &AppService::generate_mnemonic(12)?,
+        &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
         Some("Test".into()),
         Some("charlie"),
         password,
+        MnemonicLanguage::English,
     )?;
 
     let g1_id = service_g1.get_user_id()?;

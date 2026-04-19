@@ -26,6 +26,7 @@ pub use models::voucher_standard_definition::VoucherStandardDefinition;
 pub use wallet::instance::{ValidationFailureReason, VoucherInstance, VoucherStatus};
 
 // Wallet & Storage Fassaden
+pub use services::mnemonic::MnemonicLanguage;
 pub use storage::file_storage::FileStorage;
 pub use storage::{AuthMethod, Storage, StorageError};
 pub use wallet::Wallet;

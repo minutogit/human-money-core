@@ -9,6 +9,7 @@
 mod tests {
 
     use human_money_core::app_service::AppService;
+    use human_money_core::MnemonicLanguage;
     use human_money_core::app_service::ProfileInfo;
     use human_money_core::services::voucher_manager::NewVoucherData;
     use human_money_core::test_utils;
@@ -201,6 +202,7 @@ mod tests {
             None,
             Some("test"),
             PASSWORD,
+            MnemonicLanguage::English,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to create new wallet"));
@@ -213,8 +215,8 @@ mod tests {
         use human_money_core::Wallet;
         let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         
-        let (_, id1) = Wallet::new_from_mnemonic(mnemonic, None, Some("test")).unwrap();
-        let (_, id2) = Wallet::new_from_mnemonic(mnemonic, Some("secret-passphrase"), Some("test")).unwrap();
+        let (_, id1) = Wallet::new_from_mnemonic(mnemonic, None, Some("test"), MnemonicLanguage::English).unwrap();
+        let (_, id2) = Wallet::new_from_mnemonic(mnemonic, Some("secret-passphrase"), Some("test"), MnemonicLanguage::English).unwrap();
         
         assert_ne!(id1.user_id, id2.user_id, "Different passphrases must result in different UserIDs");
     }
@@ -298,6 +300,7 @@ mod tests {
                 &test_user.mnemonic,
                 test_user.passphrase,
                 "new_password",
+                MnemonicLanguage::English,
             )
             .expect("Recovery should succeed");
 

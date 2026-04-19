@@ -1,6 +1,5 @@
 //! # src/services/crypto_utils.rs
 // Zufallszahlengenerierung
-use rand::Rng;
 use rand_core::OsRng;
 use rand_core::RngCore;
 
@@ -22,8 +21,8 @@ use ed25519_dalek::{
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey, StaticSecret};
 
-// BIP39 Mnemonic Phrase
-use bip39::{Language, Mnemonic};
+// BIP39 Mnemonic Phrase (delegated to mnemonic module)
+use crate::services::mnemonic::{MnemonicLanguage, MnemonicProcessor};
 
 // Key Derivation Functions
 use hkdf::Hkdf;
@@ -49,20 +48,9 @@ use base64::{Engine as _, engine::general_purpose};
 /// Returns an error if the `word_count` is invalid.
 pub fn generate_mnemonic(
     word_count: usize,
-    language: Language,
+    language: MnemonicLanguage,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let entropy_length = match word_count {
-        12 => 16,
-        15 => 20,
-        18 => 24,
-        21 => 28,
-        24 => 32,
-        _ => return Err("Invalid entropy length".into()),
-    };
-    let mut rng = rand::thread_rng();
-    let entropy: Vec<u8> = (0..entropy_length).map(|_| rng.r#gen()).collect();
-    let mnemonic = Mnemonic::from_entropy_in(language, &entropy)?;
-    Ok(mnemonic.to_string())
+    MnemonicProcessor::generate(word_count, language).map_err(|e| e.into())
 }
 
 /// Validates a BIP-39 mnemonic phrase.
@@ -77,10 +65,8 @@ pub fn generate_mnemonic(
 /// # Returns
 ///
 /// Returns `Ok(())` if the phrase is valid, otherwise an `Err` with a descriptive message.
-pub fn validate_mnemonic_phrase(phrase: &str) -> Result<(), String> {
-    Mnemonic::parse_in_normalized(Language::English, phrase)
-        .map(|_| ()) // We only care about success, not the Mnemonic object itself.
-        .map_err(|e| e.to_string())
+pub fn validate_mnemonic_phrase(phrase: &str, language: MnemonicLanguage) -> Result<(), String> {
+    MnemonicProcessor::validate(phrase, language).map_err(|e| e.to_string())
 }
 
 /// Computes a SHA3-256 hash of the input and returns it as a base58-encoded string.
@@ -156,13 +142,14 @@ pub fn get_short_hash_from_user_id(user_id: &str) -> [u8; 4] {
 pub fn derive_ed25519_keypair(
     mnemonic_phrase: &str,
     passphrase: Option<&str>,
+    language: MnemonicLanguage,
 ) -> Result<(EdPublicKey, SigningKey), VoucherCoreError> {
-    // Parse the mnemonic phrase according to BIP-39 standard
-    let mnemonic = Mnemonic::parse_in_normalized(Language::English, mnemonic_phrase)
-        .map_err(|e| VoucherCoreError::Crypto(format!("Mnemonic parsing failed: {}", e)))?;
-
     // Generate the standard BIP-39 seed (uses PBKDF2-HMAC-SHA512 with 2048 rounds)
-    let bip39_seed = mnemonic.to_seed(passphrase.unwrap_or(""));
+    let bip39_seed = MnemonicProcessor::to_seed(
+        mnemonic_phrase,
+        passphrase.unwrap_or(""),
+        language,
+    )?;
 
     // Standard SLIP-0010 Master Key Derivation for Ed25519
     // I = HMAC-SHA512(key="ed25519 seed", Data=Seed)
@@ -955,7 +942,7 @@ mod tests {
         // Expected Public Key (hex): e96b1c6b8769fdb0b34fbecfdf85c33b053cecad9517e1ab88cba614335775c1
 
         let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        let (pub_key, priv_key) = derive_ed25519_keypair(mnemonic, None).unwrap();
+        let (pub_key, priv_key) = derive_ed25519_keypair(mnemonic, None, MnemonicLanguage::English).unwrap();
 
         let pub_hex = hex::encode(pub_key.as_bytes());
         let priv_hex = hex::encode(priv_key.to_bytes());

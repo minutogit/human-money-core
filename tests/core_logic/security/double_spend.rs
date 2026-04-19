@@ -21,7 +21,7 @@ use human_money_core::models::conflict::TransactionFingerprint;
 use human_money_core::models::voucher::{Address, Collateral, ValueDefinition};
 use human_money_core::services::voucher_manager::{self, NewVoucherData};
 use human_money_core::wallet::Wallet;
-use human_money_core::{UserIdentity, VoucherStatus, services::crypto_utils};
+use human_money_core::{UserIdentity, VoucherStatus, services::crypto_utils, MnemonicLanguage};
 
 // ===================================================================================
 // HILFSFUNKTIONEN
@@ -368,6 +368,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
             None,
             ACTORS.sender.prefix,
             "password123",
+            MnemonicLanguage::English,
         )
         .unwrap();
 

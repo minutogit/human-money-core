@@ -5,6 +5,7 @@ pub mod crypto_utils;
 pub mod decimal_utils;
 pub mod dynamic_policy_engine;
 pub mod l2_gateway;
+pub mod mnemonic;
 pub mod secure_container_manager;
 pub mod signature_manager;
 pub mod standard_manager;

@@ -15,7 +15,7 @@
 //!
 //! Ausführen: `cargo test --test services_tests services::crypto_properties`
 
-use bip39::Language;
+use human_money_core::MnemonicLanguage;
 use human_money_core::services::crypto_utils::{
     UserIdError, create_user_id, decrypt_data, generate_ed25519_keypair_for_tests,
     generate_mnemonic, validate_user_id,
@@ -35,7 +35,7 @@ use human_money_core::services::crypto_utils::{
 fn test_mnemonic_generation_covers_all_bip39_sizes() -> Result<(), Box<dyn std::error::Error>> {
     let valid_counts = [12usize, 15, 18, 21, 24];
     for &count in &valid_counts {
-        let mnemonic = generate_mnemonic(count, Language::English)
+        let mnemonic = generate_mnemonic(count, MnemonicLanguage::English)
             .unwrap_or_else(|_| panic!("generate_mnemonic({count}) should succeed"));
         let word_count_actual = mnemonic.split_whitespace().count();
         assert_eq!(
@@ -50,9 +50,9 @@ fn test_mnemonic_generation_covers_all_bip39_sizes() -> Result<(), Box<dyn std::
 /// müssen mit einem Fehler abgelehnt werden.
 #[test]
 fn test_mnemonic_generation_rejects_unsupported_sizes() {
-    assert!(generate_mnemonic(11, Language::English).is_err(), "11 words is not a BIP-39 size");
-    assert!(generate_mnemonic(13, Language::English).is_err(), "13 words is not a BIP-39 size");
-    assert!(generate_mnemonic(0,  Language::English).is_err(), "0 words makes no sense");
+    assert!(generate_mnemonic(11, MnemonicLanguage::English).is_err(), "11 words is not a BIP-39 size");
+    assert!(generate_mnemonic(13, MnemonicLanguage::English).is_err(), "13 words is not a BIP-39 size");
+    assert!(generate_mnemonic(0,  MnemonicLanguage::English).is_err(), "0 words makes no sense");
 }
 
 // =============================================================================

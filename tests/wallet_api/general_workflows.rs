@@ -13,7 +13,7 @@ use human_money_core::test_utils::{
     setup_in_memory_wallet, setup_service_with_profile,
 };
 use human_money_core::{
-    VoucherCoreError, VoucherStatus,
+    VoucherCoreError, VoucherStatus, MnemonicLanguage,
     app_service::AppService,
     models::{
         profile::PublicProfile, voucher::ValueDefinition,
@@ -164,6 +164,7 @@ fn api_app_service_lifecycle_with_passphrase() {
         &actor_with_passphrase.mnemonic,
         None, // <- Fehlende Passphrase
         "any-new-password",
+        MnemonicLanguage::English,
     );
 
     assert!(
@@ -192,28 +193,28 @@ fn api_app_service_lifecycle_with_passphrase() {
 /// 4.  Validiert Phrasen mit ungültigen Wörtern oder schlechter Prüfsumme (sollen fehlschlagen).
 #[test]
 fn api_app_service_mnemonic_helpers() {
-    let mnemonic = AppService::generate_mnemonic(12).unwrap();
+    let mnemonic = AppService::generate_mnemonic(12, MnemonicLanguage::English).unwrap();
     assert_eq!(
         mnemonic.split_whitespace().count(),
         12,
         "Mnemonic should have 12 words"
     );
     assert!(
-        AppService::generate_mnemonic(11).is_err(),
+        AppService::generate_mnemonic(11, MnemonicLanguage::English).is_err(),
         "Should fail with invalid word count"
     );
     assert!(
-        AppService::validate_mnemonic(&mnemonic).is_ok(),
+        AppService::validate_mnemonic(&mnemonic, MnemonicLanguage::English).is_ok(),
         "A freshly generated mnemonic should be valid"
     );
     let invalid_word_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon hello";
     assert!(
-        AppService::validate_mnemonic(invalid_word_mnemonic).is_err(),
+        AppService::validate_mnemonic(invalid_word_mnemonic, MnemonicLanguage::English).is_err(),
         "Should fail with an invalid word"
     );
     let bad_checksum_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
     assert!(
-        AppService::validate_mnemonic(bad_checksum_mnemonic).is_err(),
+        AppService::validate_mnemonic(bad_checksum_mnemonic, MnemonicLanguage::English).is_err(),
         "Should fail with a bad checksum"
     );
 }
@@ -248,7 +249,8 @@ fn api_app_service_password_recovery() {
                 &profile_info.folder_name,
                 wrong_mnemonic,
                 None,
-                new_password
+                new_password,
+                MnemonicLanguage::English,
             )
             .is_err()
     );
@@ -264,6 +266,7 @@ fn api_app_service_password_recovery() {
             &actor.mnemonic,
             None,
             new_password,
+            MnemonicLanguage::English,
         )
         .expect("Recovery with correct mnemonic should succeed");
     assert!(
@@ -311,6 +314,7 @@ fn api_app_service_password_recovery_with_passphrase() {
         &actor.mnemonic,
         None,
         new_password,
+        MnemonicLanguage::English,
     );
     assert!(
         recovery_fail.is_err(),
@@ -324,6 +328,7 @@ fn api_app_service_password_recovery_with_passphrase() {
             &actor.mnemonic,
             actor.passphrase,
             new_password,
+            MnemonicLanguage::English,
         )
         .expect("Recovery with correct passphrase should succeed");
 
@@ -352,7 +357,7 @@ fn api_wallet_lifecycle() {
     let dir = tempdir().unwrap();
     let test_user = &ACTORS.alice; // Nehmen wir Alice als Testperson
     let (wallet_a, identity_a) =
-        Wallet::new_from_mnemonic(&test_user.mnemonic, test_user.passphrase, test_user.prefix)
+        Wallet::new_from_mnemonic(&test_user.mnemonic, test_user.passphrase, test_user.prefix, MnemonicLanguage::English)
             .expect("Wallet creation failed");
     let original_user_id = wallet_a.profile.user_id.clone();
     let folder_name = {
@@ -973,7 +978,7 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
 
     // 1. Profile erstellen
     service_alice
-        .create_profile("Alice Details", &mnemonic, None, Some("alice"), "password")
+        .create_profile("Alice Details", &mnemonic, None, Some("alice"), "password", MnemonicLanguage::English)
         .expect("Alice profile creation failed");
 
     let id_alice = service_alice.get_user_id().unwrap();
