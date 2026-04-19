@@ -27,7 +27,7 @@ use bip39::{Language, Mnemonic};
 
 // Key Derivation Functions
 use hkdf::Hkdf;
-use hmac::Hmac;
+use hmac::{Hmac, Mac};
 use pbkdf2::pbkdf2;
 
 // Standard Bibliothek
@@ -161,38 +161,25 @@ pub fn derive_ed25519_keypair(
     let mnemonic = Mnemonic::parse_in_normalized(Language::English, mnemonic_phrase)
         .map_err(|e| VoucherCoreError::Crypto(format!("Mnemonic parsing failed: {}", e)))?;
 
-    // Generate the standard BIP-39 seed (uses PBKDF2 with 2048 rounds)
+    // Generate the standard BIP-39 seed (uses PBKDF2-HMAC-SHA512 with 2048 rounds)
     let bip39_seed = mnemonic.to_seed(passphrase.unwrap_or(""));
 
-    #[cfg(not(any(test, feature = "test-utils")))]
-    const PBKDF2_ROUNDS: u32 = 100_000;
-    #[cfg(any(test, feature = "test-utils"))]
-    const PBKDF2_ROUNDS: u32 = 1;
+    // Standard SLIP-0010 Master Key Derivation for Ed25519
+    // I = HMAC-SHA512(key="ed25519 seed", Data=Seed)
+    let mut hmac = <Hmac<Sha512> as hmac::Mac>::new_from_slice(b"ed25519 seed")
+        .map_err(|e| VoucherCoreError::Crypto(format!("HMAC initialization failed: {}", e)))?;
+    hmac.update(&bip39_seed[..]);
+    let result = hmac.finalize().into_bytes();
 
-    // Apply additional key stretching using PBKDF2 with 100,000 rounds
-    // This provides enhanced protection against brute-force attacks
-    // while maintaining BIP-39 compatibility for the initial seed generation
-    let mut stretched_key = [0u8; 32];
-    pbkdf2::<Hmac<Sha512>>(
-        &bip39_seed,
-        b"human-money-core",
-        PBKDF2_ROUNDS,
-        &mut stretched_key,
-    )
-    .map_err(|e| VoucherCoreError::Crypto(format!("PBKDF2 stretching failed: {}", e)))?;
+    // The first 32 bytes (I_L) are used as the secret seed for Ed25519
+    let ed25519_seed: [u8; 32] = result[..32]
+        .try_into()
+        .map_err(|_| VoucherCoreError::Crypto("Invalid seed length from HMAC-SHA512".to_string()))?;
 
-    // Use HKDF to derive an application-specific key from the stretched seed
-    // This is a cryptographic best practice to separate keys for different purposes
-    let hkdf = Hkdf::<Sha256>::new(None, &stretched_key);
-    let mut ed_signing_key_seed = [0u8; 32];
-    hkdf.expand(b"human-money-core/ed25519", &mut ed_signing_key_seed)
-        .map_err(|_| VoucherCoreError::Crypto("HKDF expansion failed".to_string()))?;
-
-    // SigningKey::from_seed_bytes takes a 32-byte seed and uses it to derive the
-    // Ed25519 keypair in a secure and standardized way (internally uses SHA512)
-    let signing_key = SigningKey::from_bytes(&ed_signing_key_seed);
-
+    // SigningKey::from_bytes takes the 32-byte seed
+    let signing_key = SigningKey::from_bytes(&ed25519_seed);
     let public_key = signing_key.verifying_key();
+
     Ok((public_key, signing_key))
 }
 
@@ -958,6 +945,48 @@ mod tests {
 
         let invalid_id3 = valid_id.replace("valid-prefix", "invalid--");
         assert!(!validate_user_id(&invalid_id3));
+    }
+
+    #[test]
+    fn test_derive_ed25519_keypair_slip10_vector() {
+        // Known SLIP-0010 Master Key for Ed25519 (All-zero entropy mnemonic)
+        // Mnemonic: abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about
+        // Expected Private Seed (hex): 560f9f3c94558b6551928bb781cf6092c6b8800b4fc544af2c9444ed126d51aa
+        // Expected Public Key (hex): e96b1c6b8769fdb0b34fbecfdf85c33b053cecad9517e1ab88cba614335775c1
+
+        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let (pub_key, priv_key) = derive_ed25519_keypair(mnemonic, None).unwrap();
+
+        let pub_hex = hex::encode(pub_key.as_bytes());
+        let priv_hex = hex::encode(priv_key.to_bytes());
+        
+        // Assert that we match the SLIP-0010 Master Key derivation
+        assert_eq!(priv_hex, "560f9f3c94558b6551928bb781cf6092c6b8800b4fc544af2c9444ed126d51aa");
+        assert_eq!(pub_hex, "e96b1c6b8769fdb0b34fbecfdf85c33b053cecad9517e1ab88cba614335775c1");
+    }
+
+    #[test]
+    fn test_hmac_sha512_basic() {
+        let key = b"key";
+        let data = b"test";
+        let mut mac = <Hmac<Sha512> as hmac::Mac>::new_from_slice(key).unwrap();
+        mac.update(data);
+        let result = mac.finalize().into_bytes();
+        assert_eq!(hex::encode(result), "287a0fb89a7fbdfa5b5538636918e537a5b83065e4ff331268b7aaa115dde047a9b0f4fb5b828608fc0b6327f10055f7637b058e9e0dbb9e698901a3e6dd461c");
+    }
+
+    #[test]
+    fn test_hmac_sha512_slip10_basic() {
+        // SLIP-0010 Test Vector 1 (ed25519)
+        // Seed: 000102030405060708090a0b0c0d0e0f
+        // Expected IL: 2b4be7f19ee27bbf30c667b642d5f4aa69fd169872f8fc3059c08ebae2eb19e7
+        let key = b"ed25519 seed";
+        let data = hex::decode("000102030405060708090a0b0c0d0e0f").unwrap();
+        let mut mac = <Hmac<Sha512> as hmac::Mac>::new_from_slice(key).unwrap();
+        mac.update(&data);
+        let result = mac.finalize().into_bytes();
+        let il = hex::encode(&result[..32]);
+        assert_eq!(il, "2b4be7f19ee27bbf30c667b642d5f4aa69fd169872f8fc3059c08ebae2eb19e7");
     }
 
     #[test]
