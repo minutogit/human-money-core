@@ -4,7 +4,7 @@
 //! Zentrale Hilfsfunktionen für alle Tests (intern und extern).
 
 // HINWEIS: Absoluter Pfad zu externen Crates für mehr Robustheit
-use bip39::Language;
+use crate::services::mnemonic::MnemonicLanguage;
 use ed25519_dalek::{Signer, SigningKey};
 use lazy_static::lazy_static;
 use std::path::Path;
@@ -63,7 +63,7 @@ pub fn user_from_mnemonic_slow(
 ) -> TestUser {
     // HINWEIS: Dies ist absichtlich die "langsame" Funktion, um sicherzustellen, dass die Tests
     // exakt dieselbe kryptographische Logik wie der Produktionscode verwenden.
-    let (public_key, signing_key) = crypto_utils::derive_ed25519_keypair(mnemonic, passphrase)
+    let (public_key, signing_key) = crypto_utils::derive_ed25519_keypair(mnemonic, passphrase, MnemonicLanguage::English)
         .expect("Failed to derive keypair from test mnemonic");
 
     let user_id = create_user_id(&public_key, prefix).unwrap();
@@ -277,7 +277,7 @@ lazy_static! {
 
 #[allow(dead_code)]
 pub fn generate_valid_mnemonic() -> String {
-    crypto_utils::generate_mnemonic(12, Language::English)
+    crypto_utils::generate_mnemonic(12, MnemonicLanguage::English)
         .expect("Test mnemonic generation should not fail")
 }
 
@@ -611,6 +611,7 @@ pub fn setup_service_with_profile(
             user.passphrase,
             user.prefix,
             password,
+            MnemonicLanguage::English,
         )
         .unwrap_or_else(|e| {
             panic!(

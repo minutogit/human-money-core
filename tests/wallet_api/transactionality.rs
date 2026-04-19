@@ -17,7 +17,7 @@ use human_money_core::{
     models::{
         conflict::{ProofOfDoubleSpend, ResolutionEndorsement},
         profile::PublicProfile,
-        secure_container::{ContainerConfig, SecureContainer},
+        secure_container::{ContainerConfig, PrivacyMode, SecureContainer},
         voucher::ValueDefinition,
     },
     services::{crypto_utils, voucher_manager::NewVoucherData},
@@ -330,7 +330,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
 
     // 1. Signatur von externem Unterzeichner vorbereiten (Additional Signature)
     let bundle_req = service_creator
-        .create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(id_signer.clone()))
+        .create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(id_signer.clone(), PrivacyMode::TrialDecryption))
         .unwrap();
 
     let (_, signer_identity_ref) = service_signer.get_unlocked_mut_for_test();
@@ -360,7 +360,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
             &voucher_from_request,
             "guarantor",
             true,
-            ContainerConfig::TargetDid(id_creator.clone()),
+            ContainerConfig::TargetDid(id_creator.clone(), PrivacyMode::TrialDecryption),
             Some(correct_password),
         )
         .unwrap();
@@ -382,7 +382,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let bundle_req2 = service_creator
         .create_signing_request_bundle(
             &local_id,
-            ContainerConfig::TargetDid(id_signer.clone()), // Erneut dieselbe ID, was in der Praxis zu einem Fehler führen könnte, aber hier nur das Rollback testet
+            ContainerConfig::TargetDid(id_signer.clone(), PrivacyMode::TrialDecryption), // Erneut dieselbe ID, was in der Praxis zu einem Fehler führen könnte, aber hier nur das Rollback testet
         )
         .unwrap();
 
@@ -409,7 +409,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
             &voucher_from_request2,
             "guarantor",
             true,
-            ContainerConfig::TargetDid(id_creator.clone()),
+            ContainerConfig::TargetDid(id_creator.clone(), PrivacyMode::TrialDecryption),
             Some(correct_password),
         )
         .unwrap();

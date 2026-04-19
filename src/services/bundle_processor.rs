@@ -10,7 +10,7 @@ use crate::error::ValidationError;
 use crate::error::VoucherCoreError;
 use crate::models::conflict::TransactionFingerprint;
 use crate::models::profile::{TransactionBundle, UserIdentity};
-use crate::models::secure_container::{PayloadType, SecureContainer};
+use crate::models::secure_container::{PayloadType, PrivacyMode, SecureContainer};
 use crate::models::voucher::Voucher;
 use crate::services::crypto_utils::{
     decode_base64, get_hash, get_pubkey_from_user_id, sign_ed25519, verify_ed25519,
@@ -56,7 +56,7 @@ pub fn create_and_encrypt_bundle(
 
     let secure_container = create_secure_container(
         identity,
-        crate::models::secure_container::ContainerConfig::TargetDid(recipient_id.to_string()),
+        crate::models::secure_container::ContainerConfig::TargetDid(recipient_id.to_string(), PrivacyMode::TrialDecryption),
         &signed_bundle_bytes,
         PayloadType::TransactionBundle, // content type
     )?;
@@ -102,7 +102,7 @@ fn verify_container_signature(
     sender_id: &str,
 ) -> Result<(), VoucherCoreError> {
     let sender_pubkey_ed = get_pubkey_from_user_id(sender_id)?;
-    let signature_bytes = decode_base64(&container.t)?;
+    let signature_bytes = decode_base64(&container.signature)?;
     let signature = Signature::from_slice(&signature_bytes)?;
 
     if !verify_ed25519(&sender_pubkey_ed, container.i.as_bytes(), &signature) {
@@ -148,16 +148,16 @@ mod tests {
 
         let mut container = create_secure_container(
             &id1,
-            ContainerConfig::TargetDid(id2_str),
+            ContainerConfig::TargetDid(id2_str, PrivacyMode::TrialDecryption),
             b"test_payload",
             PayloadType::TransactionBundle,
         )
         .unwrap();
 
         // Mutate signature
-        let mut sig_bytes = decode_base64(&container.t).unwrap();
+        let mut sig_bytes = decode_base64(&container.signature).unwrap();
         sig_bytes[0] ^= 0xFF; // Flip bits
-        container.t = crate::services::crypto_utils::encode_base64(&sig_bytes);
+        container.signature = crate::services::crypto_utils::encode_base64(&sig_bytes);
 
         let result = verify_container_signature(&mut container, &id1.user_id);
         assert!(result.is_err());

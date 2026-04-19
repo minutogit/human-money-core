@@ -7,13 +7,12 @@
 //! - `sign-standard`: Signiert eine gegebene Standard-Definitionsdatei.
 
 use anyhow::{Context, Result};
-use bip39::Language;
 use clap::{Parser, Subcommand};
 use ed25519_dalek::SigningKey;
 use human_money_core::{
     crypto_utils::{self, get_hash},
     models::voucher_standard_definition::VoucherStandardDefinition,
-    to_canonical_json,
+    to_canonical_json, MnemonicLanguage,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -83,7 +82,7 @@ fn generate_keys(prefix: &str) -> Result<()> {
     println!("🔑 Erzeuge neue Mnemonic-Phrase und Schlüsselpaar...");
 
     // 1. Mnemonic erzeugen und speichern
-    let mnemonic = crypto_utils::generate_mnemonic(12, Language::English)
+    let mnemonic = crypto_utils::generate_mnemonic(12, MnemonicLanguage::English)
         .map_err(|e| anyhow::anyhow!(e.to_string()))
         .context("Mnemonic konnte nicht generiert werden")?;
     fs::write(&mnemonic_path, &mnemonic).with_context(|| {
@@ -94,7 +93,7 @@ fn generate_keys(prefix: &str) -> Result<()> {
     })?;
 
     // 2. Schlüsselpaar aus Mnemonic ableiten
-    let (public_key, signing_key) = crypto_utils::derive_ed25519_keypair(&mnemonic, None)?;
+    let (public_key, signing_key) = crypto_utils::derive_ed25519_keypair(&mnemonic, None, MnemonicLanguage::English)?;
 
     // 3. Privaten Schlüssel speichern
     fs::write(&key_path, signing_key.to_bytes()).with_context(|| {

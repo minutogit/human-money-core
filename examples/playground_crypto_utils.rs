@@ -2,7 +2,7 @@
 // run with: cargo run --example playground_crypto_utils
 // more playgrounds
 
-use bip39::Language;
+use human_money_core::MnemonicLanguage;
 use hex;
 use human_money_core::services::crypto_utils::{
     create_user_id, derive_ed25519_keypair, ed25519_pub_to_x25519,
@@ -19,24 +19,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Mnemonic generieren
     println!("\nGenerating mnemonic...");
-    let mnemonic = generate_mnemonic(24, Language::English)?;
+    let mnemonic = generate_mnemonic(24, MnemonicLanguage::English)?;
     println!("Mnemonic phrase: {}", mnemonic);
 
     // Ed25519-Schlüsselpaar ableiten
     println!("\nDeriving Ed25519 keys...");
-    let (ed_pub, ed_priv) = derive_ed25519_keypair(&mnemonic, None)?;
+    let (ed_pub, ed_priv) = derive_ed25519_keypair(&mnemonic, None, MnemonicLanguage::English)?;
     println!("Ed25519 Public Key: {}", hex::encode(ed_pub.to_bytes()));
     println!("Ed25519 Private Key: {}", hex::encode(ed_priv.to_bytes()));
 
     // User ID generieren und ausgeben
-    println!("\nGenerating User IDs...");
-
-    // 1. Ohne Prefix
-    let user_id_no_prefix = create_user_id(&ed_pub, None).unwrap();
-    println!("User ID (no prefix):   {}", user_id_no_prefix);
-
-    // 2. Mit Prefix "ID"
-    let prefix = "ID";
+    println!("\nGenerating User ID...");
+    let prefix = "id";
     let user_id_with_prefix = create_user_id(&ed_pub, Some(prefix)).unwrap();
     println!("User ID (prefix '{}'): {}", prefix, user_id_with_prefix);
 

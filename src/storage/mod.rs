@@ -42,7 +42,7 @@ pub enum AuthMethod<'a> {
     /// Ein bereits abgeleiteter Session-Key (überspringt die Key-Ableitung)
     SessionKey([u8; 32]),
     /// Authentifizierung mittels einer Mnemonic-Phrase (für die Wiederherstellung).
-    Mnemonic(&'a str, Option<&'a str>),
+    Mnemonic(&'a str, Option<&'a str>, crate::services::mnemonic::MnemonicLanguage),
     /// Authentifizierung mittels der kryptographischen Identität (für die Wiederherstellung).
     RecoveryIdentity(&'a UserIdentity),
 }

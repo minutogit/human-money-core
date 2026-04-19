@@ -1,6 +1,6 @@
 [package]
 name = "human_money_core"
-version = "0.2.3"
+version = "0.2.5"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -9,7 +9,7 @@ edition = "2024"
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 serde_json_canonicalizer = "0.3.0"
 curve25519-dalek = { version = "4.1", features = ["group", "digest", "rand_core"] }
-bip39 = { version = "2.1.0", features = ["std"] }
+bip39 = { version = "2.1.0", features = ["std", "all-languages"] }
 rand = "0.8"
 zeroize = { version = "1.7", features = ["derive"] }
 argon2 = "0.5"
@@ -57,7 +57,7 @@ path = "src/bin/voucher-cli.rs"
 
 [dev-dependencies]
 rand = "0.8"
-human_money_core = { version = "0.2.3", path = ".", features = ["test-utils"] }
+human_money_core = { version = "0.2.5", path = ".", features = ["test-utils"] }
 regex = "1.10.4"
 tempfile = "3.10.1"
 lazy_static = "1.4.0"

@@ -19,9 +19,10 @@
 //! 7.  **Rohdaten-Ausgabe:** Der finale Zustand des Gutscheins wird als JSON ausgegeben.
 
 use human_money_core::app_service::AppService;
-use human_money_core::models::secure_container::ContainerConfig;
+use human_money_core::models::secure_container::{ContainerConfig, PrivacyMode};
 use human_money_core::models::voucher::ValueDefinition;
 use human_money_core::{NewVoucherData, VoucherStatus, verify_and_parse_standard};
+use human_money_core::MnemonicLanguage;
 use std::collections::HashMap;
 use tempfile::tempdir;
 
@@ -45,38 +46,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Erstelle Profile für alle Teilnehmer
     service_creator.create_profile(
         "Creator",
-        &AppService::generate_mnemonic(12)?,
+        &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
         Some("Test".into()),
         Some("creator"),
         password,
+        MnemonicLanguage::English,
     )?;
     service_g1.create_profile(
         "Guarantor 1",
-        &AppService::generate_mnemonic(12)?,
+        &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
         Some("Test".into()),
         Some("g1"),
         password,
+        MnemonicLanguage::English,
     )?;
     service_g2.create_profile(
         "Guarantor 2",
-        &AppService::generate_mnemonic(12)?,
+        &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
         Some("Test".into()),
         Some("g2"),
         password,
+        MnemonicLanguage::English,
     )?;
     service_recipient.create_profile(
         "Recipient",
-        &AppService::generate_mnemonic(12)?,
+        &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
         Some("Test".into()),
         Some("rcp"),
         password,
+        MnemonicLanguage::English,
     )?;
     service_charlie.create_profile(
         "Charlie",
-        &AppService::generate_mnemonic(12)?,
+        &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
         Some("Test".into()),
         Some("charlie"),
         password,
+        MnemonicLanguage::English,
     )?;
 
     let g1_id = service_g1.get_user_id()?;
@@ -94,6 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Erstellen eines vollständigen PublicProfile für Bürge 1 mit Beispielwerten
     let g1_profile = human_money_core::models::profile::PublicProfile {
+        protocol_version: Some("v1".to_string()),
         id: Some(g1_id.clone()),
         first_name: Some("Max".to_string()),
         last_name: Some("Bürger".to_string()),
@@ -137,6 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Erstellen eines vollständigen PublicProfile für Bürge 2 mit Beispielwerten
     let g2_profile = human_money_core::models::profile::PublicProfile {
+        protocol_version: Some("v1".to_string()),
         id: Some(g2_id.clone()),
         first_name: Some("Erika".to_string()),
         last_name: Some("Bürgin".to_string()),
@@ -194,6 +202,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Erstellen eines vollständigen PublicProfile mit Beispielwerten
     let complete_creator_profile = human_money_core::models::profile::PublicProfile {
+        protocol_version: Some("v1".to_string()),
         id: Some(creator_id.clone()),
         first_name: Some("Max".to_string()),
         last_name: Some("Mustermann".to_string()),
@@ -241,7 +250,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // **Teil A: Bürge 1**
     println!("\n  -> Ersteller sendet Signaturanfrage an Bürge 1...");
-    let _request_bundle_to_g1 = service_creator.create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g1_id.clone()))?;
+    let _request_bundle_to_g1 = service_creator.create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g1_id.clone(), PrivacyMode::TrialDecryption))?;
     // In einer echten App würde `request_bundle_to_g1` nun z.B. via QR-Code übertragen.
 
     println!("  -> Bürge 1 empfängt die Anfrage, signiert und sendet die Signatur zurück...");
@@ -251,7 +260,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &created_voucher,
         "guarantor",
         true,
-        ContainerConfig::TargetDid(creator_id.clone()),
+        ContainerConfig::TargetDid(creator_id.clone(), PrivacyMode::TrialDecryption),
         Some(password),
     )?;
 
@@ -274,14 +283,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // **Teil B: Bürge 2**
     println!("\n  -> Ersteller sendet Signaturanfrage an Bürge 2...");
-    let _request_bundle_to_g2 = service_creator.create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g2_id.clone()))?;
+    let _request_bundle_to_g2 = service_creator.create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g2_id.clone(), PrivacyMode::TrialDecryption))?;
 
     println!("  -> Bürge 2 empfängt, signiert und sendet zurück...");
     let response_bundle_from_g2 = service_g2.create_detached_signature_response_bundle(
         &created_voucher,
         "guarantor",
         true,
-        ContainerConfig::TargetDid(creator_id.clone()),
+        ContainerConfig::TargetDid(creator_id.clone(), PrivacyMode::TrialDecryption),
         Some(password),
     )?;
 

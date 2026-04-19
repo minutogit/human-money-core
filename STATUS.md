@@ -1,9 +1,9 @@
 ---
 project: human-money-core
-version: "0.2.3"
+version: "0.2.5"
 phase: "active-development"
 health: "green"
-last_updated: "2026-04-18"
+last_updated: "2026-04-19"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -59,6 +59,9 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] 'Endorsed' voucher status & persistent signature logging workflow
 - [x] User profile management (metadata retrieval and updates)
 - [x] Decentralized conflict & reputation management (VIP gossip, proof persistence)
+- [x] Multi-language mnemonic support (BIP-39 standard + custom German wordlist)
+- [x] Refactored key derivation (strict BIP-39/SLIP-0010 compliance)
+- [x] JWS & JWE standard compliance (RFC 7515/7516) and DIDComm-compatible URIs
 
 ## Next Milestones
 

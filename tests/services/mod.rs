@@ -6,4 +6,5 @@
 
 pub mod crypto;
 pub mod crypto_properties;
+pub mod jws_profile;
 pub mod utils;

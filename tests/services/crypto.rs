@@ -8,7 +8,7 @@
 
 // --- Tests from test_secure_container.rs ---
 use human_money_core::VoucherCoreError;
-use human_money_core::models::secure_container::{ContainerConfig, PayloadType};
+use human_money_core::models::secure_container::{ContainerConfig, PayloadType, PrivacyMode};
 use human_money_core::services::secure_container_manager::{
     ContainerManagerError, create_secure_container, open_secure_container,
 };
@@ -32,7 +32,7 @@ fn test_multi_recipient_secure_container() {
 
     let container = create_secure_container(
         &alice_identity,
-        ContainerConfig::TargetDids(recipient_ids),
+        ContainerConfig::TargetDids(recipient_ids, PrivacyMode::TrialDecryption),
         secret_payload,
         PayloadType::Generic("test_message".to_string()),
     )
@@ -90,7 +90,7 @@ fn test_sender_can_reopen_container() {
     // Sender erstellt einen Container für den Empfänger.
     let container = create_secure_container(
         sender,
-        ContainerConfig::TargetDids(vec![recipient.user_id.clone()]),
+        ContainerConfig::TargetDids(vec![recipient.user_id.clone()], PrivacyMode::TrialDecryption),
         payload,
         PayloadType::TransactionBundle,
     )
@@ -116,7 +116,7 @@ fn test_sender_can_reopen_container() {
 
 // --- Tests from test_crypto_utils.rs ---
 
-use bip39::Language;
+use human_money_core::MnemonicLanguage;
 use hkdf::Hkdf;
 use human_money_core::services::crypto_utils::{
     UserIdError, create_user_id, decrypt_data, derive_ed25519_keypair, ed25519_pub_to_x25519,
@@ -130,7 +130,7 @@ use x25519_dalek::PublicKey as X25519PublicKey;
 
 #[test]
 fn test_generate_mnemonic() -> Result<(), Box<dyn std::error::Error>> {
-    let mnemonic = generate_mnemonic(24, Language::English)?;
+    let mnemonic = generate_mnemonic(24, MnemonicLanguage::English)?;
     assert!(!mnemonic.is_empty());
     println!("Generated mnemonic: {}", mnemonic);
     Ok(())
@@ -138,8 +138,8 @@ fn test_generate_mnemonic() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_derive_ed25519_keypair() -> Result<(), Box<dyn std::error::Error>> {
-    let mnemonic = generate_mnemonic(24, Language::English)?;
-    let (ed_pub, ed_priv) = derive_ed25519_keypair(&mnemonic, None)?;
+    let mnemonic = generate_mnemonic(24, MnemonicLanguage::English)?;
+    let (ed_pub, ed_priv) = derive_ed25519_keypair(&mnemonic, None, MnemonicLanguage::English)?;
     assert_eq!(ed_pub.as_bytes().len(), 32);
     assert_eq!(ed_priv.as_bytes().len(), 32);
     println!("Ed25519 Public Key: {}", hex::encode(ed_pub.to_bytes()));
@@ -151,7 +151,7 @@ fn test_derive_ed25519_keypair() -> Result<(), Box<dyn std::error::Error>> {
 fn test_validate_mnemonic() {
     // 1. Test mit einer bekanntermaßen gültigen Phrase
     let valid_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-    let result = validate_mnemonic_phrase(valid_mnemonic);
+    let result = validate_mnemonic_phrase(valid_mnemonic, MnemonicLanguage::English);
     assert!(
         result.is_ok(),
         "Validation of a correct mnemonic failed. Error: {:?}",
@@ -161,7 +161,7 @@ fn test_validate_mnemonic() {
 
     // 2. Test mit einem ungültigen Wort
     let invalid_word_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon hello";
-    let result = validate_mnemonic_phrase(invalid_word_mnemonic);
+    let result = validate_mnemonic_phrase(invalid_word_mnemonic, MnemonicLanguage::English);
     assert!(
         result.is_err(),
         "Validation should have failed for an invalid word."
@@ -171,7 +171,7 @@ fn test_validate_mnemonic() {
     // 3. Test mit einer ungültigen Prüfsumme
     // "about" wurde durch "abandon" ersetzt, was die Prüfsumme ungültig macht.
     let bad_checksum_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
-    let result = validate_mnemonic_phrase(bad_checksum_mnemonic);
+    let result = validate_mnemonic_phrase(bad_checksum_mnemonic, MnemonicLanguage::English);
     assert!(
         result.is_err(),
         "Validation should have failed for a bad checksum."
@@ -203,8 +203,8 @@ fn test_validate_mnemonic() {
 /// Zustands-Inkonsistenzen erhöht.
 #[test]
 fn test_user_id_creation_requires_prefix() -> Result<(), Box<dyn std::error::Error>> {
-    let mnemonic = generate_mnemonic(24, Language::English)?;
-    let (ed_pub, _) = derive_ed25519_keypair(&mnemonic, None)?;
+    let mnemonic = generate_mnemonic(24, MnemonicLanguage::English)?;
+    let (ed_pub, _) = derive_ed25519_keypair(&mnemonic, None, MnemonicLanguage::English)?;
 
     // 1. Test: `None` als Präfix muss fehlschlagen
     let result_none = create_user_id(&ed_pub, None);
@@ -230,8 +230,8 @@ fn test_user_id_creation_requires_prefix() -> Result<(), Box<dyn std::error::Err
 
 #[test]
 fn test_ed25519_to_x25519_conversion() -> Result<(), Box<dyn std::error::Error>> {
-    let mnemonic = generate_mnemonic(24, Language::English)?;
-    let (ed_pub, _) = derive_ed25519_keypair(&mnemonic, None)?;
+    let mnemonic = generate_mnemonic(24, MnemonicLanguage::English)?;
+    let (ed_pub, _) = derive_ed25519_keypair(&mnemonic, None, MnemonicLanguage::English)?;
     let x25519_pub = ed25519_pub_to_x25519(&ed_pub);
     assert_eq!(x25519_pub.as_bytes().len(), 32);
     println!("X25519 Public Key: {}", hex::encode(x25519_pub.to_bytes()));
@@ -266,8 +266,8 @@ fn test_ephemeral_dh_key_generation() {
 
 #[test]
 fn test_ed25519_signature() -> Result<(), Box<dyn std::error::Error>> {
-    let mnemonic = generate_mnemonic(24, Language::English)?;
-    let (_, ed_priv) = derive_ed25519_keypair(&mnemonic, None)?;
+    let mnemonic = generate_mnemonic(24, MnemonicLanguage::English)?;
+    let (_, ed_priv) = derive_ed25519_keypair(&mnemonic, None, MnemonicLanguage::English)?;
     let message = b"Voucher system test message";
 
     let signature = sign_ed25519(&ed_priv, message);
@@ -285,8 +285,8 @@ fn test_ed25519_signature() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_get_pubkey_from_user_id() -> Result<(), Box<dyn std::error::Error>> {
-    let mnemonic = generate_mnemonic(24, Language::English)?;
-    let (ed_pub, ed_sk) = derive_ed25519_keypair(&mnemonic, None)?;
+    let mnemonic = generate_mnemonic(24, MnemonicLanguage::English)?;
+    let (ed_pub, ed_sk) = derive_ed25519_keypair(&mnemonic, None, MnemonicLanguage::English)?;
     let prefix = "ID";
     let user_id_with_prefix = create_user_id(&ed_pub, Some(prefix)).unwrap();
 

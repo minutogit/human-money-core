@@ -13,6 +13,7 @@ use chrono::{Utc, Duration};
 use bs58;
 use tempfile::tempdir;
 use human_money_core::app_service::AppService;
+use human_money_core::MnemonicLanguage;
 
 fn create_mock_proof(offender_id: &str) -> ProofOfDoubleSpend {
     let reporter = &ACTORS.victim;
@@ -115,7 +116,7 @@ fn test_cleanup_proofs_removes_expired_only() {
 fn test_conflict_override_persistence() {
     let dir = tempdir().unwrap();
     let mut service = AppService::new(dir.path()).unwrap();
-    service.create_profile("PersistTest", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", None, Some("al"), "pwd123").unwrap();
+    service.create_profile("PersistTest", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", None, Some("al"), "pwd123", MnemonicLanguage::English).unwrap();
 
     // Import a proof directly
     let mut tx = Transaction::default();

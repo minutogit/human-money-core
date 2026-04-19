@@ -20,6 +20,7 @@ use human_money_core::app_service::AppService;
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::models::voucher::ValueDefinition;
 use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::MnemonicLanguage;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -58,10 +59,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut service_creator = AppService::new(&creator_storage_path)?;
         service_creator.create_profile(
             "Creator",
-            &AppService::generate_mnemonic(12)?,
+            &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
             None,
             Some("creator"),
             password,
+            MnemonicLanguage::English,
         )?;
     } // Drop to close
 
@@ -69,10 +71,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut service_alice = AppService::new(dir_alice.path())?;
     service_alice.create_profile(
         "Alice",
-        &AppService::generate_mnemonic(12)?,
+        &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
         None,
         Some("alice"),
         password,
+        MnemonicLanguage::English,
     )?;
     service_alice.unlock_session(password, 60)?;
     let alice_id = service_alice.get_user_id()?;
@@ -80,10 +83,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut service_bob = AppService::new(dir_bob.path())?;
     service_bob.create_profile(
         "Bob",
-        &AppService::generate_mnemonic(12)?,
+        &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
         None,
         Some("bob"),
         password,
+        MnemonicLanguage::English,
     )?;
     service_bob.unlock_session(password, 60)?;
     let bob_id = service_bob.get_user_id()?;
