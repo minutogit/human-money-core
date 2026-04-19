@@ -622,11 +622,11 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
     assert!(result_pc_receive.is_err());
     let err_str = result_pc_receive.unwrap_err();
     assert!(
-        // KORREKTUR: Der Fehler tritt korrekterweise bereits auf Layer 1
-        // (Secure Container) auf, da die User-ID "bo-..." nicht in der
-        // Empfängerliste des Containers ("is-...") enthalten ist.
-        err_str.contains("The current user is not in the list of recipients for this container"),
-        "Error must be 'Not in recipient list' (L1 check). Got: {}",
+        // Mit PrivacyMode::TrialDecryption wird der Container erfolgreich geöffnet
+        // (da die Public Keys übereinstimmen), aber die Bundle-Validierung auf Layer 3
+        // schlägt fehl, da die recipient_id nicht zur Wallet-User-ID passt.
+        err_str.contains("Bundle Recipient Mismatch") || err_str.contains("not intended for this wallet"),
+        "Error must indicate recipient mismatch. Got: {}",
         err_str
     );
     // Das PC-Wallet muss leer bleiben

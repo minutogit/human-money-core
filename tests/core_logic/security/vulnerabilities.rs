@@ -7,7 +7,7 @@ use human_money_core::VoucherInstance;
 use human_money_core::crypto_utils;
 use human_money_core::error::ValidationError;
 use human_money_core::models::profile::TransactionBundle;
-use human_money_core::models::secure_container::{ContainerConfig, PayloadType};
+use human_money_core::models::secure_container::{ContainerConfig, PayloadType, PrivacyMode};
 use human_money_core::models::voucher::{
     Collateral, Transaction, ValueDefinition, Voucher, VoucherSignature,
 };
@@ -206,7 +206,7 @@ fn create_hacked_bundle_and_container(
     let signed_bundle_bytes = serde_json::to_vec(&bundle).unwrap();
     let secure_container = create_secure_container(
         hacker_identity,
-        ContainerConfig::TargetDid(victim_id.to_string()),
+        ContainerConfig::TargetDid(victim_id.to_string(), PrivacyMode::TrialDecryption),
         &signed_bundle_bytes,
         PayloadType::TransactionBundle,
     )

@@ -8,7 +8,7 @@
 
 // --- Tests from test_secure_container.rs ---
 use human_money_core::VoucherCoreError;
-use human_money_core::models::secure_container::{ContainerConfig, PayloadType};
+use human_money_core::models::secure_container::{ContainerConfig, PayloadType, PrivacyMode};
 use human_money_core::services::secure_container_manager::{
     ContainerManagerError, create_secure_container, open_secure_container,
 };
@@ -32,7 +32,7 @@ fn test_multi_recipient_secure_container() {
 
     let container = create_secure_container(
         &alice_identity,
-        ContainerConfig::TargetDids(recipient_ids),
+        ContainerConfig::TargetDids(recipient_ids, PrivacyMode::TrialDecryption),
         secret_payload,
         PayloadType::Generic("test_message".to_string()),
     )
@@ -90,7 +90,7 @@ fn test_sender_can_reopen_container() {
     // Sender erstellt einen Container für den Empfänger.
     let container = create_secure_container(
         sender,
-        ContainerConfig::TargetDids(vec![recipient.user_id.clone()]),
+        ContainerConfig::TargetDids(vec![recipient.user_id.clone()], PrivacyMode::TrialDecryption),
         payload,
         PayloadType::TransactionBundle,
     )

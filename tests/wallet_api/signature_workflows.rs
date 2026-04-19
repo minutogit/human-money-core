@@ -12,7 +12,7 @@ use human_money_core::{
     error::ValidationError,
     models::{
         profile::PublicProfile,
-        secure_container::{ContainerConfig, SecureContainer},
+        secure_container::{ContainerConfig, PrivacyMode, SecureContainer},
         signature::DetachedSignature,
         voucher::{ValueDefinition, Voucher, VoucherSignature},
     },
@@ -101,7 +101,7 @@ fn api_wallet_full_signature_workflow() {
     );
 
     let request_container_bytes = alice_wallet
-        .create_signing_request(&alice.identity, &local_id, ContainerConfig::TargetDid(bob.identity.user_id.clone()))
+        .create_signing_request(&alice.identity, &local_id, ContainerConfig::TargetDid(bob.identity.user_id.clone(), PrivacyMode::TrialDecryption))
         .unwrap();
     let request_file_path: PathBuf = temp_dir.path().join("request.secure");
     fs::write(&request_file_path, request_container_bytes).unwrap();
@@ -122,7 +122,7 @@ fn api_wallet_full_signature_workflow() {
             &voucher_from_alice,
             DetachedSignature::Signature(guarantor_metadata),
             true, // include_details
-            ContainerConfig::TargetDid(alice.identity.user_id.clone()),
+            ContainerConfig::TargetDid(alice.identity.user_id.clone(), PrivacyMode::TrialDecryption),
         )
         .unwrap();
     let response_file_path: PathBuf = temp_dir.path().join("response.secure");
@@ -170,7 +170,7 @@ fn api_wallet_signature_fail_wrong_recipient() {
     let (_, local_id) = setup_voucher_for_alice(&mut alice_wallet, &alice.identity);
 
     let request_bytes = alice_wallet
-        .create_signing_request(&alice.identity, &local_id, ContainerConfig::TargetDid(bob.identity.user_id.clone()))
+        .create_signing_request(&alice.identity, &local_id, ContainerConfig::TargetDid(bob.identity.user_id.clone(), PrivacyMode::TrialDecryption))
         .unwrap();
 
     let container: SecureContainer = serde_json::from_slice(&request_bytes).unwrap();
@@ -209,7 +209,7 @@ fn api_wallet_signature_fail_tampered_container() {
             &voucher,
             DetachedSignature::Signature(guarantor_metadata),
             true, // include_details
-            ContainerConfig::TargetDid(alice.identity.user_id.clone()),
+            ContainerConfig::TargetDid(alice.identity.user_id.clone(), PrivacyMode::TrialDecryption),
         )
         .unwrap();
 
@@ -282,7 +282,7 @@ fn api_wallet_signature_fail_mismatched_voucher_id() {
             &voucher_b,
             DetachedSignature::Signature(guarantor_metadata),
             true, // include_details
-            ContainerConfig::TargetDid(alice.identity.user_id.clone()),
+            ContainerConfig::TargetDid(alice.identity.user_id.clone(), PrivacyMode::TrialDecryption),
         )
         .unwrap();
 
@@ -309,7 +309,7 @@ fn api_wallet_signature_fail_wrong_payload_type() {
     let (_, local_id) = setup_voucher_for_alice(&mut alice_wallet, &alice.identity);
 
     let request_container_bytes = alice_wallet
-        .create_signing_request(&alice.identity, &local_id, ContainerConfig::TargetDid(alice.identity.user_id.clone()))
+        .create_signing_request(&alice.identity, &local_id, ContainerConfig::TargetDid(alice.identity.user_id.clone(), PrivacyMode::TrialDecryption))
         .unwrap();
 
     let result =
@@ -377,7 +377,7 @@ fn api_app_service_full_signature_workflow() {
         .clone();
 
     let request_bytes = service_creator
-        .create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(id_guarantor.clone()))
+        .create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(id_guarantor.clone(), PrivacyMode::TrialDecryption))
         .unwrap();
 
     let voucher_to_sign = {
@@ -398,7 +398,7 @@ fn api_app_service_full_signature_workflow() {
             &voucher_to_sign,
             "notary", // Role (basierend auf `create_additional_signature_data`)
             true,     // include_details
-            ContainerConfig::TargetDid(service_creator.get_user_id().unwrap()),
+            ContainerConfig::TargetDid(service_creator.get_user_id().unwrap(), PrivacyMode::TrialDecryption),
             Some(password),
         )
         .unwrap();
@@ -453,7 +453,7 @@ fn api_wallet_signature_roundtrip_minuto_required() {
 
     // Alice erstellt eine Signaturanfrage für Bob
     let request_bytes = alice_wallet
-        .create_signing_request(&alice.identity, &voucher_id, ContainerConfig::TargetDid(bob.identity.user_id.clone()))
+        .create_signing_request(&alice.identity, &voucher_id, ContainerConfig::TargetDid(bob.identity.user_id.clone(), PrivacyMode::TrialDecryption))
         .unwrap();
 
     // Bob verarbeitet die Anfrage und erstellt eine Antwort
@@ -481,7 +481,7 @@ fn api_wallet_signature_roundtrip_minuto_required() {
             &voucher_for_signing,
             signature_data_enum,
             true,
-            ContainerConfig::TargetDid(alice.identity.user_id.clone()),
+            ContainerConfig::TargetDid(alice.identity.user_id.clone(), PrivacyMode::TrialDecryption),
         )
         .unwrap();
 
@@ -598,7 +598,7 @@ fn test_full_guarantor_workflow_via_app_service() {
 
     // --- Signatur von Bürge 1 ---
     let _request_bundle_1 = service_creator
-        .create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g1_id.clone()))
+        .create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g1_id.clone(), PrivacyMode::TrialDecryption))
         .expect("Failed to create signing request for G1");
 
     // KORREKTUR: Wir müssen das Profil von G1 (Bürge 1) mit den
@@ -619,7 +619,7 @@ fn test_full_guarantor_workflow_via_app_service() {
             &details_before.voucher,
             "guarantor",
             true, // include_details
-            ContainerConfig::TargetDid(service_creator.get_user_id().unwrap()),
+            ContainerConfig::TargetDid(service_creator.get_user_id().unwrap(), PrivacyMode::TrialDecryption),
             Some(password),
         )
         .expect("Failed to create signature response from G1");
@@ -634,7 +634,7 @@ fn test_full_guarantor_workflow_via_app_service() {
 
     // --- Signatur von Bürge 2 ---
     let _request_bundle_2 = service_creator
-        .create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g2_id.clone()))
+        .create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g2_id.clone(), PrivacyMode::TrialDecryption))
         .expect("Failed to create signing request for G2");
 
     // KORREKTUR: Wir müssen das Profil von G2 (Bürge 2) mit den
@@ -652,7 +652,7 @@ fn test_full_guarantor_workflow_via_app_service() {
             &details_mid.voucher,
             "guarantor",
             true, // include_details
-            ContainerConfig::TargetDid(service_creator.get_user_id().unwrap()),
+            ContainerConfig::TargetDid(service_creator.get_user_id().unwrap(), PrivacyMode::TrialDecryption),
             Some(password),
         )
         .expect("Failed to create signature response from G2");
@@ -729,7 +729,7 @@ fn api_wallet_signature_roundtrip_silver_optional() {
     .unwrap();
 
     let request_bytes = alice_wallet
-        .create_signing_request(&alice.identity, &voucher_id, ContainerConfig::TargetDid(bob.identity.user_id.clone()))
+        .create_signing_request(&alice.identity, &voucher_id, ContainerConfig::TargetDid(bob.identity.user_id.clone(), PrivacyMode::TrialDecryption))
         .unwrap();
 
     let voucher_for_signing = debug_open_container(&request_bytes, &bob.identity).unwrap();
@@ -750,7 +750,7 @@ fn api_wallet_signature_roundtrip_silver_optional() {
             &voucher_for_signing,
             signature_data_enum,
             false, // include_details
-            ContainerConfig::TargetDid(alice.identity.user_id.clone()),
+            ContainerConfig::TargetDid(alice.identity.user_id.clone(), PrivacyMode::TrialDecryption),
         )
         .unwrap();
 
@@ -891,7 +891,7 @@ fn test_remove_signature_success_incomplete_state() {
         .create_signing_request(
             &alice.identity,
             &voucher_id,
-            ContainerConfig::TargetDid(bob.identity.user_id.clone()),
+            ContainerConfig::TargetDid(bob.identity.user_id.clone(), PrivacyMode::TrialDecryption),
         )
         .unwrap();
 
@@ -909,7 +909,7 @@ fn test_remove_signature_success_incomplete_state() {
             &voucher_for_signing,
             signature_data_enum,
             false,
-            ContainerConfig::TargetDid(alice.identity.user_id.clone()),
+            ContainerConfig::TargetDid(alice.identity.user_id.clone(), PrivacyMode::TrialDecryption),
         )
         .unwrap();
 
@@ -974,7 +974,7 @@ fn test_remove_signature_success_active_state() {
             .create_signing_request(
                 &alice.identity,
                 &voucher_id,
-                ContainerConfig::TargetDid(signer.user_id.clone()),
+                ContainerConfig::TargetDid(signer.user_id.clone(), PrivacyMode::TrialDecryption),
             )
             .unwrap();
 
@@ -992,7 +992,7 @@ fn test_remove_signature_success_active_state() {
                 &voucher_for_signing,
                 signature_data_enum,
                 false,
-                ContainerConfig::TargetDid(alice.identity.user_id.clone()),
+                ContainerConfig::TargetDid(alice.identity.user_id.clone(), PrivacyMode::TrialDecryption),
             )
             .unwrap();
 
@@ -1006,7 +1006,7 @@ fn test_remove_signature_success_active_state() {
         .create_signing_request(
             &alice.identity,
             &voucher_id,
-            ContainerConfig::TargetDid(bob.identity.user_id.clone()),
+            ContainerConfig::TargetDid(bob.identity.user_id.clone(), PrivacyMode::TrialDecryption),
         )
         .unwrap();
 
@@ -1024,7 +1024,7 @@ fn test_remove_signature_success_active_state() {
             &voucher_for_signing,
             signature_data_enum,
             false,
-            ContainerConfig::TargetDid(alice.identity.user_id.clone()),
+            ContainerConfig::TargetDid(alice.identity.user_id.clone(), PrivacyMode::TrialDecryption),
         )
         .unwrap();
 
@@ -1093,7 +1093,7 @@ fn test_remove_signature_triggers_status_downgrade() {
             .create_signing_request(
                 &alice.identity,
                 &voucher_id,
-                ContainerConfig::TargetDid(signer.user_id.clone()),
+                ContainerConfig::TargetDid(signer.user_id.clone(), PrivacyMode::TrialDecryption),
             )
             .unwrap();
 
@@ -1111,7 +1111,7 @@ fn test_remove_signature_triggers_status_downgrade() {
                 &voucher_for_signing,
                 signature_data_enum,
                 false,
-                ContainerConfig::TargetDid(alice.identity.user_id.clone()),
+                ContainerConfig::TargetDid(alice.identity.user_id.clone(), PrivacyMode::TrialDecryption),
             )
             .unwrap();
 

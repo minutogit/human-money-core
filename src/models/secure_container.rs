@@ -74,6 +74,21 @@ impl Default for EncryptionType {
     }
 }
 
+/// Definiert den Privatsphäre-Modus für die asymmetrische Verschlüsselung.
+///
+/// Dieser Modus bestimmt, ob und wie die Empfänger-ID im JWE-Header
+/// (kid-Feld) hinterlegt wird.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub enum PrivacyMode {
+    /// Maximale Privatsphäre: JWE-Header bleibt leer. Empfänger nutzen Trial Decryption.
+    #[default]
+    TrialDecryption,
+    /// Verdecktes Routing: Die ID wird gehasht im `kid`-Feld hinterlegt (erlaubt schnelles Finden ohne ID-Klartext).
+    HashedRouting,
+    /// Offenes Routing: Die did:key wird im Klartext im `kid`-Feld hinterlegt (maximale Transparenz/für einfaches Offline-Routing).
+    CleartextRouting,
+}
+
 /// Konfiguration für die Container-Verschlüsselung.
 ///
 /// Dieses Enum wird verwendet, um die Art der Verschlüsselung beim Erstellen
@@ -82,10 +97,10 @@ impl Default for EncryptionType {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum ContainerConfig {
-    /// Asymmetrische Verschlüsselung mit einer einzelnen DID.
-    TargetDid(String),
-    /// Asymmetrische Verschlüsselung mit mehreren DIDs.
-    TargetDids(Vec<String>),
+    /// Asymmetrische Verschlüsselung mit einer einzelnen DID und PrivacyMode.
+    TargetDid(String, PrivacyMode),
+    /// Asymmetrische Verschlüsselung mit mehreren DIDs und PrivacyMode.
+    TargetDids(Vec<String>, PrivacyMode),
     /// Symmetrische Verschlüsselung mit einem Passwort/PIN.
     Password(String),
     /// Keine Verschlüsselung (Klartext, nur für nicht-finanzielle Payloads!).
@@ -228,6 +243,35 @@ mod tests {
             PayloadType::Generic("custom".to_string()).to_didcomm_uri(),
             format!("{}/generic/1.0/custom.md", base)
         );
+    }
+
+    #[test]
+    fn test_container_config_serialization() {
+        // Dieser Test stellt sicher, dass die JSON-Struktur von ContainerConfig
+        // (insbesondere TargetDid) stabil bleibt und mit den Erwartungen des
+        // Frontends (Arrays für Tupel-Variants) übereinstimmt.
+        
+        let did = "did:key:z6MkiaMJCkd36qJ3FMgfqj9PFDsAqVF3aY8mEaa4t46Yr9Px";
+        let config = ContainerConfig::TargetDid(did.to_string(), PrivacyMode::TrialDecryption);
+        
+        let json = serde_json::to_string(&config).unwrap();
+        
+        // Erwartetes Format bei #[serde(tag = "type", content = "value")] und Tupel-Variant:
+        // value muss ein Array sein.
+        assert!(json.contains("\"type\":\"TargetDid\""));
+        assert!(json.contains(&format!("\"value\":[\"{}\",\"TrialDecryption\"]", did)));
+        
+        // Gegenprobe: Deserialisierung von manuellem JSON (wie es vom TS kommt)
+        let ts_json = format!(r#"{{"type": "TargetDid", "value": ["{}", "TrialDecryption"]}}"#, did);
+        let deserialized: ContainerConfig = serde_json::from_str(&ts_json).expect("TS JSON should be valid");
+        
+        match deserialized {
+            ContainerConfig::TargetDid(d, m) => {
+                assert_eq!(d, did);
+                assert_eq!(m, PrivacyMode::TrialDecryption);
+            },
+            _ => panic!("Wrong variant deserialized"),
+        }
     }
 }
 

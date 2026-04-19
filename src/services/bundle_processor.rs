@@ -10,7 +10,7 @@ use crate::error::ValidationError;
 use crate::error::VoucherCoreError;
 use crate::models::conflict::TransactionFingerprint;
 use crate::models::profile::{TransactionBundle, UserIdentity};
-use crate::models::secure_container::{PayloadType, SecureContainer};
+use crate::models::secure_container::{PayloadType, PrivacyMode, SecureContainer};
 use crate::models::voucher::Voucher;
 use crate::services::crypto_utils::{
     decode_base64, get_hash, get_pubkey_from_user_id, sign_ed25519, verify_ed25519,
@@ -56,7 +56,7 @@ pub fn create_and_encrypt_bundle(
 
     let secure_container = create_secure_container(
         identity,
-        crate::models::secure_container::ContainerConfig::TargetDid(recipient_id.to_string()),
+        crate::models::secure_container::ContainerConfig::TargetDid(recipient_id.to_string(), PrivacyMode::TrialDecryption),
         &signed_bundle_bytes,
         PayloadType::TransactionBundle, // content type
     )?;
@@ -148,7 +148,7 @@ mod tests {
 
         let mut container = create_secure_container(
             &id1,
-            ContainerConfig::TargetDid(id2_str),
+            ContainerConfig::TargetDid(id2_str, PrivacyMode::TrialDecryption),
             b"test_payload",
             PayloadType::TransactionBundle,
         )

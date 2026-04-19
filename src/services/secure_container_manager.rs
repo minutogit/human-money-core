@@ -5,7 +5,7 @@
 
 use crate::error::VoucherCoreError;
 use crate::models::profile::UserIdentity;
-use crate::models::secure_container::{ContainerConfig, EncryptionType, JweRecipient, PayloadType, SecureContainer};
+use crate::models::secure_container::{ContainerConfig, EncryptionType, JweRecipient, PayloadType, PrivacyMode, SecureContainer};
 use crate::services::crypto_utils::{
     self, decode_base64, decrypt_data_with_aad, decrypt_symmetric_password, ed25519_pub_to_x25519, ed25519_sk_to_x25519_sk, encode_base64, encrypt_data_with_aad, encrypt_symmetric_password, get_hash,
     get_pubkey_from_user_id,
@@ -59,14 +59,14 @@ pub fn create_secure_container(
         return Err(ContainerManagerError::PlaintextNotAllowedForFinancialPayload.into());
     }
 
-    let recipient_ids = match &config {
-        ContainerConfig::TargetDid(id) => vec![id.clone()],
-        ContainerConfig::TargetDids(ids) => ids.clone(),
-        _ => Vec::new(),
+    let (recipient_ids, privacy_mode) = match &config {
+        ContainerConfig::TargetDid(id, mode) => (vec![id.clone()], mode.clone()),
+        ContainerConfig::TargetDids(ids, mode) => (ids.clone(), mode.clone()),
+        _ => (Vec::new(), PrivacyMode::TrialDecryption),
     };
 
     let (encryption_type, protected, recipients, iv, ciphertext, tag, salt) = match config {
-        ContainerConfig::TargetDid(_) | ContainerConfig::TargetDids(_) => {
+        ContainerConfig::TargetDid(_, _) | ContainerConfig::TargetDids(_, _) => {
             // Asymmetrische Verschlüsselung (JWE-Format)
             let esk_priv_static = x25519_dalek::StaticSecret::random_from_rng(OsRng);
             let esk_pub = x25519_dalek::PublicKey::from(&esk_priv_static);
@@ -101,8 +101,15 @@ pub fn create_secure_container(
                     let kek = derive_kek(shared_secret.as_bytes())?;
                     let encrypted_payload_key = crypto_utils::encrypt_data(&kek, &payload_key)?;
 
+                    // Header basierend auf PrivacyMode setzen
+                    let header = match privacy_mode {
+                        PrivacyMode::TrialDecryption => None,
+                        PrivacyMode::HashedRouting => Some(json!({"kid": get_hash(&recipient_id)})),
+                        PrivacyMode::CleartextRouting => Some(json!({"kid": recipient_id})),
+                    };
+
                     recipients.push(JweRecipient {
-                        header: Some(json!({"kid": recipient_id})),
+                        header,
                         encrypted_key: encode_base64(&encrypted_payload_key),
                     });
                 }
@@ -112,8 +119,16 @@ pub fn create_secure_container(
                 let shared_secret_sender = sender_static_sk_x.diffie_hellman(&esk_pub);
                 let kek_sender = derive_kek(shared_secret_sender.as_bytes())?;
                 let encrypted_payload_key_sender = crypto_utils::encrypt_data(&kek_sender, &payload_key)?;
+
+                // Header für Sender basierend auf PrivacyMode setzen
+                let sender_header = match privacy_mode {
+                    PrivacyMode::TrialDecryption => None,
+                    PrivacyMode::HashedRouting => Some(json!({"kid": get_hash(&sender_identity.user_id), "sender": true})),
+                    PrivacyMode::CleartextRouting => Some(json!({"kid": sender_identity.user_id.clone(), "sender": true})),
+                };
+
                 recipients.push(JweRecipient {
-                    header: Some(json!({"kid": sender_identity.user_id, "sender": true})),
+                    header: sender_header,
                     encrypted_key: encode_base64(&encrypted_payload_key_sender),
                 });
 
@@ -256,29 +271,26 @@ pub fn open_secure_container(
             // Suche den passenden Empfänger im recipients-Array
             let mut decrypted_payload_key: Option<[u8; 32]> = None;
 
+            // Hash der eigenen ID einmalig berechnen für HashedRouting
+            let my_hash = get_hash(&recipient_identity.user_id);
+
             for recipient in &container.recipients {
-                if let Some(header) = &recipient.header {
-                    let kid = header["kid"].as_str();
-                    let is_sender = header["sender"].as_bool().unwrap_or(false);
+                let should_try_decrypt = match recipient.header.as_ref().and_then(|h| h.get("kid")).and_then(|v| v.as_str()) {
+                    // Wenn eine kid vorhanden ist, prüfe ob es meine Klartext-ID oder mein Hash ist
+                    Some(kid) => kid == recipient_identity.user_id || kid == my_hash,
+                    // Wenn kein Header/kid vorhanden ist, MÜSSEN wir es versuchen (Trial Decryption Fallback)
+                    None => true,
+                };
 
-                    let should_try = if is_sender {
-                        // Bin ich der Sender?
-                        kid == Some(&recipient_identity.user_id)
-                    } else {
-                        // Bin ich der Empfänger?
-                        kid == Some(&recipient_identity.user_id)
-                    };
+                if should_try_decrypt {
+                    let encrypted_payload_key = decode_base64(&recipient.encrypted_key)?;
+                    let shared_secret = recipient_x25519_sk.diffie_hellman(&esk_pub);
+                    let kek = derive_kek(shared_secret.as_bytes())?;
 
-                    if should_try {
-                        let encrypted_payload_key = decode_base64(&recipient.encrypted_key)?;
-                        let shared_secret = recipient_x25519_sk.diffie_hellman(&esk_pub);
-                        let kek = derive_kek(shared_secret.as_bytes())?;
-
-                        if let Ok(payload_key_bytes) = crypto_utils::decrypt_data(&kek, &encrypted_payload_key) {
-                            if let Ok(key_array) = payload_key_bytes.try_into() {
-                                decrypted_payload_key = Some(key_array);
-                                break;
-                            }
+                    if let Ok(payload_key_bytes) = crypto_utils::decrypt_data(&kek, &encrypted_payload_key) {
+                        if let Ok(key_array) = payload_key_bytes.try_into() {
+                            decrypted_payload_key = Some(key_array);
+                            break;
                         }
                     }
                 }
@@ -341,6 +353,7 @@ fn derive_kek(shared_secret: &[u8]) -> Result<[u8; 32], ContainerManagerError> {
 mod tests {
     use super::*;
     use crate::models::profile::UserIdentity;
+    use crate::models::secure_container::PrivacyMode;
     use crate::services::crypto_utils::{create_user_id, generate_ed25519_keypair_for_tests};
 
     #[test]
@@ -364,7 +377,7 @@ mod tests {
 
         // Erstelle einen Container mit JWE-Format
         let payload = b"Test payload data";
-        let config = ContainerConfig::TargetDid(recipient_id.clone());
+        let config = ContainerConfig::TargetDid(recipient_id.clone(), PrivacyMode::TrialDecryption);
         let content_type = PayloadType::TransactionBundle;
 
         let container = create_secure_container(&sender_identity, config, payload, content_type)
@@ -401,7 +414,7 @@ mod tests {
 
         // Erstelle einen Container
         let payload = b"Test payload for sender";
-        let config = ContainerConfig::TargetDid(recipient_id);
+        let config = ContainerConfig::TargetDid(recipient_id, PrivacyMode::TrialDecryption);
         let content_type = PayloadType::VoucherForSigning;
 
         let container = create_secure_container(&sender_identity, config, payload, content_type)
@@ -441,7 +454,7 @@ mod tests {
         };
 
         let payload = b"Payload for multiple recipients";
-        let config = ContainerConfig::TargetDids(vec![recipient1_id.clone(), recipient2_id.clone()]);
+        let config = ContainerConfig::TargetDids(vec![recipient1_id.clone(), recipient2_id.clone()], PrivacyMode::TrialDecryption);
         let content_type = PayloadType::TransactionBundle;
 
         let container = create_secure_container(&sender_identity, config, payload, content_type)
@@ -494,7 +507,7 @@ mod tests {
         };
 
         let payload = b"Non-financial payload";
-        let config = ContainerConfig::TargetDid(recipient_id);
+        let config = ContainerConfig::TargetDid(recipient_id, PrivacyMode::TrialDecryption);
         let content_type = PayloadType::DetachedSignature;
 
         let container = create_secure_container(&sender_identity, config, payload, content_type)
@@ -527,7 +540,7 @@ mod tests {
         };
 
         let payload = b"Secret payload";
-        let config = ContainerConfig::TargetDid(recipient_id);
+        let config = ContainerConfig::TargetDid(recipient_id, PrivacyMode::TrialDecryption);
         let content_type = PayloadType::TransactionBundle;
 
         let container = create_secure_container(&sender_identity, config, payload, content_type)
