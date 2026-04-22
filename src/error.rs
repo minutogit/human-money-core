@@ -393,4 +393,6 @@ pub enum VoucherCoreError {
     VoucherAlreadyInCirculation,
     #[error("Cannot remove the creator's signature from a voucher.")]
     CannotRemoveCreatorSignature,
+    #[error("Signatures can only be removed while the voucher is in status 'Incomplete'. Current status: {0:?}")]
+    SignatureRemovalRequiresIncomplete(VoucherStatus),
 }

@@ -226,7 +226,7 @@ impl Wallet {
     ///
     /// # Errors
     /// * `VoucherNotFound` - Der Gutschein wurde nicht gefunden.
-    /// * `VoucherNotActive` - Der Gutschein hat nicht den Status Active oder Incomplete.
+    /// * `SignatureRemovalRequiresIncomplete` - Entfernen nur im Status 'Incomplete' erlaubt.
     /// * `NotTheCreator` - Die anfragende Identität ist nicht der Ersteller des Gutscheins.
     /// * `VoucherAlreadyInCirculation` - Der Gutschein hat bereits mehr als eine Transaktion (ist im Umlauf).
     /// * `CannotRemoveCreatorSignature` - Es wurde versucht, die Kern-Signatur des Erstellers zu entfernen.
@@ -242,12 +242,11 @@ impl Wallet {
             .get_mut(local_instance_id)
             .ok_or_else(|| VoucherCoreError::VoucherNotFound(local_instance_id.to_string()))?;
 
-        // 1. Status-Prüfung: Nur Active oder Incomplete erlaubt
-        if !matches!(
-            instance.status,
-            VoucherStatus::Active | VoucherStatus::Incomplete { .. }
-        ) {
-            return Err(VoucherCoreError::VoucherNotActive(instance.status.clone()));
+        // 1. Status-Prüfung: Nur Incomplete erlaubt
+        if !matches!(instance.status, VoucherStatus::Incomplete { .. }) {
+            return Err(VoucherCoreError::SignatureRemovalRequiresIncomplete(
+                instance.status.clone(),
+            ));
         }
 
         // 2. History-Prüfung: Nur eine init-Transaktion erlaubt

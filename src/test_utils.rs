@@ -571,13 +571,22 @@ pub fn add_voucher_to_wallet(
     let _holder_seed = bs58::encode(holder_key.to_bytes()).into_string();
 
     let local_id = Wallet::calculate_local_instance_id(&voucher, &identity.user_id)?;
+    let status = if with_valid_guarantors {
+        VoucherStatus::Active
+    } else {
+        VoucherStatus::Incomplete {
+            reasons: vec![crate::ValidationFailureReason::RequiredSignatureMissing {
+                role_description: "Missing guarantors in test setup".to_string(),
+            }],
+        }
+    };
+
     wallet.voucher_store.vouchers.insert(
         local_id.clone(),
         VoucherInstance {
             voucher: voucher.clone(),
-            status: VoucherStatus::Active,
+            status,
             local_instance_id: local_id.clone(),
-            // current_secret_seed: Some(holder_seed), // Removed in stateless refactor
         },
     );
 

@@ -940,15 +940,15 @@ fn test_remove_signature_success_incomplete_state() {
     assert_eq!(instance_after.voucher.signatures[0].role, "creator");
 }
 
-/// Testet das erfolgreiche Entfernen einer überschüssigen Signatur im Active-Status.
+/// Testet, dass das Entfernen einer Signatur im Active-Status fehlschlägt.
 ///
 /// ### Szenario:
 /// 1. Gutschein wird erstellt, erhält genügend Signaturen um in den Status Active zu wechseln.
 /// 2. Eine zusätzliche (überschüssige) Signatur wird angehängt.
 /// 3. remove_signature wird vom Creator für die überschüssige Signatur aufgerufen.
-/// 4. Erwartung: Ok(()). Die Signatur ist entfernt. Der Status bleibt Active.
+/// 4. Erwartung: Err(SignatureRemovalRequiresIncomplete).
 #[test]
-fn test_remove_signature_success_active_state() {
+fn test_remove_signature_fails_active_state() {
     human_money_core::set_signature_bypass(true);
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
@@ -1032,32 +1032,35 @@ fn test_remove_signature_success_active_state() {
         .process_and_attach_signature(&alice.identity, &response_bytes, None)
         .unwrap();
 
+    // Setze den Status manuell auf Active, um die Sperre zu testen
+    alice_wallet.update_voucher_status(&voucher_id, VoucherStatus::Active);
+
     let instance_before = alice_wallet
         .voucher_store
         .vouchers
         .get(&voucher_id)
         .unwrap();
     // 4 Signaturen: creator + 2 required guarantors + 1 extra
+    assert_eq!(instance_before.status, VoucherStatus::Active);
     assert_eq!(instance_before.voucher.signatures.len(), 4);
     let extra_signature_id = instance_before.voucher.signatures[3].signature_id.clone();
 
     // Entferne die überschüssige Signatur
     let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, &extra_signature_id);
-    assert!(result.is_ok());
+    
+    assert!(matches!(
+        result.expect_err("Should fail to remove signature from active voucher"),
+        VoucherCoreError::SignatureRemovalRequiresIncomplete(VoucherStatus::Active)
+    ));
 
-    // Überprüfe, dass die Signatur entfernt wurde
+    // Überprüfe, dass die Signatur noch vorhanden ist
     let instance_after = alice_wallet
         .voucher_store
         .vouchers
         .get(&voucher_id)
         .unwrap();
-    assert_eq!(instance_after.voucher.signatures.len(), 3);
-    // Der Status sollte sich nicht ändern (oder werden wir konservativ auf Incomplete setzen)
-    // Da wir konservativ auf Incomplete setzen, erwarten wir Incomplete
-    assert!(matches!(
-        instance_after.status,
-        VoucherStatus::Incomplete { .. }
-    ));
+    assert_eq!(instance_after.voucher.signatures.len(), 4);
+    assert_eq!(instance_after.status, VoucherStatus::Active);
 }
 
 /// Testet, dass das Entfernen einer Signatur den Status auf Incomplete setzt.
@@ -1140,21 +1143,22 @@ fn test_remove_signature_triggers_status_downgrade() {
 
     let guarantor_signature_id = instance_after_update.voucher.signatures[1].signature_id.clone();
 
-    // Entferne einen der Bürgen
+    // Entferne einen der Bürgen -> Sollte fehlschlagen da Active
     let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, &guarantor_signature_id);
-    assert!(result.is_ok());
+    
+    assert!(matches!(
+        result.expect_err("Should fail to remove signature from active voucher"),
+        VoucherCoreError::SignatureRemovalRequiresIncomplete(VoucherStatus::Active)
+    ));
 
-    // Überprüfe, dass der Status auf Incomplete gewechselt ist
+    // Überprüfe, dass der Status Active geblieben ist und nichts entfernt wurde
     let instance_final = alice_wallet
         .voucher_store
         .vouchers
         .get(&voucher_id)
         .unwrap();
-    assert!(matches!(
-        instance_final.status,
-        VoucherStatus::Incomplete { .. }
-    ));
-    assert_eq!(instance_final.voucher.signatures.len(), 2);
+    assert_eq!(instance_final.status, VoucherStatus::Active);
+    assert_eq!(instance_final.voucher.signatures.len(), 3);
 }
 
 /// Testet, dass die Creator-Signatur nicht entfernt werden kann.
@@ -1251,7 +1255,7 @@ fn test_remove_signature_fails_already_in_circulation_via_transfer() {
         &alice.identity,
         "100",
         minuto_standard,
-        true,
+        false,
     )
     .unwrap();
 
@@ -1296,7 +1300,7 @@ fn test_remove_signature_fails_already_in_circulation_via_split() {
         &alice.identity,
         "100",
         minuto_standard,
-        true,
+        false,
     )
     .unwrap();
 
@@ -1323,12 +1327,8 @@ fn test_remove_signature_fails_already_in_circulation_via_split() {
     ));
 }
 
-/// Testet, dass Signaturen nicht aus einem ungültigen Zustand entfernt werden können.
-///
-/// ### Szenario:
-/// 1. Gutschein existiert in einem ungültigen Zustand (z.B. Quarantined).
 /// 2. remove_signature wird aufgerufen.
-/// 3. Erwartung: Err(VoucherNotActive).
+/// 3. Erwartung: Err(SignatureRemovalRequiresIncomplete).
 #[test]
 fn test_remove_signature_fails_invalid_state() {
     human_money_core::set_signature_bypass(true);
@@ -1341,7 +1341,7 @@ fn test_remove_signature_fails_invalid_state() {
         &alice.identity,
         "100",
         minuto_standard,
-        true,
+        false,
     )
     .unwrap();
 
@@ -1358,7 +1358,7 @@ fn test_remove_signature_fails_invalid_state() {
 
     assert!(matches!(
         result.unwrap_err(),
-        VoucherCoreError::VoucherNotActive(VoucherStatus::Quarantined { .. })
+        VoucherCoreError::SignatureRemovalRequiresIncomplete(VoucherStatus::Quarantined { .. })
     ));
 }
 
@@ -1380,7 +1380,7 @@ fn test_remove_signature_non_existent_signature_id() {
         &alice.identity,
         "100",
         minuto_standard,
-        true,
+        false,
     )
     .unwrap();
 

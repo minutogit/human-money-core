@@ -341,7 +341,7 @@ fn test_save_and_load_with_bundle_history() {
         alice_identity,
         "100",
         silver_standard,
-        false,
+        true,
     )
     .unwrap();
 
