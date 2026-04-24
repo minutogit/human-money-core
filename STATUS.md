@@ -64,6 +64,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] JWS & JWE standard compliance (RFC 7515/7516) and DIDComm-compatible URIs
 - [x] Deep traceability testing & fix for voucher source sender identification
 - [x] Anonymous Privacy Routing: Strict identity regulation based on PrivacyMode
+- [x] Deep Privacy Balance Calculation: Hardened UTXO-based stealth key matching test suite
 
 ## Next Milestones
 
