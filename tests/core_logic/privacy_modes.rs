@@ -246,6 +246,7 @@ fn test_privacy_mode_flexible_requires_anonymous_recipient() {
     // Case 1: Sender is DID (Allowed), but Recipient is DID (FORBIDDEN)
     let tx1 = Transaction {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
+        t_id: "stub1".to_string(),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
         amount: "10.0000".to_string(),

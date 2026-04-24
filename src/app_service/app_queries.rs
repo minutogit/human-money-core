@@ -51,9 +51,10 @@ impl AppService {
         voucher_standard_uuid_filter: Option<&[String]>,
         status_filter: Option<&[VoucherStatus]>,
     ) -> Result<Vec<VoucherSummary>, String> {
+        let identity = self.get_identity()?;
         Ok(self
             .get_wallet()?
-            .list_vouchers(voucher_standard_uuid_filter, status_filter))
+            .list_vouchers(Some(identity), voucher_standard_uuid_filter, status_filter))
     }
 
     /// Aggregiert die Guthaben aller aktiven Gutscheine, gruppiert nach Währung.
@@ -64,7 +65,8 @@ impl AppService {
     /// # Errors
     /// Schlägt fehl, wenn das Wallet gesperrt (`Locked`) ist.
     pub fn get_total_balance_by_currency(&self) -> Result<Vec<AggregatedBalance>, String> {
-        Ok(self.get_wallet()?.get_total_balance_by_currency())
+        let identity = self.get_identity()?;
+        Ok(self.get_wallet()?.get_total_balance_by_currency(Some(identity)))
     }
 
     /// Ruft eine detaillierte Ansicht für einen einzelnen Gutschein ab.

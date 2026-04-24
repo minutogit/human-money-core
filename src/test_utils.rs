@@ -884,7 +884,7 @@ pub fn create_voucher_for_manipulation(
         .creator_profile
         .id
         .as_ref()
-        .and_then(|id| id.split(':').next())
+        .and_then(|id| id.split('@').next())
         .map(|s| s.to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
@@ -1359,7 +1359,7 @@ pub fn derive_holder_key(
         .creator_profile
         .id
         .as_ref()
-        .and_then(|id| id.split(':').next())
+        .and_then(|id| id.split('@').next())
         .map(|s| s.to_string())
         .unwrap_or_else(|| "unknown".to_string());
 

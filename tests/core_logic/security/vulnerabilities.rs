@@ -862,7 +862,7 @@ fn test_attack_inconsistent_split_transaction() {
     // ### SETUP ###
     // Ein Hacker besitzt einen gültigen Gutschein über 100 Einheiten.
     let hacker_identity = &ACTORS.hacker;
-    let victim_identity = &ACTORS.victim;
+    let _victim_identity = &ACTORS.victim;
     let data = new_test_voucher_data(hacker_identity.user_id.clone());
     let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     let voucher = voucher_manager::create_voucher(
@@ -967,7 +967,7 @@ fn test_attack_negative_or_zero_amount_transaction() {
     human_money_core::set_signature_bypass(true);
     // ### SETUP ###
     let hacker_identity = &ACTORS.hacker;
-    let victim_identity = &ACTORS.victim;
+    let _victim_identity = &ACTORS.victim;
     let data = new_test_voucher_data(hacker_identity.user_id.clone());
     let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     let voucher = voucher_manager::create_voucher(

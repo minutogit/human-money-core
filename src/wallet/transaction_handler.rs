@@ -641,80 +641,70 @@ impl Wallet {
             )
         })?;
 
-        // Fall A: Die letzte Transaktion war von UNS (Split/Change)
-        if last_tx.sender_id.as_ref() == Some(&identity.user_id)
-            && last_tx.sender_remaining_amount.is_some()
-        {
-            // Re-Derive Change Key via HKDF
-            let sender_id_prefix = identity
-                .user_id
-                .split('@')
-                .next()
-                .unwrap_or(&identity.user_id)
-                .to_string();
-            let prev_hash = &last_tx.prev_hash; // Salt 
-            // ACHTUNG: Bei Change Key müssen wir den HASH DER VORHERIGEN TX nehmen?
-            // Nein, laut Spec/Manager Logik ist es der Hash der INPUT-Tx.
-            // Aber Moment: Der Change-Output wurde in DIESER Tx ("last_tx") erzeugt.
-            // Der "prev_hash" in "last_tx" bezieht sich auf die Transaktion DAVOR.
-            // Das ist korrekt, denn HKDF nutzt (prev_hash, IKM).
-
-            let ikm = identity.signing_key.to_bytes();
-            let (prk, _) = Hkdf::<Sha256>::extract(Some(prev_hash.as_bytes()), &ikm);
-            let hkdf = Hkdf::<Sha256>::from_prk(&prk)
-                .map_err(|_| VoucherCoreError::Crypto("Invalid PRK length".to_string()))?;
-
+        // 1. Prüfe, ob wir der SENDER sind (Change/Wechselgeld) via Krypto-Matching
+        // Wir versuchen den Change-Key deterministisch abzuleiten und vergleichen den Hash.
+        let sender_id_prefix = identity
+            .user_id
+            .split('@')
+            .next()
+            .unwrap_or(&identity.user_id)
+            .to_string();
+        let ikm = identity.signing_key.to_bytes();
+        let prev_hash = &last_tx.prev_hash; 
+        
+        let (prk, _) = Hkdf::<Sha256>::extract(Some(prev_hash.as_bytes()), &ikm);
+        if let Ok(hkdf) = Hkdf::<Sha256>::from_prk(&prk) {
             let info = format!("{}change_seed", sender_id_prefix);
             let mut change_seed = [0u8; 32];
-            hkdf.expand(info.as_bytes(), &mut change_seed)
-                .map_err(|e| VoucherCoreError::Crypto(format!("HKDF re-derive failed: {}", e)))?;
-
-            return Ok(SigningKey::from_bytes(&change_seed));
+            if hkdf.expand(info.as_bytes(), &mut change_seed).is_ok() {
+                let candidate_key = SigningKey::from_bytes(&change_seed);
+                let candidate_hash = crate::services::crypto_utils::get_hash(candidate_key.verifying_key().to_bytes());
+                
+                if Some(&candidate_hash) == last_tx.change_ephemeral_pub_hash.as_ref() {
+                    return Ok(candidate_key);
+                }
+            }
         }
 
-        // Fall B: Die letzte Transaktion war an UNS (Received)
-        // Wir müssen den Privacy Guard entschlüsseln.
+        // 2. Prüfe, ob wir der EMPFÄNGER sind (Received) via Privacy Guard
         if let Some(guard_base64) = &last_tx.privacy_guard {
-            // Verwende die Helper-Funktion in crypto_utils
-            let decrypted_payload_bytes = crate::services::crypto_utils::decrypt_recipient_payload(
+            if let Ok(decrypted_payload_bytes) = crate::services::crypto_utils::decrypt_recipient_payload(
                 guard_base64,
                 &identity.signing_key,
                 &identity.user_id,
-            )
-            .map_err(|e| {
-                VoucherCoreError::Crypto(format!("Failed to decrypt privacy guard: {}", e))
-            })?;
-
-            let payload = serde_json::from_slice::<crate::models::voucher::RecipientPayload>(
-                &decrypted_payload_bytes,
-            )
-            .map_err(|e| VoucherCoreError::Validation(ValidationError::Json(e)))?;
-
-            // Seed extrahieren
-            let seed_bytes = bs58::decode(&payload.next_key_seed)
-                .into_vec()
-                .map_err(|e| {
-                    VoucherCoreError::Crypto(format!("Invalid base58 in payload seed: {}", e))
-                })?;
-            let seed_arr: [u8; 32] = seed_bytes.try_into().map_err(|_| {
-                VoucherCoreError::Crypto("Invalid seed length in payload".to_string())
-            })?;
-            return Ok(SigningKey::from_bytes(&seed_arr));
+            ) {
+                if let Ok(payload) = serde_json::from_slice::<crate::models::voucher::RecipientPayload>(&decrypted_payload_bytes) {
+                    if let Ok(seed_bytes) = bs58::decode(&payload.next_key_seed).into_vec() {
+                        if let Ok(seed_arr) = seed_bytes.try_into() {
+                            let candidate_key = SigningKey::from_bytes(&seed_arr);
+                            let candidate_hash = crate::services::crypto_utils::get_hash(candidate_key.verifying_key().to_bytes());
+                            
+                            if Some(&candidate_hash) == last_tx.receiver_ephemeral_pub_hash.as_ref() {
+                                return Ok(candidate_key);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        // Fall C: Init (Ersteller) - Sonderfall?
-        // Wenn ich Ersteller bin und den ersten Schritt machen will.
-        if last_tx.t_type == "init" && last_tx.sender_id.as_ref() == Some(&identity.user_id) {
-            // Init hat genesis key. "sender_ephemeral_pub" ist genesis PUB.
-            // Aber wo ist das SECRET?
-            // Ah, Init generiert "genesis" Key Pair aus Nonce.
-            // derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "genesis")
+        // 3. Fallback: Public Mode / Init
+        if last_tx.sender_id.as_ref() == Some(&identity.user_id) && last_tx.sender_remaining_amount.is_some() {
+             let (prk, _) = Hkdf::<Sha256>::extract(Some(prev_hash.as_bytes()), &ikm);
+             let hkdf = Hkdf::<Sha256>::from_prk(&prk).map_err(|_| VoucherCoreError::Crypto("Invalid PRK".to_string()))?;
+             let info = format!("{}change_seed", sender_id_prefix);
+             let mut change_seed = [0u8; 32];
+             hkdf.expand(info.as_bytes(), &mut change_seed).map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+             return Ok(SigningKey::from_bytes(&change_seed));
+        }
 
+        // Fall C: Init (Ersteller)
+        if last_tx.t_type == "init" && last_tx.sender_id.as_ref() == Some(&identity.user_id) {
             let nonce_bytes = bs58::decode(&voucher.voucher_nonce)
                 .into_vec()
                 .map_err(|_| VoucherCoreError::Generic("Invalid nonce".to_string()))?;
 
-            let sender_id_prefix = identity.user_id.split(':').next().unwrap_or("unknown");
+            let sender_id_prefix = identity.user_id.split('@').next().unwrap_or("unknown");
 
             let (holder_secret, _) = crate::services::crypto_utils::derive_ephemeral_key_pair(
                 &identity.signing_key,
@@ -726,7 +716,7 @@ impl Wallet {
         }
 
         Err(VoucherCoreError::Generic(
-            "Could not rederive secret seed: No valid strategy found.".to_string(),
+            "Could not rederive secret seed: No valid ownership strategy found (neither Change nor Receiver hash matches).".to_string(),
         ))
     }
 }

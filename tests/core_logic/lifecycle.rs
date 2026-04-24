@@ -317,7 +317,15 @@ fn test_validation_fails_on_inconsistent_unit() {
     };
     let voucher_data = human_money_core::test_utils::create_minuto_voucher_data(creator);
 
-    let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let mut standard_obj = SILVER_STANDARD.0.clone();
+    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    let mut standard_to_hash = standard_obj.clone();
+    standard_to_hash.signature = None;
+    let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
+        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
+    );
+    let silver_standard = &standard_obj;
+    let standard_hash = &standard_hash_val;
 
     // KORREKTUR: Der Test muss den Standard VOR der Gutscheinerstellung modifizieren,
     // um Hash-Fehler zu vermeiden.
@@ -555,7 +563,16 @@ fn test_validation_succeeds_with_extra_fields_in_json() {
 #[test]
 fn test_split_transaction_cycle_and_balance_check() {
     // 1. Setup: Silber-Standard, da er teilbar ist und keine Bürgen benötigt.
-    let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let mut standard_obj = SILVER_STANDARD.0.clone();
+    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    let mut standard_to_hash = standard_obj.clone();
+    standard_to_hash.signature = None;
+    let standard_hash = human_money_core::services::crypto_utils::get_hash(
+        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
+    );
+    let silver_standard = &standard_obj;
+    let standard_hash = &standard_hash;
+    
     assert!(silver_standard.immutable.features.allow_partial_transfers);
 
     // 2. Erstelle Sender und Empfänger
@@ -582,7 +599,7 @@ fn test_split_transaction_cycle_and_balance_check() {
     // 4. Überprüfe den initialen Zustand und das Guthaben
     assert!(validate_voucher_against_standard(&initial_voucher, silver_standard).is_ok());
     let initial_balance =
-        get_spendable_balance(&initial_voucher, &sender.user_id, silver_standard).unwrap();
+        get_spendable_balance(&initial_voucher, &sender.user_id, silver_standard, None).unwrap();
     assert_eq!(initial_balance, dec!(100.0000));
 
     // 5. Führe eine Split-Transaktion durch: Sende 30.5000 an den Empfänger
@@ -591,7 +608,7 @@ fn test_split_transaction_cycle_and_balance_check() {
         human_money_core::test_utils::derive_holder_key(&initial_voucher, &sender.signing_key);
     let (voucher_after_split, _) = create_transaction(
         &initial_voucher, // KORREKTUR: Fehlte im vorherigen Versuch
-        &SILVER_STANDARD.0,
+        silver_standard,
         &sender.user_id,
         &sender.signing_key,
         &holder_key, // Init->Tx1: Emphemerer Key ist Holder Key
@@ -617,9 +634,9 @@ fn test_split_transaction_cycle_and_balance_check() {
 
     // 7. Überprüfe die Guthaben beider Parteien
     let sender_balance_after_split =
-        get_spendable_balance(&voucher_after_split, &sender.user_id, silver_standard).unwrap();
+        get_spendable_balance(&voucher_after_split, &sender.user_id, silver_standard, None).unwrap();
     let recipient_balance_after_split =
-        get_spendable_balance(&voucher_after_split, &recipient.user_id, silver_standard).unwrap();
+        get_spendable_balance(&voucher_after_split, &recipient.user_id, silver_standard, None).unwrap();
 
     assert_eq!(sender_balance_after_split, dec!(69.5000)); // 100.0000 - 30.5000
     assert_eq!(recipient_balance_after_split, dec!(30.5000));
@@ -638,7 +655,15 @@ fn test_split_fails_on_insufficient_funds() {
     let mut voucher_data = self::test_utils::create_minuto_voucher_data(sender_creator);
     voucher_data.nominal_value.amount = "50.0".to_string(); // Initialwert 50
 
-    let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let mut standard_obj = SILVER_STANDARD.0.clone();
+    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    let mut standard_to_hash = standard_obj.clone();
+    standard_to_hash.signature = None;
+    let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
+        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
+    );
+    let silver_standard = &standard_obj;
+    let standard_hash = &standard_hash_val;
 
     let initial_voucher = create_voucher(
         voucher_data,
@@ -970,7 +995,15 @@ fn test_double_spend_detection_logic() {
 
     // Wir verwenden hier einen Silber-Gutschein, da dieser teilbar ist und die Logik
     // des Double Spends demonstrieren soll.
-    let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let mut standard_obj = SILVER_STANDARD.0.clone();
+    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    let mut standard_to_hash = standard_obj.clone();
+    standard_to_hash.signature = None;
+    let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
+        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
+    );
+    let silver_standard = &standard_obj;
+    let standard_hash = &standard_hash_val;
 
     let initial_voucher = self::test_utils::create_voucher_for_manipulation(
         voucher_data,
@@ -1134,7 +1167,15 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
         creator_profile: alice_creator,
     };
 
-    let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let mut standard_obj = SILVER_STANDARD.0.clone();
+    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    let mut standard_to_hash = standard_obj.clone();
+    standard_to_hash.signature = None;
+    let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
+        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
+    );
+    let silver_standard = &standard_obj;
+    let standard_hash = &standard_hash_val;
 
     let voucher = self::test_utils::create_voucher_for_manipulation(
         voucher_data,
@@ -1171,8 +1212,8 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        silver_standard.immutable.identity.uuid.clone(),
+        silver_standard.clone(),
     );
 
     let human_money_core::wallet::CreateBundleResult {
@@ -1208,8 +1249,8 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        silver_standard.immutable.identity.uuid.clone(),
+        silver_standard.clone(),
     );
     bob_wallet
         .process_encrypted_transaction_bundle(

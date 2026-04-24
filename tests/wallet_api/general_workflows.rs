@@ -435,7 +435,7 @@ fn api_wallet_transfer_full_amount() {
         .unwrap();
 
     let summary = alice_wallet
-        .list_vouchers(None, None)
+        .list_vouchers(Some(&alice.identity), None, None)
         .into_iter()
         .find(|s| s.status == VoucherStatus::Archived)
         .unwrap();
@@ -456,7 +456,7 @@ fn api_wallet_transfer_full_amount() {
         )
         .unwrap();
 
-    let summary = bob_wallet.list_vouchers(None, None).pop().unwrap();
+    let summary = bob_wallet.list_vouchers(Some(&bob.identity), None, None).pop().unwrap();
     assert_eq!(summary.current_amount, "100");
     assert_eq!(summary.status, VoucherStatus::Active);
 }
@@ -507,7 +507,7 @@ fn api_wallet_transfer_split_amount() {
         .unwrap();
 
     let active_summary = alice_wallet
-        .list_vouchers(None, None)
+        .list_vouchers(Some(&alice.identity), None, None)
         .into_iter()
         .find(|s| s.status == VoucherStatus::Active)
         .unwrap();
@@ -527,7 +527,7 @@ fn api_wallet_transfer_split_amount() {
             &standards_for_bob,
         )
         .unwrap();
-    let bob_summary = bob_wallet.list_vouchers(None, None).pop().unwrap();
+    let bob_summary = bob_wallet.list_vouchers(Some(&bob.identity), None, None).pop().unwrap();
     assert_eq!(bob_summary.current_amount, "30");
 }
 
@@ -758,7 +758,7 @@ fn api_wallet_create_voucher_and_get_id() {
         .unwrap();
 
     let summary = wallet
-        .list_vouchers(None, None)
+        .list_vouchers(Some(&issuer.identity), None, None)
         .pop()
         .expect("Wallet should contain one voucher");
     assert_eq!(summary.current_amount, "500.0000");
@@ -823,7 +823,7 @@ fn api_wallet_query_total_balance() {
     add_voucher("1.25", VoucherStatus::Active, silver_standard);
     add_voucher("0.75", VoucherStatus::Active, silver_standard);
 
-    let balances = wallet.get_total_balance_by_currency();
+    let balances = wallet.get_total_balance_by_currency(Some(&issuer.identity));
 
     assert_eq!(balances.len(), 2, "Two currencies should be present");
     // KORREKTUR: Die Tests müssen die korrekten Währungs-Abkürzungen aus den Standards verwenden.
@@ -1117,7 +1117,7 @@ fn api_wallet_transfer_multi_source() {
         .unwrap();
 
     // 3. VERIFIZIERUNG (Alice)
-    let alice_summaries = alice_wallet.list_vouchers(None, None);
+    let alice_summaries = alice_wallet.list_vouchers(Some(&alice.identity), None, None);
     let mut remaining_amounts_alice: Vec<_> = alice_summaries
         .iter()
         .filter(|s| s.status == VoucherStatus::Active)
@@ -1150,14 +1150,14 @@ fn api_wallet_transfer_multi_source() {
             &standards_for_bob,
         )
         .unwrap();
-    let balances = bob_wallet.get_total_balance_by_currency();
+    let balances = bob_wallet.get_total_balance_by_currency(Some(&bob.identity));
     let minuto_balance = balances.iter().find(|b| b.unit == "Minuto").unwrap();
     assert_eq!(
         minuto_balance.total_amount, "50",
         "Bobs Gesamtguthaben sollte 50 sein"
     );
     assert_eq!(
-        bob_wallet.list_vouchers(None, None).len(),
+        bob_wallet.list_vouchers(Some(&bob.identity), None, None).len(),
         2,
         "Bob sollte zwei neue Gutscheine erhalten haben"
     );

@@ -38,7 +38,7 @@ mod internal_logic {
         
         // Muss fehlschlagen, da weder init noch split.
         assert!(result.is_err(), "rederive_secret_seed should fail for a non-init, non-split transfer if logic is &&");
-        assert!(result.unwrap_err().to_string().contains("No valid strategy found"));
+        assert!(result.unwrap_err().to_string().contains("No valid ownership strategy found"));
     }
 
     /// **Test: resolve_conflict_offline (Earliest Wins - pub(super))**

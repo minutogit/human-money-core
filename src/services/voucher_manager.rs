@@ -321,7 +321,7 @@ pub fn create_voucher(
     let initial_amount = Decimal::from_str(&temp_voucher.nominal_value.amount)?;
     init_transaction.amount = decimal_utils::format_for_storage(&initial_amount, decimal_places);
 
-    let creator_prefix = creator_id.split(':').next().unwrap_or("unknown");
+    let creator_prefix = creator_id.split('@').next().unwrap_or("unknown");
     let (genesis_secret, genesis_public) = derive_ephemeral_key_pair(
         creator_signing_key,
         &nonce_bytes,
@@ -558,7 +558,17 @@ pub fn create_transaction(
 
     let decimal_places = standard.immutable.features.amount_decimal_places as u32;
 
-    let spendable_balance = get_spendable_balance(voucher, sender_id, standard)?;
+    // BERECHNUNG DES GUTHABENS (Krypto-Matching):
+    let revealed_pub_bytes = sender_ephemeral_key.verifying_key().to_bytes();
+    let revealed_pub_hash = get_hash(revealed_pub_bytes);
+    
+    let spendable_balance = get_spendable_balance(
+        voucher, 
+        sender_id, 
+        standard, 
+        Some(&revealed_pub_hash)
+    )?;
+
     let amount_to_send = Decimal::from_str(amount_to_send_str)?;
     decimal_utils::validate_precision(&amount_to_send, decimal_places)?;
 
@@ -692,7 +702,7 @@ pub fn create_transaction(
 
     let privacy_guard = if recipient_id.contains(":z") {
         // Extrahiere Präfix aus sender_id für Payload (Sender-Info).
-        let _sender_prefix = sender_id.split(':').next().unwrap_or("unknown").to_string();
+        let _sender_prefix = sender_id.split('@').next().unwrap_or("unknown").to_string();
         let target_prefix = recipient_id
             .split(':')
             .next()
@@ -948,6 +958,7 @@ pub fn get_spendable_balance(
     voucher: &Voucher,
     user_id: &str,
     standard: &VoucherStandardDefinition,
+    current_holder_pub_hash: Option<&str>,
 ) -> Result<Decimal, VoucherCoreError> {
     if voucher.transactions.is_empty() {
         return Ok(Decimal::ZERO);
@@ -966,22 +977,32 @@ pub fn get_spendable_balance(
     let last_tx = voucher.transactions.last().unwrap();
     let decimal_places = standard.immutable.features.amount_decimal_places as u32;
 
-    let balance_str = if last_tx.t_type == "init" && last_tx.recipient_id == user_id {
-        // Bei der initialen Transaktion ist der Ersteller immer der Empfänger des Gesamtwerts.
-        &last_tx.amount
-    } else if last_tx.t_type == "init" {
-        "0"
-    } else if last_tx.sender_id.as_deref() == Some(user_id) {
-        // Wir sind der explizite Sender -> Zeige unser Restgeld (Change)
-        last_tx.sender_remaining_amount.as_deref().unwrap_or("0")
-    } else if last_tx.recipient_id == user_id || last_tx.recipient_id == crate::models::voucher::ANONYMOUS_ID {
-        // Wir sind der Empfänger (explizit oder anonym) -> Zeige den Empfangsbetrag
-        &last_tx.amount
-    } else if last_tx.sender_id.is_none() && last_tx.sender_remaining_amount.is_some() {
-        // Fallback für anonyme Split-Sender: Wenn wir das Objekt besitzen und ein Restbetrag existiert.
-        last_tx.sender_remaining_amount.as_deref().unwrap_or("0")
+    let balance_str = if let Some(hash) = current_holder_pub_hash {
+        // --- Mathematische UTXO-Zuweisung via Stealth Key Hash ---
+        if Some(hash) == last_tx.receiver_ephemeral_pub_hash.as_deref() {
+            &last_tx.amount
+        } else if Some(hash) == last_tx.change_ephemeral_pub_hash.as_deref() {
+            last_tx.sender_remaining_amount.as_deref().unwrap_or("0")
+        } else {
+            // Wenn der Hash nicht passt, hat der Nutzer kein Guthaben in diesem Voucher.
+            "0"
+        }
     } else {
-        "0"
+        // --- Fallback auf ID-basierte Logik (Public Mode) ---
+        if last_tx.t_type == "init" && last_tx.recipient_id == user_id {
+            // Bei der initialen Transaktion ist der Ersteller immer der Empfänger des Gesamtwerts.
+            &last_tx.amount
+        } else if last_tx.t_type == "init" {
+            "0"
+        } else if last_tx.sender_id.as_deref() == Some(user_id) {
+            // Wir sind der explizite Sender -> Zeige unser Restgeld (Change)
+            last_tx.sender_remaining_amount.as_deref().unwrap_or("0")
+        } else if last_tx.recipient_id == user_id {
+            // Wir sind der explizite Empfänger -> Zeige den Empfangsbetrag
+            &last_tx.amount
+        } else {
+            "0"
+        }
     };
 
     let balance = Decimal::from_str(balance_str)?;

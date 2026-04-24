@@ -194,7 +194,7 @@ mod tests {
         bob_wallet.execute_multi_transfer_and_bundle(&bob.identity, &standards, request, None).unwrap();
 
         // Bob's new voucher (60)
-        let bob_vouchers = bob_wallet.list_vouchers(None, None);
+        let bob_vouchers = bob_wallet.list_vouchers(Some(&bob.identity), None, None);
         let bob_new_local_id = bob_vouchers.iter().find(|v| v.current_amount == "60").unwrap().local_instance_id.clone();
 
         // Bob verifies sender -> Alice
