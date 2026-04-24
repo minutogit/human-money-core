@@ -254,6 +254,7 @@ mod integration_with_voucher {
             &identity.signing_key, // Init->Tx1
             &ACTORS.bob.user_id,
             "1",
+            None,
         );
         assert!(result.is_err());
         assert!(

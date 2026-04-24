@@ -111,6 +111,7 @@ fn test_voucher_archiving_on_full_spend() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();

@@ -40,7 +40,7 @@ pub enum CollateralType {
     PhysicalAsset,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PrivacyMode {
     #[default]

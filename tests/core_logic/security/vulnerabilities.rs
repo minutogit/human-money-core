@@ -410,6 +410,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -643,6 +644,7 @@ fn test_attack_tamper_transaction_history() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -698,6 +700,7 @@ fn test_attack_tamper_transaction_history() {
         &bob_key,
         &ACTORS.victim.user_id,
         "100",
+        None,
     );
     assert!(
         transfer_attempt_result.is_err(),
@@ -750,6 +753,7 @@ fn test_attack_create_inconsistent_transaction() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -1314,6 +1318,7 @@ fn test_attack_fuzzing_random_mutations() {
         &holder_key,
         &ACTORS.alice.user_id,
         "1000",
+        None,
     )
     .unwrap();
     master_voucher = mv;
@@ -1333,6 +1338,7 @@ fn test_attack_fuzzing_random_mutations() {
         &alice_key,
         &ACTORS.bob.user_id,
         "500",
+        None,
     )
     .unwrap(); // Split
     master_voucher = mv;

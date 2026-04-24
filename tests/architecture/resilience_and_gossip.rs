@@ -377,6 +377,7 @@ mod tests {
                 }],
                 notes: None,
                 sender_profile_name: None,
+        use_privacy_mode: None,
             };
 
             let mut standards_toml = std::collections::HashMap::new();
@@ -429,6 +430,7 @@ mod tests {
             }],
             notes: None,
             sender_profile_name: None,
+        use_privacy_mode: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(
@@ -740,6 +742,7 @@ mod tests {
             }],
             notes: None,
             sender_profile_name: None,
+        use_privacy_mode: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(

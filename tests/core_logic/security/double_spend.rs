@@ -109,6 +109,7 @@ fn test_fingerprint_generation() {
         &holder_key,           // Sender Ephemeral Key (Anchor)
         &human_money_core::test_utils::ACTORS.bob.user_id,
         "50",
+        None,
     )
     .unwrap();
 
@@ -417,6 +418,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let transfer1_result =
@@ -513,6 +515,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     // KORREKTUR: E0425 Ersetze alte sender_wallet Logik
@@ -612,6 +615,7 @@ fn test_local_double_spend_detection_lifecycle() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -688,6 +692,7 @@ fn test_local_double_spend_detection_lifecycle() {
         &bob_ephemeral_key, // Bob's ephemeral key extracted from wallet
         &charlie_identity.user_id,
         "100",
+        None,
     )
     .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(10));
@@ -699,6 +704,7 @@ fn test_local_double_spend_detection_lifecycle() {
         &bob_ephemeral_key, // Reuse same key for double spend
         &david_identity.user_id,
         "100",
+        None,
     )
     .unwrap();
 
@@ -792,6 +798,7 @@ fn test_local_double_spend_detection_lifecycle() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -862,6 +869,7 @@ fn test_local_double_spend_detection_lifecycle() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -952,6 +960,7 @@ fn test_local_double_spend_detection_lifecycle() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();

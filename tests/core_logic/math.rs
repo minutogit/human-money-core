@@ -94,6 +94,7 @@ fn test_chained_transaction_math_and_scaling() {
         &holder_key, // Init->Tx1
         &bob.user_id,
         "40",
+        None,
     )
     .unwrap();
     current_voucher = v;
@@ -131,6 +132,7 @@ fn test_chained_transaction_math_and_scaling() {
         &change_key_1,
         &bob.user_id,
         "10.1234",
+        None,
     )
     .unwrap();
     current_voucher = v;
@@ -164,6 +166,7 @@ fn test_chained_transaction_math_and_scaling() {
         &change_key_2,
         &bob.user_id,
         "9",
+        None,
     )
     .unwrap();
     current_voucher = v;
@@ -198,6 +201,7 @@ fn test_chained_transaction_math_and_scaling() {
         &change_key_3,
         &bob.user_id,
         "0.87",
+        None,
     )
     .unwrap();
     current_voucher = v;
@@ -232,6 +236,7 @@ fn test_chained_transaction_math_and_scaling() {
         &change_key_4,
         &bob.user_id,
         "40.0066",
+        None,
     )
     .unwrap();
     current_voucher = v;
@@ -269,6 +274,7 @@ fn test_chained_transaction_math_and_scaling() {
         &bob_key, // Bob spends received
         &alice.user_id,
         "10",
+        None,
     )
     .unwrap();
     current_voucher = v;
@@ -302,6 +308,7 @@ fn test_chained_transaction_math_and_scaling() {
         &bob_change_key, // Init->Tx2 (Continuing chain)
         &alice.user_id,
         "0.0066",
+        None,
     )
     .unwrap();
     current_voucher = v;
@@ -357,6 +364,7 @@ fn test_transaction_fails_on_excess_precision() {
         &alice.signing_key,
         &bob.user_id,
         "0.12345",
+        None,
     );
 
     assert!(result.is_err());

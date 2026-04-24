@@ -390,6 +390,7 @@ pub fn setup_voucher_with_one_tx() -> (
         &holder_key,          // Ephemeral Key (Anchor Resolution)
         &recipient.user_id,
         "40.0000",
+        None,
     )
     .unwrap();
 
@@ -659,6 +660,7 @@ pub fn create_transaction_with_auto_decrypt(
         sender_ephemeral_key,
         recipient_id,
         amount,
+        None,
     )?;
 
     // Use returned secret directly

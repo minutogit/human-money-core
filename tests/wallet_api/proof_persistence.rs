@@ -49,6 +49,7 @@ fn test_proof_is_created_even_when_transaction_missing_from_store() {
         &holder_key,
         &watchtower.identity.user_id,
         "40",
+        None,
     ).unwrap();
 
     // T2: Alice -> Watchtower (Double Spend of T1)
@@ -60,6 +61,7 @@ fn test_proof_is_created_even_when_transaction_missing_from_store() {
         &holder_key,
         &watchtower.identity.user_id,
         "60",
+        None,
     ).unwrap();
 
     // Alice "forgets" the vouchers (Archived)

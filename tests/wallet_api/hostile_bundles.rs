@@ -110,6 +110,7 @@ fn test_rejection_of_broken_transaction_chain() {
         &human_money_core::test_utils::derive_holder_key(&voucher, &identity_sender.signing_key), // Init -> Tx1
         &id_recipient,
         "50.0000",
+        None,
     )
     .unwrap()
     .0
@@ -276,6 +277,7 @@ fn test_rejection_of_self_received_bundle() {
         }],
         notes: Some("Für Bob".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let bundle_result = service_sender
@@ -365,6 +367,7 @@ fn test_rejection_of_identical_bundle_replay() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let bundle_result = service_sender
@@ -447,6 +450,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
         &human_money_core::test_utils::derive_holder_key(&voucher_a, &identity_sender.signing_key), // Init -> Tx 1
         &id_recipient,
         "50.0000",
+        None,
     )
     .unwrap();
 
@@ -602,6 +606,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
         }],
         notes: Some("Für Bobs Handy".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let bundle_result = service_sender

@@ -32,6 +32,9 @@ pub struct MultiTransferRequest {
     /// Optionaler Profilname des Senders.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_profile_name: Option<String>,
+    /// Optional: Erzwinge oder deaktiviere den Privacy Mode (nur bei 'Flexible' Standards).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_privacy_mode: Option<bool>,
 }
 
 /// Fasst die Ergebnisse eines Transfers pro Standard zusammen.

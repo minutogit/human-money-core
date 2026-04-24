@@ -124,6 +124,7 @@ fn test_wallet_state_management_on_split() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -226,6 +227,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
         &holder_key,
         &a_identity.user_id,
         "100",
+        None,
     )
     .unwrap();
     let (voucher_for_bob, _) = create_transaction(
@@ -236,6 +238,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
         &holder_key,
         &b_identity.user_id,
         "100",
+        None,
     )
     .unwrap();
 
@@ -426,6 +429,7 @@ fn test_serialization_roundtrip_with_special_chars() {
         &holder_key,
         &human_money_core::test_utils::ACTORS.bob.user_id, // Valid DID
         "23",
+        None,
     )
     .unwrap();
     original_voucher = ov;

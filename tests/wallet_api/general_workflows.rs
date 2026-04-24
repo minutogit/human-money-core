@@ -105,6 +105,7 @@ fn api_app_service_full_lifecycle() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.immutable.identity.uuid.clone(), silver_standard_toml.clone());
@@ -420,6 +421,7 @@ fn api_wallet_transfer_full_amount() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -491,6 +493,7 @@ fn api_wallet_transfer_split_amount() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -557,6 +560,7 @@ fn api_wallet_transfer_invalid_amount() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -577,6 +581,7 @@ fn api_wallet_transfer_invalid_amount() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -628,6 +633,7 @@ fn api_wallet_transfer_inactive_voucher() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -678,6 +684,7 @@ fn api_wallet_proactive_double_spend_prevention() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -698,6 +705,7 @@ fn api_wallet_proactive_double_spend_prevention() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -1095,6 +1103,7 @@ fn api_wallet_transfer_multi_source() {
         ],
         notes: Some("Zahlung aus zwei Quellen".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();

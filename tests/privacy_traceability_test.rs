@@ -34,6 +34,7 @@ mod tests {
             &holder_key,
             &bob.identity.user_id,
             "100",
+            None,
         ).unwrap();
 
         let (bundle_bytes, _header) = alice_wallet.create_and_encrypt_transaction_bundle(
@@ -162,7 +163,7 @@ mod tests {
 
         // 1. Alice creates voucher (100) and sends 100 to Bob
         let alice_local_id = add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", &MINUTO_STANDARD.0, true).unwrap();
-        
+
         let request = human_money_core::wallet::types::MultiTransferRequest {
             recipient_id: bob.identity.user_id.clone(),
             sources: vec![human_money_core::wallet::types::SourceTransfer {
@@ -171,6 +172,7 @@ mod tests {
             }],
             notes: None,
             sender_profile_name: Some("Alice".to_string()),
+            use_privacy_mode: None,
         };
         let bundle = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None).unwrap();
         
@@ -186,6 +188,7 @@ mod tests {
             }],
             notes: None,
             sender_profile_name: Some("Bob".to_string()),
+            use_privacy_mode: None,
         };
         bob_wallet.execute_multi_transfer_and_bundle(&bob.identity, &standards, request, None).unwrap();
 
@@ -223,6 +226,7 @@ mod tests {
             }],
             notes: None,
             sender_profile_name: Some("Alice".to_string()),
+            use_privacy_mode: None,
         };
         let bundle = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None).unwrap();
         let bob_receive = bob_wallet.process_encrypted_transaction_bundle(&bob.identity, &bundle.bundle_bytes, None, &standards).unwrap();
@@ -237,6 +241,7 @@ mod tests {
             }],
             notes: None,
             sender_profile_name: Some("Bob".to_string()),
+            use_privacy_mode: None,
         };
         let bundle = bob_wallet.execute_multi_transfer_and_bundle(&bob.identity, &standards, request, None).unwrap();
         let charlie_receive = charlie_wallet.process_encrypted_transaction_bundle(&charlie.identity, &bundle.bundle_bytes, None, &standards).unwrap();
@@ -255,5 +260,77 @@ mod tests {
         // wird abgebrochen. Es darf NICHT Alice zurückgegeben werden.
         let revealed_sender = charlie_wallet.get_voucher_source_sender(&charlie_local_id, &charlie.identity).unwrap();
         assert_eq!(revealed_sender, None);
+    }
+
+    #[test]
+    fn test_flexible_privacy_toggle() {
+        let alice = &ACTORS.alice;
+        let bob = &ACTORS.bob;
+
+        let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
+        let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
+
+        let mut standards = HashMap::new();
+        standards.insert(MINUTO_STANDARD.0.immutable.identity.uuid.clone(), MINUTO_STANDARD.0.clone());
+
+        // 1. Minuto ist Flexible. Alice sendet PRIVAT (obwohl Standard Public erlaubt)
+        let alice_local_id = add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", &MINUTO_STANDARD.0, true).unwrap();
+        
+        let request = human_money_core::wallet::types::MultiTransferRequest {
+            recipient_id: bob.identity.user_id.clone(),
+            sources: vec![human_money_core::wallet::types::SourceTransfer {
+                local_instance_id: alice_local_id,
+                amount_to_send: "100".to_string(),
+            }],
+            notes: None,
+            sender_profile_name: Some("Alice".to_string()),
+            use_privacy_mode: Some(true), // <<--- TOGGLE PRIVACY ON
+        };
+
+        let bundle = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None).unwrap();
+        
+        // Bob empfängt
+        let bob_receive = bob_wallet.process_encrypted_transaction_bundle(&bob.identity, &bundle.bundle_bytes, None, &standards).unwrap();
+        let bob_local_id = bob_receive.involved_vouchers[0].clone();
+
+        // Check A: Im Ledger (Klartext) steht kein Sender
+        let instance = bob_wallet.voucher_store.vouchers.get(&bob_local_id).unwrap();
+        let last_tx = instance.voucher.transactions.last().unwrap();
+        assert!(last_tx.sender_id.is_none());
+        assert!(last_tx.sender_identity_signature.is_none());
+
+        // Check B: Rückverfolgbarkeit funktioniert trotzdem (via Guard)
+        let revealed_sender = bob_wallet.get_voucher_source_sender(&bob_local_id, &bob.identity).unwrap();
+        assert_eq!(revealed_sender, Some(alice.identity.user_id.clone()));
+    }
+
+    #[test]
+    fn test_strict_privacy_validation() {
+        let alice = &ACTORS.alice;
+        let bob = &ACTORS.bob;
+        let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
+        let mut standards = HashMap::new();
+        
+        // 1. Test: Public Standard + use_privacy_mode: Some(true) -> Error
+        let mut test_public_std = MINUTO_STANDARD.0.clone();
+        test_public_std.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+        standards.insert(test_public_std.immutable.identity.uuid.clone(), test_public_std.clone());
+
+        let alice_local_id = add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", &test_public_std, true).unwrap();
+        
+        let request = human_money_core::wallet::types::MultiTransferRequest {
+            recipient_id: bob.identity.user_id.clone(),
+            sources: vec![human_money_core::wallet::types::SourceTransfer {
+                local_instance_id: alice_local_id,
+                amount_to_send: "100".to_string(),
+            }],
+            notes: None,
+            sender_profile_name: None,
+            use_privacy_mode: Some(true),
+        };
+
+        let result = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Cannot use privacy mode on a public standard"));
     }
 }

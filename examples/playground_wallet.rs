@@ -127,6 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }],
         notes: Some("Payment for services".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards_map = std::collections::HashMap::new();

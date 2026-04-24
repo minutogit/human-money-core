@@ -364,6 +364,7 @@ fn prevent_trap_data_replay() {
         &holder_key_init,
         &receiver_ephemeral_pub_hash_tx1,
         amount,
+        None,
     )
     .unwrap();
     let tx1 = voucher.transactions.last().unwrap().clone();

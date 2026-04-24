@@ -324,6 +324,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }],
         notes: Some("Viel Spaß!".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.immutable.identity.uuid.clone(), standard_toml.clone());
@@ -375,6 +376,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }],
         notes: Some("Weitergereicht!".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.immutable.identity.uuid.clone(), standard_toml.clone());

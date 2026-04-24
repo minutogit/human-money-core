@@ -49,6 +49,7 @@ fn test_path_dependency_long_chain() {
         &bob_ephemeral_key,
         &charlie.user_id,
         "40.0000",
+        None,
     ).unwrap();
     let final_tx = voucher_after_tx2.transactions.last().unwrap();
 
@@ -76,6 +77,7 @@ fn test_path_dependency_bounce_back() {
         &bob_ephemeral_key,
         &alice.user_id,
         "40.0000",
+        None,
     ).unwrap();
     let final_tx = voucher_after_tx2.transactions.last().unwrap();
 
@@ -104,6 +106,7 @@ fn test_correct_id_for_archived_state() {
         &alice_ephemeral_key,
         &bob.user_id,
         "60.0000",
+        None,
     ).unwrap();
     let final_tx = voucher_after_full_transfer.transactions.last().unwrap();
 

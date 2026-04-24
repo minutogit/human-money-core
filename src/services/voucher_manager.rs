@@ -5,7 +5,7 @@ use crate::models::voucher::{
     Collateral, RecipientPayload, Transaction, ValueDefinition, Voucher, VoucherSignature,
     VoucherStandard,
 };
-use crate::models::voucher_standard_definition::VoucherStandardDefinition;
+use crate::models::voucher_standard_definition::{PrivacyMode, VoucherStandardDefinition};
 use crate::services::crypto_utils::{
     derive_ephemeral_key_pair, ed25519_pk_to_curve_point, encode_base64, encrypt_data,
     generate_ephemeral_x25519_keypair, get_hash, get_hash_from_slices, get_pubkey_from_user_id,
@@ -546,10 +546,11 @@ pub fn create_transaction(
     voucher: &Voucher,
     standard: &VoucherStandardDefinition,
     sender_id: &str,
-    sender_permanent_key: &SigningKey, // Für Trap (ID)
-    sender_ephemeral_key: &SigningKey, // Für L2-Signatur und Anker-Auflösung
+    sender_permanent_key: &SigningKey,
+    sender_ephemeral_key: &SigningKey,
     recipient_id: &str,
     amount_to_send_str: &str,
+    use_privacy_mode: Option<bool>,
 ) -> Result<(Voucher, TransactionSecrets), VoucherCoreError> {
     crate::services::voucher_validation::validate_voucher_against_standard(voucher, standard)?;
 
@@ -604,25 +605,35 @@ pub fn create_transaction(
     let prev_hash = get_hash(to_canonical_json(voucher.transactions.last().unwrap())?);
     let t_time = get_current_timestamp();
 
-    // PRIVACY MODE CHECK
-    use crate::models::voucher_standard_definition::PrivacyMode;
-    let privacy_mode = &standard.immutable.features.privacy_mode;
+    // Determine Privacy Mode (Strict Validation)
+    let actually_private = match (standard.immutable.features.privacy_mode, use_privacy_mode) {
+        (PrivacyMode::Public, Some(true)) => {
+            return Err(VoucherCoreError::Validation(crate::error::ValidationError::InvalidTransaction(
+                "Cannot use privacy mode on a public standard.".to_string()
+            )));
+        },
+        (PrivacyMode::Private, Some(false)) => {
+             return Err(VoucherCoreError::Validation(crate::error::ValidationError::InvalidTransaction(
+                "Cannot disable privacy mode on a private standard.".to_string()
+            )));
+        },
+        (PrivacyMode::Private, _) => true,
+        (PrivacyMode::Public, _) => false,
+        (PrivacyMode::Flexible, Some(p)) => p,
+        (PrivacyMode::Flexible, None) => false, // Default to Public if not specified in Flexible
+    };
 
-    // Determine Sender ID Visibility
-    let final_sender_id = match privacy_mode {
-        PrivacyMode::Public => Some(sender_id.to_string()),
-        PrivacyMode::Private => None,
-        PrivacyMode::Flexible => {
-            // Flexible: Sender decides.
-            // For this implementation: We use sender_id as explicit intent to be public.
-            Some(sender_id.to_string())
-        }
+    // Determine Sender ID Visibility (Complete Anonymization)
+    let final_sender_id = if actually_private {
+        None
+    } else {
+        Some(sender_id.to_string())
     };
 
 
     // Validate Recipient ID against Mode
     let recipient_is_did = recipient_id.starts_with("did:") || recipient_id.contains("@did:");
-    let recipient_id_check = match privacy_mode {
+    let recipient_id_check = match standard.immutable.features.privacy_mode {
         PrivacyMode::Public => {
             if !recipient_is_did {
                 return Err(VoucherManagerError::Generic(

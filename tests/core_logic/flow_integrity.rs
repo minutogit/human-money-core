@@ -53,6 +53,7 @@ fn test_init_transfer_split_chain() {
         &holder_key_0,
         &bob.user_id,
         "50.0", // Full transfer
+        None,
     )
     .expect("Transfer Alice->Bob failed");
 
@@ -112,8 +113,7 @@ fn test_init_transfer_split_chain() {
         holder_key_bob, // Use derived key
         &charlie.user_id,
         "10.0",
-        // Check args! Last arg is amount?
-        // create_transaction signature: (voucher, standard, sender_id, sender_perm, sender_ephem, recipient, amount)
+        None,
     )
     .expect("Split Bob->Charlie failed");
 

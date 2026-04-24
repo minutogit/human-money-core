@@ -597,6 +597,7 @@ fn test_split_transaction_cycle_and_balance_check() {
         &holder_key, // Init->Tx1: Emphemerer Key ist Holder Key
         &recipient.user_id,
         split_amount,
+        None,
     )
     .unwrap();
 
@@ -658,6 +659,7 @@ fn test_split_fails_on_insufficient_funds() {
         &holder_key, // Init->Tx1 uses derived key
         &recipient.user_id,
         "50.1",
+        None,
     )
     .map(|(v, _)| v);
 
@@ -711,6 +713,7 @@ fn test_fails_to_create_forbidden_transaction_type() {
         &holder_key, // Init->Tx1
         &recipient.user_id,
         "50", // Teilbetrag, der einen "split" erzwingt
+        None,
     )
     .map(|(v, _)| v);
 
@@ -765,6 +768,7 @@ fn test_split_fails_on_non_allow_partial_transfers_voucher() {
         &holder_key, // Init->Tx1
         &recipient.user_id,
         "10.0",
+        None,
     )
     .map(|(v, _)| v);
 
@@ -988,6 +992,7 @@ fn test_double_spend_detection_logic() {
         &holder_key, // Init->Tx1
         &bob.user_id,
         "40",
+        None,
     )
     .unwrap();
     let validation_result_1 =
@@ -1007,6 +1012,7 @@ fn test_double_spend_detection_logic() {
         &holder_key, // Double Spend Attempt (Same key as legit tx)
         &frank.user_id,
         "60",
+        None,
     )
     .unwrap();
     let validation_result_2 =
@@ -1160,6 +1166,7 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
         }],
         notes: Some("Here is the voucher I promised!".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();

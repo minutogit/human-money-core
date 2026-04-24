@@ -13,7 +13,7 @@ use crate::models::voucher::Voucher;
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::services::crypto_utils::get_hash;
 use crate::services::utils::to_canonical_json;
-use crate::services::{bundle_processor, conflict_manager, voucher_manager};
+use crate::services::{bundle_processor, conflict_manager};
 use crate::wallet::Wallet;
 use crate::wallet::instance::VoucherStatus;
 use ed25519_dalek::SigningKey;
@@ -400,6 +400,7 @@ impl Wallet {
         recipient_id: &str,
         amount_to_send: &str,
         archive: Option<&dyn VoucherArchive>,
+        use_privacy_mode: Option<bool>,
     ) -> Result<Voucher, VoucherCoreError> {
         let instance = self
             .voucher_store
@@ -453,14 +454,15 @@ impl Wallet {
             });
         }
 
-        let (new_voucher_state, _secrets) = voucher_manager::create_transaction(
+        let (new_voucher_state, _secrets) = crate::services::voucher_manager::create_transaction(
             &voucher_to_spend,
             standard_definition,
             &identity.user_id,
-            &identity.signing_key, // Permanent Key (für Trap ID)
-            &sender_ephemeral_key, // Ephemeral Key (für L2 Sig / Anchor)
+            &identity.signing_key,
+            &sender_ephemeral_key,
             recipient_id,
             amount_to_send,
+            use_privacy_mode,
         )?;
 
         // KORREKTE LOGIK ZUR ZUSTANDSVERWALTUNG:
@@ -574,6 +576,7 @@ impl Wallet {
                 &request.recipient_id,
                 &source.amount_to_send,
                 archive,
+                request.use_privacy_mode,
             )?;
 
             vouchers_for_bundle.push(new_voucher);

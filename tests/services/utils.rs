@@ -365,6 +365,7 @@ fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
         &holder_key_allowed,
         &recipient.user_id,
         "10",
+        None,
     );
 
     assert!(
@@ -414,6 +415,7 @@ fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
         &holder_key_short,
         &recipient.user_id,
         "10",
+        None,
     );
 
     assert!(
