@@ -120,6 +120,26 @@ impl Wallet {
                         found: last_tx.recipient_id.clone(),
                     });
                 }
+
+                // Wenn anonym, erzwinge erfolgreiche Entschlüsselung des Privacy Guards als Besitznachweis VOR der Speicherung.
+                if last_tx.recipient_id == crate::models::voucher::ANONYMOUS_ID {
+                    let owns_voucher = if let Some(guard_base64) = &last_tx.privacy_guard {
+                        crate::services::crypto_utils::decrypt_recipient_payload(
+                            guard_base64,
+                            &identity.signing_key,
+                            &identity.user_id,
+                        ).is_ok()
+                    } else {
+                        false
+                    };
+
+                    if !owns_voucher {
+                         return Err(VoucherCoreError::BundleRecipientMismatch {
+                            expected: own_user_id.clone(),
+                            found: "anonymous_but_payload_decryption_failed".to_string(),
+                        });
+                    }
+                }
             } else {
                 // Ein Gutschein ohne Transaktionen ist per se ungültig.
                 return Err(VoucherCoreError::Validation(

@@ -1,6 +1,6 @@
 ---
 project: human-money-core
-version: "0.2.8"
+version: "0.2.9"
 phase: "active-development"
 health: "green"
 last_updated: "2026-04-24"
@@ -65,6 +65,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] Deep traceability testing & fix for voucher source sender identification
 - [x] Anonymous Privacy Routing: Strict identity regulation based on PrivacyMode
 - [x] Deep Privacy Balance Calculation: Hardened UTXO-based stealth key matching test suite
+- [x] Hardened Privacy Mode Decryption: Mandatory privacy_guard validation for anonymous recipient IDs
 
 ## Next Milestones
 

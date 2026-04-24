@@ -162,12 +162,12 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standa
                     .into());
                 }
             }
-            PrivacyMode::Private => {
+            PrivacyMode::Stealth => {
                 // 1. sender_id must be None.
                 if tx.sender_id.is_some() {
                     return Err(ValidationError::PrivacyModeViolation {
                         t_id: tx.t_id.clone(),
-                        reason: "Explicit sender_id in 'private' mode.".to_string(),
+                        reason: "Explicit sender_id in 'stealth' mode.".to_string(),
                     }.into());
                 }
                 // 2. sender_identity_signature must be None (Test 1).
@@ -177,12 +177,12 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standa
                     }
                     .into());
                 }
-                // 3. recipient_id must be "anonymous".
+                // 3. recipient_id must be "anonymous" (NO DIDs allowed).
                 if tx.recipient_id != crate::models::voucher::ANONYMOUS_ID {
                     return Err(ValidationError::PrivacyModeViolation {
                         t_id: tx.t_id.clone(),
                         reason: format!(
-                            "Non-anonymous recipient_id ('{}') in 'private' mode.",
+                            "Non-anonymous recipient_id ('{}') in 'stealth' mode. DIDs are strictly forbidden.",
                             tx.recipient_id
                         ),
                     }.into());
@@ -190,6 +190,16 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standa
             }
             PrivacyMode::Flexible => {
                 // 1. recipient_id MUST ALWAYS be anonymous (Future privacy).
+                // Hard check for DIDs (leaks)
+                if tx.recipient_id.contains(':') || tx.recipient_id.contains('@') {
+                     return Err(ValidationError::PrivacyModeViolation {
+                        t_id: tx.t_id.clone(),
+                        reason: format!(
+                            "Identity leak detected: recipient_id ('{}') contains DID markers in 'flexible' mode.",
+                            tx.recipient_id
+                        ),
+                    }.into());
+                }
                 if tx.recipient_id != crate::models::voucher::ANONYMOUS_ID {
                     return Err(ValidationError::PrivacyModeViolation {
                         t_id: tx.t_id.clone(),

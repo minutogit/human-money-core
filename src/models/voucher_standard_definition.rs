@@ -45,7 +45,7 @@ pub enum CollateralType {
 pub enum PrivacyMode {
     #[default]
     Public,
-    Private,
+    Stealth,
     Flexible,
 }
 

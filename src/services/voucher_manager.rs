@@ -617,12 +617,13 @@ pub fn create_transaction(
 
     // Determine Identities based on Privacy Mode (Core Regulation)
     let (final_sender_id, recipient_id_check) = match standard.immutable.features.privacy_mode {
-        PrivacyMode::Private => {
-            // Private Mode: Everything is anonymous. Ignore incoming IDs.
+        PrivacyMode::Stealth => {
+            // Stealth Mode: Everything is anonymous. Ignore incoming IDs.
             (None, crate::models::voucher::ANONYMOUS_ID.to_string())
         }
         PrivacyMode::Flexible => {
             // Flexible Mode: Sender choice for self (actually_private), but recipient IS ALWAYS anonymous.
+            // Flexibility lies ONLY with the sender.
             let actually_private = use_privacy_mode.unwrap_or(false);
             let s_id = if actually_private { None } else { Some(sender_id.to_string()) };
             (s_id, crate::models::voucher::ANONYMOUS_ID.to_string())

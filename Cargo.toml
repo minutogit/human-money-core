@@ -1,6 +1,6 @@
 [package]
 name = "human_money_core"
-version = "0.2.7"
+version = "0.2.9"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -57,7 +57,7 @@ path = "src/bin/voucher-cli.rs"
 
 [dev-dependencies]
 rand = "0.8"
-human_money_core = { version = "0.2.7", path = ".", features = ["test-utils"] }
+human_money_core = { version = "0.2.9", path = ".", features = ["test-utils"] }
 regex = "1.10.4"
 tempfile = "3.10.1"
 lazy_static = "1.4.0"

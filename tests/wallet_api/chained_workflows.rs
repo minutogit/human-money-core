@@ -117,7 +117,7 @@ fn test_chained_workflow_strict_public() {
 #[test]
 fn test_chained_workflow_strict_private() {
     human_money_core::set_signature_bypass(true);
-    let (standard_def, _standard_hash, standards_map) = setup_standard(PrivacyMode::Private);
+    let (standard_def, _standard_hash, standards_map) = setup_standard(PrivacyMode::Stealth);
 
     let mut alice = test_utils::setup_in_memory_wallet(&ACTORS.alice.identity);
     let mut bob = test_utils::setup_in_memory_wallet(&ACTORS.bob.identity);

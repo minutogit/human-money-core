@@ -127,20 +127,20 @@ mod tests {
     }
 
     #[test]
-    fn test_private_mode_compliance() {
+    fn test_stealth_mode_compliance() {
         let alice = &ACTORS.alice;
         let bob = &ACTORS.bob;
         let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
         let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
         
-        let mut private_std = MINUTO_STANDARD.0.clone();
-        private_std.immutable.features.privacy_mode = PrivacyMode::Private;
-        private_std.immutable.identity.uuid = "private-test-uuid".to_string();
+        let mut stealth_std = MINUTO_STANDARD.0.clone();
+        stealth_std.immutable.features.privacy_mode = PrivacyMode::Stealth;
+        stealth_std.immutable.identity.uuid = "stealth-test-uuid".to_string();
         
         let mut standards = HashMap::new();
-        standards.insert(private_std.immutable.identity.uuid.clone(), private_std.clone());
+        standards.insert(stealth_std.immutable.identity.uuid.clone(), stealth_std.clone());
 
-        let alice_local_id = add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", &private_std, true).unwrap();
+        let alice_local_id = add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", &stealth_std, true).unwrap();
 
         // Transfer: privacy mode is implicit here, but let's be explicit too
         let request = MultiTransferRequest {

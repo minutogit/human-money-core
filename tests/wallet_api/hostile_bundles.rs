@@ -202,6 +202,22 @@ fn test_rejection_of_inconsistent_split_math() {
     tx2.recipient_id = human_money_core::models::voucher::ANONYMOUS_ID.to_string();
     tx2.amount = "30.0000".to_string();
     tx2.sender_remaining_amount = Some("80.0000".to_string()); // Falscher Restbetrag
+
+    // NEU: Hänge einen gültigen Privacy Guard an, damit die Ingest-Prüfung passiert
+    let payload = human_money_core::models::voucher::RecipientPayload {
+        sender_permanent_did: identity_sender.user_id.clone(),
+        target_prefix: id_recipient.split(':').next().unwrap_or("").to_string(),
+        timestamp: 1625097600,
+        next_key_seed: "test".to_string(),
+    };
+    let payload_bytes = serde_json::to_vec(&payload).unwrap();
+    let recipient_pubkey = human_money_core::services::crypto_utils::get_pubkey_from_user_id(&id_recipient).unwrap();
+    tx2.privacy_guard = Some(human_money_core::services::crypto_utils::encrypt_recipient_payload(
+        &payload_bytes,
+        &recipient_pubkey,
+        &id_recipient,
+    ).unwrap());
+
     // 3. WICHTIG: Dank Signature-Bypass aktualisieren wir nur die t_id.
     tx2.t_id = human_money_core::crypto_utils::get_hash(
         human_money_core::to_canonical_json(&tx2).unwrap(),

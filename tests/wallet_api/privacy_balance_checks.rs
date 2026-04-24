@@ -35,7 +35,7 @@ fn get_balance(wallet: &Wallet, identity: &human_money_core::models::profile::Us
 #[test]
 fn test_deep_privacy_balance_calculation() {
     human_money_core::set_signature_bypass(true);
-    let (standard_def, _standard_hash, standards_map) = setup_standard(PrivacyMode::Private);
+    let (standard_def, _standard_hash, standards_map) = setup_standard(PrivacyMode::Stealth);
 
     let mut alice = test_utils::setup_in_memory_wallet(&ACTORS.alice.identity);
     let mut bob = test_utils::setup_in_memory_wallet(&ACTORS.bob.identity);

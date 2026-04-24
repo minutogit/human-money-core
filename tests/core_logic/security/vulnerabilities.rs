@@ -30,6 +30,24 @@ use std::str::FromStr;
 // HILFSFUNKTIONEN & SETUP (Adaptiert aus bestehenden Tests)
 // ===================================================================================
 
+/// Helper: Erzeugt einen gültigen Privacy Guard für Tests, damit das Bundle-Ingest passt.
+fn attach_test_privacy_guard(tx: &mut Transaction, _v_id: &str, recipient_id: &str, sender_id: &str) {
+    let payload = human_money_core::models::voucher::RecipientPayload {
+        sender_permanent_did: sender_id.to_string(),
+        target_prefix: recipient_id.split(':').next().unwrap_or("").to_string(),
+        timestamp: 1625097600, // 2021-07-01 dummy timestamp
+        next_key_seed: "test_seed_123".to_string(),
+    };
+    let payload_bytes = serde_json::to_vec(&payload).unwrap();
+    let recipient_pubkey = human_money_core::services::crypto_utils::get_pubkey_from_user_id(recipient_id).unwrap();
+    
+    tx.privacy_guard = Some(human_money_core::services::crypto_utils::encrypt_recipient_payload(
+        &payload_bytes,
+        &recipient_pubkey,
+        recipient_id,
+    ).unwrap());
+}
+
 /// Wählt eine zufällige Transaktion (außer `init`) und macht ihren Betrag negativ.
 fn mutate_to_negative_amount(voucher: &mut Voucher) -> String {
     if voucher.transactions.len() < 2 {
@@ -479,6 +497,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     let v_id =
         human_money_core::services::l2_gateway::extract_layer2_voucher_id(voucher_in_hacker_wallet)
             .unwrap();
+    attach_test_privacy_guard(&mut final_tx, &v_id, &ACTORS.victim.user_id, &ACTORS.hacker.user_id);
     let hacked_tx = create_hacked_tx(
         &hacker_holder_secret,
         Some(&ACTORS.hacker.signing_key),
@@ -559,6 +578,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     let v_id =
         human_money_core::services::l2_gateway::extract_layer2_voucher_id(voucher_in_hacker_wallet)
             .unwrap();
+    attach_test_privacy_guard(&mut final_tx_2, &v_id, &ACTORS.victim.user_id, &ACTORS.hacker.user_id);
     let final_tx_hacked = create_hacked_tx(
         &hacker_holder_secret,
         Some(&ACTORS.hacker.signing_key),
@@ -818,6 +838,7 @@ fn test_attack_create_inconsistent_transaction() {
     let v_id =
         human_money_core::services::l2_gateway::extract_layer2_voucher_id(voucher_in_hacker_wallet)
             .unwrap();
+    attach_test_privacy_guard(&mut overspend_tx_unsigned, &v_id, &ACTORS.victim.user_id, &ACTORS.hacker.user_id);
     let overspend_tx = create_hacked_tx(
         &hacker_holder_secret,
         Some(&ACTORS.hacker.signing_key),
@@ -901,6 +922,14 @@ fn test_attack_inconsistent_split_transaction() {
         &ACTORS.hacker.user_id,
     ));
     let v_id = human_money_core::services::l2_gateway::extract_layer2_voucher_id(&voucher).unwrap();
+    // NEU: Hänge einen gültigen Privacy Guard an, damit die Ingest-Prüfung passiert
+    let payload = human_money_core::models::voucher::RecipientPayload {
+        sender_permanent_did: hacker_identity.user_id.clone(),
+        target_prefix: "victim".to_string(),
+        timestamp: 1625097600,
+        next_key_seed: "test".to_string(),
+    };
+    let _payload_bytes = serde_json::to_vec(&payload).unwrap();
     let inconsistent_tx = create_hacked_tx(
         &holder_key,
         Some(&ACTORS.hacker.signing_key),

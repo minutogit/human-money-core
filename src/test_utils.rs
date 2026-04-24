@@ -1161,6 +1161,43 @@ pub fn resign_transaction_ext(
     tx
 }
 
+/// Erzeugt einen gültigen Privacy Guard für Tests.
+pub fn attach_privacy_guard(tx: &mut Transaction, recipient_id: &str, sender_id: &str) {
+    let payload = crate::models::voucher::RecipientPayload {
+        sender_permanent_did: sender_id.to_string(),
+        target_prefix: recipient_id.split(':').next().unwrap_or("").to_string(),
+        timestamp: chrono::Utc::now().timestamp() as u64,
+        next_key_seed: "test_seed_123".to_string(),
+    };
+    let payload_bytes = serde_json::to_vec(&payload).unwrap();
+    let recipient_pubkey = crate::services::crypto_utils::get_pubkey_from_user_id(recipient_id).unwrap();
+
+    tx.privacy_guard = Some(crate::services::crypto_utils::encrypt_recipient_payload(
+        &payload_bytes,
+        &recipient_pubkey,
+        recipient_id,
+    ).unwrap());
+}
+
+/// Signiert eine Transaktion und fügt automatisch einen Privacy Guard hinzu,
+/// falls der Empfänger anonym ist und noch kein Guard existiert.
+pub fn resign_transaction_with_privacy(
+    mut tx: Transaction,
+    signer_key: &ed25519_dalek::SigningKey,
+    v_id: &str,
+    l2_signer_key: Option<&ed25519_dalek::SigningKey>,
+    recipient_id: &str,
+) -> Transaction {
+    if tx.recipient_id == crate::models::voucher::ANONYMOUS_ID && tx.privacy_guard.is_none() {
+        let sender_id = tx.sender_id.clone().unwrap_or_else(|| {
+            // Fallback: Erzeuge eine Dummy-ID mit Präfix, da create_user_id nun ein Präfix erzwingt
+            crate::services::crypto_utils::create_user_id(&signer_key.verifying_key(), Some("test")).unwrap()
+        });
+        attach_privacy_guard(&mut tx, recipient_id, &sender_id);
+    }
+    resign_transaction_ext(tx, signer_key, v_id, l2_signer_key)
+}
+
 #[allow(dead_code)]
 pub fn create_test_bundle(
     sender_identity: &UserIdentity,

@@ -109,7 +109,7 @@ fn test_private_mode_enforcement() {
         setup_voucher_with_one_tx();
     let mut standard = standard_ref.clone();
 
-    standard.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Private;
+    standard.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Stealth;
 
     let mut std_no_sig = standard.clone();
     std_no_sig.signature = None;

@@ -207,7 +207,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     let alice_holder_pub = bs58::encode(alice_holder_key.verifying_key().to_bytes()).into_string();
 
     // TX_A -> Bob (früher)
-    let mut tx_a = Transaction {
+    let tx_a_raw = Transaction {
         prev_hash: prev_tx_hash.clone(),
         t_type: "transfer".to_string(),
         t_time: time_a,
@@ -218,15 +218,20 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
         layer2_signature: Some("dummy_l2_sig".to_string()),
         ..Default::default()
     };
-    // Dank Signature-Bypass müssen wir nicht mehr mühsam re-signieren.
-    // Wir brauchen nur die t_id zu aktualisieren, damit die t_id zum Inhalt passt.
-    tx_a.t_id = crypto_utils::get_hash(utils::to_canonical_json(&tx_a).unwrap());
+    let v_id = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&voucher_v1.transactions[0]).unwrap();
+    let tx_a = test_utils::resign_transaction_with_privacy(
+        tx_a_raw,
+        &identity_alice.signing_key,
+        &v_id,
+        Some(&alice_holder_key),
+        &id_david,
+    );
 
     let mut voucher_v2_bob = voucher_v1.clone();
     voucher_v2_bob.transactions.push(tx_a);
 
     // TX_B -> Charlie (später)
-    let mut tx_b = Transaction {
+    let tx_b_raw = Transaction {
         prev_hash: prev_tx_hash,
         t_type: "transfer".to_string(),
         t_time: time_b,
@@ -236,7 +241,13 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
         sender_ephemeral_pub: Some(alice_holder_pub),
         ..Default::default()
     };
-    tx_b.t_id = crypto_utils::get_hash(utils::to_canonical_json(&tx_b).unwrap());
+    let tx_b = test_utils::resign_transaction_with_privacy(
+        tx_b_raw,
+        &identity_alice.signing_key,
+        &v_id,
+        Some(&alice_holder_key),
+        &id_david,
+    );
 
     let mut voucher_v2_charlie = voucher_v1.clone();
     voucher_v2_charlie.transactions.push(tx_b);
@@ -355,7 +366,7 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     let alice_holder_pub = bs58::encode(alice_holder_key.verifying_key().to_bytes()).into_string();
 
     // Pfad A: Split-Transfer 99
-    let mut tx_a = Transaction {
+    let tx_a_raw = Transaction {
         prev_hash: prev_tx_hash.clone(),
         t_type: "split".to_string(),
         t_time: collision_time.clone(),
@@ -366,12 +377,19 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
         sender_ephemeral_pub: Some(alice_holder_pub.clone()),
         ..Default::default()
     };
-    tx_a.t_id = crypto_utils::get_hash(utils::to_canonical_json(&tx_a).unwrap());
+    let v_id = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&voucher_v1.transactions[0]).unwrap();
+    let tx_a = test_utils::resign_transaction_with_privacy(
+        tx_a_raw,
+        &identity_alice.signing_key,
+        &v_id,
+        Some(&alice_holder_key),
+        &id_david,
+    );
     let mut voucher_a = voucher_v1.clone();
     voucher_a.transactions.push(tx_a.clone());
 
     // Pfad B: Full-Transfer 100
-    let mut tx_b = Transaction {
+    let tx_b_raw = Transaction {
         prev_hash: prev_tx_hash,
         t_type: "transfer".to_string(),
         t_time: collision_time,
@@ -381,7 +399,13 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
         sender_ephemeral_pub: Some(alice_holder_pub),
         ..Default::default()
     };
-    tx_b.t_id = crypto_utils::get_hash(utils::to_canonical_json(&tx_b).unwrap());
+    let tx_b = test_utils::resign_transaction_with_privacy(
+        tx_b_raw,
+        &identity_alice.signing_key,
+        &v_id,
+        Some(&alice_holder_key),
+        &id_david,
+    );
     let mut voucher_b = voucher_v1.clone();
     voucher_b.transactions.push(tx_b.clone());
 

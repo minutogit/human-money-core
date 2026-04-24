@@ -596,12 +596,13 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         sender_ephemeral_pub: Some(alice_holder_pub.clone()),
         ..Default::default()
     };
-    // FIX: Use resign_transaction_ext with Permanent Key for Identity Signature and Holder Key for Proof Signature
-    tx_a = human_money_core::test_utils::resign_transaction_ext(
+    // FIX: Use resign_transaction_with_privacy to ensure privacy guard is added
+    tx_a = human_money_core::test_utils::resign_transaction_with_privacy(
         tx_a,
         &identity_alice.signing_key,
         &v_id,
         Some(&alice_holder_key),
+        &id_david,
     );
     let mut voucher_path_a = voucher_v1.clone();
     voucher_path_a.transactions.push(tx_a);
@@ -612,7 +613,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         None,
     )
     .unwrap();
-
+    
     // Pfad B (löst den Konflikt aus)
     let mut tx_b = human_money_core::models::voucher::Transaction {
         prev_hash: prev_tx_hash,
@@ -624,12 +625,13 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         sender_ephemeral_pub: Some(alice_holder_pub),
         ..Default::default()
     };
-    // FIX: Use resign_transaction_ext with Permanent Key for Identity Signature and Holder Key for Proof Signature
-    tx_b = human_money_core::test_utils::resign_transaction_ext(
+    // FIX: Use resign_transaction_with_privacy to ensure privacy guard is added
+    tx_b = human_money_core::test_utils::resign_transaction_with_privacy(
         tx_b,
         &identity_alice.signing_key,
         &v_id,
         Some(&alice_holder_key),
+        &id_david,
     );
     let mut voucher_path_b = voucher_v1.clone();
     voucher_path_b.transactions.push(tx_b);

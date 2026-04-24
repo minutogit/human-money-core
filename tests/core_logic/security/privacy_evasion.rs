@@ -19,7 +19,7 @@ fn setup_standard(mode: &str) -> (VoucherStandardDefinition, String) {
     // Set privacy mode
     standard.immutable.features.privacy_mode = match mode {
         "public" => human_money_core::models::voucher_standard_definition::PrivacyMode::Public,
-        "private" => human_money_core::models::voucher_standard_definition::PrivacyMode::Private,
+        "private" => human_money_core::models::voucher_standard_definition::PrivacyMode::Stealth,
         "flexible" => human_money_core::models::voucher_standard_definition::PrivacyMode::Flexible,
         _ => panic!("Unknown privacy mode: {}", mode),
     };
