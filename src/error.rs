@@ -157,6 +157,14 @@ pub enum ValidationError {
     #[error("Trap Integrity: Transaction '{t_id}' has invalid or suspicious blinded_id format.")]
     TrapDataInvalid { t_id: String },
 
+    /// Der im privacy_guard deklarierte Sender stimmt nicht mit dem Bündel-Absender überein.
+    #[error("Privacy Guard Integrity: Declared sender '{declared}' does not match bundle signer '{actual}'.")]
+    MismatchedPrivacySenderId { declared: String, actual: String },
+
+    /// Der privacy_guard konnte nicht entschlüsselt oder geparst werden.
+    #[error("Privacy Guard decryption or parsing failed: {0}")]
+    PrivacyGuardDecryptionFailed(String),
+
     /// Die voucher_id in einer Signatur stimmt nicht mit der des Gutscheins überein.
     #[error("Signature references wrong voucher. Expected ID: {expected}, Found ID: {found}")]
     MismatchedVoucherIdInSignature { expected: String, found: String },

@@ -293,6 +293,26 @@ pub fn build_hkdf_info(pk1: &X25519PublicKey, pk2: &X25519PublicKey) -> Vec<u8> 
     info
 }
 
+/// Verschlüsselt den Privacy Guard Payload für den Empfänger.
+///
+/// # Arguments
+/// * `payload_bytes` - Die serialisierten Daten des RecipientPayload.
+/// * `recipient_public_key_ed` - Der permanente Public Key (Ed25519) des Empfängers.
+pub fn encrypt_recipient_payload(
+    payload_bytes: &[u8],
+    recipient_public_key_ed: &EdPublicKey,
+) -> Result<String, VoucherCoreError> {
+    let (ephemeral_pk, ephemeral_sk) = generate_ephemeral_x25519_keypair();
+    let recipient_x_pk = ed25519_pub_to_x25519(recipient_public_key_ed);
+    let shared_secret = perform_diffie_hellman(ephemeral_sk, &recipient_x_pk)?;
+    let encrypted_bytes = encrypt_data(&shared_secret, payload_bytes)?;
+
+    let mut privacy_guard_bytes = Vec::new();
+    privacy_guard_bytes.extend_from_slice(ephemeral_pk.as_bytes());
+    privacy_guard_bytes.extend_from_slice(&encrypted_bytes);
+    Ok(encode_base64(&privacy_guard_bytes))
+}
+
 /// Entschlüsselt den Privacy Guard Payload für den Empfänger.
 ///
 /// # Arguments

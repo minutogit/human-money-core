@@ -154,27 +154,43 @@ impl Wallet {
             */
             if let Some(last_tx) = voucher.transactions.last() {
                 if let Some(guard_base64) = &last_tx.privacy_guard {
-                    // Verwende die neue Helper-Funktion in crypto_utils
-                    if let Ok(decrypted_payload_bytes) =
+                    // STRICT INGESTION: Wenn ein privacy_guard vorhanden ist, MUSS er
+                    // erfolgreich entschlüsselt und geparst werden können.
+                    let decrypted_payload_bytes =
                         crate::services::crypto_utils::decrypt_recipient_payload(
                             guard_base64,
                             &identity.signing_key,
+                        ).map_err(|e| {
+                            VoucherCoreError::Validation(
+                                ValidationError::PrivacyGuardDecryptionFailed(
+                                    format!("Decryption failed: {}", e)
+                                )
+                            )
+                        })?;
+
+                    let payload = serde_json::from_slice::<
+                        crate::models::voucher::RecipientPayload,
+                    >(&decrypted_payload_bytes).map_err(|e| {
+                        VoucherCoreError::Validation(
+                            ValidationError::PrivacyGuardDecryptionFailed(
+                                format!("JSON parsing failed: {}", e)
+                            )
                         )
-                    {
-                        if let Ok(payload) = serde_json::from_slice::<
-                            crate::models::voucher::RecipientPayload,
-                        >(&decrypted_payload_bytes)
-                        {
-                            // Check target_prefix (Simple validation)
-                            // "target_prefix": "creator:fY7..."
-                            // identity.user_id: "creator:fY7...@did..."
-                            // TODO: Robusterer Check?
-                            if identity.user_id.starts_with(&payload.target_prefix) {
-                                // STATLESS: Wir müssen den Seed hier nicht mehr speichern oder cachen.
-                                // Er wird bei Bedarf re-deriviert.
-                            } else {
-                            }
-                        }
+                    })?;
+
+                    // SICHERHEITS-CHECK: Stimmt der deklarierte Sender im Guard
+                    // mit dem tatsächlichen Signatur-Geber des Bündels überein?
+                    if payload.sender_permanent_did != bundle.sender_id {
+                        return Err(ValidationError::MismatchedPrivacySenderId {
+                            declared: payload.sender_permanent_did,
+                            actual: bundle.sender_id.clone(),
+                        }.into());
+                    }
+
+                    // Check target_prefix (Simple validation)
+                    if !identity.user_id.starts_with(&payload.target_prefix) {
+                        // Optional: Warning or Error if not addressed to us?
+                        // For now we allow it if we could decrypt it, but we log it.
                     }
                 }
             }

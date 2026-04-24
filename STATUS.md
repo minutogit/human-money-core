@@ -62,6 +62,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] Multi-language mnemonic support (BIP-39 standard + custom German wordlist)
 - [x] Refactored key derivation (strict BIP-39/SLIP-0010 compliance)
 - [x] JWS & JWE standard compliance (RFC 7515/7516) and DIDComm-compatible URIs
+- [x] Deep traceability testing & fix for voucher source sender identification
 
 ## Next Milestones
 

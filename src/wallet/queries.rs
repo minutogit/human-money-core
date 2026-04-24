@@ -141,6 +141,75 @@ impl Wallet {
         })
     }
 
+    /// Ermittelt die Identität des Absenders, von dem wir diesen Gutschein erhalten haben.
+    /// Iteriert rückwärts über alle Transaktionen und findet die erste Transaktion,
+    /// deren tatsächlicher Sender nicht der aktuelle Nutzer ist.
+    pub fn get_voucher_source_sender(
+        &self,
+        local_instance_id: &str,
+        identity: &crate::models::profile::UserIdentity,
+    ) -> Result<Option<String>, VoucherCoreError> {
+        let instance = self
+            .voucher_store
+            .vouchers
+            .get(local_instance_id)
+            .ok_or_else(|| VoucherCoreError::VoucherNotFound(local_instance_id.to_string()))?;
+
+        // Iteriere rückwärts über alle Transaktionen des Gutscheins
+        for tx in instance.voucher.transactions.iter().rev() {
+            // Bestimme den tatsächlichen Sender dieser Transaktion
+            let actual_sender = if let Some(guard_base64) = &tx.privacy_guard {
+                // Fall A: privacy_guard vorhanden
+                // Versuche zu entschlüsseln. Wenn erfolgreich, nutze payload.sender_permanent_did.
+                // Wenn die Entschlüsselung fehlschlägt (z.B. Key nicht verfügbar), brich ab und gib Ok(None) zurück!
+                match crate::services::crypto_utils::decrypt_recipient_payload(
+                    guard_base64,
+                    &identity.signing_key,
+                ) {
+                    Ok(decrypted_payload_bytes) => {
+                        match serde_json::from_slice::<crate::models::voucher::RecipientPayload>(
+                            &decrypted_payload_bytes,
+                        ) {
+                            Ok(payload) => payload.sender_permanent_did,
+                            Err(_) => {
+                                // JSON-Parsing fehlgeschlagen - unsicherer Zustand
+                                return Ok(None);
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // SICHERHEITS-CHECK: Unterscheidung zw. Outbound und Inbound.
+                        // Wenn wir NICHT der Empfänger sind (z.B. wir haben einen Split gesendet),
+                        // ist es normal, dass wir den Guard nicht lesen können.
+                        if !tx.recipient_id.starts_with(&identity.user_id) {
+                            continue;
+                        } else {
+                            // Wenn wir der Empfänger sind, aber nicht entschlüsseln können,
+                            // liegt ein Daten/Key-Problem vor. Wir dürfen nicht weitersuchen,
+                            // um keine falsche Herkunft anzuzeigen.
+                            return Ok(None);
+                        }
+                    }
+                }
+            } else {
+                // Fall B: Kein Guard vorhanden (Public Mode)
+                // Nutze den Klartext tx.sender_id
+                match &tx.sender_id {
+                    Some(sender) => sender.clone(),
+                    None => continue, // Keine sender_id, überspringe diese Transaktion
+                }
+            };
+
+            // Wenn der tatsächliche Sender nicht der aktuelle Nutzer ist, haben wir unsere Quelle gefunden
+            if actual_sender != identity.user_id {
+                return Ok(Some(actual_sender));
+            }
+        }
+
+        // Keine passende Transaktion gefunden
+        Ok(None)
+    }
+
     /// Aggregiert die Guthaben aller aktiven Gutscheine, gruppiert nach Währung/Einheit.
     ///
     /// Diese Funktion summiert die Werte aller Gutscheine mit dem Status `Active` auf
