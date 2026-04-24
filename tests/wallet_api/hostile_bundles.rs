@@ -199,7 +199,7 @@ fn test_rejection_of_inconsistent_split_math() {
     let mut tx2 = voucher.transactions[0].clone();
     tx2.prev_hash = prev_tx_hash;
     tx2.t_type = "split".to_string();
-    tx2.recipient_id = id_recipient.clone();
+    tx2.recipient_id = human_money_core::models::voucher::ANONYMOUS_ID.to_string();
     tx2.amount = "30.0000".to_string();
     tx2.sender_remaining_amount = Some("80.0000".to_string()); // Falscher Restbetrag
     // 3. WICHTIG: Dank Signature-Bypass aktualisieren wir nur die t_id.
@@ -294,13 +294,8 @@ fn test_rejection_of_self_received_bundle() {
     assert!(result_self_receive.is_err());
     let err_str = result_self_receive.unwrap_err();
     assert!(
-        // HINWEIS: Dieser Test hat sich durch die Einführung des Layer-1-Replay-Schutzes (Bundle-ID-Prüfung) geändert.
-        // Da der Sender das Bundle erstellt, ist die Bundle-ID in seinem `bundle_meta_store` bekannt.
-        // Der Versuch, dasselbe Bundle erneut zu empfangen, wird nun von der Layer-1-Prüfung
-        // (BundleAlreadyProcessed) abgefangen, *bevor* die Layer-3-Prüfung (BundleRecipientMismatch) erreicht wird.
-        // Dies ist das neue, korrekte Verhalten.
-        err_str.contains("Bundle has already been processed"),
-        "Error should be 'BundleAlreadyProcessed' (L1 check). Got: {}",
+        err_str.contains("Bundle has already been processed") || err_str.contains("Bundle Recipient Mismatch"),
+        "Error should be Replay Check or Recipient Mismatch. Got: {}",
         err_str
     );
 

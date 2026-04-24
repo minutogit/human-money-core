@@ -147,6 +147,10 @@ pub enum ValidationError {
     )]
     PrivateSignatureLeak { t_id: String },
 
+    /// Privacy Mode: Der Privacy Mode des Standards wurde verletzt (Identitäts-Veröffentlichung).
+    #[error("Privacy Mode Violation in transaction '{t_id}': {reason}")]
+    PrivacyModeViolation { t_id: String, reason: String },
+
     /// Flexible Mode: Eine Identitäts-Signatur ist vorhanden, aber die sender_id fehlt (Inkonsistenz).
     #[error(
         "Data Hygiene: Transaction '{t_id}' contains a signature but no sender_id in flexible mode."

@@ -292,8 +292,13 @@ impl Wallet {
 
         // Die definierende Transaktion ist einfach die letzte, in der der Benutzer
         // als Sender oder Empfänger auftaucht.
+        // HINWEIS: Im Privacy Mode ist recipient_id="anonymous". Wir akzeptieren dies
+        // als Treffer für den aktuellen Profil-Besitzer (profile_owner_id), da die
+        // faktische Empfangsberechtigung bereits bei der Entschlüsselung des Bundles
+        // geprüft wurde.
         for tx in voucher.transactions.iter().rev() {
             if tx.recipient_id == profile_owner_id
+                || tx.recipient_id == crate::models::voucher::ANONYMOUS_ID
                 || tx.sender_id.as_deref() == Some(profile_owner_id)
             {
                 defining_transaction_id = Some(tx.t_id.clone());

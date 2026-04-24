@@ -7,6 +7,9 @@
 use crate::models::profile::PublicProfile;
 use serde::{Deserialize, Serialize};
 
+/// Die ID, die für anonyme Teilnehmer in Transaktionen verwendet wird.
+pub const ANONYMOUS_ID: &str = "anonymous";
+
 /// Definiert den Standard, zu dem ein Gutschein gehört.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct VoucherStandard {

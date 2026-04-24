@@ -63,9 +63,12 @@ impl Wallet {
                         .last()
                         .map(|tx| {
                             // Prüfe auf ausgehende (Sent) Transaktion
-                            if tx.sender_id.as_ref() == Some(&self.profile.user_id)
-                                && tx.sender_remaining_amount.is_some()
-                            {
+                            // Korrektur für Privacy Mode: Wenn sender_id None ist, aber ein Restbetrag existiert
+                            // und der Gutschein in unserem Wallet ist, sind wir der rechtmäßige Besitzer des Rests.
+                            let is_own_sender = tx.sender_id.as_ref() == Some(&self.profile.user_id)
+                                || (tx.sender_id.is_none() && tx.sender_remaining_amount.is_some());
+
+                            if is_own_sender && tx.sender_remaining_amount.is_some() {
                                 tx.sender_remaining_amount
                                     .clone()
                                     .unwrap_or_else(|| "0".to_string())
@@ -165,6 +168,7 @@ impl Wallet {
                 match crate::services::crypto_utils::decrypt_recipient_payload(
                     guard_base64,
                     &identity.signing_key,
+                    &identity.user_id,
                 ) {
                     Ok(decrypted_payload_bytes) => {
                         match serde_json::from_slice::<crate::models::voucher::RecipientPayload>(
@@ -179,15 +183,22 @@ impl Wallet {
                     }
                     Err(_) => {
                         // SICHERHEITS-CHECK: Unterscheidung zw. Outbound und Inbound.
-                        // Wenn wir NICHT der Empfänger sind (z.B. wir haben einen Split gesendet),
-                        // ist es normal, dass wir den Guard nicht lesen können.
-                        if !tx.recipient_id.starts_with(&identity.user_id) {
-                            continue;
-                        } else {
-                            // Wenn wir der Empfänger sind, aber nicht entschlüsseln können,
-                            // liegt ein Daten/Key-Problem vor. Wir dürfen nicht weitersuchen,
-                            // um keine falsche Herkunft anzuzeigen.
+                        // Wenn wir der SENDER sind (z.B. wir haben einen Split gesendet),
+                        // ist es normal, dass wir den Guard (für den anderen Empfänger) nicht lesen können.
+                        let is_sender = tx.sender_id.as_deref() == Some(&identity.user_id);
+                        
+                        // Wenn wir der EMPFÄNGER sind (explizit oder anonym), aber nicht entschlüsseln können,
+                        // liegt ein Daten/Key-Problem bei einer an uns gerichteten Transaktion vor. 
+                        let is_recipient = tx.recipient_id == identity.user_id || tx.recipient_id == crate::models::voucher::ANONYMOUS_ID;
+
+                        if is_sender {
+                            continue; // Outbound -> Weitersuchen
+                        } else if is_recipient {
+                            // Inbound, aber unlesbar -> Abbrechen (Spoofing Schutz)
                             return Ok(None);
+                        } else {
+                            // Weder noch (z.B. eine historische Transaktion dazwischen) -> Weitersuchen
+                            continue;
                         }
                     }
                 }

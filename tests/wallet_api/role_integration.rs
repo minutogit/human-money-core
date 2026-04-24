@@ -66,7 +66,7 @@ fn test_integration_detects_victim_role() {
         t_type: "transfer".to_string(),
         t_time: time_early,
         sender_id: Some(id_alice.clone()),
-        recipient_id: ACTORS.charlie.user_id.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(alice_holder_pub.clone()),
         ..Default::default()
@@ -158,7 +158,7 @@ fn test_integration_detects_witness_role_on_split_win() {
         t_type: "transfer".to_string(),
         t_time: time_early,
         sender_id: Some(id_bob.clone()),
-        recipient_id: id_alice.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(bob_holder_pub.clone()),
         ..Default::default()
@@ -174,7 +174,7 @@ fn test_integration_detects_witness_role_on_split_win() {
         t_type: "transfer".to_string(),
         t_time: time_late,
         sender_id: Some(id_bob.clone()),
-        recipient_id: id_alice.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(bob_holder_pub),
         ..Default::default()

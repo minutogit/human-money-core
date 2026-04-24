@@ -591,7 +591,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         t_type: "transfer".to_string(),
         t_time: time_a,
         sender_id: Some(id_alice.clone()),
-        recipient_id: id_david.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(alice_holder_pub.clone()),
         ..Default::default()
@@ -619,7 +619,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         t_type: "transfer".to_string(),
         t_time: time_b,
         sender_id: Some(id_alice.clone()),
-        recipient_id: id_david.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(alice_holder_pub),
         ..Default::default()

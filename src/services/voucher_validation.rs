@@ -133,15 +133,27 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standa
 
         match mode {
             PrivacyMode::Public => {
-                // 1. sender_id muss vorhanden sein.
-                if tx.sender_id.is_none() {
-                    return Err(ValidationError::InvalidTransaction(format!(
-                        "Transaction {} missing sender_id in 'public' mode.",
-                        tx.t_id
-                    ))
-                    .into());
+                // 1. sender_id must be a DID (not None and not "anonymous").
+                match &tx.sender_id {
+                    None => return Err(ValidationError::PrivacyModeViolation {
+                        t_id: tx.t_id.clone(),
+                        reason: "Missing sender_id in 'public' mode.".to_string(),
+                    }.into()),
+                    Some(id) if id == crate::models::voucher::ANONYMOUS_ID => {
+                        return Err(ValidationError::PrivacyModeViolation {
+                            t_id: tx.t_id.clone(),
+                            reason: "Explicit anonymous sender_id in 'public' mode.".to_string(),
+                        }.into());
+                    }
+                    _ => {}
                 }
-                // 2. recipient_id muss eine DID sein.
+                // 2. recipient_id must be a DID (not "anonymous").
+                if tx.recipient_id == crate::models::voucher::ANONYMOUS_ID {
+                    return Err(ValidationError::PrivacyModeViolation {
+                        t_id: tx.t_id.clone(),
+                        reason: "Anonymous recipient_id in 'public' mode.".to_string(),
+                    }.into());
+                }
                 if !tx.recipient_id.starts_with("did:") && !tx.recipient_id.contains("@did:") {
                     return Err(ValidationError::InvalidTransaction(format!(
                         "Transaction {} has non-DID recipient in 'public' mode.",
@@ -151,32 +163,43 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standa
                 }
             }
             PrivacyMode::Private => {
-                // 1. sender_id darf NICHT vorhanden sein.
+                // 1. sender_id must be None.
                 if tx.sender_id.is_some() {
-                    return Err(ValidationError::InvalidTransaction(format!(
-                        "Transaction {} has sender_id in 'private' mode.",
-                        tx.t_id
-                    ))
-                    .into());
+                    return Err(ValidationError::PrivacyModeViolation {
+                        t_id: tx.t_id.clone(),
+                        reason: "Explicit sender_id in 'private' mode.".to_string(),
+                    }.into());
                 }
-                // 2. sender_identity_signature darf NICHT vorhanden sein (Test 1).
+                // 2. sender_identity_signature must be None (Test 1).
                 if tx.sender_identity_signature.is_some() {
                     return Err(ValidationError::PrivateSignatureLeak {
                         t_id: tx.t_id.clone(),
                     }
                     .into());
                 }
-                // 3. recipient_id darf KEINE DID sein (muss anonym sein).
-                if tx.recipient_id.starts_with("did:") {
-                    return Err(ValidationError::InvalidTransaction(format!(
-                        "Transaction {} has public DID recipient in 'private' mode.",
-                        tx.t_id
-                    ))
-                    .into());
+                // 3. recipient_id must be "anonymous".
+                if tx.recipient_id != crate::models::voucher::ANONYMOUS_ID {
+                    return Err(ValidationError::PrivacyModeViolation {
+                        t_id: tx.t_id.clone(),
+                        reason: format!(
+                            "Non-anonymous recipient_id ('{}') in 'private' mode.",
+                            tx.recipient_id
+                        ),
+                    }.into());
                 }
             }
             PrivacyMode::Flexible => {
-                // Check consistency: If anonymous (no sender_id), there must be no identity signature (Test 2).
+                // 1. recipient_id MUST ALWAYS be anonymous (Future privacy).
+                if tx.recipient_id != crate::models::voucher::ANONYMOUS_ID {
+                    return Err(ValidationError::PrivacyModeViolation {
+                        t_id: tx.t_id.clone(),
+                        reason: format!(
+                            "Non-anonymous recipient_id ('{}') in 'flexible' mode.",
+                            tx.recipient_id
+                        ),
+                    }.into());
+                }
+                // 2. Check consistency: If anonymous (no sender_id), there must be no identity signature (Test 2).
                 if tx.sender_id.is_none() && tx.sender_identity_signature.is_some() {
                     return Err(ValidationError::FlexibleModeIdentityInconsistency {
                         t_id: tx.t_id.clone(),
@@ -595,7 +618,7 @@ pub fn verify_transactions(
                 user_id: tx
                     .sender_id
                     .clone()
-                    .unwrap_or_else(|| "anonymous".to_string()),
+                    .unwrap_or_else(|| crate::models::voucher::ANONYMOUS_ID.to_string()),
                 needed: total_input_needed.to_string(),
                 // We just show the first valid output for simplicity in error message,
                 // or maybe format all of them?

@@ -92,6 +92,7 @@ mod tests {
         let guard = encrypt_recipient_payload(
             &serde_json::to_vec(&payload).unwrap(),
             &bob.identity.public_key,
+            &bob.identity.user_id,
         ).unwrap();
 
         let holder_key = derive_holder_key(&voucher, &alice.identity.signing_key);
@@ -105,7 +106,7 @@ mod tests {
             receiver_ephemeral_pub_hash: None,
             sender_id: None, // Private
             sender_identity_signature: None,
-            recipient_id: bob.identity.user_id.clone(),
+            recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
             amount: "100".to_string(),
             sender_remaining_amount: None,
             sender_ephemeral_pub: Some(public_key_b58), // Reveal the key to pass fund check!
@@ -226,7 +227,7 @@ mod tests {
             }],
             notes: None,
             sender_profile_name: Some("Alice".to_string()),
-            use_privacy_mode: None,
+            use_privacy_mode: Some(true),
         };
         let bundle = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None).unwrap();
         let bob_receive = bob_wallet.process_encrypted_transaction_bundle(&bob.identity, &bundle.bundle_bytes, None, &standards).unwrap();
@@ -241,7 +242,7 @@ mod tests {
             }],
             notes: None,
             sender_profile_name: Some("Bob".to_string()),
-            use_privacy_mode: None,
+            use_privacy_mode: Some(true),
         };
         let bundle = bob_wallet.execute_multi_transfer_and_bundle(&bob.identity, &standards, request, None).unwrap();
         let charlie_receive = charlie_wallet.process_encrypted_transaction_bundle(&charlie.identity, &bundle.bundle_bytes, None, &standards).unwrap();

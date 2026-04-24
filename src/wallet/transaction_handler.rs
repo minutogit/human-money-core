@@ -73,6 +73,16 @@ impl Wallet {
     ) -> Result<ProcessBundleResult, VoucherCoreError> {
         let bundle = bundle_processor::open_and_verify_bundle(identity, container_bytes)?;
 
+        // --- LAYER 0: BUNDLE-RECIPIENT PRÜFUNG ---
+        // Verhindert, dass ein Wallet ein Bündel annimmt, das explizit an eine andere 
+        // Instanz (z.B. Mobile vs. PC) desselben Benutzers (SAI) adressiert war.
+        if bundle.recipient_id != identity.user_id && bundle.recipient_id != crate::models::voucher::ANONYMOUS_ID {
+             return Err(VoucherCoreError::BundleRecipientMismatch {
+                expected: identity.user_id.clone(),
+                found: bundle.recipient_id.clone(),
+            });
+        }
+
         // --- LAYER 1: BUNDLE-ID REPLAY-SCHUTZ ---
         // Weist ein identisches Bundle sofort ab, das bereits verarbeitet wurde.
         if self
@@ -98,7 +108,11 @@ impl Wallet {
         let own_user_id = &identity.user_id;
         for voucher in &bundle.vouchers {
             if let Some(last_tx) = voucher.transactions.last() {
-                if last_tx.recipient_id != *own_user_id {
+                // Sicherheitsfuse: Stimmt der Empfänger mit unserem Wallet überein?
+                // Wir erlauben DIESES Wallet (own_user_id) ODER den globalen ANONYMOUS_ID.
+                // In Private/Flexible Modi ist der recipient_id im Gutschein immer "anonymous".
+                // Die tatsächliche Berechtigung wird später durch den PrivacyGuard/Key-Besitz bestätigt.
+                if last_tx.recipient_id != *own_user_id && last_tx.recipient_id != crate::models::voucher::ANONYMOUS_ID {
                     // Dieser Gutschein ist nicht für uns! Breche die gesamte
                     // Bundle-Verarbeitung ab, um eine Selbst-Annahme zu verhindern.
                     return Err(VoucherCoreError::BundleRecipientMismatch {
@@ -160,6 +174,7 @@ impl Wallet {
                         crate::services::crypto_utils::decrypt_recipient_payload(
                             guard_base64,
                             &identity.signing_key,
+                            &identity.user_id,
                         ).map_err(|e| {
                             VoucherCoreError::Validation(
                                 ValidationError::PrivacyGuardDecryptionFailed(
@@ -471,9 +486,12 @@ impl Wallet {
 
         // 2. Bestimme den Status des neuen Gutschein-Zustands für den Sender.
         if let Some(last_tx) = new_voucher_state.transactions.last() {
-            let (new_status, owner_id) = if last_tx.sender_id.as_ref() == Some(&identity.user_id)
-                && last_tx.sender_remaining_amount.is_some()
-            {
+            // Wir sind der Sender, wenn unsere ID übereinstimmt ODER wenn die Transaktion anonym ist 
+            // (da wir sie gerade selbst durch _execute_single_transfer erstellt haben).
+            let is_sender = last_tx.sender_id.as_ref() == Some(&identity.user_id) 
+                || (last_tx.sender_id.is_none() && last_tx.recipient_id == crate::models::voucher::ANONYMOUS_ID);
+
+            let (new_status, owner_id) = if is_sender && last_tx.sender_remaining_amount.is_some() {
                 // Es ist ein Split, der Sender behält einen aktiven Restbetrag.
                 (VoucherStatus::Active, &identity.user_id)
             } else {
@@ -661,6 +679,7 @@ impl Wallet {
             let decrypted_payload_bytes = crate::services::crypto_utils::decrypt_recipient_payload(
                 guard_base64,
                 &identity.signing_key,
+                &identity.user_id,
             )
             .map_err(|e| {
                 VoucherCoreError::Crypto(format!("Failed to decrypt privacy guard: {}", e))

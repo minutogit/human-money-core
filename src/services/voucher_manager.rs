@@ -605,54 +605,38 @@ pub fn create_transaction(
     let prev_hash = get_hash(to_canonical_json(voucher.transactions.last().unwrap())?);
     let t_time = get_current_timestamp();
 
-    // Determine Privacy Mode (Strict Validation)
-    let actually_private = match (standard.immutable.features.privacy_mode, use_privacy_mode) {
-        (PrivacyMode::Public, Some(true)) => {
-            return Err(VoucherCoreError::Validation(crate::error::ValidationError::InvalidTransaction(
-                "Cannot use privacy mode on a public standard.".to_string()
-            )));
-        },
-        (PrivacyMode::Private, Some(false)) => {
-             return Err(VoucherCoreError::Validation(crate::error::ValidationError::InvalidTransaction(
-                "Cannot disable privacy mode on a private standard.".to_string()
-            )));
-        },
-        (PrivacyMode::Private, _) => true,
-        (PrivacyMode::Public, _) => false,
-        (PrivacyMode::Flexible, Some(p)) => p,
-        (PrivacyMode::Flexible, None) => false, // Default to Public if not specified in Flexible
-    };
-
-    // Determine Sender ID Visibility (Complete Anonymization)
-    let final_sender_id = if actually_private {
-        None
-    } else {
-        Some(sender_id.to_string())
-    };
-
-
-    // Validate Recipient ID against Mode
-    let recipient_is_did = recipient_id.starts_with("did:") || recipient_id.contains("@did:");
-    let recipient_id_check = match standard.immutable.features.privacy_mode {
+    // Determine Identities based on Privacy Mode (Core Regulation)
+    let (final_sender_id, recipient_id_check) = match standard.immutable.features.privacy_mode {
+        PrivacyMode::Private => {
+            // Private Mode: Everything is anonymous. Ignore incoming IDs.
+            (None, crate::models::voucher::ANONYMOUS_ID.to_string())
+        }
+        PrivacyMode::Flexible => {
+            // Flexible Mode: Sender choice for self (actually_private), but recipient IS ALWAYS anonymous.
+            let actually_private = use_privacy_mode.unwrap_or(false);
+            let s_id = if actually_private { None } else { Some(sender_id.to_string()) };
+            (s_id, crate::models::voucher::ANONYMOUS_ID.to_string())
+        }
         PrivacyMode::Public => {
+            if use_privacy_mode.unwrap_or(false) {
+                return Err(VoucherManagerError::Generic(
+                    "Cannot use privacy mode on a public standard".to_string(),
+                ).into());
+            }
+            // Public Mode: Plaintext DIDs required for both.
+            let recipient_is_did = recipient_id.starts_with("did:") || recipient_id.contains("@did:");
             if !recipient_is_did {
                 return Err(VoucherManagerError::Generic(
                     "Public mode requires DID recipient.".to_string(),
-                )
-                .into());
+                ).into());
             }
-            recipient_id
-        }
-        PrivacyMode::Private => {
-            if recipient_is_did {
-                return Err(VoucherManagerError::Generic(
-                    "Private mode forbids DID recipient.".to_string(),
-                )
-                .into());
+            if sender_id == crate::models::voucher::ANONYMOUS_ID {
+                 return Err(VoucherManagerError::Generic(
+                    "Public mode forbids anonymous sender.".to_string(),
+                ).into());
             }
-            recipient_id
+            (Some(sender_id.to_string()), recipient_id.to_string())
         }
-        PrivacyMode::Flexible => recipient_id, // Both allowed
     };
 
     // 1. REVEAL: Der aktuelle Ephemeral Key wird veröffentlicht.
@@ -726,7 +710,7 @@ pub fn create_transaction(
         let (ephemeral_pk, ephemeral_sk) = generate_ephemeral_x25519_keypair();
         let recipient_ed_pk = get_pubkey_from_user_id(recipient_id)?;
         let recipient_x_pk = crate::services::crypto_utils::ed25519_pub_to_x25519(&recipient_ed_pk);
-        let shared_secret = perform_diffie_hellman(ephemeral_sk, &recipient_x_pk)?;
+        let shared_secret = perform_diffie_hellman(ephemeral_sk, &recipient_x_pk, recipient_id)?;
         let payload_json = to_canonical_json(&payload)?;
         let encrypted_bytes = encrypt_data(&shared_secret, payload_json.as_bytes())?;
 
@@ -982,9 +966,19 @@ pub fn get_spendable_balance(
     let last_tx = voucher.transactions.last().unwrap();
     let decimal_places = standard.immutable.features.amount_decimal_places as u32;
 
-    let balance_str = if last_tx.recipient_id == user_id {
+    let balance_str = if last_tx.t_type == "init" && last_tx.recipient_id == user_id {
+        // Bei der initialen Transaktion ist der Ersteller immer der Empfänger des Gesamtwerts.
         &last_tx.amount
+    } else if last_tx.t_type == "init" {
+        "0"
     } else if last_tx.sender_id.as_deref() == Some(user_id) {
+        // Wir sind der explizite Sender -> Zeige unser Restgeld (Change)
+        last_tx.sender_remaining_amount.as_deref().unwrap_or("0")
+    } else if last_tx.recipient_id == user_id || last_tx.recipient_id == crate::models::voucher::ANONYMOUS_ID {
+        // Wir sind der Empfänger (explizit oder anonym) -> Zeige den Empfangsbetrag
+        &last_tx.amount
+    } else if last_tx.sender_id.is_none() && last_tx.sender_remaining_amount.is_some() {
+        // Fallback für anonyme Split-Sender: Wenn wir das Objekt besitzen und ein Restbetrag existiert.
         last_tx.sender_remaining_amount.as_deref().unwrap_or("0")
     } else {
         "0"

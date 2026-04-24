@@ -254,7 +254,7 @@ impl Wallet {
         let offender_id = conflicting_transactions[0]
             .sender_id
             .clone()
-            .unwrap_or("anonymous".to_string());
+            .unwrap_or(crate::models::voucher::ANONYMOUS_ID.to_string());
         let fork_point_prev_hash = conflicting_transactions[0].prev_hash.clone();
         
         for t_id in missing_t_ids {

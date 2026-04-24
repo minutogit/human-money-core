@@ -137,7 +137,7 @@ fn test_privacy_mode_public_fails_missing_sender() {
 
     let result = voucher_validation::validate_voucher_against_standard(&voucher, &standard);
     assert!(
-        matches!(result, Err(VoucherCoreError::Validation(ValidationError::InvalidTransaction(msg))) if msg.contains("missing sender_id")),
+        matches!(result, Err(VoucherCoreError::Validation(ValidationError::PrivacyModeViolation { reason, .. })) if reason.contains("Missing sender_id")),
         "Should fail due to missing sender_id in public mode"
     );
 }
@@ -153,15 +153,15 @@ fn test_privacy_mode_public_fails_anonymous_recipient() {
         t_type: "transfer".to_string(),
         amount: "10.0000".to_string(),
         sender_id: Some(ACTORS.issuer.user_id.clone()),
-        recipient_id: "not-a-did".to_string(), // INVALID for Public
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(), // INVALID for Public
         ..Default::default()
     };
     voucher.transactions.push(tx);
 
     let result = voucher_validation::validate_voucher_against_standard(&voucher, &standard);
     assert!(
-        matches!(result, Err(VoucherCoreError::Validation(ValidationError::InvalidTransaction(msg))) if msg.contains("non-DID recipient")),
-        "Should fail due to non-DID recipient in public mode"
+        matches!(result, Err(VoucherCoreError::Validation(ValidationError::PrivacyModeViolation { reason, .. })) if reason.contains("Anonymous recipient_id")),
+        "Should fail due to anonymous recipient in public mode"
     );
 }
 
@@ -170,14 +170,14 @@ fn test_privacy_mode_private_success() {
     human_money_core::set_signature_bypass(true);
     let (mut voucher, standard) = create_privacy_test_voucher("private");
 
-    // Private: Sender None, Recipient NOT DID
+    // Private: Sender None, Recipient MUST BE "anonymous"
     let tx = Transaction {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
         amount: "10.0000".to_string(),
         sender_id: None,
-        recipient_id: "hash-of-key".to_string(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         ..Default::default()
     };
     voucher.transactions.push(tx);
@@ -203,14 +203,14 @@ fn test_privacy_mode_private_fails_with_sender_id() {
         t_type: "transfer".to_string(),
         amount: "10.0000".to_string(),
         sender_id: Some("did:example:123".to_string()), // INVALID for Private
-        recipient_id: "hash-of-key".to_string(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         ..Default::default()
     };
     voucher.transactions.push(tx);
 
     let result = voucher_validation::validate_voucher_against_standard(&voucher, &standard);
     assert!(
-        matches!(result, Err(VoucherCoreError::Validation(ValidationError::InvalidTransaction(msg))) if msg.contains("has sender_id")),
+        matches!(result, Err(VoucherCoreError::Validation(ValidationError::PrivacyModeViolation { reason, .. })) if reason.contains("Explicit sender_id")),
         "Should fail if sender_id is present in private mode"
     );
 }
@@ -233,17 +233,17 @@ fn test_privacy_mode_private_fails_with_did_recipient() {
 
     let result = voucher_validation::validate_voucher_against_standard(&voucher, &standard);
     assert!(
-        matches!(result, Err(VoucherCoreError::Validation(ValidationError::InvalidTransaction(msg))) if msg.contains("public DID recipient")),
-        "Should fail if recipient is DID in private mode"
+        matches!(result, Err(VoucherCoreError::Validation(ValidationError::PrivacyModeViolation { reason, .. })) if reason.contains("Non-anonymous recipient_id")),
+        "Should fail if recipient is NOT anonymous in private mode"
     );
 }
 
 #[test]
-fn test_privacy_mode_flexible_allows_all() {
+fn test_privacy_mode_flexible_requires_anonymous_recipient() {
     human_money_core::set_signature_bypass(true);
     let (mut voucher, standard) = create_privacy_test_voucher("flexible");
 
-    // Case 1: Public-like
+    // Case 1: Sender is DID (Allowed), but Recipient is DID (FORBIDDEN)
     let tx1 = Transaction {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
@@ -255,17 +255,29 @@ fn test_privacy_mode_flexible_allows_all() {
     };
     voucher.transactions.push(tx1);
 
-    // Case 2: Private-like
-    let tx2 = Transaction {
+    let result = voucher_validation::validate_voucher_against_standard(&voucher, &standard);
+    assert!(
+        matches!(result, Err(VoucherCoreError::Validation(ValidationError::PrivacyModeViolation { reason, .. })) if reason.contains("Non-anonymous recipient_id")),
+        "Flexible mode must forbid plaintext recipients"
+    );
+}
+
+#[test]
+fn test_privacy_mode_flexible_success_with_anonymous_recipient() {
+    human_money_core::set_signature_bypass(true);
+    let (mut voucher, standard) = create_privacy_test_voucher("flexible");
+
+    // Case: Sender is DID, Recipient is anonymous (ALLOWED)
+    let tx = Transaction {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
         amount: "10.0000".to_string(),
-        sender_id: None,
-        recipient_id: "some-hash".to_string(),
+        sender_id: Some("did:example:sender".to_string()),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         ..Default::default()
     };
-    voucher.transactions.push(tx2);
+    voucher.transactions.push(tx);
 
     let result = voucher_validation::validate_voucher_against_standard(&voucher, &standard);
 

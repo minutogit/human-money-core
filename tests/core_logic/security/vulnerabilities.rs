@@ -462,7 +462,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
         ),
         t_time: get_current_timestamp(),
         sender_id: Some(ACTORS.hacker.user_id.clone()),
-        recipient_id: ACTORS.victim.user_id.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(), // Hacker gibt seinen ursprünglichen Betrag aus
         t_type: "transfer".to_string(),
         trap_data: None,
@@ -543,7 +543,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
         ),
         t_time: get_current_timestamp(),
         sender_id: Some(ACTORS.hacker.user_id.clone()),
-        recipient_id: ACTORS.victim.user_id.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         t_type: "transfer".to_string(),
         trap_data: None,
@@ -802,8 +802,8 @@ fn test_attack_create_inconsistent_transaction() {
         ),
         t_time: get_current_timestamp(),
         sender_id: Some(ACTORS.hacker.user_id.clone()),
-        recipient_id: ACTORS.victim.user_id.clone(),
-        amount: "200".to_string(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
+        amount: "150".to_string(), // Overspending: 150 > 100
         t_type: "transfer".to_string(),
         trap_data: None,
         ..Default::default()
@@ -886,7 +886,7 @@ fn test_attack_inconsistent_split_transaction() {
         ),
         t_time: get_current_timestamp(),
         sender_id: Some(hacker_identity.user_id.clone()),
-        recipient_id: victim_identity.user_id.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "30".to_string(),
         sender_remaining_amount: Some("80".to_string()), // Falscher Restbetrag
         t_type: "split".to_string(),
@@ -986,7 +986,7 @@ fn test_attack_negative_or_zero_amount_transaction() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         sender_id: Some(hacker_identity.user_id.clone()),
-        recipient_id: victim_identity.user_id.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         t_type: "transfer".to_string(),
         ..Default::default()
     };
@@ -1010,7 +1010,7 @@ fn test_attack_negative_or_zero_amount_transaction() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         sender_id: Some(hacker_identity.user_id.clone()),
-        recipient_id: victim_identity.user_id.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         t_type: "transfer".to_string(),
         ..Default::default()
     };
@@ -1096,7 +1096,7 @@ fn test_attack_full_transfer_amount_mismatch() {
         t_type: "transfer".to_string(),
         amount: "99.0000".to_string(), // Inkorrekt für einen 'transfer' bei einem Guthaben von 100
         sender_id: Some(creator.id.clone().expect("Creator ID should exist")),
-        recipient_id: ACTORS.bob.user_id.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         t_time: get_current_timestamp(),
         sender_remaining_amount: None,
         ..Default::default()

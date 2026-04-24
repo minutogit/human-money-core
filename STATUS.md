@@ -1,9 +1,9 @@
 ---
 project: human-money-core
-version: "0.2.5"
+version: "0.2.8"
 phase: "active-development"
 health: "green"
-last_updated: "2026-04-19"
+last_updated: "2026-04-24"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -63,6 +63,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] Refactored key derivation (strict BIP-39/SLIP-0010 compliance)
 - [x] JWS & JWE standard compliance (RFC 7515/7516) and DIDComm-compatible URIs
 - [x] Deep traceability testing & fix for voucher source sender identification
+- [x] Anonymous Privacy Routing: Strict identity regulation based on PrivacyMode
 
 ## Next Milestones
 

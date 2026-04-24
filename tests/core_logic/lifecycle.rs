@@ -1063,7 +1063,7 @@ fn get_balance_at_transaction(
 
     for tx in history {
         let tx_amount = Decimal::from_str_exact(&tx.amount).unwrap_or_default();
-        if tx.recipient_id == user_id {
+        if tx.recipient_id == user_id || tx.recipient_id == human_money_core::models::voucher::ANONYMOUS_ID {
             if tx.t_type == "init" {
                 current_balance = total_amount;
             } else {
