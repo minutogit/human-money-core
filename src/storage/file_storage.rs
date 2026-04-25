@@ -29,6 +29,7 @@ const KNOWN_FINGERPRINTS_FILE_NAME: &str = "known_fingerprints.enc";
 const PROOF_STORE_FILE_NAME: &str = "proofs.enc";
 const OWN_FINGERPRINTS_FILE_NAME: &str = "own_fingerprints.enc";
 const FINGERPRINT_METADATA_FILE_NAME: &str = "fingerprint_metadata.enc";
+const SEAL_FILE_NAME: &str = "seal.enc";
 
 /// Privates Modul zur Kapselung der Serde-Logik für Base64-Kodierung von Vektoren.
 mod base64_serde {
@@ -144,6 +145,13 @@ struct ProofStorageContainer {
 /// Container für den `CanonicalMetadataStore`.
 #[derive(Serialize, Deserialize)]
 struct FingerprintMetadataContainer {
+    #[serde(with = "base64_serde")]
+    encrypted_store_payload: Vec<u8>,
+}
+
+/// Container für den verschlüsselten `LocalSealRecord`.
+#[derive(Serialize, Deserialize)]
+struct SealStorageContainer {
     #[serde(with = "base64_serde")]
     encrypted_store_payload: Vec<u8>,
 }
@@ -899,6 +907,63 @@ impl Storage for FileStorage {
 
     fn get_lock_file_path(&self) -> &std::path::PathBuf {
         &self.lock_file_path
+    }
+
+    fn save_seal(
+        &mut self,
+        _user_id: &str,
+        auth: &AuthMethod,
+        record: &crate::models::seal::LocalSealRecord,
+    ) -> Result<(), StorageError> {
+        let seal_path = self.user_storage_path.join(SEAL_FILE_NAME);
+        let file_key = self.get_master_key_from_auth(auth)?;
+
+        let store_payload =
+            crypto_utils::encrypt_data(&file_key, &serde_json::to_vec(record).unwrap())
+                .map_err(|e| StorageError::Generic(e.to_string()))?;
+        let store_container = SealStorageContainer {
+            encrypted_store_payload: store_payload,
+        };
+
+        let store_tmp_path = self
+            .user_storage_path
+            .join(format!("{}.tmp", SEAL_FILE_NAME));
+        fs::write(
+            &store_tmp_path,
+            serde_json::to_vec(&store_container).unwrap(),
+        )?;
+        fs::rename(&store_tmp_path, &seal_path)?;
+
+        Ok(())
+    }
+
+    fn load_seal(
+        &self,
+        _user_id: &str,
+        auth: &AuthMethod,
+    ) -> Result<Option<crate::models::seal::LocalSealRecord>, StorageError> {
+        let seal_path = self.user_storage_path.join(SEAL_FILE_NAME);
+        if !seal_path.exists() {
+            return Ok(None);
+        }
+
+        let file_key = self.get_master_key_from_auth(auth)?;
+
+        let seal_container_bytes = fs::read(seal_path)?;
+        let seal_container: SealStorageContainer =
+            serde_json::from_slice(&seal_container_bytes)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+
+        let store_bytes =
+            crypto_utils::decrypt_data(&file_key, &seal_container.encrypted_store_payload)
+                .map_err(|e| {
+                    StorageError::InvalidFormat(format!("Failed to decrypt seal: {}", e))
+                })?;
+
+        let record: crate::models::seal::LocalSealRecord = serde_json::from_slice(&store_bytes)
+            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+
+        Ok(Some(record))
     }
 }
 

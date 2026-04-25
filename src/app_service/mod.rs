@@ -71,6 +71,7 @@ pub mod conflict_handler;
 pub mod data_encryption;
 pub mod l2_facade;
 pub mod lifecycle;
+pub mod seal_handler;
 
 /// Repräsentiert die öffentlich sichtbaren Informationen eines Profils.
 /// Wird verwendet, um dem Frontend eine Liste der verfügbaren Profile zu übergeben.

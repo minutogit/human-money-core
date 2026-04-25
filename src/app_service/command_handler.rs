@@ -232,10 +232,14 @@ impl AppService {
         };
 
         self.state = new_state;
+        // Siegel aktualisieren, wenn die Aktion erfolgreich war
+        if result.is_ok() {
+            if let Err(e) = self.update_seal_after_state_change(password) {
+                eprintln!("Warning: Failed to update seal after voucher creation: {}", e);
+            }
+        }
         result
     }
-
-    /// Erstellt ein Transfer-Bundle für eine oder mehrere Transaktionen und speichert den neuen Wallet-Zustand.
     pub fn create_transfer_bundle(
         &mut self,
         request: MultiTransferRequest,
@@ -406,6 +410,12 @@ impl AppService {
             AppState::Locked => (Err("Wallet is locked.".to_string()), AppState::Locked),
         };
         self.state = new_state;
+        // Siegel aktualisieren, wenn die Aktion erfolgreich war
+        if result.is_ok() {
+            if let Err(e) = self.update_seal_after_state_change(password) {
+                eprintln!("Warning: Failed to update seal after transfer bundle creation: {}", e);
+            }
+        }
         result
     }
 
@@ -565,10 +575,14 @@ impl AppService {
             AppState::Locked => (Err("Wallet is locked.".to_string()), AppState::Locked),
         };
         self.state = new_state;
+        // Siegel aktualisieren, wenn die Aktion erfolgreich war
+        if result.is_ok() {
+            if let Err(e) = self.update_seal_after_state_change(password) {
+                eprintln!("Warning: Failed to update seal after receiving bundle: {}", e);
+            }
+        }
         result
     }
-
-    /// Importiert eine Beilegungserklärung.
     pub fn import_resolution_endorsement(
         &mut self,
         endorsement: ResolutionEndorsement,
@@ -675,6 +689,12 @@ impl AppService {
             AppState::Locked => (Err("Wallet is locked.".to_string()), AppState::Locked),
         };
         self.state = new_state;
+        // Siegel aktualisieren, wenn die Aktion erfolgreich war
+        if result.is_ok() {
+            if let Err(e) = self.update_seal_after_state_change(password) {
+                eprintln!("Warning: Failed to update seal after resolution endorsement: {}", e);
+            }
+        }
         result
     }
 }

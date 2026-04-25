@@ -7,6 +7,7 @@ pub mod dynamic_policy_engine;
 pub mod jws_profile_service;
 pub mod l2_gateway;
 pub mod mnemonic;
+pub mod seal_manager;
 pub mod secure_container_manager;
 pub mod signature_manager;
 pub mod standard_manager;

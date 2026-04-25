@@ -4,6 +4,8 @@
 //! wie Initialisierung, Login/Logout und Wiederherstellung.
 
 use super::{AppService, AppState, ProfileInfo};
+use crate::models::seal::{LocalSealRecord, SyncStatus};
+use crate::services::seal_manager::SealManager;
 use crate::storage::{AuthMethod, Storage, file_storage::FileStorage};
 use crate::wallet::Wallet;
 use crate::services::mnemonic::MnemonicLanguage;
@@ -126,6 +128,28 @@ impl AppService {
             .save(&mut storage, &identity, &AuthMethod::Password(password))
             .map_err(|e| format!("Failed to save new wallet: {}", e))?;
 
+        // --- WALLET SEAL: Initiales Siegel erstellen (Epoch 0) ---
+        let state_hash = {
+            let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
+                .map_err(|e| format!("Failed to compute state hash: {}", e))?;
+            crate::services::crypto_utils::get_hash(canonical.as_bytes())
+        };
+        let initial_seal = SealManager::create_initial_seal(
+            &identity.user_id,
+            &identity,
+            &state_hash,
+        ).map_err(|e| format!("Failed to create initial wallet seal: {}", e))?;
+
+        let seal_record = LocalSealRecord {
+            seal: initial_seal,
+            sync_status: SyncStatus::PendingUpload,
+            is_locked_due_to_fork: false,
+        };
+        storage
+            .save_seal(&identity.user_id, &AuthMethod::Password(password), &seal_record)
+            .map_err(|e| format!("Failed to save initial wallet seal: {}", e))?;
+        // --- WALLET SEAL ENDE ---
+
         // Sperre erlangen
         storage
             .lock()
@@ -181,6 +205,44 @@ impl AppService {
 
         let mut storage = FileStorage::new(profile_path);
 
+        // --- WALLET SEAL: Siegel laden und ROHEN State-Hash verifizieren ---
+        // WICHTIG: Die Verifikation erfolgt VOR Wallet::load(), da load()
+        // intern rebuild_derived_stores() aufruft, was own_fingerprints
+        // aus dem VoucherStore neu aufbaut. Dabei kann sich die Vec-Reihenfolge
+        // ändern (HashMap-Iterationsreihenfolge), was den Hash verfälscht.
+        // Wir prüfen stattdessen gegen den unveränderten, gespeicherten Zustand.
+        {
+            let auth = AuthMethod::Password(password);
+            let seal_record = storage
+                .load_seal("", &auth)
+                .ok()
+                .flatten();
+
+            if let Some(record) = &seal_record {
+                // Fork-Lock prüfen
+                if record.is_locked_due_to_fork {
+                    return Err("Security Lockdown: Wallet is locked due to a detected fork. Recovery required.".to_string());
+                }
+
+                // Lade den ROHEN own_fingerprints Store direkt aus dem Storage
+                // (vor dem Rebuild durch Wallet::load)
+                let raw_own_fingerprints = storage
+                    .load_own_fingerprints("", &auth)
+                    .map_err(|e| format!("Failed to load own_fingerprints for seal check: {}", e))?;
+
+                let current_state_hash = {
+                    let canonical = crate::services::utils::to_canonical_json(&raw_own_fingerprints)
+                        .map_err(|e| format!("Failed to compute state hash: {}", e))?;
+                    crate::services::crypto_utils::get_hash(canonical.as_bytes())
+                };
+
+                if record.seal.payload.state_hash != current_state_hash {
+                    return Err("Critical Error: Wallet state does not match the security seal. Possible rollback or corruption detected. Recovery required.".to_string());
+                }
+            }
+        }
+        // --- WALLET SEAL: Pre-Check ENDE ---
+
         let (mut wallet, identity) = Wallet::load(&storage, &AuthMethod::Password(password))
             .map_err(|e| format!("Login failed (check password): {}", e))?;
 
@@ -192,6 +254,40 @@ impl AppService {
                 .save(&mut storage, &identity, &AuthMethod::Password(password))
                 .map_err(|e| format!("Failed to save wallet after cleanup: {}", e))?;
         }
+
+        // --- WALLET SEAL: Migration für bestehende Wallets ohne Siegel ---
+        {
+            let auth = AuthMethod::Password(password);
+            let seal_record = storage
+                .load_seal(&identity.user_id, &auth)
+                .map_err(|e| format!("Failed to load wallet seal: {}", e))?;
+
+            if seal_record.is_none() {
+                // Kein Siegel vorhanden → neues initiales Siegel erstellen.
+                // Wir verwenden hier den POST-rebuild state_hash (der wird zum Referenzpunkt
+                // für zukünftige seal updates).
+                let state_hash = {
+                    let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
+                        .map_err(|e| format!("Failed to compute state hash: {}", e))?;
+                    crate::services::crypto_utils::get_hash(canonical.as_bytes())
+                };
+                let initial_seal = SealManager::create_initial_seal(
+                    &identity.user_id,
+                    &identity,
+                    &state_hash,
+                ).map_err(|e| format!("Failed to create migration seal: {}", e))?;
+
+                let new_record = LocalSealRecord {
+                    seal: initial_seal,
+                    sync_status: SyncStatus::PendingUpload,
+                    is_locked_due_to_fork: false,
+                };
+                storage
+                    .save_seal(&identity.user_id, &auth, &new_record)
+                    .map_err(|e| format!("Failed to save migration seal: {}", e))?;
+            }
+        }
+        // --- WALLET SEAL ENDE ---
 
         // Sperre erlangen
         storage
@@ -246,6 +342,38 @@ impl AppService {
         // 2. Setze das Passwort zurück, indem das Mnemonic-Schloss geöffnet und das Passwort-Schloss neu geschrieben wird.
         Wallet::reset_password(&mut storage, &identity, new_password)
             .map_err(|e| format!("Failed to set new password: {}", e))?;
+
+        // --- WALLET SEAL: Neue Epoche einleiten (Recovery) ---
+        {
+            let auth_for_seal = AuthMethod::Password(new_password);
+            let existing_seal = storage
+                .load_seal(&identity.user_id, &auth_for_seal)
+                .ok()
+                .flatten();
+
+            let current_state_hash = {
+                let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
+                    .map_err(|e| format!("Failed to compute state hash: {}", e))?;
+                crate::services::crypto_utils::get_hash(canonical.as_bytes())
+            };
+
+            let recovered_seal = SealManager::recover_seal_epoch(
+                existing_seal.as_ref().map(|r| &r.seal),
+                &identity.user_id,
+                &identity,
+                &current_state_hash,
+            ).map_err(|e| format!("Failed to create recovery seal: {}", e))?;
+
+            let new_record = LocalSealRecord {
+                seal: recovered_seal,
+                sync_status: SyncStatus::PendingUpload,
+                is_locked_due_to_fork: false, // Recovery hebt den Fork-Lock auf!
+            };
+            storage
+                .save_seal(&identity.user_id, &auth_for_seal, &new_record)
+                .map_err(|e| format!("Failed to save recovery seal: {}", e))?;
+        }
+        // --- WALLET SEAL ENDE ---
 
         // Sperre erlangen
         storage

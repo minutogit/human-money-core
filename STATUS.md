@@ -3,7 +3,7 @@ project: human-money-core
 version: "0.2.9"
 phase: "active-development"
 health: "green"
-last_updated: "2026-04-24"
+last_updated: "2026-04-25"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -32,6 +32,7 @@ priority_tasks:
 ## Current Focus
 
 The core library is stable and feature-rich. Current focus areas:
+- **New**: WalletSeal Rollback Guard — cryptographic epoch management for state protection
 - L2 gateway integration testing (playground & stress tests)
 - Voucher validation hardening (edge-case tests for ISO 8601, date rounding)
 - Security: Anti-Signature-Reuse-Firewall implemented
@@ -66,6 +67,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] Anonymous Privacy Routing: Strict identity regulation based on PrivacyMode
 - [x] Deep Privacy Balance Calculation: Hardened UTXO-based stealth key matching test suite
 - [x] Hardened Privacy Mode Decryption: Mandatory privacy_guard validation for anonymous recipient IDs
+- [x] **WalletSeal Rollback Guard**: Cryptographic epoch system with hash-chained seals, fork detection, hard lock, and recovery lifecycle integration
 
 ## Next Milestones
 

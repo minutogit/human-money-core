@@ -249,6 +249,12 @@ mod tests {
         );
 
         std::fs::remove_file(metadata_path).unwrap();
+        // Auch das Siegel entfernen, da es den alten state_hash enthält.
+        // Bei echtem Datenverlust wäre das Siegel ebenfalls betroffen.
+        let seal_path = wallet_path.join("seal.enc");
+        if seal_path.exists() {
+            std::fs::remove_file(seal_path).unwrap();
+        }
 
         service
             .login(&profile.folder_name, PASSWORD, false)
@@ -300,6 +306,11 @@ mod tests {
         service.logout();
         std::fs::remove_file(wallet_path.join("own_fingerprints.enc")).unwrap();
         std::fs::remove_file(wallet_path.join("known_fingerprints.enc")).unwrap();
+        // Auch das Siegel entfernen, da es den alten state_hash enthält.
+        let seal_path = wallet_path.join("seal.enc");
+        if seal_path.exists() {
+            std::fs::remove_file(seal_path).unwrap();
+        }
 
         service
             .login(&profile.folder_name, PASSWORD, false)
@@ -474,6 +485,11 @@ mod tests {
         let wallet_path = dir.path().join(&alice_profile.folder_name);
         alice_service.logout();
         std::fs::remove_file(wallet_path.join("fingerprint_metadata.enc")).unwrap();
+        // Auch das Siegel entfernen, da es den alten state_hash enthält.
+        let seal_path = wallet_path.join("seal.enc");
+        if seal_path.exists() {
+            std::fs::remove_file(seal_path).unwrap();
+        }
 
         // WHEN: Alice' Wallet wird wiederhergestellt
         alice_service

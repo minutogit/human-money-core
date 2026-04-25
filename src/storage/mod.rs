@@ -207,6 +207,36 @@ pub trait Storage {
     /// damit auf verschlüsselte Daten zuzugreifen.
     fn test_session_key(&self, session_key: &[u8; 32]) -> Result<(), StorageError>;
 
+    /// Speichert den Siegel-Wrapper streng lokal (außerhalb von Cloud-Sync-Ordnern).
+    ///
+    /// Der `LocalSealRecord` enthält das kryptographische Siegel plus lokale Metadaten
+    /// (SyncStatus, Fork-Lock). Diese Daten dürfen niemals an den Server gesendet werden.
+    ///
+    /// # Arguments
+    /// * `user_id` - Die ID des Benutzers.
+    /// * `auth` - Die Authentifizierungsmethode zum Verschlüsseln.
+    /// * `record` - Der zu speichernde Siegel-Wrapper.
+    fn save_seal(
+        &mut self,
+        user_id: &str,
+        auth: &AuthMethod,
+        record: &crate::models::seal::LocalSealRecord,
+    ) -> Result<(), StorageError>;
+
+    /// Lädt den lokalen Siegel-Wrapper.
+    ///
+    /// Gibt `Ok(None)` zurück, wenn noch kein Siegel existiert (z.B. bei Migration
+    /// bestehender Wallets ohne Siegel).
+    ///
+    /// # Arguments
+    /// * `user_id` - Die ID des Benutzers.
+    /// * `auth` - Die Authentifizierungsmethode zum Entschlüsseln.
+    fn load_seal(
+        &self,
+        user_id: &str,
+        auth: &AuthMethod,
+    ) -> Result<Option<crate::models::seal::LocalSealRecord>, StorageError>;
+
     /// Versucht, eine exklusive, prozessweite Sperre für den Wallet-Speicher zu erlangen.
     /// Muss die "Stale Lock"-Prüfung (z.B. PID) implementieren.
     ///

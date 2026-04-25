@@ -168,6 +168,11 @@ mod tests {
         // WHEN: Die Metadaten werden gelöscht und das Wallet wiederhergestellt.
         let metadata_path = wallet_path.join("fingerprint_metadata.enc");
         std::fs::remove_file(metadata_path).unwrap();
+        // Auch das Siegel entfernen, da es den alten state_hash enthält.
+        let seal_path = wallet_path.join("seal.enc");
+        if seal_path.exists() {
+            std::fs::remove_file(seal_path).unwrap();
+        }
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false)
             .unwrap();

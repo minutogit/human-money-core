@@ -423,4 +423,47 @@ pub enum VoucherCoreError {
         now: String,
         wait_duration: String,
     },
+
+    // --- WalletSeal / Rollback Guard Fehler ---
+
+    /// Das lokale Siegel (seal.json) fehlt. Normaler Start und Transaktionen
+    /// sind nicht erlaubt. Der Nutzer muss die Recovery-Flow starten.
+    #[error("Security Alert: No local security seal found. Recovery is required to re-anchor the wallet.")]
+    RequiresSealRecovery,
+
+    /// Der state_hash im Siegel stimmt nicht mit dem geladenen OwnFingerprints-Store überein.
+    /// Lokaler Speicher wurde manipuliert, korrumpiert oder via altem Backup zurückgesetzt.
+    #[error("Critical Error: Wallet state manipulation or outdated backup detected. The local transaction data does not match the security seal.")]
+    StateRollbackDetected,
+
+    /// Die Hash-Kette des Remote-Siegels stimmt nicht mit dem lokalen Siegel überein.
+    /// Indikator für einen schwerwiegenden Multi-Device-Konflikt.
+    #[error("Sync Conflict: The hash chain of the remote seal does not align with the local seal, indicating a multi-device fork.")]
+    SealForkDetected,
+
+    /// Ein Fork wurde erkannt und das Wallet ist nun persistent gesperrt.
+    /// Keine Transaktionen können empfangen oder gesendet werden.
+    /// Nur `recover_wallet_and_set_new_password` kann diese Sperre aufheben.
+    #[error("Security Lockdown: Wallet is locked due to a detected fork in the transaction history. Recovery required.")]
+    WalletLockedDueToFork,
+
+    /// Zone 2: Bundle-Zeitstempel liegt 5 Minuten bis 24 Stunden vor der epoch_start_time.
+    /// Double-Spend-Falle möglich. Erfordert explizite Nutzerbestätigung.
+    #[error("Warning: This transaction occurred shortly before the recent wallet recovery. Confirm with force_accept_tolerance_bundle.")]
+    BundleInRecoveryToleranceZone,
+
+    /// Zone 3: Bundle-Zeitstempel liegt 24 Stunden bis 28 Tage vor der epoch_start_time.
+    /// Hohes Risiko eines schweren Double-Spends. Erfordert kritische Nutzerbestätigung.
+    #[error("CRITICAL WARNING: This transaction is up to 4 weeks old relative to the last recovery. High double-spend risk.")]
+    BundleInExtendedRecoveryToleranceZone,
+
+    /// Zone 4: Bundle-Zeitstempel älter als 28 Tage vor der epoch_start_time.
+    /// Harte Ablehnung. Keine Umgehung möglich.
+    #[error("Transaction Rejected: This transaction is too old relative to the last wallet recovery date. Permanently rejected.")]
+    BundlePredatesCurrentEpoch,
+
+    /// Race-Condition-Schutz: Das acknowledge_seal_sync wurde mit einem Hash aufgerufen,
+    /// der nicht mehr dem aktuellsten lokalen Siegel entspricht (neue Transaktion während Upload).
+    #[error("Seal sync race condition: A new transaction occurred during the upload. The acknowledgement is outdated.")]
+    SealSyncRaceCondition,
 }
