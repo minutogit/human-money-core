@@ -1,6 +1,6 @@
 ---
 project: human-money-core
-version: "0.2.9"
+version: "0.2.10"
 phase: "active-development"
 health: "green"
 last_updated: "2026-04-25"

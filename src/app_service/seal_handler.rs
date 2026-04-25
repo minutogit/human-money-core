@@ -381,21 +381,43 @@ impl AppService {
         }
     }
 
-    /// Berechnet den state_hash (Hash des OwnFingerprints-Stores) für das Siegel.
-    pub(crate) fn compute_state_hash_from_wallet(
+    /// Gibt die `epoch_start_time` des aktuellen Siegels zurück.
+    ///
+    /// Wird vom Zonen-Modell in `receive_bundle` verwendet, um zu prüfen, ob ein
+    /// eingehendes Bundle vor der letzten Recovery erstellt wurde.
+    ///
+    /// # Returns
+    /// - `Ok(Some(epoch_start_time))` wenn ein Siegel existiert.
+    /// - `Ok(None)` wenn kein Siegel existiert (Migration; kein Zonen-Check nötig).
+    /// - `Err` bei Fehlern.
+    pub(crate) fn get_epoch_info(
         &self,
-    ) -> Result<String, VoucherCoreError> {
+        password: Option<&str>,
+    ) -> Result<Option<(String, u32)>, VoucherCoreError> {
         match &self.state {
-            AppState::Unlocked { wallet, .. } => {
-                let canonical =
-                    crate::services::utils::to_canonical_json(&wallet.own_fingerprints)?;
-                Ok(crate::services::crypto_utils::get_hash(
-                    canonical.as_bytes(),
-                ))
+            AppState::Unlocked {
+                storage,
+                identity,
+                session_cache,
+                ..
+            } => {
+                let auth = Self::resolve_auth(password, session_cache)?;
+                let record = storage
+                    .load_seal(&identity.user_id, &auth)
+                    .map_err(VoucherCoreError::Storage)?;
+
+                match record {
+                    Some(r) => Ok(Some((
+                        r.seal.payload.epoch_start_time.clone(),
+                        r.seal.payload.epoch,
+                    ))),
+                    None => Ok(None),
+                }
             }
             AppState::Locked => Err(VoucherCoreError::Generic("Wallet is locked.".to_string())),
         }
     }
+
 
     /// Aktualisiert das Siegel nach einer erfolgreichen Zustandsänderung.
     ///

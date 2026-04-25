@@ -90,6 +90,9 @@ impl AppService {
         config: ContainerConfig,
         password: Option<&str>,
     ) -> Result<Vec<u8>, String> {
+        // --- FORK-LOCK PRÜFUNG ---
+        self.check_fork_lock(password).map_err(|e| e.to_string())?;
+
         // BUG-FIX: Determine AuthMethod BEFORE state replacement
         let auth_method = match password {
             Some(pwd_str) => crate::AuthMethod::Password(pwd_str),
@@ -190,6 +193,9 @@ impl AppService {
         container_password: Option<&str>,
         wallet_password: Option<&str>,
     ) -> Result<String, String> {
+        // --- FORK-LOCK PRÜFUNG ---
+        self.check_fork_lock(wallet_password).map_err(|e| e.to_string())?;
+
         // BUG-FIX: Determine AuthMethod BEFORE state replacement
         let auth_method = match wallet_password {
             Some(pwd_str) => crate::AuthMethod::Password(pwd_str),
@@ -375,6 +381,9 @@ impl AppService {
         signature_id: &str,
         wallet_password: Option<&str>,
     ) -> Result<(), String> {
+        // --- FORK-LOCK PRÜFUNG ---
+        self.check_fork_lock(wallet_password).map_err(|e| e.to_string())?;
+
         // Determine AuthMethod BEFORE state replacement
         let auth_method = match wallet_password {
             Some(pwd_str) => crate::AuthMethod::Password(pwd_str),

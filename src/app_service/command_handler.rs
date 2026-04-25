@@ -28,6 +28,8 @@ impl AppService {
         data: NewVoucherData,
         password: Option<&str>,
     ) -> Result<Voucher, String> {
+        // --- FORK-LOCK PRÜFUNG ---
+        self.check_fork_lock(password).map_err(|e| e.to_string())?;
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
         let (result, new_state) = match current_state {
@@ -240,6 +242,7 @@ impl AppService {
         }
         result
     }
+    /// Erstellt ein Transfer-Bundle für eine oder mehrere Transaktionen und speichert den neuen Wallet-Zustand.
     pub fn create_transfer_bundle(
         &mut self,
         request: MultiTransferRequest,
@@ -247,6 +250,8 @@ impl AppService {
         archive: Option<&dyn VoucherArchive>,
         password: Option<&str>,
     ) -> Result<CreateBundleResult, String> {
+        // --- FORK-LOCK PRÜFUNG ---
+        self.check_fork_lock(password).map_err(|e| e.to_string())?;
 
         // Parse die TOML-Definitionen BEVOR der State bewegt wird,
         // damit ein Fehler hier den State nicht verwaist.
@@ -427,6 +432,76 @@ impl AppService {
         archive: Option<&dyn VoucherArchive>,
         password: Option<&str>,
     ) -> Result<ProcessBundleResult, String> {
+        // --- FORK-LOCK PRÜFUNG ---
+        self.check_fork_lock(password).map_err(|e| e.to_string())?;
+
+        // --- ZONEN-MODELL: Prüfung gegen Pre-Epoch Bundles ---
+        // Nur relevant, wenn eine Recovery stattgefunden hat (epoch > 0).
+        // Die Logik schützt davor, dass ein Angreifer nach einer Recovery alte
+        // Bundles einspielt, die vor der Recovery erstellt wurden.
+        if let Ok(Some((epoch_start_time, epoch))) = self.get_epoch_info(password) {
+            if epoch > 0 {
+                // Bundle entschlüsseln, um den Transaktionszeitstempel zu extrahieren
+                let max_tx_time = match &self.state {
+                    AppState::Unlocked { identity, .. } => {
+                        let bundle = crate::services::bundle_processor::open_and_verify_bundle(
+                            identity,
+                            bundle_data,
+                        ).map_err(|e| e.to_string())?;
+
+                        // Finde den maximalen (jüngsten) Transaktionszeitstempel
+                        let mut max_dt: Option<chrono::DateTime<chrono::Utc>> = None;
+                        for voucher in &bundle.vouchers {
+                            if let Some(last_tx) = voucher.transactions.last() {
+                                if let Ok(tx_dt) = chrono::DateTime::parse_from_rfc3339(&last_tx.t_time) {
+                                    let tx_utc = tx_dt.with_timezone(&chrono::Utc);
+                                    match max_dt {
+                                        None => max_dt = Some(tx_utc),
+                                        Some(m) if tx_utc > m => max_dt = Some(tx_utc),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                        max_dt
+                    }
+                    _ => None, // Sollte nicht vorkommen nach fork-lock check
+                };
+
+                if let Some(bundle_max_dt) = max_tx_time {
+                    if let Ok(epoch_dt) = chrono::DateTime::parse_from_rfc3339(&epoch_start_time) {
+                        let epoch_utc = epoch_dt.with_timezone(&chrono::Utc);
+
+                        // Nur prüfen, wenn das Bundle VOR der aktuellen Epoche liegt
+                        if bundle_max_dt < epoch_utc {
+                            let delta = epoch_utc - bundle_max_dt;
+
+                            // Zone 1: < 15 Minuten → Auto-Accept (kein Fehler)
+                            // Zone 2: 15 Min – 24h → Warnung, Nutzerbestätigung nötig
+                            // Zone 3: 24h – 28 Tage → Kritische Warnung
+                            // Zone 4: > 28 Tage → Harte Ablehnung
+                            const ZONE_1_LIMIT_MINUTES: i64 = 15;
+                            const ZONE_2_LIMIT_HOURS: i64 = 24;
+                            const ZONE_3_LIMIT_DAYS: i64 = 28;
+
+                            if delta > chrono::Duration::days(ZONE_3_LIMIT_DAYS) {
+                                // Zone 4: Harte Ablehnung
+                                return Err(VoucherCoreError::BundlePredatesCurrentEpoch.to_string());
+                            } else if delta > chrono::Duration::hours(ZONE_2_LIMIT_HOURS) {
+                                // Zone 3: Kritische Warnung
+                                return Err(VoucherCoreError::BundleInExtendedRecoveryToleranceZone.to_string());
+                            } else if delta > chrono::Duration::minutes(ZONE_1_LIMIT_MINUTES) {
+                                // Zone 2: Warnung
+                                return Err(VoucherCoreError::BundleInRecoveryToleranceZone.to_string());
+                            }
+                            // Zone 1: < 15 Min → Auto-Accept, kein Fehler
+                        }
+                    }
+                }
+            }
+        }
+        // --- ZONEN-MODELL ENDE ---
+
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
         let (result, new_state) = match current_state {
@@ -583,11 +658,15 @@ impl AppService {
         }
         result
     }
+    /// Importiert eine Beilegungserklärung.
     pub fn import_resolution_endorsement(
         &mut self,
         endorsement: ResolutionEndorsement,
         password: Option<&str>,
     ) -> Result<(), String> {
+        // --- FORK-LOCK PRÜFUNG ---
+        self.check_fork_lock(password).map_err(|e| e.to_string())?;
+
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
         let (result, new_state) = match current_state {
             AppState::Unlocked {

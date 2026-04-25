@@ -67,6 +67,9 @@ impl AppService {
         note: Option<String>,
         password: Option<&str>,
     ) -> Result<(), String> {
+        // --- FORK-LOCK PRÜFUNG ---
+        self.check_fork_lock(password).map_err(|e| e.to_string())?;
+
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
         if let AppState::Unlocked { mut storage, mut wallet, identity, mut session_cache } = current_state {
             let _lock_guard = match crate::storage::WalletLockGuard::new(&storage) {
@@ -114,6 +117,9 @@ impl AppService {
 
     /// Importiert einen Beweis direkt als Objekt.
     pub fn import_proof(&mut self, proof: ProofOfDoubleSpend, password: Option<&str>) -> Result<(), String> {
+        // --- FORK-LOCK PRÜFUNG ---
+        self.check_fork_lock(password).map_err(|e| e.to_string())?;
+
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
         if let AppState::Unlocked { mut storage, mut wallet, identity, mut session_cache } = current_state {
             let _lock_guard = match crate::storage::WalletLockGuard::new(&storage) {
