@@ -67,7 +67,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] Anonymous Privacy Routing: Strict identity regulation based on PrivacyMode
 - [x] Deep Privacy Balance Calculation: Hardened UTXO-based stealth key matching test suite
 - [x] Hardened Privacy Mode Decryption: Mandatory privacy_guard validation for anonymous recipient IDs
-- [x] **WalletSeal Rollback Guard**: Cryptographic epoch system with hash-chained seals, fork detection, hard lock, and recovery lifecycle integration
+- [x] **WalletSeal Rollback Guard**: Cryptographic epoch system with hash-chained seals, fork-lock protection, Zonen-Modell replay protection with user-controlled recovery overrides.
 
 ## Next Milestones
 

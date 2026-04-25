@@ -247,6 +247,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         &standards_map,
         None,
         Some("WRONG_PASSWORD_TO_FORCE_SAVE_FAILURE"), // Falsches Passwort
+        false,
     );
 
     // 3. ASSERT: Operation ist fehlgeschlagen und Wallet ist immer noch leer.
@@ -645,7 +646,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
 
     // David empfängt Pfad A erfolgreich
     service_david
-        .receive_bundle(&bundle_a, &standards_map, None, Some(correct_password))
+        .receive_bundle(&bundle_a, &standards_map, None, Some(correct_password), false)
         .unwrap();
     assert_eq!(
         service_david
@@ -658,7 +659,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
 
     // 2. ACT: David versucht, das konfliktreiche Bundle B mit falschem Passwort zu empfangen.
     let result =
-        service_david.receive_bundle(&bundle_b, &standards_map, None, Some("WRONG_PASSWORD"));
+        service_david.receive_bundle(&bundle_b, &standards_map, None, Some("WRONG_PASSWORD"), false);
 
     // 3. ASSERT: Operation schlägt fehl, Zustand wird komplett zurückgesetzt.
     assert!(
@@ -790,7 +791,7 @@ fn test_balances_are_summable_behavior() {
     let bundle_res = service_sender.create_transfer_bundle(request, &standards_map, None, Some("pwd")).unwrap();
 
     // 5. Bundle im Recipient-Wallet verarbeiten
-    let result = service.receive_bundle(&bundle_res.bundle_bytes, &standards_map, None, Some("pwd")).unwrap();
+    let result = service.receive_bundle(&bundle_res.bundle_bytes, &standards_map, None, Some("pwd"), false).unwrap();
 
     // 6. ASSERT TransferSummary
     // Summable (EUR): 10.0 + 10.0 = 20.0 (in summable_amounts)

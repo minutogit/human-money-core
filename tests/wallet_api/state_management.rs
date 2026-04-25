@@ -265,7 +265,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     // --- 4. David empfängt zuerst das spätere Bundle (Charlie) ---
     human_money_core::set_signature_bypass(true);
     service_david
-        .receive_bundle(&bundle_charlie, &standards_map, None, Some("pwd"))
+        .receive_bundle(&bundle_charlie, &standards_map, None, Some("pwd"), false)
         .unwrap();
     human_money_core::set_signature_bypass(false);
     let summaries_before = service_david.get_voucher_summaries(None, None).unwrap();
@@ -276,7 +276,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     // --- 5. David empfängt das frühere Bundle (Bob), was den Konflikt auslöst ---
     human_money_core::set_signature_bypass(true);
     service_david
-        .receive_bundle(&bundle_bob, &standards_map, None, Some("pwd"))
+        .receive_bundle(&bundle_bob, &standards_map, None, Some("pwd"), false)
         .unwrap();
     human_money_core::set_signature_bypass(false);
 
@@ -421,10 +421,10 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     // --- 3. David empfängt beide Bundles ---
     human_money_core::set_signature_bypass(true);
     service_david
-        .receive_bundle(&bundle_a, &standards_map, None, Some("pwd"))
+        .receive_bundle(&bundle_a, &standards_map, None, Some("pwd"), false)
         .unwrap();
     service_david
-        .receive_bundle(&bundle_b, &standards_map, None, Some("pwd"))
+        .receive_bundle(&bundle_b, &standards_map, None, Some("pwd"), false)
         .unwrap();
     human_money_core::set_signature_bypass(false);
 
@@ -568,7 +568,7 @@ fn api_wallet_save_and_load_fidelity() {
             bundle_bytes
         };
         service_a
-            .receive_bundle(&transfer_back_bundle, &standards_map, None, Some(password))
+            .receive_bundle(&transfer_back_bundle, &standards_map, None, Some(password), false)
             .unwrap();
 
         // --- Schritt B: Vollständiger Transfer ---

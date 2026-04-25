@@ -189,6 +189,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &standards_map,
             None,
             Some(password),
+            false,
         )?;
 
         // Get the voucher from Alice to see the transaction
@@ -252,6 +253,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &standards_map,
             None,
             Some(password),
+            false,
         )?;
 
         let bob_summaries = service_bob.get_voucher_summaries(None, None)?;

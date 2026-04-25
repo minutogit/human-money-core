@@ -205,8 +205,8 @@ fn test_integration_detects_witness_role_on_split_win() {
     let bundle_late = test_utils::create_test_bundle(&identity_bob, vec![v_late], &id_alice, None).unwrap();
 
     // --- 4. Alice empfängt beide ---
-    service_alice.receive_bundle(&bundle_early, &standards_map, None, Some("pwd")).unwrap();
-    service_alice.receive_bundle(&bundle_late, &standards_map, None, Some("pwd")).unwrap();
+    service_alice.receive_bundle(&bundle_early, &standards_map, None, Some("pwd"), false).unwrap();
+    service_alice.receive_bundle(&bundle_late, &standards_map, None, Some("pwd"), false).unwrap();
 
     // --- 5. ASSERT ---
     let conflicts = service_alice.list_conflicts().unwrap();

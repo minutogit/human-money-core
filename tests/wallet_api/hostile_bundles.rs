@@ -139,7 +139,7 @@ fn test_rejection_of_broken_transaction_chain() {
 
     // 2. ACT
     human_money_core::set_signature_bypass(true);
-    let result = service_recipient.receive_bundle(&bundle, &standards_map, None, Some(PASSWORD));
+    let result = service_recipient.receive_bundle(&bundle, &standards_map, None, Some(PASSWORD), false);
     human_money_core::set_signature_bypass(false);
 
     // 3. ASSERT
@@ -228,7 +228,7 @@ fn test_rejection_of_inconsistent_split_math() {
 
     // 2. ACT
     human_money_core::set_signature_bypass(true);
-    let result = service_recipient.receive_bundle(&bundle, &standards_map, None, Some("pwd"));
+    let result = service_recipient.receive_bundle(&bundle, &standards_map, None, Some("pwd"), false);
     human_money_core::set_signature_bypass(false);
 
     // 3. ASSERT
@@ -304,7 +304,7 @@ fn test_rejection_of_self_received_bundle() {
     // 2. ACT
     // Der SENDER versucht nun, das Bundle, das für Bob bestimmt ist, SELBST einzulesen.
     let result_self_receive =
-        service_sender.receive_bundle(&bundle_bytes_for_bob, &standards_map, None, Some("pwd"));
+        service_sender.receive_bundle(&bundle_bytes_for_bob, &standards_map, None, Some("pwd"), false);
 
     // 3. ASSERT
     assert!(result_self_receive.is_err());
@@ -324,7 +324,7 @@ fn test_rejection_of_self_received_bundle() {
 
     // Der Empfänger (Bob) kann es problemlos empfangen
     let result_recipient =
-        service_recipient.receive_bundle(&bundle_bytes_for_bob, &standards_map, None, Some("pwd"));
+        service_recipient.receive_bundle(&bundle_bytes_for_bob, &standards_map, None, Some("pwd"), false);
     assert!(result_recipient.is_ok());
     assert_eq!(
         service_recipient
@@ -388,7 +388,7 @@ fn test_rejection_of_identical_bundle_replay() {
 
     // 2. ACT (First Receive)
     let result_first =
-        service_recipient.receive_bundle(&bundle_bytes, &standards_map, None, Some("pwd"));
+        service_recipient.receive_bundle(&bundle_bytes, &standards_map, None, Some("pwd"), false);
 
     // 3. ASSERT (First Receive)
     assert!(result_first.is_ok());
@@ -402,7 +402,7 @@ fn test_rejection_of_identical_bundle_replay() {
 
     // 4. ACT (Second Receive - Replay)
     let result_second =
-        service_recipient.receive_bundle(&bundle_bytes, &standards_map, None, Some("pwd"));
+        service_recipient.receive_bundle(&bundle_bytes, &standards_map, None, Some("pwd"), false);
 
     // 5. ASSERT (Second Receive)
     assert!(result_second.is_err());
@@ -484,7 +484,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
 
     // 2. ACT (First Receive)
     let result_first =
-        service_recipient.receive_bundle(&bundle_1_bytes, &standards_map, None, Some("pwd"));
+        service_recipient.receive_bundle(&bundle_1_bytes, &standards_map, None, Some("pwd"), false);
     assert!(result_first.is_ok());
     assert_eq!(
         service_recipient
@@ -496,7 +496,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
 
     // 3. ACT (Second Receive - Replay)
     let result_second =
-        service_recipient.receive_bundle(&bundle_2_bytes, &standards_map, None, Some("pwd"));
+        service_recipient.receive_bundle(&bundle_2_bytes, &standards_map, None, Some("pwd"), false);
 
     // 4. ASSERT (Second Receive)
     assert!(result_second.is_err());
@@ -632,6 +632,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
         &standards_map,
         None,
         Some("pwd_bob"),
+        false,
     );
 
     // 3. ASSERT (PC Wallet)
@@ -660,6 +661,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
         &standards_map,
         None,
         Some("pwd_bob"),
+        false,
     );
     assert!(result_mobil_receive.is_ok());
     assert_eq!(

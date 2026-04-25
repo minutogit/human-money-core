@@ -431,6 +431,7 @@ impl AppService {
         standard_definitions_toml: &HashMap<String, String>,
         archive: Option<&dyn VoucherArchive>,
         password: Option<&str>,
+        force_accept_tolerance_bundle: bool,
     ) -> Result<ProcessBundleResult, String> {
         // --- FORK-LOCK PRÜFUNG ---
         self.check_fork_lock(password).map_err(|e| e.to_string())?;
@@ -485,14 +486,18 @@ impl AppService {
                             const ZONE_3_LIMIT_DAYS: i64 = 28;
 
                             if delta > chrono::Duration::days(ZONE_3_LIMIT_DAYS) {
-                                // Zone 4: Harte Ablehnung
+                                // Zone 4: Harte Ablehnung (Flag wird IGNORIERT)
                                 return Err(VoucherCoreError::BundlePredatesCurrentEpoch.to_string());
                             } else if delta > chrono::Duration::hours(ZONE_2_LIMIT_HOURS) {
                                 // Zone 3: Kritische Warnung
-                                return Err(VoucherCoreError::BundleInExtendedRecoveryToleranceZone.to_string());
+                                if !force_accept_tolerance_bundle {
+                                    return Err(VoucherCoreError::BundleInExtendedRecoveryToleranceZone.to_string());
+                                }
                             } else if delta > chrono::Duration::minutes(ZONE_1_LIMIT_MINUTES) {
                                 // Zone 2: Warnung
-                                return Err(VoucherCoreError::BundleInRecoveryToleranceZone.to_string());
+                                if !force_accept_tolerance_bundle {
+                                    return Err(VoucherCoreError::BundleInRecoveryToleranceZone.to_string());
+                                }
                             }
                             // Zone 1: < 15 Min → Auto-Accept, kein Fehler
                         }

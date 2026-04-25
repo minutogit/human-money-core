@@ -126,7 +126,7 @@ fn api_app_service_full_lifecycle() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(standard.immutable.identity.uuid.clone(), silver_standard_toml);
     service_bob
-        .receive_bundle(&transfer_bundle, &standards, None, Some("password"))
+        .receive_bundle(&transfer_bundle, &standards, None, Some("password"), false)
         .unwrap();
     let balance_bob = service_bob.get_total_balance_by_currency().unwrap();
     // KORREKTUR: Die Bilanz wird jetzt nach der Abkürzung der Währung gruppiert, nicht nach der Einheit.

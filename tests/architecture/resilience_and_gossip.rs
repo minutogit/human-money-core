@@ -419,7 +419,7 @@ mod tests {
             toml::to_string(&SILVER_STANDARD.0).unwrap(),
         );
         bob_service
-            .receive_bundle(&bundle1, &standards, None, Some("password"))
+            .receive_bundle(&bundle1, &standards, None, Some("password"), false)
             .unwrap();
         let bob_local_id = bob_service.get_voucher_summaries(None, None).unwrap()[0]
             .local_instance_id
@@ -463,7 +463,7 @@ mod tests {
             .login(&alice_profile.folder_name, PASSWORD, false)
             .unwrap();
         alice_service
-            .receive_bundle(&bundle2, &standards, None, Some(PASSWORD))
+            .receive_bundle(&bundle2, &standards, None, Some(PASSWORD), false)
             .unwrap();
 
         // DEBUG: Check Alice's voucher store state before logout
@@ -611,7 +611,7 @@ mod tests {
         );
 
         bob_service
-            .receive_bundle(&bundle_bytes, &HashMap::new(), None, Some("password"))
+            .receive_bundle(&bundle_bytes, &HashMap::new(), None, Some("password"), false)
             .unwrap();
 
         let (bob_wallet, _) = bob_service.get_unlocked_mut_for_test();
@@ -685,7 +685,7 @@ mod tests {
 
         // Bob (immer noch eingeloggt) empfängt das Bundle
         bob_service
-            .receive_bundle(&bundle_bytes, &HashMap::new(), None, Some("password"))
+            .receive_bundle(&bundle_bytes, &HashMap::new(), None, Some("password"), false)
             .unwrap();
 
         let (bob_wallet, _) = bob_service.get_unlocked_mut_for_test();
