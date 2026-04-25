@@ -322,6 +322,16 @@ pub enum ValidationError {
     /// JSON parsing error within validation context
     #[error("JSON validation error: {0}")]
     Json(#[from] serde_json::Error),
+
+    /// Ein Zeitstempel liegt zu weit in der Zukunft.
+    #[error("Rejection: {entity} '{id}' has a timestamp '{timestamp}' that is too far in the future (Limit: {limit}). Please wait {wait_duration} before importing.")]
+    FutureTimestampRejected {
+        entity: String,
+        id: String,
+        timestamp: String,
+        limit: String,
+        wait_duration: String,
+    },
 }
 
 /// Der zentrale Fehlertyp für alle Operationen in der `human_money_core`-Bibliothek.
@@ -407,4 +417,10 @@ pub enum VoucherCoreError {
     CannotRemoveCreatorSignature,
     #[error("Signatures can only be removed while the voucher is in status 'Incomplete'. Current status: {0:?}")]
     SignatureRemovalRequiresIncomplete(VoucherStatus),
+    #[error("Voucher is locked until '{until}'. Current time: '{now}'. Remaining wait: {wait_duration}.")]
+    VoucherLockedUntil {
+        until: String,
+        now: String,
+        wait_duration: String,
+    },
 }

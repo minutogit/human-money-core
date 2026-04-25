@@ -929,7 +929,13 @@ fn validate_issuance_firewall(
 
     // 4. Zeit-Prüfung (Der Kern)
     // Sender ist Ersteller, Empfänger ist Dritter, Regel existiert.
-    let now = Utc::now();
+    let now_str = crate::services::utils::get_current_timestamp();
+    let now = DateTime::parse_from_rfc3339(&now_str)
+        .map_err(|e| {
+            VoucherManagerError::Generic(format!("Failed to parse now date: {}", e))
+        })?
+        .with_timezone(&Utc);
+
     let valid_until_dt = DateTime::parse_from_rfc3339(&voucher.valid_until)
         .map_err(|e| {
             VoucherManagerError::Generic(format!("Failed to parse voucher valid_until date: {}", e))

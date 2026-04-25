@@ -25,4 +25,5 @@ mod proof_persistence;
 mod role_integration;
 mod chained_workflows;
 mod privacy_balance_checks;
+mod future_dates;
 

@@ -99,42 +99,90 @@ impl Wallet {
         // Weist ein NEUES Bundle ab, das Gutscheine enthält, deren letzte Transaktion
         // (Fingerprint) bereits bekannt ist. Verhindert modifizierte Replay-Angriffe.
         self.check_bundle_fingerprints_against_history(&bundle.vouchers)?;
-
         // --- ENDE REPLAY-SCHUTZ ---
 
         // --- ZUSÄTZLICHE SICHERHEITSPRÜFUNG ---
         // Stelle sicher, dass jeder Gutschein im Bundle auch wirklich für DIESES
-        // Wallet (identity.user_id) als Empfänger vorgesehen ist.
+        // Wallet (identity.user_id) an einen validen Empfänger gesendet wurde
+        // und keine Zeitstempel weit in der Zukunft liegen.
         let own_user_id = &identity.user_id;
+        // 1. Zeitstempel prüfen (Hard Reject)
+        // Wir nehmen die Transaktionszeit der Gutscheine als absolute Referenz (das Maximum davon).
+        let mut max_tx_dt: Option<chrono::DateTime<chrono::Utc>> = None;
+        let mut max_tx_time = String::new();
+        let mut max_tx_id = String::new();
+
         for voucher in &bundle.vouchers {
             if let Some(last_tx) = voucher.transactions.last() {
+                let tx_dt = chrono::DateTime::parse_from_rfc3339(&last_tx.t_time)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .map_err(|e| {
+                        VoucherCoreError::Generic(format!("Failed to parse transaction time: {}", e))
+                    })?;
+
+                match max_tx_dt {
+                    None => {
+                        max_tx_dt = Some(tx_dt);
+                        max_tx_time = last_tx.t_time.clone();
+                        max_tx_id = last_tx.t_id.clone();
+                    }
+                    Some(m_dt) if tx_dt > m_dt => {
+                        max_tx_dt = Some(tx_dt);
+                        max_tx_time = last_tx.t_time.clone();
+                        max_tx_id = last_tx.t_id.clone();
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if !max_tx_time.is_empty() {
+            crate::services::utils::verify_not_far_in_future(
+                &max_tx_time,
+                "Transaction",
+                &max_tx_id,
+            )?;
+        }
+
+        // Auch Signaturen individuell prüfen (Hard Reject)
+        for voucher in &bundle.vouchers {
+            for sig in &voucher.signatures {
+                crate::services::utils::verify_not_far_in_future(
+                    &sig.signature_time,
+                    "Signature",
+                    &sig.signature_id,
+                )?;
+            }
+        }
+
+        for voucher in &bundle.vouchers {
+            // 2. Empfänger prüfen
+            if let Some(last_tx) = voucher.transactions.last() {
                 // Sicherheitsfuse: Stimmt der Empfänger mit unserem Wallet überein?
-                // Wir erlauben DIESES Wallet (own_user_id) ODER den globalen ANONYMOUS_ID.
-                // In Private/Flexible Modi ist der recipient_id im Gutschein immer "anonymous".
-                // Die tatsächliche Berechtigung wird später durch den PrivacyGuard/Key-Besitz bestätigt.
-                if last_tx.recipient_id != *own_user_id && last_tx.recipient_id != crate::models::voucher::ANONYMOUS_ID {
-                    // Dieser Gutschein ist nicht für uns! Breche die gesamte
-                    // Bundle-Verarbeitung ab, um eine Selbst-Annahme zu verhindern.
+                if last_tx.recipient_id != *own_user_id
+                    && last_tx.recipient_id != crate::models::voucher::ANONYMOUS_ID
+                {
                     return Err(VoucherCoreError::BundleRecipientMismatch {
                         expected: own_user_id.clone(),
                         found: last_tx.recipient_id.clone(),
                     });
                 }
 
-                // Wenn anonym, erzwinge erfolgreiche Entschlüsselung des Privacy Guards als Besitznachweis VOR der Speicherung.
+                // Wenn anonym, erzwinge erfolgreiche Entschlüsselung des Privacy Guards
                 if last_tx.recipient_id == crate::models::voucher::ANONYMOUS_ID {
                     let owns_voucher = if let Some(guard_base64) = &last_tx.privacy_guard {
                         crate::services::crypto_utils::decrypt_recipient_payload(
                             guard_base64,
                             &identity.signing_key,
                             &identity.user_id,
-                        ).is_ok()
+                        )
+                        .is_ok()
                     } else {
                         false
                     };
 
                     if !owns_voucher {
-                         return Err(VoucherCoreError::BundleRecipientMismatch {
+                        return Err(VoucherCoreError::BundleRecipientMismatch {
                             expected: own_user_id.clone(),
                             found: "anonymous_but_payload_decryption_failed".to_string(),
                         });
@@ -445,6 +493,28 @@ impl Wallet {
         if !matches!(instance.status, VoucherStatus::Active) {
             return Err(VoucherCoreError::VoucherNotActive(instance.status.clone()));
         }
+
+        // --- NEU: Sperre für Gutscheine in der (nahen) Zukunft ---
+        if let Some(last_tx) = instance.voucher.transactions.last() {
+            let now_str = crate::services::utils::get_current_timestamp();
+            if last_tx.t_time > now_str {
+                let now = chrono::DateTime::parse_from_rfc3339(&now_str).unwrap();
+                let until = chrono::DateTime::parse_from_rfc3339(&last_tx.t_time).unwrap();
+                let diff = until.signed_duration_since(now);
+                let wait_duration = format!(
+                    "{}h {}m {}s",
+                    diff.num_hours(),
+                    diff.num_minutes() % 60,
+                    diff.num_seconds() % 60
+                );
+                return Err(VoucherCoreError::VoucherLockedUntil {
+                    until: last_tx.t_time.clone(),
+                    now: now_str,
+                    wait_duration,
+                });
+            }
+        }
+
         let voucher_to_spend = instance.voucher.clone();
 
         let last_tx = voucher_to_spend.transactions.last().ok_or_else(|| {
