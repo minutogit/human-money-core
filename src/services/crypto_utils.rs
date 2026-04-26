@@ -25,6 +25,7 @@ use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey, StaticSecret};
 use crate::services::mnemonic::{MnemonicLanguage, MnemonicProcessor};
 
 // Key Derivation Functions
+use argon2::{Algorithm, Argon2, Params, Version};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use pbkdf2::pbkdf2;
@@ -84,6 +85,32 @@ pub fn get_hash(input: impl AsRef<[u8]>) -> String {
     hasher.update(input.as_ref());
     let hash_bytes = hasher.finalize();
     bs58::encode(hash_bytes).into_string()
+}
+
+/// Derives a cryptographically strong, memory-hard identifier using Argon2id.
+///
+/// Optimized for Mobile and WASM environments (19 MiB RAM, 3 iterations).
+/// Uses a reduced configuration during tests for performance.
+pub fn derive_argon2_id(password: &[u8], salt: &[u8]) -> Result<String, VoucherCoreError> {
+    // Parameters tuned for Mobile/WASM (approx. 19MB RAM usage)
+    #[cfg(not(any(test, feature = "test-utils")))]
+    let (m_cost, t_cost, p_cost) = (19456, 3, 1);
+
+    // Fast configuration for tests
+    #[cfg(any(test, feature = "test-utils"))]
+    let (m_cost, t_cost, p_cost) = (1024, 1, 1);
+
+    let params = Params::new(m_cost, t_cost, p_cost, Some(32))
+        .map_err(|e| VoucherCoreError::Crypto(format!("Invalid Argon2 parameters: {}", e)))?;
+
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    let mut output = [0u8; 32];
+
+    argon2
+        .hash_password_into(password, salt, &mut output)
+        .map_err(|e| VoucherCoreError::Crypto(format!("Argon2 derivation failed: {}", e)))?;
+
+    Ok(bs58::encode(output).into_string())
 }
 
 /// Computes a SHA3-256 hash of multiple inputs concatenated and returns it as a base58-encoded string.

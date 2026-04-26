@@ -184,11 +184,6 @@ impl FileStorage {
         }
     }
 
-    /// Erstellt einen Hash des Benutzer-IDs für die Verwendung in Dateinamen.
-    fn get_user_hash(user_id: &str) -> String {
-        crypto_utils::get_hash(user_id.as_bytes())
-    }
-
     /// Lädt den `ProfileStorageContainer`, um an die Schlüssel-Metadaten zu gelangen.
     fn load_profile_container(&self) -> Result<ProfileStorageContainer, StorageError> {
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
@@ -783,7 +778,7 @@ impl Storage for FileStorage {
     /// Speichert einen beliebigen, benannten Datenblock verschlüsselt.
     fn save_arbitrary_data(
         &mut self,
-        user_id: &str,
+        _user_id: &str,
         auth: &AuthMethod,
         name: &str,
         data: &[u8],
@@ -791,11 +786,11 @@ impl Storage for FileStorage {
         // 1. Hole den Master-Schlüssel, der für alle Operationen dieses Wallets verwendet wird.
         let master_key = self.get_master_key_from_auth(auth)?;
 
-        // 2. Erstelle einen sicheren, benutzerspezifischen Dateipfad.
-        let user_hash = Self::get_user_hash(user_id);
+        // 2. Erstelle einen sicheren Dateipfad (isoliert im Profil-Ordner).
+        // Wir verzichten auf den user_hash im Dateinamen, um Privacy-Leaks zu vermeiden.
         let path = self
             .user_storage_path
-            .join(format!("generic_{}.{}.enc", name, user_hash));
+            .join(format!("generic_{}.enc", name));
 
         // 3. Verschlüssele die Daten und speichere sie.
         let ciphertext = crypto_utils::encrypt_data(&master_key, data)
@@ -808,7 +803,7 @@ impl Storage for FileStorage {
     /// Lädt einen beliebigen, benannten und verschlüsselten Datenblock.
     fn load_arbitrary_data(
         &self,
-        user_id: &str,
+        _user_id: &str,
         auth: &AuthMethod,
         name: &str,
     ) -> Result<Vec<u8>, StorageError> {
@@ -816,10 +811,9 @@ impl Storage for FileStorage {
         let master_key = self.get_master_key_from_auth(auth)?;
 
         // 2. Konstruiere den Pfad, unter dem die Daten erwartet werden.
-        let user_hash = Self::get_user_hash(user_id);
         let path = self
             .user_storage_path
-            .join(format!("generic_{}.{}.enc", name, user_hash));
+            .join(format!("generic_{}.enc", name));
 
         if !path.exists() {
             return Err(StorageError::NotFound);
@@ -1035,8 +1029,8 @@ impl Storage for FileStorage {
                 continue;
             }
 
-            // Ignoriere den Session-Anker
-            if name_str.starts_with("generic___storage_session_anchor.") && name_str.ends_with(".enc") {
+            // Ignoriere den Session-Anker (neu und alt, um Privacy-Leaks in Integrity-Reports zu vermeiden)
+            if name_str.starts_with("generic___storage_session_anchor") {
                 continue;
             }
 

@@ -73,7 +73,8 @@ fn test_wallet_creation_save_and_load() {
             identity.passphrase.unwrap_or(""),
             identity.prefix.unwrap_or("")
         );
-        crypto_utils::get_hash(secret_string.as_bytes())
+        const SALT: &[u8] = b"human-money-profile-folder-v1";
+        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
@@ -115,7 +116,8 @@ fn test_password_recovery_and_reset_with_data() {
             identity.passphrase.unwrap_or(""),
             identity.prefix.unwrap_or("")
         );
-        crypto_utils::get_hash(secret_string.as_bytes())
+        const SALT: &[u8] = b"human-money-profile-folder-v1";
+        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
@@ -207,7 +209,8 @@ fn test_load_with_missing_voucher_store() {
             identity.passphrase.unwrap_or(""),
             identity.prefix.unwrap_or("")
         );
-        crypto_utils::get_hash(secret_string.as_bytes())
+        const SALT: &[u8] = b"human-money-profile-folder-v1";
+        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
@@ -243,7 +246,8 @@ fn test_load_from_corrupted_profile_file() {
             identity.passphrase.unwrap_or(""),
             identity.prefix.unwrap_or("")
         );
-        crypto_utils::get_hash(secret_string.as_bytes())
+        const SALT: &[u8] = b"human-money-profile-folder-v1";
+        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
@@ -280,7 +284,8 @@ fn test_empty_password_handling() {
             identity.passphrase.unwrap_or(""),
             identity.prefix.unwrap_or("")
         );
-        crypto_utils::get_hash(secret_string.as_bytes())
+        const SALT: &[u8] = b"human-money-profile-folder-v1";
+        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
@@ -326,7 +331,8 @@ fn test_save_and_load_with_bundle_history() {
             alice_identity.passphrase.unwrap_or(""),
             alice_identity.prefix.unwrap_or("")
         );
-        crypto_utils::get_hash(secret_string.as_bytes())
+        const SALT: &[u8] = b"human-money-profile-folder-v1";
+        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
@@ -434,7 +440,8 @@ fn test_save_and_load_arbitrary_data() {
             identity.passphrase.unwrap_or(""),
             identity.prefix.unwrap_or("")
         );
-        crypto_utils::get_hash(secret_string.as_bytes())
+        const SALT: &[u8] = b"human-money-profile-folder-v1";
+        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
@@ -485,14 +492,13 @@ fn test_save_and_load_arbitrary_data() {
 
     println!("--> Blobs saved successfully.");
 
-    // Überprüfe, ob die Dateien mit dem korrekten, benutzerspezifischen Namen erstellt wurden
-    let user_hash = crypto_utils::get_hash(identity.user_id.as_bytes());
+    // Überprüfe, ob die Dateien OHNE den benutzerspezifischen Hash erstellt wurden
     let expected_path1 = storage
         .user_storage_path
-        .join(format!("generic_{}.{}.enc", blob_name1, user_hash));
+        .join(format!("generic_{}.enc", blob_name1));
     let expected_path2 = storage
         .user_storage_path
-        .join(format!("generic_{}.{}.enc", blob_name2, user_hash));
+        .join(format!("generic_{}.enc", blob_name2));
 
     println!("--> Verifying existence of file: {:?}", expected_path1);
     assert!(
@@ -584,7 +590,8 @@ fn test_storage_reentrancy_same_process() {
             identity.passphrase.unwrap_or(""),
             identity.prefix.unwrap_or("")
         );
-        crypto_utils::get_hash(secret_string.as_bytes())
+        const SALT: &[u8] = b"human-money-profile-folder-v1";
+        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
 

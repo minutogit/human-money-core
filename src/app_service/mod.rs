@@ -144,8 +144,12 @@ impl AppService {
             passphrase.unwrap_or(""),
             prefix.unwrap_or("")
         );
-        // 2. Hashe diesen String, um den anonymen Ordnernamen zu erhalten.
-        crypto_utils::get_hash(secret_string.as_bytes())
+
+        // 2. Verwende Argon2id Key Stretching für den anonymen Ordnernamen (Mobile/WASM tuned).
+        // Dies bietet deutlich höheren Schutz gegen Brute-Force-Angriffe auf den Ordnernamen.
+        const SALT: &[u8] = b"human-money-profile-folder-v1";
+        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT)
+            .unwrap_or_else(|_| crypto_utils::get_hash(secret_string.as_bytes()))
     }
 
     /// Validiert alle Gutscheine innerhalb eines verschlüsselten Bundles.
