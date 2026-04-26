@@ -174,12 +174,12 @@ impl AppService {
         };
 
         // BUG-FIX: Initialisiere den "Session-Anker".
-        // Die Funktion storage.derive_key_for_session scheint (fälschlicherweise)
-        // eine existierende Datei vorauszusetzen, die nur von save_arbitrary_data
-        // geschrieben wird. Wir rufen dies hier einmalig auf, um sicherzustellen,
-        // dass alle Modus A / Modus B Operationen danach funktionieren.
-        // Wir ignorieren das Ergebnis, da der Aufruf nur zum Initialisieren dient.
         let _ = self.save_encrypted_data("__storage_session_anchor", b"init", Some(password));
+
+        // --- INTEGRITY & SEAL UPDATE ---
+        // Dies muss NACH allen initialen Schreiboperationen (auch dem Anker) geschehen.
+        let _ = self.update_seal_after_state_change(Some(password));
+
         Ok(())
     }
 

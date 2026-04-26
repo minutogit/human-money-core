@@ -4,6 +4,7 @@ pub mod conflict_manager;
 pub mod crypto_utils;
 pub mod decimal_utils;
 pub mod dynamic_policy_engine;
+pub mod integrity_manager;
 pub mod jws_profile_service;
 pub mod l2_gateway;
 pub mod mnemonic;

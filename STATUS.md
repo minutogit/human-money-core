@@ -32,11 +32,12 @@ priority_tasks:
 ## Current Focus
 
 The core library is stable and feature-rich. Current focus areas:
-- **New**: WalletSeal Rollback Guard — cryptographic epoch management for state protection
+- **New**: WalletSeal Rollback Guard & Storage Integrity
 - L2 gateway integration testing (playground & stress tests)
 - Voucher validation hardening (edge-case tests for ISO 8601, date rounding)
 - Security: Anti-Signature-Reuse-Firewall implemented
 - **New**: 'Endorsed' voucher status for persistent guarantor signature tracking
+- **New**: Storage Integrity (Integritätsschutz) für alle Wallet-Datensätze
 
 ## Architecture
 
@@ -68,6 +69,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] Deep Privacy Balance Calculation: Hardened UTXO-based stealth key matching test suite
 - [x] Hardened Privacy Mode Decryption: Mandatory privacy_guard validation for anonymous recipient IDs
 - [x] **WalletSeal Rollback Guard**: Cryptographic epoch system with hash-chained seals, fork-lock protection, Zonen-Modell replay protection with user-controlled recovery overrides.
+- [x] **Storage Integrity**: SHA3-256 integrity record bound to WalletSeal, detecting missing, manipulated, or unknown items in the wallet storage with automated update-on-write.
 
 ## Next Milestones
 

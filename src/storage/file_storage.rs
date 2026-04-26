@@ -6,6 +6,7 @@
 use super::{AuthMethod, Storage, StorageError};
 use crate::models::conflict::CanonicalMetadataStore;
 use crate::models::conflict::{KnownFingerprints, OwnFingerprints, ProofStore};
+use crate::models::storage_integrity::INTEGRITY_FILE_NAME;
 use crate::models::profile::{BundleMetadataStore, UserIdentity, UserProfile, VoucherStore};
 use crate::services::crypto_utils;
 #[cfg(not(any(test, feature = "test-utils")))]
@@ -964,6 +965,82 @@ impl Storage for FileStorage {
             .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
         Ok(Some(record))
+    }
+
+    fn get_item_hash(&self, name: &str) -> Result<String, StorageError> {
+        let path = self.user_storage_path.join(name);
+        if !path.exists() {
+            return Err(StorageError::NotFound);
+        }
+        let bytes = fs::read(path)?;
+        Ok(crypto_utils::get_hash(&bytes))
+    }
+
+    fn save_integrity(
+        &mut self,
+        _user_id: &str,
+        record: &crate::models::storage_integrity::LocalIntegrityRecord,
+    ) -> Result<(), StorageError> {
+        let path = self.user_storage_path.join(INTEGRITY_FILE_NAME);
+        let tmp_path = self
+            .user_storage_path
+            .join(format!("{}.tmp", INTEGRITY_FILE_NAME));
+
+        let json = serde_json::to_vec_pretty(record)
+            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+
+        fs::write(&tmp_path, json)?;
+        fs::rename(&tmp_path, &path)?;
+
+        Ok(())
+    }
+
+    fn load_integrity(
+        &self,
+        _user_id: &str,
+    ) -> Result<Option<crate::models::storage_integrity::LocalIntegrityRecord>, StorageError> {
+        let path = self.user_storage_path.join(INTEGRITY_FILE_NAME);
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let json = fs::read(path)?;
+        let record = serde_json::from_slice(&json)
+            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+
+        Ok(Some(record))
+    }
+
+    fn get_all_item_hashes(&self) -> Result<std::collections::HashMap<String, String>, StorageError> {
+        let mut hashes = std::collections::HashMap::new();
+        
+        let entries = fs::read_dir(&self.user_storage_path).map_err(StorageError::Io)?;
+        for entry in entries {
+            let entry = entry.map_err(StorageError::Io)?;
+            let file_name = entry.file_name();
+            let name_str = file_name.to_string_lossy();
+
+            // Ignoriere Verzeichnisse
+            if entry.file_type().map_err(StorageError::Io)?.is_dir() {
+                continue;
+            }
+
+            // Ignoriere die Integrity-Datei selbst (Zirkelbezug vermeiden)
+            if name_str == INTEGRITY_FILE_NAME {
+                continue;
+            }
+
+            // Ignoriere versteckte Dateien (z.B. .lock)
+            if name_str.starts_with('.') {
+                continue;
+            }
+
+            if let Ok(hash) = self.get_item_hash(&name_str) {
+                hashes.insert(name_str.to_string(), hash);
+            }
+        }
+
+        Ok(hashes)
     }
 }
 

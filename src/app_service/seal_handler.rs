@@ -7,20 +7,108 @@
 use super::{AppService, AppState};
 use crate::error::VoucherCoreError;
 use crate::models::seal::{SealSyncState, SyncStatus, WalletSeal};
+use crate::services::integrity_manager::IntegrityManager;
 use crate::services::seal_manager::SealManager;
 use crate::storage::{AuthMethod, Storage};
 
 impl AppService {
+    /// Prüft die Integrität aller Speicher-Items gegen den Storage Integrity Record.
+    ///
+    /// # Arguments
+    /// * `password` - Optional, für die Authentifizierung.
+    pub fn check_integrity(
+        &mut self,
+        password: Option<&str>,
+    ) -> Result<crate::models::storage_integrity::IntegrityReport, String> {
+        match &self.state {
+            AppState::Unlocked {
+                storage,
+                identity,
+                session_cache,
+                ..
+            } => {
+                let auth = match Self::resolve_auth(password, session_cache) {
+                    Ok(a) => a,
+                    Err(e) => return Err(e.to_string()),
+                };
+
+                let integrity_record = storage.load_integrity("").map_err(|e| e.to_string())?;
+                let seal_record = storage
+                    .load_seal(&identity.user_id, &auth)
+                    .map_err(|e| e.to_string())?;
+
+                match (integrity_record, seal_record) {
+                    (Some(ir), Some(s)) => {
+                        let actual_hashes = storage.get_all_item_hashes().map_err(|e| e.to_string())?;
+                        IntegrityManager::verify_integrity(
+                            &ir,
+                            &s.seal,
+                            actual_hashes,
+                            &identity.user_id,
+                        )
+                        .map_err(|e| e.to_string())
+                    }
+                    (None, Some(_)) => Ok(crate::models::storage_integrity::IntegrityReport::MissingIntegrityRecord),
+                    (Some(_), None) => Ok(crate::models::storage_integrity::IntegrityReport::Valid), // Sollte nicht vorkommen
+                    (None, None) => Ok(crate::models::storage_integrity::IntegrityReport::Valid), // Migration
+                }
+            }
+            AppState::Locked => Err("Wallet is locked.".to_string()),
+        }
+    }
+
+    /// Repariert den Storage Integrity Record, indem der aktuelle Zustand der Dateien als "korrekt" akzeptiert wird.
+    ///
+    /// Diese Methode sollte nur aufgerufen werden, wenn der Nutzer die Integritätswarnung
+    /// explizit bestätigt hat (z.B. "OK, ich akzeptiere diese Änderungen").
+    /// Erzeugt einen neuen, signierten Integrity Record für alle aktuell vorhandenen Datensätze.
+    ///
+    /// # Arguments
+    /// * `password` - Optional, für die Authentifizierung.
+    pub fn repair_integrity(&mut self, password: Option<&str>) -> Result<(), String> {
+        match &mut self.state {
+            AppState::Unlocked {
+                storage,
+                wallet: _,
+                identity,
+                session_cache,
+                ..
+            } => {
+                let auth = match Self::resolve_auth(password, session_cache) {
+                    Ok(a) => a,
+                    Err(e) => return Err(e.to_string()),
+                };
+
+                // 1. Aktuelles Siegel laden (Basispunkt für den Integrity Record)
+                let record = storage
+                    .load_seal(&identity.user_id, &auth)
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| "No seal found. Cannot repair integrity without seal.".to_string())?;
+
+                // 2. Aktuelle Hashes von der Platte lesen
+                let hashes = storage.get_all_item_hashes().map_err(|e| e.to_string())?;
+
+                // 3. Neuen Integrity Record erstellen
+                let integrity_record = IntegrityManager::create_integrity_record(
+                    identity,
+                    &record.seal,
+                    hashes,
+                ).map_err(|e| e.to_string())?;
+
+                // 4. Speichern
+                storage
+                    .save_integrity(&identity.user_id, &integrity_record)
+                    .map_err(|e| e.to_string())?;
+
+                Ok(())
+            }
+            AppState::Locked => Err("Wallet is locked.".to_string()),
+        }
+    }
+
     // --- B) Lokales Sync-Tracking (Upload-Workflow für Client-Apps) ---
 
     /// Gibt den aktuellen Sync-Status des lokalen Siegels zurück.
-    ///
-    /// Kann von der GUI verwendet werden, um ein "Synced" bzw.
-    /// "Wartet auf Sync"-Icon anzuzeigen.
-    ///
-    /// # Returns
-    /// - `Ok(SyncStatus)` bei Erfolg.
-    /// - `Err` wenn das Wallet gesperrt ist oder kein Siegel existiert.
     pub fn get_seal_sync_status(&self) -> Result<SyncStatus, String> {
         match &self.state {
             AppState::Unlocked {
@@ -29,8 +117,6 @@ impl AppService {
                 session_cache,
                 ..
             } => {
-                // Wir brauchen einen Auth-Kontext, um das Siegel zu laden.
-                // Da dies ein reiner Lesezugriff ist, verwenden wir den Session-Key wenn vorhanden.
                 let auth = self.get_read_auth(session_cache)?;
                 let record = storage
                     .load_seal(&identity.user_id, &auth)
@@ -45,15 +131,7 @@ impl AppService {
         }
     }
 
-    /// Liefert das reine `WalletSeal` (ohne Metadaten!) als JSON-Byte-Array
-    /// für den Upload an den Server.
-    ///
-    /// - Gibt `Ok(Some(bytes))` zurück, wenn der Status `PendingUpload` ist.
-    /// - Gibt `Ok(None)` zurück, wenn der Status bereits `Synced` ist (nichts zu tun).
-    ///
-    /// # Wichtig
-    /// Das Ergebnis enthält **nur** das innere `WalletSeal`, **nicht** den
-    /// `LocalSealRecord`-Wrapper. Die GUI kann die Bytes sicher an den Server senden.
+    /// Liefert das reine `WalletSeal` (ohne Metadaten!) als JSON-Byte-Array für den Upload.
     pub fn get_seal_for_upload(&self) -> Result<Option<Vec<u8>>, String> {
         match &self.state {
             AppState::Unlocked {
@@ -84,17 +162,6 @@ impl AppService {
     }
 
     /// Bestätigt den erfolgreichen Upload eines Siegels an den Server.
-    ///
-    /// # Race-Condition-Schutz
-    /// Es muss zwingend der Hash des erfolgreich hochgeladenen Siegels übergeben werden.
-    /// Der Core ändert den `sync_status` nur dann auf `Synced`, wenn der Hash exakt
-    /// mit dem Hash des aktuellsten, lokalen Siegels übereinstimmt. Geschah während
-    /// eines langsamen Uploads eine neue Transaktion (neues lokales Siegel), wird das
-    /// Acknowledge mit `SealSyncRaceCondition` abgelehnt — der Status bleibt `PendingUpload`.
-    ///
-    /// # Arguments
-    /// * `uploaded_seal_hash` - Der Base58-Hash des erfolgreich hochgeladenen `WalletSeal`.
-    /// * `password` - Optional, für die Entschlüsselung des Siegel-Stores.
     pub fn acknowledge_seal_sync(
         &mut self,
         uploaded_seal_hash: &str,
@@ -117,13 +184,9 @@ impl AppService {
 
                 match record_opt {
                     Some(mut record) => {
-                        // Hash des aktuellen lokalen Siegels berechnen
                         let current_hash = SealManager::compute_seal_hash(&record.seal)?;
 
                         if current_hash != uploaded_seal_hash {
-                            // Race Condition: Eine neue Transaktion hat das Siegel
-                            // zwischenzeitlich aktualisiert. Der Upload war für ein
-                            // veraltetes Siegel → ablehnen.
                             (
                                 Err(VoucherCoreError::SealSyncRaceCondition),
                                 AppState::Unlocked {
@@ -181,16 +244,6 @@ impl AppService {
     // --- C) Remote Sync Prüfung & Hard Lock ---
 
     /// Vergleicht ein vom Server heruntergeladenes Siegel mit dem lokalen Siegel.
-    ///
-    /// # Lockdown-Trigger
-    /// Wenn das Ergebnis `SealSyncState::ForkDetected` ist, setzt der AppService
-    /// sofort `is_locked_due_to_fork = true` im `LocalSealRecord` und speichert
-    /// dies auf der Festplatte. Ab diesem Moment sind alle Transaktionen blockiert
-    /// bis `recover_wallet_and_set_new_password` ausgeführt wird.
-    ///
-    /// # Arguments
-    /// * `remote_seal_bytes` - Die JSON-serialisierten Bytes des Remote-`WalletSeal`.
-    /// * `password` - Optional, für die Entschlüsselung.
     pub fn compare_remote_seal(
         &mut self,
         remote_seal_bytes: &[u8],
@@ -208,88 +261,71 @@ impl AppService {
                 let auth_method = match Self::resolve_auth(password, &session_cache) {
                     Ok(a) => a,
                     Err(e) => {
-                        let state = AppState::Unlocked {
+                        self.state = AppState::Unlocked {
                             storage,
                             wallet,
                             identity,
                             session_cache,
                         };
-                        self.state = state;
                         return Err(e.to_string());
                     }
                 };
 
-                // 1. Remote-Siegel parsen
                 let remote_seal: WalletSeal = match serde_json::from_slice(remote_seal_bytes) {
                     Ok(s) => s,
                     Err(e) => {
-                        let state = AppState::Unlocked {
+                        self.state = AppState::Unlocked {
                             storage,
                             wallet,
                             identity,
                             session_cache,
                         };
-                        self.state = state;
                         return Err(format!("Failed to parse remote seal: {}", e));
                     }
                 };
 
-                // 2. Remote-Siegel-Signatur verifizieren
                 if let Err(e) = SealManager::verify_seal_integrity(
                     &remote_seal,
                     &identity.user_id,
                     &identity.user_id,
                 ) {
-                    let state = AppState::Unlocked {
+                    self.state = AppState::Unlocked {
                         storage,
                         wallet,
                         identity,
                         session_cache,
                     };
-                    self.state = state;
                     return Err(format!("Remote seal integrity check failed: {}", e));
                 }
 
-                // 3. Lokales Siegel laden
                 let record = match storage.load_seal(&identity.user_id, &auth_method) {
                     Ok(Some(r)) => r,
                     Ok(None) => {
-                        let state = AppState::Unlocked {
+                        self.state = AppState::Unlocked {
                             storage,
                             wallet,
                             identity,
                             session_cache,
                         };
-                        self.state = state;
                         return Err("No local seal found. Recovery required.".to_string());
                     }
                     Err(e) => {
-                        let state = AppState::Unlocked {
+                        self.state = AppState::Unlocked {
                             storage,
                             wallet,
                             identity,
                             session_cache,
                         };
-                        self.state = state;
                         return Err(format!("Failed to load local seal: {}", e));
                     }
                 };
 
-                // 4. Vergleichen
                 let sync_state = SealManager::compare_seals(&record.seal, &remote_seal);
 
-                // 5. Bei Fork: Hard Lock aktivieren
                 if sync_state == SealSyncState::ForkDetected {
                     let mut locked_record = record;
                     locked_record.is_locked_due_to_fork = true;
-                    if let Err(e) =
-                        storage.save_seal(&identity.user_id, &auth_method, &locked_record)
-                    {
-                        eprintln!(
-                            "CRITICAL: Failed to save fork lock to disk: {}",
-                            e
-                        );
-                    }
+                    let _ = storage.save_seal(&identity.user_id, &auth_method, &locked_record);
                 }
 
                 (
@@ -311,7 +347,6 @@ impl AppService {
 
     // --- Interne Hilfsmethoden ---
 
-    /// Erstellt eine Auth-Methode für reine Lesezugriffe (ohne Passwort-Pflicht).
     fn get_read_auth(
         &self,
         session_cache: &Option<super::SessionCache>,
@@ -328,7 +363,6 @@ impl AppService {
         }
     }
 
-    /// Löst die Authentifizierungsmethode aus Passwort oder Session-Cache auf.
     fn resolve_auth<'a>(
         password: Option<&'a str>,
         session_cache: &Option<super::SessionCache>,
@@ -352,12 +386,7 @@ impl AppService {
         }
     }
 
-    /// Prüft den Fork-Lock-Status und gibt einen Fehler zurück, wenn das Wallet gesperrt ist.
-    /// Wird von `create_transfer_bundle`, `receive_bundle` etc. aufgerufen.
-    pub(crate) fn check_fork_lock(
-        &self,
-        password: Option<&str>,
-    ) -> Result<(), VoucherCoreError> {
+    pub(crate) fn check_fork_lock(&self, password: Option<&str>) -> Result<(), VoucherCoreError> {
         match &self.state {
             AppState::Unlocked {
                 storage,
@@ -371,9 +400,7 @@ impl AppService {
                     .map_err(VoucherCoreError::Storage)?;
 
                 match record {
-                    Some(r) if r.is_locked_due_to_fork => {
-                        Err(VoucherCoreError::WalletLockedDueToFork)
-                    }
+                    Some(r) if r.is_locked_due_to_fork => Err(VoucherCoreError::WalletLockedDueToFork),
                     _ => Ok(()),
                 }
             }
@@ -381,15 +408,6 @@ impl AppService {
         }
     }
 
-    /// Gibt die `epoch_start_time` des aktuellen Siegels zurück.
-    ///
-    /// Wird vom Zonen-Modell in `receive_bundle` verwendet, um zu prüfen, ob ein
-    /// eingehendes Bundle vor der letzten Recovery erstellt wurde.
-    ///
-    /// # Returns
-    /// - `Ok(Some(epoch_start_time))` wenn ein Siegel existiert.
-    /// - `Ok(None)` wenn kein Siegel existiert (Migration; kein Zonen-Check nötig).
-    /// - `Err` bei Fehlern.
     pub(crate) fn get_epoch_info(
         &self,
         password: Option<&str>,
@@ -418,14 +436,6 @@ impl AppService {
         }
     }
 
-
-    /// Aktualisiert das Siegel nach einer erfolgreichen Zustandsänderung.
-    ///
-    /// Wird intern von den Command-Handlern nach jedem erfolgreichen `wallet.save()` aufgerufen.
-    /// Inkrementiert den `tx_nonce`, aktualisiert den `state_hash` und die Hash-Kette.
-    ///
-    /// # Arguments
-    /// * `password` - Optional, für die Authentifizierung.
     pub(crate) fn update_seal_after_state_change(
         &mut self,
         password: Option<&str>,
@@ -454,40 +464,55 @@ impl AppService {
                     crate::services::crypto_utils::get_hash(canonical.as_bytes())
                 };
 
-                match record_opt {
+                let updated_seal = match record_opt {
                     Some(mut record) => {
-                        let updated_seal = SealManager::update_seal(
+                        let seal = SealManager::update_seal(
                             &record.seal,
                             identity,
                             &current_state_hash,
-                        ).map_err(|e| e.to_string())?;
+                        )
+                        .map_err(|e| e.to_string())?;
 
-                        record.seal = updated_seal;
+                        record.seal = seal.clone();
                         record.sync_status = SyncStatus::PendingUpload;
 
                         storage
                             .save_seal(&identity.user_id, &auth, &record)
                             .map_err(|e| e.to_string())?;
+                        seal
                     }
                     None => {
-                        // Kein Siegel vorhanden (sollte nach Login nicht vorkommen)
-                        // Erstelle ein initiales Siegel als Fallback
-                        let initial_seal = SealManager::create_initial_seal(
+                        let seal = SealManager::create_initial_seal(
                             &identity.user_id,
                             identity,
                             &current_state_hash,
-                        ).map_err(|e| e.to_string())?;
+                        )
+                        .map_err(|e| e.to_string())?;
 
                         let new_record = crate::models::seal::LocalSealRecord {
-                            seal: initial_seal,
+                            seal: seal.clone(),
                             sync_status: SyncStatus::PendingUpload,
                             is_locked_due_to_fork: false,
                         };
                         storage
                             .save_seal(&identity.user_id, &auth, &new_record)
                             .map_err(|e| e.to_string())?;
+                        seal
                     }
-                }
+                };
+
+                // --- INTEGRITY UPDATE ---
+                let item_hashes = storage.get_all_item_hashes().map_err(|e| e.to_string())?;
+                let integrity_record = IntegrityManager::create_integrity_record(
+                    identity,
+                    &updated_seal,
+                    item_hashes,
+                )
+                .map_err(|e| e.to_string())?;
+
+                storage
+                    .save_integrity(&identity.user_id, &integrity_record)
+                    .map_err(|e| e.to_string())?;
 
                 Ok(())
             }

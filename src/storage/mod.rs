@@ -237,6 +237,36 @@ pub trait Storage {
         auth: &AuthMethod,
     ) -> Result<Option<crate::models::seal::LocalSealRecord>, StorageError>;
 
+    /// Berechnet den SHA3-256 Hash eines Elements im Wallet-Speicher.
+    ///
+    /// # Arguments
+    /// * `name` - Der Name des Elements/der Tabelle/der Datei (z.B. "profile.enc").
+    fn get_item_hash(&self, name: &str) -> Result<String, StorageError>;
+
+    /// Speichert den Storage Integrity Record.
+    /// Der Integrity Record ist Klartext, aber kryptographisch signiert.
+    ///
+    /// # Arguments
+    /// * `user_id` - Die ID des Benutzers.
+    /// * `record` - Der zu speichernde Integrity-Datensatz.
+    fn save_integrity(
+        &mut self,
+        user_id: &str,
+        record: &crate::models::storage_integrity::LocalIntegrityRecord,
+    ) -> Result<(), StorageError>;
+
+    /// Lädt den Storage Integrity Record.
+    ///
+    /// # Arguments
+    /// * `user_id` - Die ID des Benutzers.
+    fn load_integrity(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<crate::models::storage_integrity::LocalIntegrityRecord>, StorageError>;
+
+    /// Berechnet die Hashes aller relevanten logischen Speicher-Elemente.
+    fn get_all_item_hashes(&self) -> Result<std::collections::HashMap<String, String>, StorageError>;
+
     /// Versucht, eine exklusive, prozessweite Sperre für den Wallet-Speicher zu erlangen.
     /// Muss die "Stale Lock"-Prüfung (z.B. PID) implementieren.
     ///
