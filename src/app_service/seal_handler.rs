@@ -197,17 +197,19 @@ impl AppService {
                                 },
                             )
                         } else {
-                            record.sync_status = SyncStatus::Synced;
-                            match storage.save_seal(&identity.user_id, &auth_method, &record) {
-                                Ok(_) => (
-                                    Ok(()),
-                                    AppState::Unlocked {
-                                        storage,
-                                        wallet,
-                                        identity,
-                                        session_cache,
-                                    },
-                                ),
+                                    record.sync_status = SyncStatus::Synced;
+                                    match storage.save_seal(&identity.user_id, &auth_method, &record) {
+                                        Ok(_) => {
+                                            (
+                                                Ok(()),
+                                                AppState::Unlocked {
+                                                    storage,
+                                                    wallet,
+                                                    identity,
+                                                    session_cache,
+                                                },
+                                            )
+                                        }
                                 Err(e) => (
                                     Err(VoucherCoreError::Storage(e)),
                                     AppState::Unlocked {

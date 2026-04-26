@@ -247,12 +247,48 @@ impl AppService {
             .map_err(|e| format!("Login failed (check password): {}", e))?;
 
         if cleanup_on_login {
-            wallet
-                .run_storage_cleanup(None)
-                .map_err(|e| format!("Storage cleanup on login failed: {}", e))?;
-            wallet
-                .save(&mut storage, &identity, &AuthMethod::Password(password))
-                .map_err(|e| format!("Failed to save wallet after cleanup: {}", e))?;
+            // Bevor wir aufräumen, prüfen wir die Integrität. Wir dürfen die Dateien nur neu
+            // schreiben (was ihre Hashes durch neue Verschlüsselungs-Nonces ändert),
+            // wenn der aktuelle Zustand der Festplatte intakt ist. Sonst würden wir
+            // bestehende Manipulationen/Löschungen überschreiben und maskieren!
+            let auth = AuthMethod::Password(password);
+            let integrity_record = storage.load_integrity("").unwrap_or(None);
+            let seal_record = storage.load_seal(&identity.user_id, &auth).unwrap_or(None);
+            let hashes = storage.get_all_item_hashes().unwrap_or_default();
+
+            let is_valid = match (integrity_record, seal_record) {
+                (Some(ir), Some(ref s)) => {
+                    matches!(
+                        crate::services::integrity_manager::IntegrityManager::verify_integrity(&ir, &s.seal, hashes, &identity.user_id),
+                        Ok(crate::models::storage_integrity::IntegrityReport::Valid)
+                    )
+                }
+                (None, _) => true, // Migration: wir erlauben Cleanup.
+                _ => false,
+            };
+
+            if is_valid {
+                wallet
+                    .run_storage_cleanup(None)
+                    .map_err(|e| format!("Storage cleanup on login failed: {}", e))?;
+                wallet
+                    .save(&mut storage, &identity, &auth)
+                    .map_err(|e| format!("Failed to save wallet after cleanup: {}", e))?;
+                    
+                // Da wir die Wallet-Dateien neu geschrieben haben (neue Nonces = neue Hashes),
+                // MÜSSEN wir jetzt zwingend den IntegrityRecord updaten, damit der nächste Check nicht
+                // sofort ManipulatedItems meldet. Da wir vorher geprüft haben, dass alles OK war,
+                // ist das sicher.
+                let new_hashes = storage.get_all_item_hashes().unwrap_or_default();
+                let seal = storage.load_seal(&identity.user_id, &auth).unwrap_or(None).map(|s| s.seal);
+                if let Some(s) = seal {
+                    if let Ok(ir) = crate::services::integrity_manager::IntegrityManager::create_integrity_record(&identity, &s, new_hashes) {
+                        let _ = storage.save_integrity(&identity.user_id, &ir);
+                    }
+                }
+            } else {
+                eprintln!("Skipping storage cleanup during login because integrity is compromised.");
+            }
         }
 
         // --- WALLET SEAL: Migration für bestehende Wallets ohne Siegel ---
@@ -278,13 +314,19 @@ impl AppService {
                 ).map_err(|e| format!("Failed to create migration seal: {}", e))?;
 
                 let new_record = LocalSealRecord {
-                    seal: initial_seal,
+                    seal: initial_seal.clone(),
                     sync_status: SyncStatus::PendingUpload,
                     is_locked_due_to_fork: false,
                 };
                 storage
                     .save_seal(&identity.user_id, &auth, &new_record)
                     .map_err(|e| format!("Failed to save migration seal: {}", e))?;
+
+                // Integrität für das neue migrierte Siegel initialisieren
+                let hashes = storage.get_all_item_hashes().unwrap_or_default();
+                if let Ok(ir) = crate::services::integrity_manager::IntegrityManager::create_integrity_record(&identity, &initial_seal, hashes) {
+                    let _ = storage.save_integrity(&identity.user_id, &ir);
+                }
             }
         }
         // --- WALLET SEAL ENDE ---
@@ -305,6 +347,7 @@ impl AppService {
         // Dies stellt sicher, dass Modus A / Modus B Operationen nach einem
         // Login funktionieren.
         let _ = self.save_encrypted_data("__storage_session_anchor", b"init", Some(password));
+
         Ok(())
     }
 
@@ -386,6 +429,7 @@ impl AppService {
             identity,
             session_cache: None,
         };
+
         Ok(())
     }
 

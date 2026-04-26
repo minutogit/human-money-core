@@ -48,6 +48,10 @@ impl AppService {
 
                 // 3. Save the wallet
                 wallet.save(storage, identity, &auth).map_err(|e| e.to_string())?;
+
+                // 4. Update seal and integrity
+                let _ = self.update_seal_after_state_change(password);
+                
                 Ok(())
             }
             AppState::Locked => Err("Wallet is locked.".to_string()),

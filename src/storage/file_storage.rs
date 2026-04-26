@@ -1035,6 +1035,16 @@ impl Storage for FileStorage {
                 continue;
             }
 
+            // Ignoriere den Session-Anker
+            if name_str.starts_with("generic___storage_session_anchor.") && name_str.ends_with(".enc") {
+                continue;
+            }
+
+            // Ignoriere Seal-Dateien (diese werden bereits logisch über den seal_hash im IntegrityRecord geschützt)
+            if name_str.starts_with("seal_") && name_str.ends_with(".json") {
+                continue;
+            }
+
             if let Ok(hash) = self.get_item_hash(&name_str) {
                 hashes.insert(name_str.to_string(), hash);
             }

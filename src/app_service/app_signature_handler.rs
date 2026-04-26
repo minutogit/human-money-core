@@ -172,6 +172,10 @@ impl AppService {
         };
 
         self.state = new_state;
+        // Siegel aktualisieren, wenn die Aktion erfolgreich war
+        if result.is_ok() {
+            let _ = self.update_seal_after_state_change(password);
+        }
         result
     }
 
@@ -329,6 +333,10 @@ impl AppService {
         };
 
         self.state = new_state;
+        // Siegel aktualisieren, wenn die Aktion erfolgreich war
+        if result.is_ok() {
+            let _ = self.update_seal_after_state_change(wallet_password);
+        }
         result
     }
 
@@ -443,6 +451,10 @@ impl AppService {
         };
 
         self.state = new_state;
+        // Siegel aktualisieren, wenn die Aktion erfolgreich war
+        if result.is_ok() {
+            let _ = self.update_seal_after_state_change(wallet_password);
+        }
         result
     }
 }
