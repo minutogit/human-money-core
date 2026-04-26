@@ -42,7 +42,7 @@ fn test_cleanup_of_expired_archived_instances() {
     wallet.add_voucher_instance(id_b.clone(), voucher_b, VoucherStatus::Archived);
 
     // Aktion: Bereinigung mit 1 Jahr Gnadenfrist
-    wallet.cleanup_storage(1);
+    wallet.run_storage_cleanup(None, 1).unwrap();
 
     assert!(!wallet.voucher_store.vouchers.contains_key(&id_a), "Expired voucher A should have been removed");
     assert!(wallet.voucher_store.vouchers.contains_key(&id_b), "Voucher B within grace period should remain");

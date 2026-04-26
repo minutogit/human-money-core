@@ -61,6 +61,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+pub const DEFAULT_ARCHIVE_GRACE_PERIOD_YEARS: i64 = 2;
+
 // Deklaration der neuen Handler als öffentliche Sub-Module.
 // Jede Datei enthält einen `impl AppService`-Block für ihren spezifischen Bereich.
 pub mod app_profile_handler;

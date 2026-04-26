@@ -314,7 +314,7 @@ fn test_cleanup_expired_fingerprints() {
 
     // Aktion: Rufe die zentrale Aufräumfunktion mit einer Frist von 0 Jahren auf,
     // was eine sofortige Bereinigung aller abgelaufenen Einträge auslösen sollte.
-    wallet.cleanup_storage(0);
+    wallet.run_storage_cleanup(None, 0).unwrap();
 
     // Assertions für den flüchtigen Speicher (sollte bereinigt werden)
     assert!(

@@ -106,7 +106,7 @@ fn test_cleanup_proofs_removes_expired_only() {
         proof: proof_new.clone(), local_override: false, local_note: None, conflict_role: ConflictRole::Witness 
     });
 
-    wallet.cleanup_storage(0);
+    wallet.run_storage_cleanup(None, 0).unwrap();
 
     assert!(!wallet.proof_store.proofs.contains_key(&proof_old.proof_id));
     assert!(wallet.proof_store.proofs.contains_key(&proof_new.proof_id));

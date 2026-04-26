@@ -268,22 +268,28 @@ impl AppService {
             };
 
             if is_valid {
-                wallet
-                    .run_storage_cleanup(None)
+                let report = wallet
+                    .run_storage_cleanup(None, super::DEFAULT_ARCHIVE_GRACE_PERIOD_YEARS)
                     .map_err(|e| format!("Storage cleanup on login failed: {}", e))?;
-                wallet
-                    .save(&mut storage, &identity, &auth)
-                    .map_err(|e| format!("Failed to save wallet after cleanup: {}", e))?;
+                
+                if report.expired_fingerprints_removed > 0 
+                    || report.limit_based_fingerprints_removed > 0 
+                    || report.archived_items_removed > 0 
+                {
+                    wallet
+                        .save(&mut storage, &identity, &auth)
+                        .map_err(|e| format!("Failed to save wallet after cleanup: {}", e))?;
                     
-                // Da wir die Wallet-Dateien neu geschrieben haben (neue Nonces = neue Hashes),
-                // MÜSSEN wir jetzt zwingend den IntegrityRecord updaten, damit der nächste Check nicht
-                // sofort ManipulatedItems meldet. Da wir vorher geprüft haben, dass alles OK war,
-                // ist das sicher.
-                let new_hashes = storage.get_all_item_hashes().unwrap_or_default();
-                let seal = storage.load_seal(&identity.user_id, &auth).unwrap_or(None).map(|s| s.seal);
-                if let Some(s) = seal {
-                    if let Ok(ir) = crate::services::integrity_manager::IntegrityManager::create_integrity_record(&identity, &s, new_hashes) {
-                        let _ = storage.save_integrity(&identity.user_id, &ir);
+                    // Da wir die Wallet-Dateien neu geschrieben haben (neue Nonces = neue Hashes),
+                    // MÜSSEN wir jetzt zwingend den IntegrityRecord updaten, damit der nächste Check nicht
+                    // sofort ManipulatedItems meldet. Da wir vorher geprüft haben, dass alles OK war,
+                    // ist das sicher.
+                    let new_hashes = storage.get_all_item_hashes().unwrap_or_default();
+                    let seal = storage.load_seal(&identity.user_id, &auth).unwrap_or(None).map(|s| s.seal);
+                    if let Some(s) = seal {
+                        if let Ok(ir) = crate::services::integrity_manager::IntegrityManager::create_integrity_record(&identity, &s, new_hashes) {
+                            let _ = storage.save_integrity(&identity.user_id, &ir);
+                        }
                     }
                 }
             } else {

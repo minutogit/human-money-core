@@ -108,8 +108,9 @@ pub struct CreateBundleResult {
 /// Ein Bericht, der die Ergebnisse der Speicherbereinigung zusammenfasst.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CleanupReport {
-    pub expired_fingerprints_removed: u32,
-    pub limit_based_fingerprints_removed: u32,
+    pub expired_fingerprints_removed: usize,
+    pub limit_based_fingerprints_removed: usize,
+    pub archived_items_removed: usize,
 }
 
 /// Repräsentiert ein aggregiertes Guthaben für einen bestimmten Gutschein-Standard und eine Währungseinheit.

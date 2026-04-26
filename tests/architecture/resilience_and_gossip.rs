@@ -182,7 +182,7 @@ mod tests {
         let report = service
             .get_unlocked_mut_for_test()
             .0
-            .run_storage_cleanup(Some(10))
+            .run_storage_cleanup(Some(10), 2)
             .unwrap();
         assert_eq!(report.limit_based_fingerprints_removed, 2);
 

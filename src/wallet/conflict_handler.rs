@@ -56,7 +56,8 @@ impl Wallet {
     }
 
     /// Entfernt alle abgelaufenen Fingerprints aus dem Speicher.
-    pub fn cleanup_expired_fingerprints(&mut self) {
+    /// Gibt die Anzahl der entfernten Einträge zurück.
+    pub fn cleanup_expired_fingerprints(&mut self) -> usize {
         conflict_manager::cleanup_known_fingerprints(&mut self.known_fingerprints)
     }
 

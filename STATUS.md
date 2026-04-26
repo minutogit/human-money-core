@@ -70,6 +70,8 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] Hardened Privacy Mode Decryption: Mandatory privacy_guard validation for anonymous recipient IDs
 - [x] **WalletSeal Rollback Guard**: Cryptographic epoch system with hash-chained seals, fork-lock protection, Zonen-Modell replay protection with user-controlled recovery overrides.
 - [x] **Storage Integrity**: SHA3-256 integrity record bound to WalletSeal, detecting missing, manipulated, or unknown items in the wallet storage with automated update-on-write.
+- [x] **Maintenance Refactoring**: Consolidated storage cleanup into a single, efficient pass; migrated to `usize` for all collection counters and eliminated magic numbers for archival retention.
+- [x] **Integrity Bugfix**: Resolved a critical issue where auto-cleanup on login could accidentally mask offline file tampering by rewriting the state before verification.
 
 ## Next Milestones
 

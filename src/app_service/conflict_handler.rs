@@ -222,7 +222,7 @@ impl AppService {
     /// enthält, oder einen Fehler, falls der Prozess fehlschlägt.
     pub fn run_storage_cleanup(&mut self) -> Result<CleanupReport, VoucherCoreError> {
         if let AppState::Unlocked { wallet, .. } = &mut self.state {
-            let report = wallet.run_storage_cleanup(None)?;
+            let report = wallet.run_storage_cleanup(None, super::DEFAULT_ARCHIVE_GRACE_PERIOD_YEARS)?;
             // Hinweis: Das Speichern des Wallets nach dem Cleanup wird dem Aufrufer
             // überlassen (z.B. am Ende einer Operation), um mehrfaches Schreiben
             // zu vermeiden.
