@@ -29,7 +29,7 @@
 //!
 //! // 2. Neues Profil erstellen (dies entsperrt das Wallet).
 //! let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-//! app.create_profile("Mein Wallet", &mnemonic, None, Some("user"), "sicheres-passwort-123", MnemonicLanguage::English)
+//! app.create_profile("Mein Wallet", &mnemonic, None, Some("user"), "sicheres-passwort-123", MnemonicLanguage::English, "device-id".to_string())
 //!    .expect("Profil konnte nicht erstellt werden.");
 //!
 //! // 3. Eine Aktion ausführen (z.B. Guthaben prüfen).
@@ -44,7 +44,7 @@
 //! let profile_to_load = profiles.first().unwrap();
 //!
 //! // 6. Erneut anmelden mit dem Ordnernamen des Profils und dem Passwort.
-//! app.login(&profile_to_load.folder_name, "sicheres-passwort-123", false)
+//! app.login(&profile_to_load.folder_name, "sicheres-passwort-123", false, "device-id".to_string())
 //!    .expect("Login fehlgeschlagen.");
 //!
 //! // 7. Die User-ID abrufen.

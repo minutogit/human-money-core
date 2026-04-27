@@ -12,17 +12,30 @@ use crate::models::{
 use crate::services::crypto_utils::create_user_id;
 use crate::services::voucher_manager::NewVoucherData;
 use crate::services::{voucher_manager, voucher_validation};
+use crate::services::seal_manager::SealManager;
 use crate::storage::{AuthMethod, Storage, StorageError};
 use crate::wallet::Wallet;
 use crate::wallet::instance::{ValidationFailureReason, VoucherStatus};
 
 impl Wallet {
     /// Erstellt ein brandneues, leeres Wallet aus einer Mnemonic-Phrase.
+    ///
+    /// # ⚠️ CRITICAL SECURITY REQUIREMENT: `local_instance_id`
+    /// The `local_instance_id` prevents users from accidentally cloning their wallet 
+    /// folder to another device, which would cause state forks and double-spends.
+    /// 
+    /// **AS AN APP DEVELOPER, YOU MUST NOT STORE THIS ID IN THE WALLET DIRECTORY!**
+    /// If you store the ID next to the wallet files, a user copying the folder will 
+    /// also copy the ID, completely bypassing the cloning protection.
+    /// 
+    /// **Correct Usage:** Store this ID in the OS Keychain (e.g., via the `keyring` crate),
+    /// or derive it deterministically from hardware (e.g., `/etc/machine-id`).
     pub fn new_from_mnemonic(
         mnemonic_phrase: &str,
         passphrase: Option<&str>,
         user_prefix: Option<&str>,
         language: crate::services::mnemonic::MnemonicLanguage,
+        local_instance_id: String,
     ) -> Result<(Self, UserIdentity), VoucherCoreError> {
         let (public_key, signing_key) =
             crate::services::crypto_utils::derive_ed25519_keypair(mnemonic_phrase, passphrase, language)?;
@@ -69,6 +82,7 @@ impl Wallet {
             own_fingerprints,
             proof_store,
             fingerprint_metadata,
+            local_instance_id,
         };
 
         Ok((wallet, identity))
@@ -79,6 +93,7 @@ impl Wallet {
     pub fn load<S: Storage>(
         storage: &S,
         auth: &AuthMethod,
+        local_instance_id: String,
     ) -> Result<(Self, UserIdentity), VoucherCoreError> {
         let (profile, voucher_store, identity) = storage.load_wallet(auth)?;
 
@@ -109,6 +124,7 @@ impl Wallet {
             own_fingerprints,
             proof_store,
             fingerprint_metadata,
+            local_instance_id,
         };
 
         wallet.rebuild_derived_stores()?;
@@ -199,5 +215,46 @@ impl Wallet {
         self.rebuild_derived_stores()?;
 
         Ok(new_voucher)
+    }
+
+    /// Erzwingt die Bindung des Wallets an das aktuelle Gerät (Handover).
+    /// Erhöht die Epoche und setzt die neue instance_id im Siegel.
+    pub fn force_device_handover<S: Storage>(
+        &mut self,
+        storage: &mut S,
+        identity: &UserIdentity,
+        auth: &AuthMethod,
+    ) -> Result<(), VoucherCoreError> {
+        // 1. Altes Siegel laden
+        let record = storage.load_seal(&identity.user_id, auth)
+            .map_err(VoucherCoreError::Storage)?
+            .ok_or_else(|| VoucherCoreError::RequiresSealRecovery)?;
+
+        // 2. Neues Siegel mit erhöhter Epoche und neuer instance_id erstellen
+        // Wir nutzen dafür SealManager::recover_seal_epoch, da es genau das tut (Epoch + 1)
+        let state_hash = {
+            let canonical = crate::services::utils::to_canonical_json(&self.own_fingerprints)?;
+            crate::services::crypto_utils::get_hash(canonical.as_bytes())
+        };
+
+        let new_seal = SealManager::recover_seal_epoch(
+            Some(&record.seal),
+            &identity.user_id,
+            identity,
+            &state_hash,
+            &self.local_instance_id,
+        )?;
+
+        // 3. Speichern
+        let new_record = crate::models::seal::LocalSealRecord {
+            seal: new_seal,
+            sync_status: crate::models::seal::SyncStatus::PendingUpload,
+            is_locked_due_to_fork: false,
+        };
+
+        storage.save_seal(&identity.user_id, auth, &new_record)
+            .map_err(VoucherCoreError::Storage)?;
+
+        Ok(())
     }
 }

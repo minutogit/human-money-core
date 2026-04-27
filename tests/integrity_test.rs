@@ -14,7 +14,7 @@ fn test_wallet_integrity_missing_item() {
     let password = "test-password";
     
     // Profil erstellen - das sollte auch den initialen Digest schreiben
-    app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English).unwrap();
+    app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
     // 1. Initialer Check - sollte Valid sein
     let report = app.check_integrity(Some(password)).expect("Integrity check failed");
@@ -50,7 +50,7 @@ fn test_wallet_integrity_manipulated_item() {
     let mnemonic = AppService::generate_mnemonic(12, MnemonicLanguage::English).unwrap();
     let password = "test-password";
     
-    app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English).unwrap();
+    app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
     // 1. Info holen um den Pfad zu finden
     let profiles = app.list_profiles().unwrap();
@@ -81,7 +81,7 @@ fn test_wallet_integrity_unknown_item() {
     let mnemonic = AppService::generate_mnemonic(12, MnemonicLanguage::English).unwrap();
     let password = "test-password";
     
-    app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English).unwrap();
+    app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
     // 1. Info holen um den Pfad zu finden
     let profiles = app.list_profiles().unwrap();
@@ -112,7 +112,7 @@ fn test_wallet_integrity_missing_digest() {
     let mnemonic = AppService::generate_mnemonic(12, MnemonicLanguage::English).unwrap();
     let password = "test-password";
     
-    app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English).unwrap();
+    app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
     // 1. Info holen um den Pfad zu finden
     let profiles = app.list_profiles().unwrap();
@@ -137,7 +137,7 @@ fn test_wallet_integrity_invalid_signature() {
     let mnemonic = AppService::generate_mnemonic(12, MnemonicLanguage::English).unwrap();
     let password = "test-password";
     
-    app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English).unwrap();
+    app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
     // 1. Info holen um den Pfad zu finden
     let profiles = app.list_profiles().unwrap();
@@ -170,7 +170,7 @@ fn test_wallet_integrity_repair() {
     let mnemonic = AppService::generate_mnemonic(12, MnemonicLanguage::English).unwrap();
     let password = "test-password";
     
-    app.create_profile("Repair Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English).unwrap();
+    app.create_profile("Repair Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
     let profiles = app.list_profiles().unwrap();
     let folder_name = &profiles[0].folder_name;
@@ -205,7 +205,7 @@ fn test_wallet_integrity_missing_bundles_meta_after_restart() {
     let password = "test-password";
     
     // Profil erstellen
-    app.create_profile("Bundles Test", &mnemonic, None, Some("test"), password, MnemonicLanguage::English).unwrap();
+    app.create_profile("Bundles Test", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
     // 1. Initialer Check - sollte Valid sein
     let report = app.check_integrity(Some(password)).expect("Integrity check failed");
@@ -239,7 +239,7 @@ fn test_wallet_integrity_missing_bundles_meta_after_restart() {
     let mut app2 = AppService::new(base_path).unwrap();
     let profiles2 = app2.list_profiles().unwrap();
     let folder_name2 = &profiles2[0].folder_name;
-    app2.login(folder_name2, password, false).expect("Login failed");
+    app2.login(folder_name2, password, false, "test-id".to_string()).expect("Login failed");
     
     // 6. Nach dem Neustart sollte die Datei noch fehlen (wird nicht automatisch recreated)
     let bundles_meta_file_after = wallet_path.join("bundles.meta.enc");
@@ -271,7 +271,7 @@ fn test_storage_integrity_after_save_encrypted_data() {
     let password = "test-password";
     
     // 1. Create Profile (this should be valid and sealed)
-    app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English).unwrap();
+    app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
     let report = app.check_integrity(Some(password)).expect("Initial integrity check failed");
     assert_eq!(report, IntegrityReport::Valid, "Initially, integrity should be valid");
@@ -294,7 +294,7 @@ fn test_storage_integrity_after_login_anchor_write() {
     let password = "test-password";
     
     // 1. Create Profile
-    app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English).unwrap();
+    app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
     // 2. Logout
     let profiles = app.list_profiles().unwrap();
@@ -303,7 +303,7 @@ fn test_storage_integrity_after_login_anchor_write() {
     
     // 3. Login
     let mut app2 = AppService::new(base_path).unwrap();
-    app2.login(&folder_name, password, false).unwrap();
+    app2.login(&folder_name, password, false, "test-id".to_string()).unwrap();
     
     // 4. Check integrity
     let report = app2.check_integrity(Some(password)).expect("Integrity check after login failed");

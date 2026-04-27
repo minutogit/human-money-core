@@ -31,6 +31,7 @@ mod tests {
                         prev_seal_hash: "".to_string(),
                         state_hash: "dummy".to_string(),
                         timestamp: "dummy".to_string(),
+                        instance_id: "test-id".to_string(),
                     },
                     signature: "dummy".to_string(),
                 },
@@ -46,7 +47,7 @@ mod tests {
 
         // Force reload state by logging in again
         app = AppService::new(dir.path()).unwrap();
-        let _ = app.login(&ACTORS.alice.identity.user_id, PASSWORD, false);
+        let _ = app.login(&ACTORS.alice.identity.user_id, PASSWORD, false, "test-id".to_string());
 
         // Receive Bundle sollte blockiert sein
         let res = app.receive_bundle(b"fake data", &HashMap::new(), None, Some(PASSWORD), false);

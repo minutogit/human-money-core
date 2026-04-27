@@ -28,7 +28,7 @@ fn setup_test_environment(
     let (mut alice_service, alice_profile) =
         setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", PASSWORD);
     alice_service
-        .login(&alice_profile.folder_name, PASSWORD, false)
+        .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
         .unwrap();
     alice_service.unlock_session(PASSWORD, 60).unwrap();
     let alice_identity = alice_service.get_unlocked_mut_for_test().1.clone();
@@ -37,7 +37,7 @@ fn setup_test_environment(
     let (mut bob_service, bob_profile) =
         setup_service_with_profile(dir.path(), &ACTORS.bob, "Bob", PASSWORD);
     bob_service
-        .login(&bob_profile.folder_name, PASSWORD, false)
+        .login(&bob_profile.folder_name, PASSWORD, false, "test-id".to_string())
         .unwrap();
     bob_service.unlock_session(PASSWORD, 60).unwrap();
     let bob_id = bob_service.get_user_id().unwrap();

@@ -34,10 +34,12 @@ impl SealManager {
     /// * `user_id` - Die vollständige User-ID (inkl. SAI-Präfix).
     /// * `identity` - Die kryptographische Identität zum Signieren.
     /// * `initial_state_hash` - Hash des initialen OwnFingerprints-Stores.
+    /// * `local_instance_id` - Eindeutige ID des lokalen Geräts.
     pub fn create_initial_seal(
         user_id: &str,
         identity: &UserIdentity,
         initial_state_hash: &str,
+        local_instance_id: &str,
     ) -> Result<WalletSeal, VoucherCoreError> {
         let now = get_current_timestamp();
 
@@ -50,6 +52,7 @@ impl SealManager {
             prev_seal_hash: get_hash(""), // Deterministischer Genesis-Hash
             state_hash: initial_state_hash.to_string(),
             timestamp: now,
+            instance_id: local_instance_id.to_string(),
         };
 
         Self::sign_payload(payload, identity)
@@ -66,10 +69,12 @@ impl SealManager {
     /// * `prev_seal` - Das vorherige, gültige Siegel.
     /// * `identity` - Die kryptographische Identität zum Signieren.
     /// * `new_state_hash` - Hash des aktualisierten OwnFingerprints-Stores.
+    /// * `local_instance_id` - Eindeutige ID des lokalen Geräts.
     pub fn update_seal(
         prev_seal: &WalletSeal,
         identity: &UserIdentity,
         new_state_hash: &str,
+        local_instance_id: &str,
     ) -> Result<WalletSeal, VoucherCoreError> {
         // Hash des vorherigen Siegels berechnen (kanonische Serialisierung)
         let prev_seal_canonical = to_canonical_json(prev_seal)?;
@@ -84,6 +89,7 @@ impl SealManager {
             prev_seal_hash: prev_hash,
             state_hash: new_state_hash.to_string(),
             timestamp: get_current_timestamp(),
+            instance_id: local_instance_id.to_string(),
         };
 
         Self::sign_payload(payload, identity)
@@ -93,18 +99,21 @@ impl SealManager {
     ///
     /// Prüft:
     /// 1. Die User-ID im Payload entspricht dem erwarteten Wert.
-    /// 2. Der erwartete Public Key kann die Signatur verifizieren.
-    /// 3. Die Schema-Version ist unterstützt.
+    /// 2. Die instance_id entspricht dem lokalen Gerät (Clone Protection).
+    /// 3. Der erwartete Public Key kann die Signatur verifizieren.
+    /// 4. Die Schema-Version ist unterstützt.
     ///
     /// # Arguments
     /// * `seal` - Das zu verifizierende Siegel.
     /// * `expected_user_id` - Die erwartete User-ID.
     /// * `expected_pubkey_user_id` - Die User-ID, aus der der Public Key extrahiert wird.
+    /// * `local_instance_id` - Eindeutige ID des lokalen Geräts zur Prüfung gegen Klone.
     pub fn verify_seal_integrity(
         seal: &WalletSeal,
         expected_user_id: &str,
         expected_pubkey_user_id: &str,
-    ) -> Result<(), VoucherCoreError> {
+        local_instance_id: &str,
+    ) -> Result<crate::models::seal::SealValidationResult, VoucherCoreError> {
         // 1. Version prüfen
         if seal.payload.version != 1 {
             return Err(VoucherCoreError::Generic(format!(
@@ -113,15 +122,22 @@ impl SealManager {
             )));
         }
 
+
         // 2. User-ID prüfen
         if seal.payload.user_id != expected_user_id {
-            return Err(VoucherCoreError::Generic(format!(
-                "Seal user_id mismatch. Expected: {}, Found: {}",
-                expected_user_id, seal.payload.user_id
-            )));
+            return Ok(crate::models::seal::SealValidationResult::UserMismatch);
         }
 
-        // 3. Public Key extrahieren und Signatur verifizieren
+        // 3. Instance-ID prüfen (Cloning Protection)
+        // Ausnahme: Wenn seal.payload.instance_id.is_empty() (Legacy Wallet), ist es gültig.
+        if !seal.payload.instance_id.is_empty() && seal.payload.instance_id != local_instance_id {
+            return Ok(crate::models::seal::SealValidationResult::DeviceMismatch {
+                expected: seal.payload.instance_id.clone(),
+                actual: local_instance_id.to_string(),
+            });
+        }
+
+        // 4. Public Key extrahieren und Signatur verifizieren
         let pubkey = crate::services::crypto_utils::get_pubkey_from_user_id(expected_pubkey_user_id)?;
 
         let payload_canonical = to_canonical_json(&seal.payload)?;
@@ -135,12 +151,14 @@ impl SealManager {
             .map_err(|e| VoucherCoreError::Generic(format!("Invalid seal signature format: {}", e)))?;
 
         if !verify_ed25519(&pubkey, payload_hash.as_bytes(), &signature) {
-            return Err(VoucherCoreError::Generic(
-                "Seal signature verification failed. The seal may have been tampered with.".to_string(),
-            ));
+            return Ok(crate::models::seal::SealValidationResult::InvalidSignature);
         }
 
-        Ok(())
+        if seal.payload.instance_id.is_empty() {
+            Ok(crate::models::seal::SealValidationResult::LegacyValid)
+        } else {
+            Ok(crate::models::seal::SealValidationResult::Valid)
+        }
     }
 
     /// Leitet eine neue Epoche ein (Recovery). Epoch wird strikt inkrementiert.
@@ -150,17 +168,20 @@ impl SealManager {
     /// - `tx_nonce` wird auf 0 zurückgesetzt.
     /// - `epoch_start_time` wird auf den aktuellen Zeitpunkt gesetzt.
     /// - `prev_seal_hash` verweist auf das letzte bekannte Siegel (falls vorhanden).
+    /// - `instance_id` wird auf das neue Gerät gebunden.
     ///
     /// # Arguments
     /// * `last_known_seal` - Das letzte bekannte Siegel (kann `None` sein bei komplettem Verlust).
     /// * `user_id` - Die User-ID des wiederhergestellten Wallets.
     /// * `identity` - Die kryptographische Identität zum Signieren.
     /// * `current_state_hash` - Hash des aktuellen OwnFingerprints-Stores nach Recovery.
+    /// * `local_instance_id` - Eindeutige ID des lokalen Geräts.
     pub fn recover_seal_epoch(
         last_known_seal: Option<&WalletSeal>,
         user_id: &str,
         identity: &UserIdentity,
         current_state_hash: &str,
+        local_instance_id: &str,
     ) -> Result<WalletSeal, VoucherCoreError> {
         let now = get_current_timestamp();
 
@@ -185,6 +206,7 @@ impl SealManager {
             prev_seal_hash: prev_hash,
             state_hash: current_state_hash.to_string(),
             timestamp: now,
+            instance_id: local_instance_id.to_string(),
         };
 
         Self::sign_payload(payload, identity)
@@ -315,11 +337,13 @@ mod tests {
     fn test_create_initial_seal() {
         let identity = test_identity();
         let state_hash = get_hash("initial_state");
+        let instance_id = "device_a";
 
         let seal = SealManager::create_initial_seal(
             &identity.user_id,
             &identity,
             &state_hash,
+            instance_id,
         ).unwrap();
 
         assert_eq!(seal.payload.version, 1);
@@ -328,11 +352,13 @@ mod tests {
         assert_eq!(seal.payload.tx_nonce, 0);
         assert_eq!(seal.payload.state_hash, state_hash);
         assert_eq!(seal.payload.prev_seal_hash, get_hash(""));
+        assert_eq!(seal.payload.instance_id, instance_id);
         assert!(!seal.signature.is_empty());
 
         // Signatur muss verifizierbar sein
-        SealManager::verify_seal_integrity(&seal, &identity.user_id, &identity.user_id)
-            .expect("Initial seal should be valid");
+        let result = SealManager::verify_seal_integrity(&seal, &identity.user_id, &identity.user_id, instance_id)
+            .expect("Verification call should succeed");
+        assert_eq!(result, crate::models::seal::SealValidationResult::Valid);
     }
 
     #[test]
@@ -340,44 +366,73 @@ mod tests {
         let identity = test_identity();
         let state_hash_1 = get_hash("state_1");
         let state_hash_2 = get_hash("state_2");
+        let instance_id = "device_a";
 
         let seal_1 = SealManager::create_initial_seal(
             &identity.user_id,
             &identity,
             &state_hash_1,
+            instance_id,
         ).unwrap();
 
-        let seal_2 = SealManager::update_seal(&seal_1, &identity, &state_hash_2).unwrap();
+        let seal_2 = SealManager::update_seal(&seal_1, &identity, &state_hash_2, instance_id).unwrap();
 
         assert_eq!(seal_2.payload.tx_nonce, 1);
         assert_eq!(seal_2.payload.epoch, 0); // Epoch bleibt
         assert_eq!(seal_2.payload.state_hash, state_hash_2);
+        assert_eq!(seal_2.payload.instance_id, instance_id);
 
         // prev_seal_hash muss auf seal_1 verweisen
         let seal_1_hash = SealManager::compute_seal_hash(&seal_1).unwrap();
         assert_eq!(seal_2.payload.prev_seal_hash, seal_1_hash);
 
         // Signatur gültig
-        SealManager::verify_seal_integrity(&seal_2, &identity.user_id, &identity.user_id)
-            .expect("Updated seal should be valid");
+        let result = SealManager::verify_seal_integrity(&seal_2, &identity.user_id, &identity.user_id, instance_id)
+            .expect("Verification call should succeed");
+        assert_eq!(result, crate::models::seal::SealValidationResult::Valid);
     }
 
     #[test]
     fn test_tamper_detection() {
         let identity = test_identity();
         let state_hash = get_hash("state");
+        let instance_id = "device_a";
 
         let mut seal = SealManager::create_initial_seal(
             &identity.user_id,
             &identity,
             &state_hash,
+            instance_id,
         ).unwrap();
 
         // Manipuliere den tx_nonce
         seal.payload.tx_nonce = 999;
 
-        let result = SealManager::verify_seal_integrity(&seal, &identity.user_id, &identity.user_id);
-        assert!(result.is_err(), "Tampered seal should fail verification");
+        let result = SealManager::verify_seal_integrity(&seal, &identity.user_id, &identity.user_id, instance_id).unwrap();
+        assert_eq!(result, crate::models::seal::SealValidationResult::InvalidSignature);
+    }
+
+    #[test]
+    fn test_cloning_protection() {
+        let identity = test_identity();
+        let state_hash = get_hash("state");
+        let instance_a = "device_a";
+        let instance_b = "device_b";
+
+        let seal = SealManager::create_initial_seal(
+            &identity.user_id,
+            &identity,
+            &state_hash,
+            instance_a,
+        ).unwrap();
+
+        // Verifizierung auf Gerät A erfolgreich
+        let result_a = SealManager::verify_seal_integrity(&seal, &identity.user_id, &identity.user_id, instance_a).unwrap();
+        assert_eq!(result_a, crate::models::seal::SealValidationResult::Valid);
+
+        // Verifizierung auf Gerät B schlägt mit DeviceMismatch fehl
+        let result_b = SealManager::verify_seal_integrity(&seal, &identity.user_id, &identity.user_id, instance_b).unwrap();
+        assert!(matches!(result_b, crate::models::seal::SealValidationResult::DeviceMismatch { .. }));
     }
 
     #[test]
@@ -385,11 +440,14 @@ mod tests {
         let identity = test_identity();
         let state_hash_1 = get_hash("state_1");
         let state_hash_2 = get_hash("state_after_recovery");
+        let instance_a = "device_a";
+        let instance_b = "device_b"; // Neues Gerät nach Recovery
 
         let seal_1 = SealManager::create_initial_seal(
             &identity.user_id,
             &identity,
             &state_hash_1,
+            instance_a,
         ).unwrap();
 
         let recovered_seal = SealManager::recover_seal_epoch(
@@ -397,23 +455,28 @@ mod tests {
             &identity.user_id,
             &identity,
             &state_hash_2,
+            instance_b,
         ).unwrap();
 
         assert_eq!(recovered_seal.payload.epoch, 1);
         assert_eq!(recovered_seal.payload.tx_nonce, 0);
         assert_eq!(recovered_seal.payload.state_hash, state_hash_2);
+        assert_eq!(recovered_seal.payload.instance_id, instance_b);
 
-        SealManager::verify_seal_integrity(&recovered_seal, &identity.user_id, &identity.user_id)
-            .expect("Recovered seal should be valid");
+        let result = SealManager::verify_seal_integrity(&recovered_seal, &identity.user_id, &identity.user_id, instance_b)
+            .expect("Verification call should succeed");
+        assert_eq!(result, crate::models::seal::SealValidationResult::Valid);
     }
 
     #[test]
     fn test_compare_seals_synchronized() {
         let identity = test_identity();
+        let instance_id = "device_a";
         let seal = SealManager::create_initial_seal(
             &identity.user_id,
             &identity,
             &get_hash("state"),
+            instance_id,
         ).unwrap();
 
         assert_eq!(
@@ -425,13 +488,15 @@ mod tests {
     #[test]
     fn test_compare_seals_local_is_newer() {
         let identity = test_identity();
+        let instance_id = "device_a";
         let seal_1 = SealManager::create_initial_seal(
             &identity.user_id,
             &identity,
             &get_hash("state_1"),
+            instance_id,
         ).unwrap();
 
-        let seal_2 = SealManager::update_seal(&seal_1, &identity, &get_hash("state_2")).unwrap();
+        let seal_2 = SealManager::update_seal(&seal_1, &identity, &get_hash("state_2"), instance_id).unwrap();
 
         assert_eq!(
             SealManager::compare_seals(&seal_2, &seal_1),
@@ -442,13 +507,15 @@ mod tests {
     #[test]
     fn test_compare_seals_remote_is_newer() {
         let identity = test_identity();
+        let instance_id = "device_a";
         let seal_1 = SealManager::create_initial_seal(
             &identity.user_id,
             &identity,
             &get_hash("state_1"),
+            instance_id,
         ).unwrap();
 
-        let seal_2 = SealManager::update_seal(&seal_1, &identity, &get_hash("state_2")).unwrap();
+        let seal_2 = SealManager::update_seal(&seal_1, &identity, &get_hash("state_2"), instance_id).unwrap();
 
         assert_eq!(
             SealManager::compare_seals(&seal_1, &seal_2),
@@ -459,15 +526,17 @@ mod tests {
     #[test]
     fn test_compare_seals_fork_detected() {
         let identity = test_identity();
+        let instance_id = "device_a";
         let seal_base = SealManager::create_initial_seal(
             &identity.user_id,
             &identity,
             &get_hash("state_base"),
+            instance_id,
         ).unwrap();
 
         // Zwei unabhängige Updates auf demselben Basis-Siegel → Fork
-        let seal_branch_a = SealManager::update_seal(&seal_base, &identity, &get_hash("state_a")).unwrap();
-        let seal_branch_b = SealManager::update_seal(&seal_base, &identity, &get_hash("state_b")).unwrap();
+        let seal_branch_a = SealManager::update_seal(&seal_base, &identity, &get_hash("state_a"), instance_id).unwrap();
+        let seal_branch_b = SealManager::update_seal(&seal_base, &identity, &get_hash("state_b"), instance_id).unwrap();
 
         // Beide haben nonce 1, aber unterschiedliche Payloads → Fork
         assert_eq!(

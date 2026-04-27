@@ -116,7 +116,7 @@ fn test_cleanup_proofs_removes_expired_only() {
 fn test_conflict_override_persistence() {
     let dir = tempdir().unwrap();
     let mut service = AppService::new(dir.path()).unwrap();
-    service.create_profile("PersistTest", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", None, Some("al"), "pwd123", MnemonicLanguage::English).unwrap();
+    service.create_profile("PersistTest", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", None, Some("al"), "pwd123", MnemonicLanguage::English, "test-id".to_string()).unwrap();
 
     // Import a proof directly
     let mut tx = Transaction::default();
@@ -144,7 +144,7 @@ fn test_conflict_override_persistence() {
     
     // Login and get details
     let profile_folder = service.list_profiles().unwrap()[0].folder_name.clone();
-    service.login(&profile_folder, "pwd123", false).unwrap();
+    service.login(&profile_folder, "pwd123", false, "test-id".to_string()).unwrap();
     
     let conflicts = service.list_conflicts().unwrap();
     let loaded_conflict = conflicts.iter().find(|c| c.proof_id == "persist-proof-id").expect("Proof should be persisted");

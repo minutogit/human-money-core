@@ -58,6 +58,10 @@ pub struct SealPayload {
     pub state_hash: String,
     /// ISO-8601 Zeitstempel der Siegelerstellung.
     pub timestamp: String,
+    /// Eindeutige ID des Geräts, auf dem die Wallet initialisiert wurde.
+    /// Dient als Schutz vor Klonen der Wallet-Dateien auf andere Geräte.
+    #[serde(default)]
+    pub instance_id: String,
 }
 
 /// Der lokale Speicher-Wrapper für die Festplatte (Storage-Format).
@@ -103,4 +107,20 @@ pub enum SealSyncState {
     /// Indikator für einen Multi-Device-Konflikt oder Backup-Wiederherstellung.
     /// **Trigger für den Hard Lock!**
     ForkDetected,
+}
+
+/// Ergebnis der Integritätsprüfung eines Siegels.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SealValidationResult {
+    /// Das Siegel ist gültig und an das korrekte Gerät gebunden.
+    Valid,
+    /// Das Siegel ist gültig, aber noch nicht an ein Gerät gebunden (Legacy).
+    LegacyValid,
+    /// Die Signatur ist ungültig.
+    InvalidSignature,
+    /// Die User-ID im Siegel stimmt nicht mit dem Wallet überein.
+    UserMismatch,
+    /// Die Device-ID (instance_id) im Siegel stimmt nicht mit dem aktuellen Host überein.
+    /// Indikator für ein geklontes Wallet.
+    DeviceMismatch { expected: String, actual: String },
 }

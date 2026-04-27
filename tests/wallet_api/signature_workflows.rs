@@ -382,7 +382,7 @@ fn api_app_service_full_signature_workflow() {
 
     let voucher_to_sign = {
         service_guarantor
-            .login(&profile_guarantor.folder_name, password, false)
+            .login(&profile_guarantor.folder_name, password, false, "test-id".to_string())
             .unwrap();
         let guarantor_identity = service_guarantor.get_unlocked_mut_for_test().1;
         // Der Sender (creator) ist bekannt, wir brauchen ihn nicht aus dem Container.
@@ -604,7 +604,7 @@ fn test_full_guarantor_workflow_via_app_service() {
     // KORREKTUR: Wir müssen das Profil von G1 (Bürge 1) mit den
     // Gender-Daten füllen, *bevor* die Signatur erstellt wird.
     service_g1
-        .login(&profile_g1.folder_name, password, false)
+        .login(&profile_g1.folder_name, password, false, "test-id".to_string())
         .unwrap();
     let (wallet_g1, _) = service_g1.get_unlocked_mut_for_test();
     wallet_g1.profile.gender = Some("1".to_string());
@@ -640,7 +640,7 @@ fn test_full_guarantor_workflow_via_app_service() {
     // KORREKTUR: Wir müssen das Profil von G2 (Bürge 2) mit den
     // Gender-Daten füllen, *bevor* die Signatur erstellt wird.
     service_g2
-        .login(&profile_g2.folder_name, password, false)
+        .login(&profile_g2.folder_name, password, false, "test-id".to_string())
         .unwrap();
     let (wallet_g2, _) = service_g2.get_unlocked_mut_for_test();
     wallet_g2.profile.gender = Some("2".to_string());
@@ -821,7 +821,7 @@ fn api_app_service_symmetric_signature_workflow() {
         .unwrap();
 
     // 3. Bürge öffnet den Container mit demselben Passwort
-    service_guarantor.login(&profile_guarantor.folder_name, wallet_password, false).unwrap();
+    service_guarantor.login(&profile_guarantor.folder_name, wallet_password, false, "test-id".to_string()).unwrap();
     let unlocked_guarantor = service_guarantor.get_unlocked_mut_for_test();
     let guarantor_identity = unlocked_guarantor.1;
 

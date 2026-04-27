@@ -101,6 +101,7 @@ impl AppService {
         user_prefix: Option<&str>,
         password: &str,
         language: MnemonicLanguage,
+        local_instance_id: String,
     ) -> Result<(), String> {
         let mut profiles = self.list_profiles()?;
         if profiles.iter().any(|p| p.profile_name == profile_name) {
@@ -113,6 +114,9 @@ impl AppService {
         let folder_name = Self::derive_folder_name(mnemonic, passphrase, user_prefix);
         let profile_path = self.base_storage_path.join(&folder_name);
 
+        // --- SECURITY GUARD: Detect bad instance_id storage ---
+        self.check_instance_id_trap(&profile_path)?;
+
         if profile_path.exists() {
             return Err(
                 "A profile with these secrets already exists (folder collision).".to_string(),
@@ -121,7 +125,7 @@ impl AppService {
 
         let mut storage = FileStorage::new(profile_path);
 
-        let (wallet, identity) = Wallet::new_from_mnemonic(mnemonic, passphrase, user_prefix, language)
+        let (wallet, identity) = Wallet::new_from_mnemonic(mnemonic, passphrase, user_prefix, language, local_instance_id.clone())
             .map_err(|e| format!("Failed to create new wallet: {}", e))?;
 
         wallet
@@ -138,6 +142,7 @@ impl AppService {
             &identity.user_id,
             &identity,
             &state_hash,
+            &local_instance_id,
         ).map_err(|e| format!("Failed to create initial wallet seal: {}", e))?;
 
         let seal_record = LocalSealRecord {
@@ -197,13 +202,18 @@ impl AppService {
         folder_name: &str,
         password: &str,
         cleanup_on_login: bool,
+        local_instance_id: String,
     ) -> Result<(), String> {
         let profile_path = self.base_storage_path.join(folder_name);
         if !profile_path.exists() {
             return Err("Profile directory not found.".to_string());
         }
 
+        // --- SECURITY GUARD: Detect bad instance_id storage ---
+        self.check_instance_id_trap(&profile_path)?;
+
         let mut storage = FileStorage::new(profile_path);
+        let mut needs_legacy_binding = false;
 
         // --- WALLET SEAL: Siegel laden und ROHEN State-Hash verifizieren ---
         // WICHTIG: Die Verifikation erfolgt VOR Wallet::load(), da load()
@@ -222,6 +232,34 @@ impl AppService {
                 // Fork-Lock prüfen
                 if record.is_locked_due_to_fork {
                     return Err("Security Lockdown: Wallet is locked due to a detected fork. Recovery required.".to_string());
+                }
+
+                // Siegel-Integrität und Instance-ID prüfen
+                let validation = SealManager::verify_seal_integrity(&record.seal, &record.seal.payload.user_id, &record.seal.payload.user_id, &local_instance_id)
+                    .map_err(|e| format!("Seal verification error: {}", e))?;
+
+                match validation {
+                    crate::models::seal::SealValidationResult::Valid => {},
+                    crate::models::seal::SealValidationResult::LegacyValid => {
+                        println!("Legacy Wallet detected. Will bind to this device after login.");
+                        needs_legacy_binding = true;
+                    },
+                    crate::models::seal::SealValidationResult::DeviceMismatch { expected, actual } => {
+                        let err_msg = format!(
+                            "Device Mismatch: This wallet is bound to device '{}', but you are on '{}'. \
+                            To prevent double-spending and permanent reputation loss, a wallet profile (specific User Prefix) \
+                            must only be active on ONE device at a time.\n\n\
+                            - OPTION A (Move): Perform a 'Device Handover' to permanently move the wallet here. \
+                            IMPORTANT: Once handed over, you MUST NOT use this profile on the old device anymore. Please delete the wallet folder on the old device to prevent accidental usage.\n\
+                            - OPTION B (Concurrent): Create a NEW profile on this device \
+                            with the same Seed Phrase but a DIFFERENT 'User Prefix', then transfer vouchers between them.",
+                            expected, actual
+                        );
+                        return Err(err_msg);
+                    },
+                    other => {
+                        return Err(format!("Seal integrity check failed: {:?}", other));
+                    },
                 }
 
                 // Lade den ROHEN own_fingerprints Store direkt aus dem Storage
@@ -243,7 +281,7 @@ impl AppService {
         }
         // --- WALLET SEAL: Pre-Check ENDE ---
 
-        let (mut wallet, identity) = Wallet::load(&storage, &AuthMethod::Password(password))
+        let (mut wallet, identity) = Wallet::load(&storage, &AuthMethod::Password(password), local_instance_id)
             .map_err(|e| format!("Login failed (check password): {}", e))?;
 
         if cleanup_on_login {
@@ -297,30 +335,44 @@ impl AppService {
             }
         }
 
-        // --- WALLET SEAL: Migration für bestehende Wallets ohne Siegel ---
+        // --- WALLET SEAL: Migration für bestehende Wallets ohne Siegel oder ohne InstanceID ---
         {
             let auth = AuthMethod::Password(password);
             let seal_record = storage
                 .load_seal(&identity.user_id, &auth)
                 .map_err(|e| format!("Failed to load wallet seal: {}", e))?;
 
-            if seal_record.is_none() {
-                // Kein Siegel vorhanden → neues initiales Siegel erstellen.
-                // Wir verwenden hier den POST-rebuild state_hash (der wird zum Referenzpunkt
-                // für zukünftige seal updates).
+            // Nur migrieren, wenn nötig (Legacy-Binding oder kein Siegel vorhanden)
+            if needs_legacy_binding || seal_record.is_none() {
                 let state_hash = {
                     let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
                         .map_err(|e| format!("Failed to compute state hash: {}", e))?;
                     crate::services::crypto_utils::get_hash(canonical.as_bytes())
                 };
-                let initial_seal = SealManager::create_initial_seal(
-                    &identity.user_id,
-                    &identity,
-                    &state_hash,
-                ).map_err(|e| format!("Failed to create migration seal: {}", e))?;
+
+                let migrated_seal = if needs_legacy_binding && seal_record.is_some() {
+                    // Legacy Migration: Existierendes Siegel updaten, um den tx_nonce zu erhalten
+                    let existing_record = seal_record.unwrap();
+                    SealManager::update_seal(
+                        &existing_record.seal,
+                        &identity,
+                        &state_hash,
+                        &wallet.local_instance_id,
+                    )
+                    .map_err(|e| format!("Failed to migrate legacy seal: {}", e))?
+                } else {
+                    // Komplett neues Siegel (Genesis)
+                    SealManager::create_initial_seal(
+                        &identity.user_id,
+                        &identity,
+                        &state_hash,
+                        &wallet.local_instance_id,
+                    )
+                    .map_err(|e| format!("Failed to create initial seal: {}", e))?
+                };
 
                 let new_record = LocalSealRecord {
-                    seal: initial_seal.clone(),
+                    seal: migrated_seal.clone(),
                     sync_status: SyncStatus::PendingUpload,
                     is_locked_due_to_fork: false,
                 };
@@ -330,7 +382,7 @@ impl AppService {
 
                 // Integrität für das neue migrierte Siegel initialisieren
                 let hashes = storage.get_all_item_hashes().unwrap_or_default();
-                if let Ok(ir) = crate::services::integrity_manager::IntegrityManager::create_integrity_record(&identity, &initial_seal, hashes) {
+                if let Ok(ir) = crate::services::integrity_manager::IntegrityManager::create_integrity_record(&identity, &migrated_seal, hashes) {
                     let _ = storage.save_integrity(&identity.user_id, &ir);
                 }
             }
@@ -371,17 +423,21 @@ impl AppService {
         passphrase: Option<&str>,
         new_password: &str,
         language: MnemonicLanguage,
+        local_instance_id: String,
     ) -> Result<(), String> {
         let profile_path = self.base_storage_path.join(folder_name);
         if !profile_path.exists() {
             return Err("Profile directory not found.".to_string());
         }
 
+        // --- SECURITY GUARD: Detect bad instance_id storage ---
+        self.check_instance_id_trap(&profile_path)?;
+
         let mut storage = FileStorage::new(profile_path);
 
         // 1. Lade das Wallet mit der Mnemonic-Phrase (öffnet das "zweite Schloss").
         let auth_method = AuthMethod::Mnemonic(mnemonic, passphrase, language);
-        let (wallet, identity) = Wallet::load(&storage, &auth_method).map_err(|e| {
+        let (wallet, identity) = Wallet::load(&storage, &auth_method, local_instance_id.clone()).map_err(|e| {
             format!(
                 "Recovery failed (check mnemonic phrase and passphrase): {}",
                 e
@@ -411,6 +467,7 @@ impl AppService {
                 &identity.user_id,
                 &identity,
                 &current_state_hash,
+                &local_instance_id,
             ).map_err(|e| format!("Failed to create recovery seal: {}", e))?;
 
             let new_record = LocalSealRecord {
@@ -524,6 +581,68 @@ impl AppService {
             return Err("No active session to refresh.".to_string());
         }
         Err("Wallet is locked.".to_string())
+    }
+
+    /// Erzwingt die Bindung des Wallets an das aktuelle Gerät (Handover).
+    /// Dies wird aufgerufen, wenn der Login aufgrund eines `DeviceMismatch` fehlschlägt.
+    pub fn handover_to_this_device(
+        &mut self,
+        folder_name: &str,
+        password: &str,
+        local_instance_id: String,
+    ) -> Result<(), String> {
+        let profile_path = self.base_storage_path.join(folder_name);
+        if !profile_path.exists() {
+            return Err("Profile directory not found.".to_string());
+        }
+
+        let mut storage = FileStorage::new(profile_path);
+        let auth = AuthMethod::Password(password);
+
+        // 1. Wallet laden
+        let (mut wallet, identity) = Wallet::load(&storage, &auth, local_instance_id)
+            .map_err(|e| format!("Loading for handover failed: {}", e))?;
+
+        // 2. Handover durchführen
+        wallet.force_device_handover(&mut storage, &identity, &auth)
+            .map_err(|e| format!("Handover failed: {}", e))?;
+
+        // 3. Login durchführen
+        storage.lock().map_err(|e| format!("Lock failed: {}", e))?;
+        
+        self.state = AppState::Unlocked {
+            storage,
+            wallet,
+            identity,
+            session_cache: None,
+        };
+
+        Ok(())
+    }
+
+    /// Prüft, ob der App-Entwickler die `instance_id` unsicher als Datei gespeichert hat.
+    /// Klettert auch eine Ebene nach oben, um typische Tauri/Electron AppData-Ordner zu erwischen.
+    fn check_instance_id_trap(&self, profile_path: &Path) -> Result<(), String> {
+        let mut bad_paths = vec![
+            self.base_storage_path.join("instance_id"),
+            profile_path.join("instance_id"),
+        ];
+
+        // Prüfe auch das übergeordnete Verzeichnis (Parent)
+        if let Some(parent) = self.base_storage_path.parent() {
+            bad_paths.push(parent.join("instance_id"));
+        }
+
+        for path in bad_paths {
+            if path.exists() {
+                return Err(
+                    "CRITICAL SECURITY VIOLATION: The App Developer has stored the 'instance_id' inside the application data directory. \
+                    This defeats the cloning protection! The instance_id MUST be stored securely in the OS Keyring or a separate isolated Config directory. \
+                    Execution halted to protect user funds.".to_string()
+                );
+            }
+        }
+        Ok(())
     }
 }
 

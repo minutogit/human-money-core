@@ -235,7 +235,7 @@ mod tests {
 
         // Login erneut
         service_b
-            .login(&profile_b.folder_name, PASSWORD, false)
+            .login(&profile_b.folder_name, PASSWORD, false, "test-id".to_string())
             .expect("Login should succeed");
 
         // Prüfe, dass der Endorsed-Gutschein immer noch vorhanden ist

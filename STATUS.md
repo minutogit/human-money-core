@@ -73,6 +73,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **Security Hardening**: Argon2id-based key stretching for profile folders (Mobile/WASM tuned) and privacy-preserving arbitrary data naming (removed identity-leaking hashes from filenames).
 - [x] **Maintenance Refactoring**: Consolidated storage cleanup into a single, efficient pass; migrated to `usize` for all collection counters and eliminated magic numbers for archival retention.
 - [x] **Integrity Bugfix**: Resolved a critical issue where auto-cleanup on login could accidentally mask offline file tampering by rewriting the state before verification.
+- [x] **Cloning Protection Hardening**: Implemented active runtime "traps" in AppService to detect improper `instance_id` storage (including parent directories), added aggressive security docstrings, and verified with architecture tests.
 
 ## Next Milestones
 

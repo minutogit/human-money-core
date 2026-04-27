@@ -370,6 +370,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
             ACTORS.sender.prefix,
             "password123",
             MnemonicLanguage::English,
+            "test-id".to_string(),
         )
         .unwrap();
 
@@ -470,7 +471,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         human_money_core::storage::file_storage::FileStorage::new(&profile_storage_path);
     // KORREKTUR: E0609 Verwende die korrekte AuthMethod
     let auth = human_money_core::storage::AuthMethod::Password("password123");
-    let (mut wallet, identity) = Wallet::load(&storage, &auth).unwrap();
+    let (mut wallet, identity) = Wallet::load(&storage, &auth, "test-id".to_string()).unwrap();
 
     // HIER IST DER ANGRIFF: Füge den alten, ausgegebenen Gutschein wieder als 'Active' hinzu.
     let user_id = identity.user_id.clone();
@@ -493,7 +494,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
     let mut app_service = AppService::new(storage_path).unwrap();
     // KORREKTUR (Panic-Fix): Verwende den 'sender_folder_name' anstelle von "sender".
     app_service
-        .login(&sender_folder_name, "password123", false)
+        .login(&sender_folder_name, "password123", false, "test-id".to_string())
         .unwrap();
     assert_eq!(
         app_service

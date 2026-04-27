@@ -204,6 +204,7 @@ mod tests {
             Some("test"),
             PASSWORD,
             MnemonicLanguage::English,
+            "test-id".to_string(),
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to create new wallet"));
@@ -216,8 +217,8 @@ mod tests {
         use human_money_core::Wallet;
         let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         
-        let (_, id1) = Wallet::new_from_mnemonic(mnemonic, None, Some("test"), MnemonicLanguage::English).unwrap();
-        let (_, id2) = Wallet::new_from_mnemonic(mnemonic, Some("secret-passphrase"), Some("test"), MnemonicLanguage::English).unwrap();
+        let (_, id1) = Wallet::new_from_mnemonic(mnemonic, None, Some("test"), MnemonicLanguage::English, "test-id".to_string()).unwrap();
+        let (_, id2) = Wallet::new_from_mnemonic(mnemonic, Some("secret-passphrase"), Some("test"), MnemonicLanguage::English, "test-id".to_string()).unwrap();
         
         assert_ne!(id1.user_id, id2.user_id, "Different passphrases must result in different UserIDs");
     }
@@ -234,7 +235,7 @@ mod tests {
             PASSWORD,
         );
         service.logout();
-        let result = service.login(&profile_info.folder_name, WRONG_PASSWORD, false);
+        let result = service.login(&profile_info.folder_name, WRONG_PASSWORD, false, "test-id".to_string());
         assert!(result.is_err());
         assert!(
             result
@@ -302,6 +303,7 @@ mod tests {
                 test_user.passphrase,
                 "new_password",
                 MnemonicLanguage::English,
+                "test-id".to_string(),
             )
             .expect("Recovery should succeed");
 

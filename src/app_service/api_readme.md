@@ -232,3 +232,44 @@ These helper functions can be called at any time, even when the service is `Lock
 #### `pub fn validate_mnemonic(mnemonic: &str) -> Result<(), String>`
 * **Description:** Validates a given mnemonic phrase for correctness.
 * **Usage:** Used for input validation in recovery or creation forms.
+
+---
+
+## Security Checklist for App Developers
+
+To ensure the safety of user funds and prevent accidental wallet cloning, app developers **MUST** follow these rules:
+
+### 1. `local_instance_id` Storage
+The `local_instance_id` is used to bind a wallet profile to a specific device. 
+* **NEVER** store this ID in a file inside the wallet directory.
+* **NEVER** store this ID in a configuration file that is likely to be backed up or synced (like `config.toml` in the same folder).
+* **ALWAYS** store this ID in the OS Keychain/Keyring (e.g., via the `keyring` crate) or derive it from immutable hardware IDs (e.g., `/etc/machine-id` or BIOS UUID).
+
+### 2. Mandatory Integration Test
+We strongly recommend including the following security audit test in your application's test suite to detect improper storage of the `local_instance_id`:
+
+```rust
+// Example security audit test for App Developers (e.g., in a Tauri app)
+#[test]
+fn test_security_audit_instance_id_storage() {
+    // 1. Setup a fresh test environment
+    let app_data_dir = setup_test_app(); 
+    let instance_id = get_local_instance_id_from_your_keychain();
+    
+    // 2. Simulate what a user does when "cloning":
+    // Copy the entire wallet/app directory to a new, simulated "device"
+    let cloned_usb_stick_dir = copy_folder_to_temp_dir(&app_data_dir);
+    
+    // 3. On the "new device", try to retrieve the ID.
+    // If your implementation is correct, it should return a DIFFERENT ID 
+    // (or fail because the Keyring entry is missing on the new device).
+    let id_on_new_device = get_local_instance_id_from_your_keychain();
+    
+    // If this test fails, it means your instance_id was copied along with the files!
+    assert_ne!(
+        instance_id, id_on_new_device, 
+        "SECURITY CRITICAL: The instance_id was copied along with the wallet files! \
+         This defeats cloning protection. Use the OS Keychain instead of a local file."
+    );
+}
+```

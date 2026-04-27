@@ -431,12 +431,14 @@ pub fn setup_in_memory_wallet(identity: &UserIdentity) -> Wallet {
         own_fingerprints: OwnFingerprints::default(),
         proof_store: ProofStore::default(),
         fingerprint_metadata: CanonicalMetadataStore::default(),
+        local_instance_id: "memory-instance".to_string(),
     }
 }
 
 #[allow(dead_code)]
 pub fn create_test_wallet(
     seed_phrase_extra: &str,
+    local_instance_id: String,
 ) -> Result<(Wallet, UserIdentity), VoucherCoreError> {
     let (public_key, signing_key) = generate_ed25519_keypair_for_tests(Some(seed_phrase_extra));
     let user_id = create_user_id(&public_key, Some("test"))
@@ -474,6 +476,7 @@ pub fn create_test_wallet(
         own_fingerprints: OwnFingerprints::default(),
         proof_store: ProofStore::default(),
         fingerprint_metadata: CanonicalMetadataStore::default(),
+        local_instance_id,
     };
 
     Ok((wallet, identity))
@@ -622,6 +625,7 @@ pub fn setup_service_with_profile(
             user.prefix,
             password,
             MnemonicLanguage::English,
+            "test-id".to_string(),
         )
         .unwrap_or_else(|e| {
             panic!(

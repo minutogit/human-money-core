@@ -51,6 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("creator"),
         password,
         MnemonicLanguage::English,
+        "example-id".to_string(),
     )?;
     service_g1.create_profile(
         "Guarantor 1",
@@ -59,6 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("g1"),
         password,
         MnemonicLanguage::English,
+        "example-id".to_string(),
     )?;
     service_g2.create_profile(
         "Guarantor 2",
@@ -67,6 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("g2"),
         password,
         MnemonicLanguage::English,
+        "example-id".to_string(),
     )?;
     service_recipient.create_profile(
         "Recipient",
@@ -75,6 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("rcp"),
         password,
         MnemonicLanguage::English,
+        "example-id".to_string(),
     )?;
     service_charlie.create_profile(
         "Charlie",
@@ -83,6 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("charlie"),
         password,
         MnemonicLanguage::English,
+        "example-id".to_string(),
     )?;
 
     let g1_id = service_g1.get_user_id()?;

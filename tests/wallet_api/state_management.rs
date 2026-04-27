@@ -106,7 +106,7 @@ fn api_app_service_full_conflict_resolution_workflow() {
     // --- 6. Aktion 4 (Finale Prüfung): Persistenz verifizieren ---
     let mut service_checker = AppService::new(dir_reporter.path()).unwrap();
     service_checker
-        .login(&profile_reporter.folder_name, password, false)
+        .login(&profile_reporter.folder_name, password, false, "test-id".to_string())
         .unwrap();
     let conflicts_after = service_checker.list_conflicts().unwrap();
     assert_eq!(conflicts_after.len(), 1);
@@ -600,7 +600,7 @@ fn api_wallet_save_and_load_fidelity() {
     let mut service_b = AppService::new(dir.path()).unwrap();
     let profile_b = service_b.list_profiles().unwrap().pop().unwrap();
     service_b
-        .login(&profile_b.folder_name, password, false)
+        .login(&profile_b.folder_name, password, false, "test-id".to_string())
         .expect("Login for service_b should succeed");
 
     // --- 4. Assertions ---
@@ -825,13 +825,13 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
     // Instanz 1 (Stale)
     let mut app_stale = AppService::new(dir.path()).unwrap();
     app_stale
-        .login(&profile_info.folder_name, password, false)
+        .login(&profile_info.folder_name, password, false, "test-id".to_string())
         .unwrap();
 
     // Instanz 2 (Actor)
     let mut app_actor = AppService::new(dir.path()).unwrap();
     app_actor
-        .login(&profile_info.folder_name, password, false)
+        .login(&profile_info.folder_name, password, false, "test-id".to_string())
         .unwrap();
 
     // --- 3. Race Condition: Actor handelt zuerst ---

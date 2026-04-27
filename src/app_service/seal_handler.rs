@@ -286,18 +286,35 @@ impl AppService {
                     }
                 };
 
-                if let Err(e) = SealManager::verify_seal_integrity(
+                match SealManager::verify_seal_integrity(
                     &remote_seal,
                     &identity.user_id,
                     &identity.user_id,
+                    &wallet.local_instance_id,
                 ) {
-                    self.state = AppState::Unlocked {
-                        storage,
-                        wallet,
-                        identity,
-                        session_cache,
-                    };
-                    return Err(format!("Remote seal integrity check failed: {}", e));
+                    Ok(crate::models::seal::SealValidationResult::Valid) => {},
+                    Ok(crate::models::seal::SealValidationResult::LegacyValid) => {},
+                    Ok(crate::models::seal::SealValidationResult::DeviceMismatch { .. }) => {
+                        // Remote-Siegel von anderem Gerät ist für Vergleich OK (Indikator für Fork-Check)
+                    },
+                    Ok(other) => {
+                         self.state = AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        };
+                        return Err(format!("Remote seal integrity check failed: {:?}", other));
+                    },
+                    Err(e) => {
+                        self.state = AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        };
+                        return Err(format!("Remote seal verification error: {}", e));
+                    }
                 }
 
                 let record = match storage.load_seal(&identity.user_id, &auth_method) {
@@ -472,6 +489,7 @@ impl AppService {
                             &record.seal,
                             identity,
                             &current_state_hash,
+                            &wallet.local_instance_id,
                         )
                         .map_err(|e| e.to_string())?;
 
@@ -488,6 +506,7 @@ impl AppService {
                             &identity.user_id,
                             identity,
                             &current_state_hash,
+                            &wallet.local_instance_id,
                         )
                         .map_err(|e| e.to_string())?;
 

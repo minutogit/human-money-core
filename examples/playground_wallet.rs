@@ -74,6 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         own_fingerprints: Default::default(),
         proof_store: Default::default(),
         fingerprint_metadata: CanonicalMetadataStore::default(),
+        local_instance_id: "example-id".to_string(),
     };
     println!("✅ Leeres Wallet für Alice erstellt.");
 

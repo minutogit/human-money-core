@@ -69,7 +69,7 @@ fn api_app_service_full_lifecycle() {
         "Service should be locked after logout"
     );
     service_alice
-        .login(&profile_info_alice.folder_name, "password", false)
+        .login(&profile_info_alice.folder_name, "password", false, "test-id".to_string())
         .expect("Login with correct password should succeed");
     assert_eq!(service_alice.get_user_id().unwrap(), id_alice);
 
@@ -166,6 +166,7 @@ fn api_app_service_lifecycle_with_passphrase() {
         None, // <- Fehlende Passphrase
         "any-new-password",
         MnemonicLanguage::English,
+        "test-id".to_string(),
     );
 
     assert!(
@@ -252,6 +253,7 @@ fn api_app_service_password_recovery() {
                 None,
                 new_password,
                 MnemonicLanguage::English,
+                "test-id".to_string(),
             )
             .is_err()
     );
@@ -268,6 +270,7 @@ fn api_app_service_password_recovery() {
             None,
             new_password,
             MnemonicLanguage::English,
+            "test-id".to_string(),
         )
         .expect("Recovery with correct mnemonic should succeed");
     assert!(
@@ -278,13 +281,13 @@ fn api_app_service_password_recovery() {
     service.logout();
     assert!(
         service
-            .login(&profile_info.folder_name, initial_password, false)
+            .login(&profile_info.folder_name, initial_password, false, "test-id".to_string())
             .is_err(),
         "Login with old password should fail after recovery"
     );
     assert!(
         service
-            .login(&profile_info.folder_name, new_password, false)
+            .login(&profile_info.folder_name, new_password, false, "test-id".to_string())
             .is_ok(),
         "Login with new password should succeed after recovery"
     );
@@ -316,6 +319,7 @@ fn api_app_service_password_recovery_with_passphrase() {
         None,
         new_password,
         MnemonicLanguage::English,
+        "test-id".to_string(),
     );
     assert!(
         recovery_fail.is_err(),
@@ -330,13 +334,14 @@ fn api_app_service_password_recovery_with_passphrase() {
             actor.passphrase,
             new_password,
             MnemonicLanguage::English,
+            "test-id".to_string(),
         )
         .expect("Recovery with correct passphrase should succeed");
 
     // 4. Verifizierung
     service.logout();
     // Erneutes Login nach der Wiederherstellung, false für cleanup
-    let login_result = service.login(&profile_info.folder_name, new_password, false);
+    let login_result = service.login(&profile_info.folder_name, new_password, false, "test-id".to_string());
     assert!(
         login_result.is_ok(),
         "Login with new password should succeed. Error: {:?}",
@@ -358,7 +363,7 @@ fn api_wallet_lifecycle() {
     let dir = tempdir().unwrap();
     let test_user = &ACTORS.alice; // Nehmen wir Alice als Testperson
     let (wallet_a, identity_a) =
-        Wallet::new_from_mnemonic(&test_user.mnemonic, test_user.passphrase, test_user.prefix, MnemonicLanguage::English)
+        Wallet::new_from_mnemonic(&test_user.mnemonic, test_user.passphrase, test_user.prefix, MnemonicLanguage::English, "test-id".to_string())
             .expect("Wallet creation failed");
     let original_user_id = wallet_a.profile.user_id.clone();
     let folder_name = {
@@ -382,7 +387,7 @@ fn api_wallet_lifecycle() {
         .expect("Saving wallet failed");
 
     let auth = AuthMethod::Password("password123");
-    let (wallet_b, _) = Wallet::load(&storage, &auth).expect("Loading wallet failed");
+    let (wallet_b, _) = Wallet::load(&storage, &auth, "test-id".to_string()).expect("Loading wallet failed");
 
     assert_eq!(
         wallet_b.profile.user_id, original_user_id,
@@ -986,7 +991,7 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
 
     // 1. Profile erstellen
     service_alice
-        .create_profile("Alice Details", &mnemonic, None, Some("alice"), "password", MnemonicLanguage::English)
+        .create_profile("Alice Details", &mnemonic, None, Some("alice"), "password", MnemonicLanguage::English, "test-id".to_string())
         .expect("Alice profile creation failed");
 
     let id_alice = service_alice.get_user_id().unwrap();
