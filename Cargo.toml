@@ -56,6 +56,7 @@ path = "src/bin/voucher-cli.rs"
 
 
 [dev-dependencies]
+aes-gcm = "0.10.3"
 rand = "0.8"
 human_money_core = { version = "0.2.6", path = ".", features = ["test-utils"] }
 regex = "1.10.4"
@@ -73,5 +74,4 @@ path = "examples/playground_utils.rs"
 [[example]]
 name = "playground_voucher_lifecycle"
 path = "examples/playground_voucher_lifecycle.rs"
-
 
