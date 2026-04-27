@@ -1035,7 +1035,7 @@ impl Storage for FileStorage {
             }
 
             // Ignoriere Seal-Dateien (diese werden bereits logisch über den seal_hash im IntegrityRecord geschützt)
-            if name_str.starts_with("seal_") && name_str.ends_with(".json") {
+            if name_str == SEAL_FILE_NAME || (name_str.starts_with("seal_") && name_str.ends_with(".json")) {
                 continue;
             }
 

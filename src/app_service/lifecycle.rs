@@ -478,6 +478,20 @@ impl AppService {
             storage
                 .save_seal(&identity.user_id, &auth_for_seal, &new_record)
                 .map_err(|e| format!("Failed to save recovery seal: {}", e))?;
+
+            // --- INTEGRITY UPDATE ---
+            // Nach der Wiederherstellung des Siegels müssen wir den Integrity Record aktualisieren,
+            // da sich seal.enc geändert hat. Sonst warnt der nächste Login vor Manipulation.
+            let item_hashes = storage.get_all_item_hashes().map_err(|e| format!("Failed to get hashes for integrity: {}", e))?;
+            let integrity_record = crate::services::integrity_manager::IntegrityManager::create_integrity_record(
+                &identity,
+                &new_record.seal,
+                item_hashes,
+            ).map_err(|e| format!("Failed to create integrity record: {}", e))?;
+
+            storage
+                .save_integrity(&identity.user_id, &integrity_record)
+                .map_err(|e| format!("Failed to save integrity record: {}", e))?;
         }
         // --- WALLET SEAL ENDE ---
 
@@ -604,8 +618,20 @@ impl AppService {
             .map_err(|e| format!("Loading for handover failed: {}", e))?;
 
         // 2. Handover durchführen
-        wallet.force_device_handover(&mut storage, &identity, &auth)
+        let new_seal = wallet.force_device_handover(&mut storage, &identity, &auth)
             .map_err(|e| format!("Handover failed: {}", e))?;
+
+        // --- INTEGRITY UPDATE ---
+        let item_hashes = storage.get_all_item_hashes().map_err(|e| format!("Failed to get hashes for integrity: {}", e))?;
+        let integrity_record = crate::services::integrity_manager::IntegrityManager::create_integrity_record(
+            &identity,
+            &new_seal,
+            item_hashes,
+        ).map_err(|e| format!("Failed to create integrity record: {}", e))?;
+
+        storage
+            .save_integrity(&identity.user_id, &integrity_record)
+            .map_err(|e| format!("Failed to save integrity record: {}", e))?;
 
         // 3. Login durchführen
         storage.lock().map_err(|e| format!("Lock failed: {}", e))?;

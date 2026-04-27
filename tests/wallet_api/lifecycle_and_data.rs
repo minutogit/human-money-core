@@ -311,6 +311,10 @@ mod tests {
         let details_after = service.get_voucher_details(&local_id).unwrap();
         assert_eq!(details_after.local_instance_id, local_id);
         assert_eq!(details_after.voucher.voucher_id, created_voucher.voucher_id);
+
+        // 7. Assert: Storage Integrity is Valid after recovery (prevents "ManipulatedItems" bug on next login)
+        let integrity_report = service.check_integrity(Some("new_password")).expect("Integrity check should not error");
+        assert_eq!(integrity_report, human_money_core::models::storage_integrity::IntegrityReport::Valid, "Integrity must be Valid after recovery");
     }
 
     /* * ANFANG: Neuer Testabschnitt (aus Testplan 5)

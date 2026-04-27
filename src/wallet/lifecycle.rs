@@ -224,7 +224,7 @@ impl Wallet {
         storage: &mut S,
         identity: &UserIdentity,
         auth: &AuthMethod,
-    ) -> Result<(), VoucherCoreError> {
+    ) -> Result<crate::models::seal::WalletSeal, VoucherCoreError> {
         // 1. Altes Siegel laden
         let record = storage.load_seal(&identity.user_id, auth)
             .map_err(VoucherCoreError::Storage)?
@@ -247,7 +247,7 @@ impl Wallet {
 
         // 3. Speichern
         let new_record = crate::models::seal::LocalSealRecord {
-            seal: new_seal,
+            seal: new_seal.clone(),
             sync_status: crate::models::seal::SyncStatus::PendingUpload,
             is_locked_due_to_fork: false,
         };
@@ -255,6 +255,6 @@ impl Wallet {
         storage.save_seal(&identity.user_id, auth, &new_record)
             .map_err(VoucherCoreError::Storage)?;
 
-        Ok(())
+        Ok(new_seal)
     }
 }
