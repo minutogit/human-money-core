@@ -212,6 +212,7 @@ fn test_transaction_monotonic_time() {
         &bob_signing_key, 
         &alice.user_id,
         "10",
+        None,
     ).unwrap();
     
     // Set timestamp of tx[2] EXACTLY to the same as tx[1]
@@ -330,6 +331,7 @@ fn test_p2pkh_change_output_verification() {
         &bob_ephemeral_key, 
         &alice.user_id,
         "10",
+        None,
     ).unwrap();
 
     let mut bad_voucher = voucher.clone();
@@ -535,6 +537,7 @@ fn test_trap_data_privacy_validation() {
         &bob_signing_key, 
         &alice.user_id,
         "10", // send 10
+        None,
     ).unwrap();
 
     next_voucher.transactions[2].trap_data = Some(human_money_core::models::voucher::TrapData {
@@ -580,6 +583,7 @@ fn test_balance_attribution_logic() {
         &bob_signing_key, 
         &alice.user_id,
         "10", // send 10
+        None,
     ).unwrap();
     
     // verify_transactions auf den echten, gültigen Voucher aufrufen

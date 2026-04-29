@@ -29,7 +29,7 @@
 //!
 //! // 2. Neues Profil erstellen (dies entsperrt das Wallet).
 //! let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-//! app.create_profile("Mein Wallet", &mnemonic, None, Some("user"), "sicheres-passwort-123", MnemonicLanguage::English)
+//! app.create_profile("Mein Wallet", &mnemonic, None, Some("user"), "sicheres-passwort-123", MnemonicLanguage::English, "device-id".to_string())
 //!    .expect("Profil konnte nicht erstellt werden.");
 //!
 //! // 3. Eine Aktion ausführen (z.B. Guthaben prüfen).
@@ -44,7 +44,7 @@
 //! let profile_to_load = profiles.first().unwrap();
 //!
 //! // 6. Erneut anmelden mit dem Ordnernamen des Profils und dem Passwort.
-//! app.login(&profile_to_load.folder_name, "sicheres-passwort-123", false)
+//! app.login(&profile_to_load.folder_name, "sicheres-passwort-123", false, "device-id".to_string())
 //!    .expect("Login fehlgeschlagen.");
 //!
 //! // 7. Die User-ID abrufen.
@@ -61,6 +61,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+pub const DEFAULT_ARCHIVE_GRACE_PERIOD_YEARS: i64 = 2;
+
 // Deklaration der neuen Handler als öffentliche Sub-Module.
 // Jede Datei enthält einen `impl AppService`-Block für ihren spezifischen Bereich.
 pub mod app_profile_handler;
@@ -71,6 +73,7 @@ pub mod conflict_handler;
 pub mod data_encryption;
 pub mod l2_facade;
 pub mod lifecycle;
+pub mod seal_handler;
 
 /// Repräsentiert die öffentlich sichtbaren Informationen eines Profils.
 /// Wird verwendet, um dem Frontend eine Liste der verfügbaren Profile zu übergeben.
@@ -141,8 +144,12 @@ impl AppService {
             passphrase.unwrap_or(""),
             prefix.unwrap_or("")
         );
-        // 2. Hashe diesen String, um den anonymen Ordnernamen zu erhalten.
-        crypto_utils::get_hash(secret_string.as_bytes())
+
+        // 2. Verwende Argon2id Key Stretching für den anonymen Ordnernamen (Mobile/WASM tuned).
+        // Dies bietet deutlich höheren Schutz gegen Brute-Force-Angriffe auf den Ordnernamen.
+        const SALT: &[u8] = b"human-money-profile-folder-v1";
+        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT)
+            .unwrap_or_else(|_| crypto_utils::get_hash(secret_string.as_bytes()))
     }
 
     /// Validiert alle Gutscheine innerhalb eines verschlüsselten Bundles.

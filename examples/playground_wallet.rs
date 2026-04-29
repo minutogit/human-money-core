@@ -74,6 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         own_fingerprints: Default::default(),
         proof_store: Default::default(),
         fingerprint_metadata: CanonicalMetadataStore::default(),
+        local_instance_id: "example-id".to_string(),
     };
     println!("✅ Leeres Wallet für Alice erstellt.");
 
@@ -127,6 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }],
         notes: Some("Payment for services".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards_map = std::collections::HashMap::new();

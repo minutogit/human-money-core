@@ -202,6 +202,7 @@ mod structural_integrity {
             &derive_holder_key(&initial_voucher, &sender.signing_key), // Init->Tx1
             &recipient.user_id,
             "10.0000",
+            None,
         )
         .unwrap();
 
@@ -457,6 +458,7 @@ mod behavioral_rules {
             &derive_holder_key(&voucher, &identity.signing_key),
             &ACTORS.bob.user_id,
             "40",
+            None,
         );
         assert!(matches!(
             result.unwrap_err(),
@@ -526,6 +528,7 @@ mod behavioral_rules {
             &derive_holder_key(&voucher, &identity.signing_key),
             &ACTORS.bob.user_id,
             "100",
+            None,
         );
 
         // KORREKTUR: Verwende `matches!` für eine robuste Fehlerprüfung statt String-Vergleich.
@@ -704,6 +707,7 @@ mod behavioral_rules {
                 &derive_holder_key(&voucher, &setup.creator_pc.signing_key),
                 &setup.user_b.user_id,
                 "100",
+                None,
             );
             human_money_core::set_signature_bypass(false);
 
@@ -752,6 +756,7 @@ mod behavioral_rules {
                 &derive_holder_key(&voucher, &setup.creator_pc.signing_key), // Init->Tx1
                 &setup.creator_mobil.user_id,
                 "100",
+                None,
             );
             human_money_core::set_signature_bypass(false);
             assert!(result.is_ok());
@@ -781,6 +786,7 @@ mod behavioral_rules {
                 &derive_holder_key(&voucher, &setup.creator_pc.signing_key), // Init->Tx1
                 &setup.user_b.user_id,
                 "100",
+                None,
             )
             .unwrap();
 
@@ -808,6 +814,7 @@ mod behavioral_rules {
                 &user_b_ephemeral_key, // User B proves ownership
                 &setup.user_c.user_id,
                 "100",
+                None,
             );
 
             // Reset Mock Time
@@ -839,6 +846,7 @@ mod behavioral_rules {
                 &derive_holder_key(&voucher, &setup.creator_pc.signing_key), // Init->Tx1
                 &setup.user_b.user_id,
                 "100",
+                None,
             );
             assert!(result.is_ok());
         }
@@ -869,6 +877,7 @@ mod behavioral_rules {
                 &derive_holder_key(&voucher, &setup.creator_pc.signing_key), // Init->Tx1
                 &setup.user_b.user_id,
                 "100",
+                None,
             );
             assert!(result.is_ok());
         }

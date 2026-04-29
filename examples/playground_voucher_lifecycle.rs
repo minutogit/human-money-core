@@ -51,6 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("creator"),
         password,
         MnemonicLanguage::English,
+        "example-id".to_string(),
     )?;
     service_g1.create_profile(
         "Guarantor 1",
@@ -59,6 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("g1"),
         password,
         MnemonicLanguage::English,
+        "example-id".to_string(),
     )?;
     service_g2.create_profile(
         "Guarantor 2",
@@ -67,6 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("g2"),
         password,
         MnemonicLanguage::English,
+        "example-id".to_string(),
     )?;
     service_recipient.create_profile(
         "Recipient",
@@ -75,6 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("rcp"),
         password,
         MnemonicLanguage::English,
+        "example-id".to_string(),
     )?;
     service_charlie.create_profile(
         "Charlie",
@@ -83,6 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("charlie"),
         password,
         MnemonicLanguage::English,
+        "example-id".to_string(),
     )?;
 
     let g1_id = service_g1.get_user_id()?;
@@ -324,6 +329,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }],
         notes: Some("Viel Spaß!".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.immutable.identity.uuid.clone(), standard_toml.clone());
@@ -334,7 +340,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- 6. Verifizierung der Kontostände ---
     println!("\n--- SCHRITT 6: Empfänger erhält das Bundle und Kontostände werden geprüft ---");
-    service_recipient.receive_bundle(&transfer_bundle, &standards_map, None, Some(password))?;
+    service_recipient.receive_bundle(&transfer_bundle, &standards_map, None, Some(password), false)?;
 
     let balance_creator = service_creator.get_total_balance_by_currency()?;
     let balance_recipient = service_recipient.get_total_balance_by_currency()?;
@@ -375,6 +381,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }],
         notes: Some("Weitergereicht!".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.immutable.identity.uuid.clone(), standard_toml.clone());
@@ -389,6 +396,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &standards_map,
         None,
         Some(password),
+        false,
     )?;
 
     // Überprüfe die finalen Kontostände

@@ -30,6 +30,24 @@ use std::str::FromStr;
 // HILFSFUNKTIONEN & SETUP (Adaptiert aus bestehenden Tests)
 // ===================================================================================
 
+/// Helper: Erzeugt einen gültigen Privacy Guard für Tests, damit das Bundle-Ingest passt.
+fn attach_test_privacy_guard(tx: &mut Transaction, _v_id: &str, recipient_id: &str, sender_id: &str) {
+    let payload = human_money_core::models::voucher::RecipientPayload {
+        sender_permanent_did: sender_id.to_string(),
+        target_prefix: recipient_id.split(':').next().unwrap_or("").to_string(),
+        timestamp: 1625097600, // 2021-07-01 dummy timestamp
+        next_key_seed: "test_seed_123".to_string(),
+    };
+    let payload_bytes = serde_json::to_vec(&payload).unwrap();
+    let recipient_pubkey = human_money_core::services::crypto_utils::get_pubkey_from_user_id(recipient_id).unwrap();
+    
+    tx.privacy_guard = Some(human_money_core::services::crypto_utils::encrypt_recipient_payload(
+        &payload_bytes,
+        &recipient_pubkey,
+        recipient_id,
+    ).unwrap());
+}
+
 /// Wählt eine zufällige Transaktion (außer `init`) und macht ihren Betrag negativ.
 fn mutate_to_negative_amount(voucher: &mut Voucher) -> String {
     if voucher.transactions.len() < 2 {
@@ -410,6 +428,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -461,7 +480,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
         ),
         t_time: get_current_timestamp(),
         sender_id: Some(ACTORS.hacker.user_id.clone()),
-        recipient_id: ACTORS.victim.user_id.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(), // Hacker gibt seinen ursprünglichen Betrag aus
         t_type: "transfer".to_string(),
         trap_data: None,
@@ -478,6 +497,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     let v_id =
         human_money_core::services::l2_gateway::extract_layer2_voucher_id(voucher_in_hacker_wallet)
             .unwrap();
+    attach_test_privacy_guard(&mut final_tx, &v_id, &ACTORS.victim.user_id, &ACTORS.hacker.user_id);
     let hacked_tx = create_hacked_tx(
         &hacker_holder_secret,
         Some(&ACTORS.hacker.signing_key),
@@ -542,7 +562,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
         ),
         t_time: get_current_timestamp(),
         sender_id: Some(ACTORS.hacker.user_id.clone()),
-        recipient_id: ACTORS.victim.user_id.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         t_type: "transfer".to_string(),
         trap_data: None,
@@ -558,6 +578,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     let v_id =
         human_money_core::services::l2_gateway::extract_layer2_voucher_id(voucher_in_hacker_wallet)
             .unwrap();
+    attach_test_privacy_guard(&mut final_tx_2, &v_id, &ACTORS.victim.user_id, &ACTORS.hacker.user_id);
     let final_tx_hacked = create_hacked_tx(
         &hacker_holder_secret,
         Some(&ACTORS.hacker.signing_key),
@@ -643,6 +664,7 @@ fn test_attack_tamper_transaction_history() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -698,6 +720,7 @@ fn test_attack_tamper_transaction_history() {
         &bob_key,
         &ACTORS.victim.user_id,
         "100",
+        None,
     );
     assert!(
         transfer_attempt_result.is_err(),
@@ -750,6 +773,7 @@ fn test_attack_create_inconsistent_transaction() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -798,8 +822,8 @@ fn test_attack_create_inconsistent_transaction() {
         ),
         t_time: get_current_timestamp(),
         sender_id: Some(ACTORS.hacker.user_id.clone()),
-        recipient_id: ACTORS.victim.user_id.clone(),
-        amount: "200".to_string(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
+        amount: "150".to_string(), // Overspending: 150 > 100
         t_type: "transfer".to_string(),
         trap_data: None,
         ..Default::default()
@@ -814,6 +838,7 @@ fn test_attack_create_inconsistent_transaction() {
     let v_id =
         human_money_core::services::l2_gateway::extract_layer2_voucher_id(voucher_in_hacker_wallet)
             .unwrap();
+    attach_test_privacy_guard(&mut overspend_tx_unsigned, &v_id, &ACTORS.victim.user_id, &ACTORS.hacker.user_id);
     let overspend_tx = create_hacked_tx(
         &hacker_holder_secret,
         Some(&ACTORS.hacker.signing_key),
@@ -858,7 +883,7 @@ fn test_attack_inconsistent_split_transaction() {
     // ### SETUP ###
     // Ein Hacker besitzt einen gültigen Gutschein über 100 Einheiten.
     let hacker_identity = &ACTORS.hacker;
-    let victim_identity = &ACTORS.victim;
+    let _victim_identity = &ACTORS.victim;
     let data = new_test_voucher_data(hacker_identity.user_id.clone());
     let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     let voucher = voucher_manager::create_voucher(
@@ -882,7 +907,7 @@ fn test_attack_inconsistent_split_transaction() {
         ),
         t_time: get_current_timestamp(),
         sender_id: Some(hacker_identity.user_id.clone()),
-        recipient_id: victim_identity.user_id.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "30".to_string(),
         sender_remaining_amount: Some("80".to_string()), // Falscher Restbetrag
         t_type: "split".to_string(),
@@ -897,6 +922,14 @@ fn test_attack_inconsistent_split_transaction() {
         &ACTORS.hacker.user_id,
     ));
     let v_id = human_money_core::services::l2_gateway::extract_layer2_voucher_id(&voucher).unwrap();
+    // NEU: Hänge einen gültigen Privacy Guard an, damit die Ingest-Prüfung passiert
+    let payload = human_money_core::models::voucher::RecipientPayload {
+        sender_permanent_did: hacker_identity.user_id.clone(),
+        target_prefix: "victim".to_string(),
+        timestamp: 1625097600,
+        next_key_seed: "test".to_string(),
+    };
+    let _payload_bytes = serde_json::to_vec(&payload).unwrap();
     let inconsistent_tx = create_hacked_tx(
         &holder_key,
         Some(&ACTORS.hacker.signing_key),
@@ -963,7 +996,7 @@ fn test_attack_negative_or_zero_amount_transaction() {
     human_money_core::set_signature_bypass(true);
     // ### SETUP ###
     let hacker_identity = &ACTORS.hacker;
-    let victim_identity = &ACTORS.victim;
+    let _victim_identity = &ACTORS.victim;
     let data = new_test_voucher_data(hacker_identity.user_id.clone());
     let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
     let voucher = voucher_manager::create_voucher(
@@ -982,7 +1015,7 @@ fn test_attack_negative_or_zero_amount_transaction() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         sender_id: Some(hacker_identity.user_id.clone()),
-        recipient_id: victim_identity.user_id.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         t_type: "transfer".to_string(),
         ..Default::default()
     };
@@ -1006,7 +1039,7 @@ fn test_attack_negative_or_zero_amount_transaction() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         sender_id: Some(hacker_identity.user_id.clone()),
-        recipient_id: victim_identity.user_id.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         t_type: "transfer".to_string(),
         ..Default::default()
     };
@@ -1092,7 +1125,7 @@ fn test_attack_full_transfer_amount_mismatch() {
         t_type: "transfer".to_string(),
         amount: "99.0000".to_string(), // Inkorrekt für einen 'transfer' bei einem Guthaben von 100
         sender_id: Some(creator.id.clone().expect("Creator ID should exist")),
-        recipient_id: ACTORS.bob.user_id.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         t_time: get_current_timestamp(),
         sender_remaining_amount: None,
         ..Default::default()
@@ -1314,6 +1347,7 @@ fn test_attack_fuzzing_random_mutations() {
         &holder_key,
         &ACTORS.alice.user_id,
         "1000",
+        None,
     )
     .unwrap();
     master_voucher = mv;
@@ -1333,6 +1367,7 @@ fn test_attack_fuzzing_random_mutations() {
         &alice_key,
         &ACTORS.bob.user_id,
         "500",
+        None,
     )
     .unwrap(); // Split
     master_voucher = mv;

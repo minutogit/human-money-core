@@ -40,6 +40,7 @@ mod tests {
             }],
             notes: None,
             sender_profile_name: None,
+        use_privacy_mode: None,
         }
     }
 
@@ -203,6 +204,7 @@ mod tests {
             Some("test"),
             PASSWORD,
             MnemonicLanguage::English,
+            "test-id".to_string(),
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to create new wallet"));
@@ -215,8 +217,8 @@ mod tests {
         use human_money_core::Wallet;
         let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         
-        let (_, id1) = Wallet::new_from_mnemonic(mnemonic, None, Some("test"), MnemonicLanguage::English).unwrap();
-        let (_, id2) = Wallet::new_from_mnemonic(mnemonic, Some("secret-passphrase"), Some("test"), MnemonicLanguage::English).unwrap();
+        let (_, id1) = Wallet::new_from_mnemonic(mnemonic, None, Some("test"), MnemonicLanguage::English, "test-id".to_string()).unwrap();
+        let (_, id2) = Wallet::new_from_mnemonic(mnemonic, Some("secret-passphrase"), Some("test"), MnemonicLanguage::English, "test-id".to_string()).unwrap();
         
         assert_ne!(id1.user_id, id2.user_id, "Different passphrases must result in different UserIDs");
     }
@@ -233,7 +235,7 @@ mod tests {
             PASSWORD,
         );
         service.logout();
-        let result = service.login(&profile_info.folder_name, WRONG_PASSWORD, false);
+        let result = service.login(&profile_info.folder_name, WRONG_PASSWORD, false, "test-id".to_string());
         assert!(result.is_err());
         assert!(
             result
@@ -301,6 +303,7 @@ mod tests {
                 test_user.passphrase,
                 "new_password",
                 MnemonicLanguage::English,
+                "test-id".to_string(),
             )
             .expect("Recovery should succeed");
 
@@ -308,6 +311,10 @@ mod tests {
         let details_after = service.get_voucher_details(&local_id).unwrap();
         assert_eq!(details_after.local_instance_id, local_id);
         assert_eq!(details_after.voucher.voucher_id, created_voucher.voucher_id);
+
+        // 7. Assert: Storage Integrity is Valid after recovery (prevents "ManipulatedItems" bug on next login)
+        let integrity_report = service.check_integrity(Some("new_password")).expect("Integrity check should not error");
+        assert_eq!(integrity_report, human_money_core::models::storage_integrity::IntegrityReport::Valid, "Integrity must be Valid after recovery");
     }
 
     /* * ANFANG: Neuer Testabschnitt (aus Testplan 5)

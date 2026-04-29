@@ -25,6 +25,7 @@ use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey, StaticSecret};
 use crate::services::mnemonic::{MnemonicLanguage, MnemonicProcessor};
 
 // Key Derivation Functions
+use argon2::{Algorithm, Argon2, Params, Version};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use pbkdf2::pbkdf2;
@@ -84,6 +85,32 @@ pub fn get_hash(input: impl AsRef<[u8]>) -> String {
     hasher.update(input.as_ref());
     let hash_bytes = hasher.finalize();
     bs58::encode(hash_bytes).into_string()
+}
+
+/// Derives a cryptographically strong, memory-hard identifier using Argon2id.
+///
+/// Optimized for Mobile and WASM environments (19 MiB RAM, 3 iterations).
+/// Uses a reduced configuration during tests for performance.
+pub fn derive_argon2_id(password: &[u8], salt: &[u8]) -> Result<String, VoucherCoreError> {
+    // Parameters tuned for Mobile/WASM (approx. 19MB RAM usage)
+    #[cfg(not(any(test, feature = "test-utils")))]
+    let (m_cost, t_cost, p_cost) = (19456, 3, 1);
+
+    // Fast configuration for tests
+    #[cfg(any(test, feature = "test-utils"))]
+    let (m_cost, t_cost, p_cost) = (1024, 1, 1);
+
+    let params = Params::new(m_cost, t_cost, p_cost, Some(32))
+        .map_err(|e| VoucherCoreError::Crypto(format!("Invalid Argon2 parameters: {}", e)))?;
+
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    let mut output = [0u8; 32];
+
+    argon2
+        .hash_password_into(password, salt, &mut output)
+        .map_err(|e| VoucherCoreError::Crypto(format!("Argon2 derivation failed: {}", e)))?;
+
+    Ok(bs58::encode(output).into_string())
 }
 
 /// Computes a SHA3-256 hash of multiple inputs concatenated and returns it as a base58-encoded string.
@@ -275,10 +302,15 @@ pub fn ed25519_pk_to_curve_point(ed_pub: &EdPublicKey) -> Result<EdwardsPoint, V
 }
 
 /// Helper: Baut den deterministischen Info-String für HKDF auf.
-/// info = "human-money-core/x25519-exchange" + sort(pk1, pk2)
-pub fn build_hkdf_info(pk1: &X25519PublicKey, pk2: &X25519PublicKey) -> Vec<u8> {
+/// Die `recipient_id` wird zwingend einbezogen, um eine kryptographische Trennung
+/// zwischen verschiedenen SAIs (Separated Account Identities) desselben Nutzers zu erzwingen.
+pub fn build_hkdf_info(pk1: &X25519PublicKey, pk2: &X25519PublicKey, recipient_id: &str) -> Vec<u8> {
     const LABEL: &[u8] = b"human-money-core/x25519-exchange";
-    const KEY_LEN: usize = 32;
+    let mut info = Vec::with_capacity(LABEL.len() + 64 + recipient_id.len() + 2);
+    info.extend_from_slice(LABEL);
+    info.extend_from_slice(b"|");
+    info.extend_from_slice(recipient_id.as_bytes());
+    info.extend_from_slice(b"|");
 
     let (key_a, key_b) = if pk1.as_bytes() < pk2.as_bytes() {
         (pk1.as_bytes(), pk2.as_bytes())
@@ -286,11 +318,30 @@ pub fn build_hkdf_info(pk1: &X25519PublicKey, pk2: &X25519PublicKey) -> Vec<u8> 
         (pk2.as_bytes(), pk1.as_bytes())
     };
 
-    let mut info = Vec::with_capacity(LABEL.len() + KEY_LEN + KEY_LEN);
-    info.extend_from_slice(LABEL);
     info.extend_from_slice(key_a);
     info.extend_from_slice(key_b);
     info
+}
+
+/// Verschlüsselt den Privacy Guard Payload für den Empfänger.
+///
+/// # Arguments
+/// * `payload_bytes` - Die serialisierten Daten des RecipientPayload.
+/// * `recipient_public_key_ed` - Der permanente Public Key (Ed25519) des Empfängers.
+pub fn encrypt_recipient_payload(
+    payload_bytes: &[u8],
+    recipient_public_key_ed: &EdPublicKey,
+    recipient_id: &str,
+) -> Result<String, VoucherCoreError> {
+    let (ephemeral_pk, ephemeral_sk) = generate_ephemeral_x25519_keypair();
+    let recipient_x_pk = ed25519_pub_to_x25519(recipient_public_key_ed);
+    let shared_secret = perform_diffie_hellman(ephemeral_sk, &recipient_x_pk, recipient_id)?;
+    let encrypted_bytes = encrypt_data(&shared_secret, payload_bytes)?;
+
+    let mut privacy_guard_bytes = Vec::new();
+    privacy_guard_bytes.extend_from_slice(ephemeral_pk.as_bytes());
+    privacy_guard_bytes.extend_from_slice(&encrypted_bytes);
+    Ok(encode_base64(&privacy_guard_bytes))
 }
 
 /// Entschlüsselt den Privacy Guard Payload für den Empfänger.
@@ -304,6 +355,7 @@ pub fn build_hkdf_info(pk1: &X25519PublicKey, pk2: &X25519PublicKey) -> Vec<u8> 
 pub fn decrypt_recipient_payload(
     privacy_guard_base64: &str,
     recipient_secret_key: &SigningKey,
+    recipient_id: &str,
 ) -> Result<Vec<u8>, VoucherCoreError> {
     // 1. Decode Base64
     let guard_bytes = decode_base64(privacy_guard_base64)?;
@@ -329,13 +381,12 @@ pub fn decrypt_recipient_payload(
     let recipient_secret_x = ed25519_sk_to_x25519_sk(recipient_secret_key);
 
     // 4. DH Exchange
-    // Note: We use the recipient's static secret and the sender's ephemeral public.
     let shared_point = recipient_secret_x.diffie_hellman(&ephemeral_pk_x);
     let shared_secret_bytes = shared_point.as_bytes();
 
-    // 5. HKDF Derivation
+    // 5. HKDF Derivation mit SAI-Binding
     let recipient_public_x = X25519PublicKey::from(&recipient_secret_x);
-    let info = build_hkdf_info(&ephemeral_pk_x, &recipient_public_x);
+    let info = build_hkdf_info(&ephemeral_pk_x, &recipient_public_x, recipient_id);
 
     let hkdf = Hkdf::<Sha256>::new(None, shared_secret_bytes);
     let mut symmetric_key = [0u8; 32];
@@ -408,6 +459,7 @@ pub fn generate_ephemeral_x25519_keypair() -> (X25519PublicKey, EphemeralSecret)
 pub fn perform_diffie_hellman(
     our_secret: EphemeralSecret,
     their_public: &X25519PublicKey,
+    recipient_id: &str,
 ) -> Result<[u8; 32], VoucherCoreError> {
     // 1. Eigenen Public Key ableiten (für Kontext-Bindung)
     let our_public = X25519PublicKey::from(&our_secret);
@@ -433,8 +485,8 @@ pub fn perform_diffie_hellman(
     // - Unidirectionality does not require separation into Send/Receive keys.
     let hkdf = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
 
-    // KANONISIERUNG & Info-String Bau
-    let info = build_hkdf_info(&our_public, their_public);
+    // KANONISIERUNG & Info-String Bau mit SAI-Binding
+    let info = build_hkdf_info(&our_public, their_public, recipient_id);
     // Sicherer Aufbau des Info-Strings (via Helper)
     // info[..LABEL.len()].copy_from_slice(LABEL); ... replaced by helper
 

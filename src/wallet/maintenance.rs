@@ -42,9 +42,32 @@ impl Wallet {
     ///                                 speziell für Test-Szenarien zu überschreiben.
     /// # Returns
     /// Ein `CleanupReport`, der die Anzahl der in beiden Phasen entfernten Einträge zusammenfasst.
+    /// Führt die vollständige Speicherbereinigung für Fingerprints, Metadaten und Archiv-Daten durch.
+    ///
+    /// Diese Funktion implementiert einen mehrstufigen Bereinigungsprozess:
+    ///
+    /// **Phase 1: Ablage abgelaufener Einträge**
+    /// Zuerst werden alle Fingerprints aus den Historien und die zugehörigen Metadaten
+    /// entfernt, deren `valid_until` Datum in der Vergangenheit liegt.
+    ///
+    /// **Phase 2: Selektive, limitbasierte Bereinigung**
+    /// Wenn die Gesamtzahl der Fingerprints ein hartes Limit überschreitet, wird eine
+    /// prozentuale Reduzierung durchgeführt (basierend auf Tiefe und Alter).
+    ///
+    /// **Phase 3: Archiv-Bereinigung**
+    /// Entfernt veraltete Gutschein-Instanzen und Double-Spend-Beweise aus dem Archiv,
+    /// wenn diese eine konfigurierbare Schonfrist (`archive_grace_period_years`) überschritten haben.
+    ///
+    /// # Arguments
+    /// * `max_fingerprints_override` - Optionaler Wert für das Fingerprint-Limit (für Tests).
+    /// * `archive_grace_period_years` - Aufbewahrungsfrist für Archivdaten in Jahren.
+    ///
+    /// # Returns
+    /// Ein `CleanupReport`, der die Anzahl der entfernten Einträge zusammenfasst.
     pub fn run_storage_cleanup(
         &mut self,
         max_fingerprints_override: Option<usize>,
+        archive_grace_period_years: i64,
     ) -> Result<CleanupReport, VoucherCoreError> {
         const MAX_FINGERPRINTS_CONST: usize = 20_000;
         const CLEANUP_PERCENTAGE: f32 = 0.10;
@@ -77,7 +100,7 @@ impl Wallet {
         }
 
         if !expired_keys.is_empty() {
-            report.expired_fingerprints_removed = expired_keys.len() as u32;
+            report.expired_fingerprints_removed = expired_keys.len();
 
             // Entferne die abgelaufenen Einträge aus allen Stores
             self.own_fingerprints
@@ -120,13 +143,11 @@ impl Wallet {
 
             for fp in all_fingerprints {
                 if let Some(meta) = self.fingerprint_metadata.get(&fp.ds_tag) {
-                    // Wir verwenden die `t_id` als deterministischen Tie-Breaker anstelle des
-                    // nicht verfügbaren `t_time`, um eine ineffiziente Entschlüsselung zu vermeiden.
                     candidates_for_removal.push((meta.depth, fp.t_id.clone(), fp.ds_tag.clone()));
                 }
             }
 
-            // Sortiere: Höchste 'depth' zuerst, dann älteste 't_time' zuerst
+            // Sortiere: Höchste 'depth' zuerst, dann älteste 't_id' zuerst
             candidates_for_removal.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
 
             let keys_to_remove: std::collections::HashSet<String> = candidates_for_removal
@@ -135,7 +156,7 @@ impl Wallet {
                 .map(|(_, _, key)| key)
                 .collect();
 
-            report.limit_based_fingerprints_removed = keys_to_remove.len() as u32;
+            report.limit_based_fingerprints_removed = keys_to_remove.len();
 
             // Entferne die ausgewählten Einträge aus allen Stores
             self.own_fingerprints
@@ -151,26 +172,21 @@ impl Wallet {
                 .retain(|k, _| !keys_to_remove.contains(k));
         }
 
-        Ok(report)
-    }
-
-    /// Führt Wartungsarbeiten am Wallet-Speicher durch, um veraltete Daten zu entfernen.
-    pub fn cleanup_storage(&mut self, archive_grace_period_years: i64) {
-        // Schritt 1: Bereinige flüchtige Speicher sofort (ohne Frist).
-        conflict_manager::cleanup_known_fingerprints(&mut self.known_fingerprints);
-
-        let now = Utc::now();
+        // --- Phase 3: Archiv-Bereinigung ---
         let grace_period = Duration::days(archive_grace_period_years * 365);
+        let mut archived_removed = 0;
 
-        // Schritt 2: Bereinige die persistente History mit der längeren Frist.
-        conflict_manager::cleanup_expired_histories(
+        // 1. Bereinige flüchtige Speicher via ConflictManager (nutzt interne Grace Period)
+        archived_removed += conflict_manager::cleanup_known_fingerprints(&mut self.known_fingerprints);
+        archived_removed += conflict_manager::cleanup_expired_histories(
             &mut self.own_fingerprints,
             &mut self.known_fingerprints,
             &now,
             &grace_period,
         );
 
-        // Schritt 3: Bereinige Gutschein-Instanzen im Archiv mit derselben Frist.
+        // 2. Bereinige Gutschein-Instanzen im Archiv
+        let before_vouchers = self.voucher_store.vouchers.len();
         self.voucher_store.vouchers.retain(|_, instance| {
             if !matches!(instance.status, VoucherStatus::Archived) {
                 return true;
@@ -181,8 +197,10 @@ impl Wallet {
             }
             true
         });
+        archived_removed += before_vouchers - self.voucher_store.vouchers.len();
 
-        // Schritt 4: Bereinige alte Double-Spend-Beweise mit derselben Frist.
+        // 3. Bereinige alte Double-Spend-Beweise
+        let before_proofs = self.proof_store.proofs.len();
         self.proof_store.proofs.retain(|_, entry| {
             if let Ok(valid_until) = DateTime::parse_from_rfc3339(&entry.proof.deletable_at) {
                 let purge_date = valid_until.with_timezone(&Utc) + grace_period;
@@ -190,6 +208,11 @@ impl Wallet {
             }
             true
         });
+        archived_removed += before_proofs - self.proof_store.proofs.len();
+        
+        report.archived_items_removed = archived_removed;
+
+        Ok(report)
     }
 
     /// Baut alle abgeleiteten Speicher (`fingerprints`, `metadata`) aus dem `VoucherStore` neu auf.
@@ -292,8 +315,13 @@ impl Wallet {
 
         // Die definierende Transaktion ist einfach die letzte, in der der Benutzer
         // als Sender oder Empfänger auftaucht.
+        // HINWEIS: Im Privacy Mode ist recipient_id="anonymous". Wir akzeptieren dies
+        // als Treffer für den aktuellen Profil-Besitzer (profile_owner_id), da die
+        // faktische Empfangsberechtigung bereits bei der Entschlüsselung des Bundles
+        // geprüft wurde.
         for tx in voucher.transactions.iter().rev() {
             if tx.recipient_id == profile_owner_id
+                || tx.recipient_id == crate::models::voucher::ANONYMOUS_ID
                 || tx.sender_id.as_deref() == Some(profile_owner_id)
             {
                 defining_transaction_id = Some(tx.t_id.clone());

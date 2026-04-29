@@ -38,7 +38,17 @@ use rust_decimal_macros::dec;
 #[test]
 fn test_chained_transaction_math_and_scaling() {
     // --- 1. SETUP ---
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let mut standard_obj = SILVER_STANDARD.0.clone();
+    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    
+    let mut standard_to_hash = standard_obj.clone();
+    standard_to_hash.signature = None;
+    let standard_hash = human_money_core::services::crypto_utils::get_hash(
+        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
+    );
+    let standard = &standard_obj;
+    let standard_hash = &standard_hash;
+
     assert_eq!(
         standard
             .immutable.features.amount_decimal_places,
@@ -74,11 +84,11 @@ fn test_chained_transaction_math_and_scaling() {
     .unwrap();
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, standard).unwrap(),
+        get_spendable_balance(&current_voucher, &alice.user_id, standard, None).unwrap(),
         dec!(100)
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, standard).unwrap(),
+        get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
         dec!(0)
     );
 
@@ -94,17 +104,18 @@ fn test_chained_transaction_math_and_scaling() {
         &holder_key, // Init->Tx1
         &bob.user_id,
         "40",
+        None,
     )
     .unwrap();
     current_voucher = v;
 
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, &standard).unwrap(),
+        get_spendable_balance(&current_voucher, &alice.user_id, &standard, None).unwrap(),
         dec!(60)
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, &standard).unwrap(),
+        get_spendable_balance(&current_voucher, &bob.user_id, &standard, None).unwrap(),
         dec!(40)
     );
     let tx1 = current_voucher.transactions.last().unwrap();
@@ -131,16 +142,17 @@ fn test_chained_transaction_math_and_scaling() {
         &change_key_1,
         &bob.user_id,
         "10.1234",
+        None,
     )
     .unwrap();
     current_voucher = v;
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, standard).unwrap(),
+        get_spendable_balance(&current_voucher, &alice.user_id, standard, None).unwrap(),
         dec!(49.8766)
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, standard).unwrap(),
+        get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
         dec!(10.1234) // Guthaben ist nur der Betrag der letzten Transaktion
     );
 
@@ -164,16 +176,17 @@ fn test_chained_transaction_math_and_scaling() {
         &change_key_2,
         &bob.user_id,
         "9",
+        None,
     )
     .unwrap();
     current_voucher = v;
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, standard).unwrap(),
+        get_spendable_balance(&current_voucher, &alice.user_id, standard, None).unwrap(),
         dec!(40.8766)
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, standard).unwrap(),
+        get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
         dec!(9.0000) // Guthaben ist nur der Betrag der letzten Transaktion
     );
     let tx3 = current_voucher.transactions.last().unwrap();
@@ -198,16 +211,17 @@ fn test_chained_transaction_math_and_scaling() {
         &change_key_3,
         &bob.user_id,
         "0.87",
+        None,
     )
     .unwrap();
     current_voucher = v;
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, standard).unwrap(),
+        get_spendable_balance(&current_voucher, &alice.user_id, standard, None).unwrap(),
         dec!(40.0066)
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, standard).unwrap(),
+        get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
         dec!(0.8700) // Guthaben ist nur der Betrag der letzten Transaktion
     );
     let tx4 = current_voucher.transactions.last().unwrap();
@@ -232,16 +246,17 @@ fn test_chained_transaction_math_and_scaling() {
         &change_key_4,
         &bob.user_id,
         "40.0066",
+        None,
     )
     .unwrap();
     current_voucher = v;
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, standard).unwrap(),
+        get_spendable_balance(&current_voucher, &alice.user_id, standard, None).unwrap(),
         dec!(0)
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, standard).unwrap(),
+        get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
         dec!(40.0066) // Guthaben ist nur der Betrag der letzten Transaktion
     );
     let tx5 = current_voucher.transactions.last().unwrap();
@@ -269,6 +284,7 @@ fn test_chained_transaction_math_and_scaling() {
         &bob_key, // Bob spends received
         &alice.user_id,
         "10",
+        None,
     )
     .unwrap();
     current_voucher = v;
@@ -276,11 +292,11 @@ fn test_chained_transaction_math_and_scaling() {
 
     // Prüfe die Guthaben nach der ersten Rücktransaktion
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, standard).unwrap(),
+        get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
         dec!(30.0066) // Bobs Restguthaben
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, standard).unwrap(),
+        get_spendable_balance(&current_voucher, &alice.user_id, standard, None).unwrap(),
         dec!(10.0000) // Alice' neues Guthaben
     );
 
@@ -302,6 +318,7 @@ fn test_chained_transaction_math_and_scaling() {
         &bob_change_key, // Init->Tx2 (Continuing chain)
         &alice.user_id,
         "0.0066",
+        None,
     )
     .unwrap();
     current_voucher = v;
@@ -309,11 +326,11 @@ fn test_chained_transaction_math_and_scaling() {
 
     // Prüfe die Guthaben nach der zweiten Rücktransaktion
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, standard).unwrap(),
+        get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
         dec!(30.0000) // Bobs Restguthaben
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, &standard).unwrap(),
+        get_spendable_balance(&current_voucher, &alice.user_id, &standard, None).unwrap(),
         dec!(0.0066) // Alice' neues Guthaben
     );
 }
@@ -321,7 +338,15 @@ fn test_chained_transaction_math_and_scaling() {
 #[test]
 fn test_transaction_fails_on_excess_precision() {
     // --- SETUP ---
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let mut standard_obj = SILVER_STANDARD.0.clone();
+    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    let mut standard_to_hash = standard_obj.clone();
+    standard_to_hash.signature = None;
+    let standard_hash = human_money_core::services::crypto_utils::get_hash(
+        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
+    );
+    let standard = &standard_obj;
+    let standard_hash = &standard_hash;
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
 
@@ -357,6 +382,7 @@ fn test_transaction_fails_on_excess_precision() {
         &alice.signing_key,
         &bob.user_id,
         "0.12345",
+        None,
     );
 
     assert!(result.is_err());

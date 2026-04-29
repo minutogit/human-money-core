@@ -390,6 +390,7 @@ pub fn setup_voucher_with_one_tx() -> (
         &holder_key,          // Ephemeral Key (Anchor Resolution)
         &recipient.user_id,
         "40.0000",
+        None,
     )
     .unwrap();
 
@@ -430,12 +431,14 @@ pub fn setup_in_memory_wallet(identity: &UserIdentity) -> Wallet {
         own_fingerprints: OwnFingerprints::default(),
         proof_store: ProofStore::default(),
         fingerprint_metadata: CanonicalMetadataStore::default(),
+        local_instance_id: "memory-instance".to_string(),
     }
 }
 
 #[allow(dead_code)]
 pub fn create_test_wallet(
     seed_phrase_extra: &str,
+    local_instance_id: String,
 ) -> Result<(Wallet, UserIdentity), VoucherCoreError> {
     let (public_key, signing_key) = generate_ed25519_keypair_for_tests(Some(seed_phrase_extra));
     let user_id = create_user_id(&public_key, Some("test"))
@@ -473,6 +476,7 @@ pub fn create_test_wallet(
         own_fingerprints: OwnFingerprints::default(),
         proof_store: ProofStore::default(),
         fingerprint_metadata: CanonicalMetadataStore::default(),
+        local_instance_id,
     };
 
     Ok((wallet, identity))
@@ -621,6 +625,7 @@ pub fn setup_service_with_profile(
             user.prefix,
             password,
             MnemonicLanguage::English,
+            "test-id".to_string(),
         )
         .unwrap_or_else(|e| {
             panic!(
@@ -659,6 +664,7 @@ pub fn create_transaction_with_auto_decrypt(
         sender_ephemeral_key,
         recipient_id,
         amount,
+        None,
     )?;
 
     // Use returned secret directly
@@ -882,7 +888,7 @@ pub fn create_voucher_for_manipulation(
         .creator_profile
         .id
         .as_ref()
-        .and_then(|id| id.split(':').next())
+        .and_then(|id| id.split('@').next())
         .map(|s| s.to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
@@ -1159,6 +1165,43 @@ pub fn resign_transaction_ext(
     tx
 }
 
+/// Erzeugt einen gültigen Privacy Guard für Tests.
+pub fn attach_privacy_guard(tx: &mut Transaction, recipient_id: &str, sender_id: &str) {
+    let payload = crate::models::voucher::RecipientPayload {
+        sender_permanent_did: sender_id.to_string(),
+        target_prefix: recipient_id.split(':').next().unwrap_or("").to_string(),
+        timestamp: chrono::Utc::now().timestamp() as u64,
+        next_key_seed: "test_seed_123".to_string(),
+    };
+    let payload_bytes = serde_json::to_vec(&payload).unwrap();
+    let recipient_pubkey = crate::services::crypto_utils::get_pubkey_from_user_id(recipient_id).unwrap();
+
+    tx.privacy_guard = Some(crate::services::crypto_utils::encrypt_recipient_payload(
+        &payload_bytes,
+        &recipient_pubkey,
+        recipient_id,
+    ).unwrap());
+}
+
+/// Signiert eine Transaktion und fügt automatisch einen Privacy Guard hinzu,
+/// falls der Empfänger anonym ist und noch kein Guard existiert.
+pub fn resign_transaction_with_privacy(
+    mut tx: Transaction,
+    signer_key: &ed25519_dalek::SigningKey,
+    v_id: &str,
+    l2_signer_key: Option<&ed25519_dalek::SigningKey>,
+    recipient_id: &str,
+) -> Transaction {
+    if tx.recipient_id == crate::models::voucher::ANONYMOUS_ID && tx.privacy_guard.is_none() {
+        let sender_id = tx.sender_id.clone().unwrap_or_else(|| {
+            // Fallback: Erzeuge eine Dummy-ID mit Präfix, da create_user_id nun ein Präfix erzwingt
+            crate::services::crypto_utils::create_user_id(&signer_key.verifying_key(), Some("test")).unwrap()
+        });
+        attach_privacy_guard(&mut tx, recipient_id, &sender_id);
+    }
+    resign_transaction_ext(tx, signer_key, v_id, l2_signer_key)
+}
+
 #[allow(dead_code)]
 pub fn create_test_bundle(
     sender_identity: &UserIdentity,
@@ -1357,7 +1400,7 @@ pub fn derive_holder_key(
         .creator_profile
         .id
         .as_ref()
-        .and_then(|id| id.split(':').next())
+        .and_then(|id| id.split('@').next())
         .map(|s| s.to_string())
         .unwrap_or_else(|| "unknown".to_string());
 

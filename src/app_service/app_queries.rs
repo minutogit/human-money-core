@@ -2,9 +2,9 @@
 //!
 //! Enthält alle reinen Lese-Operationen (Queries) des `AppService`.
 use super::{AppService, AppState};
+use crate::models::profile::{PublicProfile, UserIdentity};
 use crate::wallet::{AggregatedBalance, instance::VoucherStatus};
 use crate::wallet::{VoucherDetails, VoucherSummary, Wallet};
-use crate::models::profile::PublicProfile;
 
 impl AppService {
     // --- Datenabfragen (Queries) ---
@@ -17,6 +17,14 @@ impl AppService {
     pub(super) fn get_wallet(&self) -> Result<&Wallet, String> {
         match &self.state {
             AppState::Unlocked { wallet, .. } => Ok(wallet),
+            AppState::Locked => Err("Wallet is locked.".to_string()),
+        }
+    }
+
+    /// Eine private Hilfsfunktion für den Zugriff auf die Identität.
+    pub(super) fn get_identity(&self) -> Result<&UserIdentity, String> {
+        match &self.state {
+            AppState::Unlocked { identity, .. } => Ok(identity),
             AppState::Locked => Err("Wallet is locked.".to_string()),
         }
     }
@@ -43,9 +51,10 @@ impl AppService {
         voucher_standard_uuid_filter: Option<&[String]>,
         status_filter: Option<&[VoucherStatus]>,
     ) -> Result<Vec<VoucherSummary>, String> {
+        let identity = self.get_identity()?;
         Ok(self
             .get_wallet()?
-            .list_vouchers(voucher_standard_uuid_filter, status_filter))
+            .list_vouchers(Some(identity), voucher_standard_uuid_filter, status_filter))
     }
 
     /// Aggregiert die Guthaben aller aktiven Gutscheine, gruppiert nach Währung.
@@ -56,7 +65,8 @@ impl AppService {
     /// # Errors
     /// Schlägt fehl, wenn das Wallet gesperrt (`Locked`) ist.
     pub fn get_total_balance_by_currency(&self) -> Result<Vec<AggregatedBalance>, String> {
-        Ok(self.get_wallet()?.get_total_balance_by_currency())
+        let identity = self.get_identity()?;
+        Ok(self.get_wallet()?.get_total_balance_by_currency(Some(identity)))
     }
 
     /// Ruft eine detaillierte Ansicht für einen einzelnen Gutschein ab.
@@ -135,6 +145,15 @@ impl AppService {
         offender_id: &str,
     ) -> Result<crate::models::conflict::TrustStatus, String> {
         Ok(self.get_wallet()?.check_reputation(offender_id))
+    }
+
+    /// Ermittelt die Identität des Absenders eines Gutscheins (ggf. durch Entschlüsselung).
+    pub fn get_voucher_source_sender(&self, local_instance_id: &str) -> Result<Option<String>, String> {
+        let wallet = self.get_wallet()?;
+        let identity = self.get_identity()?;
+        wallet
+            .get_voucher_source_sender(local_instance_id, &identity)
+            .map_err(|e| e.to_string())
     }
 }
 

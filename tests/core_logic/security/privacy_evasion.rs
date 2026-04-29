@@ -19,7 +19,7 @@ fn setup_standard(mode: &str) -> (VoucherStandardDefinition, String) {
     // Set privacy mode
     standard.immutable.features.privacy_mode = match mode {
         "public" => human_money_core::models::voucher_standard_definition::PrivacyMode::Public,
-        "private" => human_money_core::models::voucher_standard_definition::PrivacyMode::Private,
+        "private" => human_money_core::models::voucher_standard_definition::PrivacyMode::Stealth,
         "flexible" => human_money_core::models::voucher_standard_definition::PrivacyMode::Flexible,
         _ => panic!("Unknown privacy mode: {}", mode),
     };
@@ -93,7 +93,7 @@ fn detect_silent_signature_leak_in_private_mode() {
         t_type: "transfer".to_string(),
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         sender_id: None,                               // Correct for Private
-        recipient_id: get_hash("some_anon_recipient"), // Correct for Private
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(), // Correct for Private
         amount: "10".to_string(),
         ..Default::default()
     };
@@ -136,7 +136,7 @@ fn enforce_identity_consistency_in_flexible_mode() {
         t_type: "transfer".to_string(),
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         sender_id: None, // Anonymous choice
-        recipient_id: get_hash("some_anon_recipient"),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "10".to_string(),
         ..Default::default()
     };
@@ -176,7 +176,7 @@ fn prevent_trapezoidal_identity_leak() {
         t_type: "transfer".to_string(),
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         sender_id: None,
-        recipient_id: get_hash("some_anon_recipient"),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "60".to_string(), // Match full amount of previous tx to pass continuity check
         ..Default::default()
     };
@@ -364,6 +364,7 @@ fn prevent_trap_data_replay() {
         &holder_key_init,
         &receiver_ephemeral_pub_hash_tx1,
         amount,
+        None,
     )
     .unwrap();
     let tx1 = voucher.transactions.last().unwrap().clone();
@@ -388,7 +389,7 @@ fn prevent_trap_data_replay() {
         t_type: "transfer".to_string(),
         prev_hash: prev_tx2_hash,
         sender_id: None,
-        recipient_id: get_hash("recipient2"),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: amount.to_string(),
 
         sender_ephemeral_pub: Some(sender_ephemeral_pub_tx2),
@@ -438,7 +439,7 @@ fn enforce_ephemeral_key_uniqueness() {
         t_type: "transfer".to_string(),
         prev_hash: prev_hash1,
         sender_id: None,
-        recipient_id: get_hash("r1"),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "10".to_string(),
         sender_ephemeral_pub: Some(reused_ephemeral_pub.to_string()),
         layer2_signature: Some("bypass".to_string()),
@@ -455,7 +456,7 @@ fn enforce_ephemeral_key_uniqueness() {
         t_type: "transfer".to_string(),
         prev_hash: prev_hash2,
         sender_id: None,
-        recipient_id: get_hash("r2"),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "10".to_string(),
         // REUSE!
         sender_ephemeral_pub: Some(reused_ephemeral_pub.to_string()),
@@ -532,7 +533,7 @@ fn prevent_private_and_public_input_mixing() {
         t_type: "transfer".to_string(),
         prev_hash: prev_hash1,
         sender_id: None,                             // Anonymous
-        recipient_id: get_hash("private_recipient"), // Anonymous
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(), // Anonymous
         amount: "10".to_string(),
         layer2_signature: Some("bypass_sig".to_string()),
         ..Default::default()

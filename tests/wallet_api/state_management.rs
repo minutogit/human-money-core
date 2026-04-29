@@ -106,7 +106,7 @@ fn api_app_service_full_conflict_resolution_workflow() {
     // --- 6. Aktion 4 (Finale Prüfung): Persistenz verifizieren ---
     let mut service_checker = AppService::new(dir_reporter.path()).unwrap();
     service_checker
-        .login(&profile_reporter.folder_name, password, false)
+        .login(&profile_reporter.folder_name, password, false, "test-id".to_string())
         .unwrap();
     let conflicts_after = service_checker.list_conflicts().unwrap();
     assert_eq!(conflicts_after.len(), 1);
@@ -207,36 +207,47 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     let alice_holder_pub = bs58::encode(alice_holder_key.verifying_key().to_bytes()).into_string();
 
     // TX_A -> Bob (früher)
-    let mut tx_a = Transaction {
+    let tx_a_raw = Transaction {
         prev_hash: prev_tx_hash.clone(),
         t_type: "transfer".to_string(),
         t_time: time_a,
         sender_id: Some(id_alice.clone()),
-        recipient_id: id_david.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(alice_holder_pub.clone()),
         layer2_signature: Some("dummy_l2_sig".to_string()),
         ..Default::default()
     };
-    // Dank Signature-Bypass müssen wir nicht mehr mühsam re-signieren.
-    // Wir brauchen nur die t_id zu aktualisieren, damit die t_id zum Inhalt passt.
-    tx_a.t_id = crypto_utils::get_hash(utils::to_canonical_json(&tx_a).unwrap());
+    let v_id = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&voucher_v1.transactions[0]).unwrap();
+    let tx_a = test_utils::resign_transaction_with_privacy(
+        tx_a_raw,
+        &identity_alice.signing_key,
+        &v_id,
+        Some(&alice_holder_key),
+        &id_david,
+    );
 
     let mut voucher_v2_bob = voucher_v1.clone();
     voucher_v2_bob.transactions.push(tx_a);
 
     // TX_B -> Charlie (später)
-    let mut tx_b = Transaction {
+    let tx_b_raw = Transaction {
         prev_hash: prev_tx_hash,
         t_type: "transfer".to_string(),
         t_time: time_b,
         sender_id: Some(id_alice.clone()),
-        recipient_id: id_david.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(alice_holder_pub),
         ..Default::default()
     };
-    tx_b.t_id = crypto_utils::get_hash(utils::to_canonical_json(&tx_b).unwrap());
+    let tx_b = test_utils::resign_transaction_with_privacy(
+        tx_b_raw,
+        &identity_alice.signing_key,
+        &v_id,
+        Some(&alice_holder_key),
+        &id_david,
+    );
 
     let mut voucher_v2_charlie = voucher_v1.clone();
     voucher_v2_charlie.transactions.push(tx_b);
@@ -254,7 +265,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     // --- 4. David empfängt zuerst das spätere Bundle (Charlie) ---
     human_money_core::set_signature_bypass(true);
     service_david
-        .receive_bundle(&bundle_charlie, &standards_map, None, Some("pwd"))
+        .receive_bundle(&bundle_charlie, &standards_map, None, Some("pwd"), false)
         .unwrap();
     human_money_core::set_signature_bypass(false);
     let summaries_before = service_david.get_voucher_summaries(None, None).unwrap();
@@ -265,7 +276,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     // --- 5. David empfängt das frühere Bundle (Bob), was den Konflikt auslöst ---
     human_money_core::set_signature_bypass(true);
     service_david
-        .receive_bundle(&bundle_bob, &standards_map, None, Some("pwd"))
+        .receive_bundle(&bundle_bob, &standards_map, None, Some("pwd"), false)
         .unwrap();
     human_money_core::set_signature_bypass(false);
 
@@ -355,33 +366,46 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     let alice_holder_pub = bs58::encode(alice_holder_key.verifying_key().to_bytes()).into_string();
 
     // Pfad A: Split-Transfer 99
-    let mut tx_a = Transaction {
+    let tx_a_raw = Transaction {
         prev_hash: prev_tx_hash.clone(),
         t_type: "split".to_string(),
         t_time: collision_time.clone(),
         sender_id: Some(id_alice.clone()),
-        recipient_id: id_david.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "99.0000".to_string(),
         sender_remaining_amount: Some("1.0000".to_string()),
         sender_ephemeral_pub: Some(alice_holder_pub.clone()),
         ..Default::default()
     };
-    tx_a.t_id = crypto_utils::get_hash(utils::to_canonical_json(&tx_a).unwrap());
+    let v_id = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&voucher_v1.transactions[0]).unwrap();
+    let tx_a = test_utils::resign_transaction_with_privacy(
+        tx_a_raw,
+        &identity_alice.signing_key,
+        &v_id,
+        Some(&alice_holder_key),
+        &id_david,
+    );
     let mut voucher_a = voucher_v1.clone();
     voucher_a.transactions.push(tx_a.clone());
 
     // Pfad B: Full-Transfer 100
-    let mut tx_b = Transaction {
+    let tx_b_raw = Transaction {
         prev_hash: prev_tx_hash,
         t_type: "transfer".to_string(),
         t_time: collision_time,
         sender_id: Some(id_alice.clone()),
-        recipient_id: id_david.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(alice_holder_pub),
         ..Default::default()
     };
-    tx_b.t_id = crypto_utils::get_hash(utils::to_canonical_json(&tx_b).unwrap());
+    let tx_b = test_utils::resign_transaction_with_privacy(
+        tx_b_raw,
+        &identity_alice.signing_key,
+        &v_id,
+        Some(&alice_holder_key),
+        &id_david,
+    );
     let mut voucher_b = voucher_v1.clone();
     voucher_b.transactions.push(tx_b.clone());
 
@@ -397,10 +421,10 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     // --- 3. David empfängt beide Bundles ---
     human_money_core::set_signature_bypass(true);
     service_david
-        .receive_bundle(&bundle_a, &standards_map, None, Some("pwd"))
+        .receive_bundle(&bundle_a, &standards_map, None, Some("pwd"), false)
         .unwrap();
     service_david
-        .receive_bundle(&bundle_b, &standards_map, None, Some("pwd"))
+        .receive_bundle(&bundle_b, &standards_map, None, Some("pwd"), false)
         .unwrap();
     human_money_core::set_signature_bypass(false);
 
@@ -486,6 +510,7 @@ fn api_wallet_save_and_load_fidelity() {
             }],
             notes: None,
             sender_profile_name: None,
+        use_privacy_mode: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(silver_standard.immutable.identity.uuid.clone(), silver_toml.clone());
@@ -531,6 +556,7 @@ fn api_wallet_save_and_load_fidelity() {
                 }],
                 notes: None,
                 sender_profile_name: None,
+        use_privacy_mode: None,
             };
 
             let mut standards_toml = std::collections::HashMap::new();
@@ -542,7 +568,7 @@ fn api_wallet_save_and_load_fidelity() {
             bundle_bytes
         };
         service_a
-            .receive_bundle(&transfer_back_bundle, &standards_map, None, Some(password))
+            .receive_bundle(&transfer_back_bundle, &standards_map, None, Some(password), false)
             .unwrap();
 
         // --- Schritt B: Vollständiger Transfer ---
@@ -561,6 +587,7 @@ fn api_wallet_save_and_load_fidelity() {
             }],
             notes: None,
             sender_profile_name: None,
+        use_privacy_mode: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(silver_standard.immutable.identity.uuid.clone(), silver_toml.clone());
@@ -573,7 +600,7 @@ fn api_wallet_save_and_load_fidelity() {
     let mut service_b = AppService::new(dir.path()).unwrap();
     let profile_b = service_b.list_profiles().unwrap().pop().unwrap();
     service_b
-        .login(&profile_b.folder_name, password, false)
+        .login(&profile_b.folder_name, password, false, "test-id".to_string())
         .expect("Login for service_b should succeed");
 
     // --- 4. Assertions ---
@@ -798,13 +825,13 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
     // Instanz 1 (Stale)
     let mut app_stale = AppService::new(dir.path()).unwrap();
     app_stale
-        .login(&profile_info.folder_name, password, false)
+        .login(&profile_info.folder_name, password, false, "test-id".to_string())
         .unwrap();
 
     // Instanz 2 (Actor)
     let mut app_actor = AppService::new(dir.path()).unwrap();
     app_actor
-        .login(&profile_info.folder_name, password, false)
+        .login(&profile_info.folder_name, password, false, "test-id".to_string())
         .unwrap();
 
     // --- 3. Race Condition: Actor handelt zuerst ---
@@ -816,6 +843,7 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
         }],
         notes: Some("Transfer 1 (Actor)".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let result_actor =
@@ -843,6 +871,7 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
         }],
         notes: Some("Transfer 2 (Stale)".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let result_stale =

@@ -103,7 +103,7 @@ fn test_hkdf_info_contains_key_material_and_differs_per_keypair() {
     let (pk1, _) = generate_ephemeral_x25519_keypair();
     let (pk2, _) = generate_ephemeral_x25519_keypair();
 
-    let info = build_hkdf_info(&pk1, &pk2);
+    let info = build_hkdf_info(&pk1, &pk2, "test-id");
 
     // Kein leerer Vektor
     assert!(!info.is_empty(), "HKDF info must not be empty");
@@ -112,7 +112,7 @@ fn test_hkdf_info_contains_key_material_and_differs_per_keypair() {
 
     // Andere Schlüssel → anderer Info-Vektor
     let (pk3, _) = generate_ephemeral_x25519_keypair();
-    let info_different = build_hkdf_info(&pk1, &pk3);
+    let info_different = build_hkdf_info(&pk1, &pk3, "test-id");
     assert_ne!(info, info_different, "Different key pairs must produce different HKDF info");
 }
 
@@ -130,8 +130,8 @@ fn test_hkdf_info_is_independent_of_argument_order() {
     let pk_a = ed25519_pub_to_x25519(&ed_a);
     let pk_b = ed25519_pub_to_x25519(&ed_b);
 
-    let info_ab = build_hkdf_info(&pk_a, &pk_b);
-    let info_ba = build_hkdf_info(&pk_b, &pk_a);
+    let info_ab = build_hkdf_info(&pk_a, &pk_b, "test-id");
+    let info_ba = build_hkdf_info(&pk_b, &pk_a, "test-id");
 
     assert_eq!(
         info_ab, info_ba,
@@ -168,25 +168,25 @@ fn test_recipient_payload_decryption_requires_minimum_byte_length() {
 
     // 43 Bytes = 32 + 11 → fehlt 1 Byte für den Nonce
     assert!(
-        decrypt_recipient_payload(&engine.encode([0u8; 43]), &sk).is_err(),
+        decrypt_recipient_payload(&engine.encode([0u8; 43]), &sk, "test-id").is_err(),
         "43 bytes (one short) must be rejected"
     );
 
     // 20 Bytes → weit unterhalb der Grenze
     assert!(
-        decrypt_recipient_payload(&engine.encode([0u8; 20]), &sk).is_err(),
+        decrypt_recipient_payload(&engine.encode([0u8; 20]), &sk, "test-id").is_err(),
         "20 bytes must be rejected"
     );
 
     // 21 Bytes → immer noch zu kurz
     assert!(
-        decrypt_recipient_payload(&engine.encode([0u8; 21]), &sk).is_err(),
+        decrypt_recipient_payload(&engine.encode([0u8; 21]), &sk, "test-id").is_err(),
         "21 bytes must be rejected"
     );
 
     // 0 Bytes → leere Eingabe muss abgelehnt werden
     assert!(
-        decrypt_recipient_payload(&engine.encode([0u8; 0]), &sk).is_err(),
+        decrypt_recipient_payload(&engine.encode([0u8; 0]), &sk, "test-id").is_err(),
         "empty input must be rejected"
     );
 }

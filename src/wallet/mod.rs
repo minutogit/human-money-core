@@ -53,6 +53,8 @@ pub struct Wallet {
     /// Zentraler, kanonischer Speicher für dynamische Metadaten.
     /// Enthält Metadaten für ALLE Fingerprints in den anderen Stores.
     pub fingerprint_metadata: CanonicalMetadataStore,
+    /// Eindeutige ID des lokalen Geräts für Clone Protection.
+    pub local_instance_id: String,
 }
 
 impl Wallet {

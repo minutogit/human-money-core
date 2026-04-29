@@ -64,6 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some("creator"),
             password,
             MnemonicLanguage::English,
+            "example-id".to_string(),
         )?;
     } // Drop to close
 
@@ -76,6 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("alice"),
         password,
         MnemonicLanguage::English,
+        "example-id".to_string(),
     )?;
     service_alice.unlock_session(password, 60)?;
     let alice_id = service_alice.get_user_id()?;
@@ -88,6 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("bob"),
         password,
         MnemonicLanguage::English,
+        "example-id".to_string(),
     )?;
     service_bob.unlock_session(password, 60)?;
     let bob_id = service_bob.get_user_id()?;
@@ -113,7 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .find(|p| p.profile_name == "Creator")
             .expect("Creator profile missing");
-        service_creator.login(&profile.folder_name, password, false)?;
+        service_creator.login(&profile.folder_name, password, false, "example-id".to_string())?;
         service_creator.unlock_session(password, 60)?; // Safe now
 
         let creator_id = service_creator.get_user_id()?;
@@ -161,7 +164,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .find(|p| p.profile_name == "Creator")
             .expect("Creator profile missing");
-        service_creator.login(&profile.folder_name, password, false)?;
+        service_creator.login(&profile.folder_name, password, false, "example-id".to_string())?;
         service_creator.unlock_session(password, 60)?;
 
         let request = human_money_core::wallet::MultiTransferRequest {
@@ -172,6 +175,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }],
             notes: Some("To Alice".to_string()),
             sender_profile_name: None,
+            use_privacy_mode: None,
         };
 
         let bundle_result = service_creator.create_transfer_bundle(
@@ -188,6 +192,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &standards_map,
             None,
             Some(password),
+            false,
         )?;
 
         // Get the voucher from Alice to see the transaction
@@ -216,7 +221,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .find(|p| p.profile_name == "Creator")
             .expect("Creator profile missing");
-        service_creator.login(&profile.folder_name, password, false)?;
+        service_creator.login(&profile.folder_name, password, false, "example-id".to_string())?;
         service_creator.unlock_session(password, 60)?;
 
         // Check if voucher is "back"
@@ -234,6 +239,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }],
             notes: Some("To Bob".to_string()),
             sender_profile_name: None,
+            use_privacy_mode: None,
         };
 
         let bundle_result = service_creator.create_transfer_bundle(
@@ -250,6 +256,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &standards_map,
             None,
             Some(password),
+            false,
         )?;
 
         let bob_summaries = service_bob.get_voucher_summaries(None, None)?;

@@ -23,6 +23,7 @@ impl Wallet {
     /// Ein `Vec<VoucherSummary>` mit den wichtigsten Daten jedes Gutscheins.
     pub fn list_vouchers(
         &self,
+        identity: Option<&crate::models::profile::UserIdentity>,
         voucher_standard_uuid_filter: Option<&[String]>,
         status_filter: Option<&[VoucherStatus]>,
     ) -> Vec<VoucherSummary> {
@@ -50,30 +51,53 @@ impl Wallet {
             .map(|(local_id, instance)| {
                 let voucher = &instance.voucher;
 
-                // Der aktuelle Betrag steht in der letzten Transaktion.
-                // Bei einem Split ist es `sender_remaining_amount`, sonst `amount`.
-                // Ein archivierter oder bezeugter Gutschein hat für den Besitzer immer den Betrag 0.
+                // --- Guthaben-Berechnung ---
                 let current_amount = if matches!(instance.status, VoucherStatus::Archived)
                     || matches!(instance.status, VoucherStatus::Endorsed { .. })
                 {
                     "0".to_string()
                 } else {
-                    voucher
-                        .transactions
-                        .last()
-                        .map(|tx| {
-                            // Prüfe auf ausgehende (Sent) Transaktion
-                            if tx.sender_id.as_ref() == Some(&self.profile.user_id)
-                                && tx.sender_remaining_amount.is_some()
-                            {
-                                tx.sender_remaining_amount
-                                    .clone()
-                                    .unwrap_or_else(|| "0".to_string())
-                            } else {
-                                tx.amount.clone()
-                            }
-                        })
-                        .unwrap_or_else(|| "0".to_string())
+                    // Versuche den Holder-Hash zu berechnen (Stateless Re-Derivation)
+                    let holder_pub_hash = identity.and_then(|id| {
+                         self.rederive_secret_seed(voucher, id).ok()
+                    }).map(|key| {
+                        crate::services::crypto_utils::get_hash(key.verifying_key().to_bytes())
+                    });
+
+                    // Nutze den Core-Service zur präzisen Berechnung
+                    // Fallback: Wenn keine Identity da ist, nutzt get_spendable_balance die Public-Mode Logik.
+                    let _standard = crate::models::voucher_standard_definition::VoucherStandardDefinition::default(); // Dummy für Decimal-Places (wird in SM geladen eigentlich)
+                    // HINWEIS: In einer echten Umgebung müsste hier der echte Standard geladen sein.
+                    // Da get_spendable_balance aber Decimal::from_str nutzt, reicht es hier oft für die Anzeige.
+                    
+                    // TODO: In einer idealen Welt laden wir hier den echten Standard. 
+                    // Für die Summary-Liste nutzen wir eine vereinfachte Logik oder das last_tx Feld direkt.
+                    
+                    voucher.transactions.last().map(|tx| {
+                         let is_own_sender = if let Some(id) = identity {
+                             tx.sender_id.as_ref() == Some(&id.user_id)
+                         } else {
+                             tx.sender_id.is_some() // Public Mode Heuristik
+                         };
+
+                         // Krypto-Prüfung bevorzugen
+                         if let Some(hash) = &holder_pub_hash {
+                             if Some(hash) == tx.receiver_ephemeral_pub_hash.as_ref() {
+                                 tx.amount.clone()
+                             } else if Some(hash) == tx.change_ephemeral_pub_hash.as_ref() {
+                                 tx.sender_remaining_amount.clone().unwrap_or_else(|| "0".to_string())
+                             } else {
+                                 "0".to_string()
+                             }
+                         } else {
+                             // Klassische Heuristik für Abwärtskompatibilität / Public Mode
+                             if is_own_sender && tx.sender_remaining_amount.is_some() {
+                                 tx.sender_remaining_amount.clone().unwrap_or_else(|| "0".to_string())
+                             } else {
+                                 tx.amount.clone()
+                             }
+                         }
+                    }).unwrap_or_else(|| "0".to_string())
                 };
 
                 VoucherSummary {
@@ -141,6 +165,83 @@ impl Wallet {
         })
     }
 
+    /// Ermittelt die Identität des Absenders, von dem wir diesen Gutschein erhalten haben.
+    /// Iteriert rückwärts über alle Transaktionen und findet die erste Transaktion,
+    /// deren tatsächlicher Sender nicht der aktuelle Nutzer ist.
+    pub fn get_voucher_source_sender(
+        &self,
+        local_instance_id: &str,
+        identity: &crate::models::profile::UserIdentity,
+    ) -> Result<Option<String>, VoucherCoreError> {
+        let instance = self
+            .voucher_store
+            .vouchers
+            .get(local_instance_id)
+            .ok_or_else(|| VoucherCoreError::VoucherNotFound(local_instance_id.to_string()))?;
+
+        // Iteriere rückwärts über alle Transaktionen des Gutscheins
+        for tx in instance.voucher.transactions.iter().rev() {
+            // Bestimme den tatsächlichen Sender dieser Transaktion
+            let actual_sender = if let Some(guard_base64) = &tx.privacy_guard {
+                // Fall A: privacy_guard vorhanden
+                // Versuche zu entschlüsseln. Wenn erfolgreich, nutze payload.sender_permanent_did.
+                // Wenn die Entschlüsselung fehlschlägt (z.B. Key nicht verfügbar), brich ab und gib Ok(None) zurück!
+                match crate::services::crypto_utils::decrypt_recipient_payload(
+                    guard_base64,
+                    &identity.signing_key,
+                    &identity.user_id,
+                ) {
+                    Ok(decrypted_payload_bytes) => {
+                        match serde_json::from_slice::<crate::models::voucher::RecipientPayload>(
+                            &decrypted_payload_bytes,
+                        ) {
+                            Ok(payload) => payload.sender_permanent_did,
+                            Err(_) => {
+                                // JSON-Parsing fehlgeschlagen - unsicherer Zustand
+                                return Ok(None);
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // SICHERHEITS-CHECK: Unterscheidung zw. Outbound und Inbound.
+                        // Wenn wir der SENDER sind (z.B. wir haben einen Split gesendet),
+                        // ist es normal, dass wir den Guard (für den anderen Empfänger) nicht lesen können.
+                        let is_sender = tx.sender_id.as_deref() == Some(&identity.user_id);
+                        
+                        // Wenn wir der EMPFÄNGER sind (explizit oder anonym), aber nicht entschlüsseln können,
+                        // liegt ein Daten/Key-Problem bei einer an uns gerichteten Transaktion vor. 
+                        let is_recipient = tx.recipient_id == identity.user_id || tx.recipient_id == crate::models::voucher::ANONYMOUS_ID;
+
+                        if is_sender {
+                            continue; // Outbound -> Weitersuchen
+                        } else if is_recipient {
+                            // Inbound, aber unlesbar -> Abbrechen (Spoofing Schutz)
+                            return Ok(None);
+                        } else {
+                            // Weder noch (z.B. eine historische Transaktion dazwischen) -> Weitersuchen
+                            continue;
+                        }
+                    }
+                }
+            } else {
+                // Fall B: Kein Guard vorhanden (Public Mode)
+                // Nutze den Klartext tx.sender_id
+                match &tx.sender_id {
+                    Some(sender) => sender.clone(),
+                    None => continue, // Keine sender_id, überspringe diese Transaktion
+                }
+            };
+
+            // Wenn der tatsächliche Sender nicht der aktuelle Nutzer ist, haben wir unsere Quelle gefunden
+            if actual_sender != identity.user_id {
+                return Ok(Some(actual_sender));
+            }
+        }
+
+        // Keine passende Transaktion gefunden
+        Ok(None)
+    }
+
     /// Aggregiert die Guthaben aller aktiven Gutscheine, gruppiert nach Währung/Einheit.
     ///
     /// Diese Funktion summiert die Werte aller Gutscheine mit dem Status `Active` auf
@@ -149,7 +250,10 @@ impl Wallet {
     ///
     /// # Returns
     /// Ein `Vec<AggregatedBalance>`, der die Gesamtsummen pro Gutschein-Standard und Währung enthält.
-    pub fn get_total_balance_by_currency(&self) -> Vec<AggregatedBalance> {
+    pub fn get_total_balance_by_currency(
+        &self,
+        identity: Option<&crate::models::profile::UserIdentity>,
+    ) -> Vec<AggregatedBalance> {
         // Key: (standard_uuid, unit_abbreviation)
         // Value: (total_amount, standard_name, unit_abbreviation)
         let mut balances: HashMap<(String, String), (Decimal, String, String)> = HashMap::new();
@@ -162,8 +266,19 @@ impl Wallet {
                     .transactions
                     .last()
                     .map(|tx| {
-                        // Wenn wir der Sender sind und ein Restbetrag existiert (Split-Transaktion),
-                        // ist dies unser aktuelles Guthaben.
+                        // Krypto-Prüfung bevorzugen
+                        if let Some(id) = identity {
+                            if let Ok(key) = self.rederive_secret_seed(voucher, id) {
+                                let hash = crate::services::crypto_utils::get_hash(key.verifying_key().to_bytes());
+                                if Some(&hash) == tx.receiver_ephemeral_pub_hash.as_ref() {
+                                    return tx.amount.clone();
+                                } else if Some(&hash) == tx.change_ephemeral_pub_hash.as_ref() {
+                                    return tx.sender_remaining_amount.clone().unwrap_or_else(|| "0".to_string());
+                                }
+                            }
+                        }
+
+                        // Fallback: Heuristik
                         if tx.sender_id.as_ref() == Some(&self.profile.user_id)
                             && tx.sender_remaining_amount.is_some()
                         {

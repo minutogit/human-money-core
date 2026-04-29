@@ -7,7 +7,8 @@
 
 use human_money_core::test_utils::{self, ACTORS};
 use human_money_core::Wallet;
-use human_money_core::services::voucher_manager::create_transaction;
+use human_money_core::services::voucher_manager::{create_transaction, NewVoucherData};
+use human_money_core::models::{profile::PublicProfile, voucher::ValueDefinition};
 use human_money_core::VoucherCoreError;
 use bs58;
 
@@ -49,6 +50,7 @@ fn test_path_dependency_long_chain() {
         &bob_ephemeral_key,
         &charlie.user_id,
         "40.0000",
+        None,
     ).unwrap();
     let final_tx = voucher_after_tx2.transactions.last().unwrap();
 
@@ -76,6 +78,7 @@ fn test_path_dependency_bounce_back() {
         &bob_ephemeral_key,
         &alice.user_id,
         "40.0000",
+        None,
     ).unwrap();
     let final_tx = voucher_after_tx2.transactions.last().unwrap();
 
@@ -104,6 +107,7 @@ fn test_correct_id_for_archived_state() {
         &alice_ephemeral_key,
         &bob.user_id,
         "60.0000",
+        None,
     ).unwrap();
     let final_tx = voucher_after_full_transfer.transactions.last().unwrap();
 
@@ -118,7 +122,19 @@ fn test_correct_id_for_archived_state() {
 
 #[test]
 fn test_error_when_user_has_no_balance_or_history() {
-    let (_, _, _, _, voucher, _) = test_utils::setup_voucher_with_one_tx();
+    // Wir nutzen hier einen explizit öffentlichen Standard, damit DIDs verglichen werden können.
+    let (standard, standard_hash) = (&test_utils::SILVER_STANDARD.0, &test_utils::SILVER_STANDARD.1);
+    let mut public_standard = standard.clone();
+    public_standard.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    
+    let creator = &test_utils::ACTORS.alice.identity;
+    let voucher_data = NewVoucherData {
+        creator_profile: PublicProfile { id: Some(creator.user_id.clone()), ..Default::default() },
+        nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
+        ..Default::default()
+    };
+    let voucher = human_money_core::services::voucher_manager::create_voucher(voucher_data, &public_standard, standard_hash, &creator.signing_key, "en").unwrap();
+
     let charlie = &ACTORS.charlie;
 
     let result = Wallet::calculate_local_instance_id(&voucher, &charlie.user_id);

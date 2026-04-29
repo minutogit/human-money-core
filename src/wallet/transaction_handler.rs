@@ -13,7 +13,7 @@ use crate::models::voucher::Voucher;
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::services::crypto_utils::get_hash;
 use crate::services::utils::to_canonical_json;
-use crate::services::{bundle_processor, conflict_manager, voucher_manager};
+use crate::services::{bundle_processor, conflict_manager};
 use crate::wallet::Wallet;
 use crate::wallet::instance::VoucherStatus;
 use ed25519_dalek::SigningKey;
@@ -73,6 +73,16 @@ impl Wallet {
     ) -> Result<ProcessBundleResult, VoucherCoreError> {
         let bundle = bundle_processor::open_and_verify_bundle(identity, container_bytes)?;
 
+        // --- LAYER 0: BUNDLE-RECIPIENT PRÜFUNG ---
+        // Verhindert, dass ein Wallet ein Bündel annimmt, das explizit an eine andere 
+        // Instanz (z.B. Mobile vs. PC) desselben Benutzers (SAI) adressiert war.
+        if bundle.recipient_id != identity.user_id && bundle.recipient_id != crate::models::voucher::ANONYMOUS_ID {
+             return Err(VoucherCoreError::BundleRecipientMismatch {
+                expected: identity.user_id.clone(),
+                found: bundle.recipient_id.clone(),
+            });
+        }
+
         // --- LAYER 1: BUNDLE-ID REPLAY-SCHUTZ ---
         // Weist ein identisches Bundle sofort ab, das bereits verarbeitet wurde.
         if self
@@ -89,22 +99,94 @@ impl Wallet {
         // Weist ein NEUES Bundle ab, das Gutscheine enthält, deren letzte Transaktion
         // (Fingerprint) bereits bekannt ist. Verhindert modifizierte Replay-Angriffe.
         self.check_bundle_fingerprints_against_history(&bundle.vouchers)?;
-
         // --- ENDE REPLAY-SCHUTZ ---
 
         // --- ZUSÄTZLICHE SICHERHEITSPRÜFUNG ---
         // Stelle sicher, dass jeder Gutschein im Bundle auch wirklich für DIESES
-        // Wallet (identity.user_id) als Empfänger vorgesehen ist.
+        // Wallet (identity.user_id) an einen validen Empfänger gesendet wurde
+        // und keine Zeitstempel weit in der Zukunft liegen.
         let own_user_id = &identity.user_id;
+        // 1. Zeitstempel prüfen (Hard Reject)
+        // Wir nehmen die Transaktionszeit der Gutscheine als absolute Referenz (das Maximum davon).
+        let mut max_tx_dt: Option<chrono::DateTime<chrono::Utc>> = None;
+        let mut max_tx_time = String::new();
+        let mut max_tx_id = String::new();
+
         for voucher in &bundle.vouchers {
             if let Some(last_tx) = voucher.transactions.last() {
-                if last_tx.recipient_id != *own_user_id {
-                    // Dieser Gutschein ist nicht für uns! Breche die gesamte
-                    // Bundle-Verarbeitung ab, um eine Selbst-Annahme zu verhindern.
+                let tx_dt = chrono::DateTime::parse_from_rfc3339(&last_tx.t_time)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .map_err(|e| {
+                        VoucherCoreError::Generic(format!("Failed to parse transaction time: {}", e))
+                    })?;
+
+                match max_tx_dt {
+                    None => {
+                        max_tx_dt = Some(tx_dt);
+                        max_tx_time = last_tx.t_time.clone();
+                        max_tx_id = last_tx.t_id.clone();
+                    }
+                    Some(m_dt) if tx_dt > m_dt => {
+                        max_tx_dt = Some(tx_dt);
+                        max_tx_time = last_tx.t_time.clone();
+                        max_tx_id = last_tx.t_id.clone();
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if !max_tx_time.is_empty() {
+            crate::services::utils::verify_not_far_in_future(
+                &max_tx_time,
+                "Transaction",
+                &max_tx_id,
+            )?;
+        }
+
+        // Auch Signaturen individuell prüfen (Hard Reject)
+        for voucher in &bundle.vouchers {
+            for sig in &voucher.signatures {
+                crate::services::utils::verify_not_far_in_future(
+                    &sig.signature_time,
+                    "Signature",
+                    &sig.signature_id,
+                )?;
+            }
+        }
+
+        for voucher in &bundle.vouchers {
+            // 2. Empfänger prüfen
+            if let Some(last_tx) = voucher.transactions.last() {
+                // Sicherheitsfuse: Stimmt der Empfänger mit unserem Wallet überein?
+                if last_tx.recipient_id != *own_user_id
+                    && last_tx.recipient_id != crate::models::voucher::ANONYMOUS_ID
+                {
                     return Err(VoucherCoreError::BundleRecipientMismatch {
                         expected: own_user_id.clone(),
                         found: last_tx.recipient_id.clone(),
                     });
+                }
+
+                // Wenn anonym, erzwinge erfolgreiche Entschlüsselung des Privacy Guards
+                if last_tx.recipient_id == crate::models::voucher::ANONYMOUS_ID {
+                    let owns_voucher = if let Some(guard_base64) = &last_tx.privacy_guard {
+                        crate::services::crypto_utils::decrypt_recipient_payload(
+                            guard_base64,
+                            &identity.signing_key,
+                            &identity.user_id,
+                        )
+                        .is_ok()
+                    } else {
+                        false
+                    };
+
+                    if !owns_voucher {
+                        return Err(VoucherCoreError::BundleRecipientMismatch {
+                            expected: own_user_id.clone(),
+                            found: "anonymous_but_payload_decryption_failed".to_string(),
+                        });
+                    }
                 }
             } else {
                 // Ein Gutschein ohne Transaktionen ist per se ungültig.
@@ -154,27 +236,44 @@ impl Wallet {
             */
             if let Some(last_tx) = voucher.transactions.last() {
                 if let Some(guard_base64) = &last_tx.privacy_guard {
-                    // Verwende die neue Helper-Funktion in crypto_utils
-                    if let Ok(decrypted_payload_bytes) =
+                    // STRICT INGESTION: Wenn ein privacy_guard vorhanden ist, MUSS er
+                    // erfolgreich entschlüsselt und geparst werden können.
+                    let decrypted_payload_bytes =
                         crate::services::crypto_utils::decrypt_recipient_payload(
                             guard_base64,
                             &identity.signing_key,
+                            &identity.user_id,
+                        ).map_err(|e| {
+                            VoucherCoreError::Validation(
+                                ValidationError::PrivacyGuardDecryptionFailed(
+                                    format!("Decryption failed: {}", e)
+                                )
+                            )
+                        })?;
+
+                    let payload = serde_json::from_slice::<
+                        crate::models::voucher::RecipientPayload,
+                    >(&decrypted_payload_bytes).map_err(|e| {
+                        VoucherCoreError::Validation(
+                            ValidationError::PrivacyGuardDecryptionFailed(
+                                format!("JSON parsing failed: {}", e)
+                            )
                         )
-                    {
-                        if let Ok(payload) = serde_json::from_slice::<
-                            crate::models::voucher::RecipientPayload,
-                        >(&decrypted_payload_bytes)
-                        {
-                            // Check target_prefix (Simple validation)
-                            // "target_prefix": "creator:fY7..."
-                            // identity.user_id: "creator:fY7...@did..."
-                            // TODO: Robusterer Check?
-                            if identity.user_id.starts_with(&payload.target_prefix) {
-                                // STATLESS: Wir müssen den Seed hier nicht mehr speichern oder cachen.
-                                // Er wird bei Bedarf re-deriviert.
-                            } else {
-                            }
-                        }
+                    })?;
+
+                    // SICHERHEITS-CHECK: Stimmt der deklarierte Sender im Guard
+                    // mit dem tatsächlichen Signatur-Geber des Bündels überein?
+                    if payload.sender_permanent_did != bundle.sender_id {
+                        return Err(ValidationError::MismatchedPrivacySenderId {
+                            declared: payload.sender_permanent_did,
+                            actual: bundle.sender_id.clone(),
+                        }.into());
+                    }
+
+                    // Check target_prefix (Simple validation)
+                    if !identity.user_id.starts_with(&payload.target_prefix) {
+                        // Optional: Warning or Error if not addressed to us?
+                        // For now we allow it if we could decrypt it, but we log it.
                     }
                 }
             }
@@ -384,6 +483,7 @@ impl Wallet {
         recipient_id: &str,
         amount_to_send: &str,
         archive: Option<&dyn VoucherArchive>,
+        use_privacy_mode: Option<bool>,
     ) -> Result<Voucher, VoucherCoreError> {
         let instance = self
             .voucher_store
@@ -393,6 +493,28 @@ impl Wallet {
         if !matches!(instance.status, VoucherStatus::Active) {
             return Err(VoucherCoreError::VoucherNotActive(instance.status.clone()));
         }
+
+        // --- NEU: Sperre für Gutscheine in der (nahen) Zukunft ---
+        if let Some(last_tx) = instance.voucher.transactions.last() {
+            let now_str = crate::services::utils::get_current_timestamp();
+            if last_tx.t_time > now_str {
+                let now = chrono::DateTime::parse_from_rfc3339(&now_str).unwrap();
+                let until = chrono::DateTime::parse_from_rfc3339(&last_tx.t_time).unwrap();
+                let diff = until.signed_duration_since(now);
+                let wait_duration = format!(
+                    "{}h {}m {}s",
+                    diff.num_hours(),
+                    diff.num_minutes() % 60,
+                    diff.num_seconds() % 60
+                );
+                return Err(VoucherCoreError::VoucherLockedUntil {
+                    until: last_tx.t_time.clone(),
+                    now: now_str,
+                    wait_duration,
+                });
+            }
+        }
+
         let voucher_to_spend = instance.voucher.clone();
 
         let last_tx = voucher_to_spend.transactions.last().ok_or_else(|| {
@@ -437,14 +559,15 @@ impl Wallet {
             });
         }
 
-        let (new_voucher_state, _secrets) = voucher_manager::create_transaction(
+        let (new_voucher_state, _secrets) = crate::services::voucher_manager::create_transaction(
             &voucher_to_spend,
             standard_definition,
             &identity.user_id,
-            &identity.signing_key, // Permanent Key (für Trap ID)
-            &sender_ephemeral_key, // Ephemeral Key (für L2 Sig / Anchor)
+            &identity.signing_key,
+            &sender_ephemeral_key,
             recipient_id,
             amount_to_send,
+            use_privacy_mode,
         )?;
 
         // KORREKTE LOGIK ZUR ZUSTANDSVERWALTUNG:
@@ -453,9 +576,12 @@ impl Wallet {
 
         // 2. Bestimme den Status des neuen Gutschein-Zustands für den Sender.
         if let Some(last_tx) = new_voucher_state.transactions.last() {
-            let (new_status, owner_id) = if last_tx.sender_id.as_ref() == Some(&identity.user_id)
-                && last_tx.sender_remaining_amount.is_some()
-            {
+            // Wir sind der Sender, wenn unsere ID übereinstimmt ODER wenn die Transaktion anonym ist 
+            // (da wir sie gerade selbst durch _execute_single_transfer erstellt haben).
+            let is_sender = last_tx.sender_id.as_ref() == Some(&identity.user_id) 
+                || (last_tx.sender_id.is_none() && last_tx.recipient_id == crate::models::voucher::ANONYMOUS_ID);
+
+            let (new_status, owner_id) = if is_sender && last_tx.sender_remaining_amount.is_some() {
                 // Es ist ein Split, der Sender behält einen aktiven Restbetrag.
                 (VoucherStatus::Active, &identity.user_id)
             } else {
@@ -558,6 +684,7 @@ impl Wallet {
                 &request.recipient_id,
                 &source.amount_to_send,
                 archive,
+                request.use_privacy_mode,
             )?;
 
             vouchers_for_bundle.push(new_voucher);
@@ -604,79 +731,70 @@ impl Wallet {
             )
         })?;
 
-        // Fall A: Die letzte Transaktion war von UNS (Split/Change)
-        if last_tx.sender_id.as_ref() == Some(&identity.user_id)
-            && last_tx.sender_remaining_amount.is_some()
-        {
-            // Re-Derive Change Key via HKDF
-            let sender_id_prefix = identity
-                .user_id
-                .split('@')
-                .next()
-                .unwrap_or(&identity.user_id)
-                .to_string();
-            let prev_hash = &last_tx.prev_hash; // Salt 
-            // ACHTUNG: Bei Change Key müssen wir den HASH DER VORHERIGEN TX nehmen?
-            // Nein, laut Spec/Manager Logik ist es der Hash der INPUT-Tx.
-            // Aber Moment: Der Change-Output wurde in DIESER Tx ("last_tx") erzeugt.
-            // Der "prev_hash" in "last_tx" bezieht sich auf die Transaktion DAVOR.
-            // Das ist korrekt, denn HKDF nutzt (prev_hash, IKM).
-
-            let ikm = identity.signing_key.to_bytes();
-            let (prk, _) = Hkdf::<Sha256>::extract(Some(prev_hash.as_bytes()), &ikm);
-            let hkdf = Hkdf::<Sha256>::from_prk(&prk)
-                .map_err(|_| VoucherCoreError::Crypto("Invalid PRK length".to_string()))?;
-
+        // 1. Prüfe, ob wir der SENDER sind (Change/Wechselgeld) via Krypto-Matching
+        // Wir versuchen den Change-Key deterministisch abzuleiten und vergleichen den Hash.
+        let sender_id_prefix = identity
+            .user_id
+            .split('@')
+            .next()
+            .unwrap_or(&identity.user_id)
+            .to_string();
+        let ikm = identity.signing_key.to_bytes();
+        let prev_hash = &last_tx.prev_hash; 
+        
+        let (prk, _) = Hkdf::<Sha256>::extract(Some(prev_hash.as_bytes()), &ikm);
+        if let Ok(hkdf) = Hkdf::<Sha256>::from_prk(&prk) {
             let info = format!("{}change_seed", sender_id_prefix);
             let mut change_seed = [0u8; 32];
-            hkdf.expand(info.as_bytes(), &mut change_seed)
-                .map_err(|e| VoucherCoreError::Crypto(format!("HKDF re-derive failed: {}", e)))?;
-
-            return Ok(SigningKey::from_bytes(&change_seed));
+            if hkdf.expand(info.as_bytes(), &mut change_seed).is_ok() {
+                let candidate_key = SigningKey::from_bytes(&change_seed);
+                let candidate_hash = crate::services::crypto_utils::get_hash(candidate_key.verifying_key().to_bytes());
+                
+                if Some(&candidate_hash) == last_tx.change_ephemeral_pub_hash.as_ref() {
+                    return Ok(candidate_key);
+                }
+            }
         }
 
-        // Fall B: Die letzte Transaktion war an UNS (Received)
-        // Wir müssen den Privacy Guard entschlüsseln.
+        // 2. Prüfe, ob wir der EMPFÄNGER sind (Received) via Privacy Guard
         if let Some(guard_base64) = &last_tx.privacy_guard {
-            // Verwende die Helper-Funktion in crypto_utils
-            let decrypted_payload_bytes = crate::services::crypto_utils::decrypt_recipient_payload(
+            if let Ok(decrypted_payload_bytes) = crate::services::crypto_utils::decrypt_recipient_payload(
                 guard_base64,
                 &identity.signing_key,
-            )
-            .map_err(|e| {
-                VoucherCoreError::Crypto(format!("Failed to decrypt privacy guard: {}", e))
-            })?;
-
-            let payload = serde_json::from_slice::<crate::models::voucher::RecipientPayload>(
-                &decrypted_payload_bytes,
-            )
-            .map_err(|e| VoucherCoreError::Validation(ValidationError::Json(e)))?;
-
-            // Seed extrahieren
-            let seed_bytes = bs58::decode(&payload.next_key_seed)
-                .into_vec()
-                .map_err(|e| {
-                    VoucherCoreError::Crypto(format!("Invalid base58 in payload seed: {}", e))
-                })?;
-            let seed_arr: [u8; 32] = seed_bytes.try_into().map_err(|_| {
-                VoucherCoreError::Crypto("Invalid seed length in payload".to_string())
-            })?;
-            return Ok(SigningKey::from_bytes(&seed_arr));
+                &identity.user_id,
+            ) {
+                if let Ok(payload) = serde_json::from_slice::<crate::models::voucher::RecipientPayload>(&decrypted_payload_bytes) {
+                    if let Ok(seed_bytes) = bs58::decode(&payload.next_key_seed).into_vec() {
+                        if let Ok(seed_arr) = seed_bytes.try_into() {
+                            let candidate_key = SigningKey::from_bytes(&seed_arr);
+                            let candidate_hash = crate::services::crypto_utils::get_hash(candidate_key.verifying_key().to_bytes());
+                            
+                            if Some(&candidate_hash) == last_tx.receiver_ephemeral_pub_hash.as_ref() {
+                                return Ok(candidate_key);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        // Fall C: Init (Ersteller) - Sonderfall?
-        // Wenn ich Ersteller bin und den ersten Schritt machen will.
-        if last_tx.t_type == "init" && last_tx.sender_id.as_ref() == Some(&identity.user_id) {
-            // Init hat genesis key. "sender_ephemeral_pub" ist genesis PUB.
-            // Aber wo ist das SECRET?
-            // Ah, Init generiert "genesis" Key Pair aus Nonce.
-            // derive_ephemeral_key_pair(creator_signing_key, &nonce_bytes, "genesis")
+        // 3. Fallback: Public Mode / Init
+        if last_tx.sender_id.as_ref() == Some(&identity.user_id) && last_tx.sender_remaining_amount.is_some() {
+             let (prk, _) = Hkdf::<Sha256>::extract(Some(prev_hash.as_bytes()), &ikm);
+             let hkdf = Hkdf::<Sha256>::from_prk(&prk).map_err(|_| VoucherCoreError::Crypto("Invalid PRK".to_string()))?;
+             let info = format!("{}change_seed", sender_id_prefix);
+             let mut change_seed = [0u8; 32];
+             hkdf.expand(info.as_bytes(), &mut change_seed).map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+             return Ok(SigningKey::from_bytes(&change_seed));
+        }
 
+        // Fall C: Init (Ersteller)
+        if last_tx.t_type == "init" && last_tx.sender_id.as_ref() == Some(&identity.user_id) {
             let nonce_bytes = bs58::decode(&voucher.voucher_nonce)
                 .into_vec()
                 .map_err(|_| VoucherCoreError::Generic("Invalid nonce".to_string()))?;
 
-            let sender_id_prefix = identity.user_id.split(':').next().unwrap_or("unknown");
+            let sender_id_prefix = identity.user_id.split('@').next().unwrap_or("unknown");
 
             let (holder_secret, _) = crate::services::crypto_utils::derive_ephemeral_key_pair(
                 &identity.signing_key,
@@ -688,7 +806,7 @@ impl Wallet {
         }
 
         Err(VoucherCoreError::Generic(
-            "Could not rederive secret seed: No valid strategy found.".to_string(),
+            "Could not rederive secret seed: No valid ownership strategy found (neither Change nor Receiver hash matches).".to_string(),
         ))
     }
 }

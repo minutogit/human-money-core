@@ -19,6 +19,7 @@ pub mod wallet;
 // Modelle
 pub use error::VoucherCoreError;
 pub use models::profile::{UserIdentity, UserProfile, VoucherStore};
+pub use models::seal::{LocalSealRecord, SealPayload, SealSyncState, SyncStatus, WalletSeal};
 pub use models::voucher::{
     Address, Collateral, Transaction, ValueDefinition, Voucher, VoucherSignature, VoucherStandard,
 };

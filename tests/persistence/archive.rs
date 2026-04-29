@@ -52,6 +52,7 @@ fn test_voucher_archiving_on_full_spend() {
         own_fingerprints: Default::default(),
         proof_store: Default::default(),
         fingerprint_metadata: CanonicalMetadataStore::default(),
+        local_instance_id: "test-id".to_string(),
     };
 
     // Erstelle Alices Archiv im temporären Verzeichnis.
@@ -111,6 +112,7 @@ fn test_voucher_archiving_on_full_spend() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();

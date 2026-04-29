@@ -5,7 +5,7 @@ use crate::models::voucher::{
     Collateral, RecipientPayload, Transaction, ValueDefinition, Voucher, VoucherSignature,
     VoucherStandard,
 };
-use crate::models::voucher_standard_definition::VoucherStandardDefinition;
+use crate::models::voucher_standard_definition::{PrivacyMode, VoucherStandardDefinition};
 use crate::services::crypto_utils::{
     derive_ephemeral_key_pair, ed25519_pk_to_curve_point, encode_base64, encrypt_data,
     generate_ephemeral_x25519_keypair, get_hash, get_hash_from_slices, get_pubkey_from_user_id,
@@ -321,7 +321,7 @@ pub fn create_voucher(
     let initial_amount = Decimal::from_str(&temp_voucher.nominal_value.amount)?;
     init_transaction.amount = decimal_utils::format_for_storage(&initial_amount, decimal_places);
 
-    let creator_prefix = creator_id.split(':').next().unwrap_or("unknown");
+    let creator_prefix = creator_id.split('@').next().unwrap_or("unknown");
     let (genesis_secret, genesis_public) = derive_ephemeral_key_pair(
         creator_signing_key,
         &nonce_bytes,
@@ -546,10 +546,11 @@ pub fn create_transaction(
     voucher: &Voucher,
     standard: &VoucherStandardDefinition,
     sender_id: &str,
-    sender_permanent_key: &SigningKey, // Für Trap (ID)
-    sender_ephemeral_key: &SigningKey, // Für L2-Signatur und Anker-Auflösung
+    sender_permanent_key: &SigningKey,
+    sender_ephemeral_key: &SigningKey,
     recipient_id: &str,
     amount_to_send_str: &str,
+    use_privacy_mode: Option<bool>,
 ) -> Result<(Voucher, TransactionSecrets), VoucherCoreError> {
     crate::services::voucher_validation::validate_voucher_against_standard(voucher, standard)?;
 
@@ -557,7 +558,17 @@ pub fn create_transaction(
 
     let decimal_places = standard.immutable.features.amount_decimal_places as u32;
 
-    let spendable_balance = get_spendable_balance(voucher, sender_id, standard)?;
+    // BERECHNUNG DES GUTHABENS (Krypto-Matching):
+    let revealed_pub_bytes = sender_ephemeral_key.verifying_key().to_bytes();
+    let revealed_pub_hash = get_hash(revealed_pub_bytes);
+    
+    let spendable_balance = get_spendable_balance(
+        voucher, 
+        sender_id, 
+        standard, 
+        Some(&revealed_pub_hash)
+    )?;
+
     let amount_to_send = Decimal::from_str(amount_to_send_str)?;
     decimal_utils::validate_precision(&amount_to_send, decimal_places)?;
 
@@ -604,44 +615,39 @@ pub fn create_transaction(
     let prev_hash = get_hash(to_canonical_json(voucher.transactions.last().unwrap())?);
     let t_time = get_current_timestamp();
 
-    // PRIVACY MODE CHECK
-    use crate::models::voucher_standard_definition::PrivacyMode;
-    let privacy_mode = &standard.immutable.features.privacy_mode;
-
-    // Determine Sender ID Visibility
-    let final_sender_id = match privacy_mode {
-        PrivacyMode::Public => Some(sender_id.to_string()),
-        PrivacyMode::Private => None,
-        PrivacyMode::Flexible => {
-            // Flexible: Sender decides.
-            // For this implementation: We use sender_id as explicit intent to be public.
-            Some(sender_id.to_string())
+    // Determine Identities based on Privacy Mode (Core Regulation)
+    let (final_sender_id, recipient_id_check) = match standard.immutable.features.privacy_mode {
+        PrivacyMode::Stealth => {
+            // Stealth Mode: Everything is anonymous. Ignore incoming IDs.
+            (None, crate::models::voucher::ANONYMOUS_ID.to_string())
         }
-    };
-
-
-    // Validate Recipient ID against Mode
-    let recipient_is_did = recipient_id.starts_with("did:") || recipient_id.contains("@did:");
-    let recipient_id_check = match privacy_mode {
+        PrivacyMode::Flexible => {
+            // Flexible Mode: Sender choice for self (actually_private), but recipient IS ALWAYS anonymous.
+            // Flexibility lies ONLY with the sender.
+            let actually_private = use_privacy_mode.unwrap_or(false);
+            let s_id = if actually_private { None } else { Some(sender_id.to_string()) };
+            (s_id, crate::models::voucher::ANONYMOUS_ID.to_string())
+        }
         PrivacyMode::Public => {
+            if use_privacy_mode.unwrap_or(false) {
+                return Err(VoucherManagerError::Generic(
+                    "Cannot use privacy mode on a public standard".to_string(),
+                ).into());
+            }
+            // Public Mode: Plaintext DIDs required for both.
+            let recipient_is_did = recipient_id.starts_with("did:") || recipient_id.contains("@did:");
             if !recipient_is_did {
                 return Err(VoucherManagerError::Generic(
                     "Public mode requires DID recipient.".to_string(),
-                )
-                .into());
+                ).into());
             }
-            recipient_id
-        }
-        PrivacyMode::Private => {
-            if recipient_is_did {
-                return Err(VoucherManagerError::Generic(
-                    "Private mode forbids DID recipient.".to_string(),
-                )
-                .into());
+            if sender_id == crate::models::voucher::ANONYMOUS_ID {
+                 return Err(VoucherManagerError::Generic(
+                    "Public mode forbids anonymous sender.".to_string(),
+                ).into());
             }
-            recipient_id
+            (Some(sender_id.to_string()), recipient_id.to_string())
         }
-        PrivacyMode::Flexible => recipient_id, // Both allowed
     };
 
     // 1. REVEAL: Der aktuelle Ephemeral Key wird veröffentlicht.
@@ -697,7 +703,7 @@ pub fn create_transaction(
 
     let privacy_guard = if recipient_id.contains(":z") {
         // Extrahiere Präfix aus sender_id für Payload (Sender-Info).
-        let _sender_prefix = sender_id.split(':').next().unwrap_or("unknown").to_string();
+        let _sender_prefix = sender_id.split('@').next().unwrap_or("unknown").to_string();
         let target_prefix = recipient_id
             .split(':')
             .next()
@@ -715,7 +721,7 @@ pub fn create_transaction(
         let (ephemeral_pk, ephemeral_sk) = generate_ephemeral_x25519_keypair();
         let recipient_ed_pk = get_pubkey_from_user_id(recipient_id)?;
         let recipient_x_pk = crate::services::crypto_utils::ed25519_pub_to_x25519(&recipient_ed_pk);
-        let shared_secret = perform_diffie_hellman(ephemeral_sk, &recipient_x_pk)?;
+        let shared_secret = perform_diffie_hellman(ephemeral_sk, &recipient_x_pk, recipient_id)?;
         let payload_json = to_canonical_json(&payload)?;
         let encrypted_bytes = encrypt_data(&shared_secret, payload_json.as_bytes())?;
 
@@ -923,7 +929,13 @@ fn validate_issuance_firewall(
 
     // 4. Zeit-Prüfung (Der Kern)
     // Sender ist Ersteller, Empfänger ist Dritter, Regel existiert.
-    let now = Utc::now();
+    let now_str = crate::services::utils::get_current_timestamp();
+    let now = DateTime::parse_from_rfc3339(&now_str)
+        .map_err(|e| {
+            VoucherManagerError::Generic(format!("Failed to parse now date: {}", e))
+        })?
+        .with_timezone(&Utc);
+
     let valid_until_dt = DateTime::parse_from_rfc3339(&voucher.valid_until)
         .map_err(|e| {
             VoucherManagerError::Generic(format!("Failed to parse voucher valid_until date: {}", e))
@@ -953,6 +965,7 @@ pub fn get_spendable_balance(
     voucher: &Voucher,
     user_id: &str,
     standard: &VoucherStandardDefinition,
+    current_holder_pub_hash: Option<&str>,
 ) -> Result<Decimal, VoucherCoreError> {
     if voucher.transactions.is_empty() {
         return Ok(Decimal::ZERO);
@@ -971,12 +984,32 @@ pub fn get_spendable_balance(
     let last_tx = voucher.transactions.last().unwrap();
     let decimal_places = standard.immutable.features.amount_decimal_places as u32;
 
-    let balance_str = if last_tx.recipient_id == user_id {
-        &last_tx.amount
-    } else if last_tx.sender_id.as_deref() == Some(user_id) {
-        last_tx.sender_remaining_amount.as_deref().unwrap_or("0")
+    let balance_str = if let Some(hash) = current_holder_pub_hash {
+        // --- Mathematische UTXO-Zuweisung via Stealth Key Hash ---
+        if Some(hash) == last_tx.receiver_ephemeral_pub_hash.as_deref() {
+            &last_tx.amount
+        } else if Some(hash) == last_tx.change_ephemeral_pub_hash.as_deref() {
+            last_tx.sender_remaining_amount.as_deref().unwrap_or("0")
+        } else {
+            // Wenn der Hash nicht passt, hat der Nutzer kein Guthaben in diesem Voucher.
+            "0"
+        }
     } else {
-        "0"
+        // --- Fallback auf ID-basierte Logik (Public Mode) ---
+        if last_tx.t_type == "init" && last_tx.recipient_id == user_id {
+            // Bei der initialen Transaktion ist der Ersteller immer der Empfänger des Gesamtwerts.
+            &last_tx.amount
+        } else if last_tx.t_type == "init" {
+            "0"
+        } else if last_tx.sender_id.as_deref() == Some(user_id) {
+            // Wir sind der explizite Sender -> Zeige unser Restgeld (Change)
+            last_tx.sender_remaining_amount.as_deref().unwrap_or("0")
+        } else if last_tx.recipient_id == user_id {
+            // Wir sind der explizite Empfänger -> Zeige den Empfangsbetrag
+            &last_tx.amount
+        } else {
+            "0"
+        }
     };
 
     let balance = Decimal::from_str(balance_str)?;

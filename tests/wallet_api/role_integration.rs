@@ -61,17 +61,24 @@ fn test_integration_detects_victim_role() {
 
     // --- 3. Wir simulieren einen Beweis für einen FRÜHEREN Transfer an Charlie ---
     let time_early = (Utc::now() - Duration::hours(1)).to_rfc3339();
-    let mut tx_early = Transaction {
+    let tx_early_raw = Transaction {
         prev_hash: prev_tx_hash.clone(),
         t_type: "transfer".to_string(),
         t_time: time_early,
         sender_id: Some(id_alice.clone()),
-        recipient_id: ACTORS.charlie.user_id.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(alice_holder_pub.clone()),
         ..Default::default()
     };
-    tx_early.t_id = crypto_utils::get_hash(human_money_core::services::utils::to_canonical_json(&tx_early).unwrap());
+    let v_id = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&voucher_base.transactions[0]).unwrap();
+    let tx_early = test_utils::resign_transaction_with_privacy(
+        tx_early_raw,
+        &identity_alice.signing_key,
+        &v_id,
+        Some(&alice_holder_key),
+        &ACTORS.charlie.user_id.clone(), // Use a real actor for valid DID format
+    );
 
     let proof = ProofOfDoubleSpend {
         proof_id: "test-proof-victim".to_string(),
@@ -153,40 +160,53 @@ fn test_integration_detects_witness_role_on_split_win() {
     let time_late = (Utc::now() + Duration::seconds(30)).to_rfc3339();
 
     // Pfad A (Early)
-    let mut tx_early = Transaction {
+    let tx_early_raw = Transaction {
         prev_hash: prev_tx_hash.clone(),
         t_type: "transfer".to_string(),
         t_time: time_early,
         sender_id: Some(id_bob.clone()),
-        recipient_id: id_alice.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(bob_holder_pub.clone()),
         ..Default::default()
     };
-    tx_early.t_id = crypto_utils::get_hash(human_money_core::services::utils::to_canonical_json(&tx_early).unwrap());
+    let v_id = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&voucher_base.transactions[0]).unwrap();
+    let tx_early = test_utils::resign_transaction_with_privacy(
+        tx_early_raw,
+        &identity_bob.signing_key,
+        &v_id,
+        Some(&bob_holder_key),
+        &id_alice,
+    );
     let mut v_early = voucher_base.clone();
     v_early.transactions.push(tx_early);
     let bundle_early = test_utils::create_test_bundle(&identity_bob, vec![v_early], &id_alice, None).unwrap();
 
     // Pfad B (Late)
-    let mut tx_late = Transaction {
+    let tx_late_raw = Transaction {
         prev_hash: prev_tx_hash,
         t_type: "transfer".to_string(),
         t_time: time_late,
         sender_id: Some(id_bob.clone()),
-        recipient_id: id_alice.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(bob_holder_pub),
         ..Default::default()
     };
-    tx_late.t_id = crypto_utils::get_hash(human_money_core::services::utils::to_canonical_json(&tx_late).unwrap());
+    let tx_late = test_utils::resign_transaction_with_privacy(
+        tx_late_raw,
+        &identity_bob.signing_key,
+        &v_id,
+        Some(&bob_holder_key),
+        &id_alice,
+    );
     let mut v_late = voucher_base.clone();
     v_late.transactions.push(tx_late);
     let bundle_late = test_utils::create_test_bundle(&identity_bob, vec![v_late], &id_alice, None).unwrap();
 
     // --- 4. Alice empfängt beide ---
-    service_alice.receive_bundle(&bundle_early, &standards_map, None, Some("pwd")).unwrap();
-    service_alice.receive_bundle(&bundle_late, &standards_map, None, Some("pwd")).unwrap();
+    service_alice.receive_bundle(&bundle_early, &standards_map, None, Some("pwd"), false).unwrap();
+    service_alice.receive_bundle(&bundle_late, &standards_map, None, Some("pwd"), false).unwrap();
 
     // --- 5. ASSERT ---
     let conflicts = service_alice.list_conflicts().unwrap();

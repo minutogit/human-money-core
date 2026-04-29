@@ -6,6 +6,7 @@
 use super::{AuthMethod, Storage, StorageError};
 use crate::models::conflict::CanonicalMetadataStore;
 use crate::models::conflict::{KnownFingerprints, OwnFingerprints, ProofStore};
+use crate::models::storage_integrity::INTEGRITY_FILE_NAME;
 use crate::models::profile::{BundleMetadataStore, UserIdentity, UserProfile, VoucherStore};
 use crate::services::crypto_utils;
 #[cfg(not(any(test, feature = "test-utils")))]
@@ -29,6 +30,7 @@ const KNOWN_FINGERPRINTS_FILE_NAME: &str = "known_fingerprints.enc";
 const PROOF_STORE_FILE_NAME: &str = "proofs.enc";
 const OWN_FINGERPRINTS_FILE_NAME: &str = "own_fingerprints.enc";
 const FINGERPRINT_METADATA_FILE_NAME: &str = "fingerprint_metadata.enc";
+const SEAL_FILE_NAME: &str = "seal.enc";
 
 /// Privates Modul zur Kapselung der Serde-Logik für Base64-Kodierung von Vektoren.
 mod base64_serde {
@@ -148,6 +150,13 @@ struct FingerprintMetadataContainer {
     encrypted_store_payload: Vec<u8>,
 }
 
+/// Container für den verschlüsselten `LocalSealRecord`.
+#[derive(Serialize, Deserialize)]
+struct SealStorageContainer {
+    #[serde(with = "base64_serde")]
+    encrypted_store_payload: Vec<u8>,
+}
+
 // --- FileStorage Implementierung ---
 
 /// Eine Implementierung des `Storage`-Traits, die Daten in verschlüsselten Dateien speichert.
@@ -173,11 +182,6 @@ impl FileStorage {
             lock_file_path: path_buf.join(LOCK_FILE_NAME),
             user_storage_path: path_buf,
         }
-    }
-
-    /// Erstellt einen Hash des Benutzer-IDs für die Verwendung in Dateinamen.
-    fn get_user_hash(user_id: &str) -> String {
-        crypto_utils::get_hash(user_id.as_bytes())
     }
 
     /// Lädt den `ProfileStorageContainer`, um an die Schlüssel-Metadaten zu gelangen.
@@ -774,7 +778,7 @@ impl Storage for FileStorage {
     /// Speichert einen beliebigen, benannten Datenblock verschlüsselt.
     fn save_arbitrary_data(
         &mut self,
-        user_id: &str,
+        _user_id: &str,
         auth: &AuthMethod,
         name: &str,
         data: &[u8],
@@ -782,11 +786,11 @@ impl Storage for FileStorage {
         // 1. Hole den Master-Schlüssel, der für alle Operationen dieses Wallets verwendet wird.
         let master_key = self.get_master_key_from_auth(auth)?;
 
-        // 2. Erstelle einen sicheren, benutzerspezifischen Dateipfad.
-        let user_hash = Self::get_user_hash(user_id);
+        // 2. Erstelle einen sicheren Dateipfad (isoliert im Profil-Ordner).
+        // Wir verzichten auf den user_hash im Dateinamen, um Privacy-Leaks zu vermeiden.
         let path = self
             .user_storage_path
-            .join(format!("generic_{}.{}.enc", name, user_hash));
+            .join(format!("generic_{}.enc", name));
 
         // 3. Verschlüssele die Daten und speichere sie.
         let ciphertext = crypto_utils::encrypt_data(&master_key, data)
@@ -799,7 +803,7 @@ impl Storage for FileStorage {
     /// Lädt einen beliebigen, benannten und verschlüsselten Datenblock.
     fn load_arbitrary_data(
         &self,
-        user_id: &str,
+        _user_id: &str,
         auth: &AuthMethod,
         name: &str,
     ) -> Result<Vec<u8>, StorageError> {
@@ -807,10 +811,9 @@ impl Storage for FileStorage {
         let master_key = self.get_master_key_from_auth(auth)?;
 
         // 2. Konstruiere den Pfad, unter dem die Daten erwartet werden.
-        let user_hash = Self::get_user_hash(user_id);
         let path = self
             .user_storage_path
-            .join(format!("generic_{}.{}.enc", name, user_hash));
+            .join(format!("generic_{}.enc", name));
 
         if !path.exists() {
             return Err(StorageError::NotFound);
@@ -899,6 +902,149 @@ impl Storage for FileStorage {
 
     fn get_lock_file_path(&self) -> &std::path::PathBuf {
         &self.lock_file_path
+    }
+
+    fn save_seal(
+        &mut self,
+        _user_id: &str,
+        auth: &AuthMethod,
+        record: &crate::models::seal::LocalSealRecord,
+    ) -> Result<(), StorageError> {
+        let seal_path = self.user_storage_path.join(SEAL_FILE_NAME);
+        let file_key = self.get_master_key_from_auth(auth)?;
+
+        let store_payload =
+            crypto_utils::encrypt_data(&file_key, &serde_json::to_vec(record).unwrap())
+                .map_err(|e| StorageError::Generic(e.to_string()))?;
+        let store_container = SealStorageContainer {
+            encrypted_store_payload: store_payload,
+        };
+
+        let store_tmp_path = self
+            .user_storage_path
+            .join(format!("{}.tmp", SEAL_FILE_NAME));
+        fs::write(
+            &store_tmp_path,
+            serde_json::to_vec(&store_container).unwrap(),
+        )?;
+        fs::rename(&store_tmp_path, &seal_path)?;
+
+        Ok(())
+    }
+
+    fn load_seal(
+        &self,
+        _user_id: &str,
+        auth: &AuthMethod,
+    ) -> Result<Option<crate::models::seal::LocalSealRecord>, StorageError> {
+        let seal_path = self.user_storage_path.join(SEAL_FILE_NAME);
+        if !seal_path.exists() {
+            return Ok(None);
+        }
+
+        let file_key = self.get_master_key_from_auth(auth)?;
+
+        let seal_container_bytes = fs::read(seal_path)?;
+        let seal_container: SealStorageContainer =
+            serde_json::from_slice(&seal_container_bytes)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+
+        let store_bytes =
+            crypto_utils::decrypt_data(&file_key, &seal_container.encrypted_store_payload)
+                .map_err(|e| {
+                    StorageError::InvalidFormat(format!("Failed to decrypt seal: {}", e))
+                })?;
+
+        let record: crate::models::seal::LocalSealRecord = serde_json::from_slice(&store_bytes)
+            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+
+        Ok(Some(record))
+    }
+
+    fn get_item_hash(&self, name: &str) -> Result<String, StorageError> {
+        let path = self.user_storage_path.join(name);
+        if !path.exists() {
+            return Err(StorageError::NotFound);
+        }
+        let bytes = fs::read(path)?;
+        Ok(crypto_utils::get_hash(&bytes))
+    }
+
+    fn save_integrity(
+        &mut self,
+        _user_id: &str,
+        record: &crate::models::storage_integrity::LocalIntegrityRecord,
+    ) -> Result<(), StorageError> {
+        let path = self.user_storage_path.join(INTEGRITY_FILE_NAME);
+        let tmp_path = self
+            .user_storage_path
+            .join(format!("{}.tmp", INTEGRITY_FILE_NAME));
+
+        let json = serde_json::to_vec_pretty(record)
+            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+
+        fs::write(&tmp_path, json)?;
+        fs::rename(&tmp_path, &path)?;
+
+        Ok(())
+    }
+
+    fn load_integrity(
+        &self,
+        _user_id: &str,
+    ) -> Result<Option<crate::models::storage_integrity::LocalIntegrityRecord>, StorageError> {
+        let path = self.user_storage_path.join(INTEGRITY_FILE_NAME);
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let json = fs::read(path)?;
+        let record = serde_json::from_slice(&json)
+            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+
+        Ok(Some(record))
+    }
+
+    fn get_all_item_hashes(&self) -> Result<std::collections::HashMap<String, String>, StorageError> {
+        let mut hashes = std::collections::HashMap::new();
+        
+        let entries = fs::read_dir(&self.user_storage_path).map_err(StorageError::Io)?;
+        for entry in entries {
+            let entry = entry.map_err(StorageError::Io)?;
+            let file_name = entry.file_name();
+            let name_str = file_name.to_string_lossy();
+
+            // Ignoriere Verzeichnisse
+            if entry.file_type().map_err(StorageError::Io)?.is_dir() {
+                continue;
+            }
+
+            // Ignoriere die Integrity-Datei selbst (Zirkelbezug vermeiden)
+            if name_str == INTEGRITY_FILE_NAME {
+                continue;
+            }
+
+            // Ignoriere versteckte Dateien (z.B. .lock)
+            if name_str.starts_with('.') {
+                continue;
+            }
+
+            // Ignoriere den Session-Anker (neu und alt, um Privacy-Leaks in Integrity-Reports zu vermeiden)
+            if name_str.starts_with("generic___storage_session_anchor") {
+                continue;
+            }
+
+            // Ignoriere Seal-Dateien (diese werden bereits logisch über den seal_hash im IntegrityRecord geschützt)
+            if name_str == SEAL_FILE_NAME || (name_str.starts_with("seal_") && name_str.ends_with(".json")) {
+                continue;
+            }
+
+            if let Ok(hash) = self.get_item_hash(&name_str) {
+                hashes.insert(name_str.to_string(), hash);
+            }
+        }
+
+        Ok(hashes)
     }
 }
 

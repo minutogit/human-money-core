@@ -83,7 +83,7 @@ mod tests {
             std::fs::remove_file(&lock_file).unwrap();
         }
         service
-            .login(&profile.folder_name, "password", false)
+            .login(&profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         let wallet_state = service.get_unlocked_mut_for_test().0;
         let now = Utc::now();
@@ -151,7 +151,7 @@ mod tests {
             std::fs::remove_file(&lock_file).unwrap();
         }
         service
-            .login(&profile.folder_name, "password", false)
+            .login(&profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         let wallet = service.get_unlocked_mut_for_test().0;
         for i in 0..12 {
@@ -182,7 +182,7 @@ mod tests {
         let report = service
             .get_unlocked_mut_for_test()
             .0
-            .run_storage_cleanup(Some(10))
+            .run_storage_cleanup(Some(10), 2)
             .unwrap();
         assert_eq!(report.limit_based_fingerprints_removed, 2);
 
@@ -215,7 +215,7 @@ mod tests {
             std::fs::remove_file(&lock_file).unwrap();
         }
         service
-            .login(&profile.folder_name, PASSWORD, false)
+            .login(&profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
         let new_voucher_data = NewVoucherData {
             nominal_value: human_money_core::models::voucher::ValueDefinition {
@@ -249,9 +249,15 @@ mod tests {
         );
 
         std::fs::remove_file(metadata_path).unwrap();
+        // Auch das Siegel entfernen, da es den alten state_hash enthält.
+        // Bei echtem Datenverlust wäre das Siegel ebenfalls betroffen.
+        let seal_path = wallet_path.join("seal.enc");
+        if seal_path.exists() {
+            std::fs::remove_file(seal_path).unwrap();
+        }
 
         service
-            .login(&profile.folder_name, PASSWORD, false)
+            .login(&profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
         let wallet = service.get_unlocked_mut_for_test().0;
@@ -275,7 +281,7 @@ mod tests {
             std::fs::remove_file(&lock_file).unwrap();
         }
         service
-            .login(&profile.folder_name, PASSWORD, false)
+            .login(&profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
         let new_voucher_data = NewVoucherData {
             nominal_value: human_money_core::models::voucher::ValueDefinition {
@@ -300,9 +306,14 @@ mod tests {
         service.logout();
         std::fs::remove_file(wallet_path.join("own_fingerprints.enc")).unwrap();
         std::fs::remove_file(wallet_path.join("known_fingerprints.enc")).unwrap();
+        // Auch das Siegel entfernen, da es den alten state_hash enthält.
+        let seal_path = wallet_path.join("seal.enc");
+        if seal_path.exists() {
+            std::fs::remove_file(seal_path).unwrap();
+        }
 
         service
-            .login(&profile.folder_name, PASSWORD, false)
+            .login(&profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
         let wallet = service.get_unlocked_mut_for_test().0;
@@ -330,7 +341,7 @@ mod tests {
 
         // Alice einloggen
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false)
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
         // FIX: Provide a valid nominal_value
@@ -364,7 +375,7 @@ mod tests {
         // Die statische ID in ACTORS.bob unterscheidet sich von der im Service generierten ID
         // aufgrund unterschiedlicher Key-Derivation-Methoden (Test-Fast vs. Prod-Slow).
         bob_service
-            .login(&bob_profile.folder_name, "password", false)
+            .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         let bob_id = bob_service.get_user_id().unwrap();
         bob_service.logout();
@@ -377,6 +388,7 @@ mod tests {
                 }],
                 notes: None,
                 sender_profile_name: None,
+        use_privacy_mode: None,
             };
 
             let mut standards_toml = std::collections::HashMap::new();
@@ -399,7 +411,7 @@ mod tests {
 
         // Bob einloggen und Bundle empfangen
         bob_service
-            .login(&bob_profile.folder_name, "password", false)
+            .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         let mut standards = HashMap::new();
         standards.insert(
@@ -407,7 +419,7 @@ mod tests {
             toml::to_string(&SILVER_STANDARD.0).unwrap(),
         );
         bob_service
-            .receive_bundle(&bundle1, &standards, None, Some("password"))
+            .receive_bundle(&bundle1, &standards, None, Some("password"), false)
             .unwrap();
         let bob_local_id = bob_service.get_voucher_summaries(None, None).unwrap()[0]
             .local_instance_id
@@ -416,7 +428,7 @@ mod tests {
         // Tx 3: Bob -> Alice
         // FIX: Hole die echte ID von Alice
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false)
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
         let alice_id = alice_service.get_user_id().unwrap();
         alice_service.logout();
@@ -429,6 +441,7 @@ mod tests {
             }],
             notes: None,
             sender_profile_name: None,
+        use_privacy_mode: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(
@@ -447,10 +460,10 @@ mod tests {
 
         // Alice wieder einloggen und Bundle empfangen
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false)
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
         alice_service
-            .receive_bundle(&bundle2, &standards, None, Some(PASSWORD))
+            .receive_bundle(&bundle2, &standards, None, Some(PASSWORD), false)
             .unwrap();
 
         // DEBUG: Check Alice's voucher store state before logout
@@ -472,10 +485,15 @@ mod tests {
         let wallet_path = dir.path().join(&alice_profile.folder_name);
         alice_service.logout();
         std::fs::remove_file(wallet_path.join("fingerprint_metadata.enc")).unwrap();
+        // Auch das Siegel entfernen, da es den alten state_hash enthält.
+        let seal_path = wallet_path.join("seal.enc");
+        if seal_path.exists() {
+            std::fs::remove_file(seal_path).unwrap();
+        }
 
         // WHEN: Alice' Wallet wird wiederhergestellt
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false)
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
         // THEN: Die `depth` der Transaktionen in der Kette ist korrekt initialisiert (0=neueste, 1, 2=älteste)
@@ -533,7 +551,7 @@ mod tests {
 
         // Alice einloggen
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false)
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
         let fp_key = "test_fp_key".to_string();
@@ -553,7 +571,7 @@ mod tests {
 
         // Bob einloggen und Metadaten setzen
         bob_service
-            .login(&bob_profile.folder_name, "password", false)
+            .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         bob_service
             .get_unlocked_mut_for_test()
@@ -574,7 +592,7 @@ mod tests {
 
         // Alice wieder einloggen und Bundle erstellen
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false)
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
         let bundle_bytes =
             create_and_send_fingerprint_bundle(&mut alice_service, &bob_id, vec![(fingerprint, 2)]);
@@ -584,7 +602,7 @@ mod tests {
 
         // Bob wieder einloggen und Bundle empfangen
         bob_service
-            .login(&bob_profile.folder_name, "password", false)
+            .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         let (_, bob_identity) = bob_service.get_unlocked_mut_for_test();
         println!(
@@ -593,7 +611,7 @@ mod tests {
         );
 
         bob_service
-            .receive_bundle(&bundle_bytes, &HashMap::new(), None, Some("password"))
+            .receive_bundle(&bundle_bytes, &HashMap::new(), None, Some("password"), false)
             .unwrap();
 
         let (bob_wallet, _) = bob_service.get_unlocked_mut_for_test();
@@ -621,7 +639,7 @@ mod tests {
 
         // Bob einloggen und Metadaten setzen
         bob_service
-            .login(&bob_profile.folder_name, "password", false)
+            .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         let fp_key = "test_fp_key".to_string();
         let fingerprint = TransactionFingerprint {
@@ -657,7 +675,7 @@ mod tests {
 
         // Alice einloggen und Bundle erstellen
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false)
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
         let bundle_bytes =
             create_and_send_fingerprint_bundle(&mut alice_service, &bob_id, vec![(fingerprint, 5)]); // sender_depth + 1 = 6
@@ -667,7 +685,7 @@ mod tests {
 
         // Bob (immer noch eingeloggt) empfängt das Bundle
         bob_service
-            .receive_bundle(&bundle_bytes, &HashMap::new(), None, Some("password"))
+            .receive_bundle(&bundle_bytes, &HashMap::new(), None, Some("password"), false)
             .unwrap();
 
         let (bob_wallet, _) = bob_service.get_unlocked_mut_for_test();
@@ -693,7 +711,7 @@ mod tests {
 
         // Alice einloggen
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false)
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
         let new_voucher_data = NewVoucherData {
@@ -740,6 +758,7 @@ mod tests {
             }],
             notes: None,
             sender_profile_name: None,
+        use_privacy_mode: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(
@@ -783,7 +802,7 @@ mod tests {
 
         // Alice einloggen
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false)
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
         let (wallet, alice_identity) = alice_service.get_unlocked_mut_for_test();
         for i in 0..5 {
@@ -818,7 +837,7 @@ mod tests {
 
         // FIX: Hole die echte ID von Bob (da Test-User andere IDs haben können als ACTORS)
         bob_service
-            .login(&bob_profile.folder_name, "password", false)
+            .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         let bob_id = bob_service.get_user_id().unwrap();
         bob_service.logout();
@@ -842,7 +861,7 @@ mod tests {
 
         // THEN: Wir öffnen das Bundle, um zu prüfen, was ausgewählt wurde.
         bob_service
-            .login(&bob_profile.folder_name, "password", false)
+            .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         let bob_identity = &bob_service.get_unlocked_mut_for_test().1;
         let bundle = bundle_processor::open_and_verify_bundle(bob_identity, &bundle_bytes).unwrap();
@@ -879,14 +898,14 @@ mod tests {
 
         // Bob einloggen um ID zu bekommen
         bob_service
-            .login(&bob_profile.folder_name, "password", false)
+            .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         let bob_id = bob_service.get_user_id().unwrap();
         bob_service.logout();
 
         // Alice einloggen
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false)
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
         let (wallet, alice_identity) = alice_service.get_unlocked_mut_for_test();
         let key = "key_already_known".to_string();
@@ -931,7 +950,7 @@ mod tests {
 
         // THEN: Der bereits bekannte Fingerprint wird nicht erneut gesendet.
         bob_service
-            .login(&bob_profile.folder_name, "password", false)
+            .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         let bob_identity = &bob_service.get_unlocked_mut_for_test().1;
         let bundle = bundle_processor::open_and_verify_bundle(bob_identity, &bundle_bytes).unwrap();
@@ -961,7 +980,7 @@ mod tests {
 
         // Alice einloggen
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false)
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
         let (wallet, alice_identity) = alice_service.get_unlocked_mut_for_test();
 
@@ -994,7 +1013,7 @@ mod tests {
 
         // FIX: Hole die echte ID von Bob
         bob_service
-            .login(&bob_profile.folder_name, "password", false)
+            .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         let bob_id = bob_service.get_user_id().unwrap();
         bob_service.logout();
@@ -1018,7 +1037,7 @@ mod tests {
 
         // THEN: Das Kontingent von 150 wird exakt gefüllt
         bob_service
-            .login(&bob_profile.folder_name, "password", false)
+            .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         let bob_identity = &bob_service.get_unlocked_mut_for_test().1;
         let bundle = bundle_processor::open_and_verify_bundle(bob_identity, &bundle_bytes).unwrap();

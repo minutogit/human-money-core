@@ -31,7 +31,7 @@ mod tests {
             std::fs::remove_file(&lock_file).unwrap();
         }
         service
-            .login(&profile.folder_name, PASSWORD, false)
+            .login(&profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
         let wallet = service.get_unlocked_mut_for_test().0;
@@ -101,7 +101,7 @@ mod tests {
             std::fs::remove_file(&lock_file).unwrap();
         }
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false)
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
         // Erstelle einen Gutschein mit 100 Einheiten
@@ -138,7 +138,7 @@ mod tests {
 
         // Führe einen Split durch ( sende 40 an Bob, behalte 60)
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false)
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
         let request = human_money_core::wallet::MultiTransferRequest {
             recipient_id: ACTORS.bob.user_id.clone(),
@@ -148,6 +148,7 @@ mod tests {
             }],
             notes: None,
             sender_profile_name: None,
+        use_privacy_mode: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(
@@ -167,8 +168,13 @@ mod tests {
         // WHEN: Die Metadaten werden gelöscht und das Wallet wiederhergestellt.
         let metadata_path = wallet_path.join("fingerprint_metadata.enc");
         std::fs::remove_file(metadata_path).unwrap();
+        // Auch das Siegel entfernen, da es den alten state_hash enthält.
+        let seal_path = wallet_path.join("seal.enc");
+        if seal_path.exists() {
+            std::fs::remove_file(seal_path).unwrap();
+        }
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false)
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
         // THEN: Die `depth`-Werte der Kette sind korrekt initialisiert.
@@ -232,7 +238,7 @@ mod tests {
             std::fs::remove_file(&lock_file).unwrap();
         }
         service
-            .login(&profile.folder_name, PASSWORD, false)
+            .login(&profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
         assert!(
@@ -267,5 +273,36 @@ mod tests {
         assert!(final_wallet.own_fingerprints.history.is_empty());
 
         service.logout();
+    }
+
+    #[test]
+    fn test_security_trap_detects_bad_instance_id_storage() {
+        use human_money_core::app_service::AppService;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let tauri_app_dir = dir.path(); 
+        
+        // Wir simulieren, dass die Core in einem Unterordner "wallets" arbeitet
+        let base_storage_path = tauri_app_dir.join("wallets");
+        
+        // Der unvorsichtige App-Entwickler schreibt die Datei in den Tauri-App-Ordner (eine Ebene drüber)
+        std::fs::write(tauri_app_dir.join("instance_id"), "dummy-device-123").unwrap();
+        
+        let mut service = AppService::new(&base_storage_path).unwrap();
+        
+        // Versuch ein Profil zu erstellen, sollte sofort in die Falle laufen!
+        let result = service.create_profile(
+            "Trap Test", 
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", 
+            None, 
+            None, 
+            "password", 
+            human_money_core::services::mnemonic::MnemonicLanguage::English, 
+            "dummy-device-123".to_string()
+        );
+        
+        assert!(result.is_err(), "Die Falle hat nicht zugeschnappt!");
+        assert!(result.unwrap_err().contains("CRITICAL SECURITY VIOLATION"), "Falsche Fehlermeldung!");
     }
 }

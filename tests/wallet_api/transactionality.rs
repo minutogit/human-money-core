@@ -107,6 +107,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards_toml = std::collections::HashMap::new();
@@ -221,6 +222,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards_toml = std::collections::HashMap::new();
@@ -245,6 +247,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         &standards_map,
         None,
         Some("WRONG_PASSWORD_TO_FORCE_SAVE_FAILURE"), // Falsches Passwort
+        false,
     );
 
     // 3. ASSERT: Operation ist fehlgeschlagen und Wallet ist immer noch leer.
@@ -589,17 +592,18 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         t_type: "transfer".to_string(),
         t_time: time_a,
         sender_id: Some(id_alice.clone()),
-        recipient_id: id_david.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(alice_holder_pub.clone()),
         ..Default::default()
     };
-    // FIX: Use resign_transaction_ext with Permanent Key for Identity Signature and Holder Key for Proof Signature
-    tx_a = human_money_core::test_utils::resign_transaction_ext(
+    // FIX: Use resign_transaction_with_privacy to ensure privacy guard is added
+    tx_a = human_money_core::test_utils::resign_transaction_with_privacy(
         tx_a,
         &identity_alice.signing_key,
         &v_id,
         Some(&alice_holder_key),
+        &id_david,
     );
     let mut voucher_path_a = voucher_v1.clone();
     voucher_path_a.transactions.push(tx_a);
@@ -610,24 +614,25 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         None,
     )
     .unwrap();
-
+    
     // Pfad B (löst den Konflikt aus)
     let mut tx_b = human_money_core::models::voucher::Transaction {
         prev_hash: prev_tx_hash,
         t_type: "transfer".to_string(),
         t_time: time_b,
         sender_id: Some(id_alice.clone()),
-        recipient_id: id_david.clone(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "100".to_string(),
         sender_ephemeral_pub: Some(alice_holder_pub),
         ..Default::default()
     };
-    // FIX: Use resign_transaction_ext with Permanent Key for Identity Signature and Holder Key for Proof Signature
-    tx_b = human_money_core::test_utils::resign_transaction_ext(
+    // FIX: Use resign_transaction_with_privacy to ensure privacy guard is added
+    tx_b = human_money_core::test_utils::resign_transaction_with_privacy(
         tx_b,
         &identity_alice.signing_key,
         &v_id,
         Some(&alice_holder_key),
+        &id_david,
     );
     let mut voucher_path_b = voucher_v1.clone();
     voucher_path_b.transactions.push(tx_b);
@@ -641,7 +646,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
 
     // David empfängt Pfad A erfolgreich
     service_david
-        .receive_bundle(&bundle_a, &standards_map, None, Some(correct_password))
+        .receive_bundle(&bundle_a, &standards_map, None, Some(correct_password), false)
         .unwrap();
     assert_eq!(
         service_david
@@ -654,7 +659,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
 
     // 2. ACT: David versucht, das konfliktreiche Bundle B mit falschem Passwort zu empfangen.
     let result =
-        service_david.receive_bundle(&bundle_b, &standards_map, None, Some("WRONG_PASSWORD"));
+        service_david.receive_bundle(&bundle_b, &standards_map, None, Some("WRONG_PASSWORD"), false);
 
     // 3. ASSERT: Operation schlägt fehl, Zustand wird komplett zurückgesetzt.
     assert!(
@@ -780,12 +785,13 @@ fn test_balances_are_summable_behavior() {
         sources,
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let bundle_res = service_sender.create_transfer_bundle(request, &standards_map, None, Some("pwd")).unwrap();
 
     // 5. Bundle im Recipient-Wallet verarbeiten
-    let result = service.receive_bundle(&bundle_res.bundle_bytes, &standards_map, None, Some("pwd")).unwrap();
+    let result = service.receive_bundle(&bundle_res.bundle_bytes, &standards_map, None, Some("pwd"), false).unwrap();
 
     // 6. ASSERT TransferSummary
     // Summable (EUR): 10.0 + 10.0 = 20.0 (in summable_amounts)

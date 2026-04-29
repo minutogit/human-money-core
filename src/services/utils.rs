@@ -136,3 +136,61 @@ thread_local! {
 pub fn set_mock_time(time: Option<String>) {
     MOCK_TIME.with(|t| *t.borrow_mut() = time);
 }
+
+/// Die maximale Zeitspanne in der Zukunft, die wir für einen Zeitstempel akzeptieren.
+/// Alles darüber hinaus wird als "Hard Reject" abgelehnt.
+/// 2 Stunden (7200 Sekunden) erlauben moderate Clock-Drifts und Zeitzonen-Probleme.
+pub const MAX_FUTURE_GRACE_PERIOD_SECONDS: i64 = 7200;
+
+/// Prüft, ob ein Zeitstempel zu weit in der Zukunft liegt.
+///
+/// # Arguments
+/// * `timestamp_iso` - Der zu prüfende Zeitstempel im ISO 8601 Format.
+/// * `entity_name` - Name der Einheit (z.B. "Bundle", "Transaction") für die Fehlermeldung.
+/// * `id` - ID der Einheit für die Fehlermeldung.
+///
+/// # Returns
+/// `Ok(())` wenn der Zeitstempel innerhalb der Toleranz liegt, ansonsten einen `VoucherCoreError`.
+pub fn verify_not_far_in_future(
+    timestamp_iso: &str,
+    entity_name: &str,
+    id: &str,
+) -> Result<(), crate::error::VoucherCoreError> {
+    use crate::error::ValidationError;
+
+    let now_str = get_current_timestamp();
+    let now = DateTime::parse_from_rfc3339(&now_str)
+        .map_err(|e| crate::error::VoucherCoreError::Generic(format!("Failed to parse now: {}", e)))?
+        .with_timezone(&Utc);
+
+    let ts = DateTime::parse_from_rfc3339(timestamp_iso)
+        .map_err(|e| {
+            crate::error::VoucherCoreError::Generic(format!("Failed to parse timestamp: {}", e))
+        })?
+        .with_timezone(&Utc);
+
+    let diff_seconds = ts.timestamp() - now.timestamp();
+
+    if diff_seconds > MAX_FUTURE_GRACE_PERIOD_SECONDS {
+        let duration = chrono::Duration::seconds(diff_seconds);
+        let wait_duration = format!(
+            "{}h {}m {}s",
+            duration.num_hours(),
+            duration.num_minutes() % 60,
+            duration.num_seconds() % 60
+        );
+
+        let limit_time = now + chrono::Duration::seconds(MAX_FUTURE_GRACE_PERIOD_SECONDS);
+
+        return Err(ValidationError::FutureTimestampRejected {
+            entity: entity_name.to_string(),
+            id: id.to_string(),
+            timestamp: timestamp_iso.to_string(),
+            limit: limit_time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            wait_duration,
+        }
+        .into());
+    }
+
+    Ok(())
+}

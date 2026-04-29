@@ -45,6 +45,11 @@ impl AppService {
                                 .save_arbitrary_data(&identity.user_id, &auth_method, name, data)
                                 .map_err(|e| e.to_string())
                         };
+
+                        // Siegel und Integrität aktualisieren (außer für den Session-Anker, da dieser ignoriert wird)
+                        if result.is_ok() && name != "__storage_session_anchor" {
+                            let _ = self.update_seal_after_state_change(Some(pwd_str));
+                        }
                         result
                     }
                     AppState::Locked => Err("Wallet is locked.".to_string()),
@@ -68,6 +73,11 @@ impl AppService {
                                     e.to_string()
                                 })
                         };
+
+                        // Siegel und Integrität aktualisieren (via Session-Key) (außer für den Session-Anker)
+                        if result.is_ok() && name != "__storage_session_anchor" {
+                            let _ = self.update_seal_after_state_change(None);
+                        }
                         result
                     }
                     AppState::Locked => Err("Wallet is locked.".to_string()),

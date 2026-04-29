@@ -109,7 +109,7 @@ fn test_private_mode_enforcement() {
         setup_voucher_with_one_tx();
     let mut standard = standard_ref.clone();
 
-    standard.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Private;
+    standard.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Stealth;
 
     let mut std_no_sig = standard.clone();
     std_no_sig.signature = None;
@@ -153,9 +153,9 @@ fn test_private_mode_enforcement() {
         prev_hash: genesis_hash,
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: amount,                                     // Must match exactly
-        sender_id: None,                                    // Correct for Private
-        recipient_id: "hash_of_next_key".to_string(),       // Correct for Private
+        amount: amount, // Must match exactly
+        sender_id: None, // Correct for Private
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(), // Correct for Private
         sender_ephemeral_pub: Some(secret_key.to_string()), // Reveals key -> Links to Init
         ..Default::default()
     };
@@ -236,7 +236,7 @@ fn test_flexible_mode_hybrid_behavior() {
         t_type: "transfer".to_string(),
         amount: amount,
         sender_id: Some(voucher.transactions[0].recipient_id.clone()), // Valid Sender (Public)
-        recipient_id: "did:key:recipient".to_string(),
+        recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         sender_ephemeral_pub: Some(secret.to_string()),
         receiver_ephemeral_pub_hash: Some("some_hash".to_string()),
         ..Default::default()

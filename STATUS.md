@@ -1,9 +1,9 @@
 ---
 project: human-money-core
-version: "0.2.5"
+version: "0.2.10"
 phase: "active-development"
 health: "green"
-last_updated: "2026-04-19"
+last_updated: "2026-04-25"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -32,10 +32,12 @@ priority_tasks:
 ## Current Focus
 
 The core library is stable and feature-rich. Current focus areas:
+- **New**: WalletSeal Rollback Guard & Storage Integrity
 - L2 gateway integration testing (playground & stress tests)
 - Voucher validation hardening (edge-case tests for ISO 8601, date rounding)
 - Security: Anti-Signature-Reuse-Firewall implemented
 - **New**: 'Endorsed' voucher status for persistent guarantor signature tracking
+- **New**: Storage Integrity (Integritätsschutz) für alle Wallet-Datensätze
 
 ## Architecture
 
@@ -62,6 +64,16 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] Multi-language mnemonic support (BIP-39 standard + custom German wordlist)
 - [x] Refactored key derivation (strict BIP-39/SLIP-0010 compliance)
 - [x] JWS & JWE standard compliance (RFC 7515/7516) and DIDComm-compatible URIs
+- [x] Deep traceability testing & fix for voucher source sender identification
+- [x] Anonymous Privacy Routing: Strict identity regulation based on PrivacyMode
+- [x] Deep Privacy Balance Calculation: Hardened UTXO-based stealth key matching test suite
+- [x] Hardened Privacy Mode Decryption: Mandatory privacy_guard validation for anonymous recipient IDs
+- [x] **WalletSeal Rollback Guard**: Cryptographic epoch system with hash-chained seals, fork-lock protection, Zonen-Modell replay protection with user-controlled recovery overrides.
+- [x] **Storage Integrity**: SHA3-256 integrity record bound to WalletSeal, detecting missing, manipulated, or unknown items in the wallet storage with automated update-on-write.
+- [x] **Security Hardening**: Argon2id-based key stretching for profile folders (Mobile/WASM tuned) and privacy-preserving arbitrary data naming (removed identity-leaking hashes from filenames).
+- [x] **Maintenance Refactoring**: Consolidated storage cleanup into a single, efficient pass; migrated to `usize` for all collection counters and eliminated magic numbers for archival retention.
+- [x] **Integrity Bugfix**: Resolved a critical issue where auto-cleanup on login could accidentally mask offline file tampering by rewriting the state before verification.
+- [x] **Cloning Protection Hardening**: Implemented active runtime "traps" in AppService to detect improper `instance_id` storage (including parent directories), added aggressive security docstrings, and verified with architecture tests.
 
 ## Next Milestones
 

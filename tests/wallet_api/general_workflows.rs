@@ -69,7 +69,7 @@ fn api_app_service_full_lifecycle() {
         "Service should be locked after logout"
     );
     service_alice
-        .login(&profile_info_alice.folder_name, "password", false)
+        .login(&profile_info_alice.folder_name, "password", false, "test-id".to_string())
         .expect("Login with correct password should succeed");
     assert_eq!(service_alice.get_user_id().unwrap(), id_alice);
 
@@ -105,6 +105,7 @@ fn api_app_service_full_lifecycle() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.immutable.identity.uuid.clone(), silver_standard_toml.clone());
@@ -125,7 +126,7 @@ fn api_app_service_full_lifecycle() {
     let mut standards = std::collections::HashMap::new();
     standards.insert(standard.immutable.identity.uuid.clone(), silver_standard_toml);
     service_bob
-        .receive_bundle(&transfer_bundle, &standards, None, Some("password"))
+        .receive_bundle(&transfer_bundle, &standards, None, Some("password"), false)
         .unwrap();
     let balance_bob = service_bob.get_total_balance_by_currency().unwrap();
     // KORREKTUR: Die Bilanz wird jetzt nach der Abkürzung der Währung gruppiert, nicht nach der Einheit.
@@ -165,6 +166,7 @@ fn api_app_service_lifecycle_with_passphrase() {
         None, // <- Fehlende Passphrase
         "any-new-password",
         MnemonicLanguage::English,
+        "test-id".to_string(),
     );
 
     assert!(
@@ -251,6 +253,7 @@ fn api_app_service_password_recovery() {
                 None,
                 new_password,
                 MnemonicLanguage::English,
+                "test-id".to_string(),
             )
             .is_err()
     );
@@ -267,6 +270,7 @@ fn api_app_service_password_recovery() {
             None,
             new_password,
             MnemonicLanguage::English,
+            "test-id".to_string(),
         )
         .expect("Recovery with correct mnemonic should succeed");
     assert!(
@@ -277,13 +281,13 @@ fn api_app_service_password_recovery() {
     service.logout();
     assert!(
         service
-            .login(&profile_info.folder_name, initial_password, false)
+            .login(&profile_info.folder_name, initial_password, false, "test-id".to_string())
             .is_err(),
         "Login with old password should fail after recovery"
     );
     assert!(
         service
-            .login(&profile_info.folder_name, new_password, false)
+            .login(&profile_info.folder_name, new_password, false, "test-id".to_string())
             .is_ok(),
         "Login with new password should succeed after recovery"
     );
@@ -315,6 +319,7 @@ fn api_app_service_password_recovery_with_passphrase() {
         None,
         new_password,
         MnemonicLanguage::English,
+        "test-id".to_string(),
     );
     assert!(
         recovery_fail.is_err(),
@@ -329,13 +334,14 @@ fn api_app_service_password_recovery_with_passphrase() {
             actor.passphrase,
             new_password,
             MnemonicLanguage::English,
+            "test-id".to_string(),
         )
         .expect("Recovery with correct passphrase should succeed");
 
     // 4. Verifizierung
     service.logout();
     // Erneutes Login nach der Wiederherstellung, false für cleanup
-    let login_result = service.login(&profile_info.folder_name, new_password, false);
+    let login_result = service.login(&profile_info.folder_name, new_password, false, "test-id".to_string());
     assert!(
         login_result.is_ok(),
         "Login with new password should succeed. Error: {:?}",
@@ -357,7 +363,7 @@ fn api_wallet_lifecycle() {
     let dir = tempdir().unwrap();
     let test_user = &ACTORS.alice; // Nehmen wir Alice als Testperson
     let (wallet_a, identity_a) =
-        Wallet::new_from_mnemonic(&test_user.mnemonic, test_user.passphrase, test_user.prefix, MnemonicLanguage::English)
+        Wallet::new_from_mnemonic(&test_user.mnemonic, test_user.passphrase, test_user.prefix, MnemonicLanguage::English, "test-id".to_string())
             .expect("Wallet creation failed");
     let original_user_id = wallet_a.profile.user_id.clone();
     let folder_name = {
@@ -381,7 +387,7 @@ fn api_wallet_lifecycle() {
         .expect("Saving wallet failed");
 
     let auth = AuthMethod::Password("password123");
-    let (wallet_b, _) = Wallet::load(&storage, &auth).expect("Loading wallet failed");
+    let (wallet_b, _) = Wallet::load(&storage, &auth, "test-id".to_string()).expect("Loading wallet failed");
 
     assert_eq!(
         wallet_b.profile.user_id, original_user_id,
@@ -420,6 +426,7 @@ fn api_wallet_transfer_full_amount() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -433,7 +440,7 @@ fn api_wallet_transfer_full_amount() {
         .unwrap();
 
     let summary = alice_wallet
-        .list_vouchers(None, None)
+        .list_vouchers(Some(&alice.identity), None, None)
         .into_iter()
         .find(|s| s.status == VoucherStatus::Archived)
         .unwrap();
@@ -454,7 +461,7 @@ fn api_wallet_transfer_full_amount() {
         )
         .unwrap();
 
-    let summary = bob_wallet.list_vouchers(None, None).pop().unwrap();
+    let summary = bob_wallet.list_vouchers(Some(&bob.identity), None, None).pop().unwrap();
     assert_eq!(summary.current_amount, "100");
     assert_eq!(summary.status, VoucherStatus::Active);
 }
@@ -491,6 +498,7 @@ fn api_wallet_transfer_split_amount() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -504,7 +512,7 @@ fn api_wallet_transfer_split_amount() {
         .unwrap();
 
     let active_summary = alice_wallet
-        .list_vouchers(None, None)
+        .list_vouchers(Some(&alice.identity), None, None)
         .into_iter()
         .find(|s| s.status == VoucherStatus::Active)
         .unwrap();
@@ -524,7 +532,7 @@ fn api_wallet_transfer_split_amount() {
             &standards_for_bob,
         )
         .unwrap();
-    let bob_summary = bob_wallet.list_vouchers(None, None).pop().unwrap();
+    let bob_summary = bob_wallet.list_vouchers(Some(&bob.identity), None, None).pop().unwrap();
     assert_eq!(bob_summary.current_amount, "30");
 }
 
@@ -557,6 +565,7 @@ fn api_wallet_transfer_invalid_amount() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -577,6 +586,7 @@ fn api_wallet_transfer_invalid_amount() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -628,6 +638,7 @@ fn api_wallet_transfer_inactive_voucher() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -678,6 +689,7 @@ fn api_wallet_proactive_double_spend_prevention() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -698,6 +710,7 @@ fn api_wallet_proactive_double_spend_prevention() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -750,7 +763,7 @@ fn api_wallet_create_voucher_and_get_id() {
         .unwrap();
 
     let summary = wallet
-        .list_vouchers(None, None)
+        .list_vouchers(Some(&issuer.identity), None, None)
         .pop()
         .expect("Wallet should contain one voucher");
     assert_eq!(summary.current_amount, "500.0000");
@@ -815,7 +828,7 @@ fn api_wallet_query_total_balance() {
     add_voucher("1.25", VoucherStatus::Active, silver_standard);
     add_voucher("0.75", VoucherStatus::Active, silver_standard);
 
-    let balances = wallet.get_total_balance_by_currency();
+    let balances = wallet.get_total_balance_by_currency(Some(&issuer.identity));
 
     assert_eq!(balances.len(), 2, "Two currencies should be present");
     // KORREKTUR: Die Tests müssen die korrekten Währungs-Abkürzungen aus den Standards verwenden.
@@ -978,7 +991,7 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
 
     // 1. Profile erstellen
     service_alice
-        .create_profile("Alice Details", &mnemonic, None, Some("alice"), "password", MnemonicLanguage::English)
+        .create_profile("Alice Details", &mnemonic, None, Some("alice"), "password", MnemonicLanguage::English, "test-id".to_string())
         .expect("Alice profile creation failed");
 
     let id_alice = service_alice.get_user_id().unwrap();
@@ -1095,6 +1108,7 @@ fn api_wallet_transfer_multi_source() {
         ],
         notes: Some("Zahlung aus zwei Quellen".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -1108,7 +1122,7 @@ fn api_wallet_transfer_multi_source() {
         .unwrap();
 
     // 3. VERIFIZIERUNG (Alice)
-    let alice_summaries = alice_wallet.list_vouchers(None, None);
+    let alice_summaries = alice_wallet.list_vouchers(Some(&alice.identity), None, None);
     let mut remaining_amounts_alice: Vec<_> = alice_summaries
         .iter()
         .filter(|s| s.status == VoucherStatus::Active)
@@ -1141,14 +1155,14 @@ fn api_wallet_transfer_multi_source() {
             &standards_for_bob,
         )
         .unwrap();
-    let balances = bob_wallet.get_total_balance_by_currency();
+    let balances = bob_wallet.get_total_balance_by_currency(Some(&bob.identity));
     let minuto_balance = balances.iter().find(|b| b.unit == "Minuto").unwrap();
     assert_eq!(
         minuto_balance.total_amount, "50",
         "Bobs Gesamtguthaben sollte 50 sein"
     );
     assert_eq!(
-        bob_wallet.list_vouchers(None, None).len(),
+        bob_wallet.list_vouchers(Some(&bob.identity), None, None).len(),
         2,
         "Bob sollte zwei neue Gutscheine erhalten haben"
     );

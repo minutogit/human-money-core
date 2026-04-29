@@ -28,7 +28,7 @@ fn setup_test_environment(
     let (mut alice_service, alice_profile) =
         setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", PASSWORD);
     alice_service
-        .login(&alice_profile.folder_name, PASSWORD, false)
+        .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
         .unwrap();
     alice_service.unlock_session(PASSWORD, 60).unwrap();
     let alice_identity = alice_service.get_unlocked_mut_for_test().1.clone();
@@ -37,7 +37,7 @@ fn setup_test_environment(
     let (mut bob_service, bob_profile) =
         setup_service_with_profile(dir.path(), &ACTORS.bob, "Bob", PASSWORD);
     bob_service
-        .login(&bob_profile.folder_name, PASSWORD, false)
+        .login(&bob_profile.folder_name, PASSWORD, false, "test-id".to_string())
         .unwrap();
     bob_service.unlock_session(PASSWORD, 60).unwrap();
     let bob_id = bob_service.get_user_id().unwrap();
@@ -110,6 +110,7 @@ fn test_rejection_of_broken_transaction_chain() {
         &human_money_core::test_utils::derive_holder_key(&voucher, &identity_sender.signing_key), // Init -> Tx1
         &id_recipient,
         "50.0000",
+        None,
     )
     .unwrap()
     .0
@@ -138,7 +139,7 @@ fn test_rejection_of_broken_transaction_chain() {
 
     // 2. ACT
     human_money_core::set_signature_bypass(true);
-    let result = service_recipient.receive_bundle(&bundle, &standards_map, None, Some(PASSWORD));
+    let result = service_recipient.receive_bundle(&bundle, &standards_map, None, Some(PASSWORD), false);
     human_money_core::set_signature_bypass(false);
 
     // 3. ASSERT
@@ -198,9 +199,25 @@ fn test_rejection_of_inconsistent_split_math() {
     let mut tx2 = voucher.transactions[0].clone();
     tx2.prev_hash = prev_tx_hash;
     tx2.t_type = "split".to_string();
-    tx2.recipient_id = id_recipient.clone();
+    tx2.recipient_id = human_money_core::models::voucher::ANONYMOUS_ID.to_string();
     tx2.amount = "30.0000".to_string();
     tx2.sender_remaining_amount = Some("80.0000".to_string()); // Falscher Restbetrag
+
+    // NEU: Hänge einen gültigen Privacy Guard an, damit die Ingest-Prüfung passiert
+    let payload = human_money_core::models::voucher::RecipientPayload {
+        sender_permanent_did: identity_sender.user_id.clone(),
+        target_prefix: id_recipient.split(':').next().unwrap_or("").to_string(),
+        timestamp: 1625097600,
+        next_key_seed: "test".to_string(),
+    };
+    let payload_bytes = serde_json::to_vec(&payload).unwrap();
+    let recipient_pubkey = human_money_core::services::crypto_utils::get_pubkey_from_user_id(&id_recipient).unwrap();
+    tx2.privacy_guard = Some(human_money_core::services::crypto_utils::encrypt_recipient_payload(
+        &payload_bytes,
+        &recipient_pubkey,
+        &id_recipient,
+    ).unwrap());
+
     // 3. WICHTIG: Dank Signature-Bypass aktualisieren wir nur die t_id.
     tx2.t_id = human_money_core::crypto_utils::get_hash(
         human_money_core::to_canonical_json(&tx2).unwrap(),
@@ -211,7 +228,7 @@ fn test_rejection_of_inconsistent_split_math() {
 
     // 2. ACT
     human_money_core::set_signature_bypass(true);
-    let result = service_recipient.receive_bundle(&bundle, &standards_map, None, Some("pwd"));
+    let result = service_recipient.receive_bundle(&bundle, &standards_map, None, Some("pwd"), false);
     human_money_core::set_signature_bypass(false);
 
     // 3. ASSERT
@@ -276,6 +293,7 @@ fn test_rejection_of_self_received_bundle() {
         }],
         notes: Some("Für Bob".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let bundle_result = service_sender
@@ -286,19 +304,14 @@ fn test_rejection_of_self_received_bundle() {
     // 2. ACT
     // Der SENDER versucht nun, das Bundle, das für Bob bestimmt ist, SELBST einzulesen.
     let result_self_receive =
-        service_sender.receive_bundle(&bundle_bytes_for_bob, &standards_map, None, Some("pwd"));
+        service_sender.receive_bundle(&bundle_bytes_for_bob, &standards_map, None, Some("pwd"), false);
 
     // 3. ASSERT
     assert!(result_self_receive.is_err());
     let err_str = result_self_receive.unwrap_err();
     assert!(
-        // HINWEIS: Dieser Test hat sich durch die Einführung des Layer-1-Replay-Schutzes (Bundle-ID-Prüfung) geändert.
-        // Da der Sender das Bundle erstellt, ist die Bundle-ID in seinem `bundle_meta_store` bekannt.
-        // Der Versuch, dasselbe Bundle erneut zu empfangen, wird nun von der Layer-1-Prüfung
-        // (BundleAlreadyProcessed) abgefangen, *bevor* die Layer-3-Prüfung (BundleRecipientMismatch) erreicht wird.
-        // Dies ist das neue, korrekte Verhalten.
-        err_str.contains("Bundle has already been processed"),
-        "Error should be 'BundleAlreadyProcessed' (L1 check). Got: {}",
+        err_str.contains("Bundle has already been processed") || err_str.contains("Bundle Recipient Mismatch"),
+        "Error should be Replay Check or Recipient Mismatch. Got: {}",
         err_str
     );
 
@@ -311,7 +324,7 @@ fn test_rejection_of_self_received_bundle() {
 
     // Der Empfänger (Bob) kann es problemlos empfangen
     let result_recipient =
-        service_recipient.receive_bundle(&bundle_bytes_for_bob, &standards_map, None, Some("pwd"));
+        service_recipient.receive_bundle(&bundle_bytes_for_bob, &standards_map, None, Some("pwd"), false);
     assert!(result_recipient.is_ok());
     assert_eq!(
         service_recipient
@@ -365,6 +378,7 @@ fn test_rejection_of_identical_bundle_replay() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let bundle_result = service_sender
@@ -374,7 +388,7 @@ fn test_rejection_of_identical_bundle_replay() {
 
     // 2. ACT (First Receive)
     let result_first =
-        service_recipient.receive_bundle(&bundle_bytes, &standards_map, None, Some("pwd"));
+        service_recipient.receive_bundle(&bundle_bytes, &standards_map, None, Some("pwd"), false);
 
     // 3. ASSERT (First Receive)
     assert!(result_first.is_ok());
@@ -388,7 +402,7 @@ fn test_rejection_of_identical_bundle_replay() {
 
     // 4. ACT (Second Receive - Replay)
     let result_second =
-        service_recipient.receive_bundle(&bundle_bytes, &standards_map, None, Some("pwd"));
+        service_recipient.receive_bundle(&bundle_bytes, &standards_map, None, Some("pwd"), false);
 
     // 5. ASSERT (Second Receive)
     assert!(result_second.is_err());
@@ -447,6 +461,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
         &human_money_core::test_utils::derive_holder_key(&voucher_a, &identity_sender.signing_key), // Init -> Tx 1
         &id_recipient,
         "50.0000",
+        None,
     )
     .unwrap();
 
@@ -469,7 +484,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
 
     // 2. ACT (First Receive)
     let result_first =
-        service_recipient.receive_bundle(&bundle_1_bytes, &standards_map, None, Some("pwd"));
+        service_recipient.receive_bundle(&bundle_1_bytes, &standards_map, None, Some("pwd"), false);
     assert!(result_first.is_ok());
     assert_eq!(
         service_recipient
@@ -481,7 +496,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
 
     // 3. ACT (Second Receive - Replay)
     let result_second =
-        service_recipient.receive_bundle(&bundle_2_bytes, &standards_map, None, Some("pwd"));
+        service_recipient.receive_bundle(&bundle_2_bytes, &standards_map, None, Some("pwd"), false);
 
     // 4. ASSERT (Second Receive)
     assert!(result_second.is_err());
@@ -602,6 +617,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
         }],
         notes: Some("Für Bobs Handy".to_string()),
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let bundle_result = service_sender
@@ -616,6 +632,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
         &standards_map,
         None,
         Some("pwd_bob"),
+        false,
     );
 
     // 3. ASSERT (PC Wallet)
@@ -644,6 +661,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
         &standards_map,
         None,
         Some("pwd_bob"),
+        false,
     );
     assert!(result_mobil_receive.is_ok());
     assert_eq!(

@@ -109,6 +109,7 @@ fn test_fingerprint_generation() {
         &holder_key,           // Sender Ephemeral Key (Anchor)
         &human_money_core::test_utils::ACTORS.bob.user_id,
         "50",
+        None,
     )
     .unwrap();
 
@@ -313,7 +314,7 @@ fn test_cleanup_expired_fingerprints() {
 
     // Aktion: Rufe die zentrale Aufräumfunktion mit einer Frist von 0 Jahren auf,
     // was eine sofortige Bereinigung aller abgelaufenen Einträge auslösen sollte.
-    wallet.cleanup_storage(0);
+    wallet.run_storage_cleanup(None, 0).unwrap();
 
     // Assertions für den flüchtigen Speicher (sollte bereinigt werden)
     assert!(
@@ -369,6 +370,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
             ACTORS.sender.prefix,
             "password123",
             MnemonicLanguage::English,
+            "test-id".to_string(),
         )
         .unwrap();
 
@@ -417,6 +419,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let transfer1_result =
@@ -468,7 +471,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         human_money_core::storage::file_storage::FileStorage::new(&profile_storage_path);
     // KORREKTUR: E0609 Verwende die korrekte AuthMethod
     let auth = human_money_core::storage::AuthMethod::Password("password123");
-    let (mut wallet, identity) = Wallet::load(&storage, &auth).unwrap();
+    let (mut wallet, identity) = Wallet::load(&storage, &auth, "test-id".to_string()).unwrap();
 
     // HIER IST DER ANGRIFF: Füge den alten, ausgegebenen Gutschein wieder als 'Active' hinzu.
     let user_id = identity.user_id.clone();
@@ -491,7 +494,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
     let mut app_service = AppService::new(storage_path).unwrap();
     // KORREKTUR (Panic-Fix): Verwende den 'sender_folder_name' anstelle von "sender".
     app_service
-        .login(&sender_folder_name, "password123", false)
+        .login(&sender_folder_name, "password123", false, "test-id".to_string())
         .unwrap();
     assert_eq!(
         app_service
@@ -513,6 +516,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     // KORREKTUR: E0425 Ersetze alte sender_wallet Logik
@@ -612,6 +616,7 @@ fn test_local_double_spend_detection_lifecycle() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -688,6 +693,7 @@ fn test_local_double_spend_detection_lifecycle() {
         &bob_ephemeral_key, // Bob's ephemeral key extracted from wallet
         &charlie_identity.user_id,
         "100",
+        None,
     )
     .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(10));
@@ -699,6 +705,7 @@ fn test_local_double_spend_detection_lifecycle() {
         &bob_ephemeral_key, // Reuse same key for double spend
         &david_identity.user_id,
         "100",
+        None,
     )
     .unwrap();
 
@@ -792,6 +799,7 @@ fn test_local_double_spend_detection_lifecycle() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -862,6 +870,7 @@ fn test_local_double_spend_detection_lifecycle() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -952,6 +961,7 @@ fn test_local_double_spend_detection_lifecycle() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();

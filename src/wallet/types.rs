@@ -32,6 +32,9 @@ pub struct MultiTransferRequest {
     /// Optionaler Profilname des Senders.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_profile_name: Option<String>,
+    /// Optional: Erzwinge oder deaktiviere den Privacy Mode (nur bei 'Flexible' Standards).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_privacy_mode: Option<bool>,
 }
 
 /// Fasst die Ergebnisse eines Transfers pro Standard zusammen.
@@ -105,8 +108,9 @@ pub struct CreateBundleResult {
 /// Ein Bericht, der die Ergebnisse der Speicherbereinigung zusammenfasst.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CleanupReport {
-    pub expired_fingerprints_removed: u32,
-    pub limit_based_fingerprints_removed: u32,
+    pub expired_fingerprints_removed: usize,
+    pub limit_based_fingerprints_removed: usize,
+    pub archived_items_removed: usize,
 }
 
 /// Repräsentiert ein aggregiertes Guthaben für einen bestimmten Gutschein-Standard und eine Währungseinheit.

@@ -307,22 +307,30 @@ pub fn create_and_sign_resolution_endorsement(
 }
 
 /// Entfernt alle abgelaufenen Fingerprints aus den nicht-kritischen Speichern.
-pub fn cleanup_known_fingerprints(known_fingerprints: &mut KnownFingerprints) {
+/// Gibt die Anzahl der entfernten Einträge zurück.
+pub fn cleanup_known_fingerprints(known_fingerprints: &mut KnownFingerprints) -> usize {
     let now = get_current_timestamp();
+    let mut count: usize = 0;
     known_fingerprints.foreign_fingerprints.retain(|_, fps| {
+        let before = fps.len();
         fps.retain(|fp| fp.deletable_at > now);
+        count += before - fps.len();
         !fps.is_empty()
     });
+    count
 }
 
 /// Bereinigt die persistente Fingerprint-History basierend auf einer längeren Aufbewahrungsfrist.
+/// Gibt die Anzahl der entfernten Einträge zurück.
 pub fn cleanup_expired_histories(
     own_fingerprints: &mut OwnFingerprints,
     known_fingerprints: &mut KnownFingerprints,
     now: &DateTime<chrono::Utc>,
     grace_period: &chrono::Duration,
-) {
+) -> usize {
+    let mut count: usize = 0;
     own_fingerprints.history.retain(|_, fps| {
+        let before = fps.len();
         fps.retain(|fp| {
             if let Ok(valid_until) = DateTime::parse_from_rfc3339(&fp.deletable_at)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
@@ -332,9 +340,11 @@ pub fn cleanup_expired_histories(
             }
             true // Bei Parse-Fehler vorsichtshalber behalten
         });
+        count += before - fps.len();
         !fps.is_empty()
     });
     known_fingerprints.local_history.retain(|_, fps| {
+        let before = fps.len();
         fps.retain(|fp| {
             if let Ok(valid_until) = DateTime::parse_from_rfc3339(&fp.deletable_at)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
@@ -344,8 +354,10 @@ pub fn cleanup_expired_histories(
             }
             true // Bei Parse-Fehler vorsichtshalber behalten
         });
+        count += before - fps.len();
         !fps.is_empty()
     });
+    count
 }
 
 /// Serialisiert die Historie der eigenen gesendeten Transaktionen für den Export.

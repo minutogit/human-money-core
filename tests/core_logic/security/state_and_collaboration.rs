@@ -84,7 +84,15 @@ fn test_wallet_state_management_on_split() {
     };
     let voucher_data = create_test_voucher_data_with_amount(creator_data, "100.0000");
 
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let mut standard_obj = SILVER_STANDARD.0.clone();
+    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    let mut standard_to_hash = standard_obj.clone();
+    standard_to_hash.signature = None;
+    let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
+        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
+    );
+    let standard = &standard_obj;
+    let standard_hash = &standard_hash_val;
 
     let initial_voucher = create_voucher(
         voucher_data,
@@ -124,6 +132,7 @@ fn test_wallet_state_management_on_split() {
         }],
         notes: None,
         sender_profile_name: None,
+        use_privacy_mode: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -139,8 +148,8 @@ fn test_wallet_state_management_on_split() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        standard.immutable.identity.uuid.clone(),
+        standard.clone(),
     );
     wallet_b
         .process_encrypted_transaction_bundle(&b_identity, &bundle_to_b, None, &standards_for_bob)
@@ -172,7 +181,7 @@ fn test_wallet_state_management_on_split() {
     assert_eq!(remainder_instance.status, VoucherStatus::Active);
 
     let remainder_balance =
-        get_spendable_balance(&remainder_instance.voucher, &a_identity.user_id, standard).unwrap();
+        get_spendable_balance(&remainder_instance.voucher, &a_identity.user_id, standard, None).unwrap();
     assert_eq!(remainder_balance, dec!(60));
 
     // 5. Verifizierung (Wallet B)
@@ -185,7 +194,7 @@ fn test_wallet_state_management_on_split() {
     assert_eq!(received_instance.status, VoucherStatus::Active);
 
     let received_balance =
-        get_spendable_balance(&received_instance.voucher, &b_identity.user_id, standard).unwrap();
+        get_spendable_balance(&received_instance.voucher, &b_identity.user_id, standard, None).unwrap();
     assert_eq!(received_balance, dec!(40));
 }
 
@@ -205,7 +214,15 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
     eve_creator.id = Some(eve_identity.user_id.clone());
     let voucher_data = create_test_voucher_data_with_amount(eve_creator, "100");
 
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let mut standard_obj = SILVER_STANDARD.0.clone();
+    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    let mut standard_to_hash = standard_obj.clone();
+    standard_to_hash.signature = None;
+    let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
+        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
+    );
+    let standard = &standard_obj;
+    let standard_hash = &standard_hash_val;
 
     let initial_voucher = create_voucher(
         voucher_data,
@@ -226,6 +243,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
         &holder_key,
         &a_identity.user_id,
         "100",
+        None,
     )
     .unwrap();
     let (voucher_for_bob, _) = create_transaction(
@@ -236,6 +254,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
         &holder_key,
         &b_identity.user_id,
         "100",
+        None,
     )
     .unwrap();
 
@@ -266,8 +285,8 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_map = std::collections::HashMap::new();
     standards_map.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        standard.immutable.identity.uuid.clone(),
+        standard.clone(),
     );
 
     alice_wallet
@@ -349,7 +368,15 @@ fn test_serialization_roundtrip_with_special_chars() {
 
     let voucher_data = create_test_voucher_data_with_amount(creator, "123");
 
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let mut standard_obj = SILVER_STANDARD.0.clone();
+    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    let mut standard_to_hash = standard_obj.clone();
+    standard_to_hash.signature = None;
+    let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
+        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
+    );
+    let standard = &standard_obj;
+    let standard_hash = &standard_hash_val;
 
     let mut original_voucher =
         create_voucher(voucher_data, standard, standard_hash, &signing_key, "en").unwrap();
@@ -426,6 +453,7 @@ fn test_serialization_roundtrip_with_special_chars() {
         &holder_key,
         &human_money_core::test_utils::ACTORS.bob.user_id, // Valid DID
         "23",
+        None,
     )
     .unwrap();
     original_voucher = ov;
