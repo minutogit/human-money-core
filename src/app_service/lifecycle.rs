@@ -670,6 +670,66 @@ impl AppService {
         }
         Ok(())
     }
+
+    /// Löscht ein Benutzerprofil dauerhaft vom Gerät.
+    /// Erfordert das Passwort zur Bestätigung.
+    pub fn delete_profile(&mut self, folder_name: &str, password: &str) -> Result<(), String> {
+        let profile_path = self.base_storage_path.join(folder_name);
+        if !profile_path.exists() {
+            return Err("Profile directory not found.".to_string());
+        }
+
+        // 1. Passwort verifizieren
+        // Wir nutzen eine temporäre Instanz von FileStorage, um zu prüfen, ob wir das Wallet laden können.
+        let storage = FileStorage::new(profile_path.clone());
+        let auth = AuthMethod::Password(password);
+        
+        // Versuche das Wallet zu laden, um das Passwort zu prüfen.
+        // Die instance_id ist hier zweitrangig für den bloßen Passwort-Check, 
+        // wir nutzen einen Platzhalter um DeviceMismatch-Checks zu umgehen falls möglich,
+        // aber Wallet::load() selbst macht keine Seal-Prüfung (das macht nur AppService::login).
+        let _ = Wallet::load(&storage, &auth, "password_check".to_string())
+            .map_err(|e| format!("Password verification failed (check password): {}", e))?;
+
+        // 2. Profil aus dem Index (profiles.json) entfernen
+        let mut profiles = self.list_profiles()?;
+        let original_len = profiles.len();
+        profiles.retain(|p| p.folder_name != folder_name);
+        
+        if profiles.len() == original_len {
+             return Err("Profile not found in index.".to_string());
+        }
+
+        let index_path = self.base_storage_path.join(PROFILES_INDEX_FILE);
+        let updated_index = serde_json::to_string_pretty(&profiles)
+            .map_err(|e| format!("Failed to serialize profiles index: {}", e))?;
+        fs::write(index_path, updated_index)
+            .map_err(|e| format!("Failed to update profiles index file: {}", e))?;
+
+        // 3. Verzeichnis physisch löschen
+        fs::remove_dir_all(profile_path)
+            .map_err(|e| format!("Failed to delete profile directory: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Verifiziert das Passwort eines Profils und gibt die User-ID (DID) zurück.
+    /// Nützlich für Sicherheits-Bestätigungen vor kritischen Aktionen (wie Löschen).
+    pub fn get_profile_id_with_password(&self, folder_name: &str, password: &str) -> Result<String, String> {
+        let profile_path = self.base_storage_path.join(folder_name);
+        if !profile_path.exists() {
+            return Err("Profile directory not found.".to_string());
+        }
+
+        let storage = FileStorage::new(profile_path);
+        let auth = AuthMethod::Password(password);
+        
+        // Versuche das Wallet zu laden, um die Identität zu erhalten.
+        let (_, identity) = Wallet::load(&storage, &auth, "password_check".to_string())
+            .map_err(|e| format!("Password verification failed: {}", e))?;
+
+        Ok(identity.user_id.clone())
+    }
 }
 
 
