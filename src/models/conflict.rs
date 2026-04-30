@@ -160,6 +160,9 @@ pub struct ProofOfDoubleSpend {
     /// Wenn `Some`, überschreibt dieses Urteil die lokale "maximale Vorsicht"-Regel.
     #[serde(default)]
     pub layer2_verdict: Option<Layer2Verdict>,
+    /// Gibt an, ob es sich um einen Konflikt mit Testgutscheinen handelt.
+    #[serde(default)]
+    pub non_redeemable_test_voucher: bool,
 }
 
 /// Die Rolle der lokalen Wallet in Bezug auf einen Konflikt.

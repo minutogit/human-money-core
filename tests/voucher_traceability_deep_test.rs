@@ -63,7 +63,7 @@ mod tests {
         };
         let bundle = bob_wallet.execute_multi_transfer_and_bundle(&bob.identity, &standards, request, None).unwrap();
         
-        let bob_vouchers = bob_wallet.list_vouchers(Some(&bob.identity), None, None);
+        let bob_vouchers = bob_wallet.list_vouchers(Some(&bob.identity), None, None, None);
         let bob_new_local_id = bob_vouchers.iter()
             .find(|v| v.current_amount == "60")
             .unwrap().local_instance_id.clone();
@@ -94,7 +94,7 @@ mod tests {
         let bundle = bob_wallet.execute_multi_transfer_and_bundle(&bob.identity, &standards, request, None).unwrap();
 
         // Bob now has 40.
-        let bob_vouchers = bob_wallet.list_vouchers(Some(&bob.identity), None, None);
+        let bob_vouchers = bob_wallet.list_vouchers(Some(&bob.identity), None, None, None);
         let bob_final_local_id = bob_vouchers.iter()
             .find(|v| v.current_amount == "40" && matches!(v.status, human_money_core::wallet::instance::VoucherStatus::Active))
             .unwrap().local_instance_id.clone();

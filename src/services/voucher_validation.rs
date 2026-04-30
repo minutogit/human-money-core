@@ -30,6 +30,10 @@ pub fn validate_voucher_against_standard(
     // 2. Stelle sicher, dass die Stammdaten des Gutscheins nicht manipuliert wurden.
     //    (Prüft voucher.voucher_id gegen hash(voucher_stammdaten))
     verify_voucher_hash(voucher)?;
+    
+    // 2b. Anti-Spoofing: Verhindere "Social Engineering" durch "TEST"-Präfixe bei Echtgeld.
+    verify_anti_spoofing(voucher)?;
+
     // 3. (Verschoben: Validiere die Gültigkeitsdauer nach dem Datums-Check)
 
     // --- FIX (FEHLER 5): Datum-Parsing HÄRTEN ---
@@ -222,6 +226,26 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standa
     Ok(())
 }
 
+/// Verhindert, dass Echtgeld-Gutscheine sich durch "TEST"-Präfixe als Testgeld ausgeben.
+pub fn verify_anti_spoofing(voucher: &Voucher) -> Result<(), VoucherCoreError> {
+    if !voucher.non_redeemable_test_voucher {
+        let currency_upper = voucher.nominal_value.unit.to_uppercase();
+        let standard_upper = voucher.voucher_standard.name.to_uppercase();
+
+        if currency_upper.starts_with("TEST") {
+            return Err(ValidationError::DeceptiveNaming {
+                reason: format!("Currency unit '{}' starts with 'TEST' but voucher is NOT marked as test voucher.", voucher.nominal_value.unit)
+            }.into());
+        }
+
+        if standard_upper.starts_with("TEST") {
+            return Err(ValidationError::DeceptiveNaming {
+                reason: format!("Standard name '{}' starts with 'TEST' but voucher is NOT marked as test voucher.", voucher.voucher_standard.name)
+            }.into());
+        }
+    }
+    Ok(())
+}
 
 /// Überprüft, ob alle Transaktionen im Gutschein einen vom Standard erlaubten Typ haben.
 pub fn validate_transaction_types(
@@ -1183,4 +1207,64 @@ pub fn verify_transaction_integrity_and_signature(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod anti_spoofing_tests {
+    use super::*;
+    use crate::models::voucher::Voucher;
+
+    #[test]
+    fn test_validation_rejects_live_voucher_with_test_prefix_currency() {
+        let mut voucher = Voucher::default();
+        voucher.non_redeemable_test_voucher = false;
+        voucher.nominal_value.unit = "TEST-Euro".to_string();
+        
+        let result = verify_anti_spoofing(&voucher);
+        assert!(result.is_err());
+        match result {
+            Err(VoucherCoreError::Validation(ValidationError::DeceptiveNaming { reason })) => {
+                assert!(reason.contains("Currency unit 'TEST-Euro'"));
+            }
+            _ => panic!("Expected DeceptiveNaming error, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_validation_rejects_live_voucher_with_test_prefix_standard() {
+        let mut voucher = Voucher::default();
+        voucher.non_redeemable_test_voucher = false;
+        voucher.voucher_standard.name = "test_minuto".to_string();
+        
+        let result = verify_anti_spoofing(&voucher);
+        assert!(result.is_err());
+        match result {
+            Err(VoucherCoreError::Validation(ValidationError::DeceptiveNaming { reason })) => {
+                assert!(reason.contains("Standard name 'test_minuto'"));
+            }
+            _ => panic!("Expected DeceptiveNaming error, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_validation_allows_genuine_test_voucher() {
+        let mut voucher = Voucher::default();
+        voucher.non_redeemable_test_voucher = true;
+        voucher.nominal_value.unit = "TEST-Euro".to_string();
+        voucher.voucher_standard.name = "TEST-Minuto".to_string();
+        
+        let result = verify_anti_spoofing(&voucher);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validation_allows_genuine_live_voucher() {
+        let mut voucher = Voucher::default();
+        voucher.non_redeemable_test_voucher = false;
+        voucher.nominal_value.unit = "Euro".to_string();
+        voucher.voucher_standard.name = "Minuto-Gutschein".to_string();
+        
+        let result = verify_anti_spoofing(&voucher);
+        assert!(result.is_ok());
+    }
 }

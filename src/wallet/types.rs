@@ -91,6 +91,12 @@ pub struct InvolvedVoucherInfo {
     pub amount: String,
     /// Gibt an, ob der Gutschein teilbar ist.
     pub allow_partial_transfers: bool,
+    /// Gibt an, ob es sich um einen Test-Gutschein handelt.
+    pub is_test_voucher: bool,
+    /// Die formatierte Währung für die Anzeige (z.B. "TEST-Minuto").
+    pub display_currency: String,
+    /// Der formatierte Standard-Name für die Anzeige.
+    pub display_standard_name: String,
 }
 
 /// Das Ergebnis der Erstellung eines Transfer-Bündels.
@@ -113,6 +119,15 @@ pub struct CleanupReport {
     pub archived_items_removed: usize,
 }
 
+/// Dient als typsicherer Schlüssel für die Aggregation von Guthaben.
+/// Unterscheidet Assets nach Standard, Einheit und Test-Status.
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct AssetClass {
+    pub standard_uuid: String,
+    pub unit: String,
+    pub is_test_voucher: bool,
+}
+
 /// Repräsentiert ein aggregiertes Guthaben für einen bestimmten Gutschein-Standard und eine Währungseinheit.
 /// Wird verwendet, um eine zusammenfassende Dashboard-Ansicht der Guthaben zu erstellen. use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
@@ -125,6 +140,22 @@ pub struct AggregatedBalance {
     pub unit: String,
     /// Der als String formatierte Gesamtbetrag.
     pub total_amount: String,
+    /// Die formatierte Währung für die Anzeige (z.B. "TEST-Minuto").
+    pub display_currency: String,
+    /// Der formatierte Standard-Name für die Anzeige.
+    pub display_standard_name: String,
+    /// Gibt an, ob es sich um Test-Guthaben handelt.
+    pub is_test_voucher: bool,
+}
+
+/// Zusammenfassende Information über eine Asset-Klasse (Standard + Test-Status).
+/// Dient primär dazu, Filter-Dropdowns in der UI sauber zu befüllen.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct AssetClassSummary {
+    pub standard_uuid: String,
+    pub is_test_voucher: bool,
+    pub display_standard_name: String,
+    pub display_currency: String,
 }
 
 /// Eine zusammenfassende Ansicht eines Gutscheins für Listen-Darstellungen.
@@ -164,8 +195,12 @@ pub struct VoucherSummary {
     /// Der Nachname des ursprünglichen Erstellers.
     pub creator_last_name: String,
     pub creator_coordinates: String,
-    /// Eine Markierung, ob es sich um einen nicht einlösbaren Testgutschein handelt.
-    pub non_redeemable_test_voucher: bool,
+    /// Eine Markierung, ob es sich um einen Testgutschein handelt.
+    pub is_test_voucher: bool,
+    /// Die formatierte Währung für die Anzeige.
+    pub display_currency: String,
+    /// Der formatierte Standard-Name für die Anzeige.
+    pub display_standard_name: String,
 }
 
 /// Eine zusammenfassende Ansicht eines Double-Spend-Beweises für Listen-Darstellungen.
@@ -184,7 +219,10 @@ pub struct ProofOfDoubleSpendSummary {
     #[serde(default)]
     pub affected_voucher_name: Option<String>,
     #[serde(default)]
+    pub display_affected_voucher_name: Option<String>,
+    #[serde(default)]
     pub voucher_standard_uuid: Option<String>,
+    pub is_test_voucher: bool,
 }
 
 /// Eine detaillierte Ansicht eines Gutscheins inklusive seiner Transaktionshistorie.
@@ -194,4 +232,10 @@ pub struct VoucherDetails {
     /// Der aktuelle Status des Gutscheins (z.B. `Active`, `Archived`).
     pub status: VoucherStatus,
     pub voucher: Voucher,
+    /// Die formatierte Währung für die Anzeige.
+    pub display_currency: String,
+    /// Der formatierte Standard-Name für die Anzeige.
+    pub display_standard_name: String,
+    /// Gibt an, ob es sich um einen Test-Guthaben handelt.
+    pub is_test_voucher: bool,
 }

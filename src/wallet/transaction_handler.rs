@@ -337,6 +337,15 @@ impl Wallet {
                 unit: voucher.nominal_value.unit.clone(),
                 amount: last_tx.amount.clone(),
                 allow_partial_transfers: voucher.voucher_standard.template.allow_partial_transfers,
+                is_test_voucher: voucher.non_redeemable_test_voucher,
+                display_currency: super::format_bff_name(
+                    voucher.nominal_value.abbreviation.as_deref().unwrap_or(&voucher.nominal_value.unit),
+                    voucher.non_redeemable_test_voucher
+                ),
+                display_standard_name: super::format_bff_name(
+                    &voucher.voucher_standard.name,
+                    voucher.non_redeemable_test_voucher
+                ),
             });
             // --- Ende TransferSummary-Logik ---
         }
@@ -674,6 +683,15 @@ impl Wallet {
                 unit: instance.voucher.nominal_value.unit.clone(),
                 amount: source.amount_to_send.clone(),
                 allow_partial_transfers: instance.voucher.voucher_standard.template.allow_partial_transfers,
+                is_test_voucher: instance.voucher.non_redeemable_test_voucher,
+                display_currency: super::format_bff_name(
+                    instance.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&instance.voucher.nominal_value.unit),
+                    instance.voucher.non_redeemable_test_voucher
+                ),
+                display_standard_name: super::format_bff_name(
+                    &instance.voucher.voucher_standard.name,
+                    instance.voucher.non_redeemable_test_voucher
+                ),
             });
 
             // Führe die Kernoperation auf der temporären Wallet-Instanz aus.

@@ -49,7 +49,7 @@ fn test_integration_detects_victim_role() {
         Some("pwd"),
     ).unwrap();
     
-    let alice_v_id = service_alice.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
+    let alice_v_id = service_alice.get_voucher_summaries(None, None, None).unwrap()[0].local_instance_id.clone();
     
     // Wir holen uns die Daten für den Beweis
     let (wallet_alice, identity_alice) = service_alice.get_unlocked_mut_for_test();
@@ -93,6 +93,7 @@ fn test_integration_detects_victim_role() {
         reporter_signature: "sig".to_string(),
         affected_voucher_name: None,
         voucher_standard_uuid: None,
+        non_redeemable_test_voucher: false,
     };
 
     // --- 4. Alice muss den Gutschein erst in Quarantäne haben, damit import_proof Victim erkennt ---
@@ -146,7 +147,7 @@ fn test_integration_detects_witness_role_on_split_win() {
         Some("pwd"),
     ).unwrap();
     
-    let bob_v_id = service_bob.get_voucher_summaries(None, None).unwrap()[0].local_instance_id.clone();
+    let bob_v_id = service_bob.get_voucher_summaries(None, None, None).unwrap()[0].local_instance_id.clone();
     let (wallet_bob, identity_bob) = service_bob.get_unlocked_mut_for_test();
     let voucher_base = wallet_bob.voucher_store.vouchers.get(&bob_v_id).unwrap().voucher.clone();
 

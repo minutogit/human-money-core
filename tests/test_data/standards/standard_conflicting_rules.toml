@@ -1,10 +1,10 @@
 [immutable.identity]
 uuid = "CONFLICT-TEST-V1"
-name = "Conflicting Rules Test Standard"
+name = "Conflicting Rules Standard"
 abbreviation = "CFT"
 
 [immutable.blueprint]
-unit = "TestUnit"
+unit = "Unit"
 primary_redemption_type = "goods_or_services"
 collateral_type = "personal_guarantee"
 

@@ -180,7 +180,7 @@ mod compatibility_scenarios {
 
     #[test]
     fn test_parse_standard_with_unknown_fields_in_toml_then_succeeds() {
-        human_money_core::set_signature_bypass(true);
+        human_money_core::set_signature_bypass(false);
         // 1. Nimm einen zur Laufzeit gültig signierten Standard.
         let (mut standard_struct, _) = SILVER_STANDARD.clone(); // Verwende Silver zur Konsistenz
 
@@ -201,6 +201,7 @@ mod compatibility_scenarios {
             VoucherCoreError::Standard(StandardDefinitionError::InvalidSignature)
         ));
 
+        human_money_core::set_signature_bypass(true);
         // 5. Um die Vorwärtskompatibilität des Parsers selbst zu testen, fügen wir jetzt
         //    unbekannte Felder hinzu und parsen ohne Signaturprüfung.
         let mut toml_with_unknown_fields = toml_str_with_invalid_sig;

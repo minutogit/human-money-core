@@ -3,7 +3,7 @@
 //! Enthält die Implementierung der `Wallet`-Methoden, die als "View-Models"
 //! dienen. Sie bereiten Daten für die Anzeige in Client-Anwendungen auf.
 
-use super::{AggregatedBalance, VoucherDetails, VoucherSummary, Wallet};
+use super::{AggregatedBalance, AssetClass, VoucherDetails, VoucherSummary, Wallet};
 use crate::error::VoucherCoreError;
 use crate::models::profile::PublicProfile;
 use crate::services::jws_profile_service::export_profile_as_jws;
@@ -12,6 +12,16 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::Zero;
 use std::collections::HashMap;
 use std::str::FromStr;
+
+/// Hilfsfunktion zur Formatierung von Namen für die Benutzeroberfläche (BFF-Pattern).
+/// Stellt sicher, dass Testgutscheine ein einheitliches "TEST-" Präfix erhalten.
+pub(crate) fn format_bff_name(raw_name: &str, is_test: bool) -> String {
+    if is_test && !raw_name.starts_with("TEST-") {
+        format!("TEST-{}", raw_name)
+    } else {
+        raw_name.to_string()
+    }
+}
 
 /// View-Model / Komfort-Funktionen für Client-Anwendungen.
 impl Wallet {
@@ -26,6 +36,7 @@ impl Wallet {
         identity: Option<&crate::models::profile::UserIdentity>,
         voucher_standard_uuid_filter: Option<&[String]>,
         status_filter: Option<&[VoucherStatus]>,
+        test_filter: Option<bool>,
     ) -> Vec<VoucherSummary> {
         self.voucher_store
             .vouchers
@@ -46,7 +57,12 @@ impl Wallet {
                     _ => true,
                 };
 
-                uuid_match && status_match
+                let test_match = match test_filter {
+                    Some(is_test) => instance.voucher.non_redeemable_test_voucher == is_test,
+                    None => true,
+                };
+
+                uuid_match && status_match && test_match
             })
             .map(|(local_id, instance)| {
                 let voucher = &instance.voucher;
@@ -134,7 +150,19 @@ impl Wallet {
                         .coordinates
                         .clone()
                         .unwrap_or_default(),
-                    non_redeemable_test_voucher: voucher.non_redeemable_test_voucher,
+                    is_test_voucher: voucher.non_redeemable_test_voucher,
+                    display_currency: format_bff_name(
+                        voucher
+                            .nominal_value
+                            .abbreviation
+                            .as_deref()
+                            .unwrap_or(&voucher.nominal_value.unit),
+                        voucher.non_redeemable_test_voucher,
+                    ),
+                    display_standard_name: format_bff_name(
+                        &voucher.voucher_standard.name,
+                        voucher.non_redeemable_test_voucher,
+                    ),
                 }
             })
             .collect()
@@ -162,6 +190,20 @@ impl Wallet {
             local_instance_id: instance.local_instance_id.clone(),
             status: instance.status.clone(),
             voucher: instance.voucher.clone(),
+            display_currency: format_bff_name(
+                instance
+                    .voucher
+                    .nominal_value
+                    .abbreviation
+                    .as_deref()
+                    .unwrap_or(&instance.voucher.nominal_value.unit),
+                instance.voucher.non_redeemable_test_voucher,
+            ),
+            display_standard_name: format_bff_name(
+                &instance.voucher.voucher_standard.name,
+                instance.voucher.non_redeemable_test_voucher,
+            ),
+            is_test_voucher: instance.voucher.non_redeemable_test_voucher,
         })
     }
 
@@ -254,9 +296,9 @@ impl Wallet {
         &self,
         identity: Option<&crate::models::profile::UserIdentity>,
     ) -> Vec<AggregatedBalance> {
-        // Key: (standard_uuid, unit_abbreviation)
-        // Value: (total_amount, standard_name, unit_abbreviation)
-        let mut balances: HashMap<(String, String), (Decimal, String, String)> = HashMap::new();
+        // Key: AssetClass (standard_uuid, unit_abbreviation, is_test_voucher)
+        // Value: (total_amount, standard_name)
+        let mut balances: HashMap<AssetClass, (Decimal, String)> = HashMap::new();
 
         for instance in self.voucher_store.vouchers.values() {
             if matches!(instance.status, VoucherStatus::Active) {
@@ -298,24 +340,20 @@ impl Wallet {
                         continue;
                     }
 
-                    let key = (
-                        voucher.voucher_standard.uuid.clone(),
-                        voucher
+                    let asset_class = AssetClass {
+                        standard_uuid: voucher.voucher_standard.uuid.clone(),
+                        unit: voucher
                             .nominal_value
                             .abbreviation
                             .clone()
-                            .unwrap_or_default(),
-                    );
+                            .unwrap_or_else(|| voucher.nominal_value.unit.clone()),
+                        is_test_voucher: voucher.non_redeemable_test_voucher,
+                    };
 
-                    let entry = balances.entry(key).or_insert_with(|| {
+                    let entry = balances.entry(asset_class).or_insert_with(|| {
                         (
                             Decimal::zero(),
                             voucher.voucher_standard.name.clone(),
-                            voucher
-                                .nominal_value
-                                .abbreviation
-                                .clone()
-                                .unwrap_or_default(),
                         )
                     });
                     // Addiere den Betrag zum ersten Element des Tupels (dem Decimal-Wert).
@@ -326,15 +364,49 @@ impl Wallet {
 
         balances
             .into_iter()
-            .map(
-                |((standard_uuid, _), (total, standard_name, unit))| AggregatedBalance {
-                    standard_uuid,
+            .map(|(key, (total, standard_name))| {
+                let display_currency = format_bff_name(&key.unit, key.is_test_voucher);
+                let display_standard_name = format_bff_name(&standard_name, key.is_test_voucher);
+
+                AggregatedBalance {
+                    standard_uuid: key.standard_uuid,
                     standard_name,
-                    unit,
+                    unit: key.unit,
                     total_amount: total.to_string(),
-                },
-            )
+                    display_currency,
+                    display_standard_name,
+                    is_test_voucher: key.is_test_voucher,
+                }
+            })
             .collect()
+    }
+
+    /// Ermittelt alle im Wallet aktiven Asset-Klassen (Standard + Test-Status).
+    /// Dies dient der UI zum sauberen Befüllen von Filter-Dropdowns.
+    pub fn get_active_asset_classes(&self) -> Vec<super::types::AssetClassSummary> {
+        let mut classes = std::collections::HashSet::new();
+
+        for instance in self.voucher_store.vouchers.values() {
+            if matches!(instance.status, VoucherStatus::Active) {
+                let voucher = &instance.voucher;
+                let unit = voucher
+                    .nominal_value
+                    .abbreviation
+                    .clone()
+                    .unwrap_or_else(|| voucher.nominal_value.unit.clone());
+                
+                let is_test = voucher.non_redeemable_test_voucher;
+                
+                classes.insert(super::types::AssetClassSummary {
+                    standard_uuid: voucher.voucher_standard.uuid.clone(),
+                    is_test_voucher: is_test,
+                    display_standard_name: super::format_bff_name(&voucher.voucher_standard.name, is_test),
+                    display_currency: super::format_bff_name(&unit, is_test),
+                });
+            }
+        }
+
+        classes.into_iter().collect()
     }
 
     /// Gibt die User-ID des Wallet-Inhabers zurück.
@@ -410,5 +482,133 @@ impl Wallet {
         };
 
         export_profile_as_jws(&identity.signing_key, &public_profile)
+    }
+}
+
+#[cfg(test)]
+mod aggregation_tests {
+    use crate::test_utils::{setup_in_memory_wallet, ACTORS};
+    use crate::wallet::instance::{VoucherInstance, VoucherStatus};
+    use crate::models::voucher::{Voucher, Transaction};
+
+    #[test]
+    fn test_balance_aggregation_strictly_separates_test_and_live_money() {
+        let identity = &ACTORS.alice;
+        let mut wallet = setup_in_memory_wallet(identity);
+        
+        // 1. Live Minuto (10)
+        let mut v1 = Voucher::default();
+        v1.voucher_standard.uuid = "minuto-uuid".to_string();
+        v1.voucher_standard.name = "Minuto".to_string();
+        v1.nominal_value.unit = "Minuto".to_string();
+        v1.nominal_value.abbreviation = Some("Min".to_string());
+        v1.non_redeemable_test_voucher = false;
+        v1.transactions.push(Transaction { amount: "10".to_string(), ..Default::default() });
+        
+        // 2. Live Minuto (5) -> Should be aggregated with v1
+        let mut v2 = v1.clone();
+        v2.transactions[0].amount = "5".to_string();
+        
+        // 3. Test Minuto (50) -> Should be separate
+        let mut v3 = v1.clone();
+        v3.non_redeemable_test_voucher = true;
+        v3.transactions[0].amount = "50".to_string();
+        
+        wallet.voucher_store.vouchers.insert("v1".to_string(), VoucherInstance {
+            voucher: v1, status: VoucherStatus::Active, local_instance_id: "v1".to_string()
+        });
+        wallet.voucher_store.vouchers.insert("v2".to_string(), VoucherInstance {
+            voucher: v2, status: VoucherStatus::Active, local_instance_id: "v2".to_string()
+        });
+        wallet.voucher_store.vouchers.insert("v3".to_string(), VoucherInstance {
+            voucher: v3, status: VoucherStatus::Active, local_instance_id: "v3".to_string()
+        });
+        
+        let balances = wallet.get_total_balance_by_currency(Some(identity));
+        
+        assert_eq!(balances.len(), 2);
+        
+        let live_balance = balances.iter().find(|b| !b.is_test_voucher).unwrap();
+        assert_eq!(live_balance.total_amount, "15");
+        assert_eq!(live_balance.display_currency, "Min");
+        assert_eq!(live_balance.display_standard_name, "Minuto");
+        
+        let test_balance = balances.iter().find(|b| b.is_test_voucher).unwrap();
+        assert_eq!(test_balance.total_amount, "50");
+        assert_eq!(test_balance.display_currency, "TEST-Min");
+        assert_eq!(test_balance.display_standard_name, "TEST-Minuto");
+    }
+
+    #[test]
+    fn test_format_bff_name_logic() {
+        // Nutze super::super, da wir in mod aggregation_tests sind, welches in impl Wallet ist.
+        // Moment, aggregation_tests ist ein eigenes Modul. format_bff_name ist pub(crate) im parent (queries.rs).
+        assert_eq!(crate::wallet::format_bff_name("Minuto", true), "TEST-Minuto");
+        assert_eq!(crate::wallet::format_bff_name("Minuto", false), "Minuto");
+        assert_eq!(crate::wallet::format_bff_name("TEST-Minuto", true), "TEST-Minuto");
+        assert_eq!(crate::wallet::format_bff_name("TEST-Minuto", false), "TEST-Minuto");
+    }
+
+    #[test]
+    fn test_list_vouchers_respects_test_filter() {
+        let identity = &ACTORS.alice;
+        let mut wallet = setup_in_memory_wallet(identity);
+        
+        let mut v_live = Voucher::default();
+        v_live.non_redeemable_test_voucher = false;
+        
+        let mut v_test = Voucher::default();
+        v_test.non_redeemable_test_voucher = true;
+
+        wallet.voucher_store.vouchers.insert("l1".to_string(), VoucherInstance {
+            voucher: v_live.clone(), status: VoucherStatus::Active, local_instance_id: "l1".to_string()
+        });
+        wallet.voucher_store.vouchers.insert("l2".to_string(), VoucherInstance {
+            voucher: v_live, status: VoucherStatus::Active, local_instance_id: "l2".to_string()
+        });
+        wallet.voucher_store.vouchers.insert("t1".to_string(), VoucherInstance {
+            voucher: v_test.clone(), status: VoucherStatus::Active, local_instance_id: "t1".to_string()
+        });
+        wallet.voucher_store.vouchers.insert("t2".to_string(), VoucherInstance {
+            voucher: v_test.clone(), status: VoucherStatus::Active, local_instance_id: "t2".to_string()
+        });
+        wallet.voucher_store.vouchers.insert("t3".to_string(), VoucherInstance {
+            voucher: v_test, status: VoucherStatus::Active, local_instance_id: "t3".to_string()
+        });
+
+        // None -> 5
+        assert_eq!(wallet.list_vouchers(Some(identity), None, None, None).len(), 5);
+        // Some(true) -> 3
+        assert_eq!(wallet.list_vouchers(Some(identity), None, None, Some(true)).len(), 3);
+        // Some(false) -> 2
+        assert_eq!(wallet.list_vouchers(Some(identity), None, None, Some(false)).len(), 2);
+    }
+
+    #[test]
+    fn test_asset_class_listing() {
+        let identity = &ACTORS.alice;
+        let mut wallet = setup_in_memory_wallet(identity);
+        
+        let mut v1 = Voucher::default();
+        v1.voucher_standard.uuid = "std-1".to_string();
+        v1.voucher_standard.name = "Minuto".to_string();
+        v1.nominal_value.unit = "Minuto".to_string();
+        v1.non_redeemable_test_voucher = false;
+        
+        let mut v2 = v1.clone();
+        v2.non_redeemable_test_voucher = true;
+
+        wallet.voucher_store.vouchers.insert("v1".to_string(), VoucherInstance {
+            voucher: v1, status: VoucherStatus::Active, local_instance_id: "v1".to_string()
+        });
+        wallet.voucher_store.vouchers.insert("v2".to_string(), VoucherInstance {
+            voucher: v2, status: VoucherStatus::Active, local_instance_id: "v2".to_string()
+        });
+
+        let classes = wallet.get_active_asset_classes();
+        assert_eq!(classes.len(), 2);
+        
+        assert!(classes.iter().any(|c| !c.is_test_voucher && c.display_standard_name == "Minuto"));
+        assert!(classes.iter().any(|c| c.is_test_voucher && c.display_standard_name == "TEST-Minuto"));
     }
 }

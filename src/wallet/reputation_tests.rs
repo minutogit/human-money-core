@@ -26,6 +26,7 @@ mod tests {
             voucher_standard_uuid: Some("uuid".to_string()),
             resolutions: None,
             layer2_verdict: None,
+            non_redeemable_test_voucher: false,
         }
     }
 

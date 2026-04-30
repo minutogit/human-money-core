@@ -372,7 +372,7 @@ fn api_app_service_full_signature_workflow() {
             Some(password),
         )
         .unwrap();
-    let local_id = service_creator.get_voucher_summaries(None, None).unwrap()[0]
+    let local_id = service_creator.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
 
@@ -579,7 +579,7 @@ fn test_full_guarantor_workflow_via_app_service() {
         .expect("create_new_voucher should now succeed for incomplete vouchers");
 
     let summary = service_creator
-        .get_voucher_summaries(None, None)
+        .get_voucher_summaries(None, None, None)
         .expect("Failed to get summaries")
         .pop()
         .expect("Wallet should contain one voucher");
@@ -811,7 +811,7 @@ fn api_app_service_symmetric_signature_workflow() {
             Some(wallet_password),
         )
         .unwrap();
-    let local_id = service_creator.get_voucher_summaries(None, None).unwrap()[0]
+    let local_id = service_creator.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
 

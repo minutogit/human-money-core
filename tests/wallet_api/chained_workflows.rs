@@ -28,7 +28,7 @@ fn get_first_local_id(wallet: &Wallet) -> String {
 
 /// Helper to get active summaries
 fn list_active(wallet: &Wallet, identity: &human_money_core::models::profile::UserIdentity) -> Vec<human_money_core::wallet::VoucherSummary> {
-    wallet.list_vouchers(Some(identity), None, Some(&[VoucherStatus::Active]))
+    wallet.list_vouchers(Some(identity), None, Some(&[VoucherStatus::Active]), None)
 }
 
 // ============================================================================

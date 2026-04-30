@@ -306,6 +306,7 @@ fn test_proof_id_is_deterministic_and_derived_from_input() {
         vec![],
         "2030-12-31T23:59:59.999999Z".to_string(),
         reporter,
+        false,
     ).unwrap();
 
     let proof2 = create_proof_of_double_spend(
@@ -314,6 +315,7 @@ fn test_proof_id_is_deterministic_and_derived_from_input() {
         vec![],
         "2030-12-31T23:59:59.999999Z".to_string(),
         reporter,
+        false,
     ).unwrap();
 
     // Deterministisch (gleiche Inputs → gleiche proof_id)
@@ -330,6 +332,7 @@ fn test_proof_id_is_deterministic_and_derived_from_input() {
         vec![],
         "2030-12-31T23:59:59.999999Z".to_string(),
         reporter,
+        false,
     ).unwrap();
     assert_ne!(
         proof1.proof_id, proof_other_hash.proof_id,
@@ -347,6 +350,7 @@ fn test_proof_creation_rejects_invalid_offender_id() {
         vec![],
         "2030-12-31T23:59:59.999999Z".to_string(),
         reporter,
+        false,
     );
     assert!(result.is_err(), "Missing DID in offender_id must return Err");
 }

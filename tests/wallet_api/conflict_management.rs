@@ -34,6 +34,7 @@ fn create_mock_proof(offender_id: &str) -> ProofOfDoubleSpend {
         voucher_standard_uuid: None,
         resolutions: None,
         layer2_verdict: None,
+        non_redeemable_test_voucher: false,
     }
 }
 
@@ -134,6 +135,7 @@ fn test_conflict_override_persistence() {
         reporter_signature: "sig".to_string(),
         affected_voucher_name: None,
         voucher_standard_uuid: None,
+        non_redeemable_test_voucher: false,
     };
     
     // Test import_proof saves it: Check that logging out and logging back in works.

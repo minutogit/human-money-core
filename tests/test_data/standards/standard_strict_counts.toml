@@ -1,10 +1,10 @@
 [immutable.identity]
 uuid = "TEST-STRICT-COUNTS-V1"
-name = "Strict Counts Test Standard"
+name = "Strict Counts Standard"
 abbreviation = "SCT"
 
 [immutable.blueprint]
-unit = "TestUnit"
+unit = "Unit"
 primary_redemption_type = "goods_or_services"
 collateral_type = "personal_guarantee"
 

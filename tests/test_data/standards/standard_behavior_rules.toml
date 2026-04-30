@@ -1,10 +1,10 @@
 [immutable.identity]
 uuid = "BEHAVE-TEST-V1"
-name = "Behavior Rules Test Standard"
+name = "Behavior Rules Standard"
 abbreviation = "BEH"
 
 [immutable.blueprint]
-unit = "TestUnit"
+unit = "BEHUnit"
 primary_redemption_type = "goods_or_services"
 collateral_type = "personal_guarantee"
 

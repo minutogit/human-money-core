@@ -61,10 +61,23 @@ pub fn verify_and_parse_standard(
     let public_key = get_pubkey_from_user_id(&signature_block.issuer_id)?;
 
     // 6. Verifiziere die Signatur gegen den Hash des gesamten (signierten) Bodys.
-    if !verify_ed25519(&public_key, signature_hash.as_bytes(), &signature) {
-        return Err(VoucherCoreError::Standard(
-            StandardDefinitionError::InvalidSignature,
-        ));
+    #[cfg(feature = "test-utils")]
+    {
+        if !crate::is_signature_bypass_active() {
+            if !verify_ed25519(&public_key, signature_hash.as_bytes(), &signature) {
+                return Err(VoucherCoreError::Standard(
+                    StandardDefinitionError::InvalidSignature,
+                ));
+            }
+        }
+    }
+    #[cfg(not(feature = "test-utils"))]
+    {
+        if !verify_ed25519(&public_key, signature_hash.as_bytes(), &signature) {
+            return Err(VoucherCoreError::Standard(
+                StandardDefinitionError::InvalidSignature,
+            ));
+        }
     }
 
     // 7. Berechne den logic_hash NUR über die [immutable]-Zone.

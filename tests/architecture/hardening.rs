@@ -124,7 +124,7 @@ mod tests {
                 Some(PASSWORD),
             )
             .unwrap();
-        let local_id = alice_service.get_voucher_summaries(None, None).unwrap()[0]
+        let local_id = alice_service.get_voucher_summaries(None, None, None).unwrap()[0]
             .local_instance_id
             .clone();
 

@@ -93,7 +93,7 @@ fn api_app_service_full_lifecycle() {
             Some("password"),
         )
         .expect("Voucher creation failed");
-    let summaries_alice = service_alice.get_voucher_summaries(None, None).unwrap();
+    let summaries_alice = service_alice.get_voucher_summaries(None, None, None).unwrap();
     let local_id_alice = summaries_alice[0].local_instance_id.clone();
 
     // --- 5. Alice sendet den Gutschein an Bob ---
@@ -440,7 +440,7 @@ fn api_wallet_transfer_full_amount() {
         .unwrap();
 
     let summary = alice_wallet
-        .list_vouchers(Some(&alice.identity), None, None)
+        .list_vouchers(Some(&alice.identity), None, None, None)
         .into_iter()
         .find(|s| s.status == VoucherStatus::Archived)
         .unwrap();
@@ -461,7 +461,7 @@ fn api_wallet_transfer_full_amount() {
         )
         .unwrap();
 
-    let summary = bob_wallet.list_vouchers(Some(&bob.identity), None, None).pop().unwrap();
+    let summary = bob_wallet.list_vouchers(Some(&bob.identity), None, None, None).pop().unwrap();
     assert_eq!(summary.current_amount, "100");
     assert_eq!(summary.status, VoucherStatus::Active);
 }
@@ -512,7 +512,7 @@ fn api_wallet_transfer_split_amount() {
         .unwrap();
 
     let active_summary = alice_wallet
-        .list_vouchers(Some(&alice.identity), None, None)
+        .list_vouchers(Some(&alice.identity), None, None, None)
         .into_iter()
         .find(|s| s.status == VoucherStatus::Active)
         .unwrap();
@@ -532,7 +532,7 @@ fn api_wallet_transfer_split_amount() {
             &standards_for_bob,
         )
         .unwrap();
-    let bob_summary = bob_wallet.list_vouchers(Some(&bob.identity), None, None).pop().unwrap();
+    let bob_summary = bob_wallet.list_vouchers(Some(&bob.identity), None, None, None).pop().unwrap();
     assert_eq!(bob_summary.current_amount, "30");
 }
 
@@ -763,7 +763,7 @@ fn api_wallet_create_voucher_and_get_id() {
         .unwrap();
 
     let summary = wallet
-        .list_vouchers(Some(&issuer.identity), None, None)
+        .list_vouchers(Some(&issuer.identity), None, None, None)
         .pop()
         .expect("Wallet should contain one voucher");
     assert_eq!(summary.current_amount, "500.0000");
@@ -1018,7 +1018,7 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
         .expect("Voucher creation failed");
 
     // 3. Die lokale ID des Gutscheins ermitteln
-    let summaries_alice = service_alice.get_voucher_summaries(None, None).unwrap();
+    let summaries_alice = service_alice.get_voucher_summaries(None, None, None).unwrap();
     assert_eq!(summaries_alice.len(), 1, "Should have one voucher");
     let local_id = &summaries_alice[0].local_instance_id;
 
@@ -1122,7 +1122,7 @@ fn api_wallet_transfer_multi_source() {
         .unwrap();
 
     // 3. VERIFIZIERUNG (Alice)
-    let alice_summaries = alice_wallet.list_vouchers(Some(&alice.identity), None, None);
+    let alice_summaries = alice_wallet.list_vouchers(Some(&alice.identity), None, None, None);
     let mut remaining_amounts_alice: Vec<_> = alice_summaries
         .iter()
         .filter(|s| s.status == VoucherStatus::Active)
@@ -1162,7 +1162,7 @@ fn api_wallet_transfer_multi_source() {
         "Bobs Gesamtguthaben sollte 50 sein"
     );
     assert_eq!(
-        bob_wallet.list_vouchers(Some(&bob.identity), None, None).len(),
+        bob_wallet.list_vouchers(Some(&bob.identity), None, None, None).len(),
         2,
         "Bob sollte zwei neue Gutscheine erhalten haben"
     );

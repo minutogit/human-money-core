@@ -62,7 +62,7 @@ mod tests {
         // User A erstellt einen Gutschein
         let (service_a, _dir_a) = setup_service_with_voucher(PASSWORD, &ACTORS.alice, "Alice");
         let voucher_summary = service_a
-            .get_voucher_summaries(None, None)
+            .get_voucher_summaries(None, None, None)
             .unwrap()
             .pop()
             .expect("Alice should have a voucher");
@@ -111,7 +111,7 @@ mod tests {
         );
 
         // Prüfe, dass der Gutschein in Bobs Wallet mit Status Endorsed gespeichert wurde
-        let vouchers_b = service_b.get_voucher_summaries(None, None).unwrap();
+        let vouchers_b = service_b.get_voucher_summaries(None, None, None).unwrap();
         let endorsed_voucher = vouchers_b
             .iter()
             .find(|v| matches!(v.status, VoucherStatus::Endorsed { .. }))
@@ -141,7 +141,7 @@ mod tests {
         // User A erstellt einen Gutschein
         let (service_a, _dir_a) = setup_service_with_voucher(PASSWORD, &ACTORS.alice, "Alice");
         let voucher_summary = service_a
-            .get_voucher_summaries(None, None)
+            .get_voucher_summaries(None, None, None)
             .unwrap()
             .pop()
             .expect("Alice should have a voucher");
@@ -189,7 +189,7 @@ mod tests {
         // User A erstellt einen Gutschein
         let (service_a, _dir_a) = setup_service_with_voucher(PASSWORD, &ACTORS.alice, "Alice");
         let voucher_summary = service_a
-            .get_voucher_summaries(None, None)
+            .get_voucher_summaries(None, None, None)
             .unwrap()
             .pop()
             .expect("Alice should have a voucher");
@@ -220,7 +220,7 @@ mod tests {
             .expect("Signature creation should succeed");
 
         // Prüfe, dass der Endorsed-Gutschein vorhanden ist
-        let vouchers_before = service_b.get_voucher_summaries(None, None).unwrap();
+        let vouchers_before = service_b.get_voucher_summaries(None, None, None).unwrap();
         let endorsed_count_before = vouchers_before
             .iter()
             .filter(|v| matches!(v.status, VoucherStatus::Endorsed { .. }))
@@ -239,7 +239,7 @@ mod tests {
             .expect("Login should succeed");
 
         // Prüfe, dass der Endorsed-Gutschein immer noch vorhanden ist
-        let vouchers_after = service_b.get_voucher_summaries(None, None).unwrap();
+        let vouchers_after = service_b.get_voucher_summaries(None, None, None).unwrap();
         let endorsed_count_after = vouchers_after
             .iter()
             .filter(|v| matches!(v.status, VoucherStatus::Endorsed { .. }))

@@ -404,7 +404,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         .unwrap();
 
     // Merke dir die lokale ID des Gutscheins
-    let initial_local_id = app_service.get_voucher_summaries(None, None).unwrap()[0]
+    let initial_local_id = app_service.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
     let original_voucher_state_for_attack = initial_voucher.clone(); // Klonen für späteren Angriff
@@ -430,7 +430,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
     );
 
     // Status-Prüfung: Der Gutschein sollte jetzt 'Archived' sein
-    let summary_after_send = app_service.get_voucher_summaries(None, None).unwrap();
+    let summary_after_send = app_service.get_voucher_summaries(None, None, None).unwrap();
 
     // KORREKTUR: Die 'initial_local_id' existiert nicht mehr. Die Wallet-Logik
     // hat die alte Instanz entfernt und eine NEUE Instanz mit einer NEUEN local_id
@@ -498,7 +498,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         .unwrap();
     assert_eq!(
         app_service
-            .get_voucher_summaries(None, Some(&[VoucherStatus::Active]))
+            .get_voucher_summaries(None, Some(&[VoucherStatus::Active]), None)
             .unwrap()
             .len(),
         1,
@@ -540,7 +540,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
 
     // ### Akt 4: Verifizierung der Selbstheilung ###
     // Überprüfe, ob der AppService den inkonsistenten Gutschein auf 'Quarantined' gesetzt hat.
-    let summary_after_fail = app_service.get_voucher_summaries(None, None).unwrap();
+    let summary_after_fail = app_service.get_voucher_summaries(None, None, None).unwrap();
     let instance = summary_after_fail
         .iter()
         .find(|s| s.local_instance_id.contains(&initial_local_id))

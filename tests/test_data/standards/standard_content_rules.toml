@@ -1,6 +1,6 @@
 [immutable.identity]
 uuid = "TEST-CONTENT-RULES-V1"
-name = "Content Rules Test Standard"
+name = "Content Rules Standard"
 abbreviation = "CRT"
 
 [immutable.blueprint]

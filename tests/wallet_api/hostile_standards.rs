@@ -49,7 +49,7 @@ fn test_disallowed_transaction_type() {
             Some(password),
         )
         .unwrap();
-    let local_id = service.get_voucher_summaries(None, None).unwrap()[0]
+    let local_id = service.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
     assert_eq!(
