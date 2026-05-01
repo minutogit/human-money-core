@@ -153,7 +153,7 @@ fn test_rejection_of_broken_transaction_chain() {
     );
     assert!(
         service_recipient
-            .get_voucher_summaries(None, None)
+            .get_voucher_summaries(None, None, None)
             .unwrap()
             .is_empty()
     );
@@ -277,7 +277,7 @@ fn test_rejection_of_self_received_bundle() {
         .unwrap();
 
     // KORREKTUR für E0609: Die local_instance_id muss aus den Summaries geholt werden.
-    let summaries = service_sender.get_voucher_summaries(None, None).unwrap();
+    let summaries = service_sender.get_voucher_summaries(None, None, None).unwrap();
     let local_id = summaries
         .first()
         .expect("Wallet should have one voucher summary after creation")
@@ -317,7 +317,7 @@ fn test_rejection_of_self_received_bundle() {
 
     // Stelle sicher, dass der ursprüngliche Gutschein (jetzt mit Restbetrag)
     // im 'Active'-Status verblieben ist und kein neuer Gutschein erstellt wurde.
-    let summaries = service_sender.get_voucher_summaries(None, None).unwrap();
+    let summaries = service_sender.get_voucher_summaries(None, None, None).unwrap();
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].status, VoucherStatus::Active);
     assert_eq!(summaries[0].current_amount, "50.0000"); // Der Restbetrag nach dem Split
@@ -328,7 +328,7 @@ fn test_rejection_of_self_received_bundle() {
     assert!(result_recipient.is_ok());
     assert_eq!(
         service_recipient
-            .get_voucher_summaries(None, None)
+            .get_voucher_summaries(None, None, None)
             .unwrap()
             .len(),
         1
@@ -366,7 +366,7 @@ fn test_rejection_of_identical_bundle_replay() {
         )
         .unwrap();
 
-    let summaries = service_sender.get_voucher_summaries(None, None).unwrap();
+    let summaries = service_sender.get_voucher_summaries(None, None, None).unwrap();
     let local_id = summaries.first().unwrap().local_instance_id.clone();
 
     // Sender erstellt ein Bundle für den Empfänger
@@ -394,7 +394,7 @@ fn test_rejection_of_identical_bundle_replay() {
     assert!(result_first.is_ok());
     assert_eq!(
         service_recipient
-            .get_voucher_summaries(None, None)
+            .get_voucher_summaries(None, None, None)
             .unwrap()
             .len(),
         1
@@ -415,7 +415,7 @@ fn test_rejection_of_identical_bundle_replay() {
     // Der Zustand des Wallets darf sich nicht geändert haben
     assert_eq!(
         service_recipient
-            .get_voucher_summaries(None, None)
+            .get_voucher_summaries(None, None, None)
             .unwrap()
             .len(),
         1
@@ -488,7 +488,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
     assert!(result_first.is_ok());
     assert_eq!(
         service_recipient
-            .get_voucher_summaries(None, None)
+            .get_voucher_summaries(None, None, None)
             .unwrap()
             .len(),
         1
@@ -508,7 +508,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
     );
     assert_eq!(
         service_recipient
-            .get_voucher_summaries(None, None)
+            .get_voucher_summaries(None, None, None)
             .unwrap()
             .len(),
         1
@@ -601,7 +601,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
         )
         .unwrap();
     let local_id_sender = service_sender
-        .get_voucher_summaries(None, None)
+        .get_voucher_summaries(None, None, None)
         .unwrap()
         .first()
         .unwrap()
@@ -649,7 +649,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
     // Das PC-Wallet muss leer bleiben
     assert!(
         service_recipient_pc
-            .get_voucher_summaries(None, None)
+            .get_voucher_summaries(None, None, None)
             .unwrap()
             .is_empty()
     );
@@ -666,7 +666,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
     assert!(result_mobil_receive.is_ok());
     assert_eq!(
         service_recipient_mobil
-            .get_voucher_summaries(None, None)
+            .get_voucher_summaries(None, None, None)
             .unwrap()
             .len(),
         1

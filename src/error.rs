@@ -332,6 +332,10 @@ pub enum ValidationError {
         limit: String,
         wait_duration: String,
     },
+
+    /// Der Gutschein verwendet einen Namen (Währung oder Standard), der Testgeld vortäuscht, obwohl er als Echtgeld deklariert ist.
+    #[error("Anti-Spoofing: Genuine voucher uses deceptive 'TEST' prefix in currency or standard name: {reason}")]
+    DeceptiveNaming { reason: String },
 }
 
 /// Der zentrale Fehlertyp für alle Operationen in der `human_money_core`-Bibliothek.

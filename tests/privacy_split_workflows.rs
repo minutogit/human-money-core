@@ -47,7 +47,7 @@ mod tests {
         ).expect("Erster Split sollte erfolgreich sein");
 
         // Wir prüfen, ob Alice das Wechselgeld (60) korrekt in ihrem Wallet hat
-        let alice_vouchers = alice_wallet.list_vouchers(Some(&alice.identity), None, None);
+        let alice_vouchers = alice_wallet.list_vouchers(Some(&alice.identity), None, None, None);
         let remainder_local_id = alice_vouchers.iter()
             .find(|v| v.current_amount == "60")
             .map(|v| v.local_instance_id.clone())
@@ -76,7 +76,7 @@ mod tests {
         // Verifikation
         assert!(result2.is_ok(), "Der zweite Split vom Wechselgeld muss kryptographisch valide sein: {:?}", result2.err());
         
-        let final_vouchers = alice_wallet.list_vouchers(Some(&alice.identity), None, None);
+        let final_vouchers = alice_wallet.list_vouchers(Some(&alice.identity), None, None, None);
         let final_remainder = final_vouchers.iter()
             .find(|v| v.current_amount == "40")
             .is_some();

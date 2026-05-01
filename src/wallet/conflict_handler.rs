@@ -93,7 +93,11 @@ impl Wallet {
                     local_note: entry.local_note.clone(),
                     conflict_role: entry.conflict_role,
                     affected_voucher_name: proof.affected_voucher_name.clone(),
+                    display_affected_voucher_name: proof.affected_voucher_name.as_ref().map(|n| {
+                        super::format_bff_name(n, proof.non_redeemable_test_voucher)
+                    }),
                     voucher_standard_uuid: proof.voucher_standard_uuid.clone(),
+                    is_test_voucher: proof.non_redeemable_test_voucher,
                 }
             })
             .collect()
@@ -273,11 +277,13 @@ impl Wallet {
         let mut voucher_valid_until = "unknown".to_string();
         let mut affected_voucher_name = None;
         let mut voucher_standard_uuid = None;
+        let mut is_test_voucher = false;
 
         if let Some(voucher) = self.find_voucher_for_transaction(&conflicting_transactions[0].t_id, archive)? {
             voucher_valid_until = voucher.valid_until.clone();
             affected_voucher_name = Some(voucher.voucher_standard.name.clone());
             voucher_standard_uuid = Some(voucher.voucher_standard.uuid.clone());
+            is_test_voucher = voucher.non_redeemable_test_voucher;
 
             if let Ok(layer2_voucher_id) = crate::services::l2_gateway::extract_layer2_voucher_id(&voucher) {
                 for (_i, tx) in conflicting_transactions.iter().filter(|t| t.t_type != "soft_placeholder").enumerate() {
@@ -309,6 +315,7 @@ impl Wallet {
             conflicting_transactions,
             voucher_valid_until,
             identity,
+            is_test_voucher,
         )?;
 
         // Metadaten setzen

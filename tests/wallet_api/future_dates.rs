@@ -76,7 +76,7 @@ fn test_future_dated_vouchers() {
     let spend_request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: alice.identity.user_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
-            local_instance_id: bob_wallet.list_vouchers(Some(&bob.identity), None, None)[0].local_instance_id.clone(),
+            local_instance_id: bob_wallet.list_vouchers(Some(&bob.identity), None, None, None)[0].local_instance_id.clone(),
             amount_to_send: "50".to_string(),
         }],
         notes: None,

@@ -1,11 +1,11 @@
 # tests/test_data/standards/standard_no_split.toml
 [immutable.identity]
 uuid = "TEST-NO-SPLIT-V1"
-name = "No Split Test Standard"
+name = "No Split Standard"
 abbreviation = "NST"
 
 [immutable.blueprint]
-unit = "TestUnit"
+unit = "Unit"
 primary_redemption_type = "goods_or_services"
 collateral_type = "personal_guarantee"
 

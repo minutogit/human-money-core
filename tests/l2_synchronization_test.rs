@@ -147,7 +147,7 @@ fn test_scenario_1_happy_path() {
     )
     .unwrap();
 
-    let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0]
+    let voucher_id = app.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
     let mut mock_l2 = MockL2Node::new();
@@ -205,7 +205,7 @@ fn test_scenario_2_offline_sync() {
     )
     .unwrap();
 
-    let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0]
+    let voucher_id = app.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
     let mut mock_l2 = MockL2Node::new();
@@ -245,6 +245,7 @@ fn test_scenario_2_offline_sync() {
         .get_voucher_summaries(
             None,
             Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+            None,
         )
         .unwrap()
         .last()
@@ -274,6 +275,7 @@ fn test_scenario_2_offline_sync() {
         .get_voucher_summaries(
             None,
             Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+            None,
         )
         .unwrap()
         .last()
@@ -334,7 +336,7 @@ fn test_scenario_3_double_spend_detection() {
     )
     .unwrap();
 
-    let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0]
+    let voucher_id = app.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
     let mut mock_l2 = MockL2Node::new();
@@ -372,6 +374,7 @@ fn test_scenario_3_double_spend_detection() {
         .get_voucher_summaries(
             None,
             Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+            None,
         )
         .unwrap()
         .last()
@@ -439,7 +442,7 @@ fn test_scenario_4_initial_registration() {
     )
     .unwrap();
 
-    let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0]
+    let voucher_id = app.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
     let mock_l2 = MockL2Node::new(); // EMPTY L2

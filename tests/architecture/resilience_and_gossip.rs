@@ -365,7 +365,7 @@ mod tests {
             )
             .unwrap()
             .voucher_id;
-        let local_id = alice_service.get_voucher_summaries(None, None).unwrap()[0]
+        let local_id = alice_service.get_voucher_summaries(None, None, None).unwrap()[0]
             .local_instance_id
             .clone();
 
@@ -421,7 +421,7 @@ mod tests {
         bob_service
             .receive_bundle(&bundle1, &standards, None, Some("password"), false)
             .unwrap();
-        let bob_local_id = bob_service.get_voucher_summaries(None, None).unwrap()[0]
+        let bob_local_id = bob_service.get_voucher_summaries(None, None, None).unwrap()[0]
             .local_instance_id
             .clone();
 
@@ -733,7 +733,7 @@ mod tests {
                 Some(PASSWORD),
             )
             .unwrap();
-        let local_id = alice_service.get_voucher_summaries(None, None).unwrap()[0]
+        let local_id = alice_service.get_voucher_summaries(None, None, None).unwrap()[0]
             .local_instance_id
             .clone();
         let init_tx_fp_key = alice_service

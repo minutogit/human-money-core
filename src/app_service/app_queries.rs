@@ -3,7 +3,7 @@
 //! Enthält alle reinen Lese-Operationen (Queries) des `AppService`.
 use super::{AppService, AppState};
 use crate::models::profile::{PublicProfile, UserIdentity};
-use crate::wallet::{AggregatedBalance, instance::VoucherStatus};
+use crate::wallet::{AggregatedBalance, AssetClassSummary, instance::VoucherStatus};
 use crate::wallet::{VoucherDetails, VoucherSummary, Wallet};
 
 impl AppService {
@@ -30,31 +30,29 @@ impl AppService {
     }
 
     /// Gibt eine Liste von Zusammenfassungen aller Gutscheine im Wallet zurück.
-    /// Die Liste kann optional nach Gutschein-Standards (UUIDs) und/oder Status gefiltert werden.
+    /// Die Liste kann optional nach Gutschein-Standards (UUIDs), Status und Test-Status gefiltert werden.
     ///
     /// # Arguments
-    /// * `voucher_standard_uuid_filter` - Ein optionaler Slice (`&[String]`) von UUIDs. Nur Gutscheine,
-    ///                                    deren Standard-UUID in diesem Slice enthalten ist, werden zurückgegeben.
-    ///                                    Wenn `None` oder ein leerer Slice übergeben wird, werden alle Standards berücksichtigt.
-    /// * `status_filter`                - Ein optionaler Slice (`&[VoucherStatus]`) von Status-Enums. Nur Gutscheine,
-    ///                                    die einen dieser Status-Werte haben, werden zurückgegeben.
-    ///                                    Wenn `None` oder ein leerer Slice übergeben wird, werden alle Status berücksichtigt.
+    /// * `voucher_standard_uuid_filter` - Ein optionaler Slice (`&[String]`) von UUIDs.
+    /// * `status_filter`                - Ein optionaler Slice (`&[VoucherStatus]`) von Status-Enums.
+    /// * `test_filter`                  - Ein optionaler Boolean. Wenn `Some(true)`, werden nur Testgutscheine zurückgegeben.
+    ///                                    Wenn `None`, wird nicht nach Test-Status gefiltert.
     ///
     /// # Returns
     /// Ein `Vec<VoucherSummary>` mit den wichtigsten Daten jedes Gutscheins, basierend auf den Filtern.
-    ///
-    ///
-    /// # Errors
-    /// Schlägt fehl, wenn das Wallet gesperrt (`Locked`) ist.
     pub fn get_voucher_summaries(
         &self,
         voucher_standard_uuid_filter: Option<&[String]>,
         status_filter: Option<&[VoucherStatus]>,
+        test_filter: Option<bool>,
     ) -> Result<Vec<VoucherSummary>, String> {
         let identity = self.get_identity()?;
-        Ok(self
-            .get_wallet()?
-            .list_vouchers(Some(identity), voucher_standard_uuid_filter, status_filter))
+        Ok(self.get_wallet()?.list_vouchers(
+            Some(identity),
+            voucher_standard_uuid_filter,
+            status_filter,
+            test_filter,
+        ))
     }
 
     /// Aggregiert die Guthaben aller aktiven Gutscheine, gruppiert nach Währung.
@@ -67,6 +65,12 @@ impl AppService {
     pub fn get_total_balance_by_currency(&self) -> Result<Vec<AggregatedBalance>, String> {
         let identity = self.get_identity()?;
         Ok(self.get_wallet()?.get_total_balance_by_currency(Some(identity)))
+    }
+
+    /// Ermittelt alle im Wallet aktiven Asset-Klassen (Standard + Test-Status).
+    /// Dies dient der UI zum sauberen Befüllen von Filter-Dropdowns.
+    pub fn get_active_asset_classes(&self) -> Result<Vec<AssetClassSummary>, String> {
+        Ok(self.get_wallet()?.get_active_asset_classes())
     }
 
     /// Ruft eine detaillierte Ansicht für einen einzelnen Gutschein ab.

@@ -28,7 +28,7 @@ mod tests {
     /// Benötigt einen Service, der bereits einen Gutschein hat.
     fn create_dummy_transfer_request(service: &mut AppService) -> MultiTransferRequest {
         let summary = service
-            .get_voucher_summaries(None, None)
+            .get_voucher_summaries(None, None, None)
             .unwrap()
             .pop()
             .expect("Service has no vouchers to transfer");
@@ -79,7 +79,7 @@ mod tests {
             .create_new_voucher(&signed_standard, "de", voucher_data, Some(password))
             .expect("Voucher creation in setup_service_with_voucher failed");
         let local_id = service
-            .get_voucher_summaries(None, None)
+            .get_voucher_summaries(None, None, None)
             .unwrap()
             .pop()
             .unwrap()
@@ -288,7 +288,7 @@ mod tests {
             .expect("Voucher creation should succeed");
 
         // 3. Prüfen, ob der Gutschein vorhanden ist
-        let summaries_before = service.get_voucher_summaries(None, None).unwrap();
+        let summaries_before = service.get_voucher_summaries(None, None, None).unwrap();
         assert_eq!(summaries_before.len(), 1);
         let local_id = summaries_before[0].local_instance_id.clone();
 

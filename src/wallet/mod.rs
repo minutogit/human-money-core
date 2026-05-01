@@ -27,6 +27,16 @@ mod reputation_tests;
 // NEU: Exportiere alle öffentlichen Typen aus dem types-Modul
 pub use types::*;
 
+/// Hilfsfunktion zur Formatierung von Namen für die Benutzeroberfläche (BFF-Pattern).
+/// Stellt sicher, dass Testgutscheine ein einheitliches "TEST-" Präfix erhalten.
+pub(crate) fn format_bff_name(raw_name: &str, is_test: bool) -> String {
+    if is_test && !raw_name.starts_with("TEST-") {
+        format!("TEST-{}", raw_name)
+    } else {
+        raw_name.to_string()
+    }
+}
+
 use crate::models::conflict::{
     CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, ProofStore,
 };

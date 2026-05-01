@@ -1,9 +1,9 @@
 ---
 project: human-money-core
-version: "0.2.10"
+version: "0.2.13"
 phase: "active-development"
 health: "green"
-last_updated: "2026-04-25"
+last_updated: "2026-04-30"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -74,6 +74,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **Maintenance Refactoring**: Consolidated storage cleanup into a single, efficient pass; migrated to `usize` for all collection counters and eliminated magic numbers for archival retention.
 - [x] **Integrity Bugfix**: Resolved a critical issue where auto-cleanup on login could accidentally mask offline file tampering by rewriting the state before verification.
 - [x] **Cloning Protection Hardening**: Implemented active runtime "traps" in AppService to detect improper `instance_id` storage (including parent directories), added aggressive security docstrings, and verified with architecture tests.
+- [x] **Test Money Separation & Anti-Spoofing**: Strict cryptographic and structural separation of real and test money in balance aggregation; implemented automated rejection of deceptive "TEST" prefixes for real vouchers (UX security).
 
 ## Next Milestones
 

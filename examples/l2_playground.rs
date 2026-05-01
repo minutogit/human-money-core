@@ -206,7 +206,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(password),
     )?;
 
-    let voucher_id = app.get_voucher_summaries(None, None)?[0]
+    let voucher_id = app.get_voucher_summaries(None, None, None)?[0]
         .local_instance_id
         .clone();
     let req_genesis = app.generate_l2_lock_request(&voucher_id)?;
@@ -238,6 +238,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get_voucher_summaries(
             None,
             Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+            None,
         )?
         .iter()
         .find(|s| s.current_amount == "90.0000")
@@ -272,6 +273,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get_voucher_summaries(
             None,
             Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+            None,
         )?
         .iter()
         .find(|s| s.current_amount == "85.0000")

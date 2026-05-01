@@ -240,7 +240,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         service_creator.create_new_voucher(&standard_toml, "de", voucher_data, None)?;
 
     let summary = service_creator
-        .get_voucher_summaries(None, None)?
+        .get_voucher_summaries(None, None, None)?
         .pop()
         .unwrap();
     let local_id = summary.local_instance_id;
@@ -367,7 +367,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Finde die local_id des Gutscheins im Wallet des ersten Empfängers
     let recipient_summary = service_recipient
-        .get_voucher_summaries(None, None)?
+        .get_voucher_summaries(None, None, None)?
         .pop()
         .unwrap();
     let recipient_local_id = recipient_summary.local_instance_id;
@@ -427,7 +427,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- 8. Finale Rohdaten-Ausgabe ---
     println!("\n--- SCHRITT 8: Finale Rohdaten-Ausgabe des Gutscheins bei Charlie ---");
     let charlie_summary = service_charlie
-        .get_voucher_summaries(None, None)?
+        .get_voucher_summaries(None, None, None)?
         .pop()
         .unwrap();
     let charlie_voucher_details =

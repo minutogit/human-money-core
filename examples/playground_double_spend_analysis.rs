@@ -141,7 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             service_creator.create_new_voucher(&standard_toml, "de", voucher_data, None)?;
         voucher_id = voucher.voucher_id.clone();
 
-        let summaries = service_creator.get_voucher_summaries(None, None)?;
+        let summaries = service_creator.get_voucher_summaries(None, None, None)?;
         let summary = summaries.first().expect("Creator should have voucher");
         local_instance_id = summary.local_instance_id.clone();
 
@@ -196,7 +196,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
 
         // Get the voucher from Alice to see the transaction
-        let alice_summaries = service_alice.get_voucher_summaries(None, None)?;
+        let alice_summaries = service_alice.get_voucher_summaries(None, None, None)?;
         let alice_summary = alice_summaries.first().unwrap();
         let alice_details = service_alice.get_voucher_details(&alice_summary.local_instance_id)?;
         let tx = alice_details.voucher.transactions.last().unwrap();
@@ -225,7 +225,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         service_creator.unlock_session(password, 60)?;
 
         // Check if voucher is "back"
-        let summaries = service_creator.get_voucher_summaries(None, None)?;
+        let summaries = service_creator.get_voucher_summaries(None, None, None)?;
         println!(
             "   Creator wallet has {} vouchers (should be 1).",
             summaries.len()
@@ -259,7 +259,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             false,
         )?;
 
-        let bob_summaries = service_bob.get_voucher_summaries(None, None)?;
+        let bob_summaries = service_bob.get_voucher_summaries(None, None, None)?;
         let bob_summary = bob_summaries.first().unwrap();
         let bob_details = service_bob.get_voucher_details(&bob_summary.local_instance_id)?;
         let tx = bob_details.voucher.transactions.last().unwrap();

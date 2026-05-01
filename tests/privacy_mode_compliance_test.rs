@@ -102,7 +102,7 @@ mod tests {
 
         // Case B: Flexible + Privacy ON
         // Find remaining amount from Alice
-        let alice_vouchers = alice_wallet.list_vouchers(Some(&alice.identity), None, None);
+        let alice_vouchers = alice_wallet.list_vouchers(Some(&alice.identity), None, None, None);
         let alice_local_id_rem = alice_vouchers.iter().find(|v| v.current_amount == "60").unwrap().local_instance_id.clone();
 
         let request_priv = MultiTransferRequest {

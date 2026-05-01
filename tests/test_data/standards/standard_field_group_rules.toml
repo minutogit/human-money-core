@@ -1,10 +1,10 @@
 [immutable.identity]
 uuid = "FGR-TEST-V1"
-name = "Field Group Rules Test Standard"
+name = "Field Group Rules Standard"
 abbreviation = "FGR"
 
 [immutable.blueprint]
-unit = "TestUnit"
+unit = "Unit"
 primary_redemption_type = "goods_or_services"
 collateral_type = "personal_guarantee"
 

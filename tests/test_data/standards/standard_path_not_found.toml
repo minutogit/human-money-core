@@ -1,10 +1,10 @@
 [immutable.identity]
 uuid = "PNF-TEST-V1"
-name = "Path Not Found Test Standard"
+name = "Path Not Found Standard"
 abbreviation = "PNF"
 
 [immutable.blueprint]
-unit = "TestUnit"
+unit = "Unit"
 primary_redemption_type = "goods_or_services"
 collateral_type = "personal_guarantee"
 

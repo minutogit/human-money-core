@@ -43,6 +43,7 @@ fn create_mock_proof_of_double_spend(
         reporter_signature: "dummy_sig".to_string(),
         affected_voucher_name: None,
         voucher_standard_uuid: None,
+        non_redeemable_test_voucher: false,
     }
 }
 
@@ -268,7 +269,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
         .receive_bundle(&bundle_charlie, &standards_map, None, Some("pwd"), false)
         .unwrap();
     human_money_core::set_signature_bypass(false);
-    let summaries_before = service_david.get_voucher_summaries(None, None).unwrap();
+    let summaries_before = service_david.get_voucher_summaries(None, None, None).unwrap();
     assert_eq!(summaries_before.len(), 1);
     assert_eq!(summaries_before[0].status, VoucherStatus::Active);
     let charlie_instance_id = summaries_before[0].local_instance_id.clone();
@@ -281,7 +282,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     human_money_core::set_signature_bypass(false);
 
     // --- 6. Assertions ---
-    let summaries_after = service_david.get_voucher_summaries(None, None).unwrap();
+    let summaries_after = service_david.get_voucher_summaries(None, None, None).unwrap();
     assert_eq!(
         summaries_after.len(),
         2,
@@ -429,7 +430,7 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     human_money_core::set_signature_bypass(false);
 
     // --- 4. Assertions ---
-    let summaries_after = service_david.get_voucher_summaries(None, None).unwrap();
+    let summaries_after = service_david.get_voucher_summaries(None, None, None).unwrap();
     assert_eq!(
         summaries_after.len(),
         2,
@@ -494,7 +495,7 @@ fn api_wallet_save_and_load_fidelity() {
             .unwrap();
 
         // --- Schritt A: Teiltransfer (Split) ---
-        let summary = service_a.get_voucher_summaries(None, None).unwrap();
+        let summary = service_a.get_voucher_summaries(None, None, None).unwrap();
         let silver_voucher_id_10oz = summary
             .iter()
             .find(|s| s.current_amount == "10.0000" && s.status == VoucherStatus::Active)
@@ -544,7 +545,7 @@ fn api_wallet_save_and_load_fidelity() {
                     Some("pwd"),
                 )
                 .unwrap();
-            let local_id = service_bob.get_voucher_summaries(None, None).unwrap()[0]
+            let local_id = service_bob.get_voucher_summaries(None, None, None).unwrap()[0]
                 .local_instance_id
                 .clone();
 
@@ -572,7 +573,7 @@ fn api_wallet_save_and_load_fidelity() {
             .unwrap();
 
         // --- Schritt B: Vollständiger Transfer ---
-        let summary_before_full_transfer = service_a.get_voucher_summaries(None, None).unwrap();
+        let summary_before_full_transfer = service_a.get_voucher_summaries(None, None, None).unwrap();
         let silver_voucher_id_7oz = summary_before_full_transfer
             .iter()
             .find(|s| s.current_amount == "7.0000" && s.status == VoucherStatus::Active)
@@ -604,7 +605,7 @@ fn api_wallet_save_and_load_fidelity() {
         .expect("Login for service_b should succeed");
 
     // --- 4. Assertions ---
-    let summaries = service_b.get_voucher_summaries(None, None).unwrap();
+    let summaries = service_b.get_voucher_summaries(None, None, None).unwrap();
     assert_eq!(
         summaries.len(),
         2,
@@ -652,7 +653,7 @@ fn test_create_voucher_adds_exactly_one_instance() {
     app_service.unlock_session(password, 60).unwrap();
     let user_id = app_service.get_user_id().unwrap();
 
-    let initial_summaries = app_service.get_voucher_summaries(None, None).unwrap();
+    let initial_summaries = app_service.get_voucher_summaries(None, None, None).unwrap();
     assert_eq!(
         initial_summaries.len(),
         0,
@@ -680,7 +681,7 @@ fn test_create_voucher_adds_exactly_one_instance() {
         .expect("Voucher creation failed");
 
     // 3. ASSERT
-    let final_summaries = app_service.get_voucher_summaries(None, None).unwrap();
+    let final_summaries = app_service.get_voucher_summaries(None, None, None).unwrap();
 
     assert_eq!(
         final_summaries.len(),
@@ -741,7 +742,7 @@ fn test_create_voucher_is_transactional_on_save_failure() {
         creation_result_fail.is_err(),
         "Creation with wrong password should fail"
     );
-    let summaries_after_fail = app_service.get_voucher_summaries(None, None).unwrap();
+    let summaries_after_fail = app_service.get_voucher_summaries(None, None, None).unwrap();
     assert_eq!(
         summaries_after_fail.len(),
         0,
@@ -759,7 +760,7 @@ fn test_create_voucher_is_transactional_on_save_failure() {
         .expect("Voucher creation with correct password should succeed");
 
     // 5. ASSERT 2
-    let final_summaries = app_service.get_voucher_summaries(None, None).unwrap();
+    let final_summaries = app_service.get_voucher_summaries(None, None, None).unwrap();
     assert_eq!(
         final_summaries.len(),
         1,
@@ -813,7 +814,7 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
         )
         .unwrap();
 
-    let voucher_to_spend_id = service_initial.get_voucher_summaries(None, None).unwrap()[0]
+    let voucher_to_spend_id = service_initial.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
 

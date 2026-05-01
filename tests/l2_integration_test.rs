@@ -206,7 +206,7 @@ fn test_l2_double_spend_quarantine() {
     )
     .unwrap();
 
-    let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0]
+    let voucher_id = app.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
 
@@ -257,6 +257,7 @@ fn test_l2_double_spend_quarantine() {
         .get_voucher_summaries(
             None,
             Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+            None,
         )
         .unwrap();
     let voucher_id_tx1 = summaries_after_tx1
@@ -300,6 +301,7 @@ fn test_l2_double_spend_quarantine() {
         .get_voucher_summaries(
             None,
             Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+            None,
         )
         .unwrap();
     let voucher_id_tx2 = summaries_after_tx2
@@ -372,7 +374,7 @@ fn test_l2_signature_payload_manipulation() {
     )
     .unwrap();
 
-    let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0]
+    let voucher_id = app.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
 
@@ -415,6 +417,7 @@ fn test_l2_signature_payload_manipulation() {
         .get_voucher_summaries(
             None,
             Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+            None,
         )
         .unwrap();
     let voucher_id_tx1 = summaries_after_tx1
@@ -494,7 +497,7 @@ fn test_l2_fake_double_spend_protection() {
     )
     .unwrap();
 
-    let voucher_id = app.get_voucher_summaries(None, None).unwrap()[0]
+    let voucher_id = app.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
 
@@ -535,6 +538,7 @@ fn test_l2_fake_double_spend_protection() {
         .get_voucher_summaries(
             None,
             Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+            None,
         )
         .unwrap();
     let voucher_id_tx1 = summaries_after_tx1
@@ -678,7 +682,7 @@ fn test_l2_voucher_id_mixup_protection() {
     )
     .unwrap();
 
-    let summaries = app.get_voucher_summaries(None, None).unwrap();
+    let summaries = app.get_voucher_summaries(None, None, None).unwrap();
     let voucher_id = summaries[0].local_instance_id.clone();
 
     let mut mock_l2 = MockL2Node::new();

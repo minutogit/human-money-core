@@ -1,10 +1,10 @@
 [immutable.identity]
 uuid = "REQSIG-TEST-V1"
-name = "Required Signatures Test Standard"
+name = "Required Signatures Standard"
 abbreviation = "RSG"
 
 [immutable.blueprint]
-unit = "TestUnit"
+unit = "RSGUnit"
 primary_redemption_type = "goods_or_services"
 collateral_type = "personal_guarantee"
 

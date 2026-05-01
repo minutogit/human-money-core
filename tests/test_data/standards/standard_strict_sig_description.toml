@@ -1,10 +1,10 @@
 [immutable.identity]
 uuid = "SIG-DESC-TEST-V1-2025"
-name = "Signature Description Test Standard"
+name = "Signature Description Standard"
 abbreviation = "SDT"
 
 [immutable.blueprint]
-unit = "TestUnit"
+unit = "Unit"
 primary_redemption_type = "goods_or_services"
 collateral_type = "personal_guarantee"
 

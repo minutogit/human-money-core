@@ -45,6 +45,7 @@ fn create_mock_proof_of_double_spend(
         reporter_signature: "dummy_sig".to_string(),
         affected_voucher_name: None,
         voucher_standard_uuid: None,
+        non_redeemable_test_voucher: false,
     }
 }
 
@@ -91,7 +92,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
         )
         .unwrap();
 
-    let voucher_id = service.get_voucher_summaries(None, None).unwrap()[0]
+    let voucher_id = service.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
     let recipient = &ACTORS.recipient1;
@@ -150,7 +151,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
     // Die `create_transfer_bundle` Operation ist nicht atomar. Der Zustand im Speicher
     // wird verändert (der 100er Gutschein wird durch einen 60er ersetzt), aber nach dem
     // Speicherfehler nicht zurückgerollt. Die folgende Assertion würde also fehlschlagen.
-    let summaries_after = service.get_voucher_summaries(None, None).unwrap();
+    let summaries_after = service.get_voucher_summaries(None, None, None).unwrap();
     assert_eq!(
         summaries_after.len(),
         1,
@@ -211,7 +212,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
             Some("pwd"),
         )
         .unwrap();
-    let voucher_id = service_sender.get_voucher_summaries(None, None).unwrap()[0]
+    let voucher_id = service_sender.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
     let request = human_money_core::wallet::MultiTransferRequest {
@@ -260,7 +261,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         error_msg
     );
 
-    let summaries_after = service_recipient.get_voucher_summaries(None, None).unwrap();
+    let summaries_after = service_recipient.get_voucher_summaries(None, None, None).unwrap();
     assert!(
         summaries_after.is_empty(),
         "Recipient's wallet should remain empty after a failed receive"
@@ -318,7 +319,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
         )
         .unwrap();
 
-    let local_id = service_creator.get_voucher_summaries(None, None).unwrap()[0]
+    let local_id = service_creator.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
     let details_before = service_creator.get_voucher_details(&local_id).unwrap();
@@ -650,7 +651,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         .unwrap();
     assert_eq!(
         service_david
-            .get_voucher_summaries(None, None)
+            .get_voucher_summaries(None, None, None)
             .unwrap()
             .len(),
         1
@@ -667,7 +668,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         "Receive should fail on conflict + save error"
     );
 
-    let summaries_after = service_david.get_voucher_summaries(None, None).unwrap();
+    let summaries_after = service_david.get_voucher_summaries(None, None, None).unwrap();
     assert_eq!(
         summaries_after.len(),
         1,
@@ -774,7 +775,7 @@ fn test_balances_are_summable_behavior() {
     }
 
     // 4. Sender überträgt alle Gutscheine an Recipient
-    let source_vouchers = service_sender.get_voucher_summaries(None, None).unwrap();
+    let source_vouchers = service_sender.get_voucher_summaries(None, None, None).unwrap();
     let sources = source_vouchers.into_iter().map(|s| human_money_core::wallet::SourceTransfer {
         local_instance_id: s.local_instance_id,
         amount_to_send: s.current_amount,

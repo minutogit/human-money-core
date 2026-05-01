@@ -223,6 +223,7 @@ pub fn create_proof_of_double_spend(
     conflicting_transactions: Vec<Transaction>,
     deletable_at: String,
     reporter_identity: &UserIdentity,
+    non_redeemable_test_voucher: bool,
 ) -> Result<ProofOfDoubleSpend, VoucherCoreError> {
     // 1. Beweis-Objekt erstellen und signieren.
     // SECURITY FIX: Use raw bytes for proof_id derivation
@@ -260,6 +261,7 @@ pub fn create_proof_of_double_spend(
         voucher_standard_uuid: None,
         resolutions: None,
         layer2_verdict: None,
+        non_redeemable_test_voucher,
     };
 
     Ok(proof)
