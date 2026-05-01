@@ -362,7 +362,7 @@ fn api_app_service_password_recovery_with_passphrase() {
 fn api_wallet_lifecycle() {
     let dir = tempdir().unwrap();
     let test_user = &ACTORS.alice; // Nehmen wir Alice als Testperson
-    let (wallet_a, identity_a) =
+    let (mut wallet_a, identity_a) =
         Wallet::new_from_mnemonic(&test_user.mnemonic, test_user.passphrase, test_user.prefix, MnemonicLanguage::English, "test-id".to_string())
             .expect("Wallet creation failed");
     let original_user_id = wallet_a.profile.user_id.clone();

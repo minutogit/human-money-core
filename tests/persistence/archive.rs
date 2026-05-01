@@ -53,6 +53,7 @@ fn test_voucher_archiving_on_full_spend() {
         proof_store: Default::default(),
         fingerprint_metadata: CanonicalMetadataStore::default(),
         local_instance_id: "test-id".to_string(),
+        pending_events: Vec::new(),
     };
 
     // Erstelle Alices Archiv im temporären Verzeichnis.

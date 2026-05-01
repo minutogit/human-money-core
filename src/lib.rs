@@ -24,6 +24,7 @@ pub use models::voucher::{
     Address, Collateral, Transaction, ValueDefinition, Voucher, VoucherSignature, VoucherStandard,
 };
 pub use models::voucher_standard_definition::VoucherStandardDefinition;
+pub use models::wallet_event::{EventBffData, WalletEvent, WalletEventType};
 pub use wallet::instance::{ValidationFailureReason, VoucherInstance, VoucherStatus};
 
 // Wallet & Storage Fassaden

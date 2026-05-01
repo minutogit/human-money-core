@@ -3,7 +3,7 @@ project: human-money-core
 version: "0.2.13"
 phase: "active-development"
 health: "green"
-last_updated: "2026-04-30"
+last_updated: "2026-05-01"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -38,6 +38,7 @@ The core library is stable and feature-rich. Current focus areas:
 - Security: Anti-Signature-Reuse-Firewall implemented
 - **New**: 'Endorsed' voucher status for persistent guarantor signature tracking
 - **New**: Storage Integrity (Integritätsschutz) für alle Wallet-Datensätze
+- **New**: Wallet Event Sourcing (Append-only Ledger für Transaktionshistorie)
 
 ## Architecture
 
@@ -75,6 +76,8 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **Integrity Bugfix**: Resolved a critical issue where auto-cleanup on login could accidentally mask offline file tampering by rewriting the state before verification.
 - [x] **Cloning Protection Hardening**: Implemented active runtime "traps" in AppService to detect improper `instance_id` storage (including parent directories), added aggressive security docstrings, and verified with architecture tests.
 - [x] **Test Money Separation & Anti-Spoofing**: Strict cryptographic and structural separation of real and test money in balance aggregation; implemented automated rejection of deceptive "TEST" prefixes for real vouchers (UX security).
+- [x] **Wallet Event Sourcing**: Append-only event ledger for all transaction types (VoucherCreated, TransferReceived, TransferSent, VoucherExpired), integrated into atomic `save` flow, with automatic expiration sweeps and in-memory reconciliation.
+- [x] **Scalable Event Chunking**: Optimized event sourcing with time-based monthly chunks (YYYY_MM.json.enc), lazy "Move-then-Delete" migration for legacy logs, and O(N) idempotent appends with O(1) memory pagination.
 
 ## Next Milestones
 

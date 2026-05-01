@@ -432,6 +432,7 @@ pub fn setup_in_memory_wallet(identity: &UserIdentity) -> Wallet {
         proof_store: ProofStore::default(),
         fingerprint_metadata: CanonicalMetadataStore::default(),
         local_instance_id: "memory-instance".to_string(),
+        pending_events: Vec::new(),
     }
 }
 
@@ -477,6 +478,7 @@ pub fn create_test_wallet(
         proof_store: ProofStore::default(),
         fingerprint_metadata: CanonicalMetadataStore::default(),
         local_instance_id,
+        pending_events: Vec::new(),
     };
 
     Ok((wallet, identity))

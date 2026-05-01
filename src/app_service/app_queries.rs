@@ -159,6 +159,26 @@ impl AppService {
             .get_voucher_source_sender(local_instance_id, &identity)
             .map_err(|e| e.to_string())
     }
+
+    /// Lädt die Event-Historie des Wallets (BFF-Query).
+    pub fn get_event_history(
+        &self,
+        offset: usize,
+        limit: usize,
+        password: &str,
+    ) -> Result<Vec<crate::models::wallet_event::WalletEvent>, String> {
+        let wallet = self.get_wallet()?;
+        let auth = crate::storage::AuthMethod::Password(password);
+        
+        // Da AppService den Storage besitzt, können wir ihn hier nutzen.
+        match &self.state {
+            AppState::Unlocked { storage, .. } => {
+                wallet.get_event_history(storage, &auth, offset, limit)
+                    .map_err(|e| e.to_string())
+            }
+            AppState::Locked => Err("Wallet is locked.".to_string()),
+        }
+    }
 }
 
 

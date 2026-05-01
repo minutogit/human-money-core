@@ -267,6 +267,32 @@ pub trait Storage {
     /// Berechnet die Hashes aller relevanten logischen Speicher-Elemente.
     fn get_all_item_hashes(&self) -> Result<std::collections::HashMap<String, String>, StorageError>;
 
+    /// Fügt eine Batch von Wallet-Events an das persistierte Event-Log an.
+    ///
+    /// Die Implementierung sollte die existierende Datei laden/entschlüsseln,
+    /// die neuen Events anhängen und in einem Rutsch verschlüsselt zurückschreiben.
+    fn append_events(
+        &mut self,
+        user_id: &str,
+        auth: &AuthMethod,
+        events: &[crate::models::wallet_event::WalletEvent],
+    ) -> Result<(), StorageError>;
+
+    /// Lädt eine paginierte Ansicht des persistierten Event-Logs.
+    ///
+    /// # Arguments
+    /// * `user_id` - Die ID des Benutzers.
+    /// * `auth` - Die Authentifizierungsmethode zum Entschlüsseln.
+    /// * `offset` - Der Offset für die Pagination.
+    /// * `limit` - Die maximale Anzahl der zurückzugebenden Events.
+    fn load_events(
+        &self,
+        user_id: &str,
+        auth: &AuthMethod,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<crate::models::wallet_event::WalletEvent>, StorageError>;
+
     /// Versucht, eine exklusive, prozessweite Sperre für den Wallet-Speicher zu erlangen.
     /// Muss die "Stale Lock"-Prüfung (z.B. PID) implementieren.
     ///

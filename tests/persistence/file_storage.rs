@@ -79,7 +79,7 @@ fn test_wallet_creation_save_and_load() {
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
 
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
 
     // 2. Speichern
     wallet
@@ -215,7 +215,7 @@ fn test_load_with_missing_voucher_store() {
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
 
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
     wallet
         .save(&mut storage, &identity, &AuthMethod::Password(password))
         .unwrap();
@@ -252,7 +252,7 @@ fn test_load_from_corrupted_profile_file() {
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
 
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
     wallet
         .save(&mut storage, &identity, &AuthMethod::Password(password))
         .unwrap();
@@ -290,7 +290,7 @@ fn test_empty_password_handling() {
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
 
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
 
     // Speichern mit leerem Passwort sollte funktionieren
     wallet
@@ -450,7 +450,7 @@ fn test_save_and_load_arbitrary_data() {
         "--> Test storage created in: {:?}",
         storage.user_storage_path
     );
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
 
     // WICHTIG: Zuerst das Wallet speichern, damit die Schlüssel-Infrastruktur
     // (master_key.enc, recovery_key.enc) für die Verschlüsselung initialisiert wird.
@@ -597,7 +597,7 @@ fn test_storage_reentrancy_same_process() {
 
     // Instanz 1: Initialisieren, um Keys anzulegen (damit save_arbitrary_data später nicht an Auth scheitert)
     let mut storage1 = FileStorage::new(user_storage_path.clone());
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
     wallet
         .save(&mut storage1, identity, &AuthMethod::Password(password))
         .expect("Initial setup save failed");
@@ -660,7 +660,7 @@ fn setup_file_storage_with_wallet(
     password: &str,
 ) -> FileStorage {
     let mut storage = FileStorage::new(user_storage_path);
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
     wallet
         .save(&mut storage, identity, &AuthMethod::Password(password))
         .expect("Initial wallet save failed");
@@ -742,7 +742,7 @@ fn test_profile_exists_returns_correct_booleans() {
     );
 
     // Speichern, um das Profil anzulegen.
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
     wallet
         .save(&mut storage, identity, &AuthMethod::Password(password))
         .expect("save");

@@ -75,6 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         proof_store: Default::default(),
         fingerprint_metadata: CanonicalMetadataStore::default(),
         local_instance_id: "example-id".to_string(),
+        pending_events: Vec::new(),
     };
     println!("✅ Leeres Wallet für Alice erstellt.");
 
