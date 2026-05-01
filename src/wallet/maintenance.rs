@@ -301,8 +301,51 @@ impl Wallet {
     }
 
     pub fn update_voucher_status(&mut self, local_instance_id: &str, new_status: VoucherStatus) {
-        if let Some(instance) = self.voucher_store.vouchers.get_mut(local_instance_id) {
-            instance.status = new_status;
+        let event_info = if let Some(instance) = self.voucher_store.vouchers.get_mut(local_instance_id) {
+            let old_status = std::mem::replace(&mut instance.status, new_status.clone());
+
+            // Event-Logging bei wichtigen Statusänderungen
+            let event_type = match (&old_status, &new_status) {
+                // Von Unvollständig zu Aktiv
+                (VoucherStatus::Incomplete { .. }, VoucherStatus::Active) => {
+                    Some(crate::models::wallet_event::WalletEventType::VoucherActivated)
+                }
+                // Neu in Quarantäne (sofern nicht schon vorher)
+                (_, VoucherStatus::Quarantined { .. })
+                    if !matches!(old_status, VoucherStatus::Quarantined { .. }) =>
+                {
+                    Some(crate::models::wallet_event::WalletEventType::VoucherQuarantined)
+                }
+                _ => None,
+            };
+
+            if let Some(et) = event_type {
+                let voucher = &instance.voucher;
+                let bff_data = crate::models::wallet_event::EventBffData {
+                    display_currency: crate::wallet::format_bff_name(
+                        voucher.nominal_value.abbreviation.as_deref().unwrap_or(&voucher.nominal_value.unit),
+                        voucher.non_redeemable_test_voucher,
+                    ),
+                    amount: voucher.nominal_value.amount.clone(),
+                    is_test_voucher: voucher.non_redeemable_test_voucher,
+                    counterparty_id: None,
+                    counterparty_name: None,
+                };
+                Some((et, voucher.voucher_id.clone(), bff_data))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some((et, voucher_id, bff_data)) = event_info {
+            self.emit_event(
+                et,
+                local_instance_id,
+                &voucher_id,
+                bff_data,
+            );
         }
     }
 

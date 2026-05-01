@@ -273,7 +273,27 @@ impl Wallet {
             verified_standard,
         ) {
             Ok(_) => VoucherStatus::Active,
-            // Wenn Geschäftsregeln (z.B. fehlende Signaturen) verletzt sind, ist der Status `Incomplete`.
+            
+            // Fall 1: Fehlende Signaturen (Incomplete)
+            Err(VoucherCoreError::Validation(ref validation_err @ ValidationError::FieldValueCountOutOfBounds { ref path, ref field, .. }))
+            if path == "signatures" && (field == "role" || field == "details.gender") =>
+            {
+                VoucherStatus::Incomplete {
+                    reasons: vec![ValidationFailureReason::RequiredSignatureMissing { 
+                        role_description: validation_err.to_string() 
+                    }],
+                }
+            },
+            Err(VoucherCoreError::Validation(ref validation_err @ ValidationError::MissingRequiredSignature { .. })) =>
+            {
+                VoucherStatus::Incomplete {
+                    reasons: vec![ValidationFailureReason::RequiredSignatureMissing { 
+                        role_description: validation_err.to_string() 
+                    }],
+                }
+            },
+            
+            // Fall 2: Geschäftsregeln verletzt (Incomplete)
             Err(VoucherCoreError::Validation(ValidationError::BusinessRuleViolated(msg))) => {
                 VoucherStatus::Incomplete {
                     reasons: vec![ValidationFailureReason::BusinessRule {
