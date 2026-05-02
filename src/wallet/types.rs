@@ -181,7 +181,7 @@ pub struct VoucherSummary {
     /// Die Einheit des Gutscheinwerts (z.B. "m" für Minuten).
     pub unit: String,
     /// Der Name des Standards, zu dem dieser Gutschein gehört (z.B. "Minuto-Gutschein").
-    pub voucher_standard_name: String,
+    pub raw_standard_name: String,
     /// Die eindeutige Kennung (UUID) des Standards, zu dem dieser Gutschein gehört.
     pub voucher_standard_uuid: String,
     /// Die Anzahl der Transaktionen, exklusive der initialen `init`-Transaktion.

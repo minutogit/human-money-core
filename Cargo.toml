@@ -41,6 +41,7 @@ sysinfo = "0.30"
 cel-interpreter = "0.10.0"
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros"] }
 reqwest = { version = "0.13.2", features = ["json"] }
+log = "0.4"
 
 [lib]
 name = "human_money_core"
