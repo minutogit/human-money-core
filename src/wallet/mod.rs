@@ -65,6 +65,9 @@ pub struct Wallet {
     pub fingerprint_metadata: CanonicalMetadataStore,
     /// Eindeutige ID des lokalen Geräts für Clone Protection.
     pub local_instance_id: String,
+    /// Im RAM gehaltene Events, die noch nicht persistent auf die Festplatte
+    /// geflusht wurden. Wird bei `Wallet::save` atomar gespeichert und geleert.
+    pub pending_events: Vec<crate::models::wallet_event::WalletEvent>,
 }
 
 impl Wallet {

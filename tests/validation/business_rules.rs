@@ -15,7 +15,7 @@ use human_money_core::{
 };
 
 use human_money_core::test_utils::{
-    ACTORS, MINUTO_STANDARD, SILVER_STANDARD, create_female_guarantor_signature,
+    ACTORS, MINUTO_STANDARD, FREETALER_STANDARD, create_female_guarantor_signature,
     create_male_guarantor_signature, create_voucher_for_manipulation, derive_holder_key,
 };
 
@@ -27,7 +27,7 @@ mod structural_integrity {
     #[test]
     fn test_validate_voucher_when_standard_uuid_mismatches_then_fails() {
         let (minuto_standard, minuto_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
-        let silver_standard = &SILVER_STANDARD.0;
+        let freetaler_standard = &FREETALER_STANDARD.0;
 
         let creator_identity = &ACTORS.alice;
         let voucher_data = NewVoucherData {
@@ -57,7 +57,7 @@ mod structural_integrity {
             .signatures
             .push(create_female_guarantor_signature(&voucher));
 
-        let validation_result = validate_voucher_against_standard(&voucher, silver_standard);
+        let validation_result = validate_voucher_against_standard(&voucher, freetaler_standard);
 
         assert!(matches!(
             validation_result.unwrap_err(),
@@ -132,7 +132,7 @@ mod structural_integrity {
 
     #[test]
     fn test_validate_voucher_when_amount_string_is_malformed_then_fails() {
-        let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+        let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
         let creator_identity = &ACTORS.alice;
         let voucher_data = NewVoucherData {
             creator_profile: PublicProfile {
@@ -172,7 +172,7 @@ mod structural_integrity {
 
     #[test]
     fn test_validate_voucher_when_transaction_time_order_is_invalid_then_fails() {
-        let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+        let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
         let sender = &ACTORS.sender;
         let recipient = &ACTORS.recipient1;
         let voucher_data = NewVoucherData {
@@ -426,7 +426,7 @@ mod behavioral_rules {
     #[test]
     fn test_create_transaction_when_voucher_is_not_allow_partial_transfers_then_fails_on_split() {
         let (non_allow_partial_transfers_standard, hash) =
-            test_utils::create_custom_standard(&SILVER_STANDARD.0, |s| {
+            test_utils::create_custom_standard(&FREETALER_STANDARD.0, |s| {
                 s.immutable.features.allow_partial_transfers = false;
             });
         let identity = &ACTORS.alice;
@@ -545,7 +545,7 @@ mod behavioral_rules {
     mod issuance_firewall {
         use super::*;
         use human_money_core::services::voucher_manager::VoucherManagerError;
-        use human_money_core::test_utils::{SILVER_STANDARD, create_custom_standard};
+        use human_money_core::test_utils::{FREETALER_STANDARD, create_custom_standard};
 
         /// Erstellt eine Testumgebung mit den benötigten Akteuren und Standards.
         struct TestSetup {
@@ -573,7 +573,7 @@ mod behavioral_rules {
             );
 
             // Standard A: Mit 1-Jahres-Firewall
-            let (standard_a, hash_a) = create_custom_standard(&SILVER_STANDARD.0, |s| {
+            let (standard_a, hash_a) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
                 s.immutable.issuance.issuance_minimum_validity_duration = "P1Y".to_string();
                 s.immutable.issuance.validity_duration_range = vec!["P1Y".to_string(), "P2Y".to_string()];
             });
@@ -584,7 +584,7 @@ mod behavioral_rules {
                 user_b,
                 user_c,
                 standard_a: (standard_a, hash_a),
-                standard_b: (&SILVER_STANDARD.0, &SILVER_STANDARD.1),
+                standard_b: (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1),
             }
         }
 
@@ -887,11 +887,11 @@ mod behavioral_rules {
     #[cfg(test)]
     mod layer2_security {
         use super::*;
-        use human_money_core::test_utils::SILVER_STANDARD;
+        use human_money_core::test_utils::FREETALER_STANDARD;
 
         #[test]
         fn test_layer2_anchor_prevents_validity_tampering() {
-            let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+            let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
             let creator = &ACTORS.alice;
 
             let voucher_data = NewVoucherData {

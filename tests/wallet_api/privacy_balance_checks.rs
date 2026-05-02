@@ -3,7 +3,7 @@
 use human_money_core::models::voucher_standard_definition::{VoucherStandardDefinition, PrivacyMode};
 use human_money_core::services::crypto_utils::get_hash;
 use human_money_core::services::utils::to_canonical_json;
-use human_money_core::test_utils::{self, ACTORS, SILVER_STANDARD};
+use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD};
 use human_money_core::wallet::types::{MultiTransferRequest, SourceTransfer, CreateBundleResult};
 use human_money_core::wallet::Wallet;
 use human_money_core::VoucherStatus;
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 /// Helper function to configure a standard with a specific Privacy Mode
 fn setup_standard(mode: PrivacyMode) -> (VoucherStandardDefinition, String, HashMap<String, VoucherStandardDefinition>) {
-    let mut standard_def = SILVER_STANDARD.0.clone();
+    let mut standard_def = FREETALER_STANDARD.0.clone();
     standard_def.immutable.features.privacy_mode = mode;
     let standard_hash = get_hash(to_canonical_json(&standard_def.immutable).unwrap());
     

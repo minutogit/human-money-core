@@ -22,7 +22,7 @@ use human_money_core::{
         voucher_validation,
     },
     test_utils::{
-        self, ACTORS, MINUTO_STANDARD, SILVER_STANDARD, add_voucher_to_wallet,
+        self, ACTORS, MINUTO_STANDARD, FREETALER_STANDARD, add_voucher_to_wallet,
         create_additional_signature_data, create_voucher_for_manipulation, debug_open_container,
         generate_signed_standard_toml, setup_in_memory_wallet,
     },
@@ -330,14 +330,14 @@ fn api_wallet_signature_fail_wrong_payload_type() {
 /// 2.  Der Ersteller legt einen Gutschein an.
 /// 3.  Der Ersteller fordert eine Signatur vom Bürgen an.
 /// 4.  Der Bürge empfängt die Anfrage, erstellt eine `AdditionalSignature`
-///     (passend zum Silber-Standard) und sendet sie zurück.
+///     (passend zum FreeTaler-Standard) und sendet sie zurück.
 /// 5.  Der Ersteller empfängt die Antwort und fügt die Signatur erfolgreich an.
 /// 6.  Die Details des Gutscheins zeigen die neue Signatur an.
 #[test]
 fn api_app_service_full_signature_workflow() {
     human_money_core::set_signature_bypass(true);
-    let silver_standard_toml =
-        generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let freetaler_standard_toml =
+        generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let dir_creator = tempdir().unwrap();
     let dir_guarantor = tempdir().unwrap();
     let password = "sig-password";
@@ -356,7 +356,7 @@ fn api_app_service_full_signature_workflow() {
 
     let _voucher = service_creator
         .create_new_voucher(
-            &silver_standard_toml,
+            &freetaler_standard_toml,
             "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
@@ -404,7 +404,7 @@ fn api_app_service_full_signature_workflow() {
         .unwrap();
 
     service_creator
-        .process_and_attach_signature(&response_bytes, &silver_standard_toml, None, Some(password))
+        .process_and_attach_signature(&response_bytes, &freetaler_standard_toml, None, Some(password))
         .unwrap();
 
     let details = service_creator.get_voucher_details(&local_id).unwrap();
@@ -702,10 +702,10 @@ fn test_full_guarantor_workflow_via_app_service() {
     );
 }
 
-/// Testet den Signatur-Roundtrip für einen Standard mit optionalen Signaturen (Silber).
+/// Testet den Signatur-Roundtrip für einen Standard mit optionalen Signaturen (FreeTaler).
 ///
 /// ### Szenario:
-/// 1.  Alice erstellt einen Silber-Gutschein, der initial gültig ist, da `needed_guarantors = 0`.
+/// 1.  Alice erstellt einen FreeTaler-Gutschein, der initial gültig ist, da `needed_guarantors = 0`.
 /// 2.  Sie fordert trotzdem eine optionale Signatur von Bob an.
 /// 3.  Bob empfängt und beantwortet die Anfrage.
 /// 4.  Alice fügt die optionale Signatur erfolgreich an.
@@ -717,13 +717,13 @@ fn api_wallet_signature_roundtrip_silver_optional() {
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
     let bob = &ACTORS.bob;
     let bob_wallet = setup_in_memory_wallet(&bob.identity);
-    let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (freetaler_standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     let voucher_id = add_voucher_to_wallet(
         &mut alice_wallet,
         &alice.identity,
         "10",
-        silver_standard,
+        freetaler_standard,
         false,
     )
     .unwrap();
@@ -774,8 +774,8 @@ fn api_wallet_signature_roundtrip_silver_optional() {
 #[test]
 fn api_app_service_symmetric_signature_workflow() {
     human_money_core::set_signature_bypass(true);
-    let silver_standard_toml =
-        generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let freetaler_standard_toml =
+        generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let dir_creator = tempdir().unwrap();
     let dir_guarantor = tempdir().unwrap();
     let wallet_password = "wallet-password";
@@ -795,7 +795,7 @@ fn api_app_service_symmetric_signature_workflow() {
     // 1. Creator erstellt einen Gutschein
     let _voucher = service_creator
         .create_new_voucher(
-            &silver_standard_toml,
+            &freetaler_standard_toml,
             "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
@@ -849,7 +849,7 @@ fn api_app_service_symmetric_signature_workflow() {
     service_creator
         .process_and_attach_signature(
             &response_bytes,
-            &silver_standard_toml,
+            &freetaler_standard_toml,
             Some(container_password),
             Some(wallet_password),
         )

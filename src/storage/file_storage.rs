@@ -31,6 +31,8 @@ const PROOF_STORE_FILE_NAME: &str = "proofs.enc";
 const OWN_FINGERPRINTS_FILE_NAME: &str = "own_fingerprints.enc";
 const FINGERPRINT_METADATA_FILE_NAME: &str = "fingerprint_metadata.enc";
 const SEAL_FILE_NAME: &str = "seal.enc";
+const LEGACY_EVENTS_FILE_NAME: &str = "events.json.enc";
+const EVENTS_DIR_NAME: &str = "events";
 
 /// Privates Modul zur Kapselung der Serde-Logik für Base64-Kodierung von Vektoren.
 mod base64_serde {
@@ -153,6 +155,13 @@ struct FingerprintMetadataContainer {
 /// Container für den verschlüsselten `LocalSealRecord`.
 #[derive(Serialize, Deserialize)]
 struct SealStorageContainer {
+    #[serde(with = "base64_serde")]
+    encrypted_store_payload: Vec<u8>,
+}
+
+/// Container für das verschlüsselte Wallet-Event-Log.
+#[derive(Serialize, Deserialize)]
+struct EventsStorageContainer {
     #[serde(with = "base64_serde")]
     encrypted_store_payload: Vec<u8>,
 }
@@ -1009,6 +1018,7 @@ impl Storage for FileStorage {
         let mut hashes = std::collections::HashMap::new();
         
         let entries = fs::read_dir(&self.user_storage_path).map_err(StorageError::Io)?;
+        // Scanne Hauptverzeichnis
         for entry in entries {
             let entry = entry.map_err(StorageError::Io)?;
             let file_name = entry.file_name();
@@ -1044,7 +1054,235 @@ impl Storage for FileStorage {
             }
         }
 
+        // Scanne Events-Unterverzeichnis
+        let events_dir = self.user_storage_path.join(EVENTS_DIR_NAME);
+        if events_dir.exists() && events_dir.is_dir() {
+            let event_entries = fs::read_dir(&events_dir).map_err(StorageError::Io)?;
+            for entry in event_entries {
+                let entry = entry.map_err(StorageError::Io)?;
+                if entry.file_type().map_err(StorageError::Io)?.is_file() {
+                    let file_name = entry.file_name();
+                    let name_str = file_name.to_string_lossy();
+                    if name_str.ends_with(".json.enc") {
+                        let relative_path = format!("{}/{}", EVENTS_DIR_NAME, name_str);
+                        if let Ok(hash) = self.get_item_hash(&relative_path) {
+                            hashes.insert(relative_path, hash);
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(hashes)
+    }
+
+    fn append_events(
+        &mut self,
+        _user_id: &str,
+        auth: &AuthMethod,
+        events: &[crate::models::wallet_event::WalletEvent],
+    ) -> Result<(), StorageError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        let file_key = self.get_master_key_from_auth(auth)?;
+
+        // 1. Lazy Migration
+        let legacy_path = self.user_storage_path.join(LEGACY_EVENTS_FILE_NAME);
+        if legacy_path.exists() {
+            let container_bytes = fs::read(&legacy_path)?;
+            let container: EventsStorageContainer = serde_json::from_slice(&container_bytes)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+            let decrypted = crypto_utils::decrypt_data(&file_key, &container.encrypted_store_payload)
+                .map_err(|e| {
+                    StorageError::InvalidFormat(format!("Failed to decrypt legacy events: {}", e))
+                })?;
+            let legacy_events: Vec<crate::models::wallet_event::WalletEvent> = serde_json::from_slice(&decrypted)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+
+            // Gruppiere und schreibe in Chunks
+            let mut groups: std::collections::HashMap<String, Vec<crate::models::wallet_event::WalletEvent>> = std::collections::HashMap::new();
+            for ev in legacy_events {
+                let month = ev.timestamp.format("%Y_%m").to_string();
+                groups.entry(month).or_default().push(ev);
+            }
+
+            let events_dir = self.user_storage_path.join(EVENTS_DIR_NAME);
+            fs::create_dir_all(&events_dir)?;
+
+            for (month, m_events) in groups {
+                let chunk_path = events_dir.join(format!("{}.json.enc", month));
+                // Da wir migrieren, überschreiben wir oder hängen an (falls schon neue Chunks existierten)
+                let existing_events: Vec<crate::models::wallet_event::WalletEvent> = if chunk_path.exists() {
+                    let c_bytes = fs::read(&chunk_path)?;
+                    let c_container: EventsStorageContainer = serde_json::from_slice(&c_bytes)
+                        .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+                    let c_decrypted = crypto_utils::decrypt_data(&file_key, &c_container.encrypted_store_payload)
+                        .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+                    serde_json::from_slice(&c_decrypted)
+                        .map_err(|e| StorageError::InvalidFormat(e.to_string()))?
+                } else {
+                    Vec::new()
+                };
+                
+                // Deduplizierung in O(N): Filtere m_events, um nur solche anzuhängen, 
+                // die noch nicht in existing_events existieren. Bewahrt die strikte Reihenfolge!
+                let existing_ids: std::collections::HashSet<String> = 
+                    existing_events.iter().map(|e| e.event_id.clone()).collect();
+                
+                let mut merged = existing_events;
+                let new_unique_events = m_events.into_iter().filter(|e| !existing_ids.contains(&e.event_id));
+                merged.extend(new_unique_events);
+                
+                let e_bytes = serde_json::to_vec(&merged)
+                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+                let e_payload = crypto_utils::encrypt_data(&file_key, &e_bytes)
+                    .map_err(|e| StorageError::Generic(e.to_string()))?;
+                let e_container = EventsStorageContainer { encrypted_store_payload: e_payload };
+                let e_container_bytes = serde_json::to_vec(&e_container)
+                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+
+                let tmp_path = events_dir.join(format!("{}.json.enc.tmp", month));
+                fs::write(&tmp_path, e_container_bytes)?;
+                fs::rename(&tmp_path, &chunk_path)?;
+            }
+
+            // Abschluss der Migration
+            fs::remove_file(&legacy_path)?;
+        }
+
+        // 2. Neue Events gruppieren und anhängen
+        let mut groups: std::collections::HashMap<String, Vec<crate::models::wallet_event::WalletEvent>> = std::collections::HashMap::new();
+        for ev in events {
+            let month = ev.timestamp.format("%Y_%m").to_string();
+            groups.entry(month).or_default().push(ev.clone());
+        }
+
+        let events_dir = self.user_storage_path.join(EVENTS_DIR_NAME);
+        fs::create_dir_all(&events_dir)?;
+
+        for (month, m_events) in groups {
+            let chunk_path = events_dir.join(format!("{}.json.enc", month));
+            let mut all_m_events: Vec<crate::models::wallet_event::WalletEvent> = if chunk_path.exists() {
+                let c_bytes = fs::read(&chunk_path)?;
+                let c_container: EventsStorageContainer = serde_json::from_slice(&c_bytes)
+                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+                let c_decrypted = crypto_utils::decrypt_data(&file_key, &c_container.encrypted_store_payload)
+                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+                serde_json::from_slice(&c_decrypted)
+                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?
+            } else {
+                Vec::new()
+            };
+
+            // Deduplizierung beim regulären Append (Schutz vor partiellen Abstürzen)
+            let existing_ids: std::collections::HashSet<String> = 
+                all_m_events.iter().map(|e| e.event_id.clone()).collect();
+            
+            let new_unique_events = m_events.into_iter().filter(|e| !existing_ids.contains(&e.event_id));
+            all_m_events.extend(new_unique_events);
+
+            let e_bytes = serde_json::to_vec(&all_m_events)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+            let e_payload = crypto_utils::encrypt_data(&file_key, &e_bytes)
+                .map_err(|e| StorageError::Generic(e.to_string()))?;
+            let e_container = EventsStorageContainer { encrypted_store_payload: e_payload };
+            let e_container_bytes = serde_json::to_vec(&e_container)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+
+            let tmp_path = events_dir.join(format!("{}.json.enc.tmp", month));
+            fs::write(&tmp_path, e_container_bytes)?;
+            fs::rename(&tmp_path, &chunk_path)?;
+        }
+
+        Ok(())
+    }
+
+    fn load_events(
+        &self,
+        _user_id: &str,
+        auth: &AuthMethod,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<crate::models::wallet_event::WalletEvent>, StorageError> {
+        let file_key = self.get_master_key_from_auth(auth)?;
+        let mut result = Vec::new();
+        let mut current_offset = offset;
+        let mut remaining_limit = limit;
+
+        // 1. Liste alle Chunks auf
+        let events_dir = self.user_storage_path.join(EVENTS_DIR_NAME);
+        let mut chunks = Vec::new();
+        if events_dir.exists() && events_dir.is_dir() {
+            let entries = fs::read_dir(&events_dir).map_err(StorageError::Io)?;
+            for entry in entries {
+                let entry = entry.map_err(StorageError::Io)?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.ends_with(".json.enc") && !name.ends_with(".tmp") {
+                    chunks.push(name);
+                }
+            }
+        }
+
+        // Sortiere absteigend (neueste zuerst)
+        chunks.sort_by(|a, b| b.cmp(a));
+
+        // 2. Chunks sequenziell laden
+        for chunk_name in chunks {
+            if remaining_limit == 0 { break; }
+
+            let chunk_path = events_dir.join(chunk_name);
+            let c_bytes = fs::read(&chunk_path)?;
+            let c_container: EventsStorageContainer = serde_json::from_slice(&c_bytes)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+            let c_decrypted = crypto_utils::decrypt_data(&file_key, &c_container.encrypted_store_payload)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+            let mut m_events: Vec<crate::models::wallet_event::WalletEvent> = serde_json::from_slice(&c_decrypted)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+            
+            // Innerhalb eines Chunks sind Events aufsteigend sortiert.
+            // Da wir die NEUESTEN zuerst wollen, müssen wir sie umkehren oder von hinten lesen.
+            m_events.reverse();
+
+            let len = m_events.len();
+            if current_offset >= len {
+                current_offset -= len;
+                continue;
+            }
+
+            let to_take = std::cmp::min(remaining_limit, len - current_offset);
+            let page: Vec<_> = m_events.into_iter().skip(current_offset).take(to_take).collect();
+            
+            result.extend(page);
+            remaining_limit -= to_take;
+            current_offset = 0;
+        }
+
+        // 3. Legacy-Support (falls Migration noch nicht lief)
+        if remaining_limit > 0 {
+            let legacy_path = self.user_storage_path.join(LEGACY_EVENTS_FILE_NAME);
+            if legacy_path.exists() {
+                let l_bytes = fs::read(&legacy_path)?;
+                let l_container: EventsStorageContainer = serde_json::from_slice(&l_bytes)
+                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+                let l_decrypted = crypto_utils::decrypt_data(&file_key, &l_container.encrypted_store_payload)
+                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+                let mut l_events: Vec<crate::models::wallet_event::WalletEvent> = serde_json::from_slice(&l_decrypted)
+                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+                
+                l_events.reverse();
+                
+                let len = l_events.len();
+                if current_offset < len {
+                    let to_take = std::cmp::min(remaining_limit, len - current_offset);
+                    let page: Vec<_> = l_events.into_iter().skip(current_offset).take(to_take).collect();
+                    result.extend(page);
+                }
+            }
+        }
+
+        Ok(result)
     }
 }
 

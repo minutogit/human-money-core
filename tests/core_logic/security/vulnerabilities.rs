@@ -1,7 +1,7 @@
 // tests/core_logic/security/vulnerabilities.rs
 // cargo test --test core_logic_tests
 
-use self::test_utils::{ACTORS, SILVER_STANDARD, setup_in_memory_wallet};
+use self::test_utils::{ACTORS, FREETALER_STANDARD, setup_in_memory_wallet};
 use super::test_utils;
 use human_money_core::VoucherInstance;
 use human_money_core::crypto_utils;
@@ -394,7 +394,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     let mut victim_wallet = setup_test_wallet(&ACTORS.victim);
     let voucher_data = new_test_voucher_data(ACTORS.issuer.user_id.clone());
 
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     let mut valid_voucher = voucher_manager::create_voucher(
         voucher_data,
@@ -443,8 +443,8 @@ fn test_attack_tamper_core_data_and_guarantors() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_hacker = std::collections::HashMap::new();
     standards_for_hacker.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+        FREETALER_STANDARD.0.clone(),
     );
     hacker_wallet
         .process_encrypted_transaction_bundle(
@@ -514,8 +514,8 @@ fn test_attack_tamper_core_data_and_guarantors() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_victim = std::collections::HashMap::new();
     standards_for_victim.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+        FREETALER_STANDARD.0.clone(),
     );
     let process_result = victim_wallet.process_encrypted_transaction_bundle(
         &ACTORS.victim,
@@ -597,8 +597,8 @@ fn test_attack_tamper_core_data_and_guarantors() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_victim = std::collections::HashMap::new();
     standards_for_victim.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+        FREETALER_STANDARD.0.clone(),
     );
     let process_result = victim_wallet.process_encrypted_transaction_bundle(
         &ACTORS.victim,
@@ -634,7 +634,7 @@ fn test_attack_tamper_transaction_history() {
     let mut bob_wallet_hacker = setup_test_wallet(&ACTORS.bob);
     let data = new_test_voucher_data(ACTORS.alice.user_id.clone());
 
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     let voucher_a = voucher_manager::create_voucher(
         data,
@@ -679,8 +679,8 @@ fn test_attack_tamper_transaction_history() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+        FREETALER_STANDARD.0.clone(),
     );
     bob_wallet_hacker
         .process_encrypted_transaction_bundle(
@@ -740,7 +740,7 @@ fn test_attack_create_inconsistent_transaction() {
     let mut victim_wallet = setup_test_wallet(&ACTORS.victim);
     let data = new_test_voucher_data(ACTORS.issuer.user_id.clone());
 
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     let initial_voucher = voucher_manager::create_voucher(
         data,
@@ -788,8 +788,8 @@ fn test_attack_create_inconsistent_transaction() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_hacker = std::collections::HashMap::new();
     standards_for_hacker.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+        FREETALER_STANDARD.0.clone(),
     );
     hacker_wallet
         .process_encrypted_transaction_bundle(
@@ -854,8 +854,8 @@ fn test_attack_create_inconsistent_transaction() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_victim = std::collections::HashMap::new();
     standards_for_victim.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+        FREETALER_STANDARD.0.clone(),
     );
     let process_result = victim_wallet.process_encrypted_transaction_bundle(
         &ACTORS.victim,
@@ -885,7 +885,7 @@ fn test_attack_inconsistent_split_transaction() {
     let hacker_identity = &ACTORS.hacker;
     let _victim_identity = &ACTORS.victim;
     let data = new_test_voucher_data(hacker_identity.user_id.clone());
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let voucher = voucher_manager::create_voucher(
         data,
         standard,
@@ -960,7 +960,7 @@ fn test_attack_init_amount_mismatch() {
     // Ein Hacker erstellt einen scheinbar gültigen Gutschein mit Nennwert 100.
     let hacker_identity = &ACTORS.hacker;
     let data = new_test_voucher_data(hacker_identity.user_id.clone());
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let mut voucher = voucher_manager::create_voucher(
         data,
         standard,
@@ -998,7 +998,7 @@ fn test_attack_negative_or_zero_amount_transaction() {
     let hacker_identity = &ACTORS.hacker;
     let _victim_identity = &ACTORS.victim;
     let data = new_test_voucher_data(hacker_identity.user_id.clone());
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let voucher = voucher_manager::create_voucher(
         data,
         standard,
@@ -1063,7 +1063,7 @@ fn test_attack_invalid_precision_in_nominal_value() {
     let mut voucher_data = new_test_voucher_data(creator_identity.user_id.clone());
     voucher_data.nominal_value.amount = "100.12345".to_string(); // 5 statt der erlaubten 4
 
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     // ### ANGRIFF ###
     // Die `create_voucher` Funktion selbst validiert dies noch nicht, der Zustand wird also erstellt.
@@ -1090,7 +1090,7 @@ fn test_attack_invalid_precision_in_nominal_value() {
 fn test_attack_full_transfer_amount_mismatch() {
     human_money_core::set_signature_bypass(true);
     // ### SETUP ###
-    let (standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let (public_key, signing_key) =
         crypto_utils::generate_ed25519_keypair_for_tests(Some("creator_stub"));
     let user_id = crypto_utils::create_user_id(&public_key, Some("cs")).unwrap();
@@ -1109,7 +1109,7 @@ fn test_attack_full_transfer_amount_mismatch() {
     let mut voucher = create_voucher(
         voucher_data,
         standard,
-        &SILVER_STANDARD.1,
+        &FREETALER_STANDARD.1,
         &creator_identity.signing_key,
         "en",
     )
@@ -1150,7 +1150,7 @@ fn test_attack_full_transfer_amount_mismatch() {
 fn test_attack_remainder_in_full_transfer() {
     human_money_core::set_signature_bypass(true);
     // ### SETUP ###
-    let (standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let (public_key, signing_key) =
         crypto_utils::generate_ed25519_keypair_for_tests(Some("creator_stub_2"));
     let user_id = crypto_utils::create_user_id(&public_key, Some("cs2")).unwrap();
@@ -1169,7 +1169,7 @@ fn test_attack_remainder_in_full_transfer() {
     let mut voucher = create_voucher(
         voucher_data,
         standard,
-        &SILVER_STANDARD.1,
+        &FREETALER_STANDARD.1,
         &creator_identity.signing_key,
         "en",
     )
@@ -1286,7 +1286,7 @@ fn test_attack_fuzzing_random_mutations() {
     let mut data = new_test_voucher_data(ACTORS.issuer.user_id.clone());
     data.nominal_value.amount = "1000".to_string();
 
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     let mut master_voucher = voucher_manager::create_voucher(
         data,

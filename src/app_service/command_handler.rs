@@ -5,15 +5,13 @@
 
 use super::{AppService, AppState};
 use crate::archive::VoucherArchive;
-use crate::error::ValidationError;
 use crate::models::conflict::ResolutionEndorsement;
 use crate::models::voucher::Voucher;
-use crate::services::voucher_validation;
-use crate::services::{standard_manager, voucher_manager::NewVoucherData};
+use crate::services::standard_manager;
+use crate::services::voucher_manager::NewVoucherData;
 use crate::storage::WalletLockGuard; // Importiere den RAII Guard
-use crate::wallet::instance::VoucherStatus;
 use crate::wallet::{CreateBundleResult, MultiTransferRequest, ProcessBundleResult};
-use crate::{AuthMethod, ValidationFailureReason, VoucherCoreError};
+use crate::{AuthMethod, VoucherCoreError};
 
 use std::collections::HashMap;
 
@@ -68,12 +66,16 @@ impl AppService {
                         },
                     ),
                     Ok((verified_standard, standard_hash)) => {
-                        match crate::services::voucher_manager::create_voucher(
-                            data,
+                        // 1. Kopie erstellen
+                        let mut temp_wallet = wallet.clone();
+
+                        // 2. Erstellung via Wallet (enthält Validierung, ID-Berechnung und Event-Logging)
+                        match temp_wallet.create_new_voucher(
+                            &identity,
                             &verified_standard,
                             &standard_hash,
-                            &identity.signing_key,
                             lang_preference,
+                            data,
                         ) {
                             Err(e) => (
                                 Err(e.to_string()),
@@ -85,41 +87,52 @@ impl AppService {
                                 },
                             ),
                             Ok(new_voucher) => {
-                                // Validierung und Status-Ermittlung
-                                let validation_result =
-                                    voucher_validation::validate_voucher_against_standard(
-                                        &new_voucher,
-                                        &verified_standard,
-                                    );
-
-                                let (operation_result, initial_status) = match validation_result {
-                                    Ok(_) => (Ok(new_voucher.clone()), VoucherStatus::Active),
-
-                                    // Fall 1: Incomplete
-                                    Err(VoucherCoreError::Validation(ref validation_err @ ValidationError::FieldValueCountOutOfBounds { ref path, ref field, .. }))
-                                    if path == "signatures" && (field == "role" || field == "details.gender") =>
-                                        {
-                                            let reasons = vec![ValidationFailureReason::RequiredSignatureMissing { role_description: validation_err.to_string() }];
-                                            (Ok(new_voucher.clone()), VoucherStatus::Incomplete { reasons })
-                                        },
-                                    Err(VoucherCoreError::Validation(validation_err @ ValidationError::MissingRequiredSignature { .. })) =>
-                                        {
-                                            let reasons = vec![ValidationFailureReason::RequiredSignatureMissing { role_description: validation_err.to_string() }];
-                                            (Ok(new_voucher.clone()), VoucherStatus::Incomplete { reasons })
-                                        },
-                                    Err(VoucherCoreError::Validation(ValidationError::BusinessRuleViolated(msg))) =>
-                                        {
-                                            let reasons = vec![ValidationFailureReason::BusinessRule { message: msg }];
-                                            (Ok(new_voucher.clone()), VoucherStatus::Incomplete { reasons })
-                                        },
-
-                                    // Fall 2: Fataler Fehler
-                                    Err(fatal_error) => (Err(fatal_error.to_string()), VoucherStatus::Quarantined { reason: fatal_error.to_string() })
+                                // Authentifizierung ermitteln
+                                let auth_method = match password {
+                                    Some(pwd_str) => AuthMethod::Password(pwd_str),
+                                    None => {
+                                        match &session_cache {
+                                            Some(cache) => {
+                                                if std::time::Instant::now()
+                                                    > cache.last_activity
+                                                        + cache.session_duration
+                                                {
+                                                    AuthMethod::SessionKey([0u8; 32])
+                                                } else {
+                                                    AuthMethod::SessionKey(cache.session_key)
+                                                }
+                                            }
+                                            None => AuthMethod::SessionKey([0u8; 32]),
+                                        }
+                                    }
                                 };
 
-                                match operation_result {
+                                // Expliziter Check für Auth-Fehler vor dem Speichern
+                                if let AuthMethod::SessionKey(k) = auth_method {
+                                    if k == [0u8; 32] {
+                                        self.state = AppState::Unlocked {
+                                            storage,
+                                            wallet,
+                                            identity,
+                                            session_cache,
+                                        };
+                                        return Err("Session timed out or password required.".to_string());
+                                    }
+                                }
+
+                                // 3. Speichern
+                                match temp_wallet.save(&mut storage, &identity, &auth_method) {
+                                    Ok(_) => (
+                                        Ok(new_voucher),
+                                        AppState::Unlocked {
+                                            storage,
+                                            wallet: temp_wallet,
+                                            identity,
+                                            session_cache,
+                                        },
+                                    ),
                                     Err(e) => (
-                                        Err(e),
+                                        Err(e.to_string()),
                                         AppState::Unlocked {
                                             storage,
                                             wallet,
@@ -127,103 +140,6 @@ impl AppService {
                                             session_cache,
                                         },
                                     ),
-                                    Ok(voucher_to_return) => {
-                                        // Authentifizierung ermitteln
-                                        let auth_method = match password {
-                                            Some(pwd_str) => AuthMethod::Password(pwd_str),
-                                            None => {
-                                                match &session_cache {
-                                                    Some(cache) => {
-                                                        if std::time::Instant::now()
-                                                            > cache.last_activity
-                                                                + cache.session_duration
-                                                        {
-                                                            // Timeout Fallback placeholder
-                                                            AuthMethod::SessionKey([0u8; 32])
-                                                        } else {
-                                                            AuthMethod::SessionKey(
-                                                                cache.session_key,
-                                                            )
-                                                        }
-                                                    }
-                                                    None => AuthMethod::SessionKey([0u8; 32]),
-                                                }
-                                            }
-                                        };
-
-                                        // Expliziter Check für Auth-Fehler vor dem Speichern
-                                        if let AuthMethod::SessionKey(k) = auth_method {
-                                            if k == [0u8; 32] {
-                                                // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                                                self.state = AppState::Unlocked {
-                                                    storage,
-                                                    wallet,
-                                                    identity,
-                                                    session_cache,
-                                                };
-                                                return Err(
-                                                    "Session timed out or password required."
-                                                        .to_string(),
-                                                );
-                                            }
-                                        }
-
-                                        // 1. Kopie erstellen
-                                        let mut temp_wallet = wallet.clone();
-                                        let local_id =
-                                            crate::wallet::Wallet::calculate_local_instance_id(
-                                                &new_voucher,
-                                                &identity.user_id,
-                                            )
-                                            .unwrap();
-                                        temp_wallet.add_voucher_instance(
-                                            local_id.clone(),
-                                            new_voucher.clone(),
-                                            initial_status,
-                                        );
-
-                                        // STATLESS: Wir müssen den Seed nicht mehr speichern.
-                                        // Er wird bei Bedarf direkt aus der Voucher-Nonce und der Identity abgeleitet.
-
-                                        // 2. Abgeleitete Stores aktualisieren & Speichern
-                                        match temp_wallet.rebuild_derived_stores() {
-                                            Ok(_) => {
-                                                match temp_wallet.save(
-                                                    &mut storage,
-                                                    &identity,
-                                                    &auth_method,
-                                                ) {
-                                                    Ok(_) => (
-                                                        Ok(voucher_to_return),
-                                                        AppState::Unlocked {
-                                                            storage,
-                                                            wallet: temp_wallet,
-                                                            identity,
-                                                            session_cache,
-                                                        },
-                                                    ),
-                                                    Err(e) => (
-                                                        Err(e.to_string()),
-                                                        AppState::Unlocked {
-                                                            storage,
-                                                            wallet,
-                                                            identity,
-                                                            session_cache,
-                                                        },
-                                                    ),
-                                                }
-                                            }
-                                            Err(e) => (
-                                                Err(e.to_string()),
-                                                AppState::Unlocked {
-                                                    storage,
-                                                    wallet,
-                                                    identity,
-                                                    session_cache,
-                                                },
-                                            ),
-                                        }
-                                    }
                                 }
                             }
                         }

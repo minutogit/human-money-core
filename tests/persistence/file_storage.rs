@@ -20,7 +20,7 @@ use tempfile::tempdir;
 // Lade die Test-Hilfsfunktionen aus dem übergeordneten Verzeichnis.
 
 use human_money_core::test_utils::{
-    ACTORS, SILVER_STANDARD, add_voucher_to_wallet, setup_in_memory_wallet,
+    ACTORS, FREETALER_STANDARD, add_voucher_to_wallet, setup_in_memory_wallet,
 };
 
 // --- Hilfsfunktionen ---
@@ -47,7 +47,7 @@ fn create_test_voucher(identity: &UserIdentity) -> Voucher {
         ..Default::default()
     };
     // KORREKTUR: Passe den Aufruf an die neue 5-parametrige Signatur an.
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     voucher_manager::create_voucher(
         new_voucher_data,
         standard,
@@ -79,7 +79,7 @@ fn test_wallet_creation_save_and_load() {
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
 
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
 
     // 2. Speichern
     wallet
@@ -215,7 +215,7 @@ fn test_load_with_missing_voucher_store() {
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
 
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
     wallet
         .save(&mut storage, &identity, &AuthMethod::Password(password))
         .unwrap();
@@ -252,7 +252,7 @@ fn test_load_from_corrupted_profile_file() {
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
 
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
     wallet
         .save(&mut storage, &identity, &AuthMethod::Password(password))
         .unwrap();
@@ -290,7 +290,7 @@ fn test_empty_password_handling() {
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
 
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
 
     // Speichern mit leerem Passwort sollte funktionieren
     wallet
@@ -340,13 +340,13 @@ fn test_save_and_load_with_bundle_history() {
     let bob_identity = &ACTORS.bob;
     let mut alice_wallet = setup_in_memory_wallet(alice_identity);
 
-    let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (freetaler_standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     // Alice erstellt einen Gutschein und fügt ihn ihrem Wallet hinzu
     let local_id = add_voucher_to_wallet(
         &mut alice_wallet,
         alice_identity,
         "100",
-        silver_standard,
+        freetaler_standard,
         true,
     )
     .unwrap();
@@ -365,8 +365,8 @@ fn test_save_and_load_with_bundle_history() {
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(
-        silver_standard.immutable.identity.uuid.clone(),
-        silver_standard.clone(),
+        freetaler_standard.immutable.identity.uuid.clone(),
+        freetaler_standard.clone(),
     );
 
     let _ = alice_wallet
@@ -450,7 +450,7 @@ fn test_save_and_load_arbitrary_data() {
         "--> Test storage created in: {:?}",
         storage.user_storage_path
     );
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
 
     // WICHTIG: Zuerst das Wallet speichern, damit die Schlüssel-Infrastruktur
     // (master_key.enc, recovery_key.enc) für die Verschlüsselung initialisiert wird.
@@ -597,7 +597,7 @@ fn test_storage_reentrancy_same_process() {
 
     // Instanz 1: Initialisieren, um Keys anzulegen (damit save_arbitrary_data später nicht an Auth scheitert)
     let mut storage1 = FileStorage::new(user_storage_path.clone());
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
     wallet
         .save(&mut storage1, identity, &AuthMethod::Password(password))
         .expect("Initial setup save failed");
@@ -660,7 +660,7 @@ fn setup_file_storage_with_wallet(
     password: &str,
 ) -> FileStorage {
     let mut storage = FileStorage::new(user_storage_path);
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
     wallet
         .save(&mut storage, identity, &AuthMethod::Password(password))
         .expect("Initial wallet save failed");
@@ -742,7 +742,7 @@ fn test_profile_exists_returns_correct_booleans() {
     );
 
     // Speichern, um das Profil anzulegen.
-    let wallet = setup_in_memory_wallet(identity);
+    let mut wallet = setup_in_memory_wallet(identity);
     wallet
         .save(&mut storage, identity, &AuthMethod::Password(password))
         .expect("save");

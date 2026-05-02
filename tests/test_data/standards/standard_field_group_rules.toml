@@ -44,4 +44,4 @@ descriptions = { en = "Field Group Rules Test" }
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "54tUgoXWSe4DxVMYQ7t8BbjmkYJMoMaQPu8f36sXHjttQfy8uA4ixkmAN7k3FxAyck8Ra7X8BAAuGbebm1ERbYtp"
+signature = "PW3yc7PLi2nsqyBjFX5U11DH8o4kggvCNjo61Ku9Q7Wn2dgJ1mU1rCaGUC9C6qMTjLa5qbCtPsPXN2MhKA9HBeU"

@@ -19,6 +19,13 @@ pub(crate) fn format_bff_name(raw_name: &str, is_test: bool) -> String {
     if is_test && !raw_name.starts_with("TEST-") {
         format!("TEST-{}", raw_name)
     } else {
+        if !is_test && raw_name.starts_with("TEST-") {
+            log::warn!(
+                "format_bff_name: name '{}' has TEST- prefix but is_test=false. \
+                 Possible data inconsistency in voucher standard definition.",
+                raw_name
+            );
+        }
         raw_name.to_string()
     }
 }
@@ -70,6 +77,7 @@ impl Wallet {
                 // --- Guthaben-Berechnung ---
                 let current_amount = if matches!(instance.status, VoucherStatus::Archived)
                     || matches!(instance.status, VoucherStatus::Endorsed { .. })
+                    || matches!(instance.status, VoucherStatus::Expired)
                 {
                     "0".to_string()
                 } else {
@@ -128,7 +136,7 @@ impl Wallet {
                         .abbreviation
                         .clone()
                         .unwrap_or_default(),
-                    voucher_standard_name: voucher.voucher_standard.name.clone(),
+                    raw_standard_name: voucher.voucher_standard.name.clone(),
                     voucher_standard_uuid: voucher.voucher_standard.uuid.clone(),
                     // Zähle Transaktionen exkl. der initialen "init" Transaktion.
                     transaction_count: (voucher.transactions.len() as u32).saturating_sub(1),
@@ -482,6 +490,61 @@ impl Wallet {
         };
 
         export_profile_as_jws(&identity.signing_key, &public_profile)
+    }
+
+    /// Lädt die Event-Historie des Wallets, kombiniert aus persistenten und RAM-basierten Events.
+    ///
+    /// # Arguments
+    /// * `storage` - Das Storage-Backend.
+    /// * `auth` - Die Authentifizierungsmethode.
+    /// * `offset` - Der Offset für die Pagination.
+    /// * `limit` - Die maximale Anzahl der zurückzugebenden Events.
+    ///
+    /// # Returns
+    /// Eine chronologisch absteigend sortierte Liste von `WalletEvent` Objekten.
+    pub fn get_event_history<S: crate::storage::Storage>(
+        &self,
+        storage: &S,
+        auth: &crate::storage::AuthMethod,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<crate::models::wallet_event::WalletEvent>, VoucherCoreError> {
+        let pending_len = self.pending_events.len();
+        let mut result = Vec::with_capacity(limit);
+
+        // 1. Hole neueste Events zuerst aus dem RAM (pending_events sind aufsteigend, also rev())
+        if offset < pending_len {
+            let to_take = std::cmp::min(limit, pending_len - offset);
+            let pending_page = self.pending_events.iter()
+                .rev() // Macht aus aufsteigend -> absteigend (neueste zuerst)
+                .skip(offset)
+                .take(to_take)
+                .cloned();
+            result.extend(pending_page);
+        }
+
+        // 2. Falls wir das Limit noch nicht erreicht haben, füllen wir mit Storage-Events auf
+        if result.len() < limit {
+            let remaining_limit = limit - result.len();
+            
+            // Berechne den korrekten Offset für den Storage.
+            // Wenn der User-Offset größer ist als das was wir im RAM haben, 
+            // müssen wir die RAM-Größe vom Offset abziehen.
+            let storage_offset = if offset > pending_len {
+                offset - pending_len
+            } else {
+                0
+            };
+
+            // Hier übergeben wir nun das ECHTE Limit und Offset! Chunking wird optimal genutzt.
+            let persisted_page = storage
+                .load_events(&self.profile.user_id, auth, storage_offset, remaining_limit)
+                .map_err(VoucherCoreError::Storage)?;
+
+            result.extend(persisted_page);
+        }
+
+        Ok(result)
     }
 }
 

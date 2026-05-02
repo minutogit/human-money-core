@@ -125,7 +125,7 @@ impl AppService {
 
         let mut storage = FileStorage::new(profile_path);
 
-        let (wallet, identity) = Wallet::new_from_mnemonic(mnemonic, passphrase, user_prefix, language, local_instance_id.clone())
+        let (mut wallet, identity) = Wallet::new_from_mnemonic(mnemonic, passphrase, user_prefix, language, local_instance_id.clone())
             .map_err(|e| format!("Failed to create new wallet: {}", e))?;
 
         wallet
@@ -284,6 +284,15 @@ impl AppService {
         let (mut wallet, identity) = Wallet::load(&storage, &AuthMethod::Password(password), local_instance_id)
             .map_err(|e| format!("Login failed (check password): {}", e))?;
 
+        // --- EVENT FLUSH ---
+        // Wenn beim Laden passive Events (z.B. VoucherExpired) generiert wurden,
+        // flushen wir diese sofort auf die Festplatte.
+        if !wallet.pending_events.is_empty() {
+            wallet
+                .save(&mut storage, &identity, &AuthMethod::Password(password))
+                .map_err(|e| format!("Failed to flush passive events on login: {}", e))?;
+        }
+
         if cleanup_on_login {
             // Bevor wir aufräumen, prüfen wir die Integrität. Wir dürfen die Dateien nur neu
             // schreiben (was ihre Hashes durch neue Verschlüsselungs-Nonces ändert),
@@ -437,12 +446,21 @@ impl AppService {
 
         // 1. Lade das Wallet mit der Mnemonic-Phrase (öffnet das "zweite Schloss").
         let auth_method = AuthMethod::Mnemonic(mnemonic, passphrase, language);
-        let (wallet, identity) = Wallet::load(&storage, &auth_method, local_instance_id.clone()).map_err(|e| {
+        let (mut wallet, identity) = Wallet::load(&storage, &auth_method, local_instance_id.clone()).map_err(|e| {
             format!(
                 "Recovery failed (check mnemonic phrase and passphrase): {}",
                 e
             )
         })?;
+
+        // --- EVENT FLUSH ---
+        if !wallet.pending_events.is_empty() {
+            // Hinweis: Wir nutzen hier noch die Mnemonic-Auth, da das neue Passwort 
+            // erst im nächsten Schritt gesetzt wird.
+            wallet
+                .save(&mut storage, &identity, &auth_method)
+                .map_err(|e| format!("Failed to flush passive events on recovery: {}", e))?;
+        }
 
         // 2. Setze das Passwort zurück, indem das Mnemonic-Schloss geöffnet und das Passwort-Schloss neu geschrieben wird.
         Wallet::reset_password(&mut storage, &identity, new_password)

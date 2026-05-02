@@ -39,4 +39,4 @@ descriptions = { en = "No Split Test" }
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "4YfURJKFnbb9SVGSZ7pWtMvMN2JjqMgi5WJD1SXE357uwY3kLfWZNgGwsiJvZgjebswC5VW73KcuuPsFvVZsMDCS"
+signature = "39B913KjWc6CKP3hgy6LMCLesGxBWDcVP9YuW835zxQJt9PsJjN7w1JmcJLCkaQ2d7NX3hEV7kNBwReP2BhqR4Sx"

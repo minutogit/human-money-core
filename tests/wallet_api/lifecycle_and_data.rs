@@ -71,7 +71,7 @@ mod tests {
             ..Default::default()
         };
         let signed_standard =
-            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+            generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
 
         // HINWEIS: Dieser Aufruf MUSS Some(password) (Modus A) verwenden, da setup_service_with_profile
         // (und der darin enthaltene Anker-Fix) KEINE Modus B-Session startet.
@@ -280,7 +280,7 @@ mod tests {
         };
 
         let signed_standard =
-            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+            generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
         let created_voucher = service
             // KORREKTUR: Der Login (via setup_service_with_profile) startet keine Session.
             // Wir MÜSSEN Modus A (Some(PASSWORD)) verwenden.
@@ -359,11 +359,11 @@ mod tests {
         // aber OHNE aktive Session (da lock_session() entfernt wurde).
         let request = create_dummy_transfer_request(&mut service);
 
-        // Load the standard definition for SILVER-PAYMENT-V1-2025-09
+        // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
         let signed_standard =
-            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+            generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
-        standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
+        standard_definitions.insert("a1b2c3d4-e5f6-4789-8012-3456789abcde".to_string(), signed_standard);
 
         let result =
             service.create_transfer_bundle(request, &standard_definitions, None, Some(PASSWORD));
@@ -375,11 +375,11 @@ mod tests {
         let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
         let request = create_dummy_transfer_request(&mut service);
 
-        // Load the standard definition for SILVER-PAYMENT-V1-2025-09
+        // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
         let signed_standard =
-            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+            generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
-        standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
+        standard_definitions.insert("a1b2c3d4-e5f6-4789-8012-3456789abcde".to_string(), signed_standard);
 
         let result = service.create_transfer_bundle(
             request,
@@ -401,11 +401,11 @@ mod tests {
         // Der Aufruf mit `None` muss fehlschlagen.
         let request = create_dummy_transfer_request(&mut service);
 
-        // Load the standard definition for SILVER-PAYMENT-V1-2025-09
+        // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
         let signed_standard =
-            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+            generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
-        standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
+        standard_definitions.insert("a1b2c3d4-e5f6-4789-8012-3456789abcde".to_string(), signed_standard);
 
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
         assert!(result.is_err());
@@ -419,11 +419,11 @@ mod tests {
         service.unlock_session(PASSWORD, 60).unwrap();
         let request = create_dummy_transfer_request(&mut service);
 
-        // Load the standard definition for SILVER-PAYMENT-V1-2025-09
+        // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
         let signed_standard =
-            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+            generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
-        standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
+        standard_definitions.insert("a1b2c3d4-e5f6-4789-8012-3456789abcde".to_string(), signed_standard);
 
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
         assert!(result.is_ok());
@@ -437,11 +437,11 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_secs(2));
         let request = create_dummy_transfer_request(&mut service);
 
-        // Load the standard definition for SILVER-PAYMENT-V1-2025-09
+        // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
         let signed_standard =
-            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+            generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
-        standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
+        standard_definitions.insert("a1b2c3d4-e5f6-4789-8012-3456789abcde".to_string(), signed_standard);
 
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
         assert!(result.is_err());
@@ -460,11 +460,11 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_secs(2)); // Gesamt 4s vergangen
         let request = create_dummy_transfer_request(&mut service);
 
-        // Load the standard definition for SILVER-PAYMENT-V1-2025-09
+        // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
         let signed_standard =
-            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+            generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
-        standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
+        standard_definitions.insert("a1b2c3d4-e5f6-4789-8012-3456789abcde".to_string(), signed_standard);
 
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
         assert!(
@@ -549,11 +549,11 @@ mod tests {
         service.lock_session(); // Session manuell sperren
         let request = create_dummy_transfer_request(&mut service);
 
-        // Load the standard definition for SILVER-PAYMENT-V1-2025-09
+        // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
         let signed_standard =
-            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+            generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
-        standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
+        standard_definitions.insert("a1b2c3d4-e5f6-4789-8012-3456789abcde".to_string(), signed_standard);
 
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
         assert!(result.is_err());
@@ -569,11 +569,11 @@ mod tests {
         service.unlock_session(PASSWORD, 60).unwrap(); // Modus B ist aktiv
         let request = create_dummy_transfer_request(&mut service);
 
-        // Load the standard definition for SILVER-PAYMENT-V1-2025-09
+        // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
         let signed_standard =
-            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+            generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
-        standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
+        standard_definitions.insert("a1b2c3d4-e5f6-4789-8012-3456789abcde".to_string(), signed_standard);
 
         let result =
             service.create_transfer_bundle(request, &standard_definitions, None, Some(PASSWORD));
@@ -590,11 +590,11 @@ mod tests {
         service.unlock_session(PASSWORD, 60).unwrap(); // Modus B ist aktiv
         let request = create_dummy_transfer_request(&mut service);
 
-        // Load the standard definition for SILVER-PAYMENT-V1-2025-09
+        // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
         let signed_standard =
-            generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+            generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
         let mut standard_definitions = HashMap::new();
-        standard_definitions.insert("SILVER-PAYMENT-V1-2025-09".to_string(), signed_standard);
+        standard_definitions.insert("a1b2c3d4-e5f6-4789-8012-3456789abcde".to_string(), signed_standard);
 
         let result = service.create_transfer_bundle(
             request,

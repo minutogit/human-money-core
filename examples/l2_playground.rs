@@ -12,7 +12,7 @@ use human_money_core::models::profile::PublicProfile;
 use human_money_core::models::voucher::ValueDefinition;
 
 use human_money_core::services::voucher_manager::NewVoucherData;
-use human_money_core::test_utils::{self, ACTORS, SILVER_STANDARD, create_custom_standard};
+use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD, create_custom_standard};
 use std::collections::{HashMap, HashSet};
 use tempfile::tempdir;
 
@@ -170,7 +170,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bob_id = test_utils::ACTORS.david.identity.user_id.clone();
 
     // Standard laden
-    let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
+    let (flexible_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
         s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Flexible;
     });
     let flexible_toml = toml::to_string(&flexible_standard)?;
@@ -188,7 +188,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // --- SCHRITT 1: Genesis ---
-    println!("\x1b[1;33m[1/3] Genesis: Gutschein erstellen (100 Silber)\x1b[0m");
+    println!("\x1b[1;33m[1/3] Genesis: Gutschein erstellen (100 FreeTaler)\x1b[0m");
     app.create_new_voucher(
         &flexible_toml,
         "en",
@@ -220,7 +220,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // --- SCHRITT 2: Transaktion 1 ---
-    println!("\x1b[1;33m[2/3] Transaktion 1: 10 Silber an Bob senden\x1b[0m");
+    println!("\x1b[1;33m[2/3] Transaktion 1: 10 FreeTaler an Bob senden\x1b[0m");
     let request1 = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
@@ -256,7 +256,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // --- SCHRITT 3: Transaktion 2 ---
-    println!("\x1b[1;33m[3/3] Transaktion 2: 5 Silber an Bob senden\x1b[0m");
+    println!("\x1b[1;33m[3/3] Transaktion 2: 5 FreeTaler an Bob senden\x1b[0m");
     let request2 = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_id,
         sources: vec![human_money_core::wallet::SourceTransfer {

@@ -16,7 +16,7 @@ use human_money_core::app_service::AppService; // KORREKTUR: Falscher Import E04
 use std::collections::HashMap;
 use std::path::Path;
 // HINWEIS: Dieser `use` wurde auf `super::` umgestellt.
-use super::test_utils::{ACTORS, SILVER_STANDARD, setup_in_memory_wallet};
+use super::test_utils::{ACTORS, FREETALER_STANDARD, setup_in_memory_wallet};
 use human_money_core::models::conflict::TransactionFingerprint;
 use human_money_core::models::voucher::{Address, Collateral, ValueDefinition};
 use human_money_core::services::voucher_manager::{self, NewVoucherData};
@@ -88,7 +88,7 @@ fn test_fingerprint_generation() {
 
     // Erstelle einen Gutschein mit 2 Transaktionen (init + transfer)
     let voucher_data = new_test_voucher_data(identity.user_id.clone());
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     // create_voucher erwartet den &SigningKey, nicht die ganze Identity.
     let voucher = voucher_manager::create_voucher(
@@ -384,19 +384,19 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         .expect("Konnte das 'sender'-Profil nach der Erstellung nicht finden");
     let sender_folder_name = profile_info.folder_name;
 
-    let (standard, _standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, _standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     // KORREKTUR: Lade den rohen TOML-String. Der Service erwartet TOML-Inhalt, nicht den Hash.
-    let silver_toml_str = include_str!("../../../voucher_standards/silver_v1/standard.toml");
+    let freetaler_toml_str = include_str!("../../../voucher_standards/freetaler_v1/standard.toml");
 
     let mut standards_map = HashMap::new();
     // KORREKTUR: Die Map muss UUID -> TOML-Inhalt enthalten (für spätere Transfer-Aufrufe).
-    standards_map.insert(standard.immutable.identity.uuid.clone(), silver_toml_str.to_string());
+    standards_map.insert(standard.immutable.identity.uuid.clone(), freetaler_toml_str.to_string());
 
     // 2. Sender erhält einen initialen Gutschein.
     let voucher_data = new_test_voucher_data(app_service.get_user_id().unwrap());
     let initial_voucher = app_service
         .create_new_voucher(
-            silver_toml_str, // KORREKTUR (Panic-Fix): Übergebe den TOML-Inhalt, nicht den Hash
+            freetaler_toml_str, // KORREKTUR (Panic-Fix): Übergebe den TOML-Inhalt, nicht den Hash
             "en",
             voucher_data,
             Some("password123"),
@@ -574,7 +574,7 @@ fn test_local_double_spend_detection_lifecycle() {
     let mut alice_wallet = setup_test_wallet(alice_identity, "alice", storage_path);
     let mut bob_wallet = setup_test_wallet(bob_identity, "bob", storage_path);
 
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     let voucher_data = new_test_voucher_data(alice_identity.user_id.clone());
     let initial_voucher = voucher_manager::create_voucher(
@@ -631,8 +631,8 @@ fn test_local_double_spend_detection_lifecycle() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+        FREETALER_STANDARD.0.clone(),
     );
     bob_wallet
         .process_encrypted_transaction_bundle(
@@ -733,8 +733,8 @@ fn test_local_double_spend_detection_lifecycle() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_charlie = std::collections::HashMap::new();
     standards_for_charlie.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+        FREETALER_STANDARD.0.clone(),
     );
     charlie_wallet
         .process_encrypted_transaction_bundle(
@@ -763,8 +763,8 @@ fn test_local_double_spend_detection_lifecycle() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_david = std::collections::HashMap::new();
     standards_for_david.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+        FREETALER_STANDARD.0.clone(),
     );
     david_wallet
         .process_encrypted_transaction_bundle(
@@ -826,8 +826,8 @@ fn test_local_double_spend_detection_lifecycle() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_alice = std::collections::HashMap::new();
     standards_for_alice.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+        FREETALER_STANDARD.0.clone(),
     );
     let result1 = alice_wallet
         .process_encrypted_transaction_bundle(
@@ -886,8 +886,8 @@ fn test_local_double_spend_detection_lifecycle() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_alice_2 = std::collections::HashMap::new();
     standards_for_alice_2.insert(
-        SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-        SILVER_STANDARD.0.clone(),
+        FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+        FREETALER_STANDARD.0.clone(),
     );
     let result2 = alice_wallet
         .process_encrypted_transaction_bundle(

@@ -45,6 +45,9 @@ pub enum VoucherStatus {
     /// Der Gutschein gehört dem Nutzer nicht, wird aber als rechtssicheres Logbuch für
     /// eingegangene soziale Verpflichtungen archiviert.
     Endorsed { role: String },
+    /// Die Gültigkeitsdauer (`valid_until`) des Gutscheins ist abgelaufen.
+    /// Er kann nicht mehr für Transaktionen verwendet werden.
+    Expired,
 }
 
 /// Dient als Wrapper im Wallet, der die rohen `Voucher`-Daten mit ihrem

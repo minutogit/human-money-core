@@ -41,4 +41,4 @@ descriptions = { en = "Signature Description Test" }
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "32T8jBvkDqDm4XcqmE81gVkPcRc6v9htGT8McLLScp2CtDkzE7BHiciYvRcoJoT9jVJESNR6W666hkkvUctpVVxu"
+signature = "329C3zSBEZYhLNTLd3Yyw23eDB7W2wKxDBG4JLvW9a2Frbv42czjPBhaxq29ETqnNJ5QSd7S3auNVXG8zd3xs3DB"

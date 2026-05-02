@@ -9,7 +9,7 @@ mod tests {
     use chrono::{Duration, Utc};
     use human_money_core::models::conflict::TransactionFingerprint;
     use human_money_core::services::voucher_manager::NewVoucherData;
-    use human_money_core::test_utils::{self, ACTORS, SILVER_STANDARD};
+    use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD};
     use tempfile::tempdir;
 
     const PASSWORD: &str = "test-password-123";
@@ -118,7 +118,7 @@ mod tests {
         };
         let voucher = alice_service
             .create_new_voucher(
-                &toml::to_string(&SILVER_STANDARD.0).unwrap(),
+                &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
                 "de",
                 new_voucher_data,
                 Some(PASSWORD),
@@ -152,8 +152,8 @@ mod tests {
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(
-            SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-            toml::to_string(&SILVER_STANDARD.0).unwrap(),
+            FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+            toml::to_string(&FREETALER_STANDARD.0).unwrap(),
         );
         alice_service
             .create_transfer_bundle(request, &standards_toml, None, Some(PASSWORD))
