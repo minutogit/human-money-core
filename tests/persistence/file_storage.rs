@@ -20,7 +20,7 @@ use tempfile::tempdir;
 // Lade die Test-Hilfsfunktionen aus dem übergeordneten Verzeichnis.
 
 use human_money_core::test_utils::{
-    ACTORS, SILVER_STANDARD, add_voucher_to_wallet, setup_in_memory_wallet,
+    ACTORS, FREETALER_STANDARD, add_voucher_to_wallet, setup_in_memory_wallet,
 };
 
 // --- Hilfsfunktionen ---
@@ -47,7 +47,7 @@ fn create_test_voucher(identity: &UserIdentity) -> Voucher {
         ..Default::default()
     };
     // KORREKTUR: Passe den Aufruf an die neue 5-parametrige Signatur an.
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     voucher_manager::create_voucher(
         new_voucher_data,
         standard,
@@ -340,13 +340,13 @@ fn test_save_and_load_with_bundle_history() {
     let bob_identity = &ACTORS.bob;
     let mut alice_wallet = setup_in_memory_wallet(alice_identity);
 
-    let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (freetaler_standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     // Alice erstellt einen Gutschein und fügt ihn ihrem Wallet hinzu
     let local_id = add_voucher_to_wallet(
         &mut alice_wallet,
         alice_identity,
         "100",
-        silver_standard,
+        freetaler_standard,
         true,
     )
     .unwrap();
@@ -365,8 +365,8 @@ fn test_save_and_load_with_bundle_history() {
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(
-        silver_standard.immutable.identity.uuid.clone(),
-        silver_standard.clone(),
+        freetaler_standard.immutable.identity.uuid.clone(),
+        freetaler_standard.clone(),
     );
 
     let _ = alice_wallet

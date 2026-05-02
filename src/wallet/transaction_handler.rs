@@ -301,14 +301,17 @@ impl Wallet {
                 VoucherCoreError::Generic("Received voucher has no transactions.".to_string())
             })?;
 
-            // 4. Bestimme die Einheit
-            let unit = voucher.nominal_value.unit.clone();
+            // 4. Bestimme die Anzeige-Einheit (BFF-Pattern)
+            let display_currency = super::format_bff_name(
+                voucher.nominal_value.abbreviation.as_deref().unwrap_or(&voucher.nominal_value.unit),
+                voucher.non_redeemable_test_voucher
+            );
 
             // 5. Akkumuliere den Wert, basierend auf 'is_summable'
             if standard.immutable.features.balances_are_summable {
                 let current_sum = transfer_summary
                     .summable_amounts
-                    .entry(unit)
+                    .entry(display_currency)
                     .or_insert_with(|| "0.0".to_string());
 
                 // Verwende decimal_utils, um Strings sicher zu addieren
@@ -325,7 +328,7 @@ impl Wallet {
 
                 *current_sum = (val1 + val2).to_string();
             } else {
-                let count = transfer_summary.countable_items.entry(unit).or_insert(0);
+                let count = transfer_summary.countable_items.entry(display_currency).or_insert(0);
                 *count += 1;
             }
 

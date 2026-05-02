@@ -1,5 +1,5 @@
 use human_money_core::models::profile::PublicProfile;
-use human_money_core::test_utils::{ACTORS, SILVER_STANDARD, create_minuto_voucher_data};
+use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD, create_minuto_voucher_data};
 use human_money_core::{create_transaction, create_voucher, validate_voucher_against_standard};
 
 #[test]
@@ -10,14 +10,14 @@ fn test_init_transfer_split_chain() {
     let bob = &ACTORS.bob;
     let charlie = &ACTORS.charlie;
 
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     let creator = PublicProfile {
         id: Some(alice.user_id.clone()),
         ..Default::default()
     };
     let mut voucher_data = create_minuto_voucher_data(creator);
-    voucher_data.nominal_value.amount = "50.0".to_string(); // Silver is allow_partial_transfers
+    voucher_data.nominal_value.amount = "50.0".to_string(); // FreeTaler is allow_partial_transfers
 
     let voucher_0 = create_voucher(
         voucher_data,

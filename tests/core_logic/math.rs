@@ -19,7 +19,7 @@
 //! - **Vollständiger Transfer:** Korrekte Erstellung einer Transaktion ohne Restbetrag,
 //!   wenn das gesamte Guthaben überwiesen wird.
 
-use human_money_core::test_utils::{ACTORS, SILVER_STANDARD};
+use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD};
 use human_money_core::{
     // Structs/Enums from the crate root (or re-exported there)
     NewVoucherData,
@@ -38,7 +38,7 @@ use rust_decimal_macros::dec;
 #[test]
 fn test_chained_transaction_math_and_scaling() {
     // --- 1. SETUP ---
-    let mut standard_obj = SILVER_STANDARD.0.clone();
+    let mut standard_obj = FREETALER_STANDARD.0.clone();
     standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     
     let mut standard_to_hash = standard_obj.clone();
@@ -53,7 +53,7 @@ fn test_chained_transaction_math_and_scaling() {
         standard
             .immutable.features.amount_decimal_places,
         4,
-        "This test requires the silver standard with 4 decimal places."
+        "This test requires the FreeTaler standard with 4 decimal places."
     );
 
     // Erstelle Alice (Sender) und Bob (Empfänger)
@@ -338,7 +338,7 @@ fn test_chained_transaction_math_and_scaling() {
 #[test]
 fn test_transaction_fails_on_excess_precision() {
     // --- SETUP ---
-    let mut standard_obj = SILVER_STANDARD.0.clone();
+    let mut standard_obj = FREETALER_STANDARD.0.clone();
     standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     let mut standard_to_hash = standard_obj.clone();
     standard_to_hash.signature = None;

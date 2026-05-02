@@ -11,7 +11,7 @@ use human_money_core::{
     models::{profile::PublicProfile, voucher::ValueDefinition},
     services::voucher_manager::NewVoucherData,
     test_utils::{
-        ACTORS, SILVER_STANDARD, create_test_bundle, generate_signed_standard_toml,
+        ACTORS, FREETALER_STANDARD, create_test_bundle, generate_signed_standard_toml,
         setup_service_with_profile,
     },
     wallet::{MultiTransferRequest, SourceTransfer, instance::VoucherStatus},
@@ -79,10 +79,10 @@ fn test_rejection_of_broken_transaction_chain() {
     let dir = tempdir().unwrap();
     let ((mut service_sender, identity_sender), (mut service_recipient, id_recipient)) =
         setup_test_environment(&dir);
-    let silver_toml = toml::to_string(&SILVER_STANDARD.0).unwrap(); // Ist bereits signiert aus lazy_static
+    let freetaler_toml = toml::to_string(&FREETALER_STANDARD.0).unwrap(); // Ist bereits signiert aus lazy_static
     let mut voucher = service_sender
         .create_new_voucher(
-            &silver_toml,
+            &freetaler_toml,
             "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
@@ -104,7 +104,7 @@ fn test_rejection_of_broken_transaction_chain() {
     //    Wir müssen das `VoucherStandardDefinition`-Objekt (nicht den TOML-String) verwenden.
     let valid_tx = human_money_core::services::voucher_manager::create_transaction(
         &voucher,
-        &SILVER_STANDARD.0, // Das Objekt aus test_utils
+        &FREETALER_STANDARD.0, // Das Objekt aus test_utils
         &identity_sender.user_id,
         &identity_sender.signing_key,
         &human_money_core::test_utils::derive_holder_key(&voucher, &identity_sender.signing_key), // Init -> Tx1
@@ -135,7 +135,7 @@ fn test_rejection_of_broken_transaction_chain() {
     let bundle = create_test_bundle(&identity_sender, vec![voucher], &id_recipient, None).unwrap();
 
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
+    standards_map.insert(FREETALER_STANDARD.0.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
     // 2. ACT
     human_money_core::set_signature_bypass(true);
@@ -166,14 +166,14 @@ fn test_rejection_of_inconsistent_split_math() {
     // 1. ARRANGE
     let (mut service_sender, identity_sender, mut service_recipient, id_recipient) =
         setup_sender_recipient();
-    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
+    standards_map.insert(FREETALER_STANDARD.0.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
     // Erstelle einen Gutschein mit 100 (über die öffentliche API)
     let mut voucher = service_sender
         .create_new_voucher(
-            &silver_toml,
+            &freetaler_toml,
             "en", // Erstelle einen Gutschein mit 100
             NewVoucherData {
                 creator_profile: PublicProfile {
@@ -252,14 +252,14 @@ fn test_rejection_of_self_received_bundle() {
     // 1. ARRANGE
     let (mut service_sender, _, mut service_recipient, id_recipient) = setup_sender_recipient();
 
-    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
+    standards_map.insert(FREETALER_STANDARD.0.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
     // Sender erstellt einen neuen Gutschein
     let _ = service_sender // Das zurückgegebene Voucher-Objekt wird nicht direkt benötigt
         .create_new_voucher(
-            &silver_toml,
+            &freetaler_toml,
             "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
@@ -342,14 +342,14 @@ fn test_rejection_of_identical_bundle_replay() {
     // 1. ARRANGE
     let (mut service_sender, _, mut service_recipient, id_recipient) = setup_sender_recipient();
 
-    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
+    standards_map.insert(FREETALER_STANDARD.0.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
     // Sender erstellt einen neuen Gutschein
     let _ = service_sender
         .create_new_voucher(
-            &silver_toml,
+            &freetaler_toml,
             "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
@@ -430,14 +430,14 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
     let (mut service_sender, identity_sender, mut service_recipient, id_recipient) =
         setup_sender_recipient();
 
-    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
+    standards_map.insert(FREETALER_STANDARD.0.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
     // Manuelles Erstellen von voucher_A (wie in Test 2.1)
     let voucher_a = service_sender
         .create_new_voucher(
-            &silver_toml,
+            &freetaler_toml,
             "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
@@ -455,7 +455,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
         .unwrap();
     let (voucher_a_sent, _) = human_money_core::services::voucher_manager::create_transaction(
         &voucher_a,
-        &SILVER_STANDARD.0,
+        &FREETALER_STANDARD.0,
         &identity_sender.user_id,
         &identity_sender.signing_key,
         &human_money_core::test_utils::derive_holder_key(&voucher_a, &identity_sender.signing_key), // Init -> Tx 1
@@ -521,9 +521,9 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
 #[test]
 fn test_rejection_of_bundle_for_different_prefix_same_identity() {
     // 1. ARRANGE
-    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
+    standards_map.insert(FREETALER_STANDARD.0.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
     // --- Sender (Alice) ---
     let dir_sender = tempdir().unwrap();
@@ -584,7 +584,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
     // --- Sender erstellt Gutschein und Bundle für "Mobil" ---
     let _ = service_sender
         .create_new_voucher(
-            &silver_toml,
+            &freetaler_toml,
             "en",
             NewVoucherData {
                 creator_profile: PublicProfile {

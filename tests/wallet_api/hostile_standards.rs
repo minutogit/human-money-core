@@ -7,7 +7,7 @@
 use human_money_core::{
     models::{profile::PublicProfile, voucher::ValueDefinition},
     services::voucher_manager::NewVoucherData,
-    test_utils::{self, ACTORS, SILVER_STANDARD, create_custom_standard},
+    test_utils::{self, ACTORS, FREETALER_STANDARD, create_custom_standard},
 };
 use tempfile::tempdir;
 
@@ -16,7 +16,7 @@ use tempfile::tempdir;
 #[test]
 fn test_disallowed_transaction_type() {
     // 1. ARRANGE: Standard erstellen, der "split" verbietet
-    let (hostile_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
+    let (hostile_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
         if true {
             if true {
                 s.immutable.features.allow_partial_transfers = false;
@@ -92,7 +92,7 @@ fn test_disallowed_transaction_type() {
 #[test]
 fn test_violation_of_max_creation_validity() {
     // 1. ARRANGE: Standard mit maximaler Gültigkeit von 1 Jahr erstellen
-    let (hostile_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
+    let (hostile_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
         if true {
             if true {
                 s.immutable.issuance.validity_duration_range = vec!["P0M".to_string(), "P1Y".to_string()];

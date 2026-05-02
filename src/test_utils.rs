@@ -199,13 +199,13 @@ lazy_static! {
         (standard, logic_hash)
     };
 
-    /// Lädt den Silber-Standard und signiert ihn zur Laufzeit für die Tests.
-    pub static ref SILVER_STANDARD: (VoucherStandardDefinition, String) = {
+    /// Lädt den FreeTaler-Standard und signiert ihn zur Laufzeit für die Tests.
+    pub static ref FREETALER_STANDARD: (VoucherStandardDefinition, String) = {
         let issuer = &TEST_ISSUER;
-        let toml_str = include_str!("../voucher_standards/silver_v1/standard.toml");
+        let toml_str = include_str!("../voucher_standards/freetaler_v1/standard.toml");
 
         let mut standard: VoucherStandardDefinition = toml::from_str(toml_str)
-            .expect("Failed to parse Silver TOML template for tests");
+            .expect("Failed to parse FreeTaler TOML template for tests");
 
         standard.signature = None;
         let canonical_json = to_canonical_json(&standard).unwrap();
@@ -351,8 +351,8 @@ pub fn setup_voucher_with_one_tx() -> (
     crate::services::voucher_manager::TransactionSecrets,
 ) {
     let (standard, standard_hash) = (
-        &crate::test_utils::SILVER_STANDARD.0,
-        &crate::test_utils::SILVER_STANDARD.1,
+        &crate::test_utils::FREETALER_STANDARD.0,
+        &crate::test_utils::FREETALER_STANDARD.1,
     );
     let creator = &crate::test_utils::ACTORS.alice.identity;
     let recipient = &crate::test_utils::ACTORS.bob.identity;

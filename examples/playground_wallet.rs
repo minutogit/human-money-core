@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Lade den für den Gutschein gültigen Standard
-    let standard_toml = std::fs::read_to_string("voucher_standards/silver_v1/standard.toml")?;
+    let standard_toml = std::fs::read_to_string("voucher_standards/freetaler_v1/standard.toml")?;
     let (standard, standard_hash) = verify_and_parse_standard(&standard_toml)?;
     println!(
         "✅ Standard '{}' verifiziert und geladen.",
@@ -86,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         nominal_value: ValueDefinition {
             amount: "1.5".to_string(),
             ..Default::default()
-        }, // 1.5 Unzen
+        }, // 1.5 Taler
         collateral: Some(Collateral::default()),
         creator_profile: human_money_core::models::profile::PublicProfile {
             id: Some(alice_identity.user_id.clone()),
@@ -109,7 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ Initialen Gutschein erstellt und zu Alices Wallet hinzugefügt.");
 
     // --- SCHRITT 2: Transaktion durchführen ---
-    println!("\n--- SCHRITT 2: Alice sendet 0.5 Unzen an Bob ---");
+    println!("\n--- SCHRITT 2: Alice sendet 0.5 Taler an Bob ---");
 
     // Die lokale ID des Gutscheins in Alices Wallet holen
     let local_instance_id = alice_wallet

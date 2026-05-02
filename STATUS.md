@@ -1,9 +1,9 @@
 ---
 project: human-money-core
-version: "0.2.13"
+version: "0.2.14"
 phase: "active-development"
 health: "green"
-last_updated: "2026-05-01"
+last_updated: "2026-05-02"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -77,6 +77,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **Cloning Protection Hardening**: Implemented active runtime "traps" in AppService to detect improper `instance_id` storage (including parent directories), added aggressive security docstrings, and verified with architecture tests.
 - [x] **Test Money Separation & Anti-Spoofing**: Strict cryptographic and structural separation of real and test money in balance aggregation; implemented automated rejection of deceptive "TEST" prefixes for real vouchers (UX security).
 - [x] **Wallet Event Sourcing**: Append-only event ledger for all transaction types (VoucherCreated, TransferReceived, TransferSent, VoucherExpired), integrated into atomic `save` flow, with automatic expiration sweeps and in-memory reconciliation.
+- [x] **Voucher Branding Migration**: Completed full technical transition from legacy "Silver" nomenclature to "FreeTaler" v1 standard system-wide; updated all test suites, constants, and examples to ensure naming consistency.
 - [x] **Scalable Event Chunking**: Optimized event sourcing with time-based monthly chunks (YYYY_MM.json.enc), lazy "Move-then-Delete" migration for legacy logs, and O(N) idempotent appends with O(1) memory pagination.
 
 ## Next Milestones

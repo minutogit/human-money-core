@@ -10,7 +10,7 @@
 //! evasion of double-spend detection.
 //!
 //! **Scenario:**
-//! 1. Creator creates a voucher (Silver Standard).
+//! 1. Creator creates a voucher (FreeTaler Standard).
 //! 2. Creator sends 40.0000 to Alice (Transaction 1).
 //! 3. **STATE RESET**: Creator 'forgets' this transaction (simulated by reloading start state).
 //! 4. Creator sends 99.0000 to Bob (Transaction 2) - using the SAME input voucher!
@@ -95,8 +95,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     service_bob.unlock_session(password, 60)?;
     let bob_id = service_bob.get_user_id()?;
 
-    // 2. Create Voucher (Silver Standard)
-    let standard_toml = std::fs::read_to_string("voucher_standards/silver_v1/standard.toml")?;
+    // 2. Create Voucher (FreeTaler Standard)
+    let standard_toml = std::fs::read_to_string("voucher_standards/freetaler_v1/standard.toml")?;
     let mut standards_map = HashMap::new();
     // We need to parse to get UUID
     let (std_def, _) =
@@ -129,7 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let voucher_data = NewVoucherData {
             nominal_value: ValueDefinition {
-                unit: "Unzen".to_string(),
+                unit: "Taler".to_string(),
                 amount: "100.0000".to_string(),
                 ..Default::default()
             },

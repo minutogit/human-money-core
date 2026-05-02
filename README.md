@@ -15,7 +15,7 @@ Unlike traditional blockchains, this system does **not** rely on a global ledger
 * **Double-Spend Detection:** Uses a privacy-preserving "Gossip Protocol" and "Transaction Fingerprints" to detect double-spending attempts across the network without revealing transaction details.
 * **Storage Agnostic:** The core logic is decoupled from persistence via a `Storage` trait. A secure, encrypted file-based implementation (`FileStorage`) is provided out-of-the-box.
 * **Separated Account Identity (SAI):** Supports strict account separation (e.g., PC vs. Mobile) derived from a single mnemonic, preventing state inconsistencies.
-* **Voucher Standards:** Supports flexible, TOML-defined standards for different types of vouchers (e.g., Minuto, Silver, etc.).
+* **Voucher Standards:** Supports flexible, TOML-defined standards for different types of vouchers (e.g., Minuto, FreeTaler, etc.).
 * **Secure:** Implements robust cryptography using Ed25519 for signatures and X25519/ChaCha20-Poly1305 for encrypted data containers (`SecureContainer`).
 
 ## Architecture

@@ -13,7 +13,7 @@ use human_money_core::{
         voucher::ValueDefinition,
     },
     services::{crypto_utils, voucher_manager::NewVoucherData},
-    test_utils::{ACTORS, SILVER_STANDARD, create_test_bundle, generate_signed_standard_toml},
+    test_utils::{ACTORS, FREETALER_STANDARD, create_test_bundle, generate_signed_standard_toml},
 };
 
 use chrono::DateTime;
@@ -169,16 +169,16 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     let id_alice = service_alice.get_user_id().unwrap();
     let id_david = service_david.get_user_id().unwrap();
     let identity_alice = alice.identity.clone();
-    let silver_standard_toml =
-        generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
-    let (standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let freetaler_standard_toml =
+        generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
+    let (standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let mut standards_map = HashMap::new();
-    standards_map.insert(standard.immutable.identity.uuid.clone(), silver_standard_toml.clone());
+    standards_map.insert(standard.immutable.identity.uuid.clone(), freetaler_standard_toml.clone());
 
     // --- 2. Alice erstellt einen Gutschein (V1) ---
     let voucher_v1 = service_alice
         .create_new_voucher(
-            &silver_standard_toml,
+            &freetaler_standard_toml,
             "en",
             NewVoucherData {
                 nominal_value: ValueDefinition {
@@ -330,15 +330,15 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     let id_alice = service_alice.get_user_id().unwrap();
     let id_david = service_david.get_user_id().unwrap();
     let identity_alice = alice.identity.clone();
-    let silver_standard_toml =
-        generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
-    let (standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let freetaler_standard_toml =
+        generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
+    let (standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let mut standards_map = HashMap::new();
-    standards_map.insert(standard.immutable.identity.uuid.clone(), silver_standard_toml.clone());
+    standards_map.insert(standard.immutable.identity.uuid.clone(), freetaler_standard_toml.clone());
 
     let voucher_v1 = service_alice
         .create_new_voucher(
-            &silver_standard_toml,
+            &freetaler_standard_toml,
             "en",
             NewVoucherData {
                 nominal_value: ValueDefinition {
@@ -462,10 +462,10 @@ fn api_wallet_save_and_load_fidelity() {
     let dir = tempdir().unwrap();
     let test_user = &ACTORS.test_user;
     let password = "a-very-secure-password";
-    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
-    let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
+    let (freetaler_standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let mut standards_map = HashMap::new();
-    standards_map.insert(silver_standard.immutable.identity.uuid.clone(), silver_toml.clone());
+    standards_map.insert(freetaler_standard.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
     // --- 2. Wallet A in komplexen Zustand versetzen ---
     {
@@ -475,7 +475,7 @@ fn api_wallet_save_and_load_fidelity() {
         let id_a = service_a.get_user_id().unwrap();
         service_a
             .create_new_voucher(
-                &silver_toml,
+                &freetaler_toml,
                 "en",
                 NewVoucherData {
                     creator_profile: PublicProfile {
@@ -483,7 +483,7 @@ fn api_wallet_save_and_load_fidelity() {
                         ..Default::default()
                     },
                     nominal_value: ValueDefinition {
-                        unit: "Unzen".to_string(),
+                        unit: "Taler".to_string(),
                         amount: "10".to_string(),
                         abbreviation: Some("oz Ag".to_string()),
                         ..Default::default()
@@ -499,7 +499,7 @@ fn api_wallet_save_and_load_fidelity() {
         let silver_voucher_id_10oz = summary
             .iter()
             .find(|s| s.current_amount == "10.0000" && s.status == VoucherStatus::Active)
-            .expect("Silver voucher summary not found")
+            .expect("FreeTaler voucher summary not found")
             .local_instance_id
             .clone();
 
@@ -514,7 +514,7 @@ fn api_wallet_save_and_load_fidelity() {
         use_privacy_mode: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
-        standards_toml.insert(silver_standard.immutable.identity.uuid.clone(), silver_toml.clone());
+        standards_toml.insert(freetaler_standard.immutable.identity.uuid.clone(), freetaler_toml.clone());
         service_a
             .create_transfer_bundle(request, &standards_toml, None, Some(password))
             .unwrap();
@@ -529,7 +529,7 @@ fn api_wallet_save_and_load_fidelity() {
             let id_bob = service_bob.get_user_id().unwrap();
             service_bob
                 .create_new_voucher(
-                    &silver_toml,
+                    &freetaler_toml,
                     "en",
                     NewVoucherData {
                         creator_profile: PublicProfile {
@@ -561,7 +561,7 @@ fn api_wallet_save_and_load_fidelity() {
             };
 
             let mut standards_toml = std::collections::HashMap::new();
-            standards_toml.insert(silver_standard.immutable.identity.uuid.clone(), silver_toml.clone());
+            standards_toml.insert(freetaler_standard.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
             let human_money_core::wallet::CreateBundleResult { bundle_bytes, .. } = service_bob
                 .create_transfer_bundle(request, &standards_toml, None, Some("pwd"))
@@ -591,7 +591,7 @@ fn api_wallet_save_and_load_fidelity() {
         use_privacy_mode: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
-        standards_toml.insert(silver_standard.immutable.identity.uuid.clone(), silver_toml.clone());
+        standards_toml.insert(freetaler_standard.immutable.identity.uuid.clone(), freetaler_toml.clone());
         service_a
             .create_transfer_bundle(request, &standards_toml, None, Some(password))
             .unwrap();
@@ -629,10 +629,10 @@ fn api_wallet_save_and_load_fidelity() {
     let balances = service_b.get_total_balance_by_currency().unwrap();
     let silver_balance = balances
         .iter()
-        .find(|b| b.unit == "Oz")
+        .find(|b| b.unit == "Taler")
         .map(|b| b.total_amount.as_str());
 
-    assert_eq!(silver_balance, Some("1.0000"), "Silver balance mismatch");
+    assert_eq!(silver_balance, Some("1.0000"), "FreeTaler balance mismatch");
 
     let minuto_balance_exists = balances.iter().any(|b| b.unit == "Min");
     assert!(
@@ -660,7 +660,7 @@ fn test_create_voucher_adds_exactly_one_instance() {
         "Wallet should be empty at the beginning"
     );
 
-    let standard_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let standard_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
 
     let voucher_data = NewVoucherData {
         creator_profile: PublicProfile {
@@ -692,7 +692,7 @@ fn test_create_voucher_adds_exactly_one_instance() {
     let summary = &final_summaries[0];
     assert_eq!(summary.current_amount, "100.0000");
 
-    let expected_description = "Dieser Gutschein dient als Zahlungsmittel für Waren oder Dienstleistungen im Wert von 100 Unzen Silber.";
+    let expected_description = "Ein universeller, teilbarer Gutschein für den Tausch von Waren und Dienstleistungen. Der FreeTaler dient als generisches Beispiel für selbstgeschöpfte Verrechnungseinheiten.";
     assert_eq!(
         created_voucher.voucher_standard.template.description, expected_description,
         "The description from the silver standard template was not applied correctly."
@@ -715,7 +715,7 @@ fn test_create_voucher_is_transactional_on_save_failure() {
     app_service.unlock_session(correct_password, 60).unwrap();
     let user_id = app_service.get_user_id().unwrap();
 
-    let standard_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let standard_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let voucher_data = NewVoucherData {
         creator_profile: PublicProfile {
             id: Some(user_id),
@@ -785,10 +785,10 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
     let dir = tempdir().unwrap();
     let alice = &ACTORS.alice;
     let password = "super-secret-password";
-    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
-    let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
+    let (freetaler_standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let mut standards_map = HashMap::new();
-    standards_map.insert(silver_standard.immutable.identity.uuid.clone(), silver_toml.clone());
+    standards_map.insert(freetaler_standard.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
     let (mut service_initial, profile_info) =
         test_utils::setup_service_with_profile(dir.path(), alice, "Alice Concurrent", password);
@@ -797,7 +797,7 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
     // Erstelle den Gutschein
     service_initial
         .create_new_voucher(
-            &silver_toml,
+            &freetaler_toml,
             "en",
             NewVoucherData {
                 nominal_value: ValueDefinition {

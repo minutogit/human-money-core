@@ -50,4 +50,4 @@ en = "INV-000000"
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "29Z8qU3yM2CKWyQv1N2RkKkkj6VtwFBkhVdgvuHhSPUjZuzAgxVeLACHb5sco4AhBY3sMVuULEeHSkNYEu2nsXmY"
+signature = "5v8CmrzqLxCPaw1isXxVim9jYeYAZWemK4YVWbqvX1UHpVZ86Y1RuGFZqLnNhN3zgPyaGpPRCwoisUi8KV8F9EHP"

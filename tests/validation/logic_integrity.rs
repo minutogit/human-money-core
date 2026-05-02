@@ -93,7 +93,7 @@ fn test_transaction_type_validation() {
 fn test_signature_count_limits() {
     let (standard, _, _, _, mut voucher, _) = setup_voucher_with_one_tx();
 
-    // Im Silver Standard ist max_sigs zB 0. Wenn wir eine zusätzliche Signatur hinzufügen:
+    // Im FreeTaler Standard ist max_sigs zB 0. Wenn wir eine zusätzliche Signatur hinzufügen:
     let (vk, _) = human_money_core::crypto_utils::generate_ed25519_keypair_for_tests(Some("dummy"));
     let dummy_id = human_money_core::crypto_utils::create_user_id(&vk, Some("dummy")).unwrap();
 

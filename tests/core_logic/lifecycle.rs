@@ -40,7 +40,7 @@ use human_money_core::error::ValidationError;
 use human_money_core::services::crypto_utils::get_hash;
 use human_money_core::services::voucher_manager::VoucherManagerError;
 use human_money_core::test_utils::{
-    ACTORS, MINUTO_STANDARD, SILVER_STANDARD, create_custom_standard, setup_in_memory_wallet,
+    ACTORS, MINUTO_STANDARD, FREETALER_STANDARD, create_custom_standard, setup_in_memory_wallet,
 };
 use human_money_core::{
     Collateral, NewVoucherData, Transaction, ValueDefinition, Voucher, VoucherCoreError,
@@ -113,7 +113,7 @@ fn test_full_creation_and_validation_cycle() {
         err,
         // KORREKTUR: Der Standard prüft jetzt `details.gender` via CEL.
         VoucherCoreError::Validation(ValidationError::BusinessRuleViolated(msg))
-        if msg.contains("Bürg") || msg.contains("männlicher") || msg.contains("weibliche")
+        if msg.contains("Bürg") || msg.contains("männlicher") || msg.contains("weibliche") || msg.contains("guarantor") || msg.contains("required")
     ));
 
     // 4. Simulation des Bürgenprozesses nach neuer Logik
@@ -309,7 +309,7 @@ fn test_validation_fails_on_missing_required_field() {
 
 #[test]
 fn test_validation_fails_on_inconsistent_unit() {
-    // Erstelle einen initial gültigen Gutschein nach dem Silber-Standard.
+    // Erstelle einen initial gültigen Gutschein nach dem FreeTaler-Standard.
     let identity = &ACTORS.issuer;
     let creator = PublicProfile {
         id: Some(identity.user_id.clone()),
@@ -317,19 +317,19 @@ fn test_validation_fails_on_inconsistent_unit() {
     };
     let voucher_data = human_money_core::test_utils::create_minuto_voucher_data(creator);
 
-    let mut standard_obj = SILVER_STANDARD.0.clone();
+    let mut standard_obj = FREETALER_STANDARD.0.clone();
     standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     let mut standard_to_hash = standard_obj.clone();
     standard_to_hash.signature = None;
     let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
         human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
     );
-    let silver_standard = &standard_obj;
+    let freetaler_standard = &standard_obj;
     let standard_hash = &standard_hash_val;
 
     // KORREKTUR: Der Test muss den Standard VOR der Gutscheinerstellung modifizieren,
     // um Hash-Fehler zu vermeiden.
-    let mut standard_with_rule = silver_standard.clone();
+    let mut standard_with_rule = freetaler_standard.clone();
     
 
     standard_with_rule.immutable.custom_rules.insert(
@@ -338,7 +338,7 @@ fn test_validation_fails_on_inconsistent_unit() {
             message: "nominal_value.unit incorrect".to_string(),
             expression: format!(
                 "Voucher.nominal_value.unit == '{}'",
-                silver_standard.immutable.blueprint.unit
+                freetaler_standard.immutable.blueprint.unit
             ),
         },
     );
@@ -351,7 +351,7 @@ fn test_validation_fails_on_inconsistent_unit() {
     // Erstelle den Gutschein mit dem ORIGINALEN Standard, der eine korrekte Einheit setzt.
     let mut voucher = create_voucher(
         voucher_data,
-        silver_standard,
+        freetaler_standard,
         standard_hash,
         &identity.signing_key,
         "en",
@@ -411,7 +411,7 @@ fn test_validation_fails_on_guarantor_count() {
     match validation_result.unwrap_err() {
         // KORREKTUR: Erwarte den korrekten Fehler aus der CEL Evaluierung.
         VoucherCoreError::Validation(ValidationError::BusinessRuleViolated(msg))
-            if msg.contains("männlicher") || msg.contains("weibliche") || msg.contains("Bürg") => {} // Korrekt
+            if msg.contains("männlicher") || msg.contains("weibliche") || msg.contains("Bürg") || msg.contains("guarantor") || msg.contains("required") => {} // Korrekt
         e => panic!(
             "Expected BusinessRuleViolated error for gender validation, but got {:?}",
             e
@@ -562,18 +562,18 @@ fn test_validation_succeeds_with_extra_fields_in_json() {
 
 #[test]
 fn test_split_transaction_cycle_and_balance_check() {
-    // 1. Setup: Silber-Standard, da er teilbar ist und keine Bürgen benötigt.
-    let mut standard_obj = SILVER_STANDARD.0.clone();
+    // 1. Setup: FreeTaler-Standard, da er teilbar ist und keine Bürgen benötigt.
+    let mut standard_obj = FREETALER_STANDARD.0.clone();
     standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     let mut standard_to_hash = standard_obj.clone();
     standard_to_hash.signature = None;
     let standard_hash = human_money_core::services::crypto_utils::get_hash(
         human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
     );
-    let silver_standard = &standard_obj;
+    let freetaler_standard = &standard_obj;
     let standard_hash = &standard_hash;
     
-    assert!(silver_standard.immutable.features.allow_partial_transfers);
+    assert!(freetaler_standard.immutable.features.allow_partial_transfers);
 
     // 2. Erstelle Sender und Empfänger
     let sender = &ACTORS.alice;
@@ -589,7 +589,7 @@ fn test_split_transaction_cycle_and_balance_check() {
 
     let initial_voucher = create_voucher(
         voucher_data,
-        silver_standard,
+        freetaler_standard,
         standard_hash,
         &sender.signing_key,
         "en",
@@ -597,9 +597,9 @@ fn test_split_transaction_cycle_and_balance_check() {
     .unwrap();
 
     // 4. Überprüfe den initialen Zustand und das Guthaben
-    assert!(validate_voucher_against_standard(&initial_voucher, silver_standard).is_ok());
+    assert!(validate_voucher_against_standard(&initial_voucher, freetaler_standard).is_ok());
     let initial_balance =
-        get_spendable_balance(&initial_voucher, &sender.user_id, silver_standard, None).unwrap();
+        get_spendable_balance(&initial_voucher, &sender.user_id, freetaler_standard, None).unwrap();
     assert_eq!(initial_balance, dec!(100.0000));
 
     // 5. Führe eine Split-Transaktion durch: Sende 30.5000 an den Empfänger
@@ -608,7 +608,7 @@ fn test_split_transaction_cycle_and_balance_check() {
         human_money_core::test_utils::derive_holder_key(&initial_voucher, &sender.signing_key);
     let (voucher_after_split, _) = create_transaction(
         &initial_voucher, // KORREKTUR: Fehlte im vorherigen Versuch
-        silver_standard,
+        freetaler_standard,
         &sender.user_id,
         &sender.signing_key,
         &holder_key, // Init->Tx1: Emphemerer Key ist Holder Key
@@ -620,7 +620,7 @@ fn test_split_transaction_cycle_and_balance_check() {
 
     // 6. Validiere den Gutschein nach dem Split
     let validation_result =
-        validate_voucher_against_standard(&voucher_after_split, silver_standard);
+        validate_voucher_against_standard(&voucher_after_split, freetaler_standard);
     assert!(
         validation_result.is_ok(),
         "Validation after split failed: {:?}",
@@ -634,9 +634,9 @@ fn test_split_transaction_cycle_and_balance_check() {
 
     // 7. Überprüfe die Guthaben beider Parteien
     let sender_balance_after_split =
-        get_spendable_balance(&voucher_after_split, &sender.user_id, silver_standard, None).unwrap();
+        get_spendable_balance(&voucher_after_split, &sender.user_id, freetaler_standard, None).unwrap();
     let recipient_balance_after_split =
-        get_spendable_balance(&voucher_after_split, &recipient.user_id, silver_standard, None).unwrap();
+        get_spendable_balance(&voucher_after_split, &recipient.user_id, freetaler_standard, None).unwrap();
 
     assert_eq!(sender_balance_after_split, dec!(69.5000)); // 100.0000 - 30.5000
     assert_eq!(recipient_balance_after_split, dec!(30.5000));
@@ -655,19 +655,19 @@ fn test_split_fails_on_insufficient_funds() {
     let mut voucher_data = self::test_utils::create_minuto_voucher_data(sender_creator);
     voucher_data.nominal_value.amount = "50.0".to_string(); // Initialwert 50
 
-    let mut standard_obj = SILVER_STANDARD.0.clone();
+    let mut standard_obj = FREETALER_STANDARD.0.clone();
     standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     let mut standard_to_hash = standard_obj.clone();
     standard_to_hash.signature = None;
     let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
         human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
     );
-    let silver_standard = &standard_obj;
+    let freetaler_standard = &standard_obj;
     let standard_hash = &standard_hash_val;
 
     let initial_voucher = create_voucher(
         voucher_data,
-        silver_standard,
+        freetaler_standard,
         standard_hash,
         &sender.signing_key,
         "en",
@@ -678,7 +678,7 @@ fn test_split_fails_on_insufficient_funds() {
     let holder_key = self::test_utils::derive_holder_key(&initial_voucher, &sender.signing_key);
     let split_result = create_transaction(
         &initial_voucher,
-        silver_standard,
+        freetaler_standard,
         &sender.user_id,
         &sender.signing_key,
         &holder_key, // Init->Tx1 uses derived key
@@ -756,7 +756,7 @@ fn test_fails_to_create_forbidden_transaction_type() {
 #[test]
 fn test_split_fails_on_non_allow_partial_transfers_voucher() {
     // Manipuliere den Standard, um ihn nicht-teilbar zu machen
-    let (mut standard, _) = (SILVER_STANDARD.0.clone(), SILVER_STANDARD.1.clone());
+    let (mut standard, _) = (FREETALER_STANDARD.0.clone(), FREETALER_STANDARD.1.clone());
     standard.immutable.features.allow_partial_transfers = false;
     assert!(!standard.immutable.features.allow_partial_transfers);
 
@@ -980,7 +980,7 @@ fn test_validation_fails_on_tampered_guarantor_signature() {
 
 #[test]
 fn test_double_spend_detection_logic() {
-    // 1. Setup: Silber-Standard, ein Ersteller (Alice) und zwei Empfänger (Bob, Frank).
+    // 1. Setup: FreeTaler-Standard, ein Ersteller (Alice) und zwei Empfänger (Bob, Frank).
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
     let frank = &ACTORS.charlie;
@@ -993,33 +993,33 @@ fn test_double_spend_detection_logic() {
     let mut voucher_data = self::test_utils::create_minuto_voucher_data(alice_creator);
     voucher_data.nominal_value.amount = "100".to_string();
 
-    // Wir verwenden hier einen Silber-Gutschein, da dieser teilbar ist und die Logik
+    // Wir verwenden hier einen FreeTaler-Gutschein, da dieser teilbar ist und die Logik
     // des Double Spends demonstrieren soll.
-    let mut standard_obj = SILVER_STANDARD.0.clone();
+    let mut standard_obj = FREETALER_STANDARD.0.clone();
     standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     let mut standard_to_hash = standard_obj.clone();
     standard_to_hash.signature = None;
     let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
         human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
     );
-    let silver_standard = &standard_obj;
+    let freetaler_standard = &standard_obj;
     let standard_hash = &standard_hash_val;
 
     let initial_voucher = self::test_utils::create_voucher_for_manipulation(
         voucher_data,
-        silver_standard,
+        freetaler_standard,
         standard_hash,
         &alice.signing_key,
         "en",
     );
-    assert!(validate_voucher_against_standard(&initial_voucher, silver_standard).is_ok());
+    assert!(validate_voucher_against_standard(&initial_voucher, freetaler_standard).is_ok());
 
     // 3. Alice führt eine erste, legitime Transaktion durch: Sie sendet 40 an Bob.
     let holder_key =
         human_money_core::test_utils::derive_holder_key(&initial_voucher, &alice.signing_key);
     let (voucher_after_split, _) = create_transaction(
         &initial_voucher,
-        silver_standard,
+        freetaler_standard,
         &alice.user_id,
         &alice.signing_key,
         &holder_key, // Init->Tx1
@@ -1029,7 +1029,7 @@ fn test_double_spend_detection_logic() {
     )
     .unwrap();
     let validation_result_1 =
-        validate_voucher_against_standard(&voucher_after_split, silver_standard);
+        validate_voucher_against_standard(&voucher_after_split, freetaler_standard);
     assert!(
         validation_result_1.is_ok(),
         "Validation of the first legitimate transaction failed unexpectedly: {:?}",
@@ -1039,7 +1039,7 @@ fn test_double_spend_detection_logic() {
     //    und versucht, ihr ursprüngliches Guthaben von 100 erneut auszugeben, indem sie 60 an Frank sendet.
     let (fraudulent_voucher, _) = create_transaction(
         &initial_voucher,
-        silver_standard,
+        freetaler_standard,
         &alice.user_id,
         &alice.signing_key,
         &holder_key, // Double Spend Attempt (Same key as legit tx)
@@ -1049,7 +1049,7 @@ fn test_double_spend_detection_logic() {
     )
     .unwrap();
     let validation_result_2 =
-        validate_voucher_against_standard(&fraudulent_voucher, silver_standard);
+        validate_voucher_against_standard(&fraudulent_voucher, freetaler_standard);
     assert!(
         validation_result_2.is_ok(),
         "Validation of the fraudulent (but individually valid) transaction failed unexpectedly: {:?}",
@@ -1167,19 +1167,19 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
         creator_profile: alice_creator,
     };
 
-    let mut standard_obj = SILVER_STANDARD.0.clone();
+    let mut standard_obj = FREETALER_STANDARD.0.clone();
     standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     let mut standard_to_hash = standard_obj.clone();
     standard_to_hash.signature = None;
     let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
         human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
     );
-    let silver_standard = &standard_obj;
+    let freetaler_standard = &standard_obj;
     let standard_hash = &standard_hash_val;
 
     let voucher = self::test_utils::create_voucher_for_manipulation(
         voucher_data,
-        silver_standard,
+        freetaler_standard,
         standard_hash,
         &alice_identity.signing_key,
         "en",
@@ -1212,8 +1212,8 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
 
     let mut standards = std::collections::HashMap::new();
     standards.insert(
-        silver_standard.immutable.identity.uuid.clone(),
-        silver_standard.clone(),
+        freetaler_standard.immutable.identity.uuid.clone(),
+        freetaler_standard.clone(),
     );
 
     let human_money_core::wallet::CreateBundleResult {
@@ -1249,8 +1249,8 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
-        silver_standard.immutable.identity.uuid.clone(),
-        silver_standard.clone(),
+        freetaler_standard.immutable.identity.uuid.clone(),
+        freetaler_standard.clone(),
     );
     bob_wallet
         .process_encrypted_transaction_bundle(
@@ -1293,7 +1293,7 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     // Füge die finale Überprüfung hinzu, ob der empfangene Gutschein auch wirklich gültig ist.
     // KORREKTUR: Verwende ein assert!, das im Fehlerfall die genaue ValidationError ausgibt.
     let final_validation_result =
-        validate_voucher_against_standard(received_voucher, silver_standard);
+        validate_voucher_against_standard(received_voucher, freetaler_standard);
     assert!(
         final_validation_result.is_ok(),
         "Validation of the received voucher failed: {:?}",

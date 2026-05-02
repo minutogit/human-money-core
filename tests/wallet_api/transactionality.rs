@@ -21,7 +21,7 @@ use human_money_core::{
         voucher::ValueDefinition,
     },
     services::{crypto_utils, voucher_manager::NewVoucherData},
-    test_utils::{ACTORS, SILVER_STANDARD, create_custom_standard, generate_signed_standard_toml},
+    test_utils::{ACTORS, FREETALER_STANDARD, create_custom_standard, generate_signed_standard_toml},
 };
 
 /// Lokale Test-Hilfsfunktion, um einen mock `ProofOfDoubleSpend` zu erzeugen.
@@ -64,8 +64,8 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
         correct_password,
     );
 
-    // Create a Flexible Silver Standard to allow non-DID recipients
-    let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
+    // Create a Flexible FreeTaler Standard to allow non-DID recipients
+    let (flexible_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
         s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Flexible;
     });
     let flexible_toml =
@@ -183,8 +183,8 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         correct_password,
     );
 
-    // Create a Flexible Silver Standard
-    let (flexible_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
+    // Create a Flexible FreeTaler Standard
+    let (flexible_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
         s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Flexible;
     });
     let flexible_toml =
@@ -272,7 +272,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
 /// den Gutscheinzustand (Status, Signaturanzahl) nicht in-memory verändert.
 #[test]
 fn test_attach_signature_is_transactional_on_save_failure() {
-    // 1. ARRANGE: Wallet mit einem Gutschein (Silber-Standard, benötigt keine Bürgen) vorbereiten.
+    // 1. ARRANGE: Wallet mit einem Gutschein (FreeTaler-Standard, benötigt keine Bürgen) vorbereiten.
     let dir_creator = tempdir().unwrap();
     let correct_password = "correct_password";
     let creator = &ACTORS.alice;
@@ -284,10 +284,10 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     );
     let id_creator = service_creator.get_user_id().unwrap();
 
-    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
-    let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
+    let (freetaler_standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let mut standards_map = HashMap::new();
-    standards_map.insert(silver_standard.immutable.identity.uuid.clone(), silver_toml.clone());
+    standards_map.insert(freetaler_standard.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
     let signer = &ACTORS.guarantor1;
     let (mut service_signer, _) =
@@ -298,7 +298,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     // FIX: Explizite Voucher-Daten anstelle von Default::default() verwenden, um Panic zu vermeiden.
     service_creator
         .create_new_voucher(
-            &silver_toml,
+            &freetaler_toml,
             "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
@@ -309,7 +309,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
                 },
                 nominal_value: ValueDefinition {
                     amount: "100".to_string(),
-                    unit: silver_standard.immutable.blueprint.unit.clone(),
+                    unit: freetaler_standard.immutable.blueprint.unit.clone(),
                     ..Default::default()
                 },
                 validity_duration: Some("P1Y".to_string()),
@@ -371,7 +371,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
 
     // FIX: Das 2. Argument ist der Standard-TOML, nicht die local_id.
     service_creator
-        .process_and_attach_signature(&detached_sig1, &silver_toml, None, Some(correct_password))
+        .process_and_attach_signature(&detached_sig1, &freetaler_toml, None, Some(correct_password))
         .expect("First signature attachment failed. The utility logic should now be correct.");
 
     let details_mid = service_creator.get_voucher_details(&local_id).unwrap();
@@ -421,7 +421,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     // 2. ACT: Versuche, die zweite Signatur mit falschem Passwort hinzuzufügen.
     let result = service_creator.process_and_attach_signature(
         &detached_sig2,
-        &silver_toml,
+        &freetaler_toml,
         None,
         Some("WRONG_PASSWORD"),
     );
@@ -542,16 +542,16 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         test_utils::setup_service_with_profile(dir_david.path(), david, "David", correct_password);
     let id_david = service_david.get_user_id().unwrap();
 
-    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
+    standards_map.insert(FREETALER_STANDARD.0.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
     // FIX: Explizite Voucher-Daten anstelle von Default::default() verwenden, um Panic zu vermeiden.
     let id_alice = service_alice.get_user_id().unwrap();
     let identity_alice = alice.identity.clone();
     let voucher_v1 = service_alice
         .create_new_voucher(
-            &silver_toml,
+            &freetaler_toml,
             "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
@@ -714,18 +714,20 @@ fn test_balances_are_summable_behavior() {
     let sender_id = service_sender.get_user_id().unwrap();
 
     // 1. Summable Standard erstellen (balances_are_summable = true)
-    let (summable_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
+    let (summable_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
         s.immutable.identity.uuid = "SUMMABLE-V1".to_string();
         s.immutable.identity.name = "Summable Standard".to_string();
+        s.immutable.identity.abbreviation = "EUR".to_string();
         s.immutable.blueprint.unit = "EUR".to_string();
         s.immutable.features.balances_are_summable = true;
     });
     let summable_toml = toml::to_string(&summable_standard).unwrap();
 
     // 2. Non-Summable Standard erstellen (balances_are_summable = false)
-    let (non_summable_standard, _) = create_custom_standard(&SILVER_STANDARD.0, |s| {
+    let (non_summable_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
         s.immutable.identity.uuid = "NON-SUMMABLE-V1".to_string();
         s.immutable.identity.name = "Non-Summable Standard".to_string();
+        s.immutable.identity.abbreviation = "ITEM".to_string();
         s.immutable.blueprint.unit = "ITEM".to_string();
         s.immutable.features.balances_are_summable = false;
     });

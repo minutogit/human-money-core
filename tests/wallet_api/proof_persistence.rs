@@ -1,6 +1,6 @@
 // tests/wallet_api/proof_persistence.rs
 use human_money_core::test_utils::{
-    ACTORS, SILVER_STANDARD, add_voucher_to_wallet,
+    ACTORS, FREETALER_STANDARD, add_voucher_to_wallet,
     setup_in_memory_wallet, derive_holder_key,
 };
 use human_money_core::{
@@ -12,7 +12,7 @@ use std::collections::HashMap;
 fn test_proof_is_created_even_when_transaction_missing_from_store() {
     let alice = &ACTORS.alice;
     let mut wallet = setup_in_memory_wallet(&alice.identity);
-    let (standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     // let standard_hash = get_hash(to_canonical_json(&standard.immutable).unwrap());
 
     // 1. Create a voucher for Alice

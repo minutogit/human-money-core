@@ -8,7 +8,7 @@
 // Binde das `test_utils` Modul explizit über seinen Dateipfad ein.
 
 use human_money_core::test_utils::{
-    ACTORS, MINUTO_STANDARD, SILVER_STANDARD, add_voucher_to_wallet,
+    ACTORS, MINUTO_STANDARD, FREETALER_STANDARD, add_voucher_to_wallet,
     create_voucher_for_manipulation, generate_signed_standard_toml, generate_valid_mnemonic,
     setup_in_memory_wallet, setup_service_with_profile,
 };
@@ -44,9 +44,9 @@ use tempfile::tempdir;
 #[test]
 fn api_app_service_full_lifecycle() {
     // --- 1. Setup ---
-    let silver_standard_toml =
-        generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
-    let (standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let freetaler_standard_toml =
+        generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
+    let (standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let dir_alice = tempdir().expect("Failed to create temp dir for Alice");
     let dir_bob = tempdir().expect("Failed to create temp dir for Bob");
     let actor_alice = &ACTORS.alice;
@@ -77,7 +77,7 @@ fn api_app_service_full_lifecycle() {
     service_alice.unlock_session("password", 60).unwrap();
     service_alice
         .create_new_voucher(
-            &silver_standard_toml,
+            &freetaler_standard_toml,
             "en",
             NewVoucherData {
                 nominal_value: ValueDefinition {
@@ -108,7 +108,7 @@ fn api_app_service_full_lifecycle() {
         use_privacy_mode: None,
     };
     let mut standards_toml = std::collections::HashMap::new();
-    standards_toml.insert(standard.immutable.identity.uuid.clone(), silver_standard_toml.clone());
+    standards_toml.insert(standard.immutable.identity.uuid.clone(), freetaler_standard_toml.clone());
     service_alice.unlock_session("password", 60).unwrap();
     let human_money_core::wallet::CreateBundleResult {
         bundle_bytes: transfer_bundle,
@@ -124,13 +124,13 @@ fn api_app_service_full_lifecycle() {
     // --- 6. Bob empfängt den Gutschein ---
     service_bob.unlock_session(password, 60).unwrap();
     let mut standards = std::collections::HashMap::new();
-    standards.insert(standard.immutable.identity.uuid.clone(), silver_standard_toml);
+    standards.insert(standard.immutable.identity.uuid.clone(), freetaler_standard_toml);
     service_bob
         .receive_bundle(&transfer_bundle, &standards, None, Some("password"), false)
         .unwrap();
     let balance_bob = service_bob.get_total_balance_by_currency().unwrap();
     // KORREKTUR: Die Bilanz wird jetzt nach der Abkürzung der Währung gruppiert, nicht nach der Einheit.
-    let silver_abbreviation = "Oz"; // Korrigierte, statische Abkürzung für den Silber-Standard.
+    let silver_abbreviation = "Taler"; // Korrigierte, statische Abkürzung für den FreeTaler-Standard.
     let bob_silver_balance = balance_bob
         .iter()
         .find(|b| &b.unit == silver_abbreviation)
@@ -750,13 +750,13 @@ fn api_wallet_create_voucher_and_get_id() {
         validity_duration: Some("P4Y".to_string()),
         ..Default::default()
     };
-    let (silver_standard, silver_standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (freetaler_standard, freetaler_standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     wallet
         .create_new_voucher(
             &issuer.identity,
-            silver_standard,
-            silver_standard_hash,
+            freetaler_standard,
+            freetaler_standard_hash,
             "en",
             new_voucher_data,
         )
@@ -773,7 +773,7 @@ fn api_wallet_create_voucher_and_get_id() {
 /// Testet die korrekte Saldoberechnung über mehrere Währungen hinweg.
 ///
 /// ### Szenario:
-/// 1.  Ein Wallet wird mit mehreren aktiven Gutscheinen für "Minuto" und "Unzen"
+/// 1.  Ein Wallet wird mit mehreren aktiven Gutscheinen für "Minuto" und "Taler"
 ///     sowie einem nicht-aktiven Gutschein gefüllt.
 /// 2.  Die Methode `get_total_balance_by_currency` wird aufgerufen.
 /// 3.  Das Ergebnis enthält korrekte, summierte Salden für die beiden Währungen,
@@ -783,7 +783,7 @@ fn api_wallet_query_total_balance() {
     let issuer = &ACTORS.issuer;
     let mut wallet = setup_in_memory_wallet(&issuer.identity);
     let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
-    let (silver_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (freetaler_standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     let mut add_voucher =
         |amount: &str, status: VoucherStatus, standard: &VoucherStandardDefinition| {
@@ -825,8 +825,8 @@ fn api_wallet_query_total_balance() {
         },
         minuto_standard,
     ); // Ignored
-    add_voucher("1.25", VoucherStatus::Active, silver_standard);
-    add_voucher("0.75", VoucherStatus::Active, silver_standard);
+    add_voucher("1.25", VoucherStatus::Active, freetaler_standard);
+    add_voucher("0.75", VoucherStatus::Active, freetaler_standard);
 
     let balances = wallet.get_total_balance_by_currency(Some(&issuer.identity));
 
@@ -844,7 +844,7 @@ fn api_wallet_query_total_balance() {
     .unwrap();
     assert_eq!(actual_minuto_balance, expected_minuto_balance);
 
-    let silver_abbreviation = "Oz"; // Korrigierte, statische Abkürzung für den Silber-Standard.
+    let silver_abbreviation = "Taler"; // Korrigierte, statische Abkürzung für den FreeTaler-Standard.
     let expected_silver_balance = Decimal::from_str("2.00").unwrap();
     let actual_silver_balance = Decimal::from_str(
         balances
@@ -981,8 +981,8 @@ fn api_wallet_rejects_invalid_bundle() {
 ///     - Die Transaktionen sind vorhanden
 #[test]
 fn api_app_service_get_voucher_details_returns_correct_data() {
-    let silver_standard_toml =
-        generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let freetaler_standard_toml =
+        generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let dir_alice = tempdir().expect("Failed to create temp dir for Alice");
     let _password = "password123";
     let mut service_alice =
@@ -1000,7 +1000,7 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
     service_alice.unlock_session("password", 60).unwrap();
     let created_voucher = service_alice
         .create_new_voucher(
-            &silver_standard_toml,
+            &freetaler_standard_toml,
             "en",
             NewVoucherData {
                 nominal_value: ValueDefinition {

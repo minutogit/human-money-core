@@ -17,7 +17,7 @@ use tempfile::tempdir;
 
 // Lade die Test-Hilfsfunktionen aus dem übergeordneten Verzeichnis.
 
-use human_money_core::test_utils::{ACTORS, SILVER_STANDARD};
+use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD};
 
 // --- Haupttest ---
 
@@ -60,12 +60,12 @@ fn test_voucher_archiving_on_full_spend() {
     let temp_dir = tempdir().unwrap();
     let archive = FileVoucherArchive::new(temp_dir.path());
     // Verwende den vordefinierten, zur Laufzeit signierten Standard.
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     // Alice erstellt einen Gutschein und fügt ihn ihrem Wallet hinzu.
     let voucher = {
         let nominal_value = ValueDefinition {
-            amount: "100.0000".to_string(), // KORREKTUR: Vier Dezimalstellen für den Silber-Standard
+            amount: "100.0000".to_string(), // KORREKTUR: Vier Dezimalstellen für den FreeTaler-Standard
             unit: "".to_string(),
             abbreviation: Some("".to_string()),
             description: Some("".to_string()),

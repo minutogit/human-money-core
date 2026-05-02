@@ -1,4 +1,4 @@
-use human_money_core::test_utils::{setup_in_memory_wallet, ACTORS, setup_service_with_profile, SILVER_STANDARD};
+use human_money_core::test_utils::{setup_in_memory_wallet, ACTORS, setup_service_with_profile, FREETALER_STANDARD};
 use human_money_core::wallet::Wallet;
 use human_money_core::storage::{AuthMethod, Storage, file_storage::FileStorage};
 use human_money_core::models::wallet_event::{WalletEventType, WalletEvent, EventBffData};
@@ -15,8 +15,8 @@ fn test_event_generation_on_create() {
     assert_eq!(wallet.pending_events.len(), 0);
     
     // Create a voucher
-    let standard = &SILVER_STANDARD.0;
-    let standard_hash = &SILVER_STANDARD.1;
+    let standard = &FREETALER_STANDARD.0;
+    let standard_hash = &FREETALER_STANDARD.1;
     
     let _ = wallet.create_new_voucher(
         identity,

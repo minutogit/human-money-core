@@ -12,7 +12,7 @@ mod tests {
     use human_money_core::models::conflict::{FingerprintMetadata, TransactionFingerprint};
     use human_money_core::services::bundle_processor;
     use human_money_core::services::voucher_manager::NewVoucherData;
-    use human_money_core::test_utils::{self, ACTORS, SILVER_STANDARD};
+    use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD};
     use std::collections::HashMap;
     use tempfile::{TempDir, tempdir};
 
@@ -231,7 +231,7 @@ mod tests {
         };
         service
             .create_new_voucher(
-                &toml::to_string(&SILVER_STANDARD.0).unwrap(),
+                &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
                 "de",
                 new_voucher_data,
                 Some(PASSWORD),
@@ -296,7 +296,7 @@ mod tests {
         };
         service
             .create_new_voucher(
-                &toml::to_string(&SILVER_STANDARD.0).unwrap(),
+                &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
                 "de",
                 new_voucher_data,
                 Some(PASSWORD),
@@ -358,7 +358,7 @@ mod tests {
         };
         let _voucher_id = alice_service
             .create_new_voucher(
-                &toml::to_string(&SILVER_STANDARD.0).unwrap(),
+                &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
                 "de",
                 new_voucher_data,
                 Some(PASSWORD),
@@ -393,8 +393,8 @@ mod tests {
 
             let mut standards_toml = std::collections::HashMap::new();
             standards_toml.insert(
-                SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-                toml::to_string(&SILVER_STANDARD.0).unwrap(),
+                FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+                toml::to_string(&FREETALER_STANDARD.0).unwrap(),
             );
 
             let human_money_core::wallet::CreateBundleResult {
@@ -415,8 +415,8 @@ mod tests {
             .unwrap();
         let mut standards = HashMap::new();
         standards.insert(
-            SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-            toml::to_string(&SILVER_STANDARD.0).unwrap(),
+            FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+            toml::to_string(&FREETALER_STANDARD.0).unwrap(),
         );
         bob_service
             .receive_bundle(&bundle1, &standards, None, Some("password"), false)
@@ -445,8 +445,8 @@ mod tests {
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(
-            SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-            toml::to_string(&SILVER_STANDARD.0).unwrap(),
+            FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+            toml::to_string(&FREETALER_STANDARD.0).unwrap(),
         );
         let human_money_core::wallet::CreateBundleResult {
             bundle_bytes: bundle2,
@@ -727,7 +727,7 @@ mod tests {
         };
         alice_service
             .create_new_voucher(
-                &toml::to_string(&SILVER_STANDARD.0).unwrap(),
+                &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
                 "de",
                 new_voucher_data,
                 Some(PASSWORD),
@@ -762,8 +762,8 @@ mod tests {
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(
-            SILVER_STANDARD.0.immutable.identity.uuid.clone(),
-            toml::to_string(&SILVER_STANDARD.0).unwrap(),
+            FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+            toml::to_string(&FREETALER_STANDARD.0).unwrap(),
         );
         alice_service
             .create_transfer_bundle(request, &standards_toml, None, Some(PASSWORD))
