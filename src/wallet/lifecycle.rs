@@ -18,6 +18,23 @@ use crate::wallet::Wallet;
 use crate::wallet::instance::{ValidationFailureReason, VoucherStatus};
 
 impl Wallet {
+    /// Hilfsmethode zum Erzeugen eines neuen Events und Hinzufügen zum RAM-Puffer.
+    pub fn emit_event(
+        &mut self,
+        event_type: crate::models::wallet_event::WalletEventType,
+        local_instance_id: &str,
+        voucher_id: &str,
+        bff_data: crate::models::wallet_event::EventBffData,
+    ) {
+        let event = crate::models::wallet_event::WalletEvent::new(
+            local_instance_id.to_string(),
+            voucher_id.to_string(),
+            event_type,
+            bff_data,
+        );
+        self.pending_events.push(event);
+    }
+
     /// Erstellt ein brandneues, leeres Wallet aus einer Mnemonic-Phrase.
     ///
     /// # ⚠️ CRITICAL SECURITY REQUIREMENT: `local_instance_id`
@@ -83,6 +100,7 @@ impl Wallet {
             proof_store,
             fingerprint_metadata,
             local_instance_id,
+            pending_events: Vec::new(),
         };
 
         Ok((wallet, identity))
@@ -125,15 +143,67 @@ impl Wallet {
             proof_store,
             fingerprint_metadata,
             local_instance_id,
+            pending_events: Vec::new(),
         };
+
+        // --- EXPIRATION SWEEP ---
+        // Nach dem Deserialisieren, aber vor der Rückgabe: Prüfe alle Gutscheine
+        // auf Ablauf und generiere VoucherExpired-Events.
+        let now = chrono::Utc::now();
+        let expired_local_ids: Vec<(String, String, crate::models::wallet_event::EventBffData)> = {
+            let mut expired = Vec::new();
+            for instance in wallet.voucher_store.vouchers.values() {
+                if matches!(instance.status, VoucherStatus::Active | VoucherStatus::Incomplete { .. }) {
+                    if let Ok(valid_until) = chrono::DateTime::parse_from_rfc3339(&instance.voucher.valid_until) {
+                        if now > valid_until.with_timezone(&chrono::Utc) {
+                            let bff_data = crate::models::wallet_event::EventBffData {
+                                display_currency: crate::wallet::format_bff_name(
+                                    instance.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&instance.voucher.nominal_value.unit),
+                                    instance.voucher.non_redeemable_test_voucher,
+                                ),
+                                amount: instance.voucher.nominal_value.amount.clone(),
+                                is_test_voucher: instance.voucher.non_redeemable_test_voucher,
+                                counterparty_id: None,
+                                counterparty_name: None,
+                            };
+                            expired.push((
+                                instance.local_instance_id.clone(),
+                                instance.voucher.voucher_id.clone(),
+                                bff_data,
+                            ));
+                        }
+                    }
+                }
+            }
+            expired
+        };
+
+        for (local_id, voucher_id, bff_data) in expired_local_ids {
+            if let Some(instance) = wallet.voucher_store.vouchers.get_mut(&local_id) {
+                instance.status = VoucherStatus::Expired;
+            }
+            wallet.emit_event(
+                crate::models::wallet_event::WalletEventType::VoucherExpired,
+                &local_id,
+                &voucher_id,
+                bff_data,
+            );
+        }
+        // --- ENDE EXPIRATION SWEEP ---
 
         wallet.rebuild_derived_stores()?;
         Ok((wallet, identity))
     }
 
     /// Speichert den aktuellen Zustand des Wallets in einem `Storage`-Backend.
+    ///
+    /// **Wichtig:** Die Reihenfolge ist kritisch für die Datensicherheit.
+    /// Zuerst werden UserProfile, VoucherStore, BundleMetadataStore und alle
+    /// Fingerprint-Stores gespeichert. Zuletzt werden die `pending_events`
+    /// an das Event-Log angehängt. Nur wenn ALLE Operationen erfolgreich sind,
+    /// wird `self.pending_events.clear()` aufgerufen.
     pub fn save<S: Storage>(
-        &self,
+        &mut self,
         storage: &mut S,
         identity: &UserIdentity,
         auth: &AuthMethod,
@@ -144,6 +214,13 @@ impl Wallet {
         storage.save_own_fingerprints(&identity.user_id, auth, &self.own_fingerprints)?;
         storage.save_proofs(&identity.user_id, auth, &self.proof_store)?;
         storage.save_fingerprint_metadata(&identity.user_id, auth, &self.fingerprint_metadata)?;
+
+        // Zuletzt: Events persistieren. Nur bei vollständigem Erfolg clearen.
+        if !self.pending_events.is_empty() {
+            storage.append_events(&identity.user_id, auth, &self.pending_events)?;
+            self.pending_events.clear();
+        }
+
         Ok(())
     }
 
@@ -196,7 +273,27 @@ impl Wallet {
             verified_standard,
         ) {
             Ok(_) => VoucherStatus::Active,
-            // Wenn Geschäftsregeln (z.B. fehlende Signaturen) verletzt sind, ist der Status `Incomplete`.
+            
+            // Fall 1: Fehlende Signaturen (Incomplete)
+            Err(VoucherCoreError::Validation(ref validation_err @ ValidationError::FieldValueCountOutOfBounds { ref path, ref field, .. }))
+            if path == "signatures" && (field == "role" || field == "details.gender") =>
+            {
+                VoucherStatus::Incomplete {
+                    reasons: vec![ValidationFailureReason::RequiredSignatureMissing { 
+                        role_description: validation_err.to_string() 
+                    }],
+                }
+            },
+            Err(VoucherCoreError::Validation(ref validation_err @ ValidationError::MissingRequiredSignature { .. })) =>
+            {
+                VoucherStatus::Incomplete {
+                    reasons: vec![ValidationFailureReason::RequiredSignatureMissing { 
+                        role_description: validation_err.to_string() 
+                    }],
+                }
+            },
+            
+            // Fall 2: Geschäftsregeln verletzt (Incomplete)
             Err(VoucherCoreError::Validation(ValidationError::BusinessRuleViolated(msg))) => {
                 VoucherStatus::Incomplete {
                     reasons: vec![ValidationFailureReason::BusinessRule {
@@ -209,9 +306,27 @@ impl Wallet {
         };
 
         // 3. Füge die Instanz mit der korrekten ID und dem korrekten Status hinzu.
-        self.add_voucher_instance(local_id, new_voucher.clone(), initial_status);
+        self.add_voucher_instance(local_id.clone(), new_voucher.clone(), initial_status);
 
-        // 4. WICHTIG: Baue die abgeleiteten Stores (Fingerprints, Metadaten) neu auf.
+        // 4. Event für die UI-Historie generieren.
+        let bff_data = crate::models::wallet_event::EventBffData {
+            display_currency: crate::wallet::format_bff_name(
+                new_voucher.nominal_value.abbreviation.as_deref().unwrap_or(&new_voucher.nominal_value.unit),
+                new_voucher.non_redeemable_test_voucher,
+            ),
+            amount: new_voucher.nominal_value.amount.clone(),
+            is_test_voucher: new_voucher.non_redeemable_test_voucher,
+            counterparty_id: None,
+            counterparty_name: None,
+        };
+        self.emit_event(
+            crate::models::wallet_event::WalletEventType::VoucherCreated,
+            &local_id,
+            &new_voucher.voucher_id,
+            bff_data,
+        );
+
+        // 5. WICHTIG: Baue die abgeleiteten Stores (Fingerprints, Metadaten) neu auf.
         self.rebuild_derived_stores()?;
 
         Ok(new_voucher)

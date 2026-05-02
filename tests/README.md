@@ -89,7 +89,7 @@ This file contains integration tests specifically for signature workflows, contr
 -   `api_app_service_full_signature_workflow`: Tests the complete signature workflow via the `AppService` facade, including requesting, creating, and attaching signatures.
 -   `api_wallet_signature_roundtrip_minuto_required`: Tests the signature roundtrip for a standard that requires signatures (Minuto), verifying the status transition from `Incomplete` to `Active`.
 -   `test_full_guarantor_workflow_via_app_service`: Tests the full guarantor workflow via the `AppService` facade, specifically the status transition from `Incomplete` to `Active` after all required signatures are attached.
--   `api_wallet_signature_roundtrip_silver_optional`: Tests the signature roundtrip for a standard with optional signatures (Silver), verifying that an optional signature can be successfully attached.
+-   `api_wallet_signature_roundtrip_silver_optional`: Tests the signature roundtrip for a standard with optional signatures (FreeTaler), verifying that an optional signature can be successfully attached.
 
 ### `tests/architecture/hardening.rs`
 This file contains "hardening tests" that verify the robustness of the architecture in edge cases and during consistency checks.

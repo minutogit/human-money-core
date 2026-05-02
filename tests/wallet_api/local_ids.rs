@@ -123,7 +123,7 @@ fn test_correct_id_for_archived_state() {
 #[test]
 fn test_error_when_user_has_no_balance_or_history() {
     // Wir nutzen hier einen explizit öffentlichen Standard, damit DIDs verglichen werden können.
-    let (standard, standard_hash) = (&test_utils::SILVER_STANDARD.0, &test_utils::SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&test_utils::FREETALER_STANDARD.0, &test_utils::FREETALER_STANDARD.1);
     let mut public_standard = standard.clone();
     public_standard.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     

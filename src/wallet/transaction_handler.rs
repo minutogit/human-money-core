@@ -301,14 +301,17 @@ impl Wallet {
                 VoucherCoreError::Generic("Received voucher has no transactions.".to_string())
             })?;
 
-            // 4. Bestimme die Einheit
-            let unit = voucher.nominal_value.unit.clone();
+            // 4. Bestimme die Anzeige-Einheit (BFF-Pattern)
+            let display_currency = super::format_bff_name(
+                voucher.nominal_value.abbreviation.as_deref().unwrap_or(&voucher.nominal_value.unit),
+                voucher.non_redeemable_test_voucher
+            );
 
             // 5. Akkumuliere den Wert, basierend auf 'is_summable'
             if standard.immutable.features.balances_are_summable {
                 let current_sum = transfer_summary
                     .summable_amounts
-                    .entry(unit)
+                    .entry(display_currency)
                     .or_insert_with(|| "0.0".to_string());
 
                 // Verwende decimal_utils, um Strings sicher zu addieren
@@ -325,7 +328,7 @@ impl Wallet {
 
                 *current_sum = (val1 + val2).to_string();
             } else {
-                let count = transfer_summary.countable_items.entry(unit).or_insert(0);
+                let count = transfer_summary.countable_items.entry(display_currency).or_insert(0);
                 *count += 1;
             }
 
@@ -348,6 +351,23 @@ impl Wallet {
                 ),
             });
             // --- Ende TransferSummary-Logik ---
+        }
+
+        // TransferReceived-Events für jeden erfolgreich empfangenen Gutschein generieren.
+        for info in &involved_vouchers_details {
+            let bff_data = crate::models::wallet_event::EventBffData {
+                display_currency: info.display_currency.clone(),
+                amount: info.amount.clone(),
+                is_test_voucher: info.is_test_voucher,
+                counterparty_id: Some(bundle.sender_id.clone()),
+                counterparty_name: None, // Bundle-Header hat keinen sender_profile_name hier direkt
+            };
+            self.emit_event(
+                crate::models::wallet_event::WalletEventType::TransferReceived,
+                &info.local_instance_id,
+                &info.voucher_id,
+                bff_data,
+            );
         }
 
         // Die 'bundle'-Variable ist hier noch verfügbar, da `bundle.vouchers.clone()`
@@ -392,6 +412,9 @@ impl Wallet {
             all_conflicts.insert(hash.clone(), fps.clone());
         }
 
+        // Sammle Quarantäne-Events während der Konfliktlösung.
+        let mut quarantined_events: Vec<(String, String, crate::models::wallet_event::EventBffData)> = Vec::new();
+
         for (_conflict_hash, fingerprints) in &all_conflicts {
             // find_transaction_in_stores durchsucht zuerst den lokalen voucher_store.
             // Da beide Konflikt-Transaktionen lokal vorhanden sind, wird das Archive
@@ -416,6 +439,7 @@ impl Wallet {
                                 if let Some(instance_mut) =
                                     self.voucher_store.vouchers.get_mut(&instance_id)
                                 {
+                                    let prev_status = instance_mut.status.clone();
                                     instance_mut.status = if tx.t_id == verdict.valid_transaction_id
                                     {
                                         VoucherStatus::Active
@@ -424,12 +448,59 @@ impl Wallet {
                                             reason: "L2 verdict".to_string(),
                                         }
                                     };
+                                    // Wenn dieser Gutschein frisch in Quarantäne ging, Event sammeln.
+                                    if !matches!(prev_status, VoucherStatus::Quarantined { .. })
+                                        && matches!(instance_mut.status, VoucherStatus::Quarantined { .. })
+                                    {
+                                        let bff_data = crate::models::wallet_event::EventBffData {
+                                            display_currency: crate::wallet::format_bff_name(
+                                                instance_mut.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&instance_mut.voucher.nominal_value.unit),
+                                                instance_mut.voucher.non_redeemable_test_voucher,
+                                            ),
+                                            amount: instance_mut.voucher.nominal_value.amount.clone(),
+                                            is_test_voucher: instance_mut.voucher.non_redeemable_test_voucher,
+                                            counterparty_id: None,
+                                            counterparty_name: None,
+                                        };
+                                        quarantined_events.push((
+                                            instance_mut.local_instance_id.clone(),
+                                            instance_mut.voucher.voucher_id.clone(),
+                                            bff_data,
+                                        ));
+                                    }
                                 }
                             }
                         }
                     } else {
                         // Offline-Konfliktlösung, wenn kein L2-Urteil vorliegt
+                        let pre_statuses: std::collections::HashMap<String, VoucherStatus> = self.voucher_store.vouchers.iter()
+                            .filter(|(_, inst)| fingerprints.iter().any(|fp| fp.ds_tag == inst.voucher.voucher_id || inst.voucher.transactions.iter().any(|tx| tx.t_id == fp.t_id)))
+                            .map(|(lid, inst)| (lid.clone(), inst.status.clone()))
+                            .collect();
                         resolve_conflict_offline(&mut self.voucher_store, fingerprints);
+                        for (lid, prev_status) in pre_statuses {
+                            if let Some(inst) = self.voucher_store.vouchers.get(&lid) {
+                                if !matches!(prev_status, VoucherStatus::Quarantined { .. })
+                                    && matches!(inst.status, VoucherStatus::Quarantined { .. })
+                                {
+                                    let bff_data = crate::models::wallet_event::EventBffData {
+                                        display_currency: crate::wallet::format_bff_name(
+                                            inst.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&inst.voucher.nominal_value.unit),
+                                            inst.voucher.non_redeemable_test_voucher,
+                                        ),
+                                        amount: inst.voucher.nominal_value.amount.clone(),
+                                        is_test_voucher: inst.voucher.non_redeemable_test_voucher,
+                                        counterparty_id: None,
+                                        counterparty_name: None,
+                                    };
+                                    quarantined_events.push((
+                                        inst.local_instance_id.clone(),
+                                        inst.voucher.voucher_id.clone(),
+                                        bff_data,
+                                    ));
+                                }
+                            }
+                        }
                     }
 
                     // --- Bestimmung der Rolle (Opfer vs. Zeuge) ---
@@ -468,8 +539,45 @@ impl Wallet {
                 } else {
                 // Fallback: Wenn kein strikter kryptographischer Beweis erstellt werden kann
                 // (z.B. weil Daten fehlen), MUSS dennoch lokal aufgeräumt werden.
+                let pre_statuses: std::collections::HashMap<String, VoucherStatus> = self.voucher_store.vouchers.iter()
+                    .filter(|(_, inst)| fingerprints.iter().any(|fp| fp.ds_tag == inst.voucher.voucher_id || inst.voucher.transactions.iter().any(|tx| tx.t_id == fp.t_id)))
+                    .map(|(lid, inst)| (lid.clone(), inst.status.clone()))
+                    .collect();
                 resolve_conflict_offline(&mut self.voucher_store, fingerprints);
+                for (lid, prev_status) in pre_statuses {
+                    if let Some(inst) = self.voucher_store.vouchers.get(&lid) {
+                        if !matches!(prev_status, VoucherStatus::Quarantined { .. })
+                            && matches!(inst.status, VoucherStatus::Quarantined { .. })
+                        {
+                            let bff_data = crate::models::wallet_event::EventBffData {
+                                display_currency: crate::wallet::format_bff_name(
+                                    inst.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&inst.voucher.nominal_value.unit),
+                                    inst.voucher.non_redeemable_test_voucher,
+                                ),
+                                amount: inst.voucher.nominal_value.amount.clone(),
+                                is_test_voucher: inst.voucher.non_redeemable_test_voucher,
+                                counterparty_id: None,
+                                counterparty_name: None,
+                            };
+                            quarantined_events.push((
+                                inst.local_instance_id.clone(),
+                                inst.voucher.voucher_id.clone(),
+                                bff_data,
+                            ));
+                        }
+                    }
+                }
             }
+        }
+
+        // Emittierte VoucherQuarantined-Events in pending_events übernehmen.
+        for (local_id, voucher_id, bff_data) in quarantined_events {
+            self.emit_event(
+                crate::models::wallet_event::WalletEventType::VoucherQuarantined,
+                &local_id,
+                &voucher_id,
+                bff_data,
+            );
         }
 
         Ok(ProcessBundleResult {
@@ -493,6 +601,8 @@ impl Wallet {
         amount_to_send: &str,
         archive: Option<&dyn VoucherArchive>,
         use_privacy_mode: Option<bool>,
+        counterparty_id: Option<String>,
+        counterparty_name: Option<String>,
     ) -> Result<Voucher, VoucherCoreError> {
         let instance = self
             .voucher_store
@@ -636,6 +746,27 @@ impl Wallet {
             history_entry.push(fingerprint.clone());
         }
 
+        // TransferSent-Event für die UI-Historie generieren.
+        let bff_data = crate::models::wallet_event::EventBffData {
+            display_currency: crate::wallet::format_bff_name(
+                new_voucher_state.nominal_value.abbreviation.as_deref().unwrap_or(&new_voucher_state.nominal_value.unit),
+                new_voucher_state.non_redeemable_test_voucher,
+            ),
+            amount: amount_to_send.to_string(),
+            is_test_voucher: new_voucher_state.non_redeemable_test_voucher,
+            counterparty_id,
+            counterparty_name,
+        };
+        if let Some(_last_tx) = new_voucher_state.transactions.last() {
+            let new_local_id = Self::calculate_local_instance_id(&new_voucher_state, &identity.user_id)?;
+            self.emit_event(
+                crate::models::wallet_event::WalletEventType::TransferSent,
+                &new_local_id,
+                &new_voucher_state.voucher_id,
+                bff_data,
+            );
+        }
+
         // WICHTIG: KEIN BUNDLE, NUR DER MUTIERTE VOUCHER WIRD ZURÜCKGEGEBEN
         Ok(new_voucher_state)
     }
@@ -703,6 +834,8 @@ impl Wallet {
                 &source.amount_to_send,
                 archive,
                 request.use_privacy_mode,
+                Some(request.recipient_id.clone()),
+                request.sender_profile_name.clone(),
             )?;
 
             vouchers_for_bundle.push(new_voucher);

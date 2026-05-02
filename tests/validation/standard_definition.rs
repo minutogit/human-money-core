@@ -12,7 +12,7 @@ use human_money_core::services::standard_manager::{get_localized_text, verify_an
 use human_money_core::services::voucher_validation::validate_voucher_against_standard;
 use human_money_core::services::{crypto_utils, utils, voucher_manager};
 use human_money_core::test_utils::{
-    ACTORS, MINUTO_STANDARD, SILVER_STANDARD, TEST_ISSUER, add_voucher_to_wallet,
+    ACTORS, MINUTO_STANDARD, FREETALER_STANDARD, TEST_ISSUER, add_voucher_to_wallet,
     generate_signed_standard_toml, setup_in_memory_wallet,
 };
 
@@ -59,7 +59,7 @@ mod parsing_and_verification {
 
     #[test]
     fn test_verify_standard_when_signature_is_from_wrong_issuer_then_fails() {
-        let mut standard = SILVER_STANDARD.0.clone();
+        let mut standard = FREETALER_STANDARD.0.clone();
         standard.signature = None;
         let hash_to_sign = crypto_utils::get_hash(utils::to_canonical_json(&standard).unwrap());
         let hacker_signature = ACTORS.hacker.signing_key.sign(hash_to_sign.as_bytes());
@@ -233,7 +233,7 @@ mod integration_with_voucher {
             &mut wallet,
             identity,
             "5",
-            &human_money_core::test_utils::SILVER_STANDARD.0,
+            &human_money_core::test_utils::FREETALER_STANDARD.0,
             false,
         )
         .unwrap();
@@ -362,7 +362,7 @@ mod specific_parameter_constraints {
     fn test_validity_duration_range_enforcement() {
         // 1. Erstelle einen Standard mit validity_duration_range: 1 Jahr bis 3 Jahre
         let (standard, hash) =
-            human_money_core::test_utils::create_custom_standard(&SILVER_STANDARD.0, |s| {
+            human_money_core::test_utils::create_custom_standard(&FREETALER_STANDARD.0, |s| {
                 s.immutable.issuance.validity_duration_range = vec!["P1Y".to_string(), "P3Y".to_string()];
             });
 
@@ -405,7 +405,7 @@ mod specific_parameter_constraints {
     fn test_allowed_signature_roles_enforcement() {
         // 1. Erstelle einen Standard, der nur die Rolle "Official Approver" erlaubt
         let (standard, _hash) =
-            human_money_core::test_utils::create_custom_standard(&SILVER_STANDARD.0, |s| {
+            human_money_core::test_utils::create_custom_standard(&FREETALER_STANDARD.0, |s| {
                 s.immutable.issuance.allowed_signature_roles = vec!["Official Approver".to_string()];
             });
 
@@ -432,7 +432,7 @@ mod specific_parameter_constraints {
     #[test]
     fn test_invalid_enum_parsing() {
         // 1. Test invalid primary_redemption_type
-        let invalid_toml_1 = SILVER_STANDARD.0.clone();
+        let invalid_toml_1 = FREETALER_STANDARD.0.clone();
         let mut toml_str_1 = toml::to_string(&invalid_toml_1).unwrap();
         // Suchen nach dem exakten Variant-Namen (snake_case)
         toml_str_1 = toml_str_1.replace("primary_redemption_type = \"goods_or_services\"", "primary_redemption_type = \"magic\"");
@@ -441,17 +441,17 @@ mod specific_parameter_constraints {
         assert!(result_1.is_err(), "Invalid primary_redemption_type 'magic' should fail parsing");
 
         // 2. Test invalid collateral_type
-        let invalid_toml_2 = SILVER_STANDARD.0.clone();
+        let invalid_toml_2 = FREETALER_STANDARD.0.clone();
         let mut toml_str_2 = toml::to_string(&invalid_toml_2).unwrap();
-        toml_str_2 = toml_str_2.replace("collateral_type = \"physical_asset\"", "collateral_type = \"gold_bars\"");
+        toml_str_2 = toml_str_2.replace("collateral_type = \"personal_guarantee\"", "collateral_type = \"gold_bars\"");
         
         let result_2 = verify_and_parse_standard(&toml_str_2);
         assert!(result_2.is_err(), "Invalid collateral_type 'gold_bars' should fail parsing");
 
         // 3. Test invalid privacy_mode
-        let invalid_toml_3 = SILVER_STANDARD.0.clone();
+        let invalid_toml_3 = FREETALER_STANDARD.0.clone();
         let mut toml_str_3 = toml::to_string(&invalid_toml_3).unwrap();
-        // SILVER_STANDARD uses "flexible" privacy mode
+        // FREETALER_STANDARD uses "flexible" privacy mode
         toml_str_3 = toml_str_3.replace("privacy_mode = \"flexible\"", "privacy_mode = \"super_secret\"");
         
         let result_3 = verify_and_parse_standard(&toml_str_3);

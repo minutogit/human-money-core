@@ -5,3 +5,4 @@
 
 pub mod archive;
 pub mod file_storage;
+pub mod event_chunking;

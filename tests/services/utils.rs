@@ -9,7 +9,7 @@
 // --- Tests from test_date_utils.rs ---
 
 use chrono::{DateTime, Utc};
-use human_money_core::test_utils::{ACTORS, SILVER_STANDARD};
+use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD};
 use human_money_core::{
     NewVoucherData, VoucherCoreError,
     error::ValidationError,
@@ -132,7 +132,7 @@ fn test_round_up_date_logic() {
 #[test]
 fn test_chronological_validation_with_timezones() {
     // 1. Setup
-    let (standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let test_user = &ACTORS.test_user;
 
     let voucher_data = NewVoucherData {
@@ -320,7 +320,7 @@ fn test_round_up_date_p1m_correctly_handles_december() {
 /// subsequent `create_transaction` call enforces the firewall rule.
 #[test]
 fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
-    let (base_standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let (base_standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     // Build a standard that requires at least P1Y of remaining validity for the creator.
     let (standard_with_p1y, standard_hash) =

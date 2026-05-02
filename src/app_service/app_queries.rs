@@ -159,6 +159,37 @@ impl AppService {
             .get_voucher_source_sender(local_instance_id, &identity)
             .map_err(|e| e.to_string())
     }
+
+    /// Lädt die Event-Historie des Wallets (BFF-Query).
+    ///
+    /// **Achtung Architektur/API:** Da diese Abfrage den Session-Timer (Sliding Window) 
+    /// aktualisiert, erfordert sie eine mutable Referenz (`&mut self`). Wenn der `AppService` 
+    /// hinter einem `RwLock` liegt, muss für diese Abfrage ein Write-Lock angefordert werden!
+    pub fn get_event_history(
+        &mut self,
+        offset: usize,
+        limit: usize,
+        password: Option<&str>,
+    ) -> Result<Vec<crate::models::wallet_event::WalletEvent>, String> {
+        let auth = match password {
+            Some(pwd) => crate::storage::AuthMethod::Password(pwd),
+            None => {
+                let session_key = self.get_session_key()?;
+                crate::storage::AuthMethod::SessionKey(session_key)
+            }
+        };
+        
+        let wallet = self.get_wallet()?;
+        
+        // Da AppService den Storage besitzt, können wir ihn hier nutzen.
+        match &self.state {
+            AppState::Unlocked { storage, .. } => {
+                wallet.get_event_history(storage, &auth, offset, limit)
+                    .map_err(|e| e.to_string())
+            }
+            AppState::Locked => Err("Wallet is locked.".to_string()),
+        }
+    }
 }
 
 

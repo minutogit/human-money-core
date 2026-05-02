@@ -12,7 +12,7 @@ use human_money_core::{
         conflict::{ConflictRole, ProofOfDoubleSpend},
     },
     services::{crypto_utils, voucher_manager::NewVoucherData},
-    test_utils::{self, ACTORS, SILVER_STANDARD, generate_signed_standard_toml},
+    test_utils::{self, ACTORS, FREETALER_STANDARD, generate_signed_standard_toml},
 };
 
 use chrono::{Duration, Utc};
@@ -33,14 +33,14 @@ fn test_integration_detects_victim_role() {
     service_alice.unlock_session("pwd", 60).unwrap();
     let id_alice = service_alice.get_user_id().unwrap();
     
-    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
-    let (standard, _) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+    let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
+    let (standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let mut standards_map = HashMap::new();
-    standards_map.insert(standard.immutable.identity.uuid.clone(), silver_toml.clone());
+    standards_map.insert(standard.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
     // --- 2. Alice erhält einen Gutschein (V1) ---
     service_alice.create_new_voucher(
-        &silver_toml, "en",
+        &freetaler_toml, "en",
         NewVoucherData {
             nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
             creator_profile: PublicProfile { id: Some(id_alice.clone()), ..Default::default() },
@@ -132,13 +132,13 @@ fn test_integration_detects_witness_role_on_split_win() {
     let id_alice = service_alice.get_user_id().unwrap();
     let id_bob = service_bob.get_user_id().unwrap();
     
-    let silver_toml = generate_signed_standard_toml("voucher_standards/silver_v1/standard.toml");
+    let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let mut standards_map = HashMap::new();
-    standards_map.insert(SILVER_STANDARD.0.immutable.identity.uuid.clone(), silver_toml.clone());
+    standards_map.insert(FREETALER_STANDARD.0.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
     // --- 2. Bob erstellt einen Gutschein ---
     service_bob.create_new_voucher(
-        &silver_toml, "en",
+        &freetaler_toml, "en",
         NewVoucherData {
             nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
             creator_profile: PublicProfile { id: Some(id_bob.clone()), ..Default::default() },

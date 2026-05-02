@@ -48,4 +48,4 @@ descriptions = { en = "Conflicting Rules Test" }
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "4ZRKeZzNUxeeHzcq63eeo1xDPe8TWLmBJ2FoaGhyNEUNcdVvWr79kdFp4Bdp2ei13NbgJRQ4Cts2RgXfpvxeVZb8"
+signature = "29N5GTLiKJT8vY11y4SAYZ3rB3a5cwLmujLBxkX1aiDqFF3xeZ5qD6N7kAiiY1JtukStqDj9R3TuJZmxCSTXzYXJ"

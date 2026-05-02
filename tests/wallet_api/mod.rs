@@ -26,4 +26,5 @@ mod role_integration;
 mod chained_workflows;
 mod privacy_balance_checks;
 mod future_dates;
+mod event_sourcing;
 

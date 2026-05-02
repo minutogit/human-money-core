@@ -44,4 +44,4 @@ descriptions = { en = "Strict Counts Test" }
 issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
 
 # Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).
-signature = "gxRQr7HZUG79GYK73UGR5ytwcYP2b9GjHmARGiGm7FL4nW7JYcvm9FXjeVh7CD8hFBKriw4NegGP7VJBPbZowLv"
+signature = "2nvzwKjuL8iWBjEHb5XWuZXNT7bor2JjPbgKiEgfGS5PDnWyLmiGyb9F6fsyZhK5rvk7aK5zrRzBpiUovqbKU9Hj"

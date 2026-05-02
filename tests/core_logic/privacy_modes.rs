@@ -7,7 +7,7 @@ use human_money_core::services::crypto_utils::get_hash;
 use human_money_core::services::utils::get_current_timestamp;
 use human_money_core::services::voucher_manager::{self};
 use human_money_core::services::voucher_validation;
-use human_money_core::test_utils::{self, ACTORS, SILVER_STANDARD};
+use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD};
 use human_money_core::to_canonical_json;
 
 // --- Helper: Create voucher with specific privacy mode ---
@@ -24,7 +24,7 @@ fn create_privacy_test_voucher(
     let data = test_utils::create_minuto_voucher_data(creator_profile);
 
     // Modify standard to enforcing the requested privacy mode
-    let mut standard = SILVER_STANDARD.0.clone();
+    let mut standard = FREETALER_STANDARD.0.clone();
 
     // Construct PrivacySettings equivalent
     standard.immutable.features.privacy_mode = match mode {

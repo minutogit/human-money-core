@@ -8,7 +8,7 @@ use human_money_core::error::StandardDefinitionError;
 use human_money_core::error::ValidationError;
 use human_money_core::services::standard_manager;
 use human_money_core::services::utils::to_canonical_json;
-use human_money_core::test_utils::{ACTORS, SILVER_STANDARD};
+use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD};
 use human_money_core::{
     NewVoucherData, ValueDefinition, Voucher, VoucherCoreError, from_json,
     validate_voucher_against_standard,
@@ -25,21 +25,21 @@ mod compatibility_scenarios {
         human_money_core::set_signature_bypass(true);
         let identity = &ACTORS.issuer;
         let voucher_data = NewVoucherData {
-            validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu Silver)
+            validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu FreeTaler)
             nominal_value: ValueDefinition {
                 amount: "1.0000".to_string(),
                 ..Default::default()
-            }, // Verwende 1.0000 (passend zu Silver)
+            }, // Verwende 1.0000 (passend zu FreeTaler)
             creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(identity.user_id.clone()),
                 ..Default::default()
             },
             ..Default::default()
         };
-        let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+        let (freetaler_standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
         let valid_voucher = human_money_core::test_utils::create_voucher_for_manipulation(
             voucher_data,
-            silver_standard,
+            freetaler_standard,
             standard_hash,
             &identity.signing_key,
             "en",
@@ -47,7 +47,7 @@ mod compatibility_scenarios {
 
         // The validation might fail due to signature requirements, let's check what the actual error is and handle it
         let first_validation_result =
-            validate_voucher_against_standard(&valid_voucher, silver_standard);
+            validate_voucher_against_standard(&valid_voucher, freetaler_standard);
         // NOTE: If this assertion fails, we need to understand why the basic voucher with signatures fails validation
         assert!(
             first_validation_result.is_ok(),
@@ -73,7 +73,7 @@ mod compatibility_scenarios {
         assert_eq!(valid_voucher, deserialized_voucher);
 
         let validation_result =
-            validate_voucher_against_standard(&deserialized_voucher, silver_standard);
+            validate_voucher_against_standard(&deserialized_voucher, freetaler_standard);
         assert!(
             validation_result.is_ok(),
             "Validation failed unexpectedly with extra fields: {:?}",
@@ -85,28 +85,28 @@ mod compatibility_scenarios {
     fn test_validate_voucher_when_t_type_is_unknown_then_fails() {
         human_money_core::set_signature_bypass(true);
         let identity = &ACTORS.issuer;
-        let (silver_standard, standard_hash) = (&SILVER_STANDARD.0, &SILVER_STANDARD.1);
+        let (freetaler_standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
         let voucher = human_money_core::test_utils::create_voucher_for_manipulation(
             NewVoucherData {
                 creator_profile: human_money_core::models::profile::PublicProfile {
                     id: Some(identity.user_id.clone()),
                     ..Default::default()
                 },
-                validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu Silver)
+                validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu FreeTaler)
                 nominal_value: ValueDefinition {
                     amount: "1.0000".to_string(),
                     ..Default::default()
-                }, // Verwende 1.0000 (passend zu Silver)
+                }, // Verwende 1.0000 (passend zu FreeTaler)
                 ..Default::default()
             },
-            silver_standard,
+            freetaler_standard,
             standard_hash,
             &identity.signing_key,
             "en",
         );
 
         // First check that the original voucher with signatures validates correctly
-        let initial_validation = validate_voucher_against_standard(&voucher, silver_standard);
+        let initial_validation = validate_voucher_against_standard(&voucher, freetaler_standard);
         assert!(
             initial_validation.is_ok(),
             "Initial voucher validation failed: {:?}",
@@ -148,7 +148,7 @@ mod compatibility_scenarios {
         let deserialized_voucher: Voucher = from_json(&manipulated_json).unwrap();
 
         let validation_result =
-            validate_voucher_against_standard(&deserialized_voucher, silver_standard);
+            validate_voucher_against_standard(&deserialized_voucher, freetaler_standard);
         assert!(
             validation_result.is_err(),
             "Expected validation to fail for 'merge' transaction type"
@@ -182,7 +182,7 @@ mod compatibility_scenarios {
     fn test_parse_standard_with_unknown_fields_in_toml_then_succeeds() {
         human_money_core::set_signature_bypass(false);
         // 1. Nimm einen zur Laufzeit gültig signierten Standard.
-        let (mut standard_struct, _) = SILVER_STANDARD.clone(); // Verwende Silver zur Konsistenz
+        let (mut standard_struct, _) = FREETALER_STANDARD.clone(); // Verwende FreeTaler zur Konsistenz
 
         // 2. Modifiziere ein EXISTIERENDES Feld. Dies ändert den Hash-Wert der Struktur,
         // aber die Signatur bleibt die alte. Dadurch wird die Signatur ungültig.
