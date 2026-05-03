@@ -50,12 +50,6 @@ fn test_chained_transaction_math_and_scaling() {
     let standard = &standard_obj;
     let standard_hash = &standard_hash;
 
-    assert_eq!(
-        standard
-            .immutable.features.amount_decimal_places,
-        4,
-        "This test requires the FreeTaler standard with 4 decimal places."
-    );
 
     // Erstelle Alice (Sender) und Bob (Empfänger)
     let alice = &ACTORS.alice;

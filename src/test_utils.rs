@@ -890,21 +890,19 @@ pub fn create_voucher_for_manipulation(
         .creator_profile
         .id
         .as_ref()
-        .and_then(|id| id.split('@').next())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+        .and_then(|id| crypto_utils::get_prefix_from_user_id(id));
 
     let (genesis_secret, genesis_public) = crypto_utils::derive_ephemeral_key_pair(
         signing_key,
         &nonce_bytes,
         "genesis",
-        Some(&prefix),
+        prefix,
     )
     .expect("Failed to derive genesis key");
     let genesis_pub_str = bs58::encode(genesis_public.to_bytes()).into_string();
 
     let (_, holder_public) =
-        crypto_utils::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "holder", Some(&prefix))
+        crypto_utils::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "holder", prefix)
             .expect("Failed to derive holder key");
     let holder_anchor_hash = crypto_utils::get_hash(holder_public.to_bytes());
 
@@ -1402,15 +1400,13 @@ pub fn derive_holder_key(
         .creator_profile
         .id
         .as_ref()
-        .and_then(|id| id.split('@').next())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+        .and_then(|id| crate::services::crypto_utils::get_prefix_from_user_id(id));
 
     let (holder_key, _) = crate::services::crypto_utils::derive_ephemeral_key_pair(
         creator_signing_key,
         &nonce_arr,
         "holder",
-        Some(&prefix),
+        prefix,
     )
     .unwrap();
     holder_key

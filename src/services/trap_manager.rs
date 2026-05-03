@@ -52,14 +52,14 @@ pub fn hash_to_curve(input: &[u8]) -> EdwardsPoint {
 /// # Arguments
 /// * `prev_hash` - Der Hash der vorherigen Transaktion (Salt).
 /// * `secret_key_bytes` - Der private Schlüssel des Senders (IKM).
-/// * `prefix` - Das Präfix der User-ID (Info).
+/// * `prefix` - Das optionale Präfix der User-ID (Info). None für Root-Accounts.
 ///
 /// # Returns
 /// Ein `Scalar`, der als `m` in der Trap-Gleichung verwendet wird.
 pub fn derive_m(
     prev_hash: &str,
     secret_key_bytes: &[u8],
-    prefix: &str,
+    prefix: Option<&str>,
 ) -> Result<Scalar, VoucherCoreError> {
     // Implementierung analog zu crypto_utils, aber spezifisch für Scalar-Ableitung.
     // Wir nutzen HKDF-SHA256.
@@ -72,8 +72,9 @@ pub fn derive_m(
 
     // HKDF-Expand
     // Wir benötigen 64 Bytes Output, um einen uniformen Scalar zu erzeugen (wide reduction).
+    // Für Root-Accounts (prefix = None) wird ein leerer String als Info verwendet.
     let mut okm = [0u8; 64];
-    hkdf.expand(prefix.as_bytes(), &mut okm)
+    hkdf.expand(prefix.unwrap_or("").as_bytes(), &mut okm)
         .map_err(|_| VoucherCoreError::Crypto("HKDF expansion for m failed".to_string()))?;
 
     Ok(Scalar::from_bytes_mod_order_wide(&okm))
@@ -85,7 +86,7 @@ pub fn derive_m(
 /// * `u` - Der Challenge-Punkt (berechnet via hash_to_curve).
 /// * `m` - Der geheime Slope (Scalar).
 /// * `my_id_point` - Der öffentliche Identitätspunkt des Senders (ID).
-/// * `prefix` - Das Präfix (wird in die ZKP-Challenge eingebunden).
+/// * `prefix` - Das optionale Präfix (wird in die ZKP-Challenge eingebunden). None für Root-Accounts.
 ///
 /// # Returns
 /// Ein `TrapData`-Struct mit Base58-kodierten Werten.
@@ -96,7 +97,7 @@ pub fn derive_m(
 /// * `u_scalar` - Der variierende Challenge-Scalar (berechnet via hash_to_scalar).
 /// * `m` - Der geheime Slope (Scalar).
 /// * `my_id_point` - Der öffentliche Identitätspunkt des Senders (ID).
-/// * `prefix` - Das Präfix (wird in die ZKP-Challenge eingebunden).
+/// * `prefix` - Das optionale Präfix (wird in die ZKP-Challenge eingebunden). None für Root-Accounts.
 ///
 /// # Returns
 /// Ein `TrapData`-Struct mit Base58-kodierten Werten.
@@ -105,7 +106,7 @@ pub fn generate_trap(
     u_scalar: &Scalar,
     m: &Scalar,
     my_id_point: &EdwardsPoint,
-    prefix: &str,
+    prefix: Option<&str>,
 ) -> Result<TrapData, VoucherCoreError> {
     // 1. Berechne V = u * (m * G) + ID
     //    V = (u * m) * G + ID
@@ -163,7 +164,7 @@ pub fn generate_trap(
 /// * `expected_ds_tag` - Der erwartete konstante Index.
 /// * `expected_u_input` - Die rohen Daten, die zu U führen sollten (zur Prüfung von U).
 /// * `signer_id_point` - Der öffentliche Identitätspunkt (ID) des Senders.
-/// * `prefix` - Das Nutzer-Präfix.
+/// * `prefix` - Das optionale Nutzer-Präfix. None für Root-Accounts.
 ///
 /// # Returns
 /// Ok(()), wenn der Proof gültig ist.
@@ -172,7 +173,7 @@ pub fn verify_trap(
     expected_ds_tag: &str,
     expected_u_input: &[u8],
     signer_id_point: &EdwardsPoint,
-    prefix: &str,
+    prefix: Option<&str>,
 ) -> Result<(), VoucherCoreError> {
     // 1. Verify DS-Tag (Constant Index)
     if trap_data.ds_tag != expected_ds_tag {
@@ -251,13 +252,13 @@ fn calculate_challenge(
     u: &EdwardsPoint,
     v: &EdwardsPoint,
     r: &EdwardsPoint,
-    prefix: &str,
+    prefix: Option<&str>,
 ) -> Scalar {
     let mut hasher = Sha512::new();
     hasher.update(u.compress().as_bytes());
     hasher.update(v.compress().as_bytes());
     hasher.update(r.compress().as_bytes());
-    hasher.update(prefix.as_bytes());
+    hasher.update(prefix.unwrap_or("").as_bytes());
 
     Scalar::from_hash(hasher)
 }

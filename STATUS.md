@@ -1,6 +1,6 @@
 ---
 project: human-money-core
-version: "0.2.14"
+version: "0.2.15"
 phase: "active-development"
 health: "green"
 last_updated: "2026-05-02"
@@ -79,6 +79,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **Wallet Event Sourcing**: Append-only event ledger for all transaction types (VoucherCreated, TransferReceived, TransferSent, VoucherExpired), integrated into atomic `save` flow, with automatic expiration sweeps and in-memory reconciliation.
 - [x] **Voucher Branding Migration**: Completed full technical transition from legacy "Silver" nomenclature to "FreeTaler" v1 standard system-wide; updated all test suites, constants, and examples to ensure naming consistency.
 - [x] **Scalable Event Chunking**: Optimized event sourcing with time-based monthly chunks (YYYY_MM.json.enc), lazy "Move-then-Delete" migration for legacy logs, and O(N) idempotent appends with O(1) memory pagination.
+- [x] **Prefix-less Identity Integration**: Implemented support for pure `did:key` Root-Accounts, decoupled HKDF derivation from legacy prefixes, and synchronized the 150+ test suite with the 2-decimal FreeTaler precision standard.
 
 ## Next Milestones
 

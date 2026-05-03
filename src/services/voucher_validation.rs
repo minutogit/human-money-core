@@ -7,8 +7,8 @@ use crate::error::{StandardDefinitionError, ValidationError, VoucherCoreError};
 use crate::models::voucher::{Transaction, Voucher, VoucherSignature};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::services::crypto_utils::{
-    ed25519_pk_to_curve_point, get_hash, get_hash_from_slices, get_pubkey_from_user_id,
-    verify_ed25519,
+    ed25519_pk_to_curve_point, get_hash, get_hash_from_slices, get_prefix_from_user_id,
+    get_pubkey_from_user_id, verify_ed25519,
 };
 use crate::services::trap_manager::verify_trap;
 use crate::services::utils::to_canonical_json;
@@ -791,8 +791,7 @@ pub fn verify_transactions(
             if let Some(sender_id) = &tx.sender_id {
                 if let Ok(signer_pk) = get_pubkey_from_user_id(sender_id) {
                     if let Ok(signer_id_point) = ed25519_pk_to_curve_point(&signer_pk) {
-                        let sender_prefix =
-                            sender_id.split('@').next().unwrap_or(sender_id).to_string();
+                        let sender_prefix = get_prefix_from_user_id(sender_id);
 
                         let u_input_varying = format!(
                             "{}{}{}",
@@ -806,7 +805,7 @@ pub fn verify_transactions(
                             &expected_ds_tag,
                             u_input_varying.as_bytes(),
                             &signer_id_point,
-                            &sender_prefix,
+                            sender_prefix,
                         ) {
                             return Err(ValidationError::InvalidTransaction(format!(
                                 "Trap verification failed: {}",

@@ -333,7 +333,7 @@ fn generate_valid_trap_for_test(
     sender_id: &str,
 ) -> human_money_core::models::voucher::TrapData {
     use human_money_core::services::crypto_utils::{
-        ed25519_pk_to_curve_point, get_hash_from_slices,
+        ed25519_pk_to_curve_point, get_hash_from_slices, get_prefix_from_user_id,
     };
     use human_money_core::services::trap_manager::{derive_m, generate_trap, hash_to_scalar};
 
@@ -349,17 +349,17 @@ fn generate_valid_trap_for_test(
     );
     let u_scalar = hash_to_scalar(u_input_varying.as_bytes());
 
-    let sender_id_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string();
+    let sender_id_prefix = get_prefix_from_user_id(sender_id);
     let m = derive_m(
         &tx.prev_hash,
         &sender_permanent_key.to_bytes(),
-        &sender_id_prefix,
+        sender_id_prefix,
     )
     .unwrap();
 
     let my_id_point = ed25519_pk_to_curve_point(&sender_permanent_key.verifying_key()).unwrap();
 
-    generate_trap(ds_tag, &u_scalar, &m, &my_id_point, &sender_id_prefix).unwrap()
+    generate_trap(ds_tag, &u_scalar, &m, &my_id_point, sender_id_prefix).unwrap()
 }
 
 fn add_p2pkh_layer(tx: &mut Transaction, holder_secret: &ed25519_dalek::SigningKey) {

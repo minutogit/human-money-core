@@ -8,8 +8,8 @@ use crate::models::voucher::{
 use crate::models::voucher_standard_definition::{PrivacyMode, VoucherStandardDefinition};
 use crate::services::crypto_utils::{
     derive_ephemeral_key_pair, ed25519_pk_to_curve_point, encode_base64, encrypt_data,
-    generate_ephemeral_x25519_keypair, get_hash, get_hash_from_slices, get_pubkey_from_user_id,
-    perform_diffie_hellman, sign_ed25519,
+    generate_ephemeral_x25519_keypair, get_hash, get_hash_from_slices, get_prefix_from_user_id,
+    get_pubkey_from_user_id, perform_diffie_hellman, sign_ed25519,
 };
 use crate::services::trap_manager::{derive_m, generate_trap, hash_to_scalar};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
@@ -321,12 +321,12 @@ pub fn create_voucher(
     let initial_amount = Decimal::from_str(&temp_voucher.nominal_value.amount)?;
     init_transaction.amount = decimal_utils::format_for_storage(&initial_amount, decimal_places);
 
-    let creator_prefix = creator_id.split('@').next().unwrap_or("unknown");
+    let creator_prefix = get_prefix_from_user_id(&creator_id);
     let (genesis_secret, genesis_public) = derive_ephemeral_key_pair(
         creator_signing_key,
         &nonce_bytes,
         "genesis",
-        Some(creator_prefix),
+        creator_prefix,
     )?;
     let genesis_pub_str = bs58::encode(genesis_public.to_bytes()).into_string();
     init_transaction.sender_ephemeral_pub = Some(genesis_pub_str.clone());
@@ -335,7 +335,7 @@ pub fn create_voucher(
         creator_signing_key,
         &nonce_bytes,
         "holder",
-        Some(creator_prefix),
+        creator_prefix,
     )?;
     let holder_anchor_hash = get_hash(holder_public.to_bytes());
     init_transaction.receiver_ephemeral_pub_hash = Some(holder_anchor_hash);
@@ -671,7 +671,7 @@ pub fn create_transaction(
         // NEU: Deterministische Ableitung via HKDF, damit der Seed nicht gespeichert werden muss.
         // Wir nutzen denselben PRK wie für m (Trap), aber mit anderem Info-String.
 
-        let sender_id_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string();
+        let sender_id_prefix = get_prefix_from_user_id(sender_id);
 
         let salt = prev_hash.as_bytes();
         let ikm = sender_permanent_key.to_bytes(); // Master Key
@@ -679,8 +679,12 @@ pub fn create_transaction(
         let hkdf = Hkdf::<Sha256>::from_prk(&prk)
             .map_err(|_| VoucherCoreError::Crypto("Invalid PRK length".to_string()))?;
 
-        // Info-String für Change-Seed: "[prefix]change_seed"
-        let info = format!("{}change_seed", sender_id_prefix);
+        // Info-String für Change-Seed: "[prefix]change_seed" oder "change_seed" für Root-Accounts
+        let info = if let Some(p) = sender_id_prefix {
+            format!("{}change_seed", p)
+        } else {
+            "change_seed".to_string()
+        };
         let mut change_seed = [0u8; 32];
         hkdf.expand(info.as_bytes(), &mut change_seed)
             .map_err(|_| {
@@ -703,7 +707,7 @@ pub fn create_transaction(
 
     let privacy_guard = if recipient_id.contains(":z") {
         // Extrahiere Präfix aus sender_id für Payload (Sender-Info).
-        let _sender_prefix = sender_id.split('@').next().unwrap_or("unknown").to_string();
+        let _sender_prefix = get_prefix_from_user_id(sender_id).unwrap_or("unknown").to_string();
         let target_prefix = recipient_id
             .split(':')
             .next()
@@ -753,7 +757,7 @@ pub fn create_transaction(
     // a) Calculate CONSTANT DS-Tag (Index):
     //    Depends ONLY on Input (prev_hash, input_key).
     //    This ensures O(1) detection of Double Spends, independent of the identity used.
-    let sender_id_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string(); // "prefix:checksum"
+    let sender_id_prefix = get_prefix_from_user_id(sender_id);
     let amount_str = decimal_utils::format_for_storage(&amount_to_send, decimal_places);
 
     // SECURITY FIX: Use raw bytes for ds_tag derivation
@@ -782,7 +786,7 @@ pub fn create_transaction(
     let m = derive_m(
         &prev_hash,
         &sender_permanent_key.to_bytes(),
-        &sender_id_prefix,
+        sender_id_prefix,
     )?;
 
     // My ID Point
@@ -793,7 +797,7 @@ pub fn create_transaction(
         &u_scalar,
         &m,
         &my_id_point,
-        &sender_id_prefix,
+        sender_id_prefix,
     )?);
 
     let mut new_transaction = Transaction {

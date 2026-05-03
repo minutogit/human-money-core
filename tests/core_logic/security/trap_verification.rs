@@ -12,16 +12,16 @@ fn test_hkdf_determinism() {
     let prefix = "minuto:region_a";
 
     // 1. Run 100 times, must always be identical
-    let first_m = derive_m(prev_hash, secret, prefix).unwrap();
+    let first_m = derive_m(prev_hash, secret, Some(prefix)).unwrap();
 
     for _ in 0..100 {
-        let m = derive_m(prev_hash, secret, prefix).unwrap();
+        let m = derive_m(prev_hash, secret, Some(prefix)).unwrap();
         assert_eq!(first_m, m, "HKDF must be deterministic!");
     }
 
     // 2. Avalanche Effect: Change one bit in prev_hash
     let prev_hash_modified = "prev_hash_123456788"; // changed last char
-    let second_m = derive_m(prev_hash_modified, secret, prefix).unwrap();
+    let second_m = derive_m(prev_hash_modified, secret, Some(prefix)).unwrap();
 
     assert_ne!(first_m, second_m, "Avalanche effect missing!");
 }
@@ -87,12 +87,12 @@ fn test_random_slope_attack() {
     // Case 1: Real m
     let m_real = Scalar::random(&mut rng);
     let trap_real =
-        generate_trap("tag_1".to_string(), &u_scalar, &m_real, &id_point, "prefix").unwrap();
+        generate_trap("tag_1".to_string(), &u_scalar, &m_real, &id_point, Some("prefix")).unwrap();
 
     // Case 2: Fake m
     let m_fake = Scalar::random(&mut rng);
     let trap_fake =
-        generate_trap("tag_1".to_string(), &u_scalar, &m_fake, &id_point, "prefix").unwrap();
+        generate_trap("tag_1".to_string(), &u_scalar, &m_fake, &id_point, Some("prefix")).unwrap();
 
     // The ds_tag MUST be identical (it is passed in, so this test just confirms API usage)
     assert_eq!(trap_real.ds_tag, trap_fake.ds_tag);
@@ -226,7 +226,7 @@ fn test_calculate_challenge_not_zero() {
         expected_ds_tag,
         u_input,
         &my_id_point,
-        "prefix"
+        Some("prefix")
     );
     
     // Die Verifikation darf NICHT erfolgreich sein, wenn c berechnet wird und != 0 ist,
