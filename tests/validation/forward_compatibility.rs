@@ -27,9 +27,9 @@ mod compatibility_scenarios {
         let voucher_data = NewVoucherData {
             validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu FreeTaler)
             nominal_value: ValueDefinition {
-                amount: "1.0000".to_string(),
+                amount: "1.00".to_string(),
                 ..Default::default()
-            }, // Verwende 1.0000 (passend zu FreeTaler)
+            }, // Verwende 1.00 (passend zu FreeTaler)
             creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(identity.user_id.clone()),
                 ..Default::default()
@@ -94,9 +94,9 @@ mod compatibility_scenarios {
                 },
                 validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu FreeTaler)
                 nominal_value: ValueDefinition {
-                    amount: "1.0000".to_string(),
+                    amount: "1.00".to_string(),
                     ..Default::default()
-                }, // Verwende 1.0000 (passend zu FreeTaler)
+                }, // Verwende 1.00 (passend zu FreeTaler)
                 ..Default::default()
             },
             freetaler_standard,

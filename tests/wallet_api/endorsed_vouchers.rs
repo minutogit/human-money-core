@@ -37,7 +37,7 @@ mod tests {
                 ..Default::default()
             },
             nominal_value: human_money_core::models::voucher::ValueDefinition {
-                amount: "100.0000".to_string(),
+                amount: "100.00".to_string(),
                 ..Default::default()
             },
             validity_duration: Some("P1Y".to_string()),

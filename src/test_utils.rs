@@ -363,7 +363,7 @@ pub fn setup_voucher_with_one_tx() -> (
             ..Default::default()
         },
         nominal_value: ValueDefinition {
-            amount: "100.0000".to_string(),
+            amount: "100.00".to_string(),
             ..Default::default()
         },
         validity_duration: Some("P4Y".to_string()),
@@ -389,7 +389,7 @@ pub fn setup_voucher_with_one_tx() -> (
         &creator.signing_key, // Permanent Key (ID/Trap)
         &holder_key,          // Ephemeral Key (Anchor Resolution)
         &recipient.user_id,
-        "40.0000",
+        "40.00",
         None,
     )
     .unwrap();

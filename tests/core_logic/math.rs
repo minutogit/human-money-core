@@ -39,6 +39,7 @@ use rust_decimal_macros::dec;
 fn test_chained_transaction_math_and_scaling() {
     // --- 1. SETUP ---
     let mut standard_obj = FREETALER_STANDARD.0.clone();
+    standard_obj.immutable.features.amount_decimal_places = 4;
     standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     
     let mut standard_to_hash = standard_obj.clone();
@@ -339,6 +340,7 @@ fn test_chained_transaction_math_and_scaling() {
 fn test_transaction_fails_on_excess_precision() {
     // --- SETUP ---
     let mut standard_obj = FREETALER_STANDARD.0.clone();
+    standard_obj.immutable.features.amount_decimal_places = 4;
     standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     let mut standard_to_hash = standard_obj.clone();
     standard_to_hash.signature = None;

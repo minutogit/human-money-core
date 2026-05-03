@@ -82,7 +82,7 @@ fn test_wallet_state_management_on_split() {
         last_name: Some("Test".to_string()),
         ..Default::default()
     };
-    let voucher_data = create_test_voucher_data_with_amount(creator_data, "100.0000");
+    let voucher_data = create_test_voucher_data_with_amount(creator_data, "100.00");
 
     let mut standard_obj = FREETALER_STANDARD.0.clone();
     standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
