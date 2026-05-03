@@ -216,6 +216,21 @@ impl AppService {
             AppState::Locked => Err("Wallet is locked.".to_string()),
         }
     }
+
+    /// Prüft, ob eine "Passwort merken"-Sitzung aktuell aktiv ist,
+    /// ohne den Inaktivitäts-Timer zurückzusetzen.
+    pub fn is_session_active(&self) -> bool {
+        match &self.state {
+            AppState::Unlocked {
+                session_cache: Some(cache),
+                ..
+            } => {
+                let now = std::time::Instant::now();
+                now <= cache.last_activity + cache.session_duration
+            }
+            _ => false,
+        }
+    }
 }
 
 // --- Interne Hilfsmethoden für Tests ---
