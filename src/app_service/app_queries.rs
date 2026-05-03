@@ -112,11 +112,23 @@ impl AppService {
         &self,
         standard_toml_content: &str,
     ) -> Result<Vec<String>, String> {
+        let verified_standard = self.parse_voucher_standard(standard_toml_content)?;
+        Ok(verified_standard.immutable.issuance.allowed_signature_roles)
+    }
+
+    /// Parst einen Gutschein-Standard (TOML) in ein typsicheres Objekt.
+    /// Dient als Single Source of Truth für Client-Applikationen.
+    ///
+    /// Diese Funktion verifiziert auch die kryptographische Signatur des Standards.
+    pub fn parse_voucher_standard(
+        &self,
+        standard_toml_content: &str,
+    ) -> Result<crate::models::voucher_standard_definition::VoucherStandardDefinition, String> {
         let (verified_standard, _) = crate::services::standard_manager::verify_and_parse_standard(
             standard_toml_content,
         )
         .map_err(|e| e.to_string())?;
-        Ok(verified_standard.immutable.issuance.allowed_signature_roles)
+        Ok(verified_standard)
     }
 
     /// Returns the public profile of the wallet owner.
@@ -189,6 +201,84 @@ impl AppService {
             }
             AppState::Locked => Err("Wallet is locked.".to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_service::AppService;
+    use std::path::Path;
+
+    #[test]
+    fn test_parse_voucher_standard_and_serialization() {
+        // Wir nutzen den Bypass, um keine echte Signatur für den Test-TOML generieren zu müssen.
+        #[cfg(feature = "test-utils")]
+        crate::set_signature_bypass(true);
+
+        let toml_content = r#"
+[immutable.identity]
+uuid = "123-test-uuid"
+name = "Test Standard"
+abbreviation = "TST"
+
+[immutable.blueprint]
+unit = "TestUnit"
+primary_redemption_type = "goods_or_services"
+collateral_type = "personal_guarantee"
+
+[immutable.features]
+allow_partial_transfers = true
+balances_are_summable = true
+amount_decimal_places = 2
+privacy_mode = "public"
+allowed_t_types = ["init", "transfer"]
+
+[immutable.issuance]
+validity_duration_range = ["P1M", "P1Y"]
+issuance_minimum_validity_duration = "P1M"
+additional_signatures_range = [0, 1]
+allowed_signature_roles = ["issuer"]
+
+[mutable.metadata]
+issuer_name = "Test Issuer"
+
+[signature]
+issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
+signature = "5aomSjj76rEb4VVjhAd6p6qvmU79wkkTpj84AnY3D9p8xRDNfxBqKL4EbEHTKfPevggafJeJuzhgYV4rvhLgMs5m"
+"#;
+
+        let base_path = Path::new("/tmp/test_parse_standard");
+        let service = AppService::new(base_path).unwrap();
+
+        let result = service.parse_voucher_standard(toml_content);
+        assert!(result.is_ok(), "Parsing should succeed with bypass: {:?}", result.err());
+        
+        let standard = result.unwrap();
+        assert_eq!(standard.immutable.identity.name, "Test Standard");
+        assert_eq!(standard.immutable.blueprint.unit, "TestUnit");
+
+        // Test Serialisierung (Sollte snake_case bleiben um kryptographische Stabilität zu wahren)
+        let json_str = serde_json::to_string(&standard).unwrap();
+        
+        // Überprüfe, ob Felder in Rust-idiomatischem snake_case ausgegeben werden
+        assert!(json_str.contains("\"issuer_name\""));
+        assert!(json_str.contains("\"allow_partial_transfers\""));
+        assert!(json_str.contains("\"primary_redemption_type\""));
+        assert!(json_str.contains("\"amount_decimal_places\""));
+
+        #[cfg(feature = "test-utils")]
+        crate::set_signature_bypass(false);
+    }
+
+    #[test]
+    fn test_parse_voucher_standard_invalid_toml() {
+        let base_path = Path::new("/tmp/test_parse_standard_err");
+        let service = AppService::new(base_path).unwrap();
+
+        let invalid_toml = "this is not toml [[]]";
+        let result = service.parse_voucher_standard(invalid_toml);
+        assert!(result.is_err());
     }
 }
 
