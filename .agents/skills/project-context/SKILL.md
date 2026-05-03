@@ -35,23 +35,26 @@ Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `human_m
 
 - **Entkoppelte & Anonymisierte Speicherung:** Die Kernlogik (`Wallet`) ist vom Speicher (`Storage`-Trait) entkoppelt. Die Standardimplementierung `FileStorage` speichert jedes Benutzerprofil in einem eigenen, anonymen Unterverzeichnis. Der Name dieses Verzeichnisses wird aus einem Hash der Benutzergeheimnisse (`mnemonic`, `passphrase`, `prefix`) abgeleitet, um die Privatsphäre auf dem Speichermedium zu schützen.
 
-  - **Separated Account Identity (SAI) für strikte Kontotrennung:** Ein Benutzer besitzt eine einzige kryptographische Identität (Public Key), die aus dem Mnemonic abgeleitet wird. Durch die Verwendung von Präfixen (z.B. "pc", "mobil") werden separate Konten für verschiedene Kontexte definiert. Hierbei kommt die **Context-Bound Key Derivation** via HKDF-SHA256 zum Einsatz: Der geheime Seed für jedes Konto wird kryptographisch sauber aus dem Hauptschlüssel und dem Präfix abgeleitet. Dies gewährleistet:
+- **Separated Account Identity (SAI) für strikte Kontotrennung:** Ein Benutzer besitzt eine einzige kryptographische Identität (Public Key), die aus dem Mnemonic abgeleitet wird. Durch die Verwendung von Präfixen (z.B. "pc", "mobil") oder die Nutzung von **prefix-losen Root-Accounts** (`did:key`) werden separate Konten definiert. Hierbei kommt die **Context-Bound Key Derivation** via HKDF-SHA256 zum Einsatz: Der geheime Seed für jedes Konto wird kryptographisch sauber aus dem Hauptschlüssel und dem optionalen Präfix abgeleitet. Dies gewährleistet:
   - Einheitliche Identität für das Web of Trust: Alle Aktionen werden kryptographisch derselben Identität zugeordnet.
-  - Strikte Kontentrennung: Die Wallet-Logik verwendet die vollständige User-ID (z.B. `pc:aB3@did:key:z...`) zur Validierung des Besitzes. Guthaben bleibt im definierten ökonomischen Kontext.
-  - Schutz vor "Identity Hopping": Da die Schlüsselableitung an das Präfix gebunden ist, können Identitäten nicht einfach gewechselt werden, ohne die mathematische Falle (Identity Trap) auszulösen.
+  - Strikte Kontentrennung: Die Wallet-Logik verwendet die vollständige User-ID (z.B. `pc:aB3@did:key:z...` oder `did:key:z...`) zur Validierung des Besitzes. Guthaben bleibt im definierten ökonomischen Kontext.
+  - Schutz vor "Identity Hopping": Da die Schlüsselableitung an den Kontext gebunden ist, können Identitäten nicht einfach gewechselt werden, ohne die mathematische Falle (Identity Trap) auszulösen.
+
+- **WalletSeal Rollback Guard:** Ein kryptographisches Epochen-System mit hash-verketteten Siegeln (`WalletSeal`), das das Wallet vor Rollback-Angriffen (Wiedereinspielen alter Backups) und Forking schützt. Es beinhaltet einen Fork-Lock-Mechanismus und ein Zonen-Modell für Replay-Schutz mit benutzergesteuerten Recovery-Overrides.
+
+- **Storage Integrity (Integritätsschutz):** Jede Datei im Wallet-Speicher ist durch einen SHA3-256 Integritätsnachweis geschützt, der fest an das aktuelle `WalletSeal` gebunden ist. Dies ermöglicht die Erkennung von manipulierten, fehlenden oder unbekannten Dateien im Profilverzeichnis bei jedem Zugriff.
+
+- **Wallet Event Sourcing:** Alle statusändernden Aktionen werden in einem Append-only Ledger (`WalletEvent`) aufgezeichnet (z.B. `VoucherCreated`, `TransferReceived`). Dies ermöglicht eine lückenlose Transaktionshistorie und die Wiederherstellung des Zustands. Um Skalierbarkeit zu gewährleisten, werden Events in monatlichen, verschlüsselten Chunks (`YYYY_MM.json.enc`) gespeichert.
 
 - **Offline-Fähigkeit:** Transaktionen sollen auch offline durchgeführt werden können, indem die aktualisierte Gutschein-Datei direkt an den neuen Halter übergeben wird.
 
 - **Fokus auf Betrugserkennung, nicht -vermeidung:** Da es kein globales Ledger gibt, kann die Core-Bibliothek nicht verhindern, dass ein Nutzer widersprüchliche Transaktionshistorien (Double Spending) erzeugt. Das System stellt stattdessen sicher, dass jeder Betrugsversuch durch digitale Signaturen kryptographisch beweisbar ist, was eine Erkennung und soziale Sanktionen in einem übergeordneten System (Layer 2) ermöglicht.
 
-- **Peer-to-Peer Gossip-Protokoll (VIP-Impfung):** Zur dezentralen Erkennung von Double Spending tauschen Wallets **Transaktions-Fingerprints** (`ds_tag`) aus. Eine Heuristik (`depth` als `i8`) steuert die Verbreitung:
-  - **Normale Fingerprints (positiv):** Altern pro Hop (+1).
-  - **VIP-Fingerprints (negativ):** Starten bei `-1` (Betrugserkennung). Sie erhalten bei der Auswahl einen 2-Hop Vorsprung (`abs(depth) - 2`), um sich wie ein "Lauffeuer" zu verbreiten. 
-  - **Schutz:** Symmetrie-Prüfung (nur Paare werden als VIP akzeptiert) und Loop-Protection (Bestand ist immun gegen "frischere" negative Updates von außen) verhindern Spam und Network Congestion.
+- **Peer-to-Peer Gossip-Protokoll:** Zur dezentralen und anonymisierten Erkennung von Double Spending tauschen Wallets bei jeder Transaktion **Transaktions-Fingerprints** (`ds_tag`) anderer Transaktionen aus. Diese Fingerprints sind deterministisch aus dem Input abgeleitet (`hash(prev_hash + sender_ephemeral_pub)`), was eine O(1) Erkennung von Kollisionen ermöglicht. Eine Heuristik (`depth`, `known_by_peers`) sorgt für eine effiziente Verbreitung.
 
 - **Transaction Verification Layer (Layer 2):** Die Bibliothek implementiert nun die Kommunikation und Verifizierung für Layer 2. Dies umfasst die Interaktion mit L2-Gateways, die Validierung von L2-Signaturen und die Handhabung von Quarantäne-Zuständen bei Double-Spending oder Verifizierungsfehlern. Die Struktur ist für eine dezentrale Überprüfung durch "Chain of Authority" (CoA) Knoten optimiert.
 
-- **FFI/WASM-Kompatibilität:** Rust-Typen und -Funktionen müssen so gestaltet sein, dass sie einfach über FFI und WASM exponiert werden können (z.B. durch Verwendung von `#[no_mangle]`, C-kompatiblen Datentypen und `wasm_bindgen`).
+- **FFI/WASM-Kompatibilität:** Rust-Typen und -Funktionen müssen so gestaltet sein, dass sie einfach über FFI and WASM exponiert werden können (z.B. durch Verwendung von `#[no_mangle]`, C-kompatiblen Datentypen und `wasm_bindgen`).
 
 ## 4\. Coding-Standards & Wichtige Regeln
 
@@ -66,8 +69,6 @@ Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `human_m
 - **Keine externen Netzwerkaufrufe:** Die Core-Bibliothek soll keine direkten Netzwerkaufrufe für die Layer-2-Funktionalität enthalten. Diese Interaktionen werden von den übergeordneten Anwendungen gehandhabt, die `human_money_core` nutzen.
 
 ## 5\. Kernkonzepte aus dem Paper (Zusammenfassung)
-
-Gutschein-Struktur: Das universelle Gutschein-Container-Format
 
 Ein Gutschein ist im Wesentlichen eine Textdatei (repräsentiert als JSON), die alle möglichen Informationen enthält, die ein Gutschein jemals haben könnte. Jede einzelne Gutscheininstitution wird in diesem einheitlichen JSON-Schema abgebildet. Die spezifischen Regeln und Eigenschaften eines Gutscheintyps (wie "Minuto-Gutschein" oder "FreeTaler-Gutschein") werden in separaten Standard-Definitionen (voucher\_standard\_definitions) festgelegt.
 
@@ -242,9 +243,24 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 - **Double Key Wrapping:** Sowohl Absender als auch Empfänger können den Inhalt entschlüsseln.
 - **Payload:** Beinhaltet einen `RecipientPayload` mit dem Seed für den nächsten ephemeren Schlüssel.
 
+### Wallet-Sicherheit: Seal & Integrity
+
+Um den lokalen Speicher gegen physische Manipulation und Rollbacks zu schützen, verwendet das System zwei eng verzahnte Mechanismen:
+
+1.  **WalletSeal (Rollback Guard):** Jedes Speichern des Wallets erzeugt ein neues Siegel, das den Hash des vorherigen Siegels enthält. Diese Kette verhindert das unbemerkte Zurückrollen auf einen älteren Zustand (Backup). Ein `ForkLock` erkennt, wenn mehrere Instanzen desselben Wallets divergieren.
+2.  **Storage Integrity:** Alle Datensätze (Voucher, Fingerprints, Events) werden in einer Integritätsliste erfasst. Ein SHA3-256 Hash über diese Liste wird im `WalletSeal` signiert. So wird jede Manipulation an den Dateien auf der Festplatte sofort erkannt.
+
+### Wallet Event Sourcing
+
+Das Wallet führt ein lückenloses Protokoll aller Ereignisse (`WalletEvent`).
+- **Transaktionstypen:** `VoucherCreated`, `TransferSent`, `TransferReceived`, `VoucherExpired`, `VoucherQuarantined`.
+- **Speicherung:** Events werden atomar mit dem Wallet-Zustand gespeichert und periodisch in monatliche, verschlüsselten Archiv-Dateien (`YYYY_MM.json.enc`) ausgelagert, um den Speicherbedarf im RAM gering zu halten.
+- **Wiederherstellung:** Ermöglicht die Rekonstruktion der Historie für UI-Zwecke und Audit-Logs.
+
 ## 6\. Aktueller Projektstrukturbaum
 
 ```
+├── AGENTS.md
 ├── Cargo.lock
 ├── Cargo.toml
 ├── docs
@@ -261,23 +277,50 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 │   ├── playground_voucher_lifecycle.rs
 │   └── playground_wallet.rs
 ├── LICENSE
+├── protocols
+│   ├── discovery
+│   │   └── 1.0
+│   │       └── handshake.md
+│   ├── identity
+│   │   └── 1.0
+│   │       └── credential.md
+│   ├── messaging
+│   │   └── 1.0
+│   │       └── secure_container.md
+│   ├── README.md
+│   ├── transfer
+│   │   └── 1.0
+│   │       └── bundle.md
+│   └── trust
+│       └── 1.0
+│           └── assertion.md
 ├── README.md
+├── scripts
+│   ├── retest_missed.sh
+│   └── run_mutation_tests.sh
+├── SECURITY.md
 ├── sign_standards.sh
 ├── sign_test_standards.sh
 ├── src
 │   ├── app_service
 │   │   ├── api_readme.md
+│   │   ├── app_profile_handler.rs
 │   │   ├── app_queries.rs
 │   │   ├── app_signature_handler.rs
 │   │   ├── command_handler.rs
 │   │   ├── conflict_handler.rs
 │   │   ├── data_encryption.rs
+│   │   ├── l2_facade.rs
 │   │   ├── lifecycle.rs
-│   │   └── mod.rs
+│   │   ├── mod.rs
+│   │   └── seal_handler.rs
 │   ├── archive
 │   │   ├── file_archive.rs
 │   │   └── mod.rs
 │   ├── bin
+│   │   ├── l2_client_simulator
+│   │   │   ├── main.rs
+│   │   │   └── README.md
 │   │   └── voucher-cli.rs
 │   ├── error.rs
 │   ├── lib.rs
@@ -288,17 +331,25 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 │   │   ├── mod.rs
 │   │   ├── profile.rs
 │   │   ├── readme_de.md
+│   │   ├── seal.rs
 │   │   ├── secure_container.rs
 │   │   ├── signature.rs
+│   │   ├── storage_integrity.rs
 │   │   ├── voucher.rs
-│   │   └── voucher_standard_definition.rs
+│   │   ├── voucher_standard_definition.rs
+│   │   └── wallet_event.rs
 │   ├── services
 │   │   ├── bundle_processor.rs
 │   │   ├── conflict_manager.rs
 │   │   ├── crypto_utils.rs
 │   │   ├── decimal_utils.rs
+│   │   ├── dynamic_policy_engine.rs
+│   │   ├── integrity_manager.rs
+│   │   ├── jws_profile_service.rs
 │   │   ├── l2_gateway.rs
+│   │   ├── mnemonic.rs
 │   │   ├── mod.rs
+│   │   ├── seal_manager.rs
 │   │   ├── secure_container_manager.rs
 │   │   ├── signature_manager.rs
 │   │   ├── standard_manager.rs
@@ -317,17 +368,28 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 │       ├── maintenance.rs
 │       ├── mod.rs
 │       ├── queries.rs
+│       ├── reputation_tests.rs
 │       ├── signature_handler.rs
 │       ├── tests.rs
 │       ├── transaction_handler.rs
 │       └── types.rs
+├── STATUS.md
 ├── tests
+│   ├── app_service
+│   │   ├── integration_tests.rs
+│   │   └── mod.rs
+│   ├── app_service_tests.rs
 │   ├── architecture
 │   │   ├── hardening.rs
 │   │   ├── mod.rs
-│   │   └── resilience_and_gossip.rs
+│   │   ├── resilience_and_gossip.rs
+│   │   ├── rollback_guard_tests.rs
+│   │   └── security_hardening.rs
 │   ├── architecture_tests.rs
+│   ├── bypass_test.rs
+│   ├── cloning_protection.rs
 │   ├── core_logic
+│   │   ├── flow_integrity.rs
 │   │   ├── lifecycle.rs
 │   │   ├── math.rs
 │   │   ├── mod.rs
@@ -337,21 +399,34 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 │   │       ├── double_spend.rs
 │   │       ├── mod.rs
 │   │       ├── privacy_evasion.rs
+│   │       ├── root_account.rs
 │   │       ├── standard_validation.rs
 │   │       ├── state_and_collaboration.rs
 │   │       ├── trap_verification.rs
 │   │       └── vulnerabilities.rs
 │   ├── core_logic_tests.rs
-│   ├── flow_integrity.rs
+│   ├── event_log_test.rs
+│   ├── flexible_encryption.rs
+│   ├── forced_double_spend_stealth_vulnerability.rs
+│   ├── integrity_test.rs
 │   ├── l2_integration_test.rs
+│   ├── l2_synchronization_test.rs
 │   ├── persistence
 │   │   ├── archive.rs
+│   │   ├── event_chunking.rs
 │   │   ├── file_storage.rs
 │   │   └── mod.rs
 │   ├── persistence_tests.rs
+│   ├── privacy_mode_compliance_test.rs
+│   ├── privacy_split_workflows.rs
+│   ├── privacy_traceability_test.rs
 │   ├── README.md
+│   ├── reproduce_integrity_bug.rs
+│   ├── security_audit_fixes.rs
 │   ├── services
+│   │   ├── crypto_properties.rs
 │   │   ├── crypto.rs
+│   │   ├── jws_profile.rs
 │   │   ├── mod.rs
 │   │   └── utils.rs
 │   ├── services_tests.rs
@@ -393,7 +468,7 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
     ├── minuto_v1
     │   └── standard.toml
     ├── readme_de.md
-    ├── freetaler_v1
+    ├── silver_v1
     │   └── standard.toml
     └── standard_template.toml
 
@@ -462,10 +537,11 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
 - `pub fn create_resolution_endorsement(&self, proof_id: &str, notes: Option<String>) -> Result<ResolutionEndorsement, String>`
   - Erstellt eine signierte Beilegungserklärung für einen Konflikt.
 - `pub fn import_resolution_endorsement(&mut self, endorsement: ResolutionEndorsement, password: Option<&str>) -> Result<(), String>`
-  - Importiert eine Beilegungserklärung, fügt sie dem entsprechenden Konfliktbeweis hinzu und speichert den Wallet-Zustand. Bietet **Import-Schutz**: Lokal bereits existierende Beweise (insb. manuelle Beilegungen) werden nicht überschrieben.
-- `pub fn check_reputation(&self, user_id: &str) -> Result<TrustStatus, String>`
-  - Führt eine Reputationsabfrage im lokalen `ProofStore` durch. Erkennt Wiederholungstäter und berücksichtigt manuelle `local_override` Entscheidungen.
+  - Importiert eine Beilegungserklärung, fügt sie dem entsprechenden Konfliktbeweis hinzu und speichert den Wallet-Zustand.
 - `pub fn unlock_session(&mut self, password: &str, duration: chrono::Duration) -> Result<(), String>`: Sperrt eine Session für den angegebenen Zeitraum, um wiederholte Passwort-Eingaben zu vermeiden. Ermöglicht "Remember Password" Funktionalität in Client-Anwendungen.
+- `pub fn is_session_active(&self) -> bool`: Prüft, ob eine "Passwort merken"-Sitzung aktuell aktiv ist, ohne den Inaktivitäts-Timer zurückzusetzen.
+- `pub fn run_storage_integrity_check(&mut self, password: Option<&str>) -> Result<IntegrityReport, String>`: Führt eine vollständige Überprüfung der Speicherintegrität durch.
+- `pub fn update_wallet_seal(&mut self, password: Option<&str>) -> Result<(), String>`: Aktualisiert das kryptographische Siegel des Wallets.
 
 #### Authentifizierungsmodell
 
@@ -483,7 +559,7 @@ Implementierungsdetails:
 - Fügt `SessionCache` zum `AppState::Unlocked`-Zustand hinzu, um den abgeleiteten Schlüssel zu halten.
 - Einführung eines `AuthMethod`-Enums (`Password` | `SessionKey`) auf der `Storage`-Trait-Ebene.
 - `FileStorage` und `Wallet::save` wurden aktualisiert, um `AuthMethod` zu akzeptieren.
-- Implementiert Session-Timeout und "Sliding Window"-Logik via `get_session_key` und `refresh_session_activity`.
+- Implementiert Session-Timeout und "Sliding Window"-Logik via `get_session_key` and `refresh_session_activity`.
 - Fügt einen "Storage Anchor"-Fix beim Login/Create_Profile hinzu, um sicherzustellen, dass die Session-Schlüssel-Ableitung für neue Wallets funktioniert.
 
 ### `src/wallet` Modul
@@ -493,6 +569,7 @@ Das `wallet`-Modul wurde umfassend refaktorisiert, um die Komplexität zu reduzi
 - `pub struct Wallet` (`mod.rs`)
   - Hält `UserProfile`, `VoucherStore`, `BundleMetadataStore`, die getrennten `KnownFingerprints`, `OwnFingerprints`, `ProofStore` und den neuen `CanonicalMetadataStore` für Metadaten als In-Memory-Zustand.
   - Enthält neue Strukturen: `MultiTransferRequest` für die Anforderung von Transfers mit mehreren Quellen und `SourceTransfer` für die Definition einzelner Quellpositionen in einem Transfer.
+  - **Neu:** `pending_events`: Hält im RAM befindliche Events, die beim nächsten `save` atomar gespeichert werden.
 
 - **Lebenszyklus & Kernoperationen** (`lifecycle.rs`)
   - `pub fn new_from_mnemonic(...)`: Erstellt ein brandneues Wallet.
@@ -530,8 +607,19 @@ Das `wallet`-Modul wurde umfassend refaktorisiert, um die Komplexität zu reduzi
   - `pub fn process_and_attach_signature(...)`: Verarbeitet eine empfangene Signatur und fügt sie dem passenden Gutschein hinzu.
 
 - **Konflikt-Management** (`conflict_handler.rs`)
-  - `pub fn select_fingerprints_for_bundle(...) -> Result<(Vec<TransactionFingerprint>, HashMap<String, i8>), VoucherCoreError>`: Wählt Fingerprints für ein Bundle aus. Nutzt **Effektive Tiefe** (`abs(depth) - 2` für VIPs), um Betrugsbeweise vorrangig zu versenden.
-  - `pub fn process_received_fingerprints(...)`: Verarbeitet empfangene Fingerprints. Implementiert **VIP-Symmetrie-Prüfung** und **Loop-Protection** (Bestands-Immunität gegen Replay-Updates).
+  - `pub fn scan_and_rebuild_fingerprints(...)`: Durchsucht alle eigenen Gutscheine und aktualisiert den `own_fingerprints`-Store.
+  - `pub fn check_for_double_spend(&self) -> DoubleSpendCheckResult`: Prüft auf Double-Spending-Konflikte, indem es die verschiedenen Fingerprint-Stores zusammenführt.
+  - `pub fn cleanup_expired_fingerprints(&mut self)`: Entfernt alle abgelaufenen Fingerprints aus dem Speicher.
+  - `pub fn export_own_fingerprints(&self) -> Result<Vec<u8>, VoucherCoreError>`: Serialisiert die Historie der eigenen gesendeten Transaktionen für den Export.
+  - `pub fn import_foreign_fingerprints(...) -> Result<usize, VoucherCoreError>`: Importiert und merged fremde Fingerprints in den Speicher.
+  - `pub fn list_conflicts(&self) -> Vec<ProofOfDoubleSpendSummary>`: Gibt eine Liste von Zusammenfassungen aller bekannten Double-Spend-Konflikte zurück.
+  - `pub fn get_proof_of_double_spend(...) -> Result<ProofOfDoubleSpend, VoucherCoreError>`: Ruft einen vollständigen `ProofOfDoubleSpend` anhand seiner ID ab.
+  - `pub fn create_resolution_endorsement(...) -> Result<ResolutionEndorsement, VoucherCoreError>`: Erstellt eine signierte Beilegungserklärung für einen Konflikt.
+  - `pub fn add_resolution_endorsement(...) -> Result<(), VoucherCoreError>`: Fügt eine (extern erhaltene) Beilegungserklärung zu einem bestehenden Konfliktbeweis hinzu.
+  - `pub(super) fn verify_and_create_proof(...)`: Verifiziert einen Konflikt und erstellt einen Beweis. Interne Methode.
+  - `pub(super) fn check_bundle_fingerprints_against_history(...)`: Interne Hilfsfunktion für Layer-2-Replay-Schutz.
+  - `pub fn select_fingerprints_for_bundle(...) -> Result<(Vec<TransactionFingerprint>, HashMap<String, u8>), VoucherCoreError>`: Wählt Fingerprints für die Weiterleitung in einem Bundle aus, basierend auf der Heuristik.
+  - `pub fn process_received_fingerprints(...)`: Verarbeitet empfangene Fingerprints (aktiv und implizit) und aktualisiert die Metadaten.
 
 - **Voucher Instance Management** (`instance.rs`)
   - `pub enum ValidationFailureReason`: Erfasst den genauen, für den Nutzer behebbaren Grund, warum ein Gutschein als unvollständig (`Incomplete`) eingestuft wird.
@@ -539,7 +627,7 @@ Das `wallet`-Modul wurde umfassend refaktorisiert, um die Komplexität zu reduzi
   - `pub struct VoucherInstance`: Repräsentiert eine Instanz eines Gutscheins mit einem bestimmten Status.
 
 - **Typdefinitionen** (`types.rs`)
-  - Definiert öffentliche Datenstrukturen wie `MultiTransferRequest`, `SourceTransfer`, `TransferSummary`, `ProcessBundleResult`, `DoubleSpendCheckResult`, `InvolvedVoucherInfo`, `CreateBundleResult`, `CleanupReport`, `AggregatedBalance`, `VoucherSummary`, `ProofOfDoubleSpendSummary`, `VoucherDetails`, `TrustStatus`.
+  - Definiert öffentliche Datenstrukturen wie `MultiTransferRequest`, `SourceTransfer`, `TransferSummary`, `ProcessBundleResult`, `DoubleSpendCheckResult`, `InvolvedVoucherInfo`, `CreateBundleResult`, `CleanupReport`, `AggregatedBalance`, `VoucherSummary`, `ProofOfDoubleSpendSummary`, `VoucherDetails`.
 
 - **Tests** (`tests.rs`)
   - Enthält umfassende Unit-Tests für die Wallet-Logik.
@@ -713,92 +801,6 @@ Dieses Modul enthält die Logik zur Validierung eines `Voucher`-Objekts gegen di
 - Führt eine **Kern-Daten-Integritätsprüfung** durch: Validiert, dass der `voucher_id` (der Hash der Gutschein-Stammdaten) mit den tatsächlichen Inhalten des Gutscheins übereinstimmt. Diese Prüfung schützt gegen Manipulationen an den Kernstammdaten.
 - **Hinweis:** Die Validierung der `issuance_minimum_validity_duration` erfolgt nun nicht mehr in dieser Funktion, sondern wird als "Gatekeeper" in `create_voucher` (bei Erstellung) und als "Firewall" in `create_transaction` (bei Transfer) separat behandelt.
 
-Neue Validierungsfehler:
-- `ValidationError::InvalidVoucherHash` - Wird ausgelöst, wenn der `voucher_id` (Hash der Stammdaten) nicht mit den tatsächlichen Inhalten des Gutscheins übereinstimmt, was auf eine Manipulation der Kernstammdaten hindeutet.
 - Die `FieldGroupRules`-Validierung wurde angepasst, um die neuen verschachtelten Pfade für Signatur-Details zu unterstützen (z.B. `details.gender` statt `gender`). Dies ermöglicht eine präzisere Validierung der Signatur-Metadaten gemäß den Anforderungen im Standard.
 
-### `src/wallet` Modul - Neue Sicherheitsfeatures
-
-Das Wallet-Modul implementiert umfassenden Schutz gegen Replay-Angriffe durch zwei Schichten:
-
-- **Layer 1: Duplicate Processing Guard (Bundle ID Check)**: Eine schnelle Prüfung gegen den `bundle_meta_store`. Wenn die **ID des eingehenden Bundles** bereits bekannt ist, wird das Bundle sofort mit `VoucherCoreError::BundleAlreadyProcessed` abgelehnt. Dies schützt gegen versehentliche oder einfache Wiederholungen derselben Daten und stellt sicher, dass ein Bundle nur einmal verarbeitet wird.
-
-- **Layer 2: Malicious Replay Guard (Transaction Fingerprint Check)**: Eine neue Funktion `check_bundle_fingerprints_against_history` validiert die **Transaktionsfingerprints** (`prvhash_senderid_hash`) aller Gutscheine innerhalb des Bundles. Wenn ein Fingerprint bereits in der Wallet-Historie vorhanden ist, wird das Bundle mit `VoucherCoreError::TransactionFingerprintAlreadyKnown` abgelehnt. Dies verhindert bösartige modifizierte Angriffe, bei denen ein bekannter, signierter Gutschein in ein neues Bundle gepackt wird, um Double-Spending zu versuchen.
-
-- **Empfänger-Validierung**: Ein Wallet lehnt eingehende Bundles ab, die nicht explizit für den Wallet-Besitzer bestimmt sind. Das Wallet prüft, ob jede Transaktion innerhalb des Bundles für die eigene User-ID bestimmt ist, und wirft einen `VoucherCoreError::BundleRecipientMismatch`-Fehler, falls dies nicht der Fall ist.
-
-### Neue Ergebnis- und Informationsstrukturen
-
-Das Wallet-Modul und die AppService-Schnittstelle wurden um neue Informationsstrukturen erweitert, um die API-Effizienz zu verbessern:
-
-- `TransferSummary`: Fasst die Ergebnisse eines Transfers pro Standard zusammen. Enthält aufsummierte Beträge für teilbare Gutscheine und gezählte Einheiten für nicht-teilbare Gutscheine.
-
-- `InvolvedVoucherInfo`: Enthält detaillierte Informationen zu einem einzelnen Gutschein, der an einer Transaktion beteiligt war (lokale ID, globale ID, Standardname, Währung, Betrag, Teilbarkeit).
-
-- `CreateBundleResult`: Das Ergebnis der `create_transfer_bundle`-Methode, das neben den Bundle-Daten auch detaillierte Informationen über die involvierten Quell-Gutscheine (`involved_sources_details`) enthält.
-
-- `ProcessBundleResult`: Das Ergebnis der `receive_bundle`-Methode, das neben den Header-Informationen auch `transfer_summary` und `involved_vouchers_details` enthält, um eine umfassende Übersicht über den empfangenen Transfer zu bieten.
-
-### Zusätzliche Datenstrukturen in `src/models`
-
-- **profile.rs**:
-  - `UserIdentity`: Kryptographische Identität eines Nutzers mit privatem/öffentlichem Schlüssel und User-ID.
-  - `TransactionDirection`: Enum für Transaktionsrichtung (Sent/Received).
-  - `TransactionBundleHeader`: Leichtgewichtige Zusammenfassung eines `TransactionBundle`.
-  - `TransactionBundle`: Vollständiges, signiertes Bündel für Gutschein-Austausch, inkl. Fingerprints für Double-Spend-Erkennung.
-  - `VoucherStore`: Persistenter Speicher für Gutscheine.
-  - `BundleMetadataStore`: Speicher für Transaktionsbündel-Metadaten.
-  - `PublicProfile`: Standardisiertes öffentliches Profil für Signaturen und Creator-Feld.
-  - `UserProfile`: Hauptstruktur für den Nutzer-Wallet-Zustand.
-
-- **secure_container.rs**:
-  - `PayloadType`: Enum für Inhaltsart (TransactionBundle, VoucherForSigning, etc.).
-  - `WrappedKey`: Verschlüsselter Payload-Schlüssel für Empfänger/Sender.
-  - `SecureContainer`: Anonymer, sicherer Container für Datenaustausch mit Forward Secrecy.
-
-- **conflict.rs**:
-  - `TransactionFingerprint`: Anonymisierter Fingerprint einer Transaktion für Double-Spend-Erkennung.
-  - `KnownFingerprints`: Speicher für bekannte Fingerprints (lokal und fremd).
-  - `OwnFingerprints`: Kritischer Speicher für eigene Fingerprints.
-  - `FingerprintMetadata`: Dynamische Metadaten für Fingerprints (depth als `i8`, known_by_peers).
-  - `CanonicalMetadataStore`: Zentraler Speicher für Fingerprint-Metadaten.
-  - `ProofOfDoubleSpend`: Kryptographischer Beweis für Double-Spend (inkl. `affected_voucher_name`).
-  - `ResolutionEndorsement`: Bestätigung einer Konfliktbeilegung (Globaler Typ).
-  - `ProofStoreEntry`: Lokaler Wrapper für `ProofOfDoubleSpend` inkl. `local_override` und `ConflictRole`.
-  - `ConflictRole`: Unterscheidung zwischen `Victim` (eigenes Guthaben betroffen) und `Witness` (passive Beobachtung).
-  - `TrustStatus`: Ergebnis der Reputationsprüfung (`Clean`, `KnownOffender`, `Resolved`).
-  - `ProofStore`: Speicher für `ProofStoreEntry` Objekte.
-  - `Layer2Verdict`: Signiertes Urteil eines Layer-2-Servers.
-
-- **signature.rs**:
-  - `DetachedSignature`: Wrapper für losgelöste Signaturen im Signatur-Workflow.
-
-- **voucher_standard_definition.rs** (Erweiterungen):
-  - `LocalizedText`: Sprachabhängiger Text.
-  - `StandardMetadata`: Metadaten des Standards.
-  - `TemplateNominalValue`, `TemplateCollateral`, `TemplateGuarantorInfo`: Vorlagen für Gutscheinfeld.
-  - `TemplateFixed`, `TemplateDefault`: Feste und standardmäßige Vorlagen.
-  - `VoucherTemplate`: Vorlage für neue Gutscheine.
-  - `SignatureBlock`: Kryptographische Signatur des Standards.
-  - `DynamicRule`, `BehaviorRules`: Strukturen für die CEL-basierten dynamischen Regeln und die festen Verhaltensregeln.
-  - `Validation`: Hauptstruktur für Validierungsregeln.
-
-### `tests/` Verzeichnis - Wichtige Sicherheits- & Architekturtests
-
-Um die Robustheit des Systems zu gewährleisten, wurden spezialisierte Tests implementiert:
-
-- **Architektur-Hardening (`tests/architecture/hardening.rs`)**: Verifiziert die Integrität der Key-Derivation und den Schutz gegen Identity-Hopping auf Systemebene.
-- **Resilience & Gossip (`tests/architecture/resilience_and_gossip.rs`)**: Testet die Stabilität des Fingerprint-Austauschs und die dezentrale Double-Spend Erkennung.
-- **Double-Spend Identifikation (`tests/core_logic/security/double_spend_identification.rs`)**: Fokusiert auf die mathematische Extraktion der Täter-ID aus kollidierenden Transaktionen.
-- **Mixed Mode Vulnerability (`tests/wallet_api/mixed_mode_vulnerability.rs`)**: Stellt sicher, dass der Wechsel zwischen Public- und Stealth-Modus keine Sicherheitslücken (z.B. durch unterschiedliche Fingerprints) aufreißt.
-- **Multi-Identity Vulnerability (`tests/wallet_api/multi_identity_vulnerability.rs`)**: Verifiziert, dass ein Nutzer nicht mehrere Identitäten innerhalb desselben ökonomischen Kontextes missbräuchlich verwenden kann.
-
-### Automatisierung & Workflows
-
-- **Automatisierte Test-Härtung (`scripts/run_mutation_tests.sh`)**: Ein Tool zur Durchführung von Mutationstests für sicherheitskritische Module. Es stellt sicher, dass jede logische Code-Änderung in `trap_manager.rs`, `voucher_validation.rs` und `transaction_handler.rs` zuverlässig von der Test-Suite erkannt wird.
-
 ## 8. Dokumentation
-
-- **Haupt-Spezifikation**: `docs/de/spec/Spezifikation - Hybride Privatsphäre und Offline-Sicherheit für digitale Gutscheine.md` - Das maßgebliche Dokument für das gesamte Protokolldesign.
-- **Zustands-Management**: `docs/de/zustands-management.md` - Details zur Persistenz und Wallet-Zustandsübergängen.
-- **Konfliktmanagement**: `docs/de/konliktmanagement.md` - Vertiefende Informationen zur Double-Spend Erkennung und Beilegung.

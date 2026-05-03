@@ -3,7 +3,7 @@ project: human-money-core
 version: "0.2.15"
 phase: "active-development"
 health: "green"
-last_updated: "2026-05-02"
+last_updated: "2026-05-03"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -42,7 +42,7 @@ The core library is stable and feature-rich. Current focus areas:
 
 ## Architecture
 
-- **14 service modules**: crypto, voucher management, validation, conflict management, L2 gateway, etc.
+- **17 service modules**: crypto, voucher management, validation, conflict management, L2 gateway, etc.
 - **10 wallet modules**: lifecycle, transactions, queries, conflict handling, signatures
 - **Extensive test suite**: 7 test categories (architecture, core logic, persistence, services, validation, wallet API, L2 integration)
 

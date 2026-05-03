@@ -8,48 +8,67 @@
     * damit lassen sich kommentare nutzen damit der standart auch besser lesbar wird. Bei Json keine Kommentare möglich.
 ---
 ## Notwendigkeit und Berechnung der `local_voucher_instance_id`
+
 ### Warum wird eine `local_voucher_instance_id` benötigt?
 Eine `local_voucher_instance_id` ist zwingend erforderlich, um **Gutschein-Instanzen eindeutig zu verwalten**, nachdem eine **`split`-Transaktion** stattgefunden hat.
 - **Problem:** Eine `split`-Transaktion erzeugt aus einem Ursprungsgutschein mehrere neue, separat spendable Guthaben (z.B. einen Teil für einen Empfänger und den Restbetrag für den Sender). Alle diese Instanzen teilen sich jedoch weiterhin dieselbe globale `voucher_id`.
-- **Lösung:** Da die `voucher_id` allein nicht mehr eindeutig ist, dient die `local_voucher_instance_id` als **stabiler und einzigartiger Primärschlüssel** für jede dieser Instanzen innerhalb der lokalen Wallet-Verwaltung (z.B. in einer `HashMap` oder Datenbank).
+- **Lösung:** Da die `voucher_id` allein nicht mehr eindeutig ist, dient die `local_voucher_instance_id` als **stabiler und einzigartiger Primärschlüssel** für jede dieser Instanzen innerhalb der lokalen Wallet-Verwaltung.
 
-# todo Berechnung hat sich vereinfach und muss nicht so komplex sein. (Berschreibung anpassen)
-### Warum ist die Berechnung scheinbar komplex?
-Die Berechnung ist nicht willkürlich komplex, sondern präzise darauf ausgelegt, einen kritischen Anwendungsfall robust zu handhaben: die **lokale Double-Spending-Erkennung**.
-Die Komplexität entsteht, weil die Logik zwischen zwei Zuständen eines Gutscheins im Profil des Nutzers unterscheiden muss:
-1.  **Aktiver (spendabler) Gutschein:** Der Nutzer besitzt ein Guthaben `> 0`. Die ID muss diesen aktuellsten, besessenen Zustand widerspiegeln.
-2.  **Archivierter (ausgegebener) Gutschein:** Der Nutzer hat das gesamte Guthaben ausgegeben (Guthaben `= 0`). Der Gutschein wird aber als "leere Hülle" für die Transaktionshistorie aufbewahrt. Seine ID muss auf dem **letzten Zustand eingefroren werden, in dem er aktiv war**.
-Um dies zu erreichen, kann die Berechnung nicht einfach die letzte Transaktion des Gutscheins nehmen. Stattdessen muss sie die Transaktionshistorie **rückwärts durchsuchen**, um den letzten Zeitpunkt zu finden, an dem der Profilinhaber tatsächlich ein Guthaben besaß. Dieser gezielte Suchvorgang macht die Berechnung scheinbar komplex, ist aber die Grundlage für eine konsistente und sichere Zustandsverwaltung.
+### Berechnung
+Die Berechnung wurde vereinfacht: Sie basiert auf einem deterministischen Hash der `voucher_id` und der Transaktions-ID (`t_id`), die das aktuelle Guthaben begründet hat. Dies stellt sicher, dass jede Instanz innerhalb eines Wallets eine eindeutige Kennung besitzt, die über Profil-Restores hinweg stabil bleibt.
 
 
-# Architekturentscheidung: Identitäts- und Schlüsselmanagement in human_money_core
-Zur Verwaltung von Benutzerkonten auf mehreren Geräten (z.B. PC und Handy) wurde eine Architektur für Separated Account Identity (SAI) gewählt. Sie kombiniert die Anforderung eines einheitlichen "Web of Trust" mit der Notwendigkeit einer strikt getrennten Kontoführung, um Double Spending durch Zustands-Inkonsistenzen zu verhindern.
+# Architekturentscheidung: Identitäts- und Schlüsselmanagement (SAI)
 
-## Das entschiedene Separated Account Identity (SAI) Modell
-Konzept: Ein Nutzer besitzt eine einzige kryptographische Identität, die durch einen einzigen Public Key (z.B. did:key:z...xyzA) repräsentiert wird. Diese Identität wird direkt aus dem Mnemonic (und optionaler Passphrase) abgeleitet, ohne Einbeziehung eines Präfixes.
+Zur Verwaltung von Benutzerkonten auf mehreren Geräten wurde die **Separated Account Identity (SAI)** Architektur gewählt. Sie kombiniert ein einheitliches "Web of Trust" mit strikt getrennter Kontoführung.
 
-Getrennte Konten: Obwohl die kryptographische Identität (der Public Key) gleich ist, definiert der Nutzer separate Konten für verschiedene Kontexte (z.B. "pc", "mobil"), indem er unterschiedliche Präfixe verwendet.
+## Das SAI Modell
+- **Einheitliche Identität:** Ein Nutzer besitzt einen Public Key (`did:key`), der direkt aus dem Mnemonic abgeleitet wird.
+- **Getrennte Konten:** Nutzer definieren separate Konten via Präfix (z.B. "pc", "mobil") oder nutzen **präfix-lose Root-Accounts**.
+- **Context-Bound Key Derivation:** Der geheime Seed für jedes Konto wird via HKDF-SHA256 aus dem Hauptschlüssel und dem optionalen Präfix abgeleitet. Dies verhindert "Identity Hopping" und stellt sicher, dass Guthaben im definierten ökonomischen Kontext bleibt.
+- **Interne Transfers:** Um Guthaben zwischen eigenen Geräten zu bewegen, ist eine explizite Transaktion nötig. Dies hält die Zustände auch offline konsistent.
 
-Eindeutige Adressen: Jedes Konto hat eine eindeutige, vollständige User-ID, die aus dem Präfix, einer Prüfsumme und dem einheitlichen Public Key besteht.
+---
 
-Konto 1 (PC): pc:aB3@did:key:z...xyzA
+# Wallet-Sicherheit: Rollback Guard & Integrity
 
-Konto 2 (Mobil): mobil:C4d@did:key:z...xyzA
+## WalletSeal Rollback Guard
+- **Entscheidung:** Nutzung eines kryptographischen Epochen-Systems mit hash-verketteten Siegeln.
+- **Begründung:** Verhindert, dass ein Angreifer (oder ein fehlerhaftes Backup) das Wallet auf einen alten Zustand zurücksetzt, um bereits ausgegebenes Geld erneut zu verwenden. Ein `ForkLock` erkennt divergierende Wallet-Zustände.
 
-## Kernprinzipien der Implementierung
-Einheitliche Identität für das Web of Trust: Für das externe Reputationssystem (Web of Trust) ist nur der Public Key (did:key:z...xyzA) relevant. Alle Aktionen, unabhängig vom Präfix, werden kryptographisch dieser einen Identität zugeordnet.
+## Storage Integrity
+- **Entscheidung:** SHA3-256 Integritätsnachweise für alle Dateien, gebunden an das `WalletSeal`.
+- **Begründung:** Schützt vor physischer Manipulation der Dateien auf dem Datenträger. Jede Änderung, Löschung oder Hinzufügung wird beim Laden des Wallets erkannt.
 
-Strikte Kontentrennung zur Verhinderung von Double Spending: Die Wallet-Logik muss die vollständige User-ID (z.B. pc:aB3@did:key:z...xyzA) zur Validierung des Besitzes verwenden.
+---
 
-Beim Empfang (receive_bundle): Ein Gutschein, der an mobil:C4d@... adressiert ist, muss von einer Wallet, die als pc:aB3@... agiert, abgewiesen werden. Ein automatisches "Mitladen" ist ausgeschlossen, da dies zu kritischen Double-Spend-Szenarien führen würde, wenn beide Geräte (z.B. offline) denselben eingehenden Gutschein annehmen.
+# Daten- und Prozessmanagement
 
-Prüfsummen-Validierung: Die in der User-ID enthaltene Checksumme (z.B. aB3) stellt sicher, dass Gutscheine durch Tippfehler nicht an ungültige oder falsche Präfix-Varianten gesendet werden können.
+## Wallet Event Sourcing
+- **Entscheidung:** Ein persistenter, append-only Ledger (`WalletEvent`) für alle Transaktionen.
+- **Begründung:** Ermöglicht eine lückenlose Audit-Historie und die Wiederherstellung von Zuständen. Durch monatliches **Chunking** (`YYYY_MM.json.enc`) bleibt die Performance auch bei tausenden Events hoch.
 
-Ermöglichung von internen Transfers: Dieses Modell erzwingt ein klares mentales Modell: Guthaben auf pc-aB3@... ist getrennt von Guthaben auf mobil-C4d@.... Um Guthaben zwischen seinen eigenen Geräten zu bewegen, muss der Nutzer eine explizite Transaktion (einen Transfer an sich selbst) durchführen. Dies ist ein gewollter und notwendiger Schritt, um die Zustände sauber und konsistent zu halten.
+## Dynamic Business Rules via CEL
+- **Entscheidung:** Einsatz der **Common Expression Language (CEL)** für Gutschein-Validierungsregeln.
+- **Begründung:** Ermöglicht flexible Regeln in den TOML-Standards ohne Code-Änderungen im Core. CEL ist sicher (nicht Turing-vollständig), schnell und bietet mächtige Listen-Operationen.
 
-## Zusammenfassung der Architektur
-Diese Separated Account Identity (SAI) Lösung ist optimal auf die Anforderungen des Systems zugeschnitten:
+## Anti-Signature-Reuse-Firewall
+- **Entscheidung:** Validierung der Signatur-Eindeutigkeit auf Ebene des Public Keys (`[u8; 32]`), nicht des User-ID Strings.
+- **Begründung:** Verhindert, dass dieselbe Identität durch verschiedene Präfixe getarnt wird, um Signaturen in unterschiedlichen Kontexten missbräuchlich wiederzuverwenden.
 
-Sicherheit: Sie verhindert die gefährlichste Fehlerklasse – die unbeabsichtigte Doppel-Annahme desselben Gutscheins auf verschiedenen Geräten – durch eine strikte, adressbasierte Kontentrennung.
+---
 
-Vertrauen: Sie wahrt die Integrität des Web of Trust, indem alle Konten eines Nutzers auf dieselbe, verifizierbare kryptographische Identität (did:key) zurückgeführt werden.
+# Dezentrales Konfliktmanagement
+
+- **Entscheidung:** Fokus auf lokale Overrides und VIP-Gossip (Very Important Proofs) statt globalem Konsens.
+- **Begründung:** Globaler Konsens ist anfällig für Sybil-Angriffe und verletzt oft die Privatsphäre. Nutzer vertrauen ihren Kontakten lokal; Konflikte werden sozial oder durch Layer 2 Urteile gelöst.
+- **VIP Gossip:** Betrugsbeweise werden mit negativer `depth` verbreitet, um sie von normalem Gossip abzuheben und eine schnelle Verbreitung ("Head Start") zu gewährleisten.
+
+---
+
+# Serialisierung & Datenstabilität
+
+## Strikte Trennung von Domain- und View-Modell
+- **Entscheidung:** Modifiziere niemals die Serialisierungslogik (z.B. serde-Attribute wie camelCase) der Kern-Datenstrukturen aus reinen UI- oder Frontend-Bequemlichkeiten.
+- **Begründung:** Die Core-Bibliothek muss sprachagnostisch, idiomatisch Rust (Standard: snake_case) und vor allem kryptographisch stabil bleiben, da digitale Signaturen und Hashes exakt auf dieser Serialisierung basieren. Eine Änderung der Serialisierung (z.B. von snake_case zu camelCase) würde alle bestehenden Signaturen entwerten.
+- **Umsetzung:** Datentransformationen für externe Clients (wie das JS-Frontend) müssen ausnahmslos an den äußersten Systemgrenzen (z.B. im Tauri-Wrapper oder durch dedizierte DTOs im AppService) erfolgen. Der Core bleibt bei stabilem snake_case.
