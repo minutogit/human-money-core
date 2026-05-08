@@ -3,13 +3,12 @@
 //! Enthält die zentralen, schreibenden Aktionen (Commands) des `AppService`,
 //! die den Zustand des Wallets verändern und persistieren.
 
-use super::{AppService, AppState};
+use super::{AppService, AppState, TransactionOutcome};
 use crate::archive::VoucherArchive;
 use crate::models::conflict::ResolutionEndorsement;
 use crate::models::voucher::Voucher;
 use crate::services::standard_manager;
 use crate::services::voucher_manager::NewVoucherData;
-use crate::storage::WalletLockGuard; // Importiere den RAII Guard
 use crate::wallet::{CreateBundleResult, MultiTransferRequest, ProcessBundleResult};
 use crate::VoucherCoreError;
 
@@ -26,42 +25,25 @@ impl AppService {
         data: NewVoucherData,
         password: Option<&str>,
     ) -> Result<Voucher, String> {
-        // --- FORK-LOCK PRÜFUNG ---
-        self.check_fork_lock(password).map_err(|e| e.to_string())?;
-
         // Vorab-Validierung (ohne Lock möglich)
         let (verified_standard, standard_hash) =
             standard_manager::verify_and_parse_standard(standard_toml_content)
                 .map_err(|e| e.to_string())?;
 
-        let result = self.with_unlocked_mut(|wallet, identity, storage, session_cache| {
-            let _lock = WalletLockGuard::new(storage).map_err(|e| e.to_string())?;
-            let auth = Self::resolve_auth_method(password, session_cache).map_err(|e| e.to_string())?;
-
-            let mut temp_wallet = wallet.clone();
-            let new_voucher = temp_wallet
-                .create_new_voucher(
-                    identity,
-                    &verified_standard,
-                    &standard_hash,
-                    lang_preference,
-                    data,
-                )
-                .map_err(|e| e.to_string())?;
-
-            temp_wallet
-                .save(storage, identity, &auth)
-                .map_err(|e| e.to_string())?;
-
-            *wallet = temp_wallet;
-            Ok(new_voucher)
-        });
-
-        if result.is_ok() {
-            let _ = self.update_seal_after_state_change(password);
-        }
-        result
+        self.with_transactional_mut(password, |temp_wallet, identity, _, _| {
+            match temp_wallet.create_new_voucher(
+                identity,
+                &verified_standard,
+                &standard_hash,
+                lang_preference,
+                data,
+            ) {
+                Ok(new_voucher) => TransactionOutcome::Commit(new_voucher),
+                Err(e) => TransactionOutcome::Rollback(e.to_string()),
+            }
+        })
     }
+
     /// Erstellt ein Transfer-Bundle für eine oder mehrere Transaktionen und speichert den neuen Wallet-Zustand.
     pub fn create_transfer_bundle(
         &mut self,
@@ -70,9 +52,6 @@ impl AppService {
         archive: Option<&dyn VoucherArchive>,
         password: Option<&str>,
     ) -> Result<CreateBundleResult, String> {
-        // --- FORK-LOCK PRÜFUNG ---
-        self.check_fork_lock(password).map_err(|e| e.to_string())?;
-
         // Parse die TOML-Definitionen BEVOR der Lock/State-Swap passiert
         let mut verified_definitions = HashMap::new();
         for (uuid, toml_content) in standard_definitions_toml {
@@ -81,44 +60,30 @@ impl AppService {
             verified_definitions.insert(uuid.clone(), def);
         }
 
-        let result = self.with_unlocked_mut(|wallet, identity, storage, session_cache| {
-            let _lock = WalletLockGuard::new(storage).map_err(|e| e.to_string())?;
-            let auth = Self::resolve_auth_method(password, session_cache).map_err(|e| e.to_string())?;
-
-            let mut temp_wallet = wallet.clone();
+        self.with_transactional_mut(password, |temp_wallet, identity, _, _| {
             match temp_wallet.execute_multi_transfer_and_bundle(
                 identity,
                 &verified_definitions,
                 request,
                 archive,
             ) {
-                Ok(create_result) => {
-                    temp_wallet.save(storage, identity, &auth).map_err(|e| e.to_string())?;
-                    *wallet = temp_wallet;
-                    Ok(create_result)
-                }
+                Ok(create_result) => TransactionOutcome::Commit(create_result),
                 // --- SELBSTHEILUNG ---
                 Err(crate::error::VoucherCoreError::DoubleSpendAttemptBlocked { local_instance_id }) => {
-                    wallet.update_voucher_status(
+                    temp_wallet.update_voucher_status(
                         &local_instance_id,
                         crate::wallet::instance::VoucherStatus::Quarantined {
                             reason: "Self-healing: Detected state inconsistency during transfer attempt.".to_string(),
                         },
                     );
-                    wallet.save(storage, identity, &auth).map_err(|e| e.to_string())?;
-                    Err(format!(
+                    TransactionOutcome::CommitAndReturnError(format!(
                         "Action blocked and wallet state corrected: Voucher {} was internally inconsistent and is now in quarantine.",
                         local_instance_id
                     ))
                 }
-                Err(e) => Err(e.to_string()),
+                Err(e) => TransactionOutcome::Rollback(e.to_string()),
             }
-        });
-
-        if result.is_ok() {
-            let _ = self.update_seal_after_state_change(password);
-        }
-        result
+        })
     }
 
     /// Verarbeitet ein empfangenes Transaktions- oder Signatur-Bundle.
@@ -130,9 +95,6 @@ impl AppService {
         password: Option<&str>,
         force_accept_tolerance_bundle: bool,
     ) -> Result<ProcessBundleResult, String> {
-        // --- FORK-LOCK PRÜFUNG ---
-        self.check_fork_lock(password).map_err(|e| e.to_string())?;
-
         // --- ZONEN-MODELL: Prüfung gegen Pre-Epoch Bundles ---
         if let Ok(Some((epoch_start_time, epoch))) = self.get_epoch_info(password) {
             if epoch > 0 {
@@ -204,31 +166,21 @@ impl AppService {
             verified_definitions.insert(uuid.clone(), def);
         }
 
-        let result = self.with_unlocked_mut(|wallet, identity, storage, session_cache| {
-            let _lock = WalletLockGuard::new(storage).map_err(|e| e.to_string())?;
-            let auth = Self::resolve_auth_method(password, session_cache).map_err(|e| e.to_string())?;
+        self.with_transactional_mut(password, |temp_wallet, identity, _, _| {
+            if let Err(e) = Self::validate_vouchers_in_bundle(identity, bundle_data, standard_definitions_toml) {
+                return TransactionOutcome::Rollback(e);
+            }
 
-            Self::validate_vouchers_in_bundle(identity, bundle_data, standard_definitions_toml)?;
-
-            let mut temp_wallet = wallet.clone();
-            let proc_result = temp_wallet
-                .process_encrypted_transaction_bundle(
-                    identity,
-                    bundle_data,
-                    archive,
-                    &verified_definitions,
-                )
-                .map_err(|e| e.to_string())?;
-
-            temp_wallet.save(storage, identity, &auth).map_err(|e| e.to_string())?;
-            *wallet = temp_wallet;
-            Ok(proc_result)
-        });
-
-        if result.is_ok() {
-            let _ = self.update_seal_after_state_change(password);
-        }
-        result
+            match temp_wallet.process_encrypted_transaction_bundle(
+                identity,
+                bundle_data,
+                archive,
+                &verified_definitions,
+            ) {
+                Ok(proc_result) => TransactionOutcome::Commit(proc_result),
+                Err(e) => TransactionOutcome::Rollback(e.to_string()),
+            }
+        })
     }
 
     /// Importiert eine Beilegungserklärung.
@@ -237,29 +189,11 @@ impl AppService {
         endorsement: ResolutionEndorsement,
         password: Option<&str>,
     ) -> Result<(), String> {
-        // --- FORK-LOCK PRÜFUNG ---
-        self.check_fork_lock(password).map_err(|e| e.to_string())?;
-
-        let result = self.with_unlocked_mut(|wallet, identity, storage, session_cache| {
-            let _lock = WalletLockGuard::new(storage).map_err(|e| e.to_string())?;
-            let auth =
-                Self::resolve_auth_method(password, session_cache).map_err(|e| e.to_string())?;
-
-            let mut temp_wallet = wallet.clone();
-            temp_wallet
-                .add_resolution_endorsement(endorsement)
-                .map_err(|e| e.to_string())?;
-            temp_wallet
-                .save(storage, identity, &auth)
-                .map_err(|e| e.to_string())?;
-
-            *wallet = temp_wallet;
-            Ok(())
-        });
-
-        if result.is_ok() {
-            let _ = self.update_seal_after_state_change(password);
-        }
-        result
+        self.with_transactional_mut(password, |temp_wallet, _, _, _| {
+            match temp_wallet.add_resolution_endorsement(endorsement) {
+                Ok(_) => TransactionOutcome::Commit(()),
+                Err(e) => TransactionOutcome::Rollback(e.to_string()),
+            }
+        })
     }
 }

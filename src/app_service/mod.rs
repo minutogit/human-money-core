@@ -125,7 +125,14 @@ pub struct AppService {
     state: AppState,
 }
 
-// --- Interne Hilfsmethoden ---
+pub(super) enum TransactionOutcome<T, E> {
+    /// Erfolgreiche Transaktion. Zustand wird gespeichert, Seal geupdatet, T zurückgegeben.
+    Commit(T),
+    /// Fehler, ABER der modifizierte Zustand soll trotzdem gespeichert werden (z.B. Self-Healing).
+    CommitAndReturnError(E),
+    /// Abbruch. Zustand wird verworfen, keine Speicherung, kein Seal-Update, E zurückgegeben.
+    Rollback(E),
+}
 
 impl AppService {
     /// Leitet den anonymen Ordnernamen aus den Benutzergeheimnissen ab.
@@ -187,47 +194,6 @@ impl AppService {
         Ok(())
     }
 
-    /// Kapselt den Zugriff auf den entsperrten Zustand.
-    /// Führt die übergebene Closure mit den Wallet-Komponenten aus und stellt den Zustand
-    /// danach wieder her. Verhindert Code-Duplizierung und manuelle State-Recovery.
-    pub(super) fn with_unlocked_mut<F, R>(&mut self, f: F) -> Result<R, String>
-    where
-        F: FnOnce(
-            &mut Wallet,
-            &UserIdentity,
-            &mut FileStorage,
-            &mut Option<SessionCache>,
-        ) -> Result<R, String>,
-    {
-        // 1. State entpacken (temporär durch Locked ersetzen)
-        let old_state = std::mem::replace(&mut self.state, AppState::Locked);
-
-        match old_state {
-            AppState::Unlocked {
-                mut storage,
-                mut wallet,
-                identity,
-                mut session_cache,
-            } => {
-                // 2. Closure ausführen
-                let result = f(&mut wallet, &identity, &mut storage, &mut session_cache);
-
-                // 3. Zustand wiederherstellen (egal ob Erfolg oder Fehler)
-                self.state = AppState::Unlocked {
-                    storage,
-                    wallet,
-                    identity,
-                    session_cache,
-                };
-
-                result
-            }
-            AppState::Locked => {
-                // Bei Locked gibt es nichts zum Wiederherstellen, was wir nicht schon getan haben.
-                Err("AppService is locked.".to_string())
-            }
-        }
-    }
 
     /// Löst die Authentifizierungsmethode (Passwort oder Session-Key) auf.
     /// Prüft dabei auch den Session-Timeout.
@@ -251,6 +217,133 @@ impl AppService {
                     "Password required. Please use 'unlock_session'.".to_string(),
                 )),
             },
+        }
+    }
+
+    /// Hilfsmethode für den Nur-Lese-Zugriff auf das Wallet.
+    pub(super) fn get_wallet(&self) -> Result<&Wallet, String> {
+        match &self.state {
+            AppState::Unlocked { wallet, .. } => Ok(wallet),
+            AppState::Locked => Err("Wallet is locked.".to_string()),
+        }
+    }
+
+    /// Hilfsmethode für den Zugriff auf die Identität.
+    pub(super) fn get_identity(&self) -> Result<&UserIdentity, String> {
+        match &self.state {
+            AppState::Unlocked { identity, .. } => Ok(identity),
+            AppState::Locked => Err("Wallet is locked.".to_string()),
+        }
+    }
+
+    /// Kapselt den Lese-Zugriff auf das entsperrte Wallet.
+    pub(super) fn with_unlocked_ref<F, R>(&self, f: F) -> Result<R, String>
+    where
+        F: FnOnce(&Wallet, &UserIdentity, &FileStorage) -> Result<R, String>,
+    {
+        match &self.state {
+            AppState::Unlocked {
+                storage,
+                wallet,
+                identity,
+                ..
+            } => f(wallet, identity, storage),
+            AppState::Locked => Err("AppService is locked.".to_string()),
+        }
+    }
+
+    /// Orchestriert den Lebenszyklus einer schreibenden Operation (Transaktion).
+    /// Kapselt Locking, Cloning, Saving und Sealing.
+    pub(super) fn with_transactional_mut<F, R>(
+        &mut self,
+        password: Option<&str>,
+        f: F,
+    ) -> Result<R, String>
+    where
+        F: FnOnce(
+            &mut Wallet,
+            &UserIdentity,
+            &mut FileStorage,
+            &crate::storage::AuthMethod,
+        ) -> TransactionOutcome<R, String>,
+    {
+        // 1. Fork-Lock prüfen
+        self.check_fork_lock(password).map_err(|e| e.to_string())?;
+
+        // 2. State entpacken (temporär durch Locked ersetzen)
+        let old_state = std::mem::replace(&mut self.state, AppState::Locked);
+
+        match old_state {
+            AppState::Unlocked {
+                mut storage,
+                wallet,
+                identity,
+                session_cache,
+            } => {
+                // 3. File-Lock anfordern (RAII)
+                let _lock =
+                    crate::storage::WalletLockGuard::new(&storage).map_err(|e| e.to_string())?;
+
+                // 4. Authentifizierung auflösen
+                let auth = match Self::resolve_auth_method(password, &session_cache) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        self.state = AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        };
+                        return Err(e.to_string());
+                    }
+                };
+
+                // 5. Atomarität herstellen (Klonen)
+                let mut temp_wallet = wallet.clone();
+
+                // 6. Closure ausführen
+                let outcome = f(&mut temp_wallet, &identity, &mut storage, &auth);
+
+                // 7. Auswertung des Outcomes
+                match outcome {
+                    TransactionOutcome::Commit(res) => {
+                        temp_wallet
+                            .save(&mut storage, &identity, &auth)
+                            .map_err(|e| e.to_string())?;
+                        self.state = AppState::Unlocked {
+                            storage,
+                            wallet: temp_wallet,
+                            identity,
+                            session_cache,
+                        };
+                        self.update_seal_after_state_change(password)?;
+                        Ok(res)
+                    }
+                    TransactionOutcome::CommitAndReturnError(err_msg) => {
+                        temp_wallet
+                            .save(&mut storage, &identity, &auth)
+                            .map_err(|e| e.to_string())?;
+                        self.state = AppState::Unlocked {
+                            storage,
+                            wallet: temp_wallet,
+                            identity,
+                            session_cache,
+                        };
+                        self.update_seal_after_state_change(password)?;
+                        Err(err_msg)
+                    }
+                    TransactionOutcome::Rollback(err_msg) => {
+                        self.state = AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        };
+                        Err(err_msg)
+                    }
+                }
+            }
+            AppState::Locked => Err("AppService is locked.".to_string()),
         }
     }
 

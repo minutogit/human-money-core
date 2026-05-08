@@ -2,32 +2,12 @@
 //!
 //! Enthält alle reinen Lese-Operationen (Queries) des `AppService`.
 use super::{AppService, AppState};
-use crate::models::profile::{PublicProfile, UserIdentity};
+use crate::models::profile::PublicProfile;
 use crate::wallet::{AggregatedBalance, AssetClassSummary, instance::VoucherStatus};
-use crate::wallet::{VoucherDetails, VoucherSummary, Wallet};
+use crate::wallet::{VoucherDetails, VoucherSummary};
 
 impl AppService {
     // --- Datenabfragen (Queries) ---
-
-    /// Eine private Hilfsfunktion für den Nur-Lese-Zugriff auf das Wallet.
-    /// Stellt sicher, dass das Wallet entsperrt ist, bevor eine Operation ausgeführt wird.
-    ///
-    /// Diese Funktion ist `pub(super)`, damit sie von allen Handlern innerhalb
-    /// des `app_service`-Moduls verwendet werden kann.
-    pub(super) fn get_wallet(&self) -> Result<&Wallet, String> {
-        match &self.state {
-            AppState::Unlocked { wallet, .. } => Ok(wallet),
-            AppState::Locked => Err("Wallet is locked.".to_string()),
-        }
-    }
-
-    /// Eine private Hilfsfunktion für den Zugriff auf die Identität.
-    pub(super) fn get_identity(&self) -> Result<&UserIdentity, String> {
-        match &self.state {
-            AppState::Unlocked { identity, .. } => Ok(identity),
-            AppState::Locked => Err("Wallet is locked.".to_string()),
-        }
-    }
 
     /// Gibt eine Liste von Zusammenfassungen aller Gutscheine im Wallet zurück.
     /// Die Liste kann optional nach Gutschein-Standards (UUIDs), Status und Test-Status gefiltert werden.
@@ -46,13 +26,14 @@ impl AppService {
         status_filter: Option<&[VoucherStatus]>,
         test_filter: Option<bool>,
     ) -> Result<Vec<VoucherSummary>, String> {
-        let identity = self.get_identity()?;
-        Ok(self.get_wallet()?.list_vouchers(
-            Some(identity),
-            voucher_standard_uuid_filter,
-            status_filter,
-            test_filter,
-        ))
+        self.with_unlocked_ref(|wallet, identity, _| {
+            Ok(wallet.list_vouchers(
+                Some(identity),
+                voucher_standard_uuid_filter,
+                status_filter,
+                test_filter,
+            ))
+        })
     }
 
     /// Aggregiert die Guthaben aller aktiven Gutscheine, gruppiert nach Währung.
@@ -63,14 +44,15 @@ impl AppService {
     /// # Errors
     /// Schlägt fehl, wenn das Wallet gesperrt (`Locked`) ist.
     pub fn get_total_balance_by_currency(&self) -> Result<Vec<AggregatedBalance>, String> {
-        let identity = self.get_identity()?;
-        Ok(self.get_wallet()?.get_total_balance_by_currency(Some(identity)))
+        self.with_unlocked_ref(|wallet, identity, _| {
+            Ok(wallet.get_total_balance_by_currency(Some(identity)))
+        })
     }
 
     /// Ermittelt alle im Wallet aktiven Asset-Klassen (Standard + Test-Status).
     /// Dies dient der UI zum sauberen Befüllen von Filter-Dropdowns.
     pub fn get_active_asset_classes(&self) -> Result<Vec<AssetClassSummary>, String> {
-        Ok(self.get_wallet()?.get_active_asset_classes())
+        self.with_unlocked_ref(|wallet, _, _| Ok(wallet.get_active_asset_classes()))
     }
 
     /// Ruft eine detaillierte Ansicht für einen einzelnen Gutschein ab.
@@ -84,9 +66,9 @@ impl AppService {
     /// # Errors
     /// Schlägt fehl, wenn das Wallet gesperrt ist oder keine Gutschein-Instanz mit dieser ID existiert.
     pub fn get_voucher_details(&self, local_id: &str) -> Result<VoucherDetails, String> {
-        self.get_wallet()?
-            .get_voucher_details(local_id)
-            .map_err(|e| e.to_string())
+        self.with_unlocked_ref(|wallet, _, _| {
+            wallet.get_voucher_details(local_id).map_err(|e| e.to_string())
+        })
     }
 
     /// Gibt die User-ID des Wallet-Inhabers zurück.

@@ -83,6 +83,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **Prefix-less Identity Integration**: Implemented support for pure `did:key` Root-Accounts, decoupled HKDF derivation from legacy prefixes, and synchronized the 150+ test suite with the 2-decimal FreeTaler precision standard.
 - [x] **Centralized Voucher Standard Parsing**: Exposed typsafe TOML parsing in `AppService`, enabling client apps to leverage core validation logic and signature verification with verified snake_case stability.
 - [x] **Fuzzy-Search for historical voucher logs**: Resolved UI lookup errors by implementing a historical ID fallback mechanism in `Wallet::get_voucher_details`, allowing logs to correctly reference vouchers even after state-changing transactions.
+- [x] **Transactional Command Helpers**: Hardened AppService architecture with `with_transactional_mut` and `TransactionOutcome`, centralizing locking, atomic cloning, saving, and sealing to reduce boilerplate and eliminate state orchestration errors.
 
 
 ## Next Milestones
