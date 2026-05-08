@@ -156,7 +156,6 @@ impl AppService {
     /// Diese Methode wird vom `command_handler` vor der Verarbeitung eines Bundles
     /// aufgerufen und bleibt daher hier zentral verfügbar.
     fn validate_vouchers_in_bundle(
-        &self,
         identity: &UserIdentity,
         bundle_data: &[u8],
         standard_definitions_toml: &HashMap<String, String>,
@@ -186,6 +185,73 @@ impl AppService {
             .map_err(|e| e.to_string())?;
         }
         Ok(())
+    }
+
+    /// Kapselt den Zugriff auf den entsperrten Zustand.
+    /// Führt die übergebene Closure mit den Wallet-Komponenten aus und stellt den Zustand
+    /// danach wieder her. Verhindert Code-Duplizierung und manuelle State-Recovery.
+    pub(super) fn with_unlocked_mut<F, R>(&mut self, f: F) -> Result<R, String>
+    where
+        F: FnOnce(
+            &mut Wallet,
+            &UserIdentity,
+            &mut FileStorage,
+            &mut Option<SessionCache>,
+        ) -> Result<R, String>,
+    {
+        // 1. State entpacken (temporär durch Locked ersetzen)
+        let old_state = std::mem::replace(&mut self.state, AppState::Locked);
+
+        match old_state {
+            AppState::Unlocked {
+                mut storage,
+                mut wallet,
+                identity,
+                mut session_cache,
+            } => {
+                // 2. Closure ausführen
+                let result = f(&mut wallet, &identity, &mut storage, &mut session_cache);
+
+                // 3. Zustand wiederherstellen (egal ob Erfolg oder Fehler)
+                self.state = AppState::Unlocked {
+                    storage,
+                    wallet,
+                    identity,
+                    session_cache,
+                };
+
+                result
+            }
+            AppState::Locked => {
+                // Bei Locked gibt es nichts zum Wiederherstellen, was wir nicht schon getan haben.
+                Err("AppService is locked.".to_string())
+            }
+        }
+    }
+
+    /// Löst die Authentifizierungsmethode (Passwort oder Session-Key) auf.
+    /// Prüft dabei auch den Session-Timeout.
+    pub(super) fn resolve_auth_method<'a>(
+        password: Option<&'a str>,
+        session_cache: &Option<SessionCache>,
+    ) -> Result<crate::storage::AuthMethod<'a>, crate::error::VoucherCoreError> {
+        match password {
+            Some(pwd) => Ok(crate::storage::AuthMethod::Password(pwd)),
+            None => match session_cache {
+                Some(cache) => {
+                    if std::time::Instant::now() > cache.last_activity + cache.session_duration {
+                        Err(crate::error::VoucherCoreError::Generic(
+                            "Session timed out. Please provide password.".to_string(),
+                        ))
+                    } else {
+                        Ok(crate::storage::AuthMethod::SessionKey(cache.session_key))
+                    }
+                }
+                None => Err(crate::error::VoucherCoreError::Generic(
+                    "Password required. Please use 'unlock_session'.".to_string(),
+                )),
+            },
+        }
     }
 
     /// Prüft die "Passwort merken"-Sitzung, verwaltet den Timeout

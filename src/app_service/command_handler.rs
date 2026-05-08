@@ -11,7 +11,7 @@ use crate::services::standard_manager;
 use crate::services::voucher_manager::NewVoucherData;
 use crate::storage::WalletLockGuard; // Importiere den RAII Guard
 use crate::wallet::{CreateBundleResult, MultiTransferRequest, ProcessBundleResult};
-use crate::{AuthMethod, VoucherCoreError};
+use crate::VoucherCoreError;
 
 use std::collections::HashMap;
 
@@ -28,133 +28,37 @@ impl AppService {
     ) -> Result<Voucher, String> {
         // --- FORK-LOCK PRÜFUNG ---
         self.check_fork_lock(password).map_err(|e| e.to_string())?;
-        let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
-        let (result, new_state) = match current_state {
-            AppState::Unlocked {
-                mut storage,
-                wallet,
-                identity,
-                session_cache,
-            } => {
-                // --- SPERRE ERLANGEN (RAII) ---
-                let _lock_guard = match WalletLockGuard::new(&storage) {
-                    Ok(guard) => guard,
-                    Err(e) => {
-                        // FEHLERBEHEBUNG: Zustand manuell wiederherstellen und Funktion verlassen
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        };
-                        return Err(e.to_string());
-                    }
-                };
-                // --- SPERRE ENDE ---
+        // Vorab-Validierung (ohne Lock möglich)
+        let (verified_standard, standard_hash) =
+            standard_manager::verify_and_parse_standard(standard_toml_content)
+                .map_err(|e| e.to_string())?;
 
-                match crate::services::standard_manager::verify_and_parse_standard(
-                    standard_toml_content,
-                ) {
-                    Err(e) => (
-                        Err(e.to_string()),
-                        AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        },
-                    ),
-                    Ok((verified_standard, standard_hash)) => {
-                        // 1. Kopie erstellen
-                        let mut temp_wallet = wallet.clone();
+        let result = self.with_unlocked_mut(|wallet, identity, storage, session_cache| {
+            let _lock = WalletLockGuard::new(storage).map_err(|e| e.to_string())?;
+            let auth = Self::resolve_auth_method(password, session_cache).map_err(|e| e.to_string())?;
 
-                        // 2. Erstellung via Wallet (enthält Validierung, ID-Berechnung und Event-Logging)
-                        match temp_wallet.create_new_voucher(
-                            &identity,
-                            &verified_standard,
-                            &standard_hash,
-                            lang_preference,
-                            data,
-                        ) {
-                            Err(e) => (
-                                Err(e.to_string()),
-                                AppState::Unlocked {
-                                    storage,
-                                    wallet,
-                                    identity,
-                                    session_cache,
-                                },
-                            ),
-                            Ok(new_voucher) => {
-                                // Authentifizierung ermitteln
-                                let auth_method = match password {
-                                    Some(pwd_str) => AuthMethod::Password(pwd_str),
-                                    None => {
-                                        match &session_cache {
-                                            Some(cache) => {
-                                                if std::time::Instant::now()
-                                                    > cache.last_activity
-                                                        + cache.session_duration
-                                                {
-                                                    AuthMethod::SessionKey([0u8; 32])
-                                                } else {
-                                                    AuthMethod::SessionKey(cache.session_key)
-                                                }
-                                            }
-                                            None => AuthMethod::SessionKey([0u8; 32]),
-                                        }
-                                    }
-                                };
+            let mut temp_wallet = wallet.clone();
+            let new_voucher = temp_wallet
+                .create_new_voucher(
+                    identity,
+                    &verified_standard,
+                    &standard_hash,
+                    lang_preference,
+                    data,
+                )
+                .map_err(|e| e.to_string())?;
 
-                                // Expliziter Check für Auth-Fehler vor dem Speichern
-                                if let AuthMethod::SessionKey(k) = auth_method {
-                                    if k == [0u8; 32] {
-                                        self.state = AppState::Unlocked {
-                                            storage,
-                                            wallet,
-                                            identity,
-                                            session_cache,
-                                        };
-                                        return Err("Session timed out or password required.".to_string());
-                                    }
-                                }
+            temp_wallet
+                .save(storage, identity, &auth)
+                .map_err(|e| e.to_string())?;
 
-                                // 3. Speichern
-                                match temp_wallet.save(&mut storage, &identity, &auth_method) {
-                                    Ok(_) => (
-                                        Ok(new_voucher),
-                                        AppState::Unlocked {
-                                            storage,
-                                            wallet: temp_wallet,
-                                            identity,
-                                            session_cache,
-                                        },
-                                    ),
-                                    Err(e) => (
-                                        Err(e.to_string()),
-                                        AppState::Unlocked {
-                                            storage,
-                                            wallet,
-                                            identity,
-                                            session_cache,
-                                        },
-                                    ),
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            AppState::Locked => (Err("Wallet is locked.".to_string()), current_state),
-        };
+            *wallet = temp_wallet;
+            Ok(new_voucher)
+        });
 
-        self.state = new_state;
-        // Siegel aktualisieren, wenn die Aktion erfolgreich war
         if result.is_ok() {
-            if let Err(e) = self.update_seal_after_state_change(password) {
-                eprintln!("Warning: Failed to update seal after voucher creation: {}", e);
-            }
+            let _ = self.update_seal_after_state_change(password);
         }
         result
     }
@@ -169,173 +73,50 @@ impl AppService {
         // --- FORK-LOCK PRÜFUNG ---
         self.check_fork_lock(password).map_err(|e| e.to_string())?;
 
-        // Parse die TOML-Definitionen BEVOR der State bewegt wird,
-        // damit ein Fehler hier den State nicht verwaist.
+        // Parse die TOML-Definitionen BEVOR der Lock/State-Swap passiert
         let mut verified_definitions = HashMap::new();
         for (uuid, toml_content) in standard_definitions_toml {
-            match standard_manager::verify_and_parse_standard(toml_content) {
-                Ok((def, _hash)) => {
-                    verified_definitions.insert(uuid.clone(), def);
-                }
-                Err(e) => return Err(e.to_string()),
-            }
+            let (def, _) = standard_manager::verify_and_parse_standard(toml_content)
+                .map_err(|e| e.to_string())?;
+            verified_definitions.insert(uuid.clone(), def);
         }
 
-        let current_state = std::mem::replace(&mut self.state, AppState::Locked);
+        let result = self.with_unlocked_mut(|wallet, identity, storage, session_cache| {
+            let _lock = WalletLockGuard::new(storage).map_err(|e| e.to_string())?;
+            let auth = Self::resolve_auth_method(password, session_cache).map_err(|e| e.to_string())?;
 
-        let (result, new_state) = match current_state {
-            AppState::Unlocked {
-                mut storage,
-                wallet,
+            let mut temp_wallet = wallet.clone();
+            match temp_wallet.execute_multi_transfer_and_bundle(
                 identity,
-                session_cache,
-            } => {
-                // --- SPERRE ERLANGEN (RAII) ---
-                let _lock_guard = match WalletLockGuard::new(&storage) {
-                    Ok(guard) => guard,
-                    Err(e) => {
-                        // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        };
-                        return Err(e.to_string());
-                    }
-                };
-                // --- SPERRE ENDE ---
-
-                let auth_method;
-
-                match password {
-                    Some(pwd_str) => {
-                        auth_method = AuthMethod::Password(pwd_str);
-                    }
-                    None => {
-                        let session_key =
-                            match &session_cache {
-                                Some(cache) => {
-                                    let now = std::time::Instant::now();
-                                    if now > cache.last_activity + cache.session_duration {
-                                        // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                                        self.state = AppState::Unlocked {
-                                            storage,
-                                            wallet,
-                                            identity,
-                                            session_cache,
-                                        };
-                                        return Err("Session timed out. Please provide password."
-                                            .to_string());
-                                    } else {
-                                        cache.session_key
-                                    }
-                                }
-                                None => {
-                                    // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                                    self.state = AppState::Unlocked {
-                                        storage,
-                                        wallet,
-                                        identity,
-                                        session_cache,
-                                    };
-                                    return Err("Password required. Please use 'unlock_session'."
-                                        .to_string());
-                                }
-                            };
-                        auth_method = AuthMethod::SessionKey(session_key);
-                    }
+                &verified_definitions,
+                request,
+                archive,
+            ) {
+                Ok(create_result) => {
+                    temp_wallet.save(storage, identity, &auth).map_err(|e| e.to_string())?;
+                    *wallet = temp_wallet;
+                    Ok(create_result)
                 }
-
-                // Wallet Operation
-                let mut temp_wallet = wallet.clone();
-                match temp_wallet.execute_multi_transfer_and_bundle(
-                    &identity,
-                    &verified_definitions,
-                    request,
-                    archive,
-                ) {
-                    Ok(create_result) => {
-                        match temp_wallet.save(&mut storage, &identity, &auth_method) {
-                            Ok(_) => (
-                                Ok(create_result),
-                                AppState::Unlocked {
-                                    storage,
-                                    wallet: temp_wallet,
-                                    identity,
-                                    session_cache,
-                                },
-                            ),
-                            Err(e) => (
-                                Err(e.to_string()),
-                                AppState::Unlocked {
-                                    storage,
-                                    wallet,
-                                    identity,
-                                    session_cache,
-                                },
-                            ),
-                        }
-                    }
-                    // --- SELBSTHEILUNG ---
-                    Err(crate::error::VoucherCoreError::DoubleSpendAttemptBlocked {
-                        local_instance_id,
-                    }) => {
-                        let mut wallet_to_correct = wallet; // Nimm das Original
-
-                        wallet_to_correct.update_voucher_status(
-                            &local_instance_id,
-                            crate::wallet::instance::VoucherStatus::Quarantined {
-                                reason: "Self-healing: Detected state inconsistency during transfer attempt.".to_string(),
-                            },
-                        );
-
-                        match wallet_to_correct.save(&mut storage, &identity, &auth_method) {
-                            Ok(_) => (
-                                Err(format!(
-                                    "Action blocked and wallet state corrected: Voucher {} was internally inconsistent and is now in quarantine.",
-                                    local_instance_id
-                                )),
-                                AppState::Unlocked {
-                                    storage,
-                                    wallet: wallet_to_correct,
-                                    identity,
-                                    session_cache,
-                                },
-                            ),
-                            Err(save_err) => (
-                                Err(format!(
-                                    "Critical Error: Failed to save wallet correction. Error: {}",
-                                    save_err
-                                )),
-                                AppState::Unlocked {
-                                    storage,
-                                    wallet: wallet_to_correct,
-                                    identity,
-                                    session_cache,
-                                },
-                            ),
-                        }
-                    }
-                    Err(e) => (
-                        Err(e.to_string()),
-                        AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
+                // --- SELBSTHEILUNG ---
+                Err(crate::error::VoucherCoreError::DoubleSpendAttemptBlocked { local_instance_id }) => {
+                    wallet.update_voucher_status(
+                        &local_instance_id,
+                        crate::wallet::instance::VoucherStatus::Quarantined {
+                            reason: "Self-healing: Detected state inconsistency during transfer attempt.".to_string(),
                         },
-                    ),
+                    );
+                    wallet.save(storage, identity, &auth).map_err(|e| e.to_string())?;
+                    Err(format!(
+                        "Action blocked and wallet state corrected: Voucher {} was internally inconsistent and is now in quarantine.",
+                        local_instance_id
+                    ))
                 }
+                Err(e) => Err(e.to_string()),
             }
-            AppState::Locked => (Err("Wallet is locked.".to_string()), AppState::Locked),
-        };
-        self.state = new_state;
-        // Siegel aktualisieren, wenn die Aktion erfolgreich war
+        });
+
         if result.is_ok() {
-            if let Err(e) = self.update_seal_after_state_change(password) {
-                eprintln!("Warning: Failed to update seal after transfer bundle creation: {}", e);
-            }
+            let _ = self.update_seal_after_state_change(password);
         }
         result
     }
@@ -353,24 +134,22 @@ impl AppService {
         self.check_fork_lock(password).map_err(|e| e.to_string())?;
 
         // --- ZONEN-MODELL: Prüfung gegen Pre-Epoch Bundles ---
-        // Nur relevant, wenn eine Recovery stattgefunden hat (epoch > 0).
-        // Die Logik schützt davor, dass ein Angreifer nach einer Recovery alte
-        // Bundles einspielt, die vor der Recovery erstellt wurden.
         if let Ok(Some((epoch_start_time, epoch))) = self.get_epoch_info(password) {
             if epoch > 0 {
-                // Bundle entschlüsseln, um den Transaktionszeitstempel zu extrahieren
                 let max_tx_time = match &self.state {
                     AppState::Unlocked { identity, .. } => {
                         let bundle = crate::services::bundle_processor::open_and_verify_bundle(
                             identity,
                             bundle_data,
-                        ).map_err(|e| e.to_string())?;
+                        )
+                        .map_err(|e| e.to_string())?;
 
-                        // Finde den maximalen (jüngsten) Transaktionszeitstempel
                         let mut max_dt: Option<chrono::DateTime<chrono::Utc>> = None;
                         for voucher in &bundle.vouchers {
                             if let Some(last_tx) = voucher.transactions.last() {
-                                if let Ok(tx_dt) = chrono::DateTime::parse_from_rfc3339(&last_tx.t_time) {
+                                if let Ok(tx_dt) =
+                                    chrono::DateTime::parse_from_rfc3339(&last_tx.t_time)
+                                {
                                     let tx_utc = tx_dt.with_timezone(&chrono::Utc);
                                     match max_dt {
                                         None => max_dt = Some(tx_utc),
@@ -382,203 +161,76 @@ impl AppService {
                         }
                         max_dt
                     }
-                    _ => None, // Sollte nicht vorkommen nach fork-lock check
+                    _ => None,
                 };
 
                 if let Some(bundle_max_dt) = max_tx_time {
                     if let Ok(epoch_dt) = chrono::DateTime::parse_from_rfc3339(&epoch_start_time) {
                         let epoch_utc = epoch_dt.with_timezone(&chrono::Utc);
 
-                        // Nur prüfen, wenn das Bundle VOR der aktuellen Epoche liegt
                         if bundle_max_dt < epoch_utc {
                             let delta = epoch_utc - bundle_max_dt;
-
-                            // Zone 1: < 15 Minuten → Auto-Accept (kein Fehler)
-                            // Zone 2: 15 Min – 24h → Warnung, Nutzerbestätigung nötig
-                            // Zone 3: 24h – 28 Tage → Kritische Warnung
-                            // Zone 4: > 28 Tage → Harte Ablehnung
                             const ZONE_1_LIMIT_MINUTES: i64 = 15;
                             const ZONE_2_LIMIT_HOURS: i64 = 24;
                             const ZONE_3_LIMIT_DAYS: i64 = 28;
 
                             if delta > chrono::Duration::days(ZONE_3_LIMIT_DAYS) {
-                                // Zone 4: Harte Ablehnung (Flag wird IGNORIERT)
                                 return Err(VoucherCoreError::BundlePredatesCurrentEpoch.to_string());
                             } else if delta > chrono::Duration::hours(ZONE_2_LIMIT_HOURS) {
-                                // Zone 3: Kritische Warnung
                                 if !force_accept_tolerance_bundle {
-                                    return Err(VoucherCoreError::BundleInExtendedRecoveryToleranceZone.to_string());
+                                    return Err(
+                                        VoucherCoreError::BundleInExtendedRecoveryToleranceZone
+                                            .to_string(),
+                                    );
                                 }
                             } else if delta > chrono::Duration::minutes(ZONE_1_LIMIT_MINUTES) {
-                                // Zone 2: Warnung
                                 if !force_accept_tolerance_bundle {
-                                    return Err(VoucherCoreError::BundleInRecoveryToleranceZone.to_string());
+                                    return Err(
+                                        VoucherCoreError::BundleInRecoveryToleranceZone.to_string()
+                                    );
                                 }
                             }
-                            // Zone 1: < 15 Min → Auto-Accept, kein Fehler
                         }
                     }
                 }
             }
         }
-        // --- ZONEN-MODELL ENDE ---
 
-        let current_state = std::mem::replace(&mut self.state, AppState::Locked);
+        // Parse die TOML-Definitionen
+        let mut verified_definitions = HashMap::new();
+        for (uuid, toml_content) in standard_definitions_toml {
+            let (def, _) = standard_manager::verify_and_parse_standard(toml_content)
+                .map_err(|e| e.to_string())?;
+            verified_definitions.insert(uuid.clone(), def);
+        }
 
-        let (result, new_state) = match current_state {
-            AppState::Unlocked {
-                mut storage,
-                wallet,
-                identity,
-                session_cache,
-            } => {
-                // --- SPERRE ERLANGEN (RAII) ---
-                let _lock_guard = match WalletLockGuard::new(&storage) {
-                    Ok(guard) => guard,
-                    Err(e) => {
-                        // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        };
-                        return Err(e.to_string());
-                    }
-                };
-                // --- SPERRE ENDE ---
+        let result = self.with_unlocked_mut(|wallet, identity, storage, session_cache| {
+            let _lock = WalletLockGuard::new(storage).map_err(|e| e.to_string())?;
+            let auth = Self::resolve_auth_method(password, session_cache).map_err(|e| e.to_string())?;
 
-                let mut verified_definitions = HashMap::new();
-                for (uuid, toml_content) in standard_definitions_toml {
-                    match standard_manager::verify_and_parse_standard(toml_content) {
-                        Ok((def, _hash)) => {
-                            verified_definitions.insert(uuid.clone(), def);
-                        }
-                        Err(e) => {
-                            // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                            self.state = AppState::Unlocked {
-                                storage,
-                                wallet,
-                                identity,
-                                session_cache,
-                            };
-                            return Err(e.to_string());
-                        }
-                    }
-                }
+            Self::validate_vouchers_in_bundle(identity, bundle_data, standard_definitions_toml)?;
 
-                match self.validate_vouchers_in_bundle(
-                    &identity,
+            let mut temp_wallet = wallet.clone();
+            let proc_result = temp_wallet
+                .process_encrypted_transaction_bundle(
+                    identity,
                     bundle_data,
-                    standard_definitions_toml,
-                ) {
-                    Err(e) => (
-                        Err(e),
-                        AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        },
-                    ),
-                    Ok(_) => {
-                        let auth_method;
+                    archive,
+                    &verified_definitions,
+                )
+                .map_err(|e| e.to_string())?;
 
-                        match password {
-                            Some(pwd_str) => {
-                                auth_method = AuthMethod::Password(pwd_str);
-                            }
-                            None => {
-                                let session_key = match &session_cache {
-                                    Some(cache) => {
-                                        let now = std::time::Instant::now();
-                                        if now > cache.last_activity + cache.session_duration {
-                                            // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                                            self.state = AppState::Unlocked {
-                                                storage,
-                                                wallet,
-                                                identity,
-                                                session_cache,
-                                            };
-                                            return Err(
-                                                "Session timed out. Please provide password."
-                                                    .to_string(),
-                                            );
-                                        } else {
-                                            cache.session_key
-                                        }
-                                    }
-                                    None => {
-                                        // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                                        self.state = AppState::Unlocked {
-                                            storage,
-                                            wallet,
-                                            identity,
-                                            session_cache,
-                                        };
-                                        return Err(
-                                            "Password required. Please use 'unlock_session'."
-                                                .to_string(),
-                                        );
-                                    }
-                                };
-                                auth_method = AuthMethod::SessionKey(session_key);
-                            }
-                        }
-                        // TRANSANKTIONALER ANSATZ:
-                        let mut temp_wallet = wallet.clone();
-                        match temp_wallet.process_encrypted_transaction_bundle(
-                            &identity,
-                            bundle_data,
-                            archive,
-                            &verified_definitions,
-                        ) {
-                            Ok(proc_result) => {
-                                match temp_wallet.save(&mut storage, &identity, &auth_method) {
-                                    Ok(_) => (
-                                        Ok(proc_result),
-                                        AppState::Unlocked {
-                                            storage,
-                                            wallet: temp_wallet,
-                                            identity,
-                                            session_cache,
-                                        },
-                                    ),
-                                    Err(e) => (
-                                        Err(e.to_string()),
-                                        AppState::Unlocked {
-                                            storage,
-                                            wallet,
-                                            identity,
-                                            session_cache,
-                                        },
-                                    ),
-                                }
-                            }
-                            Err(e) => (
-                                Err(e.to_string()),
-                                AppState::Unlocked {
-                                    storage,
-                                    wallet,
-                                    identity,
-                                    session_cache,
-                                },
-                            ),
-                        }
-                    }
-                }
-            }
-            AppState::Locked => (Err("Wallet is locked.".to_string()), AppState::Locked),
-        };
-        self.state = new_state;
-        // Siegel aktualisieren, wenn die Aktion erfolgreich war
+            temp_wallet.save(storage, identity, &auth).map_err(|e| e.to_string())?;
+            *wallet = temp_wallet;
+            Ok(proc_result)
+        });
+
         if result.is_ok() {
-            if let Err(e) = self.update_seal_after_state_change(password) {
-                eprintln!("Warning: Failed to update seal after receiving bundle: {}", e);
-            }
+            let _ = self.update_seal_after_state_change(password);
         }
         result
     }
+
     /// Importiert eine Beilegungserklärung.
     pub fn import_resolution_endorsement(
         &mut self,
@@ -588,112 +240,25 @@ impl AppService {
         // --- FORK-LOCK PRÜFUNG ---
         self.check_fork_lock(password).map_err(|e| e.to_string())?;
 
-        let current_state = std::mem::replace(&mut self.state, AppState::Locked);
-        let (result, new_state) = match current_state {
-            AppState::Unlocked {
-                mut storage,
-                wallet,
-                identity,
-                session_cache,
-            } => {
-                // --- SPERRE ERLANGEN (RAII) ---
-                let _lock_guard = match WalletLockGuard::new(&storage) {
-                    Ok(guard) => guard,
-                    Err(e) => {
-                        // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        };
-                        return Err(e.to_string());
-                    }
-                };
-                // --- SPERRE ENDE ---
+        let result = self.with_unlocked_mut(|wallet, identity, storage, session_cache| {
+            let _lock = WalletLockGuard::new(storage).map_err(|e| e.to_string())?;
+            let auth =
+                Self::resolve_auth_method(password, session_cache).map_err(|e| e.to_string())?;
 
-                let auth_method;
+            let mut temp_wallet = wallet.clone();
+            temp_wallet
+                .add_resolution_endorsement(endorsement)
+                .map_err(|e| e.to_string())?;
+            temp_wallet
+                .save(storage, identity, &auth)
+                .map_err(|e| e.to_string())?;
 
-                match password {
-                    Some(pwd_str) => {
-                        auth_method = AuthMethod::Password(pwd_str);
-                    }
-                    None => {
-                        let session_key =
-                            match &session_cache {
-                                Some(cache) => {
-                                    let now = std::time::Instant::now();
-                                    if now > cache.last_activity + cache.session_duration {
-                                        // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                                        self.state = AppState::Unlocked {
-                                            storage,
-                                            wallet,
-                                            identity,
-                                            session_cache,
-                                        };
-                                        return Err("Session timed out. Please provide password."
-                                            .to_string());
-                                    } else {
-                                        cache.session_key
-                                    }
-                                }
-                                None => {
-                                    // FEHLERBEHEBUNG: Zustand wiederherstellen & Return
-                                    self.state = AppState::Unlocked {
-                                        storage,
-                                        wallet,
-                                        identity,
-                                        session_cache,
-                                    };
-                                    return Err("Password required. Please use 'unlock_session'."
-                                        .to_string());
-                                }
-                            };
-                        auth_method = AuthMethod::SessionKey(session_key);
-                    }
-                }
-                // TRANSANKTIONALER ANSATZ:
-                let mut temp_wallet = wallet.clone();
-                match temp_wallet.add_resolution_endorsement(endorsement) {
-                    Ok(_) => match temp_wallet.save(&mut storage, &identity, &auth_method) {
-                        Ok(_) => (
-                            Ok(()),
-                            AppState::Unlocked {
-                                storage,
-                                wallet: temp_wallet,
-                                identity,
-                                session_cache,
-                            },
-                        ),
-                        Err(e) => (
-                            Err(e.to_string()),
-                            AppState::Unlocked {
-                                storage,
-                                wallet,
-                                identity,
-                                session_cache,
-                            },
-                        ),
-                    },
-                    Err(e) => (
-                        Err(e.to_string()),
-                        AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        },
-                    ),
-                }
-            }
-            AppState::Locked => (Err("Wallet is locked.".to_string()), AppState::Locked),
-        };
-        self.state = new_state;
-        // Siegel aktualisieren, wenn die Aktion erfolgreich war
+            *wallet = temp_wallet;
+            Ok(())
+        });
+
         if result.is_ok() {
-            if let Err(e) = self.update_seal_after_state_change(password) {
-                eprintln!("Warning: Failed to update seal after resolution endorsement: {}", e);
-            }
+            let _ = self.update_seal_after_state_change(password);
         }
         result
     }
