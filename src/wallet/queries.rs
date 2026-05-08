@@ -188,11 +188,33 @@ impl Wallet {
         &self,
         local_instance_id: &str,
     ) -> Result<VoucherDetails, VoucherCoreError> {
-        let instance = self
-            .voucher_store
-            .vouchers
-            .get(local_instance_id)
-            .ok_or_else(|| VoucherCoreError::VoucherNotFound(local_instance_id.to_string()))?;
+        // 1. Direkter Lookup (Performance-Pfad)
+        let instance = if let Some(inst) = self.voucher_store.vouchers.get(local_instance_id) {
+            inst
+        } else {
+            // 2. Fuzzy-Search (Fallback für historische IDs aus Logs)
+            // Wir iterieren über alle vorhandenen Gutscheine und prüfen, ob die gesuchte ID 
+            // eine historische 'local_instance_id' dieses Gutscheins sein könnte.
+            self.voucher_store.vouchers.values().find(|inst| {
+                inst.voucher.transactions.iter().any(|tx| {
+                    // Prüfe, ob der Nutzer an dieser Transaktion beteiligt war
+                    if tx.recipient_id == self.profile.user_id
+                        || tx.recipient_id == crate::models::voucher::ANONYMOUS_ID
+                        || tx.sender_id.as_deref() == Some(&self.profile.user_id)
+                    {
+                        // Berechne die historische ID, die dieser Transaktion entsprochen hätte.
+                        // Die ID basiert auf voucher_id + transaction_id + user_id.
+                        let historical_id = crate::services::crypto_utils::get_hash(format!(
+                            "{}{}{}",
+                            inst.voucher.voucher_id, tx.t_id, self.profile.user_id
+                        ));
+                        historical_id == local_instance_id
+                    } else {
+                        false
+                    }
+                })
+            }).ok_or_else(|| VoucherCoreError::VoucherNotFound(local_instance_id.to_string()))?
+        };
 
         Ok(VoucherDetails {
             local_instance_id: instance.local_instance_id.clone(),
@@ -673,5 +695,69 @@ mod aggregation_tests {
         
         assert!(classes.iter().any(|c| !c.is_test_voucher && c.display_standard_name == "Minuto"));
         assert!(classes.iter().any(|c| c.is_test_voucher && c.display_standard_name == "TEST-Minuto"));
+    }
+}
+
+#[cfg(test)]
+mod lookup_tests {
+    use super::*;
+    use crate::test_utils::{setup_in_memory_wallet, ACTORS};
+    use crate::wallet::instance::{VoucherInstance, VoucherStatus};
+    use crate::models::voucher::{Voucher, Transaction};
+
+    #[test]
+    fn test_get_voucher_details_fuzzy_lookup_success() {
+        let identity = &ACTORS.alice;
+        let mut wallet = setup_in_memory_wallet(identity);
+        let user_id = &identity.user_id;
+
+        // 1. Erstelle einen Gutschein mit zwei Transaktionen
+        let mut v = Voucher::default();
+        v.voucher_id = "v1".to_string();
+        
+        // Initiale Transaktion (TX1)
+        v.transactions.push(Transaction {
+            t_id: "tx1".to_string(),
+            recipient_id: user_id.clone(),
+            ..Default::default()
+        });
+        
+        let id_tx1 = crate::services::crypto_utils::get_hash(format!("v1tx1{}", user_id));
+        
+        // Zweite Transaktion (TX2) - simuliert einen Transfer/Split
+        v.transactions.push(Transaction {
+            t_id: "tx2".to_string(),
+            recipient_id: user_id.clone(),
+            sender_id: Some(user_id.clone()),
+            ..Default::default()
+        });
+        
+        let id_tx2 = crate::services::crypto_utils::get_hash(format!("v1tx2{}", user_id));
+        
+        // Aktueller Zustand im Wallet ist ID_TX2
+        wallet.voucher_store.vouchers.insert(id_tx2.clone(), VoucherInstance {
+            voucher: v,
+            status: VoucherStatus::Active,
+            local_instance_id: id_tx2.clone(),
+        });
+
+        // Prüfung A: Direkter Lookup (TX2)
+        let details = wallet.get_voucher_details(&id_tx2).unwrap();
+        assert_eq!(details.local_instance_id, id_tx2);
+
+        // Prüfung B: Fuzzy Lookup (TX1) - Dies ist der Kern der Neuerung!
+        let details_fuzzy = wallet.get_voucher_details(&id_tx1).expect("Fuzzy lookup should find the voucher via historical ID");
+        assert_eq!(details_fuzzy.local_instance_id, id_tx2, "Should return the current ID");
+    }
+
+    #[test]
+    fn test_get_voucher_details_not_found() {
+        let identity = &ACTORS.alice;
+        let wallet = setup_in_memory_wallet(identity);
+        
+        let result = wallet.get_voucher_details("non-existent");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("fully spent, deleted, or transferred"), "Error message should be descriptive");
     }
 }

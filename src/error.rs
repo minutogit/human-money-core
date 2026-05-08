@@ -387,7 +387,7 @@ pub enum VoucherCoreError {
     WalletLocked,
     #[error("Feature not implemented yet: {0}")]
     NotImplemented(String),
-    #[error("Voucher with local instance ID '{0}' not found in wallet.")]
+    #[error("Voucher with local instance ID '{0}' not found in wallet. It may have been fully spent, deleted, or transferred.")]
     VoucherNotFound(String),
     #[error("Action requires an active voucher, but its status is {0:?}.")]
     VoucherNotActive(VoucherStatus),

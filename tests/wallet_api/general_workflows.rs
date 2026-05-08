@@ -118,8 +118,8 @@ fn api_app_service_full_lifecycle() {
         .expect("Transfer failed");
     let summary = service_alice
         .get_voucher_details(&local_id_alice)
-        .expect_err("Old voucher ID should not resolve to an active voucher anymore");
-    assert!(summary.to_lowercase().contains("not found"));
+        .expect("Fuzzy search should resolve the old ID to the archived voucher");
+    assert_eq!(summary.status, VoucherStatus::Archived, "The voucher should be archived after a full transfer");
 
     // --- 6. Bob empfängt den Gutschein ---
     service_bob.unlock_session(password, 60).unwrap();

@@ -3,7 +3,7 @@ project: human-money-core
 version: "0.2.15"
 phase: "active-development"
 health: "green"
-last_updated: "2026-05-03"
+last_updated: "2026-05-08"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -32,6 +32,7 @@ priority_tasks:
 ## Current Focus
 
 The core library is stable and feature-rich. Current focus areas:
+- **New**: Fuzzy-Search für historische Gutschein-Logs (Voucher Linkage Recovery)
 - **New**: WalletSeal Rollback Guard & Storage Integrity
 - L2 gateway integration testing (playground & stress tests)
 - Voucher validation hardening (edge-case tests for ISO 8601, date rounding)
@@ -81,6 +82,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **Scalable Event Chunking**: Optimized event sourcing with time-based monthly chunks (YYYY_MM.json.enc), lazy "Move-then-Delete" migration for legacy logs, and O(N) idempotent appends with O(1) memory pagination.
 - [x] **Prefix-less Identity Integration**: Implemented support for pure `did:key` Root-Accounts, decoupled HKDF derivation from legacy prefixes, and synchronized the 150+ test suite with the 2-decimal FreeTaler precision standard.
 - [x] **Centralized Voucher Standard Parsing**: Exposed typsafe TOML parsing in `AppService`, enabling client apps to leverage core validation logic and signature verification with verified snake_case stability.
+- [x] **Fuzzy-Search for historical voucher logs**: Resolved UI lookup errors by implementing a historical ID fallback mechanism in `Wallet::get_voucher_details`, allowing logs to correctly reference vouchers even after state-changing transactions.
 
 
 ## Next Milestones
