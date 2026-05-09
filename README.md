@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Human Money Core** (`human_money_core`) is the foundational Rust library powering the [Human Money / Minuto](https://github.com/minutogit) ecosystem. It is a library for managing and transferring self-issued, cryptographic value documents. It enables a decentralized value exchange that turns fundamental concepts of classical crypto systems upside down, putting humans back in the center.
+**Human Money Core** (`human_money_core`) is the foundational Rust library powering the Human Money ecosystem. It is a library for managing and transferring self-issued, cryptographic value documents. It enables a decentralized value exchange that turns fundamental concepts of classical crypto systems upside down, putting humans back in the center.
 
 ## Core Concepts
 
