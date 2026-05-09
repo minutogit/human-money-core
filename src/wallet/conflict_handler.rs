@@ -252,7 +252,41 @@ impl Wallet {
         }
 
         if conflicting_transactions.is_empty() {
-            return Ok(None);
+            // FIX: Für reine Gossip-Konflikte hat der lokale Wallet die Transaktionen
+            // nie in seinem Store. Wenn wir >= 2 Fingerprints mit unterschiedlichen
+            // t_ids haben, können wir dennoch einen "Gossip Soft Proof" erstellen.
+            if fingerprints.len() >= 2 {
+                let unique_t_ids: std::collections::HashSet<_> =
+                    fingerprints.iter().map(|fp| &fp.t_id).collect();
+                if unique_t_ids.len() >= 2 {
+                    // Erzeuge synthetische Transaktionen aus den Fingerprint-Daten.
+                    // Die offender_id kann nur als ANONYMOUS gesetzt werden, da die
+                    // vollständige mathematische Identitätswiederherstellung (V = u·M + ID)
+                    // erst mit den echten TrapData (u, blinded_id) möglich ist — aber
+                    // der Gossip-Empfänger hat genug Daten für einen Soft Proof.
+                    let offender_id = crate::models::voucher::ANONYMOUS_ID.to_string();
+                    // Verwende den ds_tag als Proxy für den fork_point_prev_hash,
+                    // da der eigentliche prev_hash nicht verfügbar ist.
+                    let fork_point_prev_hash = fingerprints[0].ds_tag.clone();
+
+                    for fp in fingerprints {
+                        let mut synthetic_tx = crate::models::voucher::Transaction::default();
+                        synthetic_tx.t_id = fp.t_id.clone();
+                        synthetic_tx.sender_id = Some(offender_id.clone());
+                        synthetic_tx.prev_hash = fork_point_prev_hash.clone();
+                        synthetic_tx.t_type = "gossip_soft_placeholder".to_string();
+                        synthetic_tx.amount = "0.00 (Gossip)".to_string();
+                        conflicting_transactions.push(synthetic_tx);
+                    }
+
+                    // Überspringe die Missing-Generierung (alles bereits abgedeckt)
+                    missing_t_ids.clear();
+                } else {
+                    return Ok(None);
+                }
+            } else {
+                return Ok(None);
+            }
         }
 
         // 2. Extrahiere Kerndaten von der ERSTEN gefundenen Transaktion.
@@ -555,6 +589,21 @@ impl Wallet {
                 }
             }
             meta.known_by_peers.insert(sender_short_hash);
+
+            // FIX: Gossip-Fingerprints persistent in foreign_fingerprints speichern.
+            // Bisher wurden nur die Metadaten aktualisiert; die TransactionFingerprint-Objekte
+            // selbst wurden nie abgelegt. Ohne diese Persistenz kann check_for_double_spend()
+            // keine Kollisionen erkennen, die ausschließlich auf Gossip-Daten basieren.
+            for (fp, _depth) in &group {
+                let entry = self
+                    .known_fingerprints
+                    .foreign_fingerprints
+                    .entry(fp.ds_tag.clone())
+                    .or_default();
+                if !entry.iter().any(|existing| existing.t_id == fp.t_id) {
+                    entry.push((*fp).clone());
+                }
+            }
         }
 
         // Phase 2: Implizite Bestätigung (aus der Gutscheinkette)

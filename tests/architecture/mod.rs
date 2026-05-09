@@ -8,3 +8,4 @@ pub mod hardening;
 pub mod resilience_and_gossip;
 mod security_hardening;
 pub mod rollback_guard_tests;
+pub mod gossip_decoupled_double_spend;
