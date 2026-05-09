@@ -1,6 +1,6 @@
 ---
 project: human-money-core
-version: "0.2.15"
+version: "0.2.16"
 phase: "active-development"
 health: "green"
 last_updated: "2026-05-09"
@@ -87,6 +87,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **Transactional Command Helpers**: Hardened AppService architecture with `with_transactional_mut` and `TransactionOutcome`, centralizing locking, atomic cloning, saving, and sealing to reduce boilerplate and eliminate state orchestration errors.
 - [x] **Core Refactoring & Modularity**: Modularized `voucher_manager`, `voucher_validation`, and `test_utils` into directory-based modules with facade patterns; removed legacy monolithic files (1400+ lines each) to reduce cognitive load and improve maintainability.
 - [x] **English Documentation Migration**: Completed transition to English comments and Rustdoc for core library entry points (`lib.rs`, `error.rs`, `app_service`), improving developer tool support and accessibility.
+- [x] **README Architecture Overhaul**: Integrated comprehensive "Core Concepts" and updated technical architecture description to reflect the current identity-centric, offline-first design paradigm.
 
 
 ## Next Milestones

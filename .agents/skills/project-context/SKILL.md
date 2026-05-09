@@ -11,7 +11,23 @@ Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `human_m
 
 - **Projektname:** `human_money_core`
 
-- **Zweck:** Implementierung der Kernlogik eines dezentralen, vertrauensbasierten elektronischen Gutschein-Zahlungssystems.
+### Was ist die human_money_core?
+Die human_money_core ist eine Rust-Bibliothek zur Verwaltung und Übertragung von selbstgeschöpften, kryptographischen Wertdokumenten. Sie ermöglicht einen dezentralen Werteaustausch, der fundamentale Konzepte klassischer Krypto-Systeme auf den Kopf stellt und den Menschen wieder in den Mittelpunkt rückt.
+
+**1. Architektur: Autarke Container statt globales Ledger**
+Das System nutzt bewusst keine Blockchain und benötigt keinen Netzwerkkonsens. Jedes Wertdokument ist eine isolierte, portable JSON-Datei. Diese Datei fungiert als autarker Container, der seine komplette, kryptographisch verkettete Transaktionshistorie (Signaturkette) in sich selbst trägt. Transaktionen können asynchron und offline erfolgen durch die direkte, P2P-basierte Übergabe der aktualisierten Datei.
+
+**2. "Human Money": Identität, Reputation und Vertrauen**
+Warum Human Money? Weil bei der Schöpfung von Werten (wie Dienstleistungen, Zeit oder Gütern) nicht die Technik, sondern der Mensch im Fokus steht. Transaktionen nutzen in der Regel bekannte kryptographische Identitäten (did:key). Sicherheit und Akzeptanz des Geldes basieren somit nicht auf einem abstrakten Algorithmus, sondern primär auf der realen Reputation und Vertrauenswürdigkeit der handelnden Akteure.
+
+**3. Sicherheitsparadigma: Betrugserkennung statt Betrugsvermeidung**
+Da es auf Layer 1 keinen globalen Konsens-Mechanismus gibt, der Transaktionen vor der Ausführung validiert, setzt die Kernarchitektur auf deterministische Betrugserkennung. Das System garantiert, dass jeder Betrugsversuch (z. B. Double-Spending) durch kryptographische NIZK-Fallen (Identity Traps) fälschungssichere mathematische Beweise in der Signaturkette hinterlässt, welche die Identität des Betrügers mathematisch offenlegen.
+
+**4. Datenschutz vs. Rückverfolgbarkeit**
+Das System erlaubt es, Transaktionen mit zusätzlichen Datenschutzschichten (Verschlüsselung, ephemere Schlüssel) zu versehen. Dies ist eine bewusste Abwägung: Während die Privatsphäre der Nutzer steigt, wird die Aufklärung von Betrugsfällen und Sybil-Identitäten aufwendiger, da sie eine manuelle, kryptographische Rückverfolgung der Kette erfordert.
+
+**5. Skalierung: Layer 2 für globale Betrugsvermeidung**
+Während der Core (Layer 1) offline funktioniert und primär auf Erkennung setzt, kann das System durch eine zusätzliche, optionale Online-Schicht (Layer 2) mit präventiver Betrugsvermeidung erweitert werden. Im Gegensatz zu Blockchains erfordert dieser Layer 2 keinen globalen Konsens. Er fungiert lediglich als dezentrales Register für kryptographische "Locks" (Sperren). Clients können online asynchron abprüfen, ob ein Gutschein-Fingerprint bereits als ausgegeben markiert wurde, wodurch ein globaler, präventiver Schutz vor Double-Spending entsteht, ohne die Skalierbarkeit zu gefährden.
 
 - **Hauptziel:** Bereitstellung einer robusten, sicheren und performanten Bibliothek, die später über FFI (Foreign Function Interface) und WASM (WebAssembly) in anderen Umgebungen (z.B. Desktop-Anwendungen, Web-Clients) genutzt werden kann.
 
