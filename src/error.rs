@@ -1,8 +1,8 @@
 //! # src/error.rs
 //!
-//! Definiert den zentralen Fehlertyp für die gesamte human_money_core-Bibliothek.
-//! Verwendet `thiserror` zur einfachen Erstellung von aussagekräftigen Fehlern
-//! und zur automatischen Konvertierung von untergeordneten Fehlertypen.
+//! Defines the central error type for the entire human_money_core library.
+//! Uses `thiserror` for easy creation of meaningful errors
+//! and automatic conversion of subordinate error types.
 
 use crate::wallet::instance::VoucherStatus;
 use crate::{
@@ -15,32 +15,32 @@ use crate::{
 };
 use thiserror::Error;
 
-/// Definiert Fehler, die bei der Verarbeitung einer `VoucherStandardDefinition` auftreten können.
+/// Defines errors that can occur during the processing of a `VoucherStandardDefinition`.
 #[derive(Error, Debug)]
 pub enum StandardDefinitionError {
-    /// Der `[signature]`-Block fehlt in der Definition.
+    /// The `[signature]` block is missing from the definition.
     #[error("The [signature] block is missing from the standard definition.")]
     MissingSignatureBlock,
-    /// Die kryptographische Signatur der Standard-Definition ist ungültig.
+    /// The cryptographic signature of the standard definition is invalid.
     #[error("The signature of the standard definition is invalid.")]
     InvalidSignature,
-    /// Der Hash des Standards im Gutschein stimmt nicht mit dem Hash des geladenen Standards überein.
+    /// The standard definition hash in the voucher does not match the hash of the loaded standard.
     #[error("The standard definition hash in the voucher does not match the loaded standard.")]
     StandardHashMismatch,
-    /// Fehler bei der Dekodierung der Signatur (z.B. Base58).
+    /// Error during signature decoding (e.g. Base58).
     #[error("Failed to decode signature: {0}")]
     SignatureDecode(String),
-    /// Der angegebene Privacy Mode im Standard ist ungültig.
+    /// The specified privacy mode in the standard is invalid.
     #[error("Invalid privacy mode: {0}")]
     InvalidMode(String),
 }
 
-/// Definiert die verschiedenen Fehler, die während der Validierung auftreten können.
-/// Diese Fehler sind spezifisch für die Überprüfung eines Gutscheins gegen seinen Standard.
+/// Defines the various errors that can occur during validation.
+/// These errors are specific to verifying a voucher against its standard.
 #[derive(Error, Debug)]
 pub enum ValidationError {
-    // --- Datengesteuerte Validierungsfehler ---
-    /// Eine quantitative Regel wurde verletzt (z.B. zu viele oder zu wenige Signaturen).
+    // --- Data-driven validation errors ---
+    /// A quantitative rule was violated (e.g. too many or too few signatures).
     #[error(
         "Count for '{field}' is out of bounds. Expected min: {min}, max: {max}, but found: {found}."
     )]
@@ -51,11 +51,11 @@ pub enum ValidationError {
         found: usize,
     },
 
-    /// Eine im Standard als zwingend erforderliche Signatur fehlt oder ist ungültig.
+    /// A signature required by the standard is missing or invalid.
     #[error("A required signature is missing for role: '{role}'.")]
     MissingRequiredSignature { role: String },
 
-    /// Der Wert eines Feldes entspricht nicht dem im Standard festgeschriebenen Wert.
+    /// The value of a field does not match the value defined in the standard.
     #[error("Field '{field}' has a mismatched value. Expected: {expected}, Found: {found}.")]
     FieldValueMismatch {
         field: String,
@@ -63,7 +63,7 @@ pub enum ValidationError {
         found: serde_json::Value,
     },
 
-    /// Der Wert eines Feldes ist in der Liste der erlaubten Werte nicht enthalten.
+    /// The value of a field is not included in the list of allowed values.
     #[error(
         "Field '{field}' has a value that is not in the allowed list. Found: {found}, Allowed: {allowed:?}."
     )]
@@ -73,7 +73,7 @@ pub enum ValidationError {
         allowed: Vec<serde_json::Value>,
     },
 
-    /// Der Wert eines Feldes entspricht nicht dem geforderten Regex-Muster.
+    /// The value of a field does not match the required regex pattern.
     #[error(
         "Field '{field}' does not match the required pattern '{pattern}'. Found value: '{found}'."
     )]
@@ -83,18 +83,18 @@ pub enum ValidationError {
         found: String,
     },
 
-    /// Der Transaktionstyp (`t_type`) ist laut Standard nicht zulässig.
+    /// The transaction type (`t_type`) is not permitted according to the standard.
     #[error("Transaction type '{t_type}' is not allowed. Allowed types are: {allowed:?}.")]
     TransactionTypeNotAllowed {
         t_type: String,
         allowed: Vec<String>,
     },
 
-    /// Ein Wert unter einem Pfad hatte einen unerwarteten Datentyp.
+    /// A value under a path had an unexpected data type.
     #[error("Invalid data type at path '{path}', expected {expected}")]
     InvalidDataType { path: String, expected: String },
 
-    /// Ein Feldwert in einer Gruppe von Objekten kam nicht in der erwarteten Häufigkeit (min/max) vor.
+    /// A field value in a group of objects did not occur with the expected frequency (min/max).
     #[error(
         "Field group validation failed for field '{field}' at path '{path}': Expected value '{value}' to appear between {min} and {max} times, but found {found}."
     )]
@@ -107,118 +107,118 @@ pub enum ValidationError {
         found: u32,
     },
 
-    /// Es wurde versucht, einen nicht teilbaren Gutschein zu teilen.
+    /// An attempt was made to split a non-divisible voucher.
     #[error("The voucher is not divisible and a split transaction was attempted.")]
     VoucherPartialTransferNotAllowed,
 
-    /// Die Gültigkeitsdauer des Gutscheins überschreitet die im Standard definierte Maximaldauer.
+    /// The voucher's validity duration exceeds the maximum duration defined in the standard.
     #[error(
         "Voucher validity duration exceeds the maximum allowed. Max allowed: '{max_allowed}', Found: '{found}'."
     )]
     ValidityDurationExceeded { max_allowed: String, found: String },
 
-    /// Ein JSON-Pfad konnte im Gutschein-Objekt nicht gefunden werden.
+    /// A JSON path could not be found in the voucher object.
     #[error("Content rule failed: Path '{path}' could not be resolved in the voucher.")]
     PathNotFound { path: String },
 
-    /// Eine dynamische CEL-Regel wurde verletzt.
+    /// A dynamic CEL rule was violated.
     #[error("Business rule violated: {0}")]
     BusinessRuleViolated(String),
 
-    // --- Logische & kryptographische Validierungsfehler ---
-    /// Die UUID des Standards im Gutschein stimmt nicht mit der UUID der Validierungsdefinition überein.
+    // --- Logical & cryptographic validation errors ---
+    /// The UUID of the standard in the voucher does not match the UUID of the validation definition.
     #[error("Voucher standard UUID mismatch. Expected: {expected}, Found: {found}")]
     StandardUuidMismatch { expected: String, found: String },
 
-    /// Die Signatur des Erstellers ist ungültig.
+    /// The creator's signature is invalid.
     #[error("Creator signature is invalid for creator {creator_id} and data hash {data_hash}")]
     InvalidCreatorSignature {
         creator_id: String,
         data_hash: String,
     },
 
-    /// Die User ID des Erstellers ist ungültig oder der Public Key kann nicht extrahiert werden.
+    /// The creator's User ID is invalid or the public key cannot be extracted.
     #[error("Invalid creator ID: {0}")]
     InvalidCreatorId(#[from] GetPubkeyError),
 
-    /// Private Mode: Eine Identitäts-Signatur wurde gefunden, obwohl der Modus Anonymität vorschreibt.
+    /// Private Mode: An identity signature was found even though the mode mandates anonymity.
     #[error(
         "Privacy Leak: Transaction '{t_id}' contains a sender_identity_signature in private mode."
     )]
     PrivateSignatureLeak { t_id: String },
 
-    /// Privacy Mode: Der Privacy Mode des Standards wurde verletzt (Identitäts-Veröffentlichung).
+    /// Privacy Mode: The standard's privacy mode was violated (identity disclosure).
     #[error("Privacy Mode Violation in transaction '{t_id}': {reason}")]
     PrivacyModeViolation { t_id: String, reason: String },
 
-    /// Flexible Mode: Eine Identitäts-Signatur ist vorhanden, aber die sender_id fehlt (Inkonsistenz).
+    /// Flexible Mode: An identity signature is present, but the sender_id is missing (inconsistency).
     #[error(
         "Data Hygiene: Transaction '{t_id}' contains a signature but no sender_id in flexible mode."
     )]
     FlexibleModeIdentityInconsistency { t_id: String },
 
-    /// Trap Data: Die blinded_id (Trap) hat ein ungültiges Format oder enthält verdächtige Daten.
+    /// Trap Data: The blinded_id (trap) has an invalid format or contains suspicious data.
     #[error("Trap Integrity: Transaction '{t_id}' has invalid or suspicious blinded_id format.")]
     TrapDataInvalid { t_id: String },
 
-    /// Der im privacy_guard deklarierte Sender stimmt nicht mit dem Bündel-Absender überein.
+    /// The sender declared in the privacy_guard does not match the bundle sender.
     #[error("Privacy Guard Integrity: Declared sender '{declared}' does not match bundle signer '{actual}'.")]
     MismatchedPrivacySenderId { declared: String, actual: String },
 
-    /// Der privacy_guard konnte nicht entschlüsselt oder geparst werden.
+    /// The privacy_guard could not be decrypted or parsed.
     #[error("Privacy Guard decryption or parsing failed: {0}")]
     PrivacyGuardDecryptionFailed(String),
 
-    /// Die voucher_id in einer Signatur stimmt nicht mit der des Gutscheins überein.
+    /// The voucher_id in a signature does not match the voucher's voucher_id.
     #[error("Signature references wrong voucher. Expected ID: {expected}, Found ID: {found}")]
     MismatchedVoucherIdInSignature { expected: String, found: String },
 
-    /// Die Signatur-ID ist ungültig, was auf manipulierte Signatur-Metadaten hindeutet.
+    /// The signature ID is invalid, suggesting tampered signature metadata.
     #[error("The signature ID {0} is invalid or data was tampered with")]
     InvalidSignatureId(String),
 
-    /// Eine Signatur ist kryptographisch ungültig.
+    /// A signature is cryptographically invalid.
     #[error("Invalid signature for signer {signer_id}")]
     InvalidSignature { signer_id: String },
 
-    /// Die Transaktionskette ist ungültig (z.B. falscher prev_hash oder Signatur).
+    /// The transaction chain is invalid (e.g. incorrect prev_hash or signature).
     #[error("Invalid transaction: {0}")]
     InvalidTransaction(String),
 
-    /// Der `voucher_id` (Hash der Stammdaten) passt nicht zu den Stammdaten.
+    /// The `voucher_id` (hash of master data) does not match the master data.
     #[error(
         "Voucher hash mismatch: The voucher's data hash (voucher_id) does not match its content."
     )]
     InvalidVoucherHash,
 
-    /// Die Signatur einer Transaktion ist ungültig.
+    /// A transaction signature is invalid.
     #[error("Invalid signature for transaction '{t_id}' from sender '{sender_id}'")]
     InvalidTransactionSignature { t_id: String, sender_id: String },
 
-    /// Die Signatur eines TransactionBundle ist ungültig.
+    /// A TransactionBundle signature is invalid.
     #[error("The signature of the transaction bundle is invalid.")]
     InvalidBundleSignature,
 
-    /// Die digitale Signatur des SecureContainers ist ungültig.
+    /// The digital signature of the SecureContainer is invalid.
     #[error("The digital signature of the secure container is invalid.")]
     InvalidContainerSignature,
 
-    /// Fehler bei der Dekodierung einer Signatur (z.B. Base58).
+    /// Error during signature decoding (e.g. Base58).
     #[error("Failed to decode signature: {0}")]
     SignatureDecodeError(String),
 
-    /// Der Betrag hat mehr Nachkommastellen als vom Standard erlaubt.
+    /// The amount has more decimal places than permitted by the standard.
     #[error("Invalid amount precision. Allowed up to {allowed} decimal places, but found {found}")]
     TooManyDecimalPlaces { allowed: u32, found: u32 },
 
-    /// Der Betrag der `init`-Transaktion stimmt nicht mit dem Nennwert des Gutscheins überein.
+    /// The amount of the `init` transaction does not match the nominal value of the voucher.
     #[error(
         "Initial transaction amount must match nominal value. Expected: {expected}, Found: {found}"
     )]
     InitAmountMismatch { expected: String, found: String },
 
-    // --- Neue Validierungsfehler aus 'test_advanced_validation' ---
-    /// Das Gültigkeitsdatum liegt vor dem Erstellungsdatum.
+    // --- New validation errors from 'test_advanced_validation' ---
+    /// The validity date is before the creation date.
     #[error(
         "Invalid date logic: valid_until ('{valid_until}') cannot be before creation_date ('{creation}')."
     )]
@@ -227,15 +227,15 @@ pub enum ValidationError {
         valid_until: String,
     },
 
-    /// Ein Unterzeichner hat versucht, mehrfach für dieselbe Rolle zu unterschreiben.
+    /// A signer attempted to sign multiple times for the same role.
     #[error("Duplicate signature found for signer: {signer_id}. A signer can only sign once per role.")]
     DuplicateSignature { signer_id: String },
 
-    /// Eine Identität (Public Key) wurde mehrfach als Ersteller oder Unterzeichner verwendet, auch wenn die ID abweicht.
+    /// An identity (public key) was used multiple times as creator or signer, even if the ID differs.
     #[error("Duplicate identity detected for signer: {signer_id}. The underlying cryptographic key is already in use for this voucher.")]
     DuplicateIdentityDetected { signer_id: String },
 
-    /// Ein Zeitstempel in der Kette ist nicht chronologisch korrekt.
+    /// A timestamp in the chain is not chronologically correct.
     #[error(
         "Invalid time order for {entity} '{id}': timestamp '{time2}' is not after previous timestamp '{time1}'."
     )]
@@ -246,17 +246,17 @@ pub enum ValidationError {
         time2: String,
     },
 
-    /// Sender oder Empfänger der 'init'-Transaktion ist nicht der Ersteller des Gutscheins.
+    /// The sender or recipient of the 'init' transaction is not the creator of the voucher.
     #[error("Initial transaction party mismatch: expected '{expected}', found '{found}'.")]
     InitPartyMismatch { expected: String, found: String },
 
-    /// Die t_id einer Transaktion stimmt nicht mit dem Hash ihres Inhalts überein.
+    /// The t_id of a transaction does not match the hash of its content.
     #[error(
         "Transaction ID mismatch for transaction '{t_id}'. The content may have been tampered with."
     )]
     MismatchedTransactionId { t_id: String },
 
-    /// Die Teilbarkeitseigenschaft des Gutscheins stimmt nicht mit der des Standards überein.
+    /// The divisibility property of the voucher does not match that of the standard.
     #[error(
         "Divisibility mismatch: voucher is '{from_voucher}' but standard requires '{from_standard}'."
     )]
@@ -265,17 +265,17 @@ pub enum ValidationError {
         from_standard: bool,
     },
 
-    /// Ein Betrag in einer Transaktion ist negativ oder null.
+    /// An amount in a transaction is negative or zero.
     #[error("Transaction amount must be positive, but found '{amount}'.")]
     NegativeOrZeroAmount { amount: String },
 
-    /// Bei einem vollen Transfer stimmt der Transaktionsbetrag nicht mit dem Guthaben des Senders überein.
+    /// In a full transfer, the transaction amount does not match the sender's balance.
     #[error(
         "Full transfer amount mismatch: Sender's balance is '{expected}', but transaction amount is '{found}'."
     )]
     FullTransferAmountMismatch { expected: String, found: String },
 
-    /// Während der Überprüfung der Transaktionskette wurden unzureichende Mittel festgestellt.
+    /// Insufficient funds were detected during the transaction chain verification.
     #[error(
         "Insufficient funds found in transaction chain for user '{user_id}'. Needed: {needed}, Available: {available}"
     )]
@@ -285,13 +285,13 @@ pub enum ValidationError {
         available: String,
     },
 
-    /// Die Gültigkeitsdauer des Gutscheins ist kürzer als vom Standard gefordert.
+    /// The voucher's validity duration is shorter than required by the standard.
     #[error(
         "The voucher's effective validity duration is shorter than the minimum required by the standard."
     )]
     ValidityDurationTooShort,
 
-    /// Die im Gutschein gespeicherte Mindestgültigkeitsregel stimmt nicht mit der des Standards überein.
+    /// The minimum validity rule stored in the voucher does not match the standard.
     #[error(
         "The minimum validity duration rule stored in the voucher does not match the standard. Expected: {expected}, Found: {found}"
     )]
@@ -323,7 +323,7 @@ pub enum ValidationError {
     #[error("JSON validation error: {0}")]
     Json(#[from] serde_json::Error),
 
-    /// Ein Zeitstempel liegt zu weit in der Zukunft.
+    /// A timestamp is too far in the future.
     #[error("Rejection: {entity} '{id}' has a timestamp '{timestamp}' that is too far in the future (Limit: {limit}). Please wait {wait_duration} before importing.")]
     FutureTimestampRejected {
         entity: String,
@@ -333,12 +333,12 @@ pub enum ValidationError {
         wait_duration: String,
     },
 
-    /// Der Gutschein verwendet einen Namen (Währung oder Standard), der Testgeld vortäuscht, obwohl er als Echtgeld deklariert ist.
+    /// The voucher uses a name (currency or standard) that simulates test money, even though it is declared as real money.
     #[error("Anti-Spoofing: Genuine voucher uses deceptive 'TEST' prefix in currency or standard name: {reason}")]
     DeceptiveNaming { reason: String },
 }
 
-/// Der zentrale Fehlertyp für alle Operationen in der `human_money_core`-Bibliothek.
+/// The central error type for all operations in the `human_money_core` library.
 #[derive(Error, Debug)]
 pub enum VoucherCoreError {
     #[error("Validation Error: {0}")]
@@ -428,46 +428,46 @@ pub enum VoucherCoreError {
         wait_duration: String,
     },
 
-    // --- WalletSeal / Rollback Guard Fehler ---
+    // --- WalletSeal / Rollback Guard Errors ---
 
-    /// Das lokale Siegel (seal.json) fehlt. Normaler Start und Transaktionen
-    /// sind nicht erlaubt. Der Nutzer muss die Recovery-Flow starten.
+    /// The local security seal (seal.json) is missing. Normal startup and transactions
+    /// are not allowed. The user must start the recovery flow.
     #[error("Security Alert: No local security seal found. Recovery is required to re-anchor the wallet.")]
     RequiresSealRecovery,
 
-    /// Der state_hash im Siegel stimmt nicht mit dem geladenen OwnFingerprints-Store überein.
-    /// Lokaler Speicher wurde manipuliert, korrumpiert oder via altem Backup zurückgesetzt.
+    /// The state_hash in the seal does not match the loaded OwnFingerprints store.
+    /// Local storage was tampered with, corrupted, or reset via an old backup.
     #[error("Critical Error: Wallet state manipulation or outdated backup detected. The local transaction data does not match the security seal.")]
     StateRollbackDetected,
 
-    /// Die Hash-Kette des Remote-Siegels stimmt nicht mit dem lokalen Siegel überein.
-    /// Indikator für einen schwerwiegenden Multi-Device-Konflikt.
+    /// The hash chain of the remote seal does not match the local seal,
+    /// indicating a serious multi-device conflict.
     #[error("Sync Conflict: The hash chain of the remote seal does not align with the local seal, indicating a multi-device fork.")]
     SealForkDetected,
 
-    /// Ein Fork wurde erkannt und das Wallet ist nun persistent gesperrt.
-    /// Keine Transaktionen können empfangen oder gesendet werden.
-    /// Nur `recover_wallet_and_set_new_password` kann diese Sperre aufheben.
+    /// A fork was detected and the wallet is now persistently locked.
+    /// No transactions can be received or sent.
+    /// Only `recover_wallet_and_set_new_password` can lift this lock.
     #[error("Security Lockdown: Wallet is locked due to a detected fork in the transaction history. Recovery required.")]
     WalletLockedDueToFork,
 
-    /// Zone 2: Bundle-Zeitstempel liegt 5 Minuten bis 24 Stunden vor der epoch_start_time.
-    /// Double-Spend-Falle möglich. Erfordert explizite Nutzerbestätigung.
+    /// Zone 2: Bundle timestamp is 5 minutes to 24 hours before the epoch_start_time.
+    /// Potential double-spend trap. Requires explicit user confirmation.
     #[error("Warning: This transaction occurred shortly before the recent wallet recovery. Confirm with force_accept_tolerance_bundle.")]
     BundleInRecoveryToleranceZone,
 
-    /// Zone 3: Bundle-Zeitstempel liegt 24 Stunden bis 28 Tage vor der epoch_start_time.
-    /// Hohes Risiko eines schweren Double-Spends. Erfordert kritische Nutzerbestätigung.
+    /// Zone 3: Bundle timestamp is 24 hours to 28 days before the epoch_start_time.
+    /// High risk of serious double-spending. Requires critical user confirmation.
     #[error("CRITICAL WARNING: This transaction is up to 4 weeks old relative to the last recovery. High double-spend risk.")]
     BundleInExtendedRecoveryToleranceZone,
 
-    /// Zone 4: Bundle-Zeitstempel älter als 28 Tage vor der epoch_start_time.
-    /// Harte Ablehnung. Keine Umgehung möglich.
+    /// Zone 4: Bundle timestamp is older than 28 days before the epoch_start_time.
+    /// Hard rejection. No bypass possible.
     #[error("Transaction Rejected: This transaction is too old relative to the last wallet recovery date. Permanently rejected.")]
     BundlePredatesCurrentEpoch,
 
-    /// Race-Condition-Schutz: Das acknowledge_seal_sync wurde mit einem Hash aufgerufen,
-    /// der nicht mehr dem aktuellsten lokalen Siegel entspricht (neue Transaktion während Upload).
+    /// Race condition protection: The acknowledge_seal_sync was called with a hash
+    /// that no longer matches the latest local seal (new transaction during upload).
     #[error("Seal sync race condition: A new transaction occurred during the upload. The acknowledgement is outdated.")]
     SealSyncRaceCondition,
 }

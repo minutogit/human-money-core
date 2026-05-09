@@ -188,7 +188,6 @@ impl AppService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::app_service::AppService;
     use std::path::Path;
 

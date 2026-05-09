@@ -32,14 +32,15 @@ priority_tasks:
 ## Current Focus
 
 The core library is stable and feature-rich. Current focus areas:
-- **New**: Fuzzy-Search für historische Gutschein-Logs (Voucher Linkage Recovery)
+- **New**: Modularization and structure cleanup of validation and utility modules
+- **New**: Fuzzy-Search for historical voucher logs (Voucher Linkage Recovery)
 - **New**: WalletSeal Rollback Guard & Storage Integrity
 - L2 gateway integration testing (playground & stress tests)
 - Voucher validation hardening (edge-case tests for ISO 8601, date rounding)
 - Security: Anti-Signature-Reuse-Firewall implemented
 - **New**: 'Endorsed' voucher status for persistent guarantor signature tracking
-- **New**: Storage Integrity (Integritätsschutz) für alle Wallet-Datensätze
-- **New**: Wallet Event Sourcing (Append-only Ledger für Transaktionshistorie)
+- **New**: Storage Integrity for all wallet records
+- **New**: Wallet Event Sourcing (Append-only Ledger for transaction history)
 
 ## Architecture
 
@@ -84,8 +85,8 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **Centralized Voucher Standard Parsing**: Exposed typsafe TOML parsing in `AppService`, enabling client apps to leverage core validation logic and signature verification with verified snake_case stability.
 - [x] **Fuzzy-Search for historical voucher logs**: Resolved UI lookup errors by implementing a historical ID fallback mechanism in `Wallet::get_voucher_details`, allowing logs to correctly reference vouchers even after state-changing transactions.
 - [x] **Transactional Command Helpers**: Hardened AppService architecture with `with_transactional_mut` and `TransactionOutcome`, centralizing locking, atomic cloning, saving, and sealing to reduce boilerplate and eliminate state orchestration errors.
-- [x] **Core Refactoring & Modularity**: Modularized `voucher_manager` into sub-modules, extracted epoch zone logic from command handlers, and consolidated BFF formatting to reduce cognitive load and improve maintainability while ensuring full API stability.
-- [x] **English Documentation Migration**: Initiated transition to English comments and Rustdoc across refactored modules, improving developer tool support and preparing for FFI/WASM integration.
+- [x] **Core Refactoring & Modularity**: Modularized `voucher_manager`, `voucher_validation`, and `test_utils` into directory-based modules with facade patterns; removed legacy monolithic files (1400+ lines each) to reduce cognitive load and improve maintainability.
+- [x] **English Documentation Migration**: Completed transition to English comments and Rustdoc for core library entry points (`lib.rs`, `error.rs`, `app_service`), improving developer tool support and accessibility.
 
 
 ## Next Milestones
