@@ -214,18 +214,31 @@ fn test_double_spend_detection_classifies_conflicts_correctly() {
     );
     assert!(!result.unverifiable_warnings.contains_key(tag));
 
-    // Szenario 2: Hash NICHT in local_history → unverifiable
+    // Szenario 2: Hash nur in foreign_fingerprints (Gossip) → verifiable
+    // Die Fingerprints tragen die kryptographischen Daten (u, blinded_id)
+    // für die DID-Key-Extraktion, unabhängig davon ob sie lokal oder via Gossip stammen.
     let own2 = OwnFingerprints::default();
     let mut known2 = KnownFingerprints::default();
-    // Nur in foreign_fingerprints, nicht in local_history
     known2.foreign_fingerprints.insert(tag.to_string(), vec![fp_a.clone(), fp_b.clone()]);
 
     let result2 = check_for_double_spend(&own2, &known2);
     assert!(
-        result2.unverifiable_warnings.contains_key(tag),
-        "Conflict NOT in local_history must go to unverifiable_warnings"
+        result2.verifiable_conflicts.contains_key(tag),
+        "Gossip-only conflict must also be verifiable"
     );
-    assert!(!result2.verifiable_conflicts.contains_key(tag));
+    assert!(!result2.unverifiable_warnings.contains_key(tag));
+
+    // Szenario 3: Hash nur in own.history (ohne local_history/foreign_fingerprints) → unverifiable
+    let mut own3 = OwnFingerprints::default();
+    own3.history.insert(tag.to_string(), vec![fp_a, fp_b]);
+    let known3 = KnownFingerprints::default();
+
+    let result3 = check_for_double_spend(&own3, &known3);
+    assert!(
+        result3.unverifiable_warnings.contains_key(tag),
+        "Conflict only in own.history without local/foreign must be unverifiable"
+    );
+    assert!(!result3.verifiable_conflicts.contains_key(tag));
 }
 
 /// Keine false-positives: Wenn es nur eine t_id gibt (kein Konflikt),
@@ -340,19 +353,23 @@ fn test_proof_id_is_deterministic_and_derived_from_input() {
     );
 }
 
-/// Ein `offender_id` ohne DID-Format muss einen Fehler zurückgeben.
+/// Ein `offender_id` ohne DID-Format wird als anonymer "Gossip Soft Proof" behandelt.
+/// Die proof_id wird dennoch deterministisch aus den Eingabe-Bytes berechnet.
 #[test]
-fn test_proof_creation_rejects_invalid_offender_id() {
+fn test_proof_creation_fallback_for_anonymous_offender_id() {
     let reporter = &ACTORS.reporter.identity;
     let result = create_proof_of_double_spend(
-        "invalid-no-did".to_string(),
+        "anonymous".to_string(),
         bs58::encode(b"some-hash").into_string(),
         vec![],
         "2030-12-31T23:59:59.999999Z".to_string(),
         reporter,
         false,
     );
-    assert!(result.is_err(), "Missing DID in offender_id must return Err");
+    assert!(result.is_ok(), "Anonymous offender_id must succeed with fallback");
+    let proof = result.unwrap();
+    assert!(!proof.proof_id.is_empty(), "Proof ID must not be empty even for anonymous offender");
+    assert_eq!(proof.offender_id, "anonymous");
 }
 
 // =============================================================================

@@ -262,22 +262,46 @@ fn test_conflict_classification() {
         "Fall A: Es sollte keine unverifizierbaren Warnungen geben."
     );
 
-    // Fall B: Nicht verifizierbarer Konflikt
+    // Fall B: Verifizierbarer Konflikt ausschließlich via Gossip (foreign_fingerprints)
+    // Auch wenn der Nutzer den Gutschein nie direkt besessen hat, tragen die
+    // via Gossip empfangenen Fingerprints die kryptographischen Daten (u, blinded_id)
+    // für die DID-Key-Extraktion. Daher muss auch dieser Fall als verifizierbar gelten.
     wallet.known_fingerprints.local_history.clear();
     wallet
         .known_fingerprints
         .foreign_fingerprints
-        .insert(conflict_hash.clone(), vec![fp1, fp2]);
+        .insert(conflict_hash.clone(), vec![fp1.clone(), fp2.clone()]);
 
     let result_b = wallet.check_for_double_spend();
     assert_eq!(
-        result_b.unverifiable_warnings.len(),
+        result_b.verifiable_conflicts.len(),
         1,
-        "Fall B: Eine unverifizierbare Warnung muss erkannt werden."
+        "Fall B: Auch ein Gossip-only-Konflikt muss als verifizierbar erkannt werden."
     );
     assert!(
-        result_b.verifiable_conflicts.is_empty(),
-        "Fall B: Es sollte keine verifizierbaren Konflikte geben."
+        result_b.unverifiable_warnings.is_empty(),
+        "Fall B: Es sollte keine unverifizierbaren Warnungen geben."
+    );
+
+    // Fall C: Nicht verifizierbarer Konflikt
+    // Ein Konflikt, der nur in own_fingerprints.history auftaucht (ohne Gegenstück
+    // in local_history oder foreign_fingerprints), ist nicht extern verifizierbar.
+    wallet.known_fingerprints.local_history.clear();
+    wallet.known_fingerprints.foreign_fingerprints.clear();
+    wallet
+        .own_fingerprints
+        .history
+        .insert(conflict_hash.clone(), vec![fp1, fp2]);
+
+    let result_c = wallet.check_for_double_spend();
+    assert_eq!(
+        result_c.unverifiable_warnings.len(),
+        1,
+        "Fall C: Ein Konflikt nur in own_fingerprints.history ist eine unverifizierbare Warnung."
+    );
+    assert!(
+        result_c.verifiable_conflicts.is_empty(),
+        "Fall C: Es sollte keine verifizierbaren Konflikte geben."
     );
 }
 

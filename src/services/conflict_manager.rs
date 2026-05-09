@@ -190,8 +190,12 @@ pub fn check_for_double_spend(
 
         if unique_t_ids.len() > 1 {
             // 3. Einen Konflikt als "verifizierbar" einstufen, wenn der Wallet-Besitzer
-            // mindestens eine der beteiligten Transaktionen selbst kennt (aus seiner Historie).
-            let is_verifiable = known_fingerprints.local_history.contains_key(&hash);
+            // die beteiligten Fingerprints aus irgendeiner Quelle kennt — entweder aus
+            // der eigenen Transaktionshistorie (local_history) oder via Gossip empfangen
+            // (foreign_fingerprints). In beiden Fällen tragen die Fingerprints die
+            // kryptographischen Daten (u, blinded_id) für die DID-Key-Extraktion.
+            let is_verifiable = known_fingerprints.local_history.contains_key(&hash)
+                || known_fingerprints.foreign_fingerprints.contains_key(&hash);
             if is_verifiable {
                 result.verifiable_conflicts.insert(hash.clone(), fps_vec);
             } else {
@@ -232,9 +236,12 @@ pub fn create_proof_of_double_spend(
             .into_vec()
             .map_err(|_| VoucherCoreError::Generic("Invalid offender_id did format".to_string()))?
     } else {
-        return Err(VoucherCoreError::Generic(
-            "Invalid offender_id format (missing DID)".to_string(),
-        ));
+        // Fallback für anonyme Offender (Gossip-Soft-Proofs):
+        // Wenn kein DID-Format vorliegt, verwende den Hash des offender_id-Strings
+        // als Ersatz für die Public-Key-Bytes. Dies ermöglicht deterministische
+        // proof_id-Berechnung auch für Konflikte, bei denen die Identität des
+        // Täters noch nicht mathematisch extrahiert wurde.
+        offender_id.as_bytes().to_vec()
     };
 
     let fork_prev_hash_bytes = bs58::decode(&fork_point_prev_hash)
