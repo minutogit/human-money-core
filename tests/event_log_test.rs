@@ -1,6 +1,5 @@
 use human_money_core::app_service::AppService;
 use human_money_core::services::voucher_manager::NewVoucherData;
-use std::path::Path;
 use tempfile::tempdir;
 
 #[test]
@@ -35,7 +34,7 @@ fn test_voucher_creation_emits_event() {
         },
     };
 
-    let voucher = app.create_new_voucher(standard_toml, "en", data, Some("password123"))
+    let _voucher = app.create_new_voucher(standard_toml, "en", data, Some("password123"))
         .expect("Failed to create voucher");
 
     // Check event history
@@ -81,7 +80,7 @@ fn test_status_transition_emits_event() {
         ..Default::default()
     };
 
-    let voucher = app.create_new_voucher(standard_toml, "en", data, Some("password123"))
+    let _voucher = app.create_new_voucher(standard_toml, "en", data, Some("password123"))
         .expect("Failed to create voucher");
 
     let local_id = app.get_voucher_summaries(None, None, None).expect("Failed to get summaries")[0].local_instance_id.clone();

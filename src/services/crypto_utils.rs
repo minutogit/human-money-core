@@ -218,10 +218,8 @@ pub fn derive_ephemeral_key_pair(
 
     // 2. HKDF Expand: Info (+ Context Binding)
     let mut final_info = info.as_bytes().to_vec();
-    if let Some(prefix) = context_prefix {
-        final_info.extend_from_slice(b"|");
-        final_info.extend_from_slice(prefix.as_bytes());
-    }
+    final_info.extend_from_slice(b"|");
+    final_info.extend_from_slice(context_prefix.unwrap_or("").as_bytes());
 
     let mut okm = [0u8; 32];
     hkdf.expand(&final_info, &mut okm)
@@ -815,11 +813,27 @@ pub fn decode_base64(encoded_data: &str) -> Result<Vec<u8>, VoucherCoreError> {
         .map_err(|e| VoucherCoreError::Base64(e.to_string()))
 }
 
+/// Extracts the prefix from a user ID string.
+/// Returns None for Root-Accounts (pure did:key without @).
+pub fn get_prefix_from_user_id(user_id: &str) -> Option<&str> {
+    if let Some(pos) = user_id.rfind('@') {
+        let prefix_part = &user_id[..pos];
+        // Extract only the prefix part before the checksum (e.g., "prefix" from "prefix:checksum")
+        if let Some(colon_pos) = prefix_part.rfind(':') {
+            let prefix = &prefix_part[..colon_pos];
+            if prefix.is_empty() { None } else { Some(prefix) }
+        } else {
+            // No checksum format, just return the whole prefix part
+            if prefix_part.is_empty() { None } else { Some(prefix_part) }
+        }
+    } else {
+        None // Root-Account (reine did:key)
+    }
+}
+
 /// Error types for user ID creation.
 #[derive(Debug)]
 pub enum UserIdError {
-    /// Das Präfix ist obligatorisch und darf nicht leer sein.
-    PrefixEmpty,
     /// Das Präfix ist zu lang (maximal 63 Zeichen erlaubt).
     PrefixTooLong(usize),
     /// Das Präfix enthält ungültige Zeichen.
@@ -833,9 +847,6 @@ pub enum UserIdError {
 impl fmt::Display for UserIdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            UserIdError::PrefixEmpty => {
-                write!(f, "Prefix is mandatory and must not be empty.")
-            }
             UserIdError::PrefixTooLong(len) => {
                 write!(f, "Prefix is too long: {} characters (maximum is 63).", len)
             }
@@ -857,7 +868,9 @@ impl std::error::Error for UserIdError {}
 
 /// Generiert eine User-ID mit optionalem Präfix und einer obligatorischen Prüfsumme.
 ///
-/// Das Format ist: `[präfix:]prüfsumme@did:key:z...`
+/// Das Format ist:
+/// - Mit Präfix: `[präfix:]prüfsumme@did:key:z...`
+/// - Ohne Präfix (Root-Account): `did:key:z...`
 pub fn create_user_id(
     public_key: &EdPublicKey,
     user_prefix: Option<&str>,
@@ -869,12 +882,17 @@ pub fn create_user_id(
     bytes_to_encode.extend_from_slice(&public_key.to_bytes());
     let did_key = format!("did:key:z{}", bs58::encode(bytes_to_encode).into_string());
 
-    // Das Präfix ist nun obligatorisch und darf nicht leer sein.
-    let prefix_str = user_prefix.ok_or(UserIdError::PrefixEmpty)?;
+    // Root-Account: Kein Präfix, Rückgabe der reinen did:key
+    if user_prefix.is_none() {
+        return Ok(did_key);
+    }
+
+    // Mit Präfix: Validierung und Prüfsummen-Logik
+    let prefix_str = user_prefix.unwrap();
     let prefix = prefix_str.to_lowercase();
 
     if prefix.is_empty() {
-        return Err(UserIdError::PrefixEmpty);
+        return Ok(did_key); // Leerer String wird als Root-Account behandelt
     }
     if prefix.len() > 63 {
         return Err(UserIdError::PrefixTooLong(prefix.len()));
@@ -897,13 +915,16 @@ pub fn create_user_id(
     let hash = get_hash(checksum_input.as_bytes());
     let checksum = &hash[hash.len() - 3..];
 
-    // Da das Präfix nun obligatorisch ist, entfällt der `if prefix.is_empty()`-Check.
     let human_readable_part = format!("{}:{}", prefix, checksum);
 
     Ok(format!("{}@{}", human_readable_part, did_key))
 }
 
 /// Validates a user ID string.
+///
+/// Supports both formats:
+/// - Mit Präfix: `[präfix:]prüfsumme@did:key:z...`
+/// - Ohne Präfix (Root-Account): `did:key:z...`
 ///
 /// # Arguments
 ///
@@ -913,6 +934,16 @@ pub fn create_user_id(
 ///
 /// `true` if the user ID is valid, `false` otherwise.
 pub fn validate_user_id(user_id: &str) -> bool {
+    // Root-Account: Reine did:key ohne @
+    if !user_id.contains('@') {
+        // Prüfe, ob es mit did:key:z beginnt und ein gültiger Ed25519-Schlüssel ist
+        if !user_id.starts_with("did:key:z") {
+            return false;
+        }
+        return get_pubkey_from_user_id(user_id).is_ok();
+    }
+
+    // Mit Präfix: Validierung der Prüfsumme
     let parts: Vec<&str> = user_id.split('@').collect();
     if parts.len() != 2 {
         return false;

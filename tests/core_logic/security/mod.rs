@@ -22,6 +22,7 @@ use human_money_core::test_utils;
 mod double_spend;
 mod double_spend_identification;
 mod privacy_evasion;
+mod root_account;
 mod standard_validation;
 mod state_and_collaboration;
 mod trap_verification;

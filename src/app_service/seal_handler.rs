@@ -6,9 +6,10 @@
 
 use super::{AppService, AppState};
 use crate::error::VoucherCoreError;
-use crate::models::seal::{SealSyncState, SyncStatus, WalletSeal};
+use crate::models::seal::{LocalSealRecord, SealSyncState, SyncStatus, WalletSeal};
 use crate::services::integrity_manager::IntegrityManager;
 use crate::services::seal_manager::SealManager;
+use crate::storage::file_storage::FileStorage;
 use crate::storage::{AuthMethod, Storage};
 
 impl AppService {
@@ -27,7 +28,7 @@ impl AppService {
                 session_cache,
                 ..
             } => {
-                let auth = match Self::resolve_auth(password, session_cache) {
+                let auth = match Self::resolve_auth_method(password, session_cache) {
                     Ok(a) => a,
                     Err(e) => return Err(e.to_string()),
                 };
@@ -74,7 +75,7 @@ impl AppService {
                 session_cache,
                 ..
             } => {
-                let auth = match Self::resolve_auth(password, session_cache) {
+                let auth = match Self::resolve_auth_method(password, session_cache) {
                     Ok(a) => a,
                     Err(e) => return Err(e.to_string()),
                 };
@@ -176,7 +177,7 @@ impl AppService {
                 identity,
                 session_cache,
             } => {
-                let auth_method = Self::resolve_auth(password, &session_cache)?;
+                let auth_method = Self::resolve_auth_method(password, &session_cache)?;
 
                 let record_opt = storage
                     .load_seal(&identity.user_id, &auth_method)
@@ -260,7 +261,7 @@ impl AppService {
                 identity,
                 session_cache,
             } => {
-                let auth_method = match Self::resolve_auth(password, &session_cache) {
+                let auth_method = match Self::resolve_auth_method(password, &session_cache) {
                     Ok(a) => a,
                     Err(e) => {
                         self.state = AppState::Unlocked {
@@ -382,27 +383,132 @@ impl AppService {
         }
     }
 
-    fn resolve_auth<'a>(
-        password: Option<&'a str>,
-        session_cache: &Option<super::SessionCache>,
-    ) -> Result<AuthMethod<'a>, VoucherCoreError> {
-        match password {
-            Some(pwd) => Ok(AuthMethod::Password(pwd)),
-            None => match session_cache {
-                Some(cache) => {
-                    if std::time::Instant::now() > cache.last_activity + cache.session_duration {
-                        Err(VoucherCoreError::Generic(
-                            "Session timed out. Please provide password.".to_string(),
-                        ))
-                    } else {
-                        Ok(AuthMethod::SessionKey(cache.session_key))
-                    }
+    pub(super) fn verify_seal_on_login(
+        storage: &FileStorage,
+        password: &str,
+        local_instance_id: &str,
+    ) -> Result<bool, String> {
+        let auth = AuthMethod::Password(password);
+        let seal_record = storage.load_seal("", &auth).ok().flatten();
+
+        if let Some(record) = &seal_record {
+            // Fork-Lock prüfen
+            if record.is_locked_due_to_fork {
+                return Err("Security Lockdown: Wallet is locked due to a detected fork. Recovery required.".to_string());
+            }
+
+            // Siegel-Integrität und Instance-ID prüfen
+            let validation = SealManager::verify_seal_integrity(
+                &record.seal,
+                &record.seal.payload.user_id,
+                &record.seal.payload.user_id,
+                local_instance_id,
+            )
+            .map_err(|e| format!("Seal verification error: {}", e))?;
+
+            match validation {
+                crate::models::seal::SealValidationResult::Valid => {}
+                crate::models::seal::SealValidationResult::LegacyValid => {
+                    println!("Legacy Wallet detected. Will bind to this device after login.");
+                    return Ok(true); // needs_legacy_binding = true
                 }
-                None => Err(VoucherCoreError::Generic(
-                    "Password required. Please use 'unlock_session'.".to_string(),
-                )),
-            },
+                crate::models::seal::SealValidationResult::DeviceMismatch { expected, actual } => {
+                    let err_msg = format!(
+                        "Device Mismatch: This wallet is bound to device '{}', but you are on '{}'. \
+                        To prevent double-spending and permanent reputation loss, a wallet profile (specific User Prefix) \
+                        must only be active on ONE device at a time.\n\n\
+                        - OPTION A (Move): Perform a 'Device Handover' to permanently move the wallet here. \
+                        IMPORTANT: Once handed over, you MUST NOT use this profile on the old device anymore. Please delete the wallet folder on the old device to prevent accidental usage.\n\
+                        - OPTION B (Concurrent): Create a NEW profile on this device \
+                        with the same Seed Phrase but a DIFFERENT 'User Prefix', then transfer vouchers between them.",
+                        expected, actual
+                    );
+                    return Err(err_msg);
+                }
+                other => {
+                    return Err(format!("Seal integrity check failed: {:?}", other));
+                }
+            }
+
+            // Lade den ROHEN own_fingerprints Store direkt aus dem Storage
+            let raw_own_fingerprints = storage
+                .load_own_fingerprints("", &auth)
+                .map_err(|e| format!("Failed to load own_fingerprints for seal check: {}", e))?;
+
+            let current_state_hash = {
+                let canonical = crate::services::utils::to_canonical_json(&raw_own_fingerprints)
+                    .map_err(|e| format!("Failed to compute state hash: {}", e))?;
+                crate::services::crypto_utils::get_hash(canonical.as_bytes())
+            };
+
+            if record.seal.payload.state_hash != current_state_hash {
+                return Err("Critical Error: Wallet state does not match the security seal. Possible rollback or corruption detected. Recovery required.".to_string());
+            }
         }
+        Ok(false)
+    }
+
+    pub(super) fn migrate_seal_on_login(
+        storage: &mut FileStorage,
+        wallet: &crate::wallet::Wallet,
+        identity: &crate::models::profile::UserIdentity,
+        password: &str,
+        needs_legacy_binding: bool,
+    ) -> Result<(), String> {
+        let auth = AuthMethod::Password(password);
+        let seal_record = storage
+            .load_seal(&identity.user_id, &auth)
+            .map_err(|e| format!("Failed to load wallet seal: {}", e))?;
+
+        // Nur migrieren, wenn nötig (Legacy-Binding oder kein Siegel vorhanden)
+        if needs_legacy_binding || seal_record.is_none() {
+            let state_hash = {
+                let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
+                    .map_err(|e| format!("Failed to compute state hash: {}", e))?;
+                crate::services::crypto_utils::get_hash(canonical.as_bytes())
+            };
+
+            let migrated_seal = if needs_legacy_binding && seal_record.is_some() {
+                // Legacy Migration: Existierendes Siegel updaten, um den tx_nonce zu erhalten
+                let existing_record = seal_record.unwrap();
+                SealManager::update_seal(
+                    &existing_record.seal,
+                    identity,
+                    &state_hash,
+                    &wallet.local_instance_id,
+                )
+                .map_err(|e| format!("Failed to migrate legacy seal: {}", e))?
+            } else {
+                // Komplett neues Siegel (Genesis)
+                SealManager::create_initial_seal(
+                    &identity.user_id,
+                    identity,
+                    &state_hash,
+                    &wallet.local_instance_id,
+                )
+                .map_err(|e| format!("Failed to create initial seal: {}", e))?
+            };
+
+            let new_record = LocalSealRecord {
+                seal: migrated_seal.clone(),
+                sync_status: SyncStatus::PendingUpload,
+                is_locked_due_to_fork: false,
+            };
+            storage
+                .save_seal(&identity.user_id, &auth, &new_record)
+                .map_err(|e| format!("Failed to save migration seal: {}", e))?;
+
+            // Integrität für das neue migrierte Siegel initialisieren
+            let hashes = storage.get_all_item_hashes().unwrap_or_default();
+            if let Ok(ir) = crate::services::integrity_manager::IntegrityManager::create_integrity_record(
+                identity,
+                &migrated_seal,
+                hashes,
+            ) {
+                let _ = storage.save_integrity(&identity.user_id, &ir);
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn check_fork_lock(&self, password: Option<&str>) -> Result<(), VoucherCoreError> {
@@ -413,7 +519,7 @@ impl AppService {
                 session_cache,
                 ..
             } => {
-                let auth = Self::resolve_auth(password, session_cache)?;
+                let auth = Self::resolve_auth_method(password, session_cache)?;
                 let record = storage
                     .load_seal(&identity.user_id, &auth)
                     .map_err(VoucherCoreError::Storage)?;
@@ -438,7 +544,7 @@ impl AppService {
                 session_cache,
                 ..
             } => {
-                let auth = Self::resolve_auth(password, session_cache)?;
+                let auth = Self::resolve_auth_method(password, session_cache)?;
                 let record = storage
                     .load_seal(&identity.user_id, &auth)
                     .map_err(VoucherCoreError::Storage)?;
@@ -467,7 +573,7 @@ impl AppService {
                 session_cache,
                 ..
             } => {
-                let auth = match Self::resolve_auth(password, session_cache) {
+                let auth = match Self::resolve_auth_method(password, session_cache) {
                     Ok(a) => a,
                     Err(e) => return Err(e.to_string()),
                 };

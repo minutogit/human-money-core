@@ -331,17 +331,22 @@ fn test_user_id_prefix_cannot_contain_consecutive_hyphens() {
 /// Prüfsumme erkannt werden (Integritätsschutz).
 #[test]
 fn test_user_id_validation_rejects_malformed_input_and_detects_tampering() {
-    // Strukturell ungültig
+    // 1. Strukturell ungültige Strings müssen abgelehnt werden
     assert!(!validate_user_id(""),              "Empty string must fail");
     assert!(!validate_user_id("not-a-user-id"), "Plain string must fail");
     assert!(!validate_user_id("only@one"),      "Missing DID part must fail");
     assert!(!validate_user_id("a@@did:key:z"), "Double '@' must fail");
     assert!(!validate_user_id("x@NOTADID"),    "Non-DID suffix must fail");
 
-    // Korrekte ID muss akzeptiert werden
-    let (pub_key, _) = generate_ed25519_keypair_for_tests(Some("validate-ok"));
-    let valid_id = create_user_id(&pub_key, Some("test")).unwrap();
-    assert!(validate_user_id(&valid_id), "Correctly generated ID must be valid");
+    // 2. Root-Account (reine did:key) muss akzeptiert werden
+    let (pub_key_root, _) = generate_ed25519_keypair_for_tests(Some("root-ok"));
+    let root_id = create_user_id(&pub_key_root, None).unwrap();
+    assert!(validate_user_id(&root_id), "Root account ID must be valid");
+
+    // 2. Korrekte Präfix-ID muss akzeptiert werden
+    let (pub_key_prefix, _) = generate_ed25519_keypair_for_tests(Some("validate-ok"));
+    let valid_id = create_user_id(&pub_key_prefix, Some("test")).unwrap();
+    assert!(validate_user_id(&valid_id), "Correctly generated prefix ID must be valid");
 
     // Nachträgliche Manipulation der Prüfsumme muss erkannt werden
     let mut tampered = valid_id.clone();
@@ -446,7 +451,6 @@ fn test_user_id_validation_accepts_hyphens_and_digits_in_prefix() {
 #[test]
 fn test_user_id_error_variants_have_descriptive_messages() {
     let errors = [
-        UserIdError::PrefixEmpty,
         UserIdError::PrefixTooLong(100),
         UserIdError::InvalidPrefixChars,
         UserIdError::InvalidPrefixStartEnd,

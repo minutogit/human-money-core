@@ -118,8 +118,8 @@ fn api_app_service_full_lifecycle() {
         .expect("Transfer failed");
     let summary = service_alice
         .get_voucher_details(&local_id_alice)
-        .expect_err("Old voucher ID should not resolve to an active voucher anymore");
-    assert!(summary.to_lowercase().contains("not found"));
+        .expect("Fuzzy search should resolve the old ID to the archived voucher");
+    assert_eq!(summary.status, VoucherStatus::Archived, "The voucher should be archived after a full transfer");
 
     // --- 6. Bob empfängt den Gutschein ---
     service_bob.unlock_session(password, 60).unwrap();
@@ -136,7 +136,7 @@ fn api_app_service_full_lifecycle() {
         .find(|b| &b.unit == silver_abbreviation)
         .map(|b| b.total_amount.as_str())
         .expect("Bob should have a silver balance");
-    assert_eq!(bob_silver_balance, "100.0000");
+    assert_eq!(bob_silver_balance, "100.00");
 }
 
 /// Testet den `AppService` Lebenszyklus, wenn eine BIP39-Passphrase verwendet wird.
@@ -766,7 +766,7 @@ fn api_wallet_create_voucher_and_get_id() {
         .list_vouchers(Some(&issuer.identity), None, None, None)
         .pop()
         .expect("Wallet should contain one voucher");
-    assert_eq!(summary.current_amount, "500.0000");
+    assert_eq!(summary.current_amount, "500.00");
     assert_eq!(summary.status, VoucherStatus::Active);
 }
 

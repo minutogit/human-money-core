@@ -9,16 +9,22 @@
    * Analyse von Code-Strukturen und Logik
    * Fehlerbehebung (Debugging)
 
-3.  **Kontextquelle**
-    Deine einzige und maßgebliche Informationsquelle für dieses Projekt ist die `llm-context.md`-Datei. Vor jeder Aktion musst du sicherstellen, dass du die relevanten Projektdetails aus dieser Datei verstanden und berücksichtigt hast.
+3.  **Kontextquellen**
+    Deine maßgeblichen Informationsquellen für dieses Projekt sind:
+    *   **`.dev/llm-context.md`**: Architektur, Identität, API-Struktur und Baum.
+    *   **`.dev/design_decisions.md`**: Begründung für Sicherheitslayer (WalletSeal, Integrity, CEL).
+    *   **`STATUS.md`**: Aktueller Fortschritt, Modul-Anzahl und offene Meilensteine.
+
+    Vor jeder Aktion musst du sicherstellen, dass du die relevanten Projektdetails aus diesen Dateien verstanden hast.
 
 4.  **Arbeitsanweisungen (Direktiven)**
-   * **Kontext ist König:** Analysiere vor jeder Antwort die `llm-context.md` auf relevante Informationen zu Architektur, Coding-Standards, Datenstrukturen und bereits implementierten Funktionen.
+   * **Kontext-Synchronisation:** Analysiere vor jeder Antwort die oben genannten Dateien auf relevante Informationen.
 
    * **Architekturprinzip: Entkopplung von Logik und Speicherung:**
-      * **Abstrakte Persistenz:** Die Kernlogik der Bibliothek (z. B. eine `Wallet`-Fassade) muss von der konkreten Speichermethode entkoppelt sein. Implementiere die Persistenzlogik hinter einer abstrakten Schnittstelle (einem `Storage`-Trait).
-      * **Standardimplementierung bereitstellen:** Die Bibliothek muss eine einfache, sofort nutzbare Standardimplementierung für die Speicherung bereitstellen (z. B. `FileStorage`), die auf verschlüsselten Dateien basiert. Dies stellt sicher, dass die Bibliothek für Client-Anwendungen "out-of-the-box" funktioniert.
-      * **Flexibilität für Server:** Die Kernlogik darf nur gegen den abstrakten `Storage`-Trait programmiert werden. Dies stellt sicher, dass Entwickler von Server-Anwendungen problemlos eigene Implementierungen (z. B. für PostgreSQL, Redis etc.) anbinden können, ohne die Kernlogik zu verändern.
+      * **Abstrakte Persistenz:** Die Kernlogik der Bibliothek (`Wallet`-Fassade) ist vom Speicher (`Storage`-Trait) entkoppelt.
+      * **Zero-Trust-Speicherung:** Jeder Schreibzugriff erfordert ein `WalletSeal`-Update. Integrität wird über `StorageIntegrity` (SHA3-256) sichergestellt.
+      * **Offline-First & Event Sourcing:** Alle Transaktionen werden in einem Append-only Ledger (`Event Sourcing`) erfasst, das in monatlichen Chunks gespeichert wird.
+      * **Strikte Trennung von Domain- und View-Modell (Kryptographische Stabilität):** Modifiziere niemals die Serialisierungslogik (z.B. serde-Attribute wie camelCase) der Kern-Datenstrukturen aus reinen UI- oder Frontend-Bequemlichkeiten. Die Core-Bibliothek muss sprachagnostisch, idiomatisch Rust (Standard: snake_case) und vor allem kryptographisch stabil bleiben, da digitale Signaturen und Hashes exakt auf dieser Serialisierung basieren. Datentransformationen für externe Clients (wie das JS-Frontend) müssen ausnahmslos an den äußersten Systemgrenzen (z.B. im Tauri-Wrapper oder durch dedizierte DTOs im AppService) erfolgen.
 
    * **Code-Änderungen & Ausgabeformat:**
       * **Prinzip der Minimaländerung:** Modifiziere bei Änderungen an existierendem Code ausschließlich die notwendigen Teile. Bestehende Kommentare und der restliche Code müssen identisch und unberührt bleiben.

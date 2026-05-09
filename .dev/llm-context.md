@@ -1,4 +1,4 @@
-# llm-context.md für human-money-core
+.dev/llm-context.md# llm-context.md für human-money-core
 
 Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `human_money_core`. Sie dient als "README für die KI", um ein umfassendes Verständnis des Projekts und seiner Anforderungen zu gewährleisten.
 
@@ -6,7 +6,23 @@ Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `human_m
 
 - **Projektname:** `human_money_core`
 
-- **Zweck:** Implementierung der Kernlogik eines dezentralen, vertrauensbasierten elektronischen Gutschein-Zahlungssystems.
+### Was ist die human_money_core?
+Die human_money_core ist eine Rust-Bibliothek zur Verwaltung und Übertragung von selbstgeschöpften, kryptographischen Wertdokumenten. Sie ermöglicht einen dezentralen Werteaustausch, der fundamentale Konzepte klassischer Krypto-Systeme auf den Kopf stellt und den Menschen wieder in den Mittelpunkt rückt.
+
+**1. Architektur: Autarke Container statt globales Ledger**
+Das System nutzt bewusst keine Blockchain und benötigt keinen Netzwerkkonsens. Jedes Wertdokument ist eine isolierte, portable JSON-Datei. Diese Datei fungiert als autarker Container, der seine komplette, kryptographisch verkettete Transaktionshistorie (Signaturkette) in sich selbst trägt. Transaktionen können asynchron und offline erfolgen durch die direkte, P2P-basierte Übergabe der aktualisierten Datei.
+
+**2. "Human Money": Identität, Reputation und Vertrauen**
+Warum Human Money? Weil bei der Schöpfung von Werten (wie Dienstleistungen, Zeit oder Gütern) nicht die Technik, sondern der Mensch im Fokus steht. Transaktionen nutzen in der Regel bekannte kryptographische Identitäten (did:key). Sicherheit und Akzeptanz des Geldes basieren somit nicht auf einem abstrakten Algorithmus, sondern primär auf der realen Reputation und Vertrauenswürdigkeit der handelnden Akteure.
+
+**3. Sicherheitsparadigma: Betrugserkennung statt Betrugsvermeidung**
+Da es auf Layer 1 keinen globalen Konsens-Mechanismus gibt, der Transaktionen vor der Ausführung validiert, setzt die Kernarchitektur auf deterministische Betrugserkennung. Das System garantiert, dass jeder Betrugsversuch (z. B. Double-Spending) durch kryptographische NIZK-Fallen (Identity Traps) fälschungssichere mathematische Beweise in der Signaturkette hinterlässt, welche die Identität des Betrügers mathematisch offenlegen.
+
+**4. Datenschutz vs. Rückverfolgbarkeit**
+Das System erlaubt es, Transaktionen mit zusätzlichen Datenschutzschichten (Verschlüsselung, ephemere Schlüssel) zu versehen. Dies ist eine bewusste Abwägung: Während die Privatsphäre der Nutzer steigt, wird die Aufklärung von Betrugsfällen und Sybil-Identitäten aufwendiger, da sie eine manuelle, kryptographische Rückverfolgung der Kette erfordert.
+
+**5. Skalierung: Layer 2 für globale Betrugsvermeidung**
+Während der Core (Layer 1) offline funktioniert und primär auf Erkennung setzt, kann das System durch eine zusätzliche, optionale Online-Schicht (Layer 2) mit präventiver Betrugsvermeidung erweitert werden. Im Gegensatz zu Blockchains erfordert dieser Layer 2 keinen globalen Konsens. Er fungiert lediglich als dezentrales Register für kryptographische "Locks" (Sperren). Clients können online asynchron abprüfen, ob ein Gutschein-Fingerprint bereits als ausgegeben markiert wurde, wodurch ein globaler, präventiver Schutz vor Double-Spending entsteht, ohne die Skalierbarkeit zu gefährden.
 
 - **Hauptziel:** Bereitstellung einer robusten, sicheren und performanten Bibliothek, die später über FFI (Foreign Function Interface) und WASM (WebAssembly) in anderen Umgebungen (z.B. Desktop-Anwendungen, Web-Clients) genutzt werden kann.
 
@@ -30,10 +46,16 @@ Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `human_m
 
 - **Entkoppelte & Anonymisierte Speicherung:** Die Kernlogik (`Wallet`) ist vom Speicher (`Storage`-Trait) entkoppelt. Die Standardimplementierung `FileStorage` speichert jedes Benutzerprofil in einem eigenen, anonymen Unterverzeichnis. Der Name dieses Verzeichnisses wird aus einem Hash der Benutzergeheimnisse (`mnemonic`, `passphrase`, `prefix`) abgeleitet, um die Privatsphäre auf dem Speichermedium zu schützen.
 
-  - **Separated Account Identity (SAI) für strikte Kontotrennung:** Ein Benutzer besitzt eine einzige kryptographische Identität (Public Key), die aus dem Mnemonic abgeleitet wird. Durch die Verwendung von Präfixen (z.B. "pc", "mobil") werden separate Konten für verschiedene Kontexte definiert. Hierbei kommt die **Context-Bound Key Derivation** via HKDF-SHA256 zum Einsatz: Der geheime Seed für jedes Konto wird kryptographisch sauber aus dem Hauptschlüssel und dem Präfix abgeleitet. Dies gewährleistet:
+- **Separated Account Identity (SAI) für strikte Kontotrennung:** Ein Benutzer besitzt eine einzige kryptographische Identität (Public Key), die aus dem Mnemonic abgeleitet wird. Durch die Verwendung von Präfixen (z.B. "pc", "mobil") oder die Nutzung von **prefix-losen Root-Accounts** (`did:key`) werden separate Konten definiert. Hierbei kommt die **Context-Bound Key Derivation** via HKDF-SHA256 zum Einsatz: Der geheime Seed für jedes Konto wird kryptographisch sauber aus dem Hauptschlüssel und dem optionalen Präfix abgeleitet. Dies gewährleistet:
   - Einheitliche Identität für das Web of Trust: Alle Aktionen werden kryptographisch derselben Identität zugeordnet.
-  - Strikte Kontentrennung: Die Wallet-Logik verwendet die vollständige User-ID (z.B. `pc:aB3@did:key:z...`) zur Validierung des Besitzes. Guthaben bleibt im definierten ökonomischen Kontext.
-  - Schutz vor "Identity Hopping": Da die Schlüsselableitung an das Präfix gebunden ist, können Identitäten nicht einfach gewechselt werden, ohne die mathematische Falle (Identity Trap) auszulösen.
+  - Strikte Kontentrennung: Die Wallet-Logik verwendet die vollständige User-ID (z.B. `pc:aB3@did:key:z...` oder `did:key:z...`) zur Validierung des Besitzes. Guthaben bleibt im definierten ökonomischen Kontext.
+  - Schutz vor "Identity Hopping": Da die Schlüsselableitung an den Kontext gebunden ist, können Identitäten nicht einfach gewechselt werden, ohne die mathematische Falle (Identity Trap) auszulösen.
+
+- **WalletSeal Rollback Guard:** Ein kryptographisches Epochen-System mit hash-verketteten Siegeln (`WalletSeal`), das das Wallet vor Rollback-Angriffen (Wiedereinspielen alter Backups) und Forking schützt. Es beinhaltet einen Fork-Lock-Mechanismus und ein Zonen-Modell für Replay-Schutz mit benutzergesteuerten Recovery-Overrides.
+
+- **Storage Integrity (Integritätsschutz):** Jede Datei im Wallet-Speicher ist durch einen SHA3-256 Integritätsnachweis geschützt, der fest an das aktuelle `WalletSeal` gebunden ist. Dies ermöglicht die Erkennung von manipulierten, fehlenden oder unbekannten Dateien im Profilverzeichnis bei jedem Zugriff.
+
+- **Wallet Event Sourcing:** Alle statusändernden Aktionen werden in einem Append-only Ledger (`WalletEvent`) aufgezeichnet (z.B. `VoucherCreated`, `TransferReceived`). Dies ermöglicht eine lückenlose Transaktionshistorie und die Wiederherstellung des Zustands. Um Skalierbarkeit zu gewährleisten, werden Events in monatlichen, verschlüsselten Chunks (`YYYY_MM.json.enc`) gespeichert.
 
 - **Offline-Fähigkeit:** Transaktionen sollen auch offline durchgeführt werden können, indem die aktualisierte Gutschein-Datei direkt an den neuen Halter übergeben wird.
 
@@ -56,12 +78,12 @@ Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `human_m
 - **Testen:** Umfassende Unit- und Integrationstests.
 
 - **Keine externen Netzwerkaufrufe:** Die Core-Bibliothek soll keine direkten Netzwerkaufrufe für die Layer-2-Funktionalität enthalten. Diese Interaktionen werden von den übergeordneten Anwendungen gehandhabt, die `human_money_core` nutzen.
++
++- **Strikte Trennung von Domain- und View-Modell (Kryptographische Stabilität):** Modifiziere niemals die Serialisierungslogik (z.B. serde-Attribute wie camelCase) der Kern-Datenstrukturen aus reinen UI- oder Frontend-Bequemlichkeiten. Die Core-Bibliothek muss sprachagnostisch, idiomatisch Rust (Standard: snake_case) und vor allem kryptographisch stabil bleiben, da digitale Signaturen und Hashes exakt auf dieser Serialisierung basieren. Datentransformationen für externe Clients (wie das JS-Frontend) müssen ausnahmslos an den äußersten Systemgrenzen (z.B. im Tauri-Wrapper oder durch dedizierte DTOs im AppService) erfolgen.
 
 ## 5\. Kernkonzepte aus dem Paper (Zusammenfassung)
 
-Gutschein-Struktur: Das universelle Gutschein-Container-Format
-
-Ein Gutschein ist im Wesentlichen eine Textdatei (repräsentiert als JSON), die alle möglichen Informationen enthält, die ein Gutschein jemals haben könnte. Jede einzelne Gutscheininstitution wird in diesem einheitlichen JSON-Schema abgebildet. Die spezifischen Regeln und Eigenschaften eines Gutscheintyps (wie "Minuto-Gutschein" oder "FreeTaler-Umlauf-Gutschein") werden in separaten Standard-Definitionen (voucher\_standard\_definitions) festgelegt.
+Ein Gutschein ist im Wesentlichen eine Textdatei (repräsentiert als JSON), die alle möglichen Informationen enthält, die ein Gutschein jemals haben könnte. Jede einzelne Gutscheininstitution wird in diesem einheitlichen JSON-Schema abgebildet. Die spezifischen Regeln und Eigenschaften eines Gutscheintyps (wie "Minuto-Gutschein" oder "FreeTaler-Gutschein") werden in separaten Standard-Definitionen (voucher\_standard\_definitions) festgelegt.
 
 Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_standards/`-Verzeichnis) bereitgestellt und zur Laufzeit geparst. Die TOML-Struktur ist klar in drei Blocker unterteilt:
 
@@ -234,9 +256,24 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 - **Double Key Wrapping:** Sowohl Absender als auch Empfänger können den Inhalt entschlüsseln.
 - **Payload:** Beinhaltet einen `RecipientPayload` mit dem Seed für den nächsten ephemeren Schlüssel.
 
+### Wallet-Sicherheit: Seal & Integrity
+
+Um den lokalen Speicher gegen physische Manipulation und Rollbacks zu schützen, verwendet das System zwei eng verzahnte Mechanismen:
+
+1.  **WalletSeal (Rollback Guard):** Jedes Speichern des Wallets erzeugt ein neues Siegel, das den Hash des vorherigen Siegels enthält. Diese Kette verhindert das unbemerkte Zurückrollen auf einen älteren Zustand (Backup). Ein `ForkLock` erkennt, wenn mehrere Instanzen desselben Wallets divergieren.
+2.  **Storage Integrity:** Alle Datensätze (Voucher, Fingerprints, Events) werden in einer Integritätsliste erfasst. Ein SHA3-256 Hash über diese Liste wird im `WalletSeal` signiert. So wird jede Manipulation an den Dateien auf der Festplatte sofort erkannt.
+
+### Wallet Event Sourcing
+
+Das Wallet führt ein lückenloses Protokoll aller Ereignisse (`WalletEvent`).
+- **Transaktionstypen:** `VoucherCreated`, `TransferSent`, `TransferReceived`, `VoucherExpired`, `VoucherQuarantined`.
+- **Speicherung:** Events werden atomar mit dem Wallet-Zustand gespeichert und periodisch in monatliche, verschlüsselte Archiv-Dateien (`YYYY_MM.json.enc`) ausgelagert, um den Speicherbedarf im RAM gering zu halten.
+- **Wiederherstellung:** Ermöglicht die Rekonstruktion der Historie für UI-Zwecke und Audit-Logs.
+
 ## 6\. Aktueller Projektstrukturbaum
 
 ```
+├── AGENTS.md
 ├── Cargo.lock
 ├── Cargo.toml
 ├── docs
@@ -253,23 +290,50 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 │   ├── playground_voucher_lifecycle.rs
 │   └── playground_wallet.rs
 ├── LICENSE
+├── protocols
+│   ├── discovery
+│   │   └── 1.0
+│   │       └── handshake.md
+│   ├── identity
+│   │   └── 1.0
+│   │       └── credential.md
+│   ├── messaging
+│   │   └── 1.0
+│   │       └── secure_container.md
+│   ├── README.md
+│   ├── transfer
+│   │   └── 1.0
+│   │       └── bundle.md
+│   └── trust
+│       └── 1.0
+│           └── assertion.md
 ├── README.md
+├── scripts
+│   ├── retest_missed.sh
+│   └── run_mutation_tests.sh
+├── SECURITY.md
 ├── sign_standards.sh
 ├── sign_test_standards.sh
 ├── src
 │   ├── app_service
 │   │   ├── api_readme.md
+│   │   ├── app_profile_handler.rs
 │   │   ├── app_queries.rs
 │   │   ├── app_signature_handler.rs
 │   │   ├── command_handler.rs
 │   │   ├── conflict_handler.rs
 │   │   ├── data_encryption.rs
+│   │   ├── l2_facade.rs
 │   │   ├── lifecycle.rs
-│   │   └── mod.rs
+│   │   ├── mod.rs
+│   │   └── seal_handler.rs
 │   ├── archive
 │   │   ├── file_archive.rs
 │   │   └── mod.rs
 │   ├── bin
+│   │   ├── l2_client_simulator
+│   │   │   ├── main.rs
+│   │   │   └── README.md
 │   │   └── voucher-cli.rs
 │   ├── error.rs
 │   ├── lib.rs
@@ -280,17 +344,25 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 │   │   ├── mod.rs
 │   │   ├── profile.rs
 │   │   ├── readme_de.md
+│   │   ├── seal.rs
 │   │   ├── secure_container.rs
 │   │   ├── signature.rs
+│   │   ├── storage_integrity.rs
 │   │   ├── voucher.rs
-│   │   └── voucher_standard_definition.rs
+│   │   ├── voucher_standard_definition.rs
+│   │   └── wallet_event.rs
 │   ├── services
 │   │   ├── bundle_processor.rs
 │   │   ├── conflict_manager.rs
 │   │   ├── crypto_utils.rs
 │   │   ├── decimal_utils.rs
+│   │   ├── dynamic_policy_engine.rs
+│   │   ├── integrity_manager.rs
+│   │   ├── jws_profile_service.rs
 │   │   ├── l2_gateway.rs
+│   │   ├── mnemonic.rs
 │   │   ├── mod.rs
+│   │   ├── seal_manager.rs
 │   │   ├── secure_container_manager.rs
 │   │   ├── signature_manager.rs
 │   │   ├── standard_manager.rs
@@ -309,17 +381,28 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 │       ├── maintenance.rs
 │       ├── mod.rs
 │       ├── queries.rs
+│       ├── reputation_tests.rs
 │       ├── signature_handler.rs
 │       ├── tests.rs
 │       ├── transaction_handler.rs
 │       └── types.rs
+├── STATUS.md
 ├── tests
+│   ├── app_service
+│   │   ├── integration_tests.rs
+│   │   └── mod.rs
+│   ├── app_service_tests.rs
 │   ├── architecture
 │   │   ├── hardening.rs
 │   │   ├── mod.rs
-│   │   └── resilience_and_gossip.rs
+│   │   ├── resilience_and_gossip.rs
+│   │   ├── rollback_guard_tests.rs
+│   │   └── security_hardening.rs
 │   ├── architecture_tests.rs
+│   ├── bypass_test.rs
+│   ├── cloning_protection.rs
 │   ├── core_logic
+│   │   ├── flow_integrity.rs
 │   │   ├── lifecycle.rs
 │   │   ├── math.rs
 │   │   ├── mod.rs
@@ -329,21 +412,34 @@ Der Austausch von Daten (Bundles, Signaturanfragen) erfolgt via `SecureContainer
 │   │       ├── double_spend.rs
 │   │       ├── mod.rs
 │   │       ├── privacy_evasion.rs
+│   │       ├── root_account.rs
 │   │       ├── standard_validation.rs
 │   │       ├── state_and_collaboration.rs
 │   │       ├── trap_verification.rs
 │   │       └── vulnerabilities.rs
 │   ├── core_logic_tests.rs
-│   ├── flow_integrity.rs
+│   ├── event_log_test.rs
+│   ├── flexible_encryption.rs
+│   ├── forced_double_spend_stealth_vulnerability.rs
+│   ├── integrity_test.rs
 │   ├── l2_integration_test.rs
+│   ├── l2_synchronization_test.rs
 │   ├── persistence
 │   │   ├── archive.rs
+│   │   ├── event_chunking.rs
 │   │   ├── file_storage.rs
 │   │   └── mod.rs
 │   ├── persistence_tests.rs
+│   ├── privacy_mode_compliance_test.rs
+│   ├── privacy_split_workflows.rs
+│   ├── privacy_traceability_test.rs
 │   ├── README.md
+│   ├── reproduce_integrity_bug.rs
+│   ├── security_audit_fixes.rs
 │   ├── services
+│   │   ├── crypto_properties.rs
 │   │   ├── crypto.rs
+│   │   ├── jws_profile.rs
 │   │   ├── mod.rs
 │   │   └── utils.rs
 │   ├── services_tests.rs
@@ -456,6 +552,9 @@ Definiert den `AppService`, eine übergeordnete Fassade, die die `Wallet`-Logik 
 - `pub fn import_resolution_endorsement(&mut self, endorsement: ResolutionEndorsement, password: Option<&str>) -> Result<(), String>`
   - Importiert eine Beilegungserklärung, fügt sie dem entsprechenden Konfliktbeweis hinzu und speichert den Wallet-Zustand.
 - `pub fn unlock_session(&mut self, password: &str, duration: chrono::Duration) -> Result<(), String>`: Sperrt eine Session für den angegebenen Zeitraum, um wiederholte Passwort-Eingaben zu vermeiden. Ermöglicht "Remember Password" Funktionalität in Client-Anwendungen.
+- `pub fn is_session_active(&self) -> bool`: Prüft, ob eine "Passwort merken"-Sitzung aktuell aktiv ist, ohne den Inaktivitäts-Timer zurückzusetzen.
+- `pub fn run_storage_integrity_check(&mut self, password: Option<&str>) -> Result<IntegrityReport, String>`: Führt eine vollständige Überprüfung der Speicherintegrität durch.
+- `pub fn update_wallet_seal(&mut self, password: Option<&str>) -> Result<(), String>`: Aktualisiert das kryptographische Siegel des Wallets.
 
 #### Authentifizierungsmodell
 
@@ -483,6 +582,7 @@ Das `wallet`-Modul wurde umfassend refaktorisiert, um die Komplexität zu reduzi
 - `pub struct Wallet` (`mod.rs`)
   - Hält `UserProfile`, `VoucherStore`, `BundleMetadataStore`, die getrennten `KnownFingerprints`, `OwnFingerprints`, `ProofStore` und den neuen `CanonicalMetadataStore` für Metadaten als In-Memory-Zustand.
   - Enthält neue Strukturen: `MultiTransferRequest` für die Anforderung von Transfers mit mehreren Quellen und `SourceTransfer` für die Definition einzelner Quellpositionen in einem Transfer.
+  - **Neu:** `pending_events`: Hält im RAM befindliche Events, die beim nächsten `save` atomar gespeichert werden.
 
 - **Lebenszyklus & Kernoperationen** (`lifecycle.rs`)
   - `pub fn new_from_mnemonic(...)`: Erstellt ein brandneues Wallet.
@@ -714,9 +814,18 @@ Dieses Modul enthält die Logik zur Validierung eines `Voucher`-Objekts gegen di
 - Führt eine **Kern-Daten-Integritätsprüfung** durch: Validiert, dass der `voucher_id` (der Hash der Gutschein-Stammdaten) mit den tatsächlichen Inhalten des Gutscheins übereinstimmt. Diese Prüfung schützt gegen Manipulationen an den Kernstammdaten.
 - **Hinweis:** Die Validierung der `issuance_minimum_validity_duration` erfolgt nun nicht mehr in dieser Funktion, sondern wird als "Gatekeeper" in `create_voucher` (bei Erstellung) und als "Firewall" in `create_transaction` (bei Transfer) separat behandelt.
 
-Neue Validierungsfehler:
-- `ValidationError::InvalidVoucherHash` - Wird ausgelöst, wenn der `voucher_id` (Hash der Stammdaten) nicht mit den tatsächlichen Inhalten des Gutscheins übereinstimmt, was auf eine Manipulation der Kernstammdaten hindeutet.
 - Die `FieldGroupRules`-Validierung wurde angepasst, um die neuen verschachtelten Pfade für Signatur-Details zu unterstützen (z.B. `details.gender` statt `gender`). Dies ermöglicht eine präzisere Validierung der Signatur-Metadaten gemäß den Anforderungen im Standard.
+
+### WalletSeal & Storage Integrity (Sicherheits-Layer)
+
+- **Rollback Guard**: Das System schützt vor dem Wiedereinspielen alter Backups durch eine Hash-Kette von Siegeln. Jede Änderung am Wallet-Zustand erzeugt ein neues Siegel, das kryptographisch an das vorherige gebunden ist.
+- **Integritätsschutz**: Alle Dateien im Wallet-Ordner werden in einer Manifest-Datei (`integrity.json.enc`) mit SHA3-256 Hashes gelistet. Das Manifest selbst ist an das aktuelle WalletSeal gebunden. Jede Manipulation, Löschung oder Hinzufügung von Dateien wird erkannt.
+
+### Wallet Event Sourcing
+
+- **Event-Log**: Alle wesentlichen Aktionen (Erstellung, Transfer, Ablauf, Quarantäne) erzeugen ein `WalletEvent`.
+- **Atomarität**: Events werden zusammen mit dem Wallet-Zustand gespeichert.
+- **Monthly Chunking**: Um die Hauptdatei klein zu halten, werden Events periodisch in monatliche Chunks ausgelagert. Diese Chunks sind verschlüsselt und signiert.
 
 ### `src/wallet` Modul - Neue Sicherheitsfeatures
 

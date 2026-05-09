@@ -108,7 +108,7 @@ fn test_deep_privacy_balance_calculation() {
     // Alice sendet 250 von ihren verbliebenen 700 an Dave.
     // =========================================================================
     let alice_vouchers_step3 = list_active(&alice, &ACTORS.alice.identity);
-    let alice_source_id_3 = alice_vouchers_step3.iter().find(|v| v.current_amount == "700.0000").expect("Alice must have her 700 voucher").local_instance_id.clone();
+    let alice_source_id_3 = alice_vouchers_step3.iter().find(|v| v.current_amount == "700.00").expect("Alice must have her 700 voucher").local_instance_id.clone();
 
     let CreateBundleResult { bundle_bytes: b3, .. } = alice.execute_multi_transfer_and_bundle(
         &ACTORS.alice.identity, &standards_map, 

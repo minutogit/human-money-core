@@ -373,8 +373,8 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
         t_time: collision_time.clone(),
         sender_id: Some(id_alice.clone()),
         recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
-        amount: "99.0000".to_string(),
-        sender_remaining_amount: Some("1.0000".to_string()),
+        amount: "99.00".to_string(),
+        sender_remaining_amount: Some("1.00".to_string()),
         sender_ephemeral_pub: Some(alice_holder_pub.clone()),
         ..Default::default()
     };
@@ -498,7 +498,7 @@ fn api_wallet_save_and_load_fidelity() {
         let summary = service_a.get_voucher_summaries(None, None, None).unwrap();
         let silver_voucher_id_10oz = summary
             .iter()
-            .find(|s| s.current_amount == "10.0000" && s.status == VoucherStatus::Active)
+            .find(|s| s.current_amount == "10.00" && s.status == VoucherStatus::Active)
             .expect("FreeTaler voucher summary not found")
             .local_instance_id
             .clone();
@@ -576,7 +576,7 @@ fn api_wallet_save_and_load_fidelity() {
         let summary_before_full_transfer = service_a.get_voucher_summaries(None, None, None).unwrap();
         let silver_voucher_id_7oz = summary_before_full_transfer
             .iter()
-            .find(|s| s.current_amount == "7.0000" && s.status == VoucherStatus::Active)
+            .find(|s| s.current_amount == "7.00" && s.status == VoucherStatus::Active)
             .expect("7oz silver voucher for full transfer not found")
             .local_instance_id
             .clone();
@@ -632,7 +632,7 @@ fn api_wallet_save_and_load_fidelity() {
         .find(|b| b.unit == "Taler")
         .map(|b| b.total_amount.as_str());
 
-    assert_eq!(silver_balance, Some("1.0000"), "FreeTaler balance mismatch");
+    assert_eq!(silver_balance, Some("1.00"), "FreeTaler balance mismatch");
 
     let minuto_balance_exists = balances.iter().any(|b| b.unit == "Min");
     assert!(
@@ -690,7 +690,7 @@ fn test_create_voucher_adds_exactly_one_instance() {
     );
 
     let summary = &final_summaries[0];
-    assert_eq!(summary.current_amount, "100.0000");
+    assert_eq!(summary.current_amount, "100.00");
 
     let expected_description = "Ein universeller, teilbarer Gutschein für den Tausch von Waren und Dienstleistungen. Der FreeTaler dient als generisches Beispiel für selbstgeschöpfte Verrechnungseinheiten.";
     assert_eq!(

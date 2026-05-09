@@ -181,7 +181,7 @@ mod structural_integrity {
                 ..Default::default()
             },
             nominal_value: ValueDefinition {
-                amount: "60.0000".to_string(),
+                amount: "60.00".to_string(),
                 ..Default::default()
             },
             validity_duration: Some("P1Y".to_string()),
@@ -201,7 +201,7 @@ mod structural_integrity {
             &sender.signing_key,
             &derive_holder_key(&initial_voucher, &sender.signing_key), // Init->Tx1
             &recipient.user_id,
-            "10.0000",
+            "10.00",
             None,
         )
         .unwrap();
@@ -381,7 +381,7 @@ mod behavioral_rules {
             t_time: human_money_core::services::utils::get_current_timestamp(),
             sender_id: Some(recipient.user_id.clone()),
             recipient_id: ACTORS.charlie.user_id.clone(),
-            amount: "10.0000".to_string(),
+            amount: "10.00".to_string(),
             sender_remaining_amount: None,
             // P2PKH Setup
             receiver_ephemeral_pub_hash: None,

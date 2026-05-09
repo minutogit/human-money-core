@@ -583,9 +583,9 @@ fn test_split_transaction_cycle_and_balance_check() {
         ..Default::default()
     };
 
-    // 3. Erstelle einen Gutschein mit dem Wert 100.0000 - wir passen die Daten von `create_minuto_voucher_data` an.
+    // 3. Erstelle einen Gutschein mit dem Wert 100.00 - wir passen die Daten von `create_minuto_voucher_data` an.
     let mut voucher_data = self::test_utils::create_minuto_voucher_data(sender_creator);
-    voucher_data.nominal_value.amount = "100.0000".to_string();
+    voucher_data.nominal_value.amount = "100.00".to_string();
 
     let initial_voucher = create_voucher(
         voucher_data,
@@ -600,10 +600,10 @@ fn test_split_transaction_cycle_and_balance_check() {
     assert!(validate_voucher_against_standard(&initial_voucher, freetaler_standard).is_ok());
     let initial_balance =
         get_spendable_balance(&initial_voucher, &sender.user_id, freetaler_standard, None).unwrap();
-    assert_eq!(initial_balance, dec!(100.0000));
+    assert_eq!(initial_balance, dec!(100.00));
 
-    // 5. Führe eine Split-Transaktion durch: Sende 30.5000 an den Empfänger
-    let split_amount = "30.5000";
+    // 5. Führe eine Split-Transaktion durch: Sende 30.50 an den Empfänger
+    let split_amount = "30.50";
     let holder_key =
         human_money_core::test_utils::derive_holder_key(&initial_voucher, &sender.signing_key);
     let (voucher_after_split, _) = create_transaction(
@@ -638,8 +638,8 @@ fn test_split_transaction_cycle_and_balance_check() {
     let recipient_balance_after_split =
         get_spendable_balance(&voucher_after_split, &recipient.user_id, freetaler_standard, None).unwrap();
 
-    assert_eq!(sender_balance_after_split, dec!(69.5000)); // 100.0000 - 30.5000
-    assert_eq!(recipient_balance_after_split, dec!(30.5000));
+    assert_eq!(sender_balance_after_split, dec!(69.50)); // 100.00 - 30.50
+    assert_eq!(recipient_balance_after_split, dec!(30.50));
 }
 
 #[test]
@@ -773,7 +773,7 @@ fn test_split_fails_on_non_allow_partial_transfers_voucher() {
     };
 
     let mut voucher_data = self::test_utils::create_minuto_voucher_data(sender_creator);
-    voucher_data.nominal_value.amount = "60.0000".to_string();
+    voucher_data.nominal_value.amount = "60.00".to_string();
 
     let initial_voucher = create_voucher(
         voucher_data,

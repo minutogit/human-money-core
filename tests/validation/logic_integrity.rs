@@ -131,7 +131,7 @@ fn test_signature_count_limits() {
 fn test_transaction_amount_precision() {
     let (standard, _, _, _, mut voucher, _) = setup_voucher_with_one_tx();
     
-    // We have tx0 (init: "100.0000") and tx1 (transfer). Change it to split to allow remaining_amount.
+    // We have tx0 (init: "100.00") and tx1 (transfer). Change it to split to allow remaining_amount.
     // To make sure we don't fail InsufficientFundsInChain, amount + remaining must be 100.
     voucher.transactions[1].t_type = "split".to_string();
     voucher.transactions[1].amount = "10.12345".to_string();

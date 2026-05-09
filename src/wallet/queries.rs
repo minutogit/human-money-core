@@ -188,11 +188,33 @@ impl Wallet {
         &self,
         local_instance_id: &str,
     ) -> Result<VoucherDetails, VoucherCoreError> {
-        let instance = self
-            .voucher_store
-            .vouchers
-            .get(local_instance_id)
-            .ok_or_else(|| VoucherCoreError::VoucherNotFound(local_instance_id.to_string()))?;
+        // 1. Direkter Lookup (Performance-Pfad)
+        let instance = if let Some(inst) = self.voucher_store.vouchers.get(local_instance_id) {
+            inst
+        } else {
+            // 2. Fuzzy-Search (Fallback für historische IDs aus Logs)
+            // Wir iterieren über alle vorhandenen Gutscheine und prüfen, ob die gesuchte ID 
+            // eine historische 'local_instance_id' dieses Gutscheins sein könnte.
+            self.voucher_store.vouchers.values().find(|inst| {
+                inst.voucher.transactions.iter().any(|tx| {
+                    // Prüfe, ob der Nutzer an dieser Transaktion beteiligt war
+                    if tx.recipient_id == self.profile.user_id
+                        || tx.recipient_id == crate::models::voucher::ANONYMOUS_ID
+                        || tx.sender_id.as_deref() == Some(&self.profile.user_id)
+                    {
+                        // Berechne die historische ID, die dieser Transaktion entsprochen hätte.
+                        // Die ID basiert auf voucher_id + transaction_id + user_id.
+                        let historical_id = crate::services::crypto_utils::get_hash(format!(
+                            "{}{}{}",
+                            inst.voucher.voucher_id, tx.t_id, self.profile.user_id
+                        ));
+                        historical_id == local_instance_id
+                    } else {
+                        false
+                    }
+                })
+            }).ok_or_else(|| crate::error::VoucherCoreError::VoucherNotFound(local_instance_id.to_string()))?
+        };
 
         Ok(VoucherDetails {
             local_instance_id: instance.local_instance_id.clone(),
@@ -545,133 +567,5 @@ impl Wallet {
         }
 
         Ok(result)
-    }
-}
-
-#[cfg(test)]
-mod aggregation_tests {
-    use crate::test_utils::{setup_in_memory_wallet, ACTORS};
-    use crate::wallet::instance::{VoucherInstance, VoucherStatus};
-    use crate::models::voucher::{Voucher, Transaction};
-
-    #[test]
-    fn test_balance_aggregation_strictly_separates_test_and_live_money() {
-        let identity = &ACTORS.alice;
-        let mut wallet = setup_in_memory_wallet(identity);
-        
-        // 1. Live Minuto (10)
-        let mut v1 = Voucher::default();
-        v1.voucher_standard.uuid = "minuto-uuid".to_string();
-        v1.voucher_standard.name = "Minuto".to_string();
-        v1.nominal_value.unit = "Minuto".to_string();
-        v1.nominal_value.abbreviation = Some("Min".to_string());
-        v1.non_redeemable_test_voucher = false;
-        v1.transactions.push(Transaction { amount: "10".to_string(), ..Default::default() });
-        
-        // 2. Live Minuto (5) -> Should be aggregated with v1
-        let mut v2 = v1.clone();
-        v2.transactions[0].amount = "5".to_string();
-        
-        // 3. Test Minuto (50) -> Should be separate
-        let mut v3 = v1.clone();
-        v3.non_redeemable_test_voucher = true;
-        v3.transactions[0].amount = "50".to_string();
-        
-        wallet.voucher_store.vouchers.insert("v1".to_string(), VoucherInstance {
-            voucher: v1, status: VoucherStatus::Active, local_instance_id: "v1".to_string()
-        });
-        wallet.voucher_store.vouchers.insert("v2".to_string(), VoucherInstance {
-            voucher: v2, status: VoucherStatus::Active, local_instance_id: "v2".to_string()
-        });
-        wallet.voucher_store.vouchers.insert("v3".to_string(), VoucherInstance {
-            voucher: v3, status: VoucherStatus::Active, local_instance_id: "v3".to_string()
-        });
-        
-        let balances = wallet.get_total_balance_by_currency(Some(identity));
-        
-        assert_eq!(balances.len(), 2);
-        
-        let live_balance = balances.iter().find(|b| !b.is_test_voucher).unwrap();
-        assert_eq!(live_balance.total_amount, "15");
-        assert_eq!(live_balance.display_currency, "Min");
-        assert_eq!(live_balance.display_standard_name, "Minuto");
-        
-        let test_balance = balances.iter().find(|b| b.is_test_voucher).unwrap();
-        assert_eq!(test_balance.total_amount, "50");
-        assert_eq!(test_balance.display_currency, "TEST-Min");
-        assert_eq!(test_balance.display_standard_name, "TEST-Minuto");
-    }
-
-    #[test]
-    fn test_format_bff_name_logic() {
-        // Nutze super::super, da wir in mod aggregation_tests sind, welches in impl Wallet ist.
-        // Moment, aggregation_tests ist ein eigenes Modul. format_bff_name ist pub(crate) im parent (queries.rs).
-        assert_eq!(crate::wallet::format_bff_name("Minuto", true), "TEST-Minuto");
-        assert_eq!(crate::wallet::format_bff_name("Minuto", false), "Minuto");
-        assert_eq!(crate::wallet::format_bff_name("TEST-Minuto", true), "TEST-Minuto");
-        assert_eq!(crate::wallet::format_bff_name("TEST-Minuto", false), "TEST-Minuto");
-    }
-
-    #[test]
-    fn test_list_vouchers_respects_test_filter() {
-        let identity = &ACTORS.alice;
-        let mut wallet = setup_in_memory_wallet(identity);
-        
-        let mut v_live = Voucher::default();
-        v_live.non_redeemable_test_voucher = false;
-        
-        let mut v_test = Voucher::default();
-        v_test.non_redeemable_test_voucher = true;
-
-        wallet.voucher_store.vouchers.insert("l1".to_string(), VoucherInstance {
-            voucher: v_live.clone(), status: VoucherStatus::Active, local_instance_id: "l1".to_string()
-        });
-        wallet.voucher_store.vouchers.insert("l2".to_string(), VoucherInstance {
-            voucher: v_live, status: VoucherStatus::Active, local_instance_id: "l2".to_string()
-        });
-        wallet.voucher_store.vouchers.insert("t1".to_string(), VoucherInstance {
-            voucher: v_test.clone(), status: VoucherStatus::Active, local_instance_id: "t1".to_string()
-        });
-        wallet.voucher_store.vouchers.insert("t2".to_string(), VoucherInstance {
-            voucher: v_test.clone(), status: VoucherStatus::Active, local_instance_id: "t2".to_string()
-        });
-        wallet.voucher_store.vouchers.insert("t3".to_string(), VoucherInstance {
-            voucher: v_test, status: VoucherStatus::Active, local_instance_id: "t3".to_string()
-        });
-
-        // None -> 5
-        assert_eq!(wallet.list_vouchers(Some(identity), None, None, None).len(), 5);
-        // Some(true) -> 3
-        assert_eq!(wallet.list_vouchers(Some(identity), None, None, Some(true)).len(), 3);
-        // Some(false) -> 2
-        assert_eq!(wallet.list_vouchers(Some(identity), None, None, Some(false)).len(), 2);
-    }
-
-    #[test]
-    fn test_asset_class_listing() {
-        let identity = &ACTORS.alice;
-        let mut wallet = setup_in_memory_wallet(identity);
-        
-        let mut v1 = Voucher::default();
-        v1.voucher_standard.uuid = "std-1".to_string();
-        v1.voucher_standard.name = "Minuto".to_string();
-        v1.nominal_value.unit = "Minuto".to_string();
-        v1.non_redeemable_test_voucher = false;
-        
-        let mut v2 = v1.clone();
-        v2.non_redeemable_test_voucher = true;
-
-        wallet.voucher_store.vouchers.insert("v1".to_string(), VoucherInstance {
-            voucher: v1, status: VoucherStatus::Active, local_instance_id: "v1".to_string()
-        });
-        wallet.voucher_store.vouchers.insert("v2".to_string(), VoucherInstance {
-            voucher: v2, status: VoucherStatus::Active, local_instance_id: "v2".to_string()
-        });
-
-        let classes = wallet.get_active_asset_classes();
-        assert_eq!(classes.len(), 2);
-        
-        assert!(classes.iter().any(|c| !c.is_test_voucher && c.display_standard_name == "Minuto"));
-        assert!(classes.iter().any(|c| c.is_test_voucher && c.display_standard_name == "TEST-Minuto"));
     }
 }

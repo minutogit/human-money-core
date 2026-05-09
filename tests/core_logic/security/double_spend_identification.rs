@@ -25,11 +25,11 @@ fn setup_trap_data(prev_hash: &str, sender: &TestUser, t_id: &str) -> TrapData {
     let u_scalar = trap_manager::hash_to_scalar(u_input_varying.as_bytes());
 
     // m derivation (Constant for same input)
-    let m = trap_manager::derive_m(prev_hash, &sender.signing_key.to_bytes(), "prefix").unwrap();
+    let m = trap_manager::derive_m(prev_hash, &sender.signing_key.to_bytes(), Some("prefix")).unwrap();
 
     let my_id_point = crypto_utils::ed25519_pk_to_curve_point(&sender.public_key).unwrap();
 
-    trap_manager::generate_trap(ds_tag, &u_scalar, &m, &my_id_point, "prefix").unwrap()
+    trap_manager::generate_trap(ds_tag, &u_scalar, &m, &my_id_point, Some("prefix")).unwrap()
 }
 
 #[test]

@@ -159,7 +159,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
     );
 
     assert_eq!(
-        summaries_after[0].current_amount, "100.0000",
+        summaries_after[0].current_amount, "100.00",
         "Voucher amount should be rolled back to 100"
     );
 }
@@ -798,8 +798,8 @@ fn test_balances_are_summable_behavior() {
 
     // 6. ASSERT TransferSummary
     // Summable (EUR): 10.0 + 10.0 = 20.0 (in summable_amounts)
-    // Hinweis: current_amount in summaries wird mit 4 Nachkommastellen formatiert, daher "20.0000"
-    assert_eq!(result.transfer_summary.summable_amounts.get("EUR").unwrap(), "20.0000");
+    // Hinweis: current_amount in summaries wird mit 4 Nachkommastellen formatiert, daher "20.00"
+    assert_eq!(result.transfer_summary.summable_amounts.get("EUR").unwrap(), "20.00");
     assert!(!result.transfer_summary.countable_items.contains_key("EUR"));
 
     // Non-Summable (ITEM): 2 items (in countable_items)
