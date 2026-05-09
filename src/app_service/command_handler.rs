@@ -1,7 +1,7 @@
 //! # src/app_service/command_handler.rs
 //!
-//! Enthält die zentralen, schreibenden Aktionen (Commands) des `AppService`,
-//! die den Zustand des Wallets verändern und persistieren.
+//! Contains the central write actions (Commands) of the `AppService`
+//! that modify and persist the state of the wallet.
 
 use super::{AppService, AppState, TransactionOutcome};
 use crate::archive::VoucherArchive;
@@ -15,9 +15,9 @@ use crate::VoucherCoreError;
 use std::collections::HashMap;
 
 impl AppService {
-    // --- Aktionen (Commands) ---
+    // --- Actions (Commands) ---
 
-    /// Erstellt einen brandneuen Gutschein, fügt ihn zum Wallet hinzu und speichert den Zustand.
+    /// Creates a brand new voucher, adds it to the wallet, and saves the state.
     pub fn create_new_voucher(
         &mut self,
         standard_toml_content: &str,
@@ -25,7 +25,7 @@ impl AppService {
         data: NewVoucherData,
         password: Option<&str>,
     ) -> Result<Voucher, String> {
-        // Vorab-Validierung (ohne Lock möglich)
+        // Pre-validation (possible without lock)
         let (verified_standard, standard_hash) =
             standard_manager::verify_and_parse_standard(standard_toml_content)
                 .map_err(|e| e.to_string())?;
@@ -44,7 +44,7 @@ impl AppService {
         })
     }
 
-    /// Erstellt ein Transfer-Bundle für eine oder mehrere Transaktionen und speichert den neuen Wallet-Zustand.
+    /// Creates a transfer bundle for one or more transactions and saves the new wallet state.
     pub fn create_transfer_bundle(
         &mut self,
         request: MultiTransferRequest,
@@ -52,7 +52,7 @@ impl AppService {
         archive: Option<&dyn VoucherArchive>,
         password: Option<&str>,
     ) -> Result<CreateBundleResult, String> {
-        // Parse die TOML-Definitionen BEVOR der Lock/State-Swap passiert
+        // Parse the TOML definitions BEFORE the lock/state swap occurs
         let mut verified_definitions = HashMap::new();
         for (uuid, toml_content) in standard_definitions_toml {
             let (def, _) = standard_manager::verify_and_parse_standard(toml_content)
@@ -68,7 +68,7 @@ impl AppService {
                 archive,
             ) {
                 Ok(create_result) => TransactionOutcome::Commit(create_result),
-                // --- SELBSTHEILUNG ---
+                // --- SELF-HEALING ---
                 Err(crate::error::VoucherCoreError::DoubleSpendAttemptBlocked { local_instance_id }) => {
                     temp_wallet.update_voucher_status(
                         &local_instance_id,
@@ -86,7 +86,7 @@ impl AppService {
         })
     }
 
-    /// Verarbeitet ein empfangenes Transaktions- oder Signatur-Bundle.
+    /// Processes a received transaction or signature bundle.
     pub fn receive_bundle(
         &mut self,
         bundle_data: &[u8],
@@ -95,7 +95,55 @@ impl AppService {
         password: Option<&str>,
         force_accept_tolerance_bundle: bool,
     ) -> Result<ProcessBundleResult, String> {
-        // --- ZONEN-MODELL: Prüfung gegen Pre-Epoch Bundles ---
+        // --- EPOCH ZONE MODEL: Check against Pre-Epoch Bundles ---
+        self.check_bundle_against_epoch_zones(bundle_data, password, force_accept_tolerance_bundle)?;
+
+        // Parse TOML definitions
+        let mut verified_definitions = HashMap::new();
+        for (uuid, toml_content) in standard_definitions_toml {
+            let (def, _) = standard_manager::verify_and_parse_standard(toml_content)
+                .map_err(|e| e.to_string())?;
+            verified_definitions.insert(uuid.clone(), def);
+        }
+
+        self.with_transactional_mut(password, |temp_wallet, identity, _, _| {
+            if let Err(e) = Self::validate_vouchers_in_bundle(identity, bundle_data, standard_definitions_toml) {
+                return TransactionOutcome::Rollback(e);
+            }
+
+            match temp_wallet.process_encrypted_transaction_bundle(
+                identity,
+                bundle_data,
+                archive,
+                &verified_definitions,
+            ) {
+                Ok(proc_result) => TransactionOutcome::Commit(proc_result),
+                Err(e) => TransactionOutcome::Rollback(e.to_string()),
+            }
+        })
+    }
+
+    /// Imports a resolution endorsement.
+    pub fn import_resolution_endorsement(
+        &mut self,
+        endorsement: ResolutionEndorsement,
+        password: Option<&str>,
+    ) -> Result<(), String> {
+        self.with_transactional_mut(password, |temp_wallet, _, _, _| {
+            match temp_wallet.add_resolution_endorsement(endorsement) {
+                Ok(_) => TransactionOutcome::Commit(()),
+                Err(e) => TransactionOutcome::Rollback(e.to_string()),
+            }
+        })
+    }
+
+    /// Internal helper to validate a bundle against epoch rollback zones.
+    fn check_bundle_against_epoch_zones(
+        &self,
+        bundle_data: &[u8],
+        password: Option<&str>,
+        force_accept: bool,
+    ) -> Result<(), String> {
         if let Ok(Some((epoch_start_time, epoch))) = self.get_epoch_info(password) {
             if epoch > 0 {
                 let max_tx_time = match &self.state {
@@ -139,16 +187,16 @@ impl AppService {
                             if delta > chrono::Duration::days(ZONE_3_LIMIT_DAYS) {
                                 return Err(VoucherCoreError::BundlePredatesCurrentEpoch.to_string());
                             } else if delta > chrono::Duration::hours(ZONE_2_LIMIT_HOURS) {
-                                if !force_accept_tolerance_bundle {
+                                if !force_accept {
                                     return Err(
                                         VoucherCoreError::BundleInExtendedRecoveryToleranceZone
                                             .to_string(),
                                     );
                                 }
                             } else if delta > chrono::Duration::minutes(ZONE_1_LIMIT_MINUTES) {
-                                if !force_accept_tolerance_bundle {
+                                if !force_accept {
                                     return Err(
-                                        VoucherCoreError::BundleInRecoveryToleranceZone.to_string()
+                                        VoucherCoreError::BundleInRecoveryToleranceZone.to_string(),
                                     );
                                 }
                             }
@@ -157,43 +205,6 @@ impl AppService {
                 }
             }
         }
-
-        // Parse die TOML-Definitionen
-        let mut verified_definitions = HashMap::new();
-        for (uuid, toml_content) in standard_definitions_toml {
-            let (def, _) = standard_manager::verify_and_parse_standard(toml_content)
-                .map_err(|e| e.to_string())?;
-            verified_definitions.insert(uuid.clone(), def);
-        }
-
-        self.with_transactional_mut(password, |temp_wallet, identity, _, _| {
-            if let Err(e) = Self::validate_vouchers_in_bundle(identity, bundle_data, standard_definitions_toml) {
-                return TransactionOutcome::Rollback(e);
-            }
-
-            match temp_wallet.process_encrypted_transaction_bundle(
-                identity,
-                bundle_data,
-                archive,
-                &verified_definitions,
-            ) {
-                Ok(proc_result) => TransactionOutcome::Commit(proc_result),
-                Err(e) => TransactionOutcome::Rollback(e.to_string()),
-            }
-        })
-    }
-
-    /// Importiert eine Beilegungserklärung.
-    pub fn import_resolution_endorsement(
-        &mut self,
-        endorsement: ResolutionEndorsement,
-        password: Option<&str>,
-    ) -> Result<(), String> {
-        self.with_transactional_mut(password, |temp_wallet, _, _, _| {
-            match temp_wallet.add_resolution_endorsement(endorsement) {
-                Ok(_) => TransactionOutcome::Commit(()),
-                Err(e) => TransactionOutcome::Rollback(e.to_string()),
-            }
-        })
+        Ok(())
     }
 }

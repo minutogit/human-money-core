@@ -3,7 +3,7 @@ project: human-money-core
 version: "0.2.15"
 phase: "active-development"
 health: "green"
-last_updated: "2026-05-08"
+last_updated: "2026-05-09"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -84,6 +84,8 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **Centralized Voucher Standard Parsing**: Exposed typsafe TOML parsing in `AppService`, enabling client apps to leverage core validation logic and signature verification with verified snake_case stability.
 - [x] **Fuzzy-Search for historical voucher logs**: Resolved UI lookup errors by implementing a historical ID fallback mechanism in `Wallet::get_voucher_details`, allowing logs to correctly reference vouchers even after state-changing transactions.
 - [x] **Transactional Command Helpers**: Hardened AppService architecture with `with_transactional_mut` and `TransactionOutcome`, centralizing locking, atomic cloning, saving, and sealing to reduce boilerplate and eliminate state orchestration errors.
+- [x] **Core Refactoring & Modularity**: Modularized `voucher_manager` into sub-modules, extracted epoch zone logic from command handlers, and consolidated BFF formatting to reduce cognitive load and improve maintainability while ensuring full API stability.
+- [x] **English Documentation Migration**: Initiated transition to English comments and Rustdoc across refactored modules, improving developer tool support and preparing for FFI/WASM integration.
 
 
 ## Next Milestones
