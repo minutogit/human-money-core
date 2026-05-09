@@ -65,7 +65,7 @@ fn test_voucher_archiving_on_full_spend() {
     // Alice erstellt einen Gutschein und fügt ihn ihrem Wallet hinzu.
     let voucher = {
         let nominal_value = ValueDefinition {
-            amount: "100.0000".to_string(), // KORREKTUR: Vier Dezimalstellen für den FreeTaler-Standard
+            amount: "100.00".to_string(), // KORREKTUR: Vier Dezimalstellen für den FreeTaler-Standard
             unit: "".to_string(),
             abbreviation: Some("".to_string()),
             description: Some("".to_string()),
@@ -109,7 +109,7 @@ fn test_voucher_archiving_on_full_spend() {
         recipient_id: bob_identity.user_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_id.clone(),
-            amount_to_send: "100.0000".to_string(), // KORREKTUR: Betrag muss ebenfalls das korrekte Format haben.
+            amount_to_send: "100.00".to_string(), // KORREKTUR: Betrag muss ebenfalls das korrekte Format haben.
         }],
         notes: None,
         sender_profile_name: None,

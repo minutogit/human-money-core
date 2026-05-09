@@ -80,7 +80,7 @@ fn test_chained_workflow_strict_public() {
     bob.process_encrypted_transaction_bundle(&ACTORS.bob.identity, &bundle_bytes, None, &standards_map).unwrap();
 
     let list_alice = list_active(&alice, &ACTORS.alice.identity);
-    assert_eq!(list_alice[0].current_amount, "60.0000");
+    assert_eq!(list_alice[0].current_amount, "60.00");
     
     let v_bob = bob.get_voucher_details(&get_first_local_id(&bob)).unwrap().voucher;
     let tx_bob_0 = &v_bob.transactions.last().unwrap();
@@ -103,7 +103,7 @@ fn test_chained_workflow_strict_public() {
     charlie.process_encrypted_transaction_bundle(&ACTORS.charlie.identity, &bundle_bytes, None, &standards_map).unwrap();
 
     let list_charlie = list_active(&charlie, &ACTORS.charlie.identity);
-    assert_eq!(list_charlie[0].current_amount, "40.0000");
+    assert_eq!(list_charlie[0].current_amount, "40.00");
     
     let v_charlie = charlie.get_voucher_details(&get_first_local_id(&charlie)).unwrap().voucher;
     let tx_charlie_0 = &v_charlie.transactions.last().unwrap();
@@ -167,9 +167,9 @@ fn test_chained_workflow_strict_private() {
     }, None).unwrap();
     dave.process_encrypted_transaction_bundle(&ACTORS.david.identity, &bundle_bytes, None, &standards_map).unwrap();
 
-    assert_eq!(list_active(&alice, &ACTORS.alice.identity)[0].current_amount, "40.0000");
-    assert_eq!(list_active(&bob, &ACTORS.bob.identity)[0].current_amount, "40.0000");
-    assert_eq!(list_active(&dave, &ACTORS.david.identity)[0].current_amount, "20.0000");
+    assert_eq!(list_active(&alice, &ACTORS.alice.identity)[0].current_amount, "40.00");
+    assert_eq!(list_active(&bob, &ACTORS.bob.identity)[0].current_amount, "40.00");
+    assert_eq!(list_active(&dave, &ACTORS.david.identity)[0].current_amount, "20.00");
 }
 
 // ============================================================================
@@ -238,7 +238,7 @@ fn test_chained_workflow_ultimate_flexible() {
 
     // Final Asserts
     assert_eq!(list_active(&alice, &ACTORS.alice.identity).len(), 0);
-    assert_eq!(list_active(&bob, &ACTORS.bob.identity)[0].current_amount, "20.0000");
+    assert_eq!(list_active(&bob, &ACTORS.bob.identity)[0].current_amount, "20.00");
     assert_eq!(list_active(&charlie, &ACTORS.charlie.identity).len(), 0);
     
     let daves_vouchers = list_active(&dave, &ACTORS.david.identity);

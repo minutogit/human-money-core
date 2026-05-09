@@ -1,119 +1,15 @@
-//! # src/services/voucher_validation.rs
-//!
-//! Dieses Modul enthält die Logik zur Validierung eines `Voucher`-Objekts
-//! gegen die Regeln eines `VoucherStandardDefinition`.
-
-use crate::error::{StandardDefinitionError, ValidationError, VoucherCoreError};
-use crate::models::voucher::{Transaction, Voucher, VoucherSignature};
-use crate::models::voucher_standard_definition::VoucherStandardDefinition;
-use crate::services::crypto_utils::{
-    ed25519_pk_to_curve_point, get_hash, get_hash_from_slices, get_pubkey_from_user_id,
-    verify_ed25519,
-};
-use crate::services::trap_manager::verify_trap;
+use crate::error::{ValidationError, VoucherCoreError};
+use crate::models::voucher::{Transaction, Voucher};
+use crate::models::voucher_standard_definition::{VoucherStandardDefinition, PrivacyMode};
+use crate::services::crypto_utils::{self, get_hash, get_hash_from_slices, ed25519_pk_to_curve_point, get_pubkey_from_user_id};
 use crate::services::utils::to_canonical_json;
-
+use crate::services::trap_manager::verify_trap;
 use ed25519_dalek::{Signature, Verifier};
 use rust_decimal::Decimal;
-use std::collections::HashSet;
 use std::str::FromStr;
 
-/// Hauptfunktion zur Validierung eines Gutscheins gegen seinen Standard.
-/// Dies ist der zentrale Orchestrator, der alle untergeordneten Validierungsschritte aufruft.
-pub fn validate_voucher_against_standard(
-    voucher: &Voucher,
-    standard: &VoucherStandardDefinition,
-) -> Result<(), VoucherCoreError> {
-    // --- Grundlegende Identitäts- und Integritätsprüfungen (MUSS ZUERST ERFOLGEN) ---
-    // 1. Stelle sicher, dass der Gutschein zu diesem Standard gehört.
-    verify_standard_identity(voucher, standard)?;
-    // 2. Stelle sicher, dass die Stammdaten des Gutscheins nicht manipuliert wurden.
-    //    (Prüft voucher.voucher_id gegen hash(voucher_stammdaten))
-    verify_voucher_hash(voucher)?;
-    
-    // 2b. Anti-Spoofing: Verhindere "Social Engineering" durch "TEST"-Präfixe bei Echtgeld.
-    verify_anti_spoofing(voucher)?;
-
-    // 3. (Verschoben: Validiere die Gültigkeitsdauer nach dem Datums-Check)
-
-    // --- FIX (FEHLER 5): Datum-Parsing HÄRTEN ---
-    // Parsen der Zeitstempel MUSS vor dem Vergleich erfolgen.
-    let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date)
-        .map_err(|_| ValidationError::InvalidDateLogic {
-            creation: voucher.creation_date.clone(),
-            valid_until: voucher.valid_until.clone(),
-        })?
-        .with_timezone(&chrono::Utc);
-    let valid_until_dt = chrono::DateTime::parse_from_rfc3339(&voucher.valid_until)
-        .map_err(|_| ValidationError::InvalidDateLogic {
-            creation: voucher.creation_date.clone(),
-            valid_until: voucher.valid_until.clone(),
-        })?
-        .with_timezone(&chrono::Utc);
-
-    if valid_until_dt < creation_dt {
-        return Err(ValidationError::InvalidDateLogic {
-            creation: voucher.creation_date.clone(),
-            valid_until: voucher.valid_until.clone(),
-        }
-        .into());
-    }
-
-    // 3. Validiere die Gültigkeitsdauer aus dem Standard
-    verify_validity_duration(voucher, standard)?;
-
-    // 4. Validiere die erlaubten Transaktionstypen
-    validate_transaction_types(voucher, standard)?;
-
-    // Führe die datengesteuerten CEL-Validierungsregeln aus
-    let failing_rules = get_failing_custom_rules(voucher, standard)?;
-    if !failing_rules.is_empty() {
-        // Halt on the first one to match existing behavior, or just report one
-        return Err(ValidationError::BusinessRuleViolated(failing_rules[0].clone()).into());
-    }
-
-
-    let privacy_mode = &standard.immutable.features.privacy_mode;
-    validate_privacy_mode(voucher, privacy_mode)?;
-
-    verify_transactions(voucher, standard)?;
-
-    // Signaturen als letztes prüfen, da sie auf den IDs/Hashes der anderen Komponenten basieren.
-    verify_signatures(voucher, standard)?;
-    Ok(())
-}
-
-/// Sammelt alle fehlgeschlagenen, datengesteuerten CEL-Validierungsregeln aus dem Standard
-pub fn get_failing_custom_rules(
-    voucher: &Voucher,
-    standard: &VoucherStandardDefinition,
-) -> Result<Vec<String>, VoucherCoreError> {
-    let mut failing = Vec::new();
-    if !standard.immutable.custom_rules.is_empty() {
-        let voucher_json = serde_json::to_value(voucher)?;
-        let tx_json = voucher.transactions.last().map(|tx| serde_json::to_value(tx).unwrap());
-
-        for (rule_name, rule) in &standard.immutable.custom_rules {
-            match crate::services::dynamic_policy_engine::DynamicPolicyEngine::evaluate_rule(
-                &rule.expression,
-                &voucher_json,
-                tx_json.as_ref(),
-            ) {
-                Ok(true) => {} // Regel erfüllt
-                Ok(false) => failing.push(rule.message.clone()),
-                Err(e) => failing.push(format!("CEL Error in {}: {:?}", rule_name, e)),
-            }
-        }
-    }
-    Ok(failing)
-}
-
-/// Validiert die Einhaltung des Privacy-Modes für alle Transaktionen.
-fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standard_definition::PrivacyMode) -> Result<(), VoucherCoreError> {
-    use crate::models::voucher_standard_definition::PrivacyMode;
-
+pub fn validate_privacy_mode(voucher: &Voucher, mode: &PrivacyMode) -> Result<(), VoucherCoreError> {
     for (i, tx) in voucher.transactions.iter().enumerate() {
-        // Init-Transaktion (Index 0) ist IMMER public (Creator ist bekannt).
         if i == 0 {
             if tx.sender_id.is_none() {
                 return Err(ValidationError::InvalidTransaction(
@@ -128,7 +24,6 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standa
             continue;
         }
 
-        // Global check for whitespace obfuscation (Test 4)
         if tx.recipient_id.trim() != tx.recipient_id {
             return Err(ValidationError::InvalidTransaction(
                 format!("Transaction {} has recipient_id with leading/trailing whitespace (obfuscation attempt).", tx.t_id)
@@ -137,7 +32,6 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standa
 
         match mode {
             PrivacyMode::Public => {
-                // 1. sender_id must be a DID (not None and not "anonymous").
                 match &tx.sender_id {
                     None => return Err(ValidationError::PrivacyModeViolation {
                         t_id: tx.t_id.clone(),
@@ -151,7 +45,6 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standa
                     }
                     _ => {}
                 }
-                // 2. recipient_id must be a DID (not "anonymous").
                 if tx.recipient_id == crate::models::voucher::ANONYMOUS_ID {
                     return Err(ValidationError::PrivacyModeViolation {
                         t_id: tx.t_id.clone(),
@@ -167,21 +60,18 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standa
                 }
             }
             PrivacyMode::Stealth => {
-                // 1. sender_id must be None.
                 if tx.sender_id.is_some() {
                     return Err(ValidationError::PrivacyModeViolation {
                         t_id: tx.t_id.clone(),
                         reason: "Explicit sender_id in 'stealth' mode.".to_string(),
                     }.into());
                 }
-                // 2. sender_identity_signature must be None (Test 1).
                 if tx.sender_identity_signature.is_some() {
                     return Err(ValidationError::PrivateSignatureLeak {
                         t_id: tx.t_id.clone(),
                     }
                     .into());
                 }
-                // 3. recipient_id must be "anonymous" (NO DIDs allowed).
                 if tx.recipient_id != crate::models::voucher::ANONYMOUS_ID {
                     return Err(ValidationError::PrivacyModeViolation {
                         t_id: tx.t_id.clone(),
@@ -193,8 +83,6 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standa
                 }
             }
             PrivacyMode::Flexible => {
-                // 1. recipient_id MUST ALWAYS be anonymous (Future privacy).
-                // Hard check for DIDs (leaks)
                 if tx.recipient_id.contains(':') || tx.recipient_id.contains('@') {
                      return Err(ValidationError::PrivacyModeViolation {
                         t_id: tx.t_id.clone(),
@@ -213,7 +101,6 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standa
                         ),
                     }.into());
                 }
-                // 2. Check consistency: If anonymous (no sender_id), there must be no identity signature (Test 2).
                 if tx.sender_id.is_none() && tx.sender_identity_signature.is_some() {
                     return Err(ValidationError::FlexibleModeIdentityInconsistency {
                         t_id: tx.t_id.clone(),
@@ -226,328 +113,6 @@ fn validate_privacy_mode(voucher: &Voucher, mode: &crate::models::voucher_standa
     Ok(())
 }
 
-/// Verhindert, dass Echtgeld-Gutscheine sich durch "TEST"-Präfixe als Testgeld ausgeben.
-pub fn verify_anti_spoofing(voucher: &Voucher) -> Result<(), VoucherCoreError> {
-    if !voucher.non_redeemable_test_voucher {
-        let currency_upper = voucher.nominal_value.unit.to_uppercase();
-        let standard_upper = voucher.voucher_standard.name.to_uppercase();
-
-        if currency_upper.starts_with("TEST") {
-            return Err(ValidationError::DeceptiveNaming {
-                reason: format!("Currency unit '{}' starts with 'TEST' but voucher is NOT marked as test voucher.", voucher.nominal_value.unit)
-            }.into());
-        }
-
-        if standard_upper.starts_with("TEST") {
-            return Err(ValidationError::DeceptiveNaming {
-                reason: format!("Standard name '{}' starts with 'TEST' but voucher is NOT marked as test voucher.", voucher.voucher_standard.name)
-            }.into());
-        }
-    }
-    Ok(())
-}
-
-/// Überprüft, ob alle Transaktionen im Gutschein einen vom Standard erlaubten Typ haben.
-pub fn validate_transaction_types(
-    voucher: &Voucher,
-    standard: &VoucherStandardDefinition,
-) -> Result<(), VoucherCoreError> {
-    let allowed = &standard.immutable.features.allowed_t_types;
-    for tx in &voucher.transactions {
-        if !tx.t_type.is_empty() && !allowed.contains(&tx.t_type) {
-            return Err(ValidationError::TransactionTypeNotAllowed {
-                t_type: tx.t_type.clone(),
-                allowed: allowed.clone(),
-            }
-            .into());
-        }
-    }
-    Ok(())
-}
-
-/// Stellt sicher, dass der Gutschein zum richtigen Standard gehört (UUID und Hash-Abgleich).
-fn verify_standard_identity(
-    voucher: &Voucher,
-    standard: &VoucherStandardDefinition,
-) -> Result<(), VoucherCoreError> {
-    if voucher.voucher_standard.uuid != standard.immutable.identity.uuid {
-        return Err(ValidationError::StandardUuidMismatch {
-            expected: standard.immutable.identity.uuid.clone(),
-            found: voucher.voucher_standard.uuid.clone(),
-        }
-        .into());
-    }
-
-    let expected_hash = get_hash(to_canonical_json(&standard.immutable)?);
-
-    if voucher.voucher_standard.standard_definition_hash != expected_hash {
-        return Err(VoucherCoreError::Standard(
-            StandardDefinitionError::StandardHashMismatch,
-        ));
-    }
-    Ok(())
-}
-
-fn verify_validity_duration(
-    voucher: &Voucher,
-    standard: &VoucherStandardDefinition,
-) -> Result<(), VoucherCoreError> {
-    let standard_min_duration = standard.immutable.issuance.issuance_minimum_validity_duration.clone();
-
-    // 1. Prüfe, ob die im Gutschein gespeicherte Regel mit der aktuellen Regel des Standards übereinstimmt.
-    if voucher
-        .voucher_standard
-        .template
-        .issuance_minimum_validity_duration
-        != standard_min_duration
-    {
-        return Err(ValidationError::MismatchedMinimumValidity {
-            expected: standard_min_duration,
-            found: voucher
-                .voucher_standard
-                .template
-                .issuance_minimum_validity_duration
-                .clone(),
-        }
-        .into());
-    }
-
-    // 2. Prüfe, ob die tatsächliche Gültigkeitsdauer ausreicht.
-    if !standard_min_duration.is_empty() {
-        let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date)
-            .map_err(|_| ValidationError::InvalidDateLogic {
-                creation: voucher.creation_date.clone(),
-                valid_until: voucher.valid_until.clone(),
-            })?
-            .with_timezone(&chrono::Utc);
-
-        let min_valid_until_dt = crate::services::voucher_manager::add_iso8601_duration(
-            creation_dt,
-            &standard_min_duration,
-        )?;
-
-        let actual_valid_until_dt = chrono::DateTime::parse_from_rfc3339(&voucher.valid_until)
-            .map_err(|_| ValidationError::InvalidDateLogic {
-                creation: voucher.creation_date.clone(),
-                valid_until: voucher.valid_until.clone(),
-            })?
-            .with_timezone(&chrono::Utc);
-
-        if actual_valid_until_dt < min_valid_until_dt {
-            return Err(ValidationError::ValidityDurationTooShort.into());
-        }
-    }
-
-    let standard_max_duration = standard.immutable.issuance.validity_duration_range.get(1).cloned().unwrap_or_default();
-
-    if !standard_max_duration.is_empty() {
-        let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date)
-            .map_err(|_| ValidationError::InvalidDateLogic {
-                creation: voucher.creation_date.clone(),
-                valid_until: voucher.valid_until.clone(),
-            })?
-            .with_timezone(&chrono::Utc);
-
-        let max_valid_until_dt = crate::services::voucher_manager::add_iso8601_duration(
-            creation_dt,
-            &standard_max_duration,
-        )?;
-
-        let actual_valid_until_dt = chrono::DateTime::parse_from_rfc3339(&voucher.valid_until)
-            .map_err(|_| ValidationError::InvalidDateLogic {
-                creation: voucher.creation_date.clone(),
-                valid_until: voucher.valid_until.clone(),
-            })?
-            .with_timezone(&chrono::Utc);
-
-        if actual_valid_until_dt > max_valid_until_dt {
-            return Err(ValidationError::ValidityDurationTooLong {
-                max_allowed: standard_max_duration,
-            }
-            .into());
-        }
-    }
-
-    Ok(())
-}
-
-// --- HILFSFUNKTIONEN UND BESTEHENDE KRYPTO-PRÜFUNGEN (leicht angepasst) ---
-
-/// Hilfsfunktion, die prüft, ob eine einzelne zusätzliche Signatur gültig ist. Gibt bool zurück.
-fn is_signature_valid(
-    signature_obj: &VoucherSignature,
-    init_t_id: &str, // <-- NEUER PARAMETER
-) -> Result<(), ValidationError> {
-    #[cfg(feature = "test-utils")]
-    if crate::is_signature_bypass_active() {
-        return Ok(());
-    }
-
-    let mut obj_to_verify = signature_obj.clone();
-    obj_to_verify.signature_id = "".to_string();
-    obj_to_verify.signature = "".to_string();
-
-    let calculated_id_hash = get_hash_from_slices(&[
-        to_canonical_json(&obj_to_verify)
-            .unwrap_or_default()
-            .as_bytes(),
-        init_t_id.as_bytes(),
-    ]);
-
-    if calculated_id_hash != signature_obj.signature_id {
-        return Err(ValidationError::InvalidSignatureId(
-            signature_obj.signature_id.clone(),
-        ));
-    }
-
-    // Prüfung 3: Ist die kryptographische Signatur selbst gültig?
-    let public_key = match get_pubkey_from_user_id(&signature_obj.signer_id) {
-        Ok(pk) => pk,
-        Err(e) => return Err(ValidationError::InvalidCreatorId(e)), // Wiederverwenden des Creator-ID-Fehlers
-    };
-    let signature_bytes = match bs58::decode(&signature_obj.signature).into_vec() {
-        Ok(bytes) => bytes,
-        Err(e) => return Err(ValidationError::SignatureDecodeError(e.to_string())),
-    };
-
-    // KORREKTUR: Verwende die robustere Pars-Logik aus `signature_manager.rs`,
-    // um die 64-Byte-Länge explizit zu prüfen.
-    let signature_array: [u8; 64] = signature_bytes.try_into().map_err(|_| {
-        ValidationError::SignatureDecodeError(
-            "Invalid signature length: must be 64 bytes".to_string(),
-        )
-    })?;
-    // KORREKTUR: Verwende `from_bytes` statt `from_slice`
-    let signature = Signature::from_bytes(&signature_array);
-
-    if !verify_ed25519(
-        &public_key,
-        signature_obj.signature_id.as_bytes(),
-        &signature,
-    ) {
-        return Err(ValidationError::InvalidSignature {
-            signer_id: signature_obj.signer_id.clone(),
-        });
-    }
-
-    Ok(())
-}
-
-/// Verifiziert die kryptographische Gültigkeit, Einzigartigkeit und chronologische
-/// Korrektheit aller Signaturen in der `signatures`-Liste sowie die Standard-Regeln zu Rollen und Anzahl.
-pub fn verify_signatures(
-    voucher: &Voucher,
-    standard: &VoucherStandardDefinition,
-) -> Result<(), VoucherCoreError> {
-    let mut seen_signers: HashSet<[u8; 32]> = HashSet::new();
-
-    // Extrahiere die ID der ersten Transaktion (Init-Transaktion)
-    let init_t_id = voucher
-        .transactions
-        .first()
-        .map(|tx| tx.t_id.as_str())
-        .ok_or_else(|| {
-            VoucherCoreError::Validation(ValidationError::InvalidTransaction(
-                "Voucher must have at least one (init) transaction.".to_string(),
-            ))
-        })?;
-
-    let allowed_roles = standard.immutable.issuance.allowed_signature_roles.as_slice();
-
-    let min_sigs = standard.immutable.issuance.additional_signatures_range.get(0).copied().unwrap_or(0);
-
-    let max_sigs = standard.immutable.issuance.additional_signatures_range.get(1).copied().unwrap_or(0);
-
-    let mut additional_sig_count = 0;
-
-    for signature_obj in &voucher.signatures {
-        // --- ANTI-SIGNATURE-REUSE-FIREWALL (Rationale) ---
-        // Ein Gutschein-Standard (wie Minuto) verlangt oft unabhängige Bürgen.
-        // Um zu verhindern, dass ein Nutzer sich selbst besichert oder mehrere Bürgen-Rollen
-        // gleichzeitig einnimmt (Sybil-Angriff auf den Gutschein), erzwingen wir die
-        // Eindeutigkeit der kryptographischen Identität.
-        //
-        // WICHTIG: Wir prüfen hier den 32-Byte Public Key direkt. Ein Vergleich der 
-        // signer_id Strings würde nicht ausreichen, da ein Nutzer unterschiedliche IDs
-        // (mit verschiedenen Präfixen) für denselben Schlüssel verwenden könnte.
-        // --- SIGNATURE ROLE VALIDATION ---
-        if signature_obj.role != "creator" {
-            // Note: We no longer need to check if the creator is trying to sign again here, 
-            // because the `DuplicateIdentityDetected` check below will catch it if they try 
-            // to use the same cryptographic key for multiple roles.
-
-            if !allowed_roles.contains(&signature_obj.role) {
-                return Err(ValidationError::BusinessRuleViolated(format!(
-                    "Role '{}' is not an allowed signature role.",
-                    signature_obj.role
-                ))
-                .into());
-            }
-
-            additional_sig_count += 1;
-        }
-
-        let pk = match get_pubkey_from_user_id(&signature_obj.signer_id) {
-            Ok(pk) => pk,
-            Err(e) => return Err(ValidationError::InvalidCreatorId(e).into()),
-        };
-
-        if !seen_signers.insert(pk.to_bytes()) {
-            return Err(ValidationError::DuplicateIdentityDetected {
-                signer_id: signature_obj.signer_id.clone(),
-            }
-            .into());
-        }
-
-        // Prüfung auf chronologische Korrektheit der Signatur.
-        // Eine Signatur kann nicht vor der Erstellung des Gutscheins existieren.
-        if signature_obj.signature_time < voucher.creation_date {
-            return Err(ValidationError::InvalidTimeOrder {
-                entity: "Signature".to_string(),
-                id: signature_obj.signature_id.clone(),
-                time1: voucher.creation_date.clone(),
-                time2: signature_obj.signature_time.clone(),
-            }
-            .into());
-        }
-
-        // Kryptographische Prüfung der Signatur selbst.
-        is_signature_valid(signature_obj, init_t_id)?;
-    }
-
-    if additional_sig_count < min_sigs || additional_sig_count > max_sigs {
-        return Err(ValidationError::CountOutOfBounds {
-            field: "additional_signatures".to_string(),
-            min: min_sigs,
-            max: max_sigs,
-            found: additional_sig_count as usize,
-        }
-        .into());
-    }
-
-    Ok(())
-}
-
-/// --- NEUE FUNKTION (FIX FÜR FEHLER 4) ---
-/// Verifiziert, dass der `voucher_id` (der Hash der Stammdaten) mit den
-/// tatsächlichen Stammdaten übereinstimmt.
-pub fn verify_voucher_hash(voucher: &Voucher) -> Result<(), VoucherCoreError> {
-    let mut voucher_to_hash = voucher.clone();
-    // Entferne die Felder, die nicht Teil des ursprünglichen Hashes sind.
-    voucher_to_hash.voucher_id = "".to_string();
-    voucher_to_hash.transactions.clear();
-    voucher_to_hash.signatures.clear();
-
-    let calculated_hash = get_hash(to_canonical_json(&voucher_to_hash)?);
-
-    if calculated_hash != voucher.voucher_id {
-        Err(ValidationError::InvalidVoucherHash.into())
-    } else {
-        Ok(())
-    }
-}
-
-/// Verifiziert die Integrität, Signaturen und Geschäftslogik der Transaktionsliste. (Weitgehend unverändert)
 pub fn verify_transactions(
     voucher: &Voucher,
     standard: &VoucherStandardDefinition,
@@ -561,7 +126,7 @@ pub fn verify_transactions(
     let allowed_decimal_places = standard.immutable.features.amount_decimal_places as u32;
 
     for (i, tx) in voucher.transactions.iter().enumerate() {
-        let amt = rust_decimal::Decimal::from_str(&tx.amount)?;
+        let amt = Decimal::from_str(&tx.amount)?;
         if amt.scale() > allowed_decimal_places {
             return Err(ValidationError::InvalidAmountPrecision {
                 path: if tx.t_type == "init" { "nominal_value.amount".to_string() } else { format!("transactions[{}].amount", i) },
@@ -570,7 +135,7 @@ pub fn verify_transactions(
             }.into());
         }
         if let Some(rem) = &tx.sender_remaining_amount {
-            let rem_amt = rust_decimal::Decimal::from_str(rem)?;
+            let rem_amt = Decimal::from_str(rem)?;
             if rem_amt.scale() > allowed_decimal_places {
                 return Err(ValidationError::InvalidAmountPrecision {
                     path: format!("transactions[{}].sender_remaining_amount", i),
@@ -581,7 +146,6 @@ pub fn verify_transactions(
         }
     }
 
-    // --- Phase 1: Verify the 'init' transaction basics ---
     let init_tx = voucher.transactions.get(0).ok_or_else(|| {
         VoucherCoreError::Validation(ValidationError::InvalidTransaction(
             "Transaction list is empty.".to_string(),
@@ -592,24 +156,17 @@ pub fn verify_transactions(
     verify_transaction_basics(init_tx, voucher, true)?;
     verify_transaction_integrity_and_signature(init_tx, &layer2_voucher_id)?;
 
-    // --- Phase 2: Verify all subsequent transactions in the chain ---
     let mut last_tx_hash = get_hash(to_canonical_json(init_tx)?);
     let mut last_tx_time = init_tx.t_time.clone();
 
-    // Track valid outputs from the previous transaction that can be spent.
-    // For init/transfer: [amount]
-    // For split: [amount, remaining]
-    // The next transaction MUST consume exactly one of these values.
     let mut valid_previous_outputs = vec![Decimal::from_str(&init_tx.amount)?];
 
     for (i, tx) in voucher.transactions.iter().enumerate().skip(1) {
         let prev_tx = &voucher.transactions[i - 1];
 
-        // Basic and cryptographic checks
         verify_transaction_basics(tx, voucher, false)?;
         verify_transaction_integrity_and_signature(tx, &layer2_voucher_id)?;
 
-        // Chain integrity checks
         if tx.prev_hash != last_tx_hash {
             return Err(ValidationError::InvalidTransaction(
                 "Transaction chain broken: prev_hash does not match hash of previous transaction."
@@ -617,7 +174,6 @@ pub fn verify_transactions(
             )
             .into());
         }
-        // Prüfe chronologische Reihenfolge
         if tx.t_time <= last_tx_time {
             return Err(ValidationError::InvalidTimeOrder {
                 entity: "Transaction".to_string(),
@@ -628,7 +184,6 @@ pub fn verify_transactions(
             .into());
         }
 
-        // --- Amount Continuity Check ---
         let current_amount = Decimal::from_str(&tx.amount)?;
         let current_remainder = if let Some(rem) = &tx.sender_remaining_amount {
             Decimal::from_str(rem)?
@@ -637,10 +192,8 @@ pub fn verify_transactions(
         };
         let total_input_needed = current_amount + current_remainder;
 
-        // Check if `total_input_needed` matches any of the valid previous outputs
         let mut match_found = false;
         for valid_out in &valid_previous_outputs {
-            // Use normalize() for comparison to handle trailing zeros (e.g. 100.00 vs 100)
             if total_input_needed.normalize() == valid_out.normalize() {
                 match_found = true;
                 break;
@@ -654,8 +207,6 @@ pub fn verify_transactions(
                     .clone()
                     .unwrap_or_else(|| crate::models::voucher::ANONYMOUS_ID.to_string()),
                 needed: total_input_needed.to_string(),
-                // We just show the first valid output for simplicity in error message,
-                // or maybe format all of them?
                 available: valid_previous_outputs
                     .iter()
                     .map(|d| d.to_string())
@@ -665,29 +216,15 @@ pub fn verify_transactions(
             .into());
         }
 
-        // Update valid outputs for next iteration
         valid_previous_outputs.clear();
         valid_previous_outputs.push(current_amount);
         if let Some(rem) = &tx.sender_remaining_amount {
             valid_previous_outputs.push(Decimal::from_str(rem)?);
         }
 
-        // --- P2PKH Verkettungs-Validierung ---
-        // Prüfe, dass der in dieser Tx enthüllte sender_ephemeral_pub
-        // dem Hash in der vorherigen Tx entspricht.
         if let Some(revealed_pub) = &tx.sender_ephemeral_pub {
             let correct_anchor = if prev_tx.recipient_id == tx.sender_id.clone().unwrap_or_default()
             {
-                // Fall: Sender identifiziert sich als Empfänger
-                // ACHTUNG: Wenn sender_id NONE ist (Private), matcht das hier nicht auf recipient_id (die ja meist auch Hash/Anon ist).
-                // In Private müssen wir rein kryptographisch prüfen.
-                // Aber: Wir wissen nicht, OB wir der Empfänger waren, außer wir probieren es?
-                // Nein, Validierung ist öffentlich. Jeder muss es prüfen können.
-                // LÖSUNG: Wir können nicht rein an IDs festmachen, wer der Parent war, wenn IDs fehlen.
-                // Wir müssen PRÜFEN, ob der Hash passt.
-
-                // Versuch 1: Passt es zum Receiver Hash der Vor-Tx?
-                // SECURITY FIX: Decode Base58 and hash raw bytes
                 let pub_bytes = bs58::decode(revealed_pub).into_vec().map_err(|_| {
                     VoucherCoreError::Crypto("Invalid base58 encoding in revealed_pub".to_string())
                 })?;
@@ -708,14 +245,11 @@ pub fn verify_transactions(
                     None
                 }
             } else {
-                // Fallback für explizite ID Matches (Public Mode)
                 if Some(prev_tx.recipient_id.clone()) == tx.sender_id {
                     prev_tx.receiver_ephemeral_pub_hash.as_ref()
                 } else if tx.sender_id.is_some() && tx.sender_id == prev_tx.sender_id {
                     prev_tx.change_ephemeral_pub_hash.as_ref()
                 } else {
-                    // Wenn keine ID Matcht, versuchen wir den Hash-Match (siehe oben)
-                    // SECURITY FIX: Decode Base58 and hash raw bytes
                     let pub_bytes = bs58::decode(revealed_pub).into_vec().map_err(|_| {
                         VoucherCoreError::Crypto(
                             "Invalid base58 encoding in revealed_pub".to_string(),
@@ -749,9 +283,7 @@ pub fn verify_transactions(
             }
         }
 
-        // --- TRAP Validierung ---
         if let Some(trap) = &tx.trap_data {
-            // TEST 3: Prevent Trapezoidal Identity Leak
             if trap.blinded_id.contains(':') || trap.blinded_id.contains('@') {
                 return Err(ValidationError::TrapDataInvalid {
                     t_id: tx.t_id.clone(),
@@ -759,12 +291,6 @@ pub fn verify_transactions(
                 .into());
             }
 
-            // GLOBAL CHECK (Context Binding):
-            // The DS-Tag MUST be derived from the transaction context (prev_hash + sender_ephemeral_pub).
-            // This prevents Replay Attacks where a valid Trap is reused in a different transaction context.
-            // This check applies to BOTH Public and Private modes.
-
-            // SECURITY FIX: Decode to raw bytes to prevent string malleability
             let prev_hash_bytes = bs58::decode(&tx.prev_hash)
                 .into_vec()
                 .map_err(|_| VoucherCoreError::Crypto("Invalid prev_hash format".to_string()))?;
@@ -787,12 +313,10 @@ pub fn verify_transactions(
                 )));
             }
 
-            // Full ZKP Verification (Only possible if sender_id is known)
             if let Some(sender_id) = &tx.sender_id {
                 if let Ok(signer_pk) = get_pubkey_from_user_id(sender_id) {
                     if let Ok(signer_id_point) = ed25519_pk_to_curve_point(&signer_pk) {
-                        let sender_prefix =
-                            sender_id.split('@').next().unwrap_or(sender_id).to_string();
+                        let sender_prefix = crypto_utils::get_prefix_from_user_id(sender_id);
 
                         let u_input_varying = format!(
                             "{}{}{}",
@@ -806,7 +330,7 @@ pub fn verify_transactions(
                             &expected_ds_tag,
                             u_input_varying.as_bytes(),
                             &signer_id_point,
-                            &sender_prefix,
+                            sender_prefix,
                         ) {
                             return Err(ValidationError::InvalidTransaction(format!(
                                 "Trap verification failed: {}",
@@ -819,22 +343,7 @@ pub fn verify_transactions(
             }
         }
 
-        // --- Financial Consistency Check (Look-behind-by-one) ---
         let sender_balance_before_tx = {
-            // Wir müssen herausfinden, ob wir der Recipient oder der Sender (Change) der Vor-Tx waren.
-            // Da wir ggf. keine IDs haben, nutzen wir den Match aus der P2PKH Prüfung?
-            // Vereinfachung: Wir schauen auf die Beträge und P2PKH Link.
-            // Da wir oben "correct_anchor" nicht exponiert haben, hier heuristisch:
-
-            // Wenn Recipient Balance matching?
-            // "Look-behind":
-            // - War prev_tx.recipient der Vorbesitzer?
-            // - War prev_tx.sender (Change) der Vorbesitzer?
-
-            // Wenn wir den Key revealt haben, der zu RecipientHash passt -> Balance = Amount
-            // Wenn wir den Key revealt haben, der zu ChangeHash passt -> Balance = Remaining
-
-            // AUSTAUSCH DER LOGIK: Statt ID-Check nun Hash-Check
             let my_revealed_pub_hash = if let Some(k) = &tx.sender_ephemeral_pub {
                 let bytes = bs58::decode(k).into_vec().map_err(|_| {
                     VoucherCoreError::Crypto(
@@ -851,11 +360,9 @@ pub fn verify_transactions(
             } else if Some(&my_revealed_pub_hash) == prev_tx.change_ephemeral_pub_hash.as_ref() {
                 Decimal::from_str(prev_tx.sender_remaining_amount.as_deref().unwrap_or("0"))?
             } else {
-                // Fallback für alte Logik / Init
                 if tx.t_type == "init" {
-                    Decimal::ZERO // Init hat keinen Vorgänger in dem Sinne, Balance Check ist anders
+                    Decimal::ZERO
                 } else {
-                    // Wenn keine kryptographische Verbindung -> Error (wurde oben schon gefangen eigentlich)
                     Decimal::ZERO
                 }
             }
@@ -879,7 +386,6 @@ pub fn verify_transactions(
             .into());
         }
 
-        // HÄRTUNG: Ein 'transfer' darf keinen Restbetrag haben. Dies verhindert mehrdeutige Zustände.
         if tx.t_type == "transfer" && tx.sender_remaining_amount.is_some() {
             return Err(ValidationError::InvalidTransaction(
                 "A 'transfer' transaction must not have a sender_remaining_amount.".to_string(),
@@ -887,8 +393,6 @@ pub fn verify_transactions(
             .into());
         }
 
-        // NEU: Zusätzliche Prüfung für Split-Transaktionen auf korrekte Bilanz.
-        // Dies schließt die "Gelderschaffungs"-Lücke.
         if tx.t_type == "split" {
             let remaining_amount = match tx.sender_remaining_amount.as_deref() {
                 Some(rem_str) => Decimal::from_str(rem_str)?,
@@ -908,15 +412,14 @@ pub fn verify_transactions(
             }
         }
 
-        // Update state for the next iteration
         last_tx_hash = get_hash(to_canonical_json(tx)?);
         last_tx_time = tx.t_time.clone();
     }
 
     Ok(())
 }
-/// Hilfsfunktion, die grundlegende, zustandslose Prüfungen für eine einzelne Transaktion durchführt.
-fn verify_transaction_basics(
+
+pub fn verify_transaction_basics(
     tx: &Transaction,
     voucher: &Voucher,
     is_init: bool,
@@ -928,7 +431,6 @@ fn verify_transaction_basics(
             )
             .into());
         }
-        // SECURITY FIX: Use raw bytes for concatenation to avoid malleability
         let nonce_bytes = bs58::decode(&voucher.voucher_nonce)
             .into_vec()
             .map_err(|_| {
@@ -1007,8 +509,6 @@ fn verify_transaction_basics(
             .into());
         }
     } else if !is_init {
-        // Allow unknown types? Probably not safe.
-        // For now, let's stick to known types.
         return Err(ValidationError::InvalidTransaction(format!(
             "Unknown transaction type: {}",
             tx.t_type
@@ -1023,7 +523,6 @@ fn verify_transaction_basics(
         .into());
     }
 
-    // Check remaining amount positivity if present
     if let Some(rem) = &tx.sender_remaining_amount {
         if Decimal::from_str(rem)? <= Decimal::ZERO {
             return Err(ValidationError::NegativeOrZeroAmount {
@@ -1036,7 +535,6 @@ fn verify_transaction_basics(
     Ok(())
 }
 
-/// Prüft die kryptographische Integrität und die Signatur einer einzelnen Transaktion.
 pub fn verify_transaction_integrity_and_signature(
     transaction: &Transaction,
     layer2_voucher_id: &str,
@@ -1046,10 +544,8 @@ pub fn verify_transaction_integrity_and_signature(
         return Ok(());
     }
 
-    // 1. Basis-Integrität prüfen (t_id Berechnung)
     let mut tx_for_tid_calc = transaction.clone();
 
-    // WICHTIG: Um die ID zu validieren, müssen wir die Signaturen entfernen.
     tx_for_tid_calc.t_id = "".to_string();
     tx_for_tid_calc.layer2_signature = None;
     tx_for_tid_calc.sender_identity_signature = None;
@@ -1062,7 +558,6 @@ pub fn verify_transaction_integrity_and_signature(
         .into());
     }
 
-    // 2. Layer 2 Signature Validierung (Pflichtfeld)
     if let Some(l2_sig) = &transaction.layer2_signature {
         if let Some(sender_ephem_pub) = &transaction.sender_ephemeral_pub {
             let ephem_pub_bytes = bs58::decode(sender_ephem_pub).into_vec().map_err(|_| {
@@ -1089,7 +584,6 @@ pub fn verify_transaction_integrity_and_signature(
                 .into_vec()
                 .map_err(|_| ValidationError::SignatureDecodeError("Invalid t_id format".into()))?;
 
-            // Herausfinden des challenge_ds_tag
             let challenge_ds_tag = if transaction.t_type == "init" {
                 transaction.t_id.clone()
             } else {
@@ -1175,7 +669,6 @@ pub fn verify_transaction_integrity_and_signature(
         );
     }
 
-    // 3. Sender Identity Signature (L1) - Nur prüfen wenn sender_id vorhanden
     if let Some(sender_id) = &transaction.sender_id {
         let identity_sig_enc = transaction
             .sender_identity_signature
@@ -1194,7 +687,6 @@ pub fn verify_transaction_integrity_and_signature(
             ValidationError::SignatureDecodeError("Invalid identity signature length".into())
         })?);
 
-        // NEU: Signatur prüft direkt die t_id (raw bytes)
         let t_id_raw = bs58::decode(&transaction.t_id)
             .into_vec()
             .map_err(|_| ValidationError::SignatureDecodeError("Invalid t_id format".into()))?;
@@ -1207,64 +699,4 @@ pub fn verify_transaction_integrity_and_signature(
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod anti_spoofing_tests {
-    use super::*;
-    use crate::models::voucher::Voucher;
-
-    #[test]
-    fn test_validation_rejects_live_voucher_with_test_prefix_currency() {
-        let mut voucher = Voucher::default();
-        voucher.non_redeemable_test_voucher = false;
-        voucher.nominal_value.unit = "TEST-Euro".to_string();
-        
-        let result = verify_anti_spoofing(&voucher);
-        assert!(result.is_err());
-        match result {
-            Err(VoucherCoreError::Validation(ValidationError::DeceptiveNaming { reason })) => {
-                assert!(reason.contains("Currency unit 'TEST-Euro'"));
-            }
-            _ => panic!("Expected DeceptiveNaming error, got {:?}", result),
-        }
-    }
-
-    #[test]
-    fn test_validation_rejects_live_voucher_with_test_prefix_standard() {
-        let mut voucher = Voucher::default();
-        voucher.non_redeemable_test_voucher = false;
-        voucher.voucher_standard.name = "test_minuto".to_string();
-        
-        let result = verify_anti_spoofing(&voucher);
-        assert!(result.is_err());
-        match result {
-            Err(VoucherCoreError::Validation(ValidationError::DeceptiveNaming { reason })) => {
-                assert!(reason.contains("Standard name 'test_minuto'"));
-            }
-            _ => panic!("Expected DeceptiveNaming error, got {:?}", result),
-        }
-    }
-
-    #[test]
-    fn test_validation_allows_genuine_test_voucher() {
-        let mut voucher = Voucher::default();
-        voucher.non_redeemable_test_voucher = true;
-        voucher.nominal_value.unit = "TEST-Euro".to_string();
-        voucher.voucher_standard.name = "TEST-Minuto".to_string();
-        
-        let result = verify_anti_spoofing(&voucher);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_validation_allows_genuine_live_voucher() {
-        let mut voucher = Voucher::default();
-        voucher.non_redeemable_test_voucher = false;
-        voucher.nominal_value.unit = "Euro".to_string();
-        voucher.voucher_standard.name = "Minuto-Gutschein".to_string();
-        
-        let result = verify_anti_spoofing(&voucher);
-        assert!(result.is_ok());
-    }
 }

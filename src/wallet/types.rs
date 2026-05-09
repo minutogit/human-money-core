@@ -1,7 +1,7 @@
 //! # src/wallet/types.rs
 //!
-//! Definiert öffentliche Datenstrukturen (Structs), die als "View-Models"
-//! oder Datencontainer für die API-Interaktion des Wallets dienen.
+//! Defines public data structures (structs) that serve as "view models"
+//! or data containers for the wallet's API interaction.
 
 use crate::models::conflict::TransactionFingerprint;
 use crate::models::profile::TransactionBundleHeader;
@@ -10,108 +10,118 @@ use crate::wallet::instance::VoucherStatus;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Beschreibt einen Teil-Transfer von einem spezifischen Quell-Gutschein.
-/// Wird verwendet, um die Quellen (lokale ID und Betrag) für einen Multi-Transfer zu definieren.
+/// Internal helper function to format names for the user interface (BFF pattern).
+/// Ensures that test vouchers receive a consistent "TEST-" prefix.
+pub(crate) fn format_bff_name(raw_name: &str, is_test: bool) -> String {
+    if is_test && !raw_name.starts_with("TEST-") {
+        format!("TEST-{}", raw_name)
+    } else {
+        raw_name.to_string()
+    }
+}
+
+/// Describes a partial transfer from a specific source voucher.
+/// Used to define sources (local ID and amount) for a multi-transfer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceTransfer {
-    /// Die lokale ID des Gutscheins, von dem ein Betrag abgezogen werden soll.
+    /// The local ID of the voucher from which an amount should be deducted.
     pub local_instance_id: String,
-    /// Der Betrag, der von diesem Gutschein abgezogen werden soll, als String.
+    /// The amount to be deducted from this voucher, as a string.
     pub amount_to_send: String,
 }
 
-/// Die aggregierte Anforderung für den universellen Transfer-Befehl.
+/// The aggregated request for the universal transfer command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiTransferRequest {
-    /// Die User-ID des Empfängers.
+    /// The recipient's user ID.
     pub recipient_id: String,
-    /// Eine Liste von Quell-Gutscheinen und den jeweils zu sendenden Beträgen (1 bis N).
+    /// A list of source vouchers and the amounts to be sent from each (1 to N).
     pub sources: Vec<SourceTransfer>,
-    /// Optionale Notizen für das Bundle.
+    /// Optional notes for the bundle.
     pub notes: Option<String>,
-    /// Optionaler Profilname des Senders.
+    /// Optional sender profile name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_profile_name: Option<String>,
-    /// Optional: Erzwinge oder deaktiviere den Privacy Mode (nur bei 'Flexible' Standards).
+    /// Optional: Force or disable privacy mode (only for 'Flexible' standards).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub use_privacy_mode: Option<bool>,
 }
 
-/// Fasst die Ergebnisse eines Transfers pro Standard zusammen.
-/// Key: Währungseinheit (z.B. "Minuto"), Value: Summe als String (teilbar) oder Anzahl (nicht-teilbar).
+/// Summarizes the results of a transfer per standard.
+/// Key: Currency unit (e.g., "Minuto"), Value: Sum as a string (divisible) or count (non-divisible).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct TransferSummary {
-    /// Aufsummierte Beträge für teilbare/summierbare Gutscheine (z.B. "10.50 Minuto").
-    /// Key: Währungseinheit (z.B. "Minuto"), Value: Summe als String.
+    /// Aggregated amounts for divisible/summable vouchers (e.g., "10.50 Minuto").
+    /// Key: Currency unit (e.g., "Minuto"), Value: Sum as a string.
     #[serde(default)]
     pub summable_amounts: HashMap<String, String>,
-    /// Gezählte Einheiten für nicht-teilbare/nicht-summierbare Gutscheine (z.B. "3 Brote").
-    /// Key: Währungseinheit (z.B. "Brot"), Value: Anzahl.
+    /// Counted units for non-divisible/non-summable vouchers (e.g., "3 loaves").
+    /// Key: Currency unit (e.g., "Bread"), Value: Count.
     #[serde(default)]
     pub countable_items: HashMap<String, u32>,
 }
 
-/// Das Ergebnis der Verarbeitung eines eingehenden Transaktionsbündels.
+/// The result of processing an incoming transaction bundle.
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ProcessBundleResult {
     pub header: TransactionBundleHeader,
     pub check_result: DoubleSpendCheckResult,
-    /// Detaillierte Zusammenfassung der transferierten Werte (Summen und Zähler).
+    /// Detailed summary of transferred values (sums and counters).
     #[serde(default)]
     pub transfer_summary: TransferSummary,
-    /// Liste der lokalen IDs der Gutscheine, die im Wallet des Empfängers
-    /// durch diesen Transfer erstellt oder aktualisiert wurden.
+    /// List of local IDs of vouchers created or updated in the recipient's
+    /// wallet by this transfer.
     #[serde(default)]
     pub involved_vouchers: Vec<String>,
-    /// Detaillierte Aufschlüsselung jedes empfangenen Gutscheins.
+    /// Detailed breakdown of each received voucher.
     #[serde(default)]
     pub involved_vouchers_details: Vec<InvolvedVoucherInfo>,
 }
 
-/// Das Ergebnis einer Double-Spend-Prüfung.
+/// The result of a double-spend check.
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct DoubleSpendCheckResult {
     pub verifiable_conflicts: HashMap<String, Vec<TransactionFingerprint>>,
     pub unverifiable_warnings: HashMap<String, Vec<TransactionFingerprint>>,
 }
 
-/// Enthält detaillierte Informationen zu einem einzelnen Gutschein, der
-/// an einer Transaktion (Senden oder Empfangen) beteiligt war.
+/// Contains detailed information about a single voucher involved in a
+/// transaction (sending or receiving).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct InvolvedVoucherInfo {
-    /// Die lokale ID der Gutschein-Instanz im Wallet des Benutzers.
+    /// The local ID of the voucher instance in the user's wallet.
     pub local_instance_id: String,
-    /// Die globale, unveränderliche ID des Gutscheins.
+    /// The global, immutable ID of the voucher.
     pub voucher_id: String,
-    /// Der menschenlesbare Name des Standards (z.B. "Minuto-Gutschein").
+    /// Human-readable name of the standard (e.g., "Minuto Voucher").
     pub standard_name: String,
-    /// Die Währungseinheit (z.B. "Minuto", "Gramm").
+    /// Currency unit (e.g., "Minuto", "Gram").
     pub unit: String,
-    /// Der Betrag, der von diesem Gutschein gesendet oder empfangen wurde.
+    /// Amount sent or received from this voucher.
     pub amount: String,
-    /// Gibt an, ob der Gutschein teilbar ist.
+    /// Indicates if the voucher is divisible.
     pub allow_partial_transfers: bool,
-    /// Gibt an, ob es sich um einen Test-Gutschein handelt.
+    /// Indicates if it is a test voucher.
     pub is_test_voucher: bool,
-    /// Die formatierte Währung für die Anzeige (z.B. "TEST-Minuto").
+    /// Formatted currency for display (e.g., "TEST-Minuto").
     pub display_currency: String,
-    /// Der formatierte Standard-Name für die Anzeige.
+    /// Formatted standard name for display.
     pub display_standard_name: String,
 }
 
-/// Das Ergebnis der Erstellung eines Transfer-Bündels.
+/// The result of creating a transfer bundle.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct CreateBundleResult {
-    /// Die serialisierten Bytes des SecureContainers, bereit zum Senden.
+    /// Serialized bytes of the SecureContainer, ready for sending.
     pub bundle_bytes: Vec<u8>,
-    /// Die eindeutige ID des erstellten Bundles.
+    /// Unique ID of the created bundle.
     pub bundle_id: String,
-    /// Detaillierte Aufschlüsselung jedes Quell-Gutscheins, der in der Transaktion verwendet wurde.
+    /// Detailed breakdown of each source voucher used in the transaction.
     #[serde(default)]
     pub involved_sources_details: Vec<InvolvedVoucherInfo>,
 }
 
-/// Ein Bericht, der die Ergebnisse der Speicherbereinigung zusammenfasst.
+/// A report summarizing the results of storage cleanup.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CleanupReport {
     pub expired_fingerprints_removed: usize,
@@ -119,8 +129,8 @@ pub struct CleanupReport {
     pub archived_items_removed: usize,
 }
 
-/// Dient als typsicherer Schlüssel für die Aggregation von Guthaben.
-/// Unterscheidet Assets nach Standard, Einheit und Test-Status.
+/// Serves as a type-safe key for aggregating balances.
+/// Distinguishes assets by standard, unit, and test status.
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct AssetClass {
     pub standard_uuid: String,
@@ -128,28 +138,28 @@ pub struct AssetClass {
     pub is_test_voucher: bool,
 }
 
-/// Repräsentiert ein aggregiertes Guthaben für einen bestimmten Gutschein-Standard und eine Währungseinheit.
-/// Wird verwendet, um eine zusammenfassende Dashboard-Ansicht der Guthaben zu erstellen. use serde::{Deserialize, Serialize};
+/// Represents an aggregated balance for a specific voucher standard and currency unit.
+/// Used to create a summary dashboard view of balances.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AggregatedBalance {
-    /// Der Name des Gutschein-Standards (z.B. "Minuto-Gutschein").
+    /// Name of the voucher standard (e.g., "Minuto Voucher").
     pub standard_name: String,
-    /// Die eindeutige UUID des Gutschein-Standards.
+    /// Unique UUID of the voucher standard.
     pub standard_uuid: String,
-    /// Die Währungseinheit des Guthabens (z.B. "Min", "€").
+    /// Currency unit of the balance (e.g., "Min", "€").
     pub unit: String,
-    /// Der als String formatierte Gesamtbetrag.
+    /// Total amount formatted as a string.
     pub total_amount: String,
-    /// Die formatierte Währung für die Anzeige (z.B. "TEST-Minuto").
+    /// Formatted currency for display (e.g., "TEST-Minuto").
     pub display_currency: String,
-    /// Der formatierte Standard-Name für die Anzeige.
+    /// Formatted standard name for display.
     pub display_standard_name: String,
-    /// Gibt an, ob es sich um Test-Guthaben handelt.
+    /// Indicates if it is test balance.
     pub is_test_voucher: bool,
 }
 
-/// Zusammenfassende Information über eine Asset-Klasse (Standard + Test-Status).
-/// Dient primär dazu, Filter-Dropdowns in der UI sauber zu befüllen.
+/// Summary information about an asset class (standard + test status).
+/// Primarily used to populate filter dropdowns in the UI.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct AssetClassSummary {
     pub standard_uuid: String,
@@ -158,52 +168,51 @@ pub struct AssetClassSummary {
     pub display_currency: String,
 }
 
-/// Eine zusammenfassende Ansicht eines Gutscheins für Listen-Darstellungen.
+/// A summary view of a voucher for list representations.
 ///
-/// Diese Struktur wird von der Funktion `AppService::get_voucher_summaries`
-/// zurückgegeben und dient dazu, eine übersichtliche Darstellung der
-/// Gutschein-Daten zu liefern, ohne das gesamte, komplexe `Voucher`-Objekt
-/// übertragen zu müssen.
+/// This structure is returned by `AppService::get_voucher_summaries`
+/// and provides a concise representation of voucher data without
+/// having to transfer the entire, complex `Voucher` object.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoucherSummary {
-    /// Die eindeutige, lokale ID der Gutschein-Instanz im Wallet.
+    /// Unique local ID of the voucher instance in the wallet.
     pub local_instance_id: String,
-    /// Der aktuelle Status des Gutscheins (z.B. `Active`, `Archived`).
+    /// Current status of the voucher (e.g., `Active`, `Archived`).
     pub status: VoucherStatus,
-    /// Die eindeutige ID des Erstellers (oft ein Public Key).
+    /// Unique ID of the creator (often a public key).
     pub creator_id: String,
-    /// Das Gültigkeitsdatum des Gutscheins im ISO 8601-Format.
+    /// Validity date of the voucher in ISO 8601 format.
     pub valid_until: String,
-    /// Eine allgemeine, menschenlesbare Beschreibung des Gutscheins.
+    /// General human-readable description of the voucher.
     pub description: String,
-    /// Der aktuelle, verfügbare Betrag des Gutscheins als String.
+    /// Current available amount of the voucher as a string.
     pub current_amount: String,
-    /// Die Einheit des Gutscheinwerts (z.B. "m" für Minuten).
+    /// Unit of the voucher value (e.g., "m" for minutes).
     pub unit: String,
-    /// Der Name des Standards, zu dem dieser Gutschein gehört (z.B. "Minuto-Gutschein").
+    /// Name of the standard this voucher belongs to (e.g., "Minuto Voucher").
     pub raw_standard_name: String,
-    /// Die eindeutige Kennung (UUID) des Standards, zu dem dieser Gutschein gehört.
+    /// Unique identifier (UUID) of the standard this voucher belongs to.
     pub voucher_standard_uuid: String,
-    /// Die Anzahl der Transaktionen, exklusive der initialen `init`-Transaktion.
+    /// Number of transactions, excluding the initial `init` transaction.
     pub transaction_count: u32,
-    /// Die Gesamtzahl der vorhandenen Signaturen (inkl. Bürgen).
+    /// Total number of existing signatures (including guarantors).
     pub signatures_count: u32,
-    /// Ein Flag, das anzeigt, ob der Gutschein besichert ist.
+    /// Flag indicating if the voucher is collateralized.
     pub has_collateral: bool,
-    /// Der Vorname des ursprünglichen Erstellers.
+    /// First name of the original creator.
     pub creator_first_name: String,
-    /// Der Nachname des ursprünglichen Erstellers.
+    /// Last name of the original creator.
     pub creator_last_name: String,
     pub creator_coordinates: String,
-    /// Eine Markierung, ob es sich um einen Testgutschein handelt.
+    /// Marker for whether it is a test voucher.
     pub is_test_voucher: bool,
-    /// Die formatierte Währung für die Anzeige.
+    /// Formatted currency for display.
     pub display_currency: String,
-    /// Der formatierte Standard-Name für die Anzeige.
+    /// Formatted standard name for display.
     pub display_standard_name: String,
 }
 
-/// Eine zusammenfassende Ansicht eines Double-Spend-Beweises für Listen-Darstellungen.
+/// A summary view of a double-spend proof for list representations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofOfDoubleSpendSummary {
     pub proof_id: String,
@@ -225,17 +234,17 @@ pub struct ProofOfDoubleSpendSummary {
     pub is_test_voucher: bool,
 }
 
-/// Eine detaillierte Ansicht eines Gutscheins inklusive seiner Transaktionshistorie.
+/// A detailed view of a voucher including its transaction history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoucherDetails {
     pub local_instance_id: String,
-    /// Der aktuelle Status des Gutscheins (z.B. `Active`, `Archived`).
+    /// Current status of the voucher (e.g., `Active`, `Archived`).
     pub status: VoucherStatus,
     pub voucher: Voucher,
-    /// Die formatierte Währung für die Anzeige.
+    /// Formatted currency for display.
     pub display_currency: String,
-    /// Der formatierte Standard-Name für die Anzeige.
+    /// Formatted standard name for display.
     pub display_standard_name: String,
-    /// Gibt an, ob es sich um einen Test-Guthaben handelt.
+    /// Indicates if it is a test balance.
     pub is_test_voucher: bool,
 }

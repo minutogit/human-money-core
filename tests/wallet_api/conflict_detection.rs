@@ -44,7 +44,7 @@ fn make_test_transaction(suffix: &str, t_time: &str) -> Transaction {
         sender_ephemeral_pub: None,
         trap_data: None,
         layer2_signature: None,
-        amount: "10.0000".to_string(),
+        amount: "10.00".to_string(),
         recipient_id: ACTORS.bob.user_id.clone(),
         t_type: "transfer".to_string(),
         ..Default::default()
@@ -92,7 +92,7 @@ fn test_fingerprint_valid_until_is_rounded_to_end_of_month() {
             ..Default::default()
         },
         nominal_value: ValueDefinition {
-            amount: "10.0000".to_string(),
+            amount: "10.00".to_string(),
             ..Default::default()
         },
         validity_duration: Some("P1Y".to_string()),
@@ -143,7 +143,7 @@ fn test_fingerprint_ds_tag_is_non_empty() {
     let mut voucher = create_voucher_for_manipulation(
         NewVoucherData {
             creator_profile: PublicProfile { id: Some(creator.user_id.clone()), ..Default::default() },
-            nominal_value: ValueDefinition { amount: "5.0000".to_string(), ..Default::default() },
+            nominal_value: ValueDefinition { amount: "5.00".to_string(), ..Default::default() },
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
         },
@@ -172,7 +172,7 @@ fn test_scan_rebuild_does_not_duplicate_fingerprints_in_known_history() {
     let (std, _) = &*MINUTO_STANDARD;
     let mut wallet = setup_in_memory_wallet(alice);
 
-    add_voucher_to_wallet(&mut wallet, alice, "20.0000", std, false).unwrap();
+    add_voucher_to_wallet(&mut wallet, alice, "20.00", std, false).unwrap();
 
     let (_own, known) = scan_and_rebuild_fingerprints(&wallet.voucher_store, &alice.user_id).unwrap();
 

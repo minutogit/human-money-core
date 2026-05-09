@@ -109,7 +109,7 @@ fn test_rejection_of_broken_transaction_chain() {
         &identity_sender.signing_key,
         &human_money_core::test_utils::derive_holder_key(&voucher, &identity_sender.signing_key), // Init -> Tx1
         &id_recipient,
-        "50.0000",
+        "50.00",
         None,
     )
     .unwrap()
@@ -200,8 +200,8 @@ fn test_rejection_of_inconsistent_split_math() {
     tx2.prev_hash = prev_tx_hash;
     tx2.t_type = "split".to_string();
     tx2.recipient_id = human_money_core::models::voucher::ANONYMOUS_ID.to_string();
-    tx2.amount = "30.0000".to_string();
-    tx2.sender_remaining_amount = Some("80.0000".to_string()); // Falscher Restbetrag
+    tx2.amount = "30.00".to_string();
+    tx2.sender_remaining_amount = Some("80.00".to_string()); // Falscher Restbetrag
 
     // NEU: Hänge einen gültigen Privacy Guard an, damit die Ingest-Prüfung passiert
     let payload = human_money_core::models::voucher::RecipientPayload {
@@ -320,7 +320,7 @@ fn test_rejection_of_self_received_bundle() {
     let summaries = service_sender.get_voucher_summaries(None, None, None).unwrap();
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].status, VoucherStatus::Active);
-    assert_eq!(summaries[0].current_amount, "50.0000"); // Der Restbetrag nach dem Split
+    assert_eq!(summaries[0].current_amount, "50.00"); // Der Restbetrag nach dem Split
 
     // Der Empfänger (Bob) kann es problemlos empfangen
     let result_recipient =
@@ -460,7 +460,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
         &identity_sender.signing_key,
         &human_money_core::test_utils::derive_holder_key(&voucher_a, &identity_sender.signing_key), // Init -> Tx 1
         &id_recipient,
-        "50.0000",
+        "50.00",
         None,
     )
     .unwrap();

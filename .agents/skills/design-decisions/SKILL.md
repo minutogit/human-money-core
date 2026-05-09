@@ -3,51 +3,57 @@ name: design-decisions
 description: Architectural design decisions for human_money_core including SAI, instance IDs, TOML standards, and CEL engine choices.
 ---
 
-# Design Decisions — human_money_core
+# human_money_core — Design Decisions
 
-## Gender Representation in Creator Struct
+Dieses Dokument hält die grundlegenden Design-Entscheidungen der `human_money_core`-Bibliothek fest und dient als Referenz für die Architektur.
 
-- **Decision:** `gender` field uses ISO 5218 integer (1=male, 2=female, 0=not known, 9=not applicable)
-- **Rationale:** Pragmatic and universal. Complex gender representation is delegated to higher application layers.
+## 1. Datenformate
 
-## TOML for Voucher Standards
+**Abbildung des Geschlechts im `Creator` Struct:**
+- **Entscheidung:** Das `gender`-Feld im `Creator`-Struct wird als `Int` definiert. Geschlecht des Erstellers nach ISO 5218 (1 = male, 2 = female, 0 = not known, 9 = Not applicable).
+- **Begründung:** Diese Wahl ist pragmatisch und universell einsetzbar, ohne sich auf spezifische kulturelle oder rechtliche Definitionen von Geschlecht zu beschränken.
 
-- **Decision:** Standards use TOML format instead of JSON.
-- **Rationale:** TOML supports comments, making standards human-readable and self-documenting.
+**Voucher Standard Definitionen via TOML:**
+- **Entscheidung:** Nutzung von TOML für die Definitionsdateien der Gutschein-Standards.
+- **Begründung:** TOML erlaubt Kommentare, was die Lesbarkeit und Dokumentation der Standards erheblich verbessert. JSON bietet diese Möglichkeit nicht.
 
-## Local Voucher Instance ID
+## 2. Wallet-Architektur
 
-- **Why needed:** After a `split` transaction, multiple instances share the same `voucher_id`. The `local_voucher_instance_id` is a stable, unique primary key for each instance in the wallet.
-- **Calculation:** Traverses transaction history backwards to find the last point where the profile owner had a balance > 0. This is necessary for consistent state management and local double-spending detection.
+**local_voucher_instance_id:**
+- **Entscheidung:** Einführung einer lokalen Instanz-ID als Primärschlüssel.
+- **Begründung:** Nach einer `split`-Transaktion teilen sich mehrere Guthaben dieselbe `voucher_id`. Die Instanz-ID (Hash aus `voucher_id` und `t_id`) ermöglicht eine eindeutige Referenzierung im Wallet.
 
-## Separated Account Identity (SAI)
+**Separated Account Identity (SAI):**
+- **Entscheidung:** Kombination aus einheitlichem Web of Trust und strikter Kontotrennung.
+- **Begründung:** Ein Nutzer hat einen Hauptschlüssel (Mnemonic), aber pro Kontext (Präfix oder Root) einen eigenen abgeleiteten Schlüssel (via HKDF). Dies verhindert Identitäts-Hopping und ermöglicht saubere Kontentrennung bei gleicher Identität.
 
-- **Concept:** One user has one cryptographic identity (Public Key from mnemonic). Separate accounts for different contexts (e.g., "pc", "mobile") use different prefixes.
-- **User IDs:** `pc:aB3@did:key:z...xyzA` and `mobil:C4d@did:key:z...xyzA`
-- **Key principles:**
-  - Unified identity for Web of Trust (only `did:key` matters)
-  - Strict account separation (prevents double-spend from state inconsistency)
-  - Checksum validation prevents typos
-  - Explicit transfers required between own accounts
+## 3. Sicherheitsschichten
 
-## Dynamic Business Rules via CEL
+**WalletSeal Rollback Guard:**
+- **Entscheidung:** Kryptographisches Epochen-System mit hash-verketteten Siegeln.
+- **Begründung:** Verhindert das Wiedereinspielen alter Backups (Rollback-Angriff) und erkennt divergierende Wallet-Zustände (Forking).
 
-- **Decision:** Common Expression Language (CEL) replaces hardcoded validation logic.
-- **Rationale:** Turing-incomplete (no DoS risk), native Rust crate, excellent list processing (filter, map, all makros), seamless custom function injection.
-- **Implementation:** `src/services/dynamic_policy_engine.rs`
-- **Key advantage:** New voucher standards can add validation rules without recompiling the core library.
+**Storage Integrity:**
+- **Entscheidung:** SHA3-256 Integritätsnachweise für alle Dateien, gebunden an das `WalletSeal`.
+- **Begründung:** Erkennt sofort jede physische Manipulation an den Dateien auf dem Datenträger (Änderung, Löschung, Hinzufügung).
 
-## Anti-Signature-Reuse-Firewall
+**Anti-Signature-Reuse-Firewall:**
+- **Entscheidung:** Validierung der Signatur-Eindeutigkeit auf Ebene des binären Public Keys (`[u8; 32]`).
+- **Begründung:** Verhindert Sybil-Angriffe, bei denen dieselbe Identität durch verschiedene Präfixe getarnt wird.
 
-- **Decision:** Signature uniqueness is validated at the Public Key level (32-byte `[u8; 32]`), not at the User-ID string level.
-- **Rationale:** Different prefixes could disguise the same key. `get_pubkey_from_user_id` extracts the actual `EdPublicKey` for comparison.
+## 4. Geschäftslogik & Engines
 
-## Decentralized Conflict & Reputation Management
+**Dynamic Business Rules via CEL:**
+- **Entscheidung:** Einsatz der **Common Expression Language (CEL)** für Gutschein-Validierungsregeln.
+- **Begründung:** Ermöglicht flexible, komplexe Regeln in den Standards ohne Code-Änderungen im Core. CEL ist sicher, performant und nicht Turing-vollständig.
 
-- **Decision:** Use a purely decentralized "Local Override" mechanism instead of relying on a global consensus or "ResolutionEndorsements" for the MVP.
-- **Rationale:** Global endorsement suffers from Sybil-attacks, lack of incentives for victims to "forgive" publicly, and privacy concerns (de-masking stealth keys). Conflicts are settled socially; users trust contacts locally.
-- **Organic Eviction (VIP Gossip):** 
-  - **Negative Depth:** Fraud proofs are gossiped with negative `depth` values (`i8`) to distinguish them from organic gossip.
-  - **Effective Depth:** Selection for gossip bundles uses `abs(depth) - 2`. This gives new VIP reports a 2-hop "head start" to spread rapidly while allowing them to age naturally if no longer relevant.
-  - **Loop & Replay Protection:** External VIP updates are ignored if the fingerprint is already known locally as a VIP (prevents "fresher" negative depths from keeping zombies alive). Symmetrically arriving fingerprints (pairs with matching negative depth) are prioritized; asymmetric pairs are treated as spam and normalized.
-- **Conflict Roles:** The UI distinguishes between `Victim` (local active voucher was quarantined) and `Witness` (passive detection).
+**Wallet Event Sourcing:**
+- **Entscheidung:** Persistenter, append-only Ledger (`WalletEvent`) in monatlichen Chunks.
+- **Begründung:** Ermöglicht Audit-Historie und Zustandswiederherstellung bei hoher Performance durch Chunking (`YYYY_MM.json.enc`).
+
+## 5. Konfliktmanagement
+
+**Dezentrales Konfliktmanagement & VIP-Gossip:**
+- **Entscheidung:** Fokus auf lokale Overrides und "Very Important Proofs" (VIP).
+- **Begründung:** Globaler Konsens wird vermieden, um Privatsphäre zu schützen und Sybil-Anfälligkeit zu reduzieren. Konflikte werden sozial oder via Layer 2 gelöst.
+- **VIP Gossip:** Betrugsbeweise werden mit negativer `depth` priorisiert verbreitet.

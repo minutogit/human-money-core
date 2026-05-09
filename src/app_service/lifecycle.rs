@@ -213,80 +213,15 @@ impl AppService {
         self.check_instance_id_trap(&profile_path)?;
 
         let mut storage = FileStorage::new(profile_path);
-        let mut needs_legacy_binding = false;
 
         // --- WALLET SEAL: Siegel laden und ROHEN State-Hash verifizieren ---
-        // WICHTIG: Die Verifikation erfolgt VOR Wallet::load(), da load()
-        // intern rebuild_derived_stores() aufruft, was own_fingerprints
-        // aus dem VoucherStore neu aufbaut. Dabei kann sich die Vec-Reihenfolge
-        // ändern (HashMap-Iterationsreihenfolge), was den Hash verfälscht.
-        // Wir prüfen stattdessen gegen den unveränderten, gespeicherten Zustand.
-        {
-            let auth = AuthMethod::Password(password);
-            let seal_record = storage
-                .load_seal("", &auth)
-                .ok()
-                .flatten();
-
-            if let Some(record) = &seal_record {
-                // Fork-Lock prüfen
-                if record.is_locked_due_to_fork {
-                    return Err("Security Lockdown: Wallet is locked due to a detected fork. Recovery required.".to_string());
-                }
-
-                // Siegel-Integrität und Instance-ID prüfen
-                let validation = SealManager::verify_seal_integrity(&record.seal, &record.seal.payload.user_id, &record.seal.payload.user_id, &local_instance_id)
-                    .map_err(|e| format!("Seal verification error: {}", e))?;
-
-                match validation {
-                    crate::models::seal::SealValidationResult::Valid => {},
-                    crate::models::seal::SealValidationResult::LegacyValid => {
-                        println!("Legacy Wallet detected. Will bind to this device after login.");
-                        needs_legacy_binding = true;
-                    },
-                    crate::models::seal::SealValidationResult::DeviceMismatch { expected, actual } => {
-                        let err_msg = format!(
-                            "Device Mismatch: This wallet is bound to device '{}', but you are on '{}'. \
-                            To prevent double-spending and permanent reputation loss, a wallet profile (specific User Prefix) \
-                            must only be active on ONE device at a time.\n\n\
-                            - OPTION A (Move): Perform a 'Device Handover' to permanently move the wallet here. \
-                            IMPORTANT: Once handed over, you MUST NOT use this profile on the old device anymore. Please delete the wallet folder on the old device to prevent accidental usage.\n\
-                            - OPTION B (Concurrent): Create a NEW profile on this device \
-                            with the same Seed Phrase but a DIFFERENT 'User Prefix', then transfer vouchers between them.",
-                            expected, actual
-                        );
-                        return Err(err_msg);
-                    },
-                    other => {
-                        return Err(format!("Seal integrity check failed: {:?}", other));
-                    },
-                }
-
-                // Lade den ROHEN own_fingerprints Store direkt aus dem Storage
-                // (vor dem Rebuild durch Wallet::load)
-                let raw_own_fingerprints = storage
-                    .load_own_fingerprints("", &auth)
-                    .map_err(|e| format!("Failed to load own_fingerprints for seal check: {}", e))?;
-
-                let current_state_hash = {
-                    let canonical = crate::services::utils::to_canonical_json(&raw_own_fingerprints)
-                        .map_err(|e| format!("Failed to compute state hash: {}", e))?;
-                    crate::services::crypto_utils::get_hash(canonical.as_bytes())
-                };
-
-                if record.seal.payload.state_hash != current_state_hash {
-                    return Err("Critical Error: Wallet state does not match the security seal. Possible rollback or corruption detected. Recovery required.".to_string());
-                }
-            }
-        }
+        let needs_legacy_binding = Self::verify_seal_on_login(&storage, password, &local_instance_id)?;
         // --- WALLET SEAL: Pre-Check ENDE ---
 
         let (mut wallet, identity) = Wallet::load(&storage, &AuthMethod::Password(password), local_instance_id)
             .map_err(|e| format!("Login failed (check password): {}", e))?;
 
         // --- EVENT FLUSH ---
-        // Wenn beim Laden passive Events (z.B. VoucherExpired) generiert wurden,
-        // flushen wir diese sofort auf die Festplatte.
         if !wallet.pending_events.is_empty() {
             wallet
                 .save(&mut storage, &identity, &AuthMethod::Password(password))
@@ -294,10 +229,7 @@ impl AppService {
         }
 
         if cleanup_on_login {
-            // Bevor wir aufräumen, prüfen wir die Integrität. Wir dürfen die Dateien nur neu
-            // schreiben (was ihre Hashes durch neue Verschlüsselungs-Nonces ändert),
-            // wenn der aktuelle Zustand der Festplatte intakt ist. Sonst würden wir
-            // bestehende Manipulationen/Löschungen überschreiben und maskieren!
+            // Bevor wir aufräumen, prüfen wir die Integrität.
             let auth = AuthMethod::Password(password);
             let integrity_record = storage.load_integrity("").unwrap_or(None);
             let seal_record = storage.load_seal(&identity.user_id, &auth).unwrap_or(None);
@@ -327,10 +259,6 @@ impl AppService {
                         .save(&mut storage, &identity, &auth)
                         .map_err(|e| format!("Failed to save wallet after cleanup: {}", e))?;
                     
-                    // Da wir die Wallet-Dateien neu geschrieben haben (neue Nonces = neue Hashes),
-                    // MÜSSEN wir jetzt zwingend den IntegrityRecord updaten, damit der nächste Check nicht
-                    // sofort ManipulatedItems meldet. Da wir vorher geprüft haben, dass alles OK war,
-                    // ist das sicher.
                     let new_hashes = storage.get_all_item_hashes().unwrap_or_default();
                     let seal = storage.load_seal(&identity.user_id, &auth).unwrap_or(None).map(|s| s.seal);
                     if let Some(s) = seal {
@@ -345,57 +273,7 @@ impl AppService {
         }
 
         // --- WALLET SEAL: Migration für bestehende Wallets ohne Siegel oder ohne InstanceID ---
-        {
-            let auth = AuthMethod::Password(password);
-            let seal_record = storage
-                .load_seal(&identity.user_id, &auth)
-                .map_err(|e| format!("Failed to load wallet seal: {}", e))?;
-
-            // Nur migrieren, wenn nötig (Legacy-Binding oder kein Siegel vorhanden)
-            if needs_legacy_binding || seal_record.is_none() {
-                let state_hash = {
-                    let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
-                        .map_err(|e| format!("Failed to compute state hash: {}", e))?;
-                    crate::services::crypto_utils::get_hash(canonical.as_bytes())
-                };
-
-                let migrated_seal = if needs_legacy_binding && seal_record.is_some() {
-                    // Legacy Migration: Existierendes Siegel updaten, um den tx_nonce zu erhalten
-                    let existing_record = seal_record.unwrap();
-                    SealManager::update_seal(
-                        &existing_record.seal,
-                        &identity,
-                        &state_hash,
-                        &wallet.local_instance_id,
-                    )
-                    .map_err(|e| format!("Failed to migrate legacy seal: {}", e))?
-                } else {
-                    // Komplett neues Siegel (Genesis)
-                    SealManager::create_initial_seal(
-                        &identity.user_id,
-                        &identity,
-                        &state_hash,
-                        &wallet.local_instance_id,
-                    )
-                    .map_err(|e| format!("Failed to create initial seal: {}", e))?
-                };
-
-                let new_record = LocalSealRecord {
-                    seal: migrated_seal.clone(),
-                    sync_status: SyncStatus::PendingUpload,
-                    is_locked_due_to_fork: false,
-                };
-                storage
-                    .save_seal(&identity.user_id, &auth, &new_record)
-                    .map_err(|e| format!("Failed to save migration seal: {}", e))?;
-
-                // Integrität für das neue migrierte Siegel initialisieren
-                let hashes = storage.get_all_item_hashes().unwrap_or_default();
-                if let Ok(ir) = crate::services::integrity_manager::IntegrityManager::create_integrity_record(&identity, &migrated_seal, hashes) {
-                    let _ = storage.save_integrity(&identity.user_id, &ir);
-                }
-            }
-        }
+        Self::migrate_seal_on_login(&mut storage, &wallet, &identity, password, needs_legacy_binding)?;
         // --- WALLET SEAL ENDE ---
 
         // Sperre erlangen

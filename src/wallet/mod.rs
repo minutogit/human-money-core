@@ -1,17 +1,17 @@
 //! # src/wallet/mod.rs
 //!
-//! Definiert die `Wallet`-Fassade, die zentrale Verwaltungsstruktur für ein
-//! Nutzerprofil. Sie kapselt den In-Memory-Zustand (`UserProfile`, `VoucherStore`)
-//! und orchestriert die Interaktionen mit einem `Storage`-Backend und den
-//! kryptographischen Operationen der `UserIdentity`.
+//! Defines the `Wallet` facade, the central management structure for a
+//! user profile. It encapsulates the in-memory state (`UserProfile`, `VoucherStore`)
+//! and orchestrates interactions with a `Storage` backend and the
+//! cryptographic operations of the `UserIdentity`.
 
-// Deklariert das `instance`-Modul als öffentlichen Teil des `wallet`-Moduls.
+// Declares the `instance` module as a public part of the `wallet` module.
 pub mod instance;
-// Deklariere die anderen Dateien als Teil dieses Moduls
+// Declare the other files as part of this module
 mod conflict_handler;
 mod queries;
 mod signature_handler;
-// NEU: Modul-Deklarationen für das Refactoring
+// NEW: Module declarations for refactoring
 mod lifecycle;
 mod maintenance;
 mod transaction_handler;
@@ -24,61 +24,53 @@ mod tests;
 #[cfg(test)]
 mod reputation_tests;
 
-// NEU: Exportiere alle öffentlichen Typen aus dem types-Modul
+// NEW: Export all public types from the types module
 pub use types::*;
 
-/// Hilfsfunktion zur Formatierung von Namen für die Benutzeroberfläche (BFF-Pattern).
-/// Stellt sicher, dass Testgutscheine ein einheitliches "TEST-" Präfix erhalten.
-pub(crate) fn format_bff_name(raw_name: &str, is_test: bool) -> String {
-    if is_test && !raw_name.starts_with("TEST-") {
-        format!("TEST-{}", raw_name)
-    } else {
-        raw_name.to_string()
-    }
-}
+pub(crate) use crate::wallet::types::format_bff_name;
 
 use crate::models::conflict::{
     CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, ProofStore,
 };
 use crate::models::profile::{BundleMetadataStore, UserProfile, VoucherStore};
 
-// ALLE STRUCT-DEFINITIONEN WURDEN NACH src/wallet/types.rs VERSCHOBEN.
+// ALL STRUCT DEFINITIONS WERE MOVED TO src/wallet/types.rs.
 
-/// Die zentrale Verwaltungsstruktur für ein Nutzer-Wallet.
-/// Hält den In-Memory-Zustand und interagiert mit dem Speichersystem.
+/// The central management structure for a user wallet.
+/// Holds the in-memory state and interacts with the storage system.
 #[derive(Clone)]
 pub struct Wallet {
-    /// Die öffentlichen Profildaten und die Transaktionshistorie.
+    /// Public profile data and transaction history.
     pub profile: UserProfile,
-    /// Der Bestand an Gutscheinen des Nutzers.
+    /// The user's voucher holdings.
     pub voucher_store: VoucherStore,
-    /// Die Historie der Transaktions-Metadaten.
+    /// History of transaction metadata.
     pub bundle_meta_store: BundleMetadataStore,
-    /// Der Speicher für alle bekannten (eigenen und fremden) Transaktions-Fingerprints.
+    /// Storage for all known (own and foreign) transaction fingerprints.
     pub known_fingerprints: KnownFingerprints,
-    /// Die kritische, persistente Historie der eigenen **gesendeten** Transaktionen.
+    /// The critical, persistent history of own **sent** transactions.
     pub own_fingerprints: OwnFingerprints,
-    /// Der Speicher für kryptographisch bewiesene Double-Spend-Konflikte.
+    /// Storage for cryptographically proven double-spend conflicts.
     pub proof_store: ProofStore,
-    /// Zentraler, kanonischer Speicher für dynamische Metadaten.
-    /// Enthält Metadaten für ALLE Fingerprints in den anderen Stores.
+    /// Central, canonical storage for dynamic metadata.
+    /// Contains metadata for ALL fingerprints in the other stores.
     pub fingerprint_metadata: CanonicalMetadataStore,
-    /// Eindeutige ID des lokalen Geräts für Clone Protection.
+    /// Unique ID of the local device for clone protection.
     pub local_instance_id: String,
-    /// Im RAM gehaltene Events, die noch nicht persistent auf die Festplatte
-    /// geflusht wurden. Wird bei `Wallet::save` atomar gespeichert und geleert.
+    /// In-RAM events that have not yet been persistently flushed to disk.
+    /// Saved atomically and cleared during `Wallet::save`.
     pub pending_events: Vec<crate::models::wallet_event::WalletEvent>,
 }
 
 impl Wallet {
-    // METHODEN FÜR lifecycle.rs WURDEN VERSCHOBEN
+    // METHODS FOR lifecycle.rs WERE MOVED
     // - new_from_mnemonic
     // - load
     // - save
     // - reset_password
     // - create_new_voucher
 
-    // METHODEN FÜR transaction_handler.rs WURDEN VERSCHOBEN
+    // METHODS FOR transaction_handler.rs WERE MOVED
     // - create_and_encrypt_transaction_bundle
     // - process_encrypted_transaction_bundle
     // - _execute_single_transfer

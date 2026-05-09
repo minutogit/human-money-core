@@ -1,9 +1,9 @@
 ---
 project: human-money-core
-version: "0.2.14"
+version: "0.2.16"
 phase: "active-development"
 health: "green"
-last_updated: "2026-05-02"
+last_updated: "2026-05-09"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -32,17 +32,19 @@ priority_tasks:
 ## Current Focus
 
 The core library is stable and feature-rich. Current focus areas:
+- **New**: Modularization and structure cleanup of validation and utility modules
+- **New**: Fuzzy-Search for historical voucher logs (Voucher Linkage Recovery)
 - **New**: WalletSeal Rollback Guard & Storage Integrity
 - L2 gateway integration testing (playground & stress tests)
 - Voucher validation hardening (edge-case tests for ISO 8601, date rounding)
 - Security: Anti-Signature-Reuse-Firewall implemented
 - **New**: 'Endorsed' voucher status for persistent guarantor signature tracking
-- **New**: Storage Integrity (Integritätsschutz) für alle Wallet-Datensätze
-- **New**: Wallet Event Sourcing (Append-only Ledger für Transaktionshistorie)
+- **New**: Storage Integrity for all wallet records
+- **New**: Wallet Event Sourcing (Append-only Ledger for transaction history)
 
 ## Architecture
 
-- **14 service modules**: crypto, voucher management, validation, conflict management, L2 gateway, etc.
+- **17 service modules**: crypto, voucher management, validation, conflict management, L2 gateway, etc.
 - **10 wallet modules**: lifecycle, transactions, queries, conflict handling, signatures
 - **Extensive test suite**: 7 test categories (architecture, core logic, persistence, services, validation, wallet API, L2 integration)
 
@@ -79,6 +81,14 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **Wallet Event Sourcing**: Append-only event ledger for all transaction types (VoucherCreated, TransferReceived, TransferSent, VoucherExpired), integrated into atomic `save` flow, with automatic expiration sweeps and in-memory reconciliation.
 - [x] **Voucher Branding Migration**: Completed full technical transition from legacy "Silver" nomenclature to "FreeTaler" v1 standard system-wide; updated all test suites, constants, and examples to ensure naming consistency.
 - [x] **Scalable Event Chunking**: Optimized event sourcing with time-based monthly chunks (YYYY_MM.json.enc), lazy "Move-then-Delete" migration for legacy logs, and O(N) idempotent appends with O(1) memory pagination.
+- [x] **Prefix-less Identity Integration**: Implemented support for pure `did:key` Root-Accounts, decoupled HKDF derivation from legacy prefixes, and synchronized the 150+ test suite with the 2-decimal FreeTaler precision standard.
+- [x] **Centralized Voucher Standard Parsing**: Exposed typsafe TOML parsing in `AppService`, enabling client apps to leverage core validation logic and signature verification with verified snake_case stability.
+- [x] **Fuzzy-Search for historical voucher logs**: Resolved UI lookup errors by implementing a historical ID fallback mechanism in `Wallet::get_voucher_details`, allowing logs to correctly reference vouchers even after state-changing transactions.
+- [x] **Transactional Command Helpers**: Hardened AppService architecture with `with_transactional_mut` and `TransactionOutcome`, centralizing locking, atomic cloning, saving, and sealing to reduce boilerplate and eliminate state orchestration errors.
+- [x] **Core Refactoring & Modularity**: Modularized `voucher_manager`, `voucher_validation`, and `test_utils` into directory-based modules with facade patterns; removed legacy monolithic files (1400+ lines each) to reduce cognitive load and improve maintainability.
+- [x] **English Documentation Migration**: Completed transition to English comments and Rustdoc for core library entry points (`lib.rs`, `error.rs`, `app_service`), improving developer tool support and accessibility.
+- [x] **README Architecture Overhaul**: Integrated comprehensive "Core Concepts" and updated technical architecture description to reflect the current identity-centric, offline-first design paradigm.
+
 
 ## Next Milestones
 

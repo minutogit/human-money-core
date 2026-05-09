@@ -67,7 +67,7 @@ fn test_privacy_mode_public_success() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10.0000".to_string(),
+        amount: "10.00".to_string(),
         sender_id: Some(ACTORS.issuer.user_id.clone()), // Public ID
         recipient_id: ACTORS.alice.user_id.clone(),     // DID
         ..Default::default()
@@ -128,7 +128,7 @@ fn test_privacy_mode_public_fails_missing_sender() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10.0000".to_string(),
+        amount: "10.00".to_string(),
         sender_id: None, // INVALID for Public
         recipient_id: ACTORS.alice.user_id.clone(),
         ..Default::default()
@@ -151,7 +151,7 @@ fn test_privacy_mode_public_fails_anonymous_recipient() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10.0000".to_string(),
+        amount: "10.00".to_string(),
         sender_id: Some(ACTORS.issuer.user_id.clone()),
         recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(), // INVALID for Public
         ..Default::default()
@@ -175,7 +175,7 @@ fn test_privacy_mode_stealth_success() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10.0000".to_string(),
+        amount: "10.00".to_string(),
         sender_id: None,
         recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         ..Default::default()
@@ -201,7 +201,7 @@ fn test_privacy_mode_stealth_fails_with_sender_id() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10.0000".to_string(),
+        amount: "10.00".to_string(),
         sender_id: Some("did:example:123".to_string()), // INVALID for Stealth
         recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         ..Default::default()
@@ -224,7 +224,7 @@ fn test_privacy_mode_stealth_fails_with_did_recipient() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10.0000".to_string(),
+        amount: "10.00".to_string(),
         sender_id: None,
         recipient_id: "did:key:zABC".to_string(), // INVALID for Stealth
         ..Default::default()
@@ -249,7 +249,7 @@ fn test_privacy_mode_flexible_requires_anonymous_recipient() {
         t_id: "stub1".to_string(),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10.0000".to_string(),
+        amount: "10.00".to_string(),
         sender_id: Some("did:example:sender".to_string()),
         recipient_id: "did:example:recipient".to_string(),
         ..Default::default()
@@ -273,7 +273,7 @@ fn test_privacy_mode_flexible_success_with_anonymous_recipient() {
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: "10.0000".to_string(),
+        amount: "10.00".to_string(),
         sender_id: Some("did:example:sender".to_string()),
         recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         ..Default::default()

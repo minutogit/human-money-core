@@ -884,18 +884,18 @@ impl Wallet {
 
         // 1. Prüfe, ob wir der SENDER sind (Change/Wechselgeld) via Krypto-Matching
         // Wir versuchen den Change-Key deterministisch abzuleiten und vergleichen den Hash.
-        let sender_id_prefix = identity
-            .user_id
-            .split('@')
-            .next()
-            .unwrap_or(&identity.user_id)
-            .to_string();
+        let sender_id_prefix = crate::services::crypto_utils::get_prefix_from_user_id(&identity.user_id);
         let ikm = identity.signing_key.to_bytes();
-        let prev_hash = &last_tx.prev_hash; 
-        
+        let prev_hash = &last_tx.prev_hash;
+
         let (prk, _) = Hkdf::<Sha256>::extract(Some(prev_hash.as_bytes()), &ikm);
         if let Ok(hkdf) = Hkdf::<Sha256>::from_prk(&prk) {
-            let info = format!("{}change_seed", sender_id_prefix);
+            // Info-String für Change-Seed: "[prefix]change_seed" oder "change_seed" für Root-Accounts
+            let info = if let Some(p) = sender_id_prefix {
+                format!("{}change_seed", p)
+            } else {
+                "change_seed".to_string()
+            };
             let mut change_seed = [0u8; 32];
             if hkdf.expand(info.as_bytes(), &mut change_seed).is_ok() {
                 let candidate_key = SigningKey::from_bytes(&change_seed);
@@ -933,7 +933,12 @@ impl Wallet {
         if last_tx.sender_id.as_ref() == Some(&identity.user_id) && last_tx.sender_remaining_amount.is_some() {
              let (prk, _) = Hkdf::<Sha256>::extract(Some(prev_hash.as_bytes()), &ikm);
              let hkdf = Hkdf::<Sha256>::from_prk(&prk).map_err(|_| VoucherCoreError::Crypto("Invalid PRK".to_string()))?;
-             let info = format!("{}change_seed", sender_id_prefix);
+             // Info-String für Change-Seed: "[prefix]change_seed" oder "change_seed" für Root-Accounts
+             let info = if let Some(p) = sender_id_prefix {
+                 format!("{}change_seed", p)
+             } else {
+                 "change_seed".to_string()
+             };
              let mut change_seed = [0u8; 32];
              hkdf.expand(info.as_bytes(), &mut change_seed).map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
              return Ok(SigningKey::from_bytes(&change_seed));
@@ -945,13 +950,13 @@ impl Wallet {
                 .into_vec()
                 .map_err(|_| VoucherCoreError::Generic("Invalid nonce".to_string()))?;
 
-            let sender_id_prefix = identity.user_id.split('@').next().unwrap_or("unknown");
+            let sender_id_prefix = crate::services::crypto_utils::get_prefix_from_user_id(&identity.user_id);
 
             let (holder_secret, _) = crate::services::crypto_utils::derive_ephemeral_key_pair(
                 &identity.signing_key,
                 &nonce_bytes,
                 "holder",
-                Some(sender_id_prefix),
+                sender_id_prefix,
             )?;
             return Ok(holder_secret);
         }

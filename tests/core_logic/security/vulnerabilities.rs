@@ -333,7 +333,7 @@ fn generate_valid_trap_for_test(
     sender_id: &str,
 ) -> human_money_core::models::voucher::TrapData {
     use human_money_core::services::crypto_utils::{
-        ed25519_pk_to_curve_point, get_hash_from_slices,
+        ed25519_pk_to_curve_point, get_hash_from_slices, get_prefix_from_user_id,
     };
     use human_money_core::services::trap_manager::{derive_m, generate_trap, hash_to_scalar};
 
@@ -349,17 +349,17 @@ fn generate_valid_trap_for_test(
     );
     let u_scalar = hash_to_scalar(u_input_varying.as_bytes());
 
-    let sender_id_prefix = sender_id.split('@').next().unwrap_or(sender_id).to_string();
+    let sender_id_prefix = get_prefix_from_user_id(sender_id);
     let m = derive_m(
         &tx.prev_hash,
         &sender_permanent_key.to_bytes(),
-        &sender_id_prefix,
+        sender_id_prefix,
     )
     .unwrap();
 
     let my_id_point = ed25519_pk_to_curve_point(&sender_permanent_key.verifying_key()).unwrap();
 
-    generate_trap(ds_tag, &u_scalar, &m, &my_id_point, &sender_id_prefix).unwrap()
+    generate_trap(ds_tag, &u_scalar, &m, &my_id_point, sender_id_prefix).unwrap()
 }
 
 fn add_p2pkh_layer(tx: &mut Transaction, holder_secret: &ed25519_dalek::SigningKey) {
@@ -975,7 +975,7 @@ fn test_attack_init_amount_mismatch() {
     // Der Nennwert des Gutscheins ist 100, aber der Hacker manipuliert die 'init'-Transaktion,
     // sodass sie nur einen Betrag von 101 ausweist.
     let mut malicious_init_tx = voucher.transactions[0].clone();
-    malicious_init_tx.amount = "101.0000".to_string();
+    malicious_init_tx.amount = "101.00".to_string();
 
     // DANK SIGNATURE BYPASS: Keine Notwendigkeit mehr, die Transaktion neu zu signieren!
     // Die Validierung ignoriert die nun ungültige Signatur und prüft direkt den Betrag.
@@ -1010,7 +1010,7 @@ fn test_attack_negative_or_zero_amount_transaction() {
 
     // ### ANGRIFF 1: Negativer Betrag ###
     let negative_tx_unsigned = Transaction {
-        amount: "-10.0000".to_string(),
+        amount: "-10.00".to_string(),
         // Restliche Felder sind für diesen Test nicht primär relevant
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
@@ -1035,7 +1035,7 @@ fn test_attack_negative_or_zero_amount_transaction() {
 
     // ### ANGRIFF 2: Betrag von Null ###
     let zero_tx_unsigned = Transaction {
-        amount: "0.0000".to_string(),
+        amount: "0.00".to_string(),
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         sender_id: Some(hacker_identity.user_id.clone()),
@@ -1123,7 +1123,7 @@ fn test_attack_full_transfer_amount_mismatch() {
         t_id: String::new(), // Wird später gesetzt
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_type: "transfer".to_string(),
-        amount: "99.0000".to_string(), // Inkorrekt für einen 'transfer' bei einem Guthaben von 100
+        amount: "99.00".to_string(), // Inkorrekt für einen 'transfer' bei einem Guthaben von 100
         sender_id: Some(creator.id.clone().expect("Creator ID should exist")),
         recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         t_time: get_current_timestamp(),
@@ -1182,8 +1182,8 @@ fn test_attack_remainder_in_full_transfer() {
         t_id: String::new(), // Wird später gesetzt
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_type: "transfer".to_string(),
-        amount: "100.0000".to_string(),
-        sender_remaining_amount: Some("0.0001".to_string()), // Darf nicht vorhanden sein
+        amount: "100.00".to_string(),
+        sender_remaining_amount: Some("0.01".to_string()), // Darf nicht vorhanden sein
         sender_id: Some(creator.id.clone().expect("Creator ID should exist")),
         recipient_id: ACTORS.bob.user_id.clone(),
         t_time: get_current_timestamp(),

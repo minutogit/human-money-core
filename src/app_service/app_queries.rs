@@ -2,32 +2,12 @@
 //!
 //! Enthält alle reinen Lese-Operationen (Queries) des `AppService`.
 use super::{AppService, AppState};
-use crate::models::profile::{PublicProfile, UserIdentity};
+use crate::models::profile::PublicProfile;
 use crate::wallet::{AggregatedBalance, AssetClassSummary, instance::VoucherStatus};
-use crate::wallet::{VoucherDetails, VoucherSummary, Wallet};
+use crate::wallet::{VoucherDetails, VoucherSummary};
 
 impl AppService {
     // --- Datenabfragen (Queries) ---
-
-    /// Eine private Hilfsfunktion für den Nur-Lese-Zugriff auf das Wallet.
-    /// Stellt sicher, dass das Wallet entsperrt ist, bevor eine Operation ausgeführt wird.
-    ///
-    /// Diese Funktion ist `pub(super)`, damit sie von allen Handlern innerhalb
-    /// des `app_service`-Moduls verwendet werden kann.
-    pub(super) fn get_wallet(&self) -> Result<&Wallet, String> {
-        match &self.state {
-            AppState::Unlocked { wallet, .. } => Ok(wallet),
-            AppState::Locked => Err("Wallet is locked.".to_string()),
-        }
-    }
-
-    /// Eine private Hilfsfunktion für den Zugriff auf die Identität.
-    pub(super) fn get_identity(&self) -> Result<&UserIdentity, String> {
-        match &self.state {
-            AppState::Unlocked { identity, .. } => Ok(identity),
-            AppState::Locked => Err("Wallet is locked.".to_string()),
-        }
-    }
 
     /// Gibt eine Liste von Zusammenfassungen aller Gutscheine im Wallet zurück.
     /// Die Liste kann optional nach Gutschein-Standards (UUIDs), Status und Test-Status gefiltert werden.
@@ -46,13 +26,14 @@ impl AppService {
         status_filter: Option<&[VoucherStatus]>,
         test_filter: Option<bool>,
     ) -> Result<Vec<VoucherSummary>, String> {
-        let identity = self.get_identity()?;
-        Ok(self.get_wallet()?.list_vouchers(
-            Some(identity),
-            voucher_standard_uuid_filter,
-            status_filter,
-            test_filter,
-        ))
+        self.with_unlocked_ref(|wallet, identity, _| {
+            Ok(wallet.list_vouchers(
+                Some(identity),
+                voucher_standard_uuid_filter,
+                status_filter,
+                test_filter,
+            ))
+        })
     }
 
     /// Aggregiert die Guthaben aller aktiven Gutscheine, gruppiert nach Währung.
@@ -63,14 +44,15 @@ impl AppService {
     /// # Errors
     /// Schlägt fehl, wenn das Wallet gesperrt (`Locked`) ist.
     pub fn get_total_balance_by_currency(&self) -> Result<Vec<AggregatedBalance>, String> {
-        let identity = self.get_identity()?;
-        Ok(self.get_wallet()?.get_total_balance_by_currency(Some(identity)))
+        self.with_unlocked_ref(|wallet, identity, _| {
+            Ok(wallet.get_total_balance_by_currency(Some(identity)))
+        })
     }
 
     /// Ermittelt alle im Wallet aktiven Asset-Klassen (Standard + Test-Status).
     /// Dies dient der UI zum sauberen Befüllen von Filter-Dropdowns.
     pub fn get_active_asset_classes(&self) -> Result<Vec<AssetClassSummary>, String> {
-        Ok(self.get_wallet()?.get_active_asset_classes())
+        self.with_unlocked_ref(|wallet, _, _| Ok(wallet.get_active_asset_classes()))
     }
 
     /// Ruft eine detaillierte Ansicht für einen einzelnen Gutschein ab.
@@ -84,9 +66,9 @@ impl AppService {
     /// # Errors
     /// Schlägt fehl, wenn das Wallet gesperrt ist oder keine Gutschein-Instanz mit dieser ID existiert.
     pub fn get_voucher_details(&self, local_id: &str) -> Result<VoucherDetails, String> {
-        self.get_wallet()?
-            .get_voucher_details(local_id)
-            .map_err(|e| e.to_string())
+        self.with_unlocked_ref(|wallet, _, _| {
+            wallet.get_voucher_details(local_id).map_err(|e| e.to_string())
+        })
     }
 
     /// Gibt die User-ID des Wallet-Inhabers zurück.
@@ -112,11 +94,23 @@ impl AppService {
         &self,
         standard_toml_content: &str,
     ) -> Result<Vec<String>, String> {
+        let verified_standard = self.parse_voucher_standard(standard_toml_content)?;
+        Ok(verified_standard.immutable.issuance.allowed_signature_roles)
+    }
+
+    /// Parst einen Gutschein-Standard (TOML) in ein typsicheres Objekt.
+    /// Dient als Single Source of Truth für Client-Applikationen.
+    ///
+    /// Diese Funktion verifiziert auch die kryptographische Signatur des Standards.
+    pub fn parse_voucher_standard(
+        &self,
+        standard_toml_content: &str,
+    ) -> Result<crate::models::voucher_standard_definition::VoucherStandardDefinition, String> {
         let (verified_standard, _) = crate::services::standard_manager::verify_and_parse_standard(
             standard_toml_content,
         )
         .map_err(|e| e.to_string())?;
-        Ok(verified_standard.immutable.issuance.allowed_signature_roles)
+        Ok(verified_standard)
     }
 
     /// Returns the public profile of the wallet owner.
@@ -189,6 +183,83 @@ impl AppService {
             }
             AppState::Locked => Err("Wallet is locked.".to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app_service::AppService;
+    use std::path::Path;
+
+    #[test]
+    fn test_parse_voucher_standard_and_serialization() {
+        // Wir nutzen den Bypass, um keine echte Signatur für den Test-TOML generieren zu müssen.
+        #[cfg(feature = "test-utils")]
+        crate::set_signature_bypass(true);
+
+        let toml_content = r#"
+[immutable.identity]
+uuid = "123-test-uuid"
+name = "Test Standard"
+abbreviation = "TST"
+
+[immutable.blueprint]
+unit = "TestUnit"
+primary_redemption_type = "goods_or_services"
+collateral_type = "personal_guarantee"
+
+[immutable.features]
+allow_partial_transfers = true
+balances_are_summable = true
+amount_decimal_places = 2
+privacy_mode = "public"
+allowed_t_types = ["init", "transfer"]
+
+[immutable.issuance]
+validity_duration_range = ["P1M", "P1Y"]
+issuance_minimum_validity_duration = "P1M"
+additional_signatures_range = [0, 1]
+allowed_signature_roles = ["issuer"]
+
+[mutable.metadata]
+issuer_name = "Test Issuer"
+
+[signature]
+issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
+signature = "5aomSjj76rEb4VVjhAd6p6qvmU79wkkTpj84AnY3D9p8xRDNfxBqKL4EbEHTKfPevggafJeJuzhgYV4rvhLgMs5m"
+"#;
+
+        let base_path = Path::new("/tmp/test_parse_standard");
+        let service = AppService::new(base_path).unwrap();
+
+        let result = service.parse_voucher_standard(toml_content);
+        assert!(result.is_ok(), "Parsing should succeed with bypass: {:?}", result.err());
+        
+        let standard = result.unwrap();
+        assert_eq!(standard.immutable.identity.name, "Test Standard");
+        assert_eq!(standard.immutable.blueprint.unit, "TestUnit");
+
+        // Test Serialisierung (Sollte snake_case bleiben um kryptographische Stabilität zu wahren)
+        let json_str = serde_json::to_string(&standard).unwrap();
+        
+        // Überprüfe, ob Felder in Rust-idiomatischem snake_case ausgegeben werden
+        assert!(json_str.contains("\"issuer_name\""));
+        assert!(json_str.contains("\"allow_partial_transfers\""));
+        assert!(json_str.contains("\"primary_redemption_type\""));
+        assert!(json_str.contains("\"amount_decimal_places\""));
+
+        #[cfg(feature = "test-utils")]
+        crate::set_signature_bypass(false);
+    }
+
+    #[test]
+    fn test_parse_voucher_standard_invalid_toml() {
+        let base_path = Path::new("/tmp/test_parse_standard_err");
+        let service = AppService::new(base_path).unwrap();
+
+        let invalid_toml = "this is not toml [[]]";
+        let result = service.parse_voucher_standard(invalid_toml);
+        assert!(result.is_err());
     }
 }
 
