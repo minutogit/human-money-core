@@ -290,10 +290,39 @@ impl Wallet {
         }
 
         // 2. Extrahiere Kerndaten von der ERSTEN gefundenen Transaktion.
-        let offender_id = conflicting_transactions[0]
+        let mut offender_id = conflicting_transactions[0]
             .sender_id
             .clone()
             .unwrap_or(crate::models::voucher::ANONYMOUS_ID.to_string());
+
+        // --- MATHEMATISCHE ENTLARVUNG ---
+        // Falls die Identität anonym ist (Stealth-Modus oder Gossip-Soft-Proof), versuchen wir
+        // sie mathematisch aus den Trap-Daten der Fingerprints wiederherzustellen.
+        if offender_id == crate::models::voucher::ANONYMOUS_ID && fingerprints.len() >= 2 {
+            let f1 = &fingerprints[0];
+            let f2 = &fingerprints[1];
+            // Nur wenn es sich um echte mathematische Traps handelt (nicht 'init'-Fingerprints)
+            if f1.u != "none" && f2.u != "none" {
+                if let Ok(point) = crate::services::trap_manager::extract_id_point_from_raw_data(
+                    &f1.ds_tag,
+                    &f1.u,
+                    &f1.blinded_id,
+                    &f2.ds_tag,
+                    &f2.u,
+                    &f2.blinded_id,
+                ) {
+                    let pk_bytes = point.compress().to_bytes();
+                    if let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes) {
+                        // Erstelle eine DID-Key ID (im Root-Account Format ohne Präfix)
+                        if let Ok(did_id) = crate::services::crypto_utils::create_user_id(&pk, None)
+                        {
+                            offender_id = did_id;
+                        }
+                    }
+                }
+            }
+        }
+
         let fork_point_prev_hash = conflicting_transactions[0].prev_hash.clone();
         
         for t_id in missing_t_ids {
