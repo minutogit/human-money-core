@@ -171,6 +171,10 @@ impl Wallet {
                         &voucher.voucher_standard.name,
                         voucher.non_redeemable_test_voucher,
                     ),
+                    allow_partial_transfers: voucher
+                        .voucher_standard
+                        .template
+                        .allow_partial_transfers,
                 }
             })
             .collect()

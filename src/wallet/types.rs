@@ -210,6 +210,8 @@ pub struct VoucherSummary {
     pub display_currency: String,
     /// Formatted standard name for display.
     pub display_standard_name: String,
+    /// Indicates if the voucher is divisible.
+    pub allow_partial_transfers: bool,
 }
 
 /// A summary view of a double-spend proof for list representations.
