@@ -107,6 +107,12 @@ pub struct InvolvedVoucherInfo {
     pub display_currency: String,
     /// Formatted standard name for display.
     pub display_standard_name: String,
+    /// The User ID of the counterparty, if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counterparty_id: Option<String>,
+    /// The profile name of the counterparty, if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counterparty_name: Option<String>,
 }
 
 /// The result of creating a transfer bundle.
