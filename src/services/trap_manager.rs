@@ -262,3 +262,76 @@ fn calculate_challenge(
 
     Scalar::from_hash(hasher)
 }
+
+/// Extrahiert die Identität (ID-Punkt) mathematisch aus zwei kollidierenden Trap-Daten.
+/// Dies ist der Kern der Entlarvungs-Logik bei Double-Spends.
+///
+/// Die Identität wird über die Gleichung ID = V1 - u1 * (V1 - V2) * (u1 - u2)^-1
+/// zurückgewonnen, wobei V der blinded_id-Punkt und u der Challenge-Scalar ist.
+pub fn extract_id_point_from_raw_data(
+    ds_tag1: &str,
+    u1_str: &str,
+    v1_str: &str,
+    ds_tag2: &str,
+    u2_str: &str,
+    v2_str: &str,
+) -> Result<EdwardsPoint, VoucherCoreError> {
+    if ds_tag1 != ds_tag2 {
+        return Err(VoucherCoreError::Crypto(
+            "Traps have different DS-Tags - not a collision".to_string(),
+        ));
+    }
+    if u1_str == u2_str {
+        return Err(VoucherCoreError::Crypto(
+            "Traps have identical U (no fork detected)".to_string(),
+        ));
+    }
+
+    // 1. Dekodiere Base58-Daten
+    let u1_bytes = bs58::decode(u1_str)
+        .into_vec()
+        .map_err(|e| VoucherCoreError::Crypto(format!("Invalid U1: {}", e)))?;
+    let u2_bytes = bs58::decode(u2_str)
+        .into_vec()
+        .map_err(|e| VoucherCoreError::Crypto(format!("Invalid U2: {}", e)))?;
+    let v1_bytes = bs58::decode(v1_str)
+        .into_vec()
+        .map_err(|e| VoucherCoreError::Crypto(format!("Invalid V1: {}", e)))?;
+    let v2_bytes = bs58::decode(v2_str)
+        .into_vec()
+        .map_err(|e| VoucherCoreError::Crypto(format!("Invalid V2: {}", e)))?;
+
+    // 2. Konvertiere in kryptographische Typen
+    let u1 = Scalar::from_bytes_mod_order(
+        u1_bytes
+            .try_into()
+            .map_err(|_| VoucherCoreError::Crypto("Invalid Scalar U1 length".to_string()))?,
+    );
+    let u2 = Scalar::from_bytes_mod_order(
+        u2_bytes
+            .try_into()
+            .map_err(|_| VoucherCoreError::Crypto("Invalid Scalar U2 length".to_string()))?,
+    );
+
+    let v1 = CompressedEdwardsY::from_slice(&v1_bytes)
+        .map_err(|_| VoucherCoreError::Crypto("Invalid Blinded-ID V1".to_string()))?
+        .decompress()
+        .ok_or_else(|| VoucherCoreError::Crypto("Decompress V1 failed".to_string()))?;
+    let v2 = CompressedEdwardsY::from_slice(&v2_bytes)
+        .map_err(|_| VoucherCoreError::Crypto("Invalid Blinded-ID V2".to_string()))?
+        .decompress()
+        .ok_or_else(|| VoucherCoreError::Crypto("Decompress V2 failed".to_string()))?;
+
+    // 3. Berechne Deltas
+    let delta_v = v1 - v2;
+    let delta_u = u1 - u2;
+
+    // 4. Berechne Slope Point M = Delta V * (Delta U)^-1
+    let delta_u_inv = delta_u.invert();
+    let m_point = delta_v * delta_u_inv;
+
+    // 5. Berechne Identity ID = V1 - u1 * M
+    let recovered_id_point = v1 - (m_point * u1);
+
+    Ok(recovered_id_point)
+}

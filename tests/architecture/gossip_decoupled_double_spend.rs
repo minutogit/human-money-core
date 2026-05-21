@@ -511,6 +511,73 @@ mod tests {
              or stored as a conflict."
         );
 
+        // --- Assert 3: The offender_id is the mathematically extracted did:key of User 1 ---
+        //
+        // The attacker (User 1) used stealth mode for all transfers, so the sender_id in
+        // the transactions was "anonymous". The system must have used the mathematical
+        // trap-door recovery (ID = V1 - u1 * M) to unmask the real identity.
+        //
+        // Since extract_id_point_from_raw_data recovers a bare public key (no prefix),
+        // create_user_id(&pk, None) produces a Root-Account DID (did:key:z...) without
+        // a prefix. User 1's actual ID may have a prefix, so we compare the underlying
+        // Ed25519 public keys instead of raw strings.
+        {
+            let conflict = &conflicts[0];
+            let offender_in_proof = &conflict.offender_id;
+
+            println!(
+                "[Test] Assert 3: offender_id in proof = '{}'",
+                offender_in_proof
+            );
+            println!(
+                "[Test] Assert 3: user1_id (attacker)   = '{}'",
+                user1_id
+            );
+
+            // The offender must NOT be "anonymous" — the math must have unmasked them.
+            assert_ne!(
+                offender_in_proof, "anonymous",
+                "Assert 3 failed: offender_id is still 'anonymous'. \
+                 The mathematical identity recovery from trap data did not work."
+            );
+
+            // The offender_id must be a valid did:key
+            assert!(
+                offender_in_proof.contains("did:key:z"),
+                "Assert 3 failed: offender_id '{}' is not a valid did:key format.",
+                offender_in_proof
+            );
+
+            // Extract the raw Ed25519 public key from both IDs and compare.
+            // The recovered DID is a Root-Account (no prefix), while user1_id may have
+            // a prefix — but the underlying cryptographic identity must be identical.
+            let recovered_pubkey =
+                human_money_core::services::crypto_utils::get_pubkey_from_user_id(
+                    offender_in_proof,
+                )
+                .expect("Failed to extract pubkey from recovered offender_id");
+
+            let attacker_pubkey =
+                human_money_core::services::crypto_utils::get_pubkey_from_user_id(&user1_id)
+                    .expect("Failed to extract pubkey from user1_id");
+
+            assert_eq!(
+                recovered_pubkey.as_bytes(),
+                attacker_pubkey.as_bytes(),
+                "Assert 3 failed: The mathematically recovered public key does not match \
+                 the attacker's (User 1) actual public key.\n\
+                 Recovered: {:?}\n\
+                 Expected:  {:?}",
+                recovered_pubkey.as_bytes(),
+                attacker_pubkey.as_bytes(),
+            );
+
+            println!(
+                "[Test] ✅ Assert 3 PASSED: Offender identity mathematically proven. \
+                 did:key matches User 1's public key."
+            );
+        }
+
         user4.logout();
     }
 }

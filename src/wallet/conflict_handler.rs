@@ -120,6 +120,73 @@ impl Wallet {
             })
     }
 
+    /// Finds the associated double-spend conflict proof ID for a voucher using cascading match strategies.
+    pub fn get_proof_id_for_voucher(&self, local_id: &str) -> Option<String> {
+        // Direct lookup of the voucher instance
+        let instance = self.voucher_store.vouchers.get(local_id)?;
+        let voucher_txs = &instance.voucher.transactions;
+
+        for entry in self.proof_store.proofs.values() {
+            let proof = &entry.proof;
+
+            // Match 1: Direct transaction ID match (Checks all transactions in the voucher)
+            let has_tx_match = proof.conflicting_transactions.iter().any(|tx| {
+                voucher_txs.iter().any(|vtx| vtx.t_id == tx.t_id)
+            });
+            if has_tx_match {
+                log::info!("  ✅ Match 1 (t_id) found!");
+                return Some(proof.proof_id.clone());
+            }
+
+            // Match 2: DS-Tag match (Very robust)
+            let proof_ds_tags: Vec<&str> = proof.conflicting_transactions.iter()
+                .filter_map(|tx| tx.trap_data.as_ref().map(|td| td.ds_tag.as_str()))
+                .collect();
+            let has_ds_tag_match = voucher_txs.iter().any(|vtx| {
+                vtx.trap_data.as_ref().map(|td| proof_ds_tags.contains(&td.ds_tag.as_str())).unwrap_or(false)
+            });
+            if has_ds_tag_match {
+                log::info!("  ✅ Match 2 (ds_tag) found!");
+                return Some(proof.proof_id.clone());
+            }
+
+            // Match 3: Deep Fork Point match (Scans entire chain)
+            let has_deep_fork_match = voucher_txs.iter().any(|vtx| {
+                vtx.prev_hash == proof.fork_point_prev_hash || vtx.t_id == proof.fork_point_prev_hash
+            });
+            let has_any_history_match = voucher_txs.iter().any(|vtx| {
+                 vtx.prev_hash == proof.fork_point_prev_hash
+            });
+            if has_deep_fork_match || has_any_history_match {
+                log::info!("  ✅ Match 3 (fork_point) found!");
+                return Some(proof.proof_id.clone());
+            }
+
+            // Match 4: Offender & Chain Link (The most aggressive fallback)
+            let is_offender_involved = voucher_txs.iter().any(|vtx| {
+                vtx.sender_id.as_deref() == Some(proof.offender_id.as_str())
+            });
+            if is_offender_involved {
+                log::info!("  ✅ Match 4 (offender involvement) found!");
+                return Some(proof.proof_id.clone());
+            }
+
+            // Match 5: Recipient match (Targeted at the victim)
+            let voucher_last_recipient = voucher_txs.last().map(|tx| tx.recipient_id.as_str());
+            let has_recipient_match = proof.conflicting_transactions.iter().any(|tx| {
+                voucher_last_recipient == Some(tx.recipient_id.as_str())
+            });
+            if has_recipient_match {
+                log::info!("  ✅ Match 5 (recipient_id) found!");
+                return Some(proof.proof_id.clone());
+            }
+        }
+
+        log::warn!("=== No proof found for quarantined voucher {} after checking {} conflicts ===", local_id, self.proof_store.proofs.len());
+        None
+    }
+
+
     /// Erstellt eine signierte Beilegungserklärung (`ResolutionEndorsement`) für einen Konflikt.
     ///
     /// Diese Methode verändert den Wallet-Zustand nicht, sondern erzeugt nur das
@@ -290,10 +357,39 @@ impl Wallet {
         }
 
         // 2. Extrahiere Kerndaten von der ERSTEN gefundenen Transaktion.
-        let offender_id = conflicting_transactions[0]
+        let mut offender_id = conflicting_transactions[0]
             .sender_id
             .clone()
             .unwrap_or(crate::models::voucher::ANONYMOUS_ID.to_string());
+
+        // --- MATHEMATISCHE ENTLARVUNG ---
+        // Falls die Identität anonym ist (Stealth-Modus oder Gossip-Soft-Proof), versuchen wir
+        // sie mathematisch aus den Trap-Daten der Fingerprints wiederherzustellen.
+        if offender_id == crate::models::voucher::ANONYMOUS_ID && fingerprints.len() >= 2 {
+            let f1 = &fingerprints[0];
+            let f2 = &fingerprints[1];
+            // Nur wenn es sich um echte mathematische Traps handelt (nicht 'init'-Fingerprints)
+            if f1.u != "none" && f2.u != "none" {
+                if let Ok(point) = crate::services::trap_manager::extract_id_point_from_raw_data(
+                    &f1.ds_tag,
+                    &f1.u,
+                    &f1.blinded_id,
+                    &f2.ds_tag,
+                    &f2.u,
+                    &f2.blinded_id,
+                ) {
+                    let pk_bytes = point.compress().to_bytes();
+                    if let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes) {
+                        // Erstelle eine DID-Key ID (im Root-Account Format ohne Präfix)
+                        if let Ok(did_id) = crate::services::crypto_utils::create_user_id(&pk, None)
+                        {
+                            offender_id = did_id;
+                        }
+                    }
+                }
+            }
+        }
+
         let fork_point_prev_hash = conflicting_transactions[0].prev_hash.clone();
         
         for t_id in missing_t_ids {

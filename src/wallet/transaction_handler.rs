@@ -349,6 +349,8 @@ impl Wallet {
                     &voucher.voucher_standard.name,
                     voucher.non_redeemable_test_voucher
                 ),
+                counterparty_id: Self::extract_sender_from_transaction(last_tx, identity),
+                counterparty_name: bundle.sender_profile_name.clone(),
             });
             // --- Ende TransferSummary-Logik ---
         }
@@ -359,8 +361,8 @@ impl Wallet {
                 display_currency: info.display_currency.clone(),
                 amount: info.amount.clone(),
                 is_test_voucher: info.is_test_voucher,
-                counterparty_id: Some(bundle.sender_id.clone()),
-                counterparty_name: None, // Bundle-Header hat keinen sender_profile_name hier direkt
+                counterparty_id: info.counterparty_id.clone().or_else(|| Some(bundle.sender_id.clone())),
+                counterparty_name: info.counterparty_name.clone(),
             };
             self.emit_event(
                 crate::models::wallet_event::WalletEventType::TransferReceived,
@@ -823,6 +825,8 @@ impl Wallet {
                     &instance.voucher.voucher_standard.name,
                     instance.voucher.non_redeemable_test_voucher
                 ),
+                counterparty_id: Some(request.recipient_id.clone()),
+                counterparty_name: None,
             });
 
             // Führe die Kernoperation auf der temporären Wallet-Instanz aus.
@@ -964,5 +968,37 @@ impl Wallet {
         Err(VoucherCoreError::Generic(
             "Could not rederive secret seed: No valid ownership strategy found (neither Change nor Receiver hash matches).".to_string(),
         ))
+    }
+
+    /// Extrahert die Sender-Identität (DID) aus einer Transaktion.
+    /// Berücksichtigt sowohl den Public Mode (sender_id im Klartext)
+    /// als auch den Stealth Mode (Entschlüsselung des Privacy Guards).
+    fn extract_sender_from_transaction(
+        tx: &crate::models::voucher::Transaction,
+        identity: &UserIdentity,
+    ) -> Option<String> {
+        // Fall 1: Public Mode - Sender ID ist direkt im Klartext vorhanden
+        if let Some(sender_id) = &tx.sender_id {
+            if sender_id != crate::models::voucher::ANONYMOUS_ID {
+                return Some(sender_id.clone());
+            }
+        }
+
+        // Fall 2: Stealth Mode - DID ist im Privacy Guard verschlüsselt
+        if let Some(guard_base64) = &tx.privacy_guard {
+            if let Ok(decrypted_payload_bytes) = crate::services::crypto_utils::decrypt_recipient_payload(
+                guard_base64,
+                &identity.signing_key,
+                &identity.user_id,
+            ) {
+                if let Ok(payload) = serde_json::from_slice::<crate::models::voucher::RecipientPayload>(
+                    &decrypted_payload_bytes,
+                ) {
+                    return Some(payload.sender_permanent_did);
+                }
+            }
+        }
+
+        None
     }
 }
