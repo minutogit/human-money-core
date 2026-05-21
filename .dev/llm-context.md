@@ -6,7 +6,7 @@ Dies ist die Kontextdatei für die Entwicklung der Rust-Core-Bibliothek `human_m
 
 - **Projektname:** `human_money_core`
 
-### Was ist die human_money_core?
+**### Was ist die human_money_core?
 Die human_money_core ist eine Rust-Bibliothek zur Verwaltung und Übertragung von selbstgeschöpften, kryptographischen Wertdokumenten. Sie ermöglicht einen dezentralen Werteaustausch, der fundamentale Konzepte klassischer Krypto-Systeme auf den Kopf stellt und den Menschen wieder in den Mittelpunkt rückt.
 
 **1. Architektur: Autarke Container statt globales Ledger**
@@ -26,7 +26,7 @@ Während der Core (Layer 1) offline funktioniert und primär auf Erkennung setzt
 
 - **Hauptziel:** Bereitstellung einer robusten, sicheren und performanten Bibliothek, die später über FFI (Foreign Function Interface) und WASM (WebAssembly) in anderen Umgebungen (z.B. Desktop-Anwendungen, Web-Clients) genutzt werden kann.
 
-- **Kernfunktionalität:** Erstellung, Verwaltung und Verifizierung von digitalen Gutscheinen und deren Transaktionshistorie.
+- **Kernfunktionalität:** Erstellung, Verwaltung und Verifizierung von digitalen Gutscheinen und deren Transaktionshistorie.**
 
 ## 2\. Tech-Stack
 

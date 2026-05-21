@@ -88,6 +88,8 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **Core Refactoring & Modularity**: Modularized `voucher_manager`, `voucher_validation`, and `test_utils` into directory-based modules with facade patterns; removed legacy monolithic files (1400+ lines each) to reduce cognitive load and improve maintainability.
 - [x] **English Documentation Migration**: Completed transition to English comments and Rustdoc for core library entry points (`lib.rs`, `error.rs`, `app_service`), improving developer tool support and accessibility.
 - [x] **README Architecture Overhaul**: Integrated comprehensive "Core Concepts" and updated technical architecture description to reflect the current identity-centric, offline-first design paradigm.
+- [x] **Refactored Voucher Proof Matching**: Moved `get_proof_id_for_voucher` matching heuristics from Tauri backend to core `Wallet` for zero-copy/no-DTO lookup, exposing it in `AppService` and simplifying command handlers.
+
 
 
 ## Next Milestones

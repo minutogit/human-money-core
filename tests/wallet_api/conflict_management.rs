@@ -14,6 +14,7 @@ use bs58;
 use tempfile::tempdir;
 use human_money_core::app_service::AppService;
 use human_money_core::MnemonicLanguage;
+use human_money_core::{Voucher, Wallet, VoucherInstance, VoucherStatus};
 
 fn create_mock_proof(offender_id: &str) -> ProofOfDoubleSpend {
     let reporter = &ACTORS.victim;
@@ -154,3 +155,124 @@ fn test_conflict_override_persistence() {
     assert!(loaded_conflict.local_override);
     assert_eq!(loaded_conflict.local_note, Some("Trust me".to_string()));
 }
+
+#[test]
+fn test_get_proof_id_for_voucher_all_heuristics() {
+    let alice = &ACTORS.alice;
+    let mut wallet = setup_in_memory_wallet(alice);
+
+    let local_id = "test_voucher_instance";
+
+    // Helper to generate a base voucher
+    let mut voucher = Voucher::default();
+    voucher.voucher_id = "v123".to_string();
+    voucher.transactions = vec![Transaction::default()];
+    
+    // Helper to clear proofs and voucher store
+    let reset_wallet = |w: &mut Wallet, v: Voucher| {
+        w.proof_store.proofs.clear();
+        w.voucher_store.vouchers.clear();
+        w.voucher_store.vouchers.insert(local_id.to_string(), VoucherInstance {
+            voucher: v,
+            status: VoucherStatus::Quarantined { reason: "test".to_string() },
+            local_instance_id: local_id.to_string(),
+        });
+    };
+
+    // Test Case 1: Match 1 (Direct t_id match)
+    {
+        let mut v = voucher.clone();
+        v.transactions[0].t_id = "tx_match_1".to_string();
+        reset_wallet(&mut wallet, v);
+
+        let mut proof = create_mock_proof("offender1");
+        proof.proof_id = "proof_case_1".to_string();
+        proof.conflicting_transactions[0].t_id = "tx_match_1".to_string();
+
+        use human_money_core::models::conflict::{ProofStoreEntry, ConflictRole};
+        wallet.proof_store.proofs.insert(proof.proof_id.clone(), ProofStoreEntry {
+            proof: proof.clone(), local_override: false, local_note: None, conflict_role: ConflictRole::Witness
+        });
+
+        assert_eq!(wallet.get_proof_id_for_voucher(local_id), Some("proof_case_1".to_string()));
+    }
+
+    // Test Case 2: Match 2 (DS-Tag match)
+    {
+        use human_money_core::models::voucher::TrapData;
+        let mut v = voucher.clone();
+        v.transactions[0].trap_data = Some(TrapData {
+            ds_tag: "tag_match_2".to_string(),
+            ..Default::default()
+        });
+        reset_wallet(&mut wallet, v);
+
+        let mut proof = create_mock_proof("offender2");
+        proof.proof_id = "proof_case_2".to_string();
+        proof.conflicting_transactions[0].trap_data = Some(TrapData {
+            ds_tag: "tag_match_2".to_string(),
+            ..Default::default()
+        });
+
+        use human_money_core::models::conflict::{ProofStoreEntry, ConflictRole};
+        wallet.proof_store.proofs.insert(proof.proof_id.clone(), ProofStoreEntry {
+            proof: proof.clone(), local_override: false, local_note: None, conflict_role: ConflictRole::Witness
+        });
+
+        assert_eq!(wallet.get_proof_id_for_voucher(local_id), Some("proof_case_2".to_string()));
+    }
+
+    // Test Case 3: Match 3 (Deep Fork Point match)
+    {
+        let mut v = voucher.clone();
+        v.transactions[0].prev_hash = "fork_hash_3".to_string();
+        reset_wallet(&mut wallet, v);
+
+        let mut proof = create_mock_proof("offender3");
+        proof.proof_id = "proof_case_3".to_string();
+        proof.fork_point_prev_hash = "fork_hash_3".to_string();
+
+        use human_money_core::models::conflict::{ProofStoreEntry, ConflictRole};
+        wallet.proof_store.proofs.insert(proof.proof_id.clone(), ProofStoreEntry {
+            proof: proof.clone(), local_override: false, local_note: None, conflict_role: ConflictRole::Witness
+        });
+
+        assert_eq!(wallet.get_proof_id_for_voucher(local_id), Some("proof_case_3".to_string()));
+    }
+
+    // Test Case 4: Match 4 (Offender & Chain Link match)
+    {
+        let mut v = voucher.clone();
+        v.transactions[0].sender_id = Some("offender4".to_string());
+        reset_wallet(&mut wallet, v);
+
+        let mut proof = create_mock_proof("offender4");
+        proof.proof_id = "proof_case_4".to_string();
+
+        use human_money_core::models::conflict::{ProofStoreEntry, ConflictRole};
+        wallet.proof_store.proofs.insert(proof.proof_id.clone(), ProofStoreEntry {
+            proof: proof.clone(), local_override: false, local_note: None, conflict_role: ConflictRole::Witness
+        });
+
+        assert_eq!(wallet.get_proof_id_for_voucher(local_id), Some("proof_case_4".to_string()));
+    }
+
+    // Test Case 5: Match 5 (Recipient match)
+    {
+        let mut v = voucher.clone();
+        v.transactions[0].recipient_id = "victim5".to_string();
+        reset_wallet(&mut wallet, v);
+
+        let mut proof = create_mock_proof("offender5");
+        proof.proof_id = "proof_case_5".to_string();
+        proof.conflicting_transactions[0].recipient_id = "victim5".to_string();
+
+        use human_money_core::models::conflict::{ProofStoreEntry, ConflictRole};
+        wallet.proof_store.proofs.insert(proof.proof_id.clone(), ProofStoreEntry {
+            proof: proof.clone(), local_override: false, local_note: None, conflict_role: ConflictRole::Witness
+        });
+
+        assert_eq!(wallet.get_proof_id_for_voucher(local_id), Some("proof_case_5".to_string()));
+    }
+}
+

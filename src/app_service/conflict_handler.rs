@@ -231,4 +231,13 @@ impl AppService {
             Err(VoucherCoreError::WalletLocked)
         }
     }
+
+    /// Finds the associated double-spend conflict proof ID for a voucher using cascading match strategies.
+    ///
+    /// # Errors
+    /// Returns an error if the wallet is locked.
+    pub fn get_proof_id_for_voucher(&self, local_id: &str) -> Result<Option<String>, String> {
+        Ok(self.get_wallet()?.get_proof_id_for_voucher(local_id))
+    }
 }
+
