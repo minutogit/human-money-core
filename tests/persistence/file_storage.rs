@@ -884,3 +884,81 @@ fn test_fingerprint_metadata_persists_and_loads() {
         "depth muss nach dem Laden den gespeicherten Wert 3 haben"
     );
 }
+
+#[test]
+fn test_wallet_lock_guard_does_not_delete_persistent_lock() {
+    use human_money_core::storage::{Storage, WalletLockGuard};
+    use human_money_core::storage::file_storage::FileStorage;
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let storage = FileStorage::new(dir.path());
+
+    // 1. Simuliere einen Login: Sperre manuell erlangen
+    storage.lock().expect("Initial lock should succeed");
+    assert!(
+        storage.get_lock_file_path().exists(),
+        "Lock file should exist after manual lock"
+    );
+
+    // 2. Simuliere eine temporäre Datenoperation (z.B. save_encrypted_data)
+    {
+        let _guard = WalletLockGuard::new(&storage).expect("Guard creation should succeed via re-entrancy");
+        assert!(
+            storage.get_lock_file_path().exists(),
+            "Lock file should exist inside guard scope"
+        );
+    } // HIER: Der Guard wird gedroppt.
+
+    // 3. REGRESSION CHECK: Die Sperrdatei MUSS weiterhin existieren,
+    // da die übergeordnete Session noch aktiv ist!
+    // (Dieser Assert wird vor dem Bugfix fehlschlagen)
+    assert!(
+        storage.get_lock_file_path().exists(),
+        "REGRESSION BUG: WalletLockGuard hat die Sperrdatei beim Drop gelöscht, obwohl der Lock bereits vorher bestand!"
+    );
+
+    // 4. Simuliere Logout
+    storage.unlock().unwrap();
+    assert!(!storage.get_lock_file_path().exists());
+}
+
+
+#[test]
+fn test_wallet_lock_guard_does_not_delete_persistent_lock() {
+    use human_money_core::storage::{Storage, WalletLockGuard};
+    use human_money_core::storage::file_storage::FileStorage;
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let storage = FileStorage::new(dir.path());
+
+    // 1. Simuliere einen Login: Sperre manuell erlangen
+    storage.lock().expect("Initial lock should succeed");
+    assert!(
+        storage.get_lock_file_path().exists(),
+        "Lock file should exist after manual lock"
+    );
+
+    // 2. Simuliere eine temporäre Datenoperation (z.B. save_encrypted_data)
+    {
+        let _guard = WalletLockGuard::new(&storage).expect("Guard creation should succeed via re-entrancy");
+        assert!(
+            storage.get_lock_file_path().exists(),
+            "Lock file should exist inside guard scope"
+        );
+    } // HIER: Der Guard wird gedroppt.
+
+    // 3. REGRESSION CHECK: Die Sperrdatei MUSS weiterhin existieren,
+    // da die übergeordnete Session noch aktiv ist!
+    // (Dieser Assert wird vor dem Bugfix fehlschlagen)
+    assert!(
+        storage.get_lock_file_path().exists(),
+        "REGRESSION BUG: WalletLockGuard hat die Sperrdatei beim Drop gelöscht, obwohl der Lock bereits vorher bestand!"
+    );
+
+    // 4. Simuliere Logout
+    storage.unlock().unwrap();
+    assert!(!storage.get_lock_file_path().exists());
+}
+

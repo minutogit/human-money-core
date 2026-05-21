@@ -1,9 +1,9 @@
 ---
 project: human-money-core
-version: "0.2.16"
+version: "0.2.18"
 phase: "active-development"
 health: "green"
-last_updated: "2026-05-09"
+last_updated: "2026-05-21"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -89,6 +89,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **English Documentation Migration**: Completed transition to English comments and Rustdoc for core library entry points (`lib.rs`, `error.rs`, `app_service`), improving developer tool support and accessibility.
 - [x] **README Architecture Overhaul**: Integrated comprehensive "Core Concepts" and updated technical architecture description to reflect the current identity-centric, offline-first design paradigm.
 - [x] **Refactored Voucher Proof Matching**: Moved `get_proof_id_for_voucher` matching heuristics from Tauri backend to core `Wallet` for zero-copy/no-DTO lookup, exposing it in `AppService` and simplifying command handlers.
+- [x] **WalletLockGuard Re-entrancy Bugfix**: Resolved a critical issue where `WalletLockGuard` drop destructor would delete the persistent lock file even when the lock was pre-existing (re-entrant lock), enabling stable sub-session data updates without losing parent session locks.
 
 
 

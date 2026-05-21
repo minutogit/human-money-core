@@ -296,10 +296,11 @@ pub trait Storage {
     /// Versucht, eine exklusive, prozessweite Sperre für den Wallet-Speicher zu erlangen.
     /// Muss die "Stale Lock"-Prüfung (z.B. PID) implementieren.
     ///
-    /// Gibt `Ok(())` zurück, wenn die Sperre erfolgreich erlangt wurde.
+    /// Gibt `Ok(true)` zurück, wenn eine neue Sperre erfolgreich erlangt wurde.
+    /// Gibt `Ok(false)` zurück, wenn die Sperre bereits von UNS selbst gehalten wird (Re-Entrancy).
     /// Gibt `Err(StorageError::LockFailed)` zurück, wenn die Sperre aktiv von einem
     /// *anderen lebenden* Prozess gehalten wird.
-    fn lock(&self) -> Result<(), StorageError>;
+    fn lock(&self) -> Result<bool, StorageError>;
 
     /// Gibt die exklusive Sperre wieder frei.
     /// Diese Methode sollte nur bei einem sauberen Logout aufgerufen werden.
@@ -319,14 +320,18 @@ pub trait Storage {
 /// oder `receive_bundle` verwendet werden.
 pub struct WalletLockGuard {
     lock_file_path: std::path::PathBuf,
+    was_already_locked: bool,
 }
 
 impl WalletLockGuard {
     /// Erstellt einen neuen Guard und versucht sofort, die Sperre zu erlangen.
     pub fn new(storage: &dyn Storage) -> Result<Self, StorageError> {
-        storage.lock()?; // Sperre beim Erstellen erlangen
+        let is_newly_locked = storage.lock()?; // Sperre beim Erstellen erlangen
         let lock_file_path = storage.get_lock_file_path().clone();
-        Ok(Self { lock_file_path })
+        Ok(Self {
+            lock_file_path,
+            was_already_locked: !is_newly_locked,
+        })
     }
 }
 
@@ -334,7 +339,8 @@ impl WalletLockGuard {
 impl Drop for WalletLockGuard {
     fn drop(&mut self) {
         use std::fs;
-        if self.lock_file_path.exists() {
+        // Lösche die Datei NUR, wenn wir sie selbst erzeugt haben (was_already_locked == false)
+        if !self.was_already_locked && self.lock_file_path.exists() {
             if let Err(e) = fs::remove_file(&self.lock_file_path) {
                 // WICHTIG: In `drop` niemals paniken!
                 eprintln!(

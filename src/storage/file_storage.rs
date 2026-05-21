@@ -851,7 +851,7 @@ impl Storage for FileStorage {
 
     // --- Implementierung der Sperrlogik ---
 
-    fn lock(&self) -> Result<(), StorageError> {
+    fn lock(&self) -> Result<bool, StorageError> {
         // Stelle sicher, dass das Verzeichnis existiert.
         fs::create_dir_all(&self.user_storage_path)?;
 
@@ -869,7 +869,7 @@ impl Storage for FileStorage {
             // --- RE-ENTRANCY CHECK ---
             // Wenn die PID in der Datei UNSERE ist, haben wir den Lock schon. Alles gut.
             if pid_val == current_pid {
-                return Ok(());
+                return Ok(false);
             }
 
             // Prüfe, ob der Prozess noch läuft
@@ -895,7 +895,7 @@ impl Storage for FileStorage {
         let mut file = fs::File::create(&self.lock_file_path)?;
         file.write_all(current_pid.to_string().as_bytes())?;
 
-        Ok(())
+        Ok(true)
     }
 
     fn unlock(&self) -> Result<(), StorageError> {
