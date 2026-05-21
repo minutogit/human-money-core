@@ -29,6 +29,7 @@ pub fn setup_in_memory_wallet(identity: &UserIdentity) -> Wallet {
         fingerprint_metadata: CanonicalMetadataStore::default(),
         local_instance_id: "memory-instance".to_string(),
         pending_events: Vec::new(),
+        loaded_generation: 0,
     }
 }
 
@@ -62,6 +63,7 @@ pub fn create_test_wallet(
         fingerprint_metadata: CanonicalMetadataStore::default(),
         local_instance_id,
         pending_events: Vec::new(),
+        loaded_generation: 0,
     };
 
     Ok((wallet, identity))

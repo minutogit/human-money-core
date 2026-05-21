@@ -90,6 +90,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **README Architecture Overhaul**: Integrated comprehensive "Core Concepts" and updated technical architecture description to reflect the current identity-centric, offline-first design paradigm.
 - [x] **Refactored Voucher Proof Matching**: Moved `get_proof_id_for_voucher` matching heuristics from Tauri backend to core `Wallet` for zero-copy/no-DTO lookup, exposing it in `AppService` and simplifying command handlers.
 - [x] **WalletLockGuard Re-entrancy Bugfix**: Resolved a critical issue where `WalletLockGuard` drop destructor would delete the persistent lock file even when the lock was pre-existing (re-entrant lock), enabling stable sub-session data updates without losing parent session locks.
+- [x] **Optimistic Locking**: Implemented generation-based optimistic concurrency locking and transparent 'reload-before-write' synchronization in `AppService` to protect against double-spend vulnerabilities from concurrent UI access.
 
 
 

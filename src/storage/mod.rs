@@ -33,6 +33,9 @@ pub enum StorageError {
 
     #[error("Veraltete Sperre (Stale Lock) gefunden und entfernt: {0}")]
     StaleLock(String),
+
+    #[error("State conflict: {0}")]
+    StateConflict(String),
 }
 
 /// Authentifizierungsmethode für den Speicherzugriff
@@ -309,6 +312,14 @@ pub trait Storage {
 
     /// Gibt den Pfad zur Sperrdatei zurück (für den RAII Guard).
     fn get_lock_file_path(&self) -> &std::path::PathBuf;
+
+    /// Liest den aktuellen Generationszähler von der Platte.
+    /// Falls die Datei nicht existiert, wird 0 zurückgegeben.
+    fn read_generation(&self) -> Result<u64, StorageError>;
+
+    /// Schreibt den neuen Generationszähler auf die Platte.
+    /// Prüft atomar, ob der aktuelle Zähler dem erwarteten Wert entspricht.
+    fn write_generation(&mut self, expected: u64, new: u64) -> Result<(), StorageError>;
 }
 
 // --- RAII Lock Guard ---

@@ -290,8 +290,9 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     standards_map.insert(freetaler_standard.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
     let signer = &ACTORS.guarantor1;
+    let dir_signer = tempdir().unwrap();
     let (mut service_signer, _) =
-        test_utils::setup_service_with_profile(tempdir().unwrap().path(), signer, "Signer", "pwd");
+        test_utils::setup_service_with_profile(dir_signer.path(), signer, "Signer", "pwd");
     let id_signer = service_signer.get_user_id().unwrap();
 
     // Gutschein erstellen -> Status: Active (da keine Bürgen erforderlich)
@@ -365,7 +366,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
             "guarantor",
             true,
             ContainerConfig::TargetDid(id_creator.clone(), PrivacyMode::TrialDecryption),
-            Some(correct_password),
+            Some("pwd"),
         )
         .unwrap();
 
@@ -414,7 +415,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
             "guarantor",
             true,
             ContainerConfig::TargetDid(id_creator.clone(), PrivacyMode::TrialDecryption),
-            Some(correct_password),
+            Some("pwd"),
         )
         .unwrap();
 

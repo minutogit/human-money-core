@@ -46,8 +46,10 @@ fn setup_test_environment(
 }
 
 /// Erstellt eine Sender- und Empfänger-Instanz für die Tests.
-fn setup_sender_recipient() -> (AppService, UserIdentity, AppService, String) {
-    let dir_sender = tempdir().unwrap();
+fn setup_sender_recipient(
+    dir_sender: &tempfile::TempDir,
+    dir_recipient: &tempfile::TempDir,
+) -> (AppService, UserIdentity, AppService, String) {
     // HINWEIS: Wir MÜSSEN einen "slow" crypto-Akteur (wie alice) verwenden,
     // damit die 'identity_sender' mit der von AppService abgeleiteten Identität übereinstimmt.
     // `ACTORS.sender` verwendet 'fast' crypto und ist hierfür ungeeignet.
@@ -57,7 +59,6 @@ fn setup_sender_recipient() -> (AppService, UserIdentity, AppService, String) {
     service_sender.unlock_session("pwd", 60).unwrap();
     let identity_sender = sender.identity.clone();
 
-    let dir_recipient = tempdir().unwrap();
     let recipient = &ACTORS.recipient1;
     let (mut service_recipient, _) =
         setup_service_with_profile(dir_recipient.path(), recipient, "Recipient", "pwd");
@@ -164,8 +165,10 @@ fn test_rejection_of_broken_transaction_chain() {
 #[test]
 fn test_rejection_of_inconsistent_split_math() {
     // 1. ARRANGE
+    let dir_sender = tempdir().unwrap();
+    let dir_recipient = tempdir().unwrap();
     let (mut service_sender, identity_sender, mut service_recipient, id_recipient) =
-        setup_sender_recipient();
+        setup_sender_recipient(&dir_sender, &dir_recipient);
     let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let mut standards_map = HashMap::new();
     standards_map.insert(FREETALER_STANDARD.0.immutable.identity.uuid.clone(), freetaler_toml.clone());
@@ -250,7 +253,10 @@ fn test_rejection_of_inconsistent_split_math() {
 #[test]
 fn test_rejection_of_self_received_bundle() {
     // 1. ARRANGE
-    let (mut service_sender, _, mut service_recipient, id_recipient) = setup_sender_recipient();
+    let dir_sender = tempdir().unwrap();
+    let dir_recipient = tempdir().unwrap();
+    let (mut service_sender, _, mut service_recipient, id_recipient) =
+        setup_sender_recipient(&dir_sender, &dir_recipient);
 
     let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let mut standards_map = HashMap::new();
@@ -340,7 +346,10 @@ fn test_rejection_of_self_received_bundle() {
 #[test]
 fn test_rejection_of_identical_bundle_replay() {
     // 1. ARRANGE
-    let (mut service_sender, _, mut service_recipient, id_recipient) = setup_sender_recipient();
+    let dir_sender = tempdir().unwrap();
+    let dir_recipient = tempdir().unwrap();
+    let (mut service_sender, _, mut service_recipient, id_recipient) =
+        setup_sender_recipient(&dir_sender, &dir_recipient);
 
     let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let mut standards_map = HashMap::new();
@@ -427,8 +436,10 @@ fn test_rejection_of_identical_bundle_replay() {
 #[test]
 fn test_rejection_of_voucher_replay_in_new_bundle() {
     // 1. ARRANGE
+    let dir_sender = tempdir().unwrap();
+    let dir_recipient = tempdir().unwrap();
     let (mut service_sender, identity_sender, mut service_recipient, id_recipient) =
-        setup_sender_recipient();
+        setup_sender_recipient(&dir_sender, &dir_recipient);
 
     let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let mut standards_map = HashMap::new();

@@ -54,7 +54,7 @@
 
 use crate::models::profile::UserIdentity;
 use crate::services::{bundle_processor, crypto_utils};
-use crate::storage::file_storage::FileStorage;
+use crate::storage::{Storage, file_storage::FileStorage};
 use crate::wallet::Wallet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -298,8 +298,41 @@ impl AppService {
                     }
                 };
 
+                // NEU: Prüfe ob unser RAM-State aktuell ist (Reload-Before-Write)
+                let mut current_wallet = wallet;
+                let disk_generation = match storage.read_generation() {
+                    Ok(gen_val) => gen_val,
+                    Err(e) => {
+                        self.state = AppState::Unlocked {
+                            storage,
+                            wallet: current_wallet,
+                            identity,
+                            session_cache,
+                        };
+                        return Err(e.to_string());
+                    }
+                };
+
+                if disk_generation != current_wallet.loaded_generation {
+                    let local_instance_id = current_wallet.local_instance_id.clone();
+                    match Wallet::load(&storage, &auth, local_instance_id) {
+                        Ok((fresh_wallet, _)) => {
+                            current_wallet = fresh_wallet;
+                        }
+                        Err(e) => {
+                            self.state = AppState::Unlocked {
+                                storage,
+                                wallet: current_wallet,
+                                identity,
+                                session_cache,
+                            };
+                            return Err(format!("Failed to reload wallet: {}", e));
+                        }
+                    }
+                }
+
                 // 5. Establish atomicity (cloning)
-                let mut temp_wallet = wallet.clone();
+                let mut temp_wallet = current_wallet.clone();
 
                 // 6. Execute closure
                 let outcome = f(&mut temp_wallet, &identity, &mut storage, &auth);
@@ -307,9 +340,15 @@ impl AppService {
                 // 7. Evaluate outcome
                 match outcome {
                     TransactionOutcome::Commit(res) => {
-                        temp_wallet
-                            .save(&mut storage, &identity, &auth)
-                            .map_err(|e| e.to_string())?;
+                        if let Err(e) = temp_wallet.save(&mut storage, &identity, &auth) {
+                            self.state = AppState::Unlocked {
+                                storage,
+                                wallet: current_wallet,
+                                identity,
+                                session_cache,
+                            };
+                            return Err(e.to_string());
+                        }
                         self.state = AppState::Unlocked {
                             storage,
                             wallet: temp_wallet,
@@ -320,9 +359,15 @@ impl AppService {
                         Ok(res)
                     }
                     TransactionOutcome::CommitAndReturnError(err_msg) => {
-                        temp_wallet
-                            .save(&mut storage, &identity, &auth)
-                            .map_err(|e| e.to_string())?;
+                        if let Err(e) = temp_wallet.save(&mut storage, &identity, &auth) {
+                            self.state = AppState::Unlocked {
+                                storage,
+                                wallet: current_wallet,
+                                identity,
+                                session_cache,
+                            };
+                            return Err(e.to_string());
+                        }
                         self.state = AppState::Unlocked {
                             storage,
                             wallet: temp_wallet,
@@ -335,7 +380,7 @@ impl AppService {
                     TransactionOutcome::Rollback(err_msg) => {
                         self.state = AppState::Unlocked {
                             storage,
-                            wallet,
+                            wallet: current_wallet,
                             identity,
                             session_cache,
                         };

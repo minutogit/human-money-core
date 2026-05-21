@@ -913,6 +913,35 @@ impl Storage for FileStorage {
         &self.lock_file_path
     }
 
+    fn read_generation(&self) -> Result<u64, StorageError> {
+        let path = self.user_storage_path.join(".wallet.generation");
+        if !path.exists() {
+            return Ok(0);
+        }
+        let content = fs::read_to_string(&path)?;
+        let gen_count = content.trim().parse::<u64>().map_err(|e| {
+            StorageError::InvalidFormat(format!("Failed to parse generation counter: {}", e))
+        })?;
+        Ok(gen_count)
+    }
+
+    fn write_generation(&mut self, expected: u64, new: u64) -> Result<(), StorageError> {
+        fs::create_dir_all(&self.user_storage_path)?;
+        let path = self.user_storage_path.join(".wallet.generation");
+        let current = self.read_generation()?;
+        if current != expected {
+            return Err(StorageError::StateConflict(format!(
+                "Generation counter mismatch: expected {}, found {}",
+                expected, current
+            )));
+        }
+
+        let tmp_path = self.user_storage_path.join(".wallet.generation.tmp");
+        fs::write(&tmp_path, new.to_string())?;
+        fs::rename(&tmp_path, &path)?;
+        Ok(())
+    }
+
     fn save_seal(
         &mut self,
         _user_id: &str,
