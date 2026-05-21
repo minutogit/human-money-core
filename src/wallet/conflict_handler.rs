@@ -264,6 +264,79 @@ impl Wallet {
             return Ok(());
         }
 
+        // --- Konfliktlösung (Offline-Gewinner ermitteln und Verlierer unter Quarantäne stellen) ---
+        let mut winner_tx_id: Option<String> = None;
+        let mut earliest_dt: Option<chrono::DateTime<chrono::FixedOffset>> = None;
+
+        for tx in &proof.conflicting_transactions {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&tx.t_time) {
+                match earliest_dt {
+                    None => {
+                        earliest_dt = Some(dt);
+                        winner_tx_id = Some(tx.t_id.clone());
+                    }
+                    Some(e_dt) if dt < e_dt => {
+                        earliest_dt = Some(dt);
+                        winner_tx_id = Some(tx.t_id.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let tx_ids: std::collections::HashSet<_> = proof.conflicting_transactions.iter().map(|tx| &tx.t_id).collect();
+        let mut quarantined_events = Vec::new();
+
+        if let Some(winner_id) = winner_tx_id {
+            for instance in self.voucher_store.vouchers.values_mut() {
+                if let Some(tx) = instance
+                    .voucher
+                    .transactions
+                    .iter()
+                    .find(|tx| tx_ids.contains(&tx.t_id))
+                {
+                    let prev_status = instance.status.clone();
+                    instance.status = if tx.t_id == winner_id {
+                        VoucherStatus::Active
+                    } else {
+                        VoucherStatus::Quarantined {
+                            reason: "Lost race in imported proof".to_string(),
+                        }
+                    };
+
+                    if !matches!(prev_status, VoucherStatus::Quarantined { .. })
+                        && matches!(instance.status, VoucherStatus::Quarantined { .. })
+                    {
+                        let bff_data = crate::models::wallet_event::EventBffData {
+                            display_currency: super::format_bff_name(
+                                instance.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&instance.voucher.nominal_value.unit),
+                                instance.voucher.non_redeemable_test_voucher,
+                            ),
+                            amount: instance.voucher.nominal_value.amount.clone(),
+                            is_test_voucher: instance.voucher.non_redeemable_test_voucher,
+                            counterparty_id: None,
+                            counterparty_name: None,
+                        };
+                        quarantined_events.push((
+                            instance.local_instance_id.clone(),
+                            instance.voucher.voucher_id.clone(),
+                            bff_data,
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Emittierte VoucherQuarantined-Events in pending_events übernehmen.
+        for (local_id, voucher_id, bff_data) in quarantined_events {
+            self.emit_event(
+                crate::models::wallet_event::WalletEventType::VoucherQuarantined,
+                &local_id,
+                &voucher_id,
+                bff_data,
+            );
+        }
+
         // --- Bestimmung der Rolle (Opfer vs. Zeuge) ---
         // REFINEMENT: Wir sind nur ein Opfer, wenn wir KEINEN aktiven Gutschein für diesen
         // Konflikt-Tag haben, aber mindestens einer existiert (der nun in Quarantäne ist).
@@ -739,25 +812,33 @@ pub(super) fn resolve_conflict_offline(
         .filter(|tx| tx_ids.contains(&tx.t_id))
         .collect();
 
-    let mut winner_tx: Option<&crate::models::voucher::Transaction> = None;
+    if conflicting_txs.is_empty() {
+        return;
+    }
+
+    // Since all conflicting transactions branch from the same fork point, they share the same prev_hash.
+    let prev_hash = &conflicting_txs[0].prev_hash;
+    let mut winner_id: Option<String> = None;
     let mut earliest_time = u128::MAX;
 
-    for tx in &conflicting_txs {
-        if let Some(fp) = fingerprints.iter().find(|f| f.t_id == tx.t_id) {
-            if let Ok(decrypted_nanos) =
-                conflict_manager::decrypt_transaction_timestamp(tx, fp.encrypted_timestamp)
-            {
-                if decrypted_nanos < earliest_time {
-                    earliest_time = decrypted_nanos;
-                    winner_tx = Some(tx);
-                }
+    for fp in fingerprints {
+        // Construct a synthetic transaction to decrypt the timestamp
+        let mut tx = crate::models::voucher::Transaction::default();
+        tx.t_id = fp.t_id.clone();
+        tx.prev_hash = prev_hash.clone();
+
+        if let Ok(decrypted_nanos) =
+            conflict_manager::decrypt_transaction_timestamp(&tx, fp.encrypted_timestamp)
+        {
+            if decrypted_nanos < earliest_time {
+                earliest_time = decrypted_nanos;
+                winner_id = Some(fp.t_id.clone());
             }
         }
     }
 
     // --- 2. Schreib-Phase: Aktualisiere den Status basierend auf der Gewinner-ID ---
-    // Die `conflicting_txs`-Liste ist nun nicht mehr im Scope, die unveränderliche Ausleihe ist beendet.
-    if let Some(winner_id) = winner_tx.map(|tx| tx.t_id.clone()) {
+    if let Some(winner_id) = winner_id {
         for instance in voucher_store.vouchers.values_mut() {
             // Finde heraus, ob diese Instanz eine der Konflikt-Transaktionen enthält.
             if let Some(tx) = instance

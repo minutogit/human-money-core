@@ -851,7 +851,7 @@ impl Storage for FileStorage {
 
     // --- Implementierung der Sperrlogik ---
 
-    fn lock(&self) -> Result<(), StorageError> {
+    fn lock(&self) -> Result<bool, StorageError> {
         // Stelle sicher, dass das Verzeichnis existiert.
         fs::create_dir_all(&self.user_storage_path)?;
 
@@ -869,7 +869,7 @@ impl Storage for FileStorage {
             // --- RE-ENTRANCY CHECK ---
             // Wenn die PID in der Datei UNSERE ist, haben wir den Lock schon. Alles gut.
             if pid_val == current_pid {
-                return Ok(());
+                return Ok(false);
             }
 
             // Prüfe, ob der Prozess noch läuft
@@ -895,7 +895,7 @@ impl Storage for FileStorage {
         let mut file = fs::File::create(&self.lock_file_path)?;
         file.write_all(current_pid.to_string().as_bytes())?;
 
-        Ok(())
+        Ok(true)
     }
 
     fn unlock(&self) -> Result<(), StorageError> {
@@ -911,6 +911,35 @@ impl Storage for FileStorage {
 
     fn get_lock_file_path(&self) -> &std::path::PathBuf {
         &self.lock_file_path
+    }
+
+    fn read_generation(&self) -> Result<u64, StorageError> {
+        let path = self.user_storage_path.join(".wallet.generation");
+        if !path.exists() {
+            return Ok(0);
+        }
+        let content = fs::read_to_string(&path)?;
+        let gen_count = content.trim().parse::<u64>().map_err(|e| {
+            StorageError::InvalidFormat(format!("Failed to parse generation counter: {}", e))
+        })?;
+        Ok(gen_count)
+    }
+
+    fn write_generation(&mut self, expected: u64, new: u64) -> Result<(), StorageError> {
+        fs::create_dir_all(&self.user_storage_path)?;
+        let path = self.user_storage_path.join(".wallet.generation");
+        let current = self.read_generation()?;
+        if current != expected {
+            return Err(StorageError::StateConflict(format!(
+                "Generation counter mismatch: expected {}, found {}",
+                expected, current
+            )));
+        }
+
+        let tmp_path = self.user_storage_path.join(".wallet.generation.tmp");
+        fs::write(&tmp_path, new.to_string())?;
+        fs::rename(&tmp_path, &path)?;
+        Ok(())
     }
 
     fn save_seal(

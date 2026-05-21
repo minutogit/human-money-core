@@ -28,33 +28,7 @@ fn test_voucher_archiving_on_full_spend() {
     let alice_identity = &ACTORS.alice;
     let bob_identity = &ACTORS.bob;
 
-    let mut alice_wallet = Wallet {
-        profile: UserProfile {
-            user_id: alice_identity.user_id.clone(),
-            first_name: None,
-            last_name: None,
-            organization: None,
-            community: None,
-            address: None,
-            gender: None,
-            email: None,
-            phone: None,
-            coordinates: None,
-            url: None,
-            service_offer: None,
-            needs: None,
-            picture_url: None,
-            l2_server_pubkey: None,
-        },
-        voucher_store: Default::default(),
-        bundle_meta_store: Default::default(),
-        known_fingerprints: Default::default(),
-        own_fingerprints: Default::default(),
-        proof_store: Default::default(),
-        fingerprint_metadata: CanonicalMetadataStore::default(),
-        local_instance_id: "test-id".to_string(),
-        pending_events: Vec::new(),
-    };
+    let mut alice_wallet = human_money_core::test_utils::setup_in_memory_wallet(&alice_identity.identity);
 
     // Erstelle Alices Archiv im temporären Verzeichnis.
     let temp_dir = tempdir().unwrap();

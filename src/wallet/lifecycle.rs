@@ -101,6 +101,7 @@ impl Wallet {
             fingerprint_metadata,
             local_instance_id,
             pending_events: Vec::new(),
+            loaded_generation: 0,
         };
 
         Ok((wallet, identity))
@@ -134,6 +135,8 @@ impl Wallet {
             return Err(StorageError::AuthenticationFailed.into());
         }
 
+        let loaded_generation = storage.read_generation()?;
+
         let mut wallet = Wallet {
             profile,
             voucher_store,
@@ -144,6 +147,7 @@ impl Wallet {
             fingerprint_metadata,
             local_instance_id,
             pending_events: Vec::new(),
+            loaded_generation,
         };
 
         // --- EXPIRATION SWEEP ---
@@ -208,6 +212,16 @@ impl Wallet {
         identity: &UserIdentity,
         auth: &AuthMethod,
     ) -> Result<(), StorageError> {
+        let current_generation = storage.read_generation()?;
+        if current_generation != self.loaded_generation {
+            return Err(StorageError::StateConflict(
+                "State was modified externally!".to_string(),
+            ));
+        }
+        let new_generation = current_generation + 1;
+        storage.write_generation(current_generation, new_generation)?;
+        self.loaded_generation = new_generation;
+
         storage.save_wallet(&self.profile, &self.voucher_store, identity, auth)?;
         storage.save_bundle_metadata(&identity.user_id, auth, &self.bundle_meta_store)?;
         storage.save_known_fingerprints(&identity.user_id, auth, &self.known_fingerprints)?;
