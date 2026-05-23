@@ -57,6 +57,7 @@ path = "src/bin/voucher-cli.rs"
 
 
 [dev-dependencies]
+aes-gcm = "0.10.3"
 rand = "0.8"
 human_money_core = { version = "0.2.17", path = ".", features = ["test-utils"] }
 regex = "1.10.4"
