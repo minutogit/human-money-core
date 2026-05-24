@@ -129,15 +129,15 @@ fn api_app_service_conflict_api_fails_when_locked() {
 
     let res_list = service.list_conflicts();
     assert!(res_list.is_err());
-    assert!(res_list.unwrap_err().contains("Wallet is locked"));
+    assert!(res_list.unwrap_err().to_string().contains("Wallet is locked"));
 
     let res_get = service.get_proof_of_double_spend(fake_proof_id);
     assert!(res_get.is_err());
-    assert!(res_get.unwrap_err().contains("Wallet is locked"));
+    assert!(res_get.unwrap_err().to_string().contains("Wallet is locked"));
 
     let res_create = service.create_resolution_endorsement(fake_proof_id, None);
     assert!(res_create.is_err());
-    assert!(res_create.unwrap_err().contains("Wallet is locked"));
+    assert!(res_create.unwrap_err().to_string().contains("Wallet is locked"));
 
     let dummy_endorsement = ResolutionEndorsement {
         endorsement_id: "".to_string(),
@@ -149,7 +149,7 @@ fn api_app_service_conflict_api_fails_when_locked() {
     };
     let res_import = service.import_resolution_endorsement(dummy_endorsement, Some(password));
     assert!(res_import.is_err());
-    assert!(res_import.unwrap_err().contains("Wallet is locked"));
+    assert!(res_import.unwrap_err().to_string().contains("Wallet is locked"));
 }
 
 /// Test 1.1: Testet die reaktive Double-Spend-Erkennung via "Earliest Wins"-Heuristik.

@@ -303,6 +303,6 @@ mod tests {
         );
         
         assert!(result.is_err(), "Die Falle hat nicht zugeschnappt!");
-        assert!(result.unwrap_err().contains("CRITICAL SECURITY VIOLATION"), "Falsche Fehlermeldung!");
+        assert!(result.unwrap_err().to_string().contains("CRITICAL SECURITY VIOLATION"), "Falsche Fehlermeldung!");
     }
 }

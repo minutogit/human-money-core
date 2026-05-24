@@ -593,7 +593,7 @@ fn test_l2_fake_double_spend_protection() {
         result_a.is_err(),
         "Wallet darf mathematisch ungültigen Beweis nicht akzeptieren"
     );
-    assert!(result_a.unwrap_err().contains("ungültig"));
+    assert!(result_a.unwrap_err().to_string().contains("ungültig"));
 
     // Status prüfen -> muss Active bleiben
     assert!(matches!(
@@ -637,7 +637,7 @@ fn test_l2_fake_double_spend_protection() {
         result_b.is_err(),
         "Wallet muss Beweis mit fremdem Key ablehnen"
     );
-    assert!(result_b.unwrap_err().contains("fremden Key"));
+    assert!(result_b.unwrap_err().to_string().contains("fremden Key"));
 
     // Status prüfen -> muss Active bleiben
     assert!(matches!(
@@ -759,7 +759,7 @@ fn test_l2_voucher_id_mixup_protection() {
         result_c.is_err(),
         "Wallet muss Beweis für falsche Voucher ID ablehnen"
     );
-    assert!(result_c.unwrap_err().contains("Mix-up"));
+    assert!(result_c.unwrap_err().to_string().contains("Mix-up"));
 
     // Status prüfen -> muss Active bleiben
     assert!(matches!(

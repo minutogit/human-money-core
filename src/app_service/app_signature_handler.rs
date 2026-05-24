@@ -3,7 +3,7 @@
 //! Enthält alle `AppService`-Funktionen, die sich auf den Signatur-Workflow beziehen,
 //! wie das Anfordern, Erstellen und Anhängen von losgelösten Signaturen.
 
-use super::{AppService, AppState};
+use super::{AppService, AppState, AppFacadeError};
 use crate::models::secure_container::ContainerConfig;
 use crate::models::signature::DetachedSignature;
 use crate::models::voucher::{Voucher, VoucherSignature};
@@ -25,15 +25,15 @@ impl AppService {
         &self,
         local_instance_id: &str,
         config: ContainerConfig,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<u8>, AppFacadeError> {
         let wallet = self.get_wallet()?;
         let identity = match &self.state {
             AppState::Unlocked { identity, .. } => identity,
-            AppState::Locked => return Err("Wallet is locked".to_string()),
+            AppState::Locked => return Err(AppFacadeError::WalletLocked("Wallet is locked".to_string())),
         };
         wallet
             .create_signing_request(identity, local_instance_id, config)
-            .map_err(|e| e.to_string())
+            .map_err(AppFacadeError::from)
     }
 
     /// Öffnet einen empfangenen `SecureContainer`, der eine Signaturanfrage enthält,
@@ -47,28 +47,28 @@ impl AppService {
         &self,
         container_bytes: &[u8],
         password: Option<&str>,
-    ) -> Result<Voucher, String> {
+    ) -> Result<Voucher, AppFacadeError> {
         let identity = match &self.state {
             AppState::Unlocked { identity, .. } => identity,
-            AppState::Locked => return Err("Wallet is locked".to_string()),
+            AppState::Locked => return Err(AppFacadeError::WalletLocked("Wallet is locked".to_string())),
         };
 
         let container: crate::models::secure_container::SecureContainer =
-            serde_json::from_slice(container_bytes).map_err(|e| e.to_string())?;
+            serde_json::from_slice(container_bytes).map_err(|e| AppFacadeError::JsonError(e.to_string()))?;
 
         if !matches!(
             container.c,
             crate::models::secure_container::PayloadType::VoucherForSigning
         ) {
-            return Err("Invalid payload type: expected VoucherForSigning".to_string());
+            return Err(AppFacadeError::ValidationError("Invalid payload type: expected VoucherForSigning".to_string()));
         }
 
         let payload = crate::services::secure_container_manager::open_secure_container(
             &container, identity, password,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(AppFacadeError::from)?;
 
-        let voucher: Voucher = serde_json::from_slice(&payload).map_err(|e| e.to_string())?;
+        let voucher: Voucher = serde_json::from_slice(&payload).map_err(|e| AppFacadeError::JsonError(e.to_string()))?;
         Ok(voucher)
     }
 
@@ -89,22 +89,22 @@ impl AppService {
         include_details: bool,
         config: ContainerConfig,
         password: Option<&str>,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<u8>, AppFacadeError> {
         // --- FORK-LOCK PRÜFUNG ---
-        self.check_fork_lock(password).map_err(|e| e.to_string())?;
+        self.check_fork_lock(password).map_err(AppFacadeError::from)?;
 
         // BUG-FIX: Determine AuthMethod BEFORE state replacement
         let auth_method = match password {
             Some(pwd_str) => crate::AuthMethod::Password(pwd_str),
             None => {
-                let session_key = self.get_session_key().map_err(|e| e.to_string())?;
+                let session_key = self.get_session_key()?;
                 crate::AuthMethod::SessionKey(session_key)
             }
         };
 
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
-        let (result, new_state) = match current_state {
+        let (result, new_state): (Result<Vec<u8>, AppFacadeError>, AppState) = match current_state {
             AppState::Unlocked {
                 mut storage,
                 wallet,
@@ -126,39 +126,52 @@ impl AppService {
                         include_details,
                         config,
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(AppFacadeError::from);
 
-                // Speichere den bezeugten Gutschein im lokalen Wallet
-                let mut temp_wallet = wallet.clone();
-                // Für Endorsed-Gutscheine verwenden wir eine andere ID-Generierung,
-                // da der Unterzeichner keine Ownership-History für den Gutschein hat.
-                // Wir verwenden voucher_id + signer_id + role als deterministische ID.
-                use crate::services::crypto_utils::get_hash_from_slices;
-                let voucher_id_bytes = voucher_to_sign.voucher_id.as_bytes();
-                let signer_id_bytes = temp_wallet.profile.user_id.as_bytes();
-                let role_bytes = role.as_bytes();
-                let local_id = get_hash_from_slices(&[voucher_id_bytes, signer_id_bytes, role_bytes]);
-                temp_wallet.add_voucher_instance(
-                    local_id,
-                    voucher_to_sign.clone(),
-                    crate::wallet::instance::VoucherStatus::Endorsed {
-                        role: role.to_string(),
-                    },
-                );
+                match bundle_bytes {
+                    Ok(bytes) => {
+                        // Speichere den bezeugten Gutschein im lokalen Wallet
+                        let mut temp_wallet = wallet.clone();
+                        // Für Endorsed-Gutscheine verwenden wir eine andere ID-Generierung,
+                        // da der Unterzeichner keine Ownership-History für den Gutschein hat.
+                        // Wir verwenden voucher_id + signer_id + role als deterministische ID.
+                        use crate::services::crypto_utils::get_hash_from_slices;
+                        let voucher_id_bytes = voucher_to_sign.voucher_id.as_bytes();
+                        let signer_id_bytes = temp_wallet.profile.user_id.as_bytes();
+                        let role_bytes = role.as_bytes();
+                        let local_id = get_hash_from_slices(&[voucher_id_bytes, signer_id_bytes, role_bytes]);
+                        temp_wallet.add_voucher_instance(
+                            local_id,
+                            voucher_to_sign.clone(),
+                            crate::wallet::instance::VoucherStatus::Endorsed {
+                                role: role.to_string(),
+                            },
+                        );
 
-                // Speichere den Wallet-Zustand
-                match temp_wallet.save(&mut storage, &identity, &auth_method) {
-                    Ok(_) => (
-                        Ok(bundle_bytes),
-                        AppState::Unlocked {
-                            storage,
-                            wallet: temp_wallet,
-                            identity,
-                            session_cache,
-                        },
-                    ),
+                        // Speichere den Wallet-Zustand
+                        match temp_wallet.save(&mut storage, &identity, &auth_method) {
+                            Ok(_) => (
+                                Ok(bytes),
+                                AppState::Unlocked {
+                                    storage,
+                                    wallet: temp_wallet,
+                                    identity,
+                                    session_cache,
+                                },
+                            ),
+                            Err(e) => (
+                                Err(AppFacadeError::from(e)),
+                                AppState::Unlocked {
+                                    storage,
+                                    wallet,
+                                    identity,
+                                    session_cache,
+                                },
+                            ),
+                        }
+                    }
                     Err(e) => (
-                        Err(e.to_string()),
+                        Err(e),
                         AppState::Unlocked {
                             storage,
                             wallet,
@@ -168,7 +181,7 @@ impl AppService {
                     ),
                 }
             }
-            AppState::Locked => (Err("Wallet is locked".to_string()), AppState::Locked),
+            AppState::Locked => (Err(AppFacadeError::WalletLocked("Wallet is locked".to_string())), AppState::Locked),
         };
 
         self.state = new_state;
@@ -196,22 +209,22 @@ impl AppService {
         standard_toml_content: &str,
         container_password: Option<&str>,
         wallet_password: Option<&str>,
-    ) -> Result<String, String> {
+    ) -> Result<String, AppFacadeError> {
         // --- FORK-LOCK PRÜFUNG ---
-        self.check_fork_lock(wallet_password).map_err(|e| e.to_string())?;
+        self.check_fork_lock(wallet_password).map_err(AppFacadeError::from)?;
 
         // BUG-FIX: Determine AuthMethod BEFORE state replacement
         let auth_method = match wallet_password {
             Some(pwd_str) => crate::AuthMethod::Password(pwd_str),
             None => {
-                let session_key = self.get_session_key().map_err(|e| e.to_string())?;
+                let session_key = self.get_session_key()?;
                 crate::AuthMethod::SessionKey(session_key)
             }
         };
 
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
-        let (result, new_state) = match current_state {
+        let (result, new_state): (Result<String, AppFacadeError>, AppState) = match current_state {
             AppState::Unlocked {
                 mut storage,
                 wallet,
@@ -222,7 +235,7 @@ impl AppService {
                     standard_toml_content,
                 ) {
                     Err(e) => (
-                        Err(e.to_string()),
+                        Err(AppFacadeError::from(e)),
                         AppState::Unlocked {
                             storage,
                             wallet,
@@ -237,7 +250,7 @@ impl AppService {
                         // 1. Signatur an die temporäre Wallet-Instanz anhängen.
                         match temp_wallet.process_and_attach_signature(&identity, container_bytes, container_password) {
                             Err(e) => (
-                                Err(e.to_string()),
+                                Err(AppFacadeError::from(e)),
                                 AppState::Unlocked {
                                     storage,
                                     wallet,
@@ -289,10 +302,10 @@ impl AppService {
                                             },
                                         );
                                         (
-                                            Err(format!(
+                                            Err(AppFacadeError::ValidationError(format!(
                                                 "Voucher quarantined due to fatal validation error: {}",
                                                 fatal_error
-                                            )),
+                                            ))),
                                             VoucherStatus::Quarantined {
                                                 reason: fatal_error.to_string(),
                                             },
@@ -315,7 +328,7 @@ impl AppService {
                                     ),
                                     Err(e) => (
                                         // Fehler: Verwirf die Änderungen und gib den Speicherfehler zurück.
-                                        Err(e.to_string()),
+                                        Err(AppFacadeError::from(e)),
                                         AppState::Unlocked {
                                             storage,
                                             wallet,
@@ -329,7 +342,7 @@ impl AppService {
                     }
                 }
             }
-            AppState::Locked => (Err("Wallet is locked.".to_string()), AppState::Locked),
+            AppState::Locked => (Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())), AppState::Locked),
         };
 
         self.state = new_state;
@@ -349,11 +362,11 @@ impl AppService {
         voucher: &Voucher,
         role: &str,
         standard_toml_content: &str,
-    ) -> Result<crate::services::signature_manager::SignatureImpact, String> {
+    ) -> Result<crate::services::signature_manager::SignatureImpact, AppFacadeError> {
         let (verified_standard, _) = crate::services::standard_manager::verify_and_parse_standard(
             standard_toml_content,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(AppFacadeError::from)?;
 
         let profile = self.get_public_profile()?;
         
@@ -363,7 +376,7 @@ impl AppService {
             role,
             &profile,
         )
-        .map_err(|e| e.to_string())
+        .map_err(AppFacadeError::from)
     }
 
     /// Entfernt eine Zusatzsignatur (z. B. von Bürgen oder Zeugen) von einem Gutschein.
@@ -388,22 +401,22 @@ impl AppService {
         local_instance_id: &str,
         signature_id: &str,
         wallet_password: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppFacadeError> {
         // --- FORK-LOCK PRÜFUNG ---
-        self.check_fork_lock(wallet_password).map_err(|e| e.to_string())?;
+        self.check_fork_lock(wallet_password).map_err(AppFacadeError::from)?;
 
         // Determine AuthMethod BEFORE state replacement
         let auth_method = match wallet_password {
             Some(pwd_str) => crate::AuthMethod::Password(pwd_str),
             None => {
-                let session_key = self.get_session_key().map_err(|e| e.to_string())?;
+                let session_key = self.get_session_key()?;
                 crate::AuthMethod::SessionKey(session_key)
             }
         };
 
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
-        let (result, new_state) = match current_state {
+        let (result, new_state): (Result<(), AppFacadeError>, AppState) = match current_state {
             AppState::Unlocked {
                 mut storage,
                 wallet,
@@ -414,7 +427,7 @@ impl AppService {
 
                 match temp_wallet.remove_signature(&identity, local_instance_id, signature_id) {
                     Err(e) => (
-                        Err(e.to_string()),
+                        Err(AppFacadeError::from(e)),
                         AppState::Unlocked {
                             storage,
                             wallet,
@@ -435,7 +448,7 @@ impl AppService {
                                 },
                             ),
                             Err(e) => (
-                                Err(e.to_string()),
+                                Err(AppFacadeError::from(e)),
                                 AppState::Unlocked {
                                     storage,
                                     wallet,
@@ -447,7 +460,7 @@ impl AppService {
                     }
                 }
             }
-            AppState::Locked => (Err("Wallet is locked.".to_string()), AppState::Locked),
+            AppState::Locked => (Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())), AppState::Locked),
         };
 
         self.state = new_state;

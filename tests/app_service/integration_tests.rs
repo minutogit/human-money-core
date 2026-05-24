@@ -1,4 +1,4 @@
-use human_money_core::app_service::AppService;
+use human_money_core::app_service::{AppService, AppFacadeError};
 use human_money_core::models::profile::PublicProfile;
 use std::path::PathBuf;
 
@@ -8,7 +8,7 @@ fn test_update_public_profile_locked() {
     let profile = PublicProfile::default();
     let result = app_service.update_public_profile(profile, Some("password"));
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), "Wallet is locked.");
+    assert!(matches!(result.unwrap_err(), AppFacadeError::WalletLocked(_)));
 }
 
 #[test]
@@ -32,7 +32,7 @@ fn test_get_public_profile_locked() {
     let app_service = AppService::new(&PathBuf::from("/tmp/test")).unwrap();
     let result = app_service.get_public_profile();
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), "Wallet is locked.");
+    assert!(matches!(result.unwrap_err(), AppFacadeError::WalletLocked(_)));
 }
 
 #[test]
@@ -46,5 +46,5 @@ fn test_open_voucher_signing_request_locked() {
     let app_service = AppService::new(&PathBuf::from("/tmp/test")).unwrap();
     let result = app_service.open_voucher_signing_request(&[], None);
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), "Wallet is locked");
+    assert!(matches!(result.unwrap_err(), AppFacadeError::WalletLocked(_)));
 }

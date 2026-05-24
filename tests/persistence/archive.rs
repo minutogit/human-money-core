@@ -8,7 +8,6 @@ use human_money_core::{
     VoucherStatus,
     archive::file_archive::FileVoucherArchive,
     models::voucher::ValueDefinition,
-    models::{conflict::CanonicalMetadataStore, profile::UserProfile},
     services::voucher_manager,
     wallet::Wallet,
 };

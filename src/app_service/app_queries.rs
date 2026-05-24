@@ -1,7 +1,7 @@
 //! # src/app_service/app_queries.rs
 //!
 //! Enthält alle reinen Lese-Operationen (Queries) des `AppService`.
-use super::{AppService, AppState};
+use super::{AppService, AppState, AppFacadeError};
 use crate::models::profile::PublicProfile;
 use crate::wallet::{AggregatedBalance, AssetClassSummary, instance::VoucherStatus};
 use crate::wallet::{VoucherDetails, VoucherSummary};
@@ -25,7 +25,7 @@ impl AppService {
         voucher_standard_uuid_filter: Option<&[String]>,
         status_filter: Option<&[VoucherStatus]>,
         test_filter: Option<bool>,
-    ) -> Result<Vec<VoucherSummary>, String> {
+    ) -> Result<Vec<VoucherSummary>, AppFacadeError> {
         self.with_unlocked_ref(|wallet, identity, _| {
             Ok(wallet.list_vouchers(
                 Some(identity),
@@ -43,7 +43,7 @@ impl AppService {
     ///
     /// # Errors
     /// Schlägt fehl, wenn das Wallet gesperrt (`Locked`) ist.
-    pub fn get_total_balance_by_currency(&self) -> Result<Vec<AggregatedBalance>, String> {
+    pub fn get_total_balance_by_currency(&self) -> Result<Vec<AggregatedBalance>, AppFacadeError> {
         self.with_unlocked_ref(|wallet, identity, _| {
             Ok(wallet.get_total_balance_by_currency(Some(identity)))
         })
@@ -51,7 +51,7 @@ impl AppService {
 
     /// Ermittelt alle im Wallet aktiven Asset-Klassen (Standard + Test-Status).
     /// Dies dient der UI zum sauberen Befüllen von Filter-Dropdowns.
-    pub fn get_active_asset_classes(&self) -> Result<Vec<AssetClassSummary>, String> {
+    pub fn get_active_asset_classes(&self) -> Result<Vec<AssetClassSummary>, AppFacadeError> {
         self.with_unlocked_ref(|wallet, _, _| Ok(wallet.get_active_asset_classes()))
     }
 
@@ -65,9 +65,9 @@ impl AppService {
     ///
     /// # Errors
     /// Schlägt fehl, wenn das Wallet gesperrt ist oder keine Gutschein-Instanz mit dieser ID existiert.
-    pub fn get_voucher_details(&self, local_id: &str) -> Result<VoucherDetails, String> {
+    pub fn get_voucher_details(&self, local_id: &str) -> Result<VoucherDetails, AppFacadeError> {
         self.with_unlocked_ref(|wallet, _, _| {
-            wallet.get_voucher_details(local_id).map_err(|e| e.to_string())
+            wallet.get_voucher_details(local_id).map_err(AppFacadeError::from)
         })
     }
 
@@ -78,7 +78,7 @@ impl AppService {
     ///
     /// # Errors
     /// Schlägt fehl, wenn das Wallet gesperrt (`Locked`) ist.
-    pub fn get_user_id(&self) -> Result<String, String> {
+    pub fn get_user_id(&self) -> Result<String, AppFacadeError> {
         Ok(self.get_wallet()?.get_user_id().to_string())
     }
 
@@ -93,7 +93,7 @@ impl AppService {
     pub fn get_allowed_signature_roles_from_standard(
         &self,
         standard_toml_content: &str,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, AppFacadeError> {
         let verified_standard = self.parse_voucher_standard(standard_toml_content)?;
         Ok(verified_standard.immutable.issuance.allowed_signature_roles)
     }
@@ -105,16 +105,16 @@ impl AppService {
     pub fn parse_voucher_standard(
         &self,
         standard_toml_content: &str,
-    ) -> Result<crate::models::voucher_standard_definition::VoucherStandardDefinition, String> {
+    ) -> Result<crate::models::voucher_standard_definition::VoucherStandardDefinition, AppFacadeError> {
         let (verified_standard, _) = crate::services::standard_manager::verify_and_parse_standard(
             standard_toml_content,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(AppFacadeError::from)?;
         Ok(verified_standard)
     }
 
     /// Returns the public profile of the wallet owner.
-    pub fn get_public_profile(&self) -> Result<PublicProfile, String> {
+    pub fn get_public_profile(&self) -> Result<PublicProfile, AppFacadeError> {
         let wallet = self.get_wallet()?;
         let profile = &wallet.profile;
         Ok(PublicProfile {
@@ -141,17 +141,17 @@ impl AppService {
     pub fn check_reputation(
         &self,
         offender_id: &str,
-    ) -> Result<crate::models::conflict::TrustStatus, String> {
+    ) -> Result<crate::models::conflict::TrustStatus, AppFacadeError> {
         Ok(self.get_wallet()?.check_reputation(offender_id))
     }
 
     /// Ermittelt die Identität des Absenders eines Gutscheins (ggf. durch Entschlüsselung).
-    pub fn get_voucher_source_sender(&self, local_instance_id: &str) -> Result<Option<String>, String> {
+    pub fn get_voucher_source_sender(&self, local_instance_id: &str) -> Result<Option<String>, AppFacadeError> {
         let wallet = self.get_wallet()?;
         let identity = self.get_identity()?;
         wallet
             .get_voucher_source_sender(local_instance_id, &identity)
-            .map_err(|e| e.to_string())
+            .map_err(AppFacadeError::from)
     }
 
     /// Lädt die Event-Historie des Wallets (BFF-Query).
@@ -164,7 +164,7 @@ impl AppService {
         offset: usize,
         limit: usize,
         password: Option<&str>,
-    ) -> Result<Vec<crate::models::wallet_event::WalletEvent>, String> {
+    ) -> Result<Vec<crate::models::wallet_event::WalletEvent>, AppFacadeError> {
         let auth = match password {
             Some(pwd) => crate::storage::AuthMethod::Password(pwd),
             None => {
@@ -179,9 +179,9 @@ impl AppService {
         match &self.state {
             AppState::Unlocked { storage, .. } => {
                 wallet.get_event_history(storage, &auth, offset, limit)
-                    .map_err(|e| e.to_string())
+                    .map_err(AppFacadeError::from)
             }
-            AppState::Locked => Err("Wallet is locked.".to_string()),
+            AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())),
         }
     }
 }

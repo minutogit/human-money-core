@@ -9,7 +9,6 @@
 //! 4. Gibt den finalen Gutschein-Zustand und den dabei erzeugten
 //!    anonymen Transaktions-Fingerprint im Terminal aus.
 
-use human_money_core::models::conflict::CanonicalMetadataStore;
 use human_money_core::models::profile::UserIdentity;
 use human_money_core::models::voucher::{Address, Collateral, ValueDefinition};
 use human_money_core::services::crypto_utils;

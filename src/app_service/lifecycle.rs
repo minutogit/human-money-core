@@ -3,7 +3,7 @@
 //! Enthält alle Funktionen, die den Lebenszyklus des `AppService` steuern,
 //! wie Initialisierung, Login/Logout und Wiederherstellung.
 
-use super::{AppService, AppState, ProfileInfo};
+use super::{AppService, AppState, ProfileInfo, AppFacadeError};
 use crate::models::seal::{LocalSealRecord, SyncStatus};
 use crate::services::seal_manager::SealManager;
 use crate::storage::{AuthMethod, Storage, file_storage::FileStorage};
@@ -23,9 +23,9 @@ impl AppService {
     /// # Arguments
     /// * `base_storage_path` - Der Pfad zum Basisverzeichnis, in dem alle
     ///   Profil-Unterverzeichnisse und die `profiles.json` gespeichert werden.
-    pub fn new(base_storage_path: &Path) -> Result<Self, String> {
+    pub fn new(base_storage_path: &Path) -> Result<Self, AppFacadeError> {
         fs::create_dir_all(base_storage_path)
-            .map_err(|e| format!("Failed to create base storage directory: {}", e))?;
+            .map_err(|e| AppFacadeError::StorageError(format!("Failed to create base storage directory: {}", e)))?;
         Ok(AppService {
             base_storage_path: base_storage_path.to_path_buf(),
             state: AppState::Locked,
@@ -45,28 +45,28 @@ impl AppService {
     /// # Returns
     /// Ein `Result` mit einem Vektor von `ProfileInfo` oder einer Fehlermeldung,
     /// falls die Indexdatei nicht gelesen oder geparst werden kann.
-    pub fn list_profiles(&self) -> Result<Vec<ProfileInfo>, String> {
+    pub fn list_profiles(&self) -> Result<Vec<ProfileInfo>, AppFacadeError> {
         let index_path = self.base_storage_path.join(PROFILES_INDEX_FILE);
         if !index_path.exists() {
             return Ok(Vec::new()); // Keine Profile vorhanden, kein Fehler.
         }
 
         let content = fs::read_to_string(index_path)
-            .map_err(|e| format!("Could not read profiles index file: {}", e))?;
+            .map_err(|e| AppFacadeError::StorageError(format!("Could not read profiles index file: {}", e)))?;
         if content.trim().is_empty() {
             return Ok(Vec::new());
         }
 
         serde_json::from_str(&content)
-            .map_err(|e| format!("Could not parse profiles index file: {}", e))
+            .map_err(|e| AppFacadeError::JsonError(format!("Could not parse profiles index file: {}", e)))
     }
 
     /// Generiert eine neue BIP-39 Mnemonic-Phrase (Seed-Wörter).
     ///
     /// Diese Methode ist statisch und kann ohne geladenes Wallet aufgerufen werden.
-    pub fn generate_mnemonic(word_count: u32, language: MnemonicLanguage) -> Result<String, String> {
+    pub fn generate_mnemonic(word_count: u32, language: MnemonicLanguage) -> Result<String, AppFacadeError> {
         crate::services::crypto_utils::generate_mnemonic(word_count as usize, language)
-            .map_err(|e| e.to_string())
+            .map_err(|e| AppFacadeError::CryptoError(e.to_string()))
     }
 
     /// Gibt die Wortliste für eine bestimmte Sprache zurück.
@@ -77,8 +77,9 @@ impl AppService {
     /// Validiert eine vom Benutzer eingegebene BIP-39 Mnemonic-Phrase.
     ///
     /// Diese Methode ist statisch und kann ohne geladenes Wallet aufgerufen werden.
-    pub fn validate_mnemonic(mnemonic: &str, language: MnemonicLanguage) -> Result<(), String> {
+    pub fn validate_mnemonic(mnemonic: &str, language: MnemonicLanguage) -> Result<(), AppFacadeError> {
         crate::services::crypto_utils::validate_mnemonic_phrase(mnemonic, language)
+            .map_err(|e| AppFacadeError::CryptoError(e.to_string()))
     }
 
     /// Erstellt ein komplett neues Benutzerprofil und Wallet und speichert es verschlüsselt.
@@ -102,13 +103,13 @@ impl AppService {
         password: &str,
         language: MnemonicLanguage,
         local_instance_id: String,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppFacadeError> {
         let mut profiles = self.list_profiles()?;
         if profiles.iter().any(|p| p.profile_name == profile_name) {
-            return Err(format!(
+            return Err(AppFacadeError::ProfileAlreadyExists(format!(
                 "A profile with the name '{}' already exists.",
                 profile_name
-            ));
+            )));
         }
 
         let folder_name = Self::derive_folder_name(mnemonic, passphrase, user_prefix);
@@ -118,24 +119,24 @@ impl AppService {
         self.check_instance_id_trap(&profile_path)?;
 
         if profile_path.exists() {
-            return Err(
-                "A profile with these secrets already exists (folder collision).".to_string(),
-            );
+            return Err(AppFacadeError::ProfileAlreadyExists(
+                "A profile with these secrets already exists (folder collision).".to_string()
+            ));
         }
 
         let mut storage = FileStorage::new(profile_path);
 
         let (mut wallet, identity) = Wallet::new_from_mnemonic(mnemonic, passphrase, user_prefix, language, local_instance_id.clone())
-            .map_err(|e| format!("Failed to create new wallet: {}", e))?;
+            .map_err(AppFacadeError::from)?;
 
         wallet
             .save(&mut storage, &identity, &AuthMethod::Password(password))
-            .map_err(|e| format!("Failed to save new wallet: {}", e))?;
+            .map_err(AppFacadeError::from)?;
 
         // --- WALLET SEAL: Initiales Siegel erstellen (Epoch 0) ---
         let state_hash = {
             let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
-                .map_err(|e| format!("Failed to compute state hash: {}", e))?;
+                .map_err(AppFacadeError::from)?;
             crate::services::crypto_utils::get_hash(canonical.as_bytes())
         };
         let initial_seal = SealManager::create_initial_seal(
@@ -143,7 +144,7 @@ impl AppService {
             &identity,
             &state_hash,
             &local_instance_id,
-        ).map_err(|e| format!("Failed to create initial wallet seal: {}", e))?;
+        ).map_err(AppFacadeError::from)?;
 
         let seal_record = LocalSealRecord {
             seal: initial_seal,
@@ -152,13 +153,13 @@ impl AppService {
         };
         storage
             .save_seal(&identity.user_id, &AuthMethod::Password(password), &seal_record)
-            .map_err(|e| format!("Failed to save initial wallet seal: {}", e))?;
+            .map_err(AppFacadeError::from)?;
         // --- WALLET SEAL ENDE ---
 
         // Sperre erlangen
         storage
             .lock()
-            .map_err(|e| format!("Failed to lock wallet: {}", e))?;
+            .map_err(AppFacadeError::from)?;
 
         // Füge das neue Profil zur Indexdatei hinzu
         profiles.push(ProfileInfo {
@@ -167,9 +168,9 @@ impl AppService {
         });
         let index_path = self.base_storage_path.join(PROFILES_INDEX_FILE);
         let updated_index = serde_json::to_string_pretty(&profiles)
-            .map_err(|e| format!("Failed to serialize profile index: {}", e))?;
+            .map_err(AppFacadeError::from)?;
         fs::write(index_path, updated_index)
-            .map_err(|e| format!("Failed to write profile index file: {}", e))?;
+            .map_err(AppFacadeError::from)?;
 
         self.state = AppState::Unlocked {
             storage,
@@ -203,10 +204,10 @@ impl AppService {
         password: &str,
         cleanup_on_login: bool,
         local_instance_id: String,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppFacadeError> {
         let profile_path = self.base_storage_path.join(folder_name);
         if !profile_path.exists() {
-            return Err("Profile directory not found.".to_string());
+            return Err(AppFacadeError::ProfileNotFound("Profile directory not found.".to_string()));
         }
 
         // --- SECURITY GUARD: Detect bad instance_id storage ---
@@ -215,17 +216,18 @@ impl AppService {
         let mut storage = FileStorage::new(profile_path);
 
         // --- WALLET SEAL: Siegel laden und ROHEN State-Hash verifizieren ---
-        let needs_legacy_binding = Self::verify_seal_on_login(&storage, password, &local_instance_id)?;
+        let needs_legacy_binding = Self::verify_seal_on_login(&storage, password, &local_instance_id)
+            .map_err(AppFacadeError::from)?;
         // --- WALLET SEAL: Pre-Check ENDE ---
 
         let (mut wallet, identity) = Wallet::load(&storage, &AuthMethod::Password(password), local_instance_id)
-            .map_err(|e| format!("Login failed (check password): {}", e))?;
+            .map_err(|e| AppFacadeError::CryptoError(format!("Login failed (check password): {}", e)))?;
 
         // --- EVENT FLUSH ---
         if !wallet.pending_events.is_empty() {
             wallet
                 .save(&mut storage, &identity, &AuthMethod::Password(password))
-                .map_err(|e| format!("Failed to flush passive events on login: {}", e))?;
+                .map_err(AppFacadeError::from)?;
         }
 
         if cleanup_on_login {
@@ -249,7 +251,7 @@ impl AppService {
             if is_valid {
                 let report = wallet
                     .run_storage_cleanup(None, super::DEFAULT_ARCHIVE_GRACE_PERIOD_YEARS)
-                    .map_err(|e| format!("Storage cleanup on login failed: {}", e))?;
+                    .map_err(AppFacadeError::from)?;
                 
                 if report.expired_fingerprints_removed > 0 
                     || report.limit_based_fingerprints_removed > 0 
@@ -257,7 +259,7 @@ impl AppService {
                 {
                     wallet
                         .save(&mut storage, &identity, &auth)
-                        .map_err(|e| format!("Failed to save wallet after cleanup: {}", e))?;
+                        .map_err(AppFacadeError::from)?;
                     
                     let new_hashes = storage.get_all_item_hashes().unwrap_or_default();
                     let seal = storage.load_seal(&identity.user_id, &auth).unwrap_or(None).map(|s| s.seal);
@@ -273,13 +275,14 @@ impl AppService {
         }
 
         // --- WALLET SEAL: Migration für bestehende Wallets ohne Siegel oder ohne InstanceID ---
-        Self::migrate_seal_on_login(&mut storage, &wallet, &identity, password, needs_legacy_binding)?;
+        Self::migrate_seal_on_login(&mut storage, &wallet, &identity, password, needs_legacy_binding)
+            .map_err(AppFacadeError::from)?;
         // --- WALLET SEAL ENDE ---
 
         // Sperre erlangen
         storage
             .lock()
-            .map_err(|e| format!("Failed to lock wallet: {}", e))?;
+            .map_err(AppFacadeError::from)?;
 
         self.state = AppState::Unlocked {
             storage,
@@ -311,10 +314,10 @@ impl AppService {
         new_password: &str,
         language: MnemonicLanguage,
         local_instance_id: String,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppFacadeError> {
         let profile_path = self.base_storage_path.join(folder_name);
         if !profile_path.exists() {
-            return Err("Profile directory not found.".to_string());
+            return Err(AppFacadeError::ProfileNotFound("Profile directory not found.".to_string()));
         }
 
         // --- SECURITY GUARD: Detect bad instance_id storage ---
@@ -325,10 +328,10 @@ impl AppService {
         // 1. Lade das Wallet mit der Mnemonic-Phrase (öffnet das "zweite Schloss").
         let auth_method = AuthMethod::Mnemonic(mnemonic, passphrase, language);
         let (mut wallet, identity) = Wallet::load(&storage, &auth_method, local_instance_id.clone()).map_err(|e| {
-            format!(
+            AppFacadeError::CryptoError(format!(
                 "Recovery failed (check mnemonic phrase and passphrase): {}",
                 e
-            )
+            ))
         })?;
 
         // --- EVENT FLUSH ---
@@ -337,12 +340,12 @@ impl AppService {
             // erst im nächsten Schritt gesetzt wird.
             wallet
                 .save(&mut storage, &identity, &auth_method)
-                .map_err(|e| format!("Failed to flush passive events on recovery: {}", e))?;
+                .map_err(AppFacadeError::from)?;
         }
 
         // 2. Setze das Passwort zurück, indem das Mnemonic-Schloss geöffnet und das Passwort-Schloss neu geschrieben wird.
         Wallet::reset_password(&mut storage, &identity, new_password)
-            .map_err(|e| format!("Failed to set new password: {}", e))?;
+            .map_err(AppFacadeError::from)?;
 
         // --- WALLET SEAL: Neue Epoche einleiten (Recovery) ---
         {
@@ -354,7 +357,7 @@ impl AppService {
 
             let current_state_hash = {
                 let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
-                    .map_err(|e| format!("Failed to compute state hash: {}", e))?;
+                    .map_err(AppFacadeError::from)?;
                 crate::services::crypto_utils::get_hash(canonical.as_bytes())
             };
 
@@ -364,7 +367,7 @@ impl AppService {
                 &identity,
                 &current_state_hash,
                 &local_instance_id,
-            ).map_err(|e| format!("Failed to create recovery seal: {}", e))?;
+            ).map_err(AppFacadeError::from)?;
 
             let new_record = LocalSealRecord {
                 seal: recovered_seal,
@@ -373,28 +376,28 @@ impl AppService {
             };
             storage
                 .save_seal(&identity.user_id, &auth_for_seal, &new_record)
-                .map_err(|e| format!("Failed to save recovery seal: {}", e))?;
+                .map_err(AppFacadeError::from)?;
 
             // --- INTEGRITY UPDATE ---
             // Nach der Wiederherstellung des Siegels müssen wir den Integrity Record aktualisieren,
             // da sich seal.enc geändert hat. Sonst warnt der nächste Login vor Manipulation.
-            let item_hashes = storage.get_all_item_hashes().map_err(|e| format!("Failed to get hashes for integrity: {}", e))?;
+            let item_hashes = storage.get_all_item_hashes().map_err(AppFacadeError::from)?;
             let integrity_record = crate::services::integrity_manager::IntegrityManager::create_integrity_record(
                 &identity,
                 &new_record.seal,
                 item_hashes,
-            ).map_err(|e| format!("Failed to create integrity record: {}", e))?;
+            ).map_err(AppFacadeError::from)?;
 
             storage
                 .save_integrity(&identity.user_id, &integrity_record)
-                .map_err(|e| format!("Failed to save integrity record: {}", e))?;
+                .map_err(AppFacadeError::from)?;
         }
         // --- WALLET SEAL ENDE ---
 
         // Sperre erlangen
         storage
             .lock()
-            .map_err(|e| format!("Failed to lock wallet: {}", e))?;
+            .map_err(AppFacadeError::from)?;
 
         self.state = AppState::Unlocked {
             storage,
@@ -424,7 +427,7 @@ impl AppService {
     /// # Arguments
     /// * `password` - Das Passwort zur Verifizierung und Key-Ableitung.
     /// * `duration_seconds` - Die Dauer der Sitzung in Sekunden.
-    pub fn unlock_session(&mut self, password: &str, duration_seconds: u64) -> Result<(), String> {
+    pub fn unlock_session(&mut self, password: &str, duration_seconds: u64) -> Result<(), AppFacadeError> {
         match &mut self.state {
             AppState::Unlocked {
                 storage,
@@ -433,16 +436,15 @@ impl AppService {
                 session_cache,
             } => {
                 // Verifiziere das Passwort, indem wir versuchen, den Session-Key abzuleiten
-                let session_key = storage.derive_key_for_session(password).map_err(|e| {
-                    format!("Password verification failed: {}", e)
-                })?;
+                let session_key = storage.derive_key_for_session(password)
+                    .map_err(AppFacadeError::from)?;
 
                 // Teste, ob der abgeleitete Schlüssel gültig ist, indem wir ihn verwenden,
                 // um den verschlüsselten Dateischlüssel zu entschlüsseln.
                 // Dies validiert, dass das Passwort korrekt war.
                 storage
                     .test_session_key(&session_key)
-                    .map_err(|e| format!("Password verification failed: {}", e))?;
+                    .map_err(AppFacadeError::from)?;
 
                 // Erstelle den Session-Cache
                 *session_cache = Some(super::SessionCache {
@@ -453,7 +455,7 @@ impl AppService {
 
                 Ok(())
             }
-            AppState::Locked => Err("Wallet is locked. Please login first.".to_string()),
+            AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked. Please login first.".to_string())),
         }
     }
 
@@ -473,7 +475,7 @@ impl AppService {
     /// # Returns
     /// * `Ok(())` - Wenn die Session aktiv war und erfolgreich verlängert wurde.
     /// * `Err(String)` - Wenn die Session bereits abgelaufen war (wird gesperrt), keine Session aktiv ist oder das Wallet gesperrt ist.
-    pub fn refresh_session_activity(&mut self) -> Result<(), String> {
+    pub fn refresh_session_activity(&mut self) -> Result<(), AppFacadeError> {
         if let AppState::Unlocked { session_cache, .. } = &mut self.state {
             // Prüfen, ob überhaupt eine Session existiert
             if let Some(cache) = session_cache {
@@ -481,16 +483,16 @@ impl AppService {
                 if cache.last_activity.elapsed() > cache.session_duration {
                     // Session ist abgelaufen: Cache löschen und Fehler zurückgeben
                     *session_cache = None;
-                    return Err("Session expired.".to_string());
+                    return Err(AppFacadeError::SessionExpired("Session expired.".to_string()));
                 } else {
                     // Session gültig: Timer erneuern.
                     cache.last_activity = Instant::now();
                     return Ok(());
                 }
             }
-            return Err("No active session to refresh.".to_string());
+            return Err(AppFacadeError::SessionNotActive("No active session to refresh.".to_string()));
         }
-        Err("Wallet is locked.".to_string())
+        Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string()))
     }
 
     /// Erzwingt die Bindung des Wallets an das aktuelle Gerät (Handover).
@@ -500,10 +502,10 @@ impl AppService {
         folder_name: &str,
         password: &str,
         local_instance_id: String,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppFacadeError> {
         let profile_path = self.base_storage_path.join(folder_name);
         if !profile_path.exists() {
-            return Err("Profile directory not found.".to_string());
+            return Err(AppFacadeError::ProfileNotFound("Profile directory not found.".to_string()));
         }
 
         let mut storage = FileStorage::new(profile_path);
@@ -511,26 +513,26 @@ impl AppService {
 
         // 1. Wallet laden
         let (mut wallet, identity) = Wallet::load(&storage, &auth, local_instance_id)
-            .map_err(|e| format!("Loading for handover failed: {}", e))?;
+            .map_err(|e| AppFacadeError::CryptoError(format!("Loading for handover failed: {}", e)))?;
 
         // 2. Handover durchführen
         let new_seal = wallet.force_device_handover(&mut storage, &identity, &auth)
-            .map_err(|e| format!("Handover failed: {}", e))?;
+            .map_err(AppFacadeError::from)?;
 
         // --- INTEGRITY UPDATE ---
-        let item_hashes = storage.get_all_item_hashes().map_err(|e| format!("Failed to get hashes for integrity: {}", e))?;
+        let item_hashes = storage.get_all_item_hashes().map_err(AppFacadeError::from)?;
         let integrity_record = crate::services::integrity_manager::IntegrityManager::create_integrity_record(
             &identity,
             &new_seal,
             item_hashes,
-        ).map_err(|e| format!("Failed to create integrity record: {}", e))?;
+        ).map_err(AppFacadeError::from)?;
 
         storage
             .save_integrity(&identity.user_id, &integrity_record)
-            .map_err(|e| format!("Failed to save integrity record: {}", e))?;
+            .map_err(AppFacadeError::from)?;
 
         // 3. Login durchführen
-        storage.lock().map_err(|e| format!("Lock failed: {}", e))?;
+        storage.lock().map_err(AppFacadeError::from)?;
         
         self.state = AppState::Unlocked {
             storage,
@@ -544,7 +546,7 @@ impl AppService {
 
     /// Prüft, ob der App-Entwickler die `instance_id` unsicher als Datei gespeichert hat.
     /// Klettert auch eine Ebene nach oben, um typische Tauri/Electron AppData-Ordner zu erwischen.
-    fn check_instance_id_trap(&self, profile_path: &Path) -> Result<(), String> {
+    fn check_instance_id_trap(&self, profile_path: &Path) -> Result<(), AppFacadeError> {
         let mut bad_paths = vec![
             self.base_storage_path.join("instance_id"),
             profile_path.join("instance_id"),
@@ -557,11 +559,11 @@ impl AppService {
 
         for path in bad_paths {
             if path.exists() {
-                return Err(
+                return Err(AppFacadeError::Generic(
                     "CRITICAL SECURITY VIOLATION: The App Developer has stored the 'instance_id' inside the application data directory. \
                     This defeats the cloning protection! The instance_id MUST be stored securely in the OS Keyring or a separate isolated Config directory. \
                     Execution halted to protect user funds.".to_string()
-                );
+                ));
             }
         }
         Ok(())
@@ -569,10 +571,10 @@ impl AppService {
 
     /// Löscht ein Benutzerprofil dauerhaft vom Gerät.
     /// Erfordert das Passwort zur Bestätigung.
-    pub fn delete_profile(&mut self, folder_name: &str, password: &str) -> Result<(), String> {
+    pub fn delete_profile(&mut self, folder_name: &str, password: &str) -> Result<(), AppFacadeError> {
         let profile_path = self.base_storage_path.join(folder_name);
         if !profile_path.exists() {
-            return Err("Profile directory not found.".to_string());
+            return Err(AppFacadeError::ProfileNotFound("Profile directory not found.".to_string()));
         }
 
         // 1. Passwort verifizieren
@@ -585,7 +587,7 @@ impl AppService {
         // wir nutzen einen Platzhalter um DeviceMismatch-Checks zu umgehen falls möglich,
         // aber Wallet::load() selbst macht keine Seal-Prüfung (das macht nur AppService::login).
         let _ = Wallet::load(&storage, &auth, "password_check".to_string())
-            .map_err(|e| format!("Password verification failed (check password): {}", e))?;
+            .map_err(|e| AppFacadeError::CryptoError(format!("Password verification failed (check password): {}", e)))?;
 
         // 2. Profil aus dem Index (profiles.json) entfernen
         let mut profiles = self.list_profiles()?;
@@ -593,28 +595,28 @@ impl AppService {
         profiles.retain(|p| p.folder_name != folder_name);
         
         if profiles.len() == original_len {
-             return Err("Profile not found in index.".to_string());
+             return Err(AppFacadeError::ProfileNotFound("Profile not found in index.".to_string()));
         }
 
         let index_path = self.base_storage_path.join(PROFILES_INDEX_FILE);
         let updated_index = serde_json::to_string_pretty(&profiles)
-            .map_err(|e| format!("Failed to serialize profiles index: {}", e))?;
+            .map_err(AppFacadeError::from)?;
         fs::write(index_path, updated_index)
-            .map_err(|e| format!("Failed to update profiles index file: {}", e))?;
+            .map_err(AppFacadeError::from)?;
 
         // 3. Verzeichnis physisch löschen
         fs::remove_dir_all(profile_path)
-            .map_err(|e| format!("Failed to delete profile directory: {}", e))?;
+            .map_err(AppFacadeError::from)?;
 
         Ok(())
     }
 
     /// Verifiziert das Passwort eines Profils und gibt die User-ID (DID) zurück.
     /// Nützlich für Sicherheits-Bestätigungen vor kritischen Aktionen (wie Löschen).
-    pub fn get_profile_id_with_password(&self, folder_name: &str, password: &str) -> Result<String, String> {
+    pub fn get_profile_id_with_password(&self, folder_name: &str, password: &str) -> Result<String, AppFacadeError> {
         let profile_path = self.base_storage_path.join(folder_name);
         if !profile_path.exists() {
-            return Err("Profile directory not found.".to_string());
+            return Err(AppFacadeError::ProfileNotFound("Profile directory not found.".to_string()));
         }
 
         let storage = FileStorage::new(profile_path);
@@ -622,7 +624,7 @@ impl AppService {
         
         // Versuche das Wallet zu laden, um die Identität zu erhalten.
         let (_, identity) = Wallet::load(&storage, &auth, "password_check".to_string())
-            .map_err(|e| format!("Password verification failed: {}", e))?;
+            .map_err(|e| AppFacadeError::CryptoError(format!("Password verification failed: {}", e)))?;
 
         Ok(identity.user_id.clone())
     }

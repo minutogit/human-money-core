@@ -3,7 +3,7 @@
 //! Enthält die `AppService`-Methoden zur Ver- und Entschlüsselung von
 //! beliebigen, anwendungsspezifischen Daten.
 
-use super::{AppService, AppState};
+use super::{AppService, AppState, AppFacadeError};
 use crate::storage::{AuthMethod, Storage, WalletLockGuard};
 
 impl AppService {
@@ -27,7 +27,7 @@ impl AppService {
         name: &str,
         data: &[u8],
         password: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppFacadeError> {
         return match password {
             Some(pwd_str) => {
                 match &mut self.state {
@@ -39,11 +39,11 @@ impl AppService {
                         let result = {
                             // --- SPERRE ERLANGEN (RAII) ---
                             let _lock_guard =
-                                WalletLockGuard::new(storage).map_err(|e| e.to_string())?;
+                                WalletLockGuard::new(storage).map_err(AppFacadeError::from)?;
                             // --- SPERRE ENDE ---
                             storage
                                 .save_arbitrary_data(&identity.user_id, &auth_method, name, data)
-                                .map_err(|e| e.to_string())
+                                .map_err(AppFacadeError::from)
                         };
 
                         // Siegel und Integrität aktualisieren (außer für den Session-Anker, da dieser ignoriert wird)
@@ -52,7 +52,7 @@ impl AppService {
                         }
                         result
                     }
-                    AppState::Locked => Err("Wallet is locked.".to_string()),
+                    AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())),
                 }
             }
             None => {
@@ -65,13 +65,11 @@ impl AppService {
                         let result = {
                             // --- SPERRE ERLANGEN (RAII) ---
                             let _lock_guard =
-                                WalletLockGuard::new(storage).map_err(|e| e.to_string())?;
+                                WalletLockGuard::new(storage).map_err(AppFacadeError::from)?;
                             // --- SPERRE ENDE ---
                             storage
                                 .save_arbitrary_data(&identity.user_id, &auth_method, name, data)
-                                .map_err(|e| {
-                                    e.to_string()
-                                })
+                                .map_err(AppFacadeError::from)
                         };
 
                         // Siegel und Integrität aktualisieren (via Session-Key) (außer für den Session-Anker)
@@ -80,7 +78,7 @@ impl AppService {
                         }
                         result
                     }
-                    AppState::Locked => Err("Wallet is locked.".to_string()),
+                    AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())),
                 }
             }
         };
@@ -102,7 +100,7 @@ impl AppService {
         &mut self,
         name: &str,
         password: Option<&str>,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<u8>, AppFacadeError> {
         return match password {
             Some(pwd_str) => {
                 match &mut self.state {
@@ -113,11 +111,9 @@ impl AppService {
                         let auth_method = AuthMethod::Password(pwd_str);
                         storage
                             .load_arbitrary_data(&identity.user_id, &auth_method, name)
-                            .map_err(|e| {
-                                e.to_string()
-                            })
+                            .map_err(AppFacadeError::from)
                     }
-                    AppState::Locked => Err("Wallet is locked.".to_string()),
+                    AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())),
                 }
             }
             None => {
@@ -128,10 +124,8 @@ impl AppService {
                         storage, identity, ..
                     } => storage
                         .load_arbitrary_data(&identity.user_id, &auth_method, name)
-                        .map_err(|e| {
-                            e.to_string()
-                        }),
-                    AppState::Locked => Err("Wallet is locked.".to_string()),
+                        .map_err(AppFacadeError::from),
+                    AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())),
                 }
             }
         };

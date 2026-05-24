@@ -138,7 +138,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
     // HINWEIS: Der Fehler kann "Authentication failed" oder "Wallet is locked" sein,
     // je nachdem, wie die Implementierung das falsche Passwort im Modus A behandelt.
     // Wichtig ist nur, DASS ein Fehler auftritt und der Zustand danach korrekt ist.
-    let error_msg = result_fail.unwrap_err();
+    let error_msg = result_fail.unwrap_err().to_string();
     assert!(
         error_msg.contains("Authentication failed")
             || error_msg.contains("Wallet is locked")
@@ -254,7 +254,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
     // 3. ASSERT: Operation ist fehlgeschlagen und Wallet ist immer noch leer.
     assert!(result.is_err(), "Receive operation should fail");
 
-    let error_msg = result.unwrap_err();
+    let error_msg = result.unwrap_err().to_string();
     assert!(
         error_msg.contains("Authentication failed") || error_msg.contains("Wallet is locked"),
         "Unexpected error message: {}",

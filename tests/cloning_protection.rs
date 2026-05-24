@@ -33,7 +33,7 @@ fn test_wallet_cloning_protection_and_handover() {
     let login_result = service_b.login(&folder_name, password, false, instance_b.clone());
     
     assert!(login_result.is_err(), "Login on device B should fail due to device mismatch");
-    assert!(login_result.unwrap_err().contains("Device Mismatch"), "Error message should mention device mismatch");
+    assert!(login_result.unwrap_err().to_string().contains("Device Mismatch"), "Error message should mention device mismatch");
 
     // 3. Handover auf Gerät B erzwingen
     service_b.handover_to_this_device(&folder_name, password, instance_b.clone())
@@ -49,7 +49,7 @@ fn test_wallet_cloning_protection_and_handover() {
     let login_a_result = service_a_again.login(&folder_name, password, false, instance_a.clone());
     
     assert!(login_a_result.is_err(), "Login on device A should now fail because it's bound to B");
-    assert!(login_a_result.unwrap_err().contains("Device Mismatch"), "Error message should mention device mismatch");
+    assert!(login_a_result.unwrap_err().to_string().contains("Device Mismatch"), "Error message should mention device mismatch");
 }
 
 #[test]
@@ -99,5 +99,5 @@ fn test_legacy_wallet_migration() {
     // 3. Nun ist es gebunden. Login mit anderer ID sollte fehlschlagen.
     let login_fail = service_new.login(&folder_name, password, false, "wrong-device".to_string());
     assert!(login_fail.is_err());
-    assert!(login_fail.unwrap_err().contains("Device Mismatch"));
+    assert!(login_fail.unwrap_err().to_string().contains("Device Mismatch"));
 }

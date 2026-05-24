@@ -559,7 +559,8 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         transfer2_result
             .err()
             .unwrap()
-            .contains("Action blocked and wallet state corrected")
+            .to_string()
+            .contains("Double spend attempt blocked")
     );
 
     // ### Akt 4: Verifizierung der Selbstheilung ###

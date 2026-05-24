@@ -2,7 +2,7 @@
 //!
 //! Implementiert Operationen zur Verwaltung des Nutzerprofils (Metadata).
 
-use super::{AppService, AppState};
+use super::{AppService, AppState, AppFacadeError};
 use crate::models::profile::PublicProfile;
 use crate::storage::AuthMethod;
 
@@ -15,7 +15,7 @@ impl AppService {
         &mut self,
         profile: PublicProfile,
         password: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppFacadeError> {
         // 1. Get auth method (either from session or from provided password)
         let auth = if let Some(pw) = password {
             AuthMethod::Password(pw)
@@ -47,14 +47,14 @@ impl AppService {
                 wallet.profile.needs = profile.needs;
 
                 // 3. Save the wallet
-                wallet.save(storage, identity, &auth).map_err(|e| e.to_string())?;
+                wallet.save(storage, identity, &auth).map_err(AppFacadeError::from)?;
 
                 // 4. Update seal and integrity
                 let _ = self.update_seal_after_state_change(password);
                 
                 Ok(())
             }
-            AppState::Locked => Err("Wallet is locked.".to_string()),
+            AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())),
         }
     }
 }

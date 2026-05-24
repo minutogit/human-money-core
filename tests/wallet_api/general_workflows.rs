@@ -176,6 +176,7 @@ fn api_app_service_lifecycle_with_passphrase() {
     assert!(
         recovery_result
             .unwrap_err()
+            .to_string()
             .to_lowercase()
             .contains("recovery failed")
     );

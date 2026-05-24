@@ -3,7 +3,7 @@
 //! Contains the central write actions (Commands) of the `AppService`
 //! that modify and persist the state of the wallet.
 
-use super::{AppService, AppState, TransactionOutcome};
+use super::{AppService, AppState, TransactionOutcome, AppFacadeError};
 use crate::archive::VoucherArchive;
 use crate::models::conflict::ResolutionEndorsement;
 use crate::models::voucher::Voucher;
@@ -24,11 +24,11 @@ impl AppService {
         lang_preference: &str,
         data: NewVoucherData,
         password: Option<&str>,
-    ) -> Result<Voucher, String> {
+    ) -> Result<Voucher, AppFacadeError> {
         // Pre-validation (possible without lock)
         let (verified_standard, standard_hash) =
             standard_manager::verify_and_parse_standard(standard_toml_content)
-                .map_err(|e| e.to_string())?;
+                .map_err(AppFacadeError::from)?;
 
         self.with_transactional_mut(password, |temp_wallet, identity, _, _| {
             match temp_wallet.create_new_voucher(
@@ -39,7 +39,7 @@ impl AppService {
                 data,
             ) {
                 Ok(new_voucher) => TransactionOutcome::Commit(new_voucher),
-                Err(e) => TransactionOutcome::Rollback(e.to_string()),
+                Err(e) => TransactionOutcome::Rollback(AppFacadeError::from(e)),
             }
         })
     }
@@ -51,12 +51,12 @@ impl AppService {
         standard_definitions_toml: &HashMap<String, String>,
         archive: Option<&dyn VoucherArchive>,
         password: Option<&str>,
-    ) -> Result<CreateBundleResult, String> {
+    ) -> Result<CreateBundleResult, AppFacadeError> {
         // Parse the TOML definitions BEFORE the lock/state swap occurs
         let mut verified_definitions = HashMap::new();
         for (uuid, toml_content) in standard_definitions_toml {
             let (def, _) = standard_manager::verify_and_parse_standard(toml_content)
-                .map_err(|e| e.to_string())?;
+                .map_err(AppFacadeError::from)?;
             verified_definitions.insert(uuid.clone(), def);
         }
 
@@ -76,12 +76,9 @@ impl AppService {
                             reason: "Self-healing: Detected state inconsistency during transfer attempt.".to_string(),
                         },
                     );
-                    TransactionOutcome::CommitAndReturnError(format!(
-                        "Action blocked and wallet state corrected: Voucher {} was internally inconsistent and is now in quarantine.",
-                        local_instance_id
-                    ))
+                    TransactionOutcome::CommitAndReturnError(AppFacadeError::DoubleSpendAttemptBlocked(local_instance_id))
                 }
-                Err(e) => TransactionOutcome::Rollback(e.to_string()),
+                Err(e) => TransactionOutcome::Rollback(AppFacadeError::from(e)),
             }
         })
     }
@@ -94,7 +91,7 @@ impl AppService {
         archive: Option<&dyn VoucherArchive>,
         password: Option<&str>,
         force_accept_tolerance_bundle: bool,
-    ) -> Result<ProcessBundleResult, String> {
+    ) -> Result<ProcessBundleResult, AppFacadeError> {
         // --- EPOCH ZONE MODEL: Check against Pre-Epoch Bundles ---
         self.check_bundle_against_epoch_zones(bundle_data, password, force_accept_tolerance_bundle)?;
 
@@ -102,7 +99,7 @@ impl AppService {
         let mut verified_definitions = HashMap::new();
         for (uuid, toml_content) in standard_definitions_toml {
             let (def, _) = standard_manager::verify_and_parse_standard(toml_content)
-                .map_err(|e| e.to_string())?;
+                .map_err(AppFacadeError::from)?;
             verified_definitions.insert(uuid.clone(), def);
         }
 
@@ -118,7 +115,7 @@ impl AppService {
                 &verified_definitions,
             ) {
                 Ok(proc_result) => TransactionOutcome::Commit(proc_result),
-                Err(e) => TransactionOutcome::Rollback(e.to_string()),
+                Err(e) => TransactionOutcome::Rollback(AppFacadeError::from(e)),
             }
         })
     }
@@ -128,11 +125,11 @@ impl AppService {
         &mut self,
         endorsement: ResolutionEndorsement,
         password: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppFacadeError> {
         self.with_transactional_mut(password, |temp_wallet, _, _, _| {
             match temp_wallet.add_resolution_endorsement(endorsement) {
                 Ok(_) => TransactionOutcome::Commit(()),
-                Err(e) => TransactionOutcome::Rollback(e.to_string()),
+                Err(e) => TransactionOutcome::Rollback(AppFacadeError::from(e)),
             }
         })
     }
@@ -143,7 +140,7 @@ impl AppService {
         bundle_data: &[u8],
         password: Option<&str>,
         force_accept: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppFacadeError> {
         if let Ok(Some((epoch_start_time, epoch))) = self.get_epoch_info(password) {
             if epoch > 0 {
                 let max_tx_time = match &self.state {
@@ -152,7 +149,7 @@ impl AppService {
                             identity,
                             bundle_data,
                         )
-                        .map_err(|e| e.to_string())?;
+                        .map_err(AppFacadeError::from)?;
 
                         let mut max_dt: Option<chrono::DateTime<chrono::Utc>> = None;
                         for voucher in &bundle.vouchers {
@@ -185,19 +182,18 @@ impl AppService {
                             const ZONE_3_LIMIT_DAYS: i64 = 28;
 
                             if delta > chrono::Duration::days(ZONE_3_LIMIT_DAYS) {
-                                return Err(VoucherCoreError::BundlePredatesCurrentEpoch.to_string());
+                                return Err(AppFacadeError::from(VoucherCoreError::BundlePredatesCurrentEpoch));
                             } else if delta > chrono::Duration::hours(ZONE_2_LIMIT_HOURS) {
                                 if !force_accept {
-                                    return Err(
+                                    return Err(AppFacadeError::from(
                                         VoucherCoreError::BundleInExtendedRecoveryToleranceZone
-                                            .to_string(),
-                                    );
+                                    ));
                                 }
                             } else if delta > chrono::Duration::minutes(ZONE_1_LIMIT_MINUTES) {
                                 if !force_accept {
-                                    return Err(
-                                        VoucherCoreError::BundleInRecoveryToleranceZone.to_string(),
-                                    );
+                                    return Err(AppFacadeError::from(
+                                        VoucherCoreError::BundleInRecoveryToleranceZone,
+                                    ));
                                 }
                             }
                         }

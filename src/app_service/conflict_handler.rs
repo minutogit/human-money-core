@@ -3,10 +3,10 @@
 //! Enthält alle `AppService`-Funktionen, die sich auf das Management von
 //! Double-Spend-Konflikten beziehen.
 
-use super::{AppService, AppState};
+use super::{AppService, AppState, AppFacadeError};
 use crate::models::conflict::{ProofOfDoubleSpend, ResolutionEndorsement};
 use crate::wallet::ProofOfDoubleSpendSummary;
-use crate::{error::VoucherCoreError, wallet::CleanupReport};
+use crate::wallet::CleanupReport;
 
 impl AppService {
     // --- Konflikt-Management ---
@@ -15,7 +15,7 @@ impl AppService {
     ///
     /// # Errors
     /// Schlägt fehl, wenn das Wallet gesperrt (`Locked`) ist.
-    pub fn list_conflicts(&self) -> Result<Vec<ProofOfDoubleSpendSummary>, String> {
+    pub fn list_conflicts(&self) -> Result<Vec<ProofOfDoubleSpendSummary>, AppFacadeError> {
         Ok(self.get_wallet()?.list_conflicts())
     }
 
@@ -26,10 +26,10 @@ impl AppService {
     ///
     /// # Errors
     /// Schlägt fehl, wenn das Wallet gesperrt ist oder kein Beweis mit dieser ID existiert.
-    pub fn get_proof_of_double_spend(&self, proof_id: &str) -> Result<ProofOfDoubleSpend, String> {
+    pub fn get_proof_of_double_spend(&self, proof_id: &str) -> Result<ProofOfDoubleSpend, AppFacadeError> {
         self.get_wallet()?
             .get_proof_of_double_spend(proof_id)
-            .map_err(|e| e.to_string())
+            .map_err(AppFacadeError::from)
     }
 
     /// Erstellt eine signierte Beilegungserklärung (`ResolutionEndorsement`) für einen Konflikt.
@@ -45,14 +45,14 @@ impl AppService {
         &self,
         proof_id: &str,
         notes: Option<String>,
-    ) -> Result<ResolutionEndorsement, String> {
+    ) -> Result<ResolutionEndorsement, AppFacadeError> {
         match &self.state {
             AppState::Unlocked {
                 wallet, identity, ..
             } => wallet
                 .create_resolution_endorsement(identity, proof_id, notes)
-                .map_err(|e| e.to_string()),
-            AppState::Locked => Err("Wallet is locked.".to_string()),
+                .map_err(AppFacadeError::from),
+            AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())),
         }
     }
 
@@ -66,23 +66,24 @@ impl AppService {
         value: bool,
         note: Option<String>,
         password: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppFacadeError> {
         // --- FORK-LOCK PRÜFUNG ---
-        self.check_fork_lock(password).map_err(|e| e.to_string())?;
+        self.check_fork_lock(password).map_err(AppFacadeError::from)?;
 
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
-        if let AppState::Unlocked { mut storage, mut wallet, identity, mut session_cache } = current_state {
+        if let AppState::Unlocked { mut storage, wallet, identity, mut session_cache } = current_state {
             let _lock_guard = match crate::storage::WalletLockGuard::new(&storage) {
                 Ok(guard) => guard,
                 Err(e) => {
                     self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                    return Err(e.to_string());
+                    return Err(AppFacadeError::from(e));
                 }
             };
 
-            if let Err(e) = wallet.set_conflict_local_override(proof_id, value, note) {
-                self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                return Err(e.to_string());
+            let mut temp_wallet = wallet;
+            if let Err(e) = temp_wallet.set_conflict_local_override(proof_id, value, note) {
+                self.state = AppState::Unlocked { storage, wallet: temp_wallet, identity, session_cache };
+                return Err(AppFacadeError::from(e));
             }
 
             let auth_method = match password {
@@ -91,48 +92,49 @@ impl AppService {
                     match &mut session_cache {
                         Some(cache) => {
                             if std::time::Instant::now() > cache.last_activity + cache.session_duration {
-                                self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                                return Err("Session timed out or password required.".to_string());
+                                self.state = AppState::Unlocked { storage, wallet: temp_wallet, identity, session_cache };
+                                return Err(AppFacadeError::SessionExpired("Session timed out or password required.".to_string()));
                             } else {
                                 cache.last_activity = std::time::Instant::now();
                                 crate::storage::AuthMethod::SessionKey(cache.session_key)
                             }
                         }
                         None => {
-                            self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                            return Err("Session timed out or password required.".to_string());
+                            self.state = AppState::Unlocked { storage, wallet: temp_wallet, identity, session_cache };
+                            return Err(AppFacadeError::SessionNotActive("Session timed out or password required.".to_string()));
                         }
                     }
                 }
             };
 
-            let save_result = wallet.save(&mut storage, &identity, &auth_method);
-            self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-            save_result.map_err(|e| e.to_string())
+            let save_result = temp_wallet.save(&mut storage, &identity, &auth_method);
+            self.state = AppState::Unlocked { storage, wallet: temp_wallet, identity, session_cache };
+            save_result.map_err(AppFacadeError::from)
         } else {
             self.state = current_state;
-            Err("Wallet is locked.".to_string())
+            Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string()))
         }
     }
 
     /// Importiert einen Beweis direkt als Objekt.
-    pub fn import_proof(&mut self, proof: ProofOfDoubleSpend, password: Option<&str>) -> Result<(), String> {
+    pub fn import_proof(&mut self, proof: ProofOfDoubleSpend, password: Option<&str>) -> Result<(), AppFacadeError> {
         // --- FORK-LOCK PRÜFUNG ---
-        self.check_fork_lock(password).map_err(|e| e.to_string())?;
+        self.check_fork_lock(password).map_err(AppFacadeError::from)?;
 
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
-        if let AppState::Unlocked { mut storage, mut wallet, identity, mut session_cache } = current_state {
+        if let AppState::Unlocked { mut storage, wallet, identity, mut session_cache } = current_state {
             let _lock_guard = match crate::storage::WalletLockGuard::new(&storage) {
                 Ok(guard) => guard,
                 Err(e) => {
                     self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                    return Err(e.to_string());
+                    return Err(AppFacadeError::from(e));
                 }
             };
 
-            if let Err(e) = wallet.import_proof(proof) {
-                self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                return Err(e.to_string());
+            let mut temp_wallet = wallet;
+            if let Err(e) = temp_wallet.import_proof(proof) {
+                self.state = AppState::Unlocked { storage, wallet: temp_wallet, identity, session_cache };
+                return Err(AppFacadeError::from(e));
             }
 
             let auth_method = match password {
@@ -141,51 +143,51 @@ impl AppService {
                     match &mut session_cache {
                         Some(cache) => {
                             if std::time::Instant::now() > cache.last_activity + cache.session_duration {
-                                self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                                return Err("Session timed out or password required.".to_string());
+                                self.state = AppState::Unlocked { storage, wallet: temp_wallet, identity, session_cache };
+                                return Err(AppFacadeError::SessionExpired("Session timed out or password required.".to_string()));
                             } else {
                                 cache.last_activity = std::time::Instant::now();
                                 crate::storage::AuthMethod::SessionKey(cache.session_key)
                             }
                         }
                         None => {
-                            self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-                            return Err("Session timed out or password required.".to_string());
+                            self.state = AppState::Unlocked { storage, wallet: temp_wallet, identity, session_cache };
+                            return Err(AppFacadeError::SessionNotActive("Session timed out or password required.".to_string()));
                         }
                     }
                 }
             };
 
-            let save_result = wallet.save(&mut storage, &identity, &auth_method);
-            self.state = AppState::Unlocked { storage, wallet, identity, session_cache };
-            save_result.map_err(|e| e.to_string())
+            let save_result = temp_wallet.save(&mut storage, &identity, &auth_method);
+            self.state = AppState::Unlocked { storage, wallet: temp_wallet, identity, session_cache };
+            save_result.map_err(AppFacadeError::from)
         } else {
             self.state = current_state;
-            Err("Wallet is locked.".to_string())
+            Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string()))
         }
     }
 
     /// Importiert einen Beweis aus einem Base64-kodierten JSON-String (Klartext-Export).
     ///
-    pub fn import_proof_from_json(&mut self, json_base64: &str, password: Option<&str>) -> Result<(), String> {
+    pub fn import_proof_from_json(&mut self, json_base64: &str, password: Option<&str>) -> Result<(), AppFacadeError> {
         let json_bytes = bs58::decode(json_base64)
             .into_vec()
-            .map_err(|_| "Invalid base64 encoding".to_string())?;
+            .map_err(|e| AppFacadeError::ValidationError(format!("Invalid base64 encoding: {}", e)))?;
         let proof: ProofOfDoubleSpend =
-            serde_json::from_slice(&json_bytes).map_err(|e| e.to_string())?;
+            serde_json::from_slice(&json_bytes).map_err(|e| AppFacadeError::JsonError(e.to_string()))?;
 
         self.import_proof(proof, password)
     }
 
     /// Importiert einen Beweis aus einem `SecureContainer` (Sicherer Austausch).
-    pub fn import_proof_from_container(&mut self, container_bytes: &[u8], password: Option<&str>) -> Result<(), String> {
+    pub fn import_proof_from_container(&mut self, container_bytes: &[u8], password: Option<&str>) -> Result<(), AppFacadeError> {
         let proof = {
             if let AppState::Unlocked { identity, .. } = &self.state {
                 let container: crate::models::secure_container::SecureContainer =
-                    serde_json::from_slice(container_bytes).map_err(|e| e.to_string())?;
+                    serde_json::from_slice(container_bytes).map_err(|e| AppFacadeError::JsonError(e.to_string()))?;
 
                 if container.c != crate::models::secure_container::PayloadType::ProofOfDoubleSpend {
-                    return Err("Container does not contain a Double-Spend-Proof.".to_string());
+                    return Err(AppFacadeError::ValidationError("Container does not contain a Double-Spend-Proof.".to_string()));
                 }
 
                 // Wallet-Identity wird benötigt, um den Container zu öffnen
@@ -194,14 +196,14 @@ impl AppService {
                     identity,
                     None,
                 )
-                .map_err(|e: crate::error::VoucherCoreError| e.to_string())?;
+                .map_err(AppFacadeError::from)?;
 
                 let parsed_proof: ProofOfDoubleSpend =
-                    serde_json::from_slice(&decrypted_payload).map_err(|e| e.to_string())?;
+                    serde_json::from_slice(&decrypted_payload).map_err(|e| AppFacadeError::JsonError(e.to_string()))?;
                 
                 parsed_proof
             } else {
-                return Err("Wallet is locked.".to_string());
+                return Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string()));
             }
         };
 
@@ -220,7 +222,7 @@ impl AppService {
     /// # Returns
     /// Ein `Result` mit einem `CleanupReport`, der Details über die Bereinigung
     /// enthält, oder einen Fehler, falls der Prozess fehlschlägt.
-    pub fn run_storage_cleanup(&mut self) -> Result<CleanupReport, VoucherCoreError> {
+    pub fn run_storage_cleanup(&mut self) -> Result<CleanupReport, AppFacadeError> {
         if let AppState::Unlocked { wallet, .. } = &mut self.state {
             let report = wallet.run_storage_cleanup(None, super::DEFAULT_ARCHIVE_GRACE_PERIOD_YEARS)?;
             // Hinweis: Das Speichern des Wallets nach dem Cleanup wird dem Aufrufer
@@ -228,7 +230,7 @@ impl AppService {
             // zu vermeiden.
             Ok(report)
         } else {
-            Err(VoucherCoreError::WalletLocked)
+            Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string()))
         }
     }
 
@@ -236,7 +238,7 @@ impl AppService {
     ///
     /// # Errors
     /// Returns an error if the wallet is locked.
-    pub fn get_proof_id_for_voucher(&self, local_id: &str) -> Result<Option<String>, String> {
+    pub fn get_proof_id_for_voucher(&self, local_id: &str) -> Result<Option<String>, AppFacadeError> {
         Ok(self.get_wallet()?.get_proof_id_for_voucher(local_id))
     }
 }

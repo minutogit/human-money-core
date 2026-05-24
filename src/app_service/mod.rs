@@ -63,6 +63,9 @@ use std::time::{Duration, Instant};
 
 pub const DEFAULT_ARCHIVE_GRACE_PERIOD_YEARS: i64 = 2;
 
+pub mod error;
+pub use error::AppFacadeError;
+
 // Declaration of the new handlers as public sub-modules.
 // Each file contains an `impl AppService` block for its specific area.
 pub mod app_profile_handler;
@@ -166,30 +169,30 @@ impl AppService {
         identity: &UserIdentity,
         bundle_data: &[u8],
         standard_definitions_toml: &HashMap<String, String>,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppFacadeError> {
         let bundle = bundle_processor::open_and_verify_bundle(identity, bundle_data)
-            .map_err(|e| e.to_string())?;
+            .map_err(AppFacadeError::from)?;
 
         for voucher in &bundle.vouchers {
             let standard_uuid = &voucher.voucher_standard.uuid;
             let standard_toml = standard_definitions_toml
                 .get(standard_uuid)
                 .ok_or_else(|| {
-                    format!(
+                    AppFacadeError::ValidationError(format!(
                         "Required standard definition for UUID '{}' not provided.",
                         standard_uuid
-                    )
+                    ))
                 })?;
 
             let (verified_standard, _) =
                 crate::services::standard_manager::verify_and_parse_standard(standard_toml)
-                    .map_err(|e| e.to_string())?;
+                    .map_err(AppFacadeError::from)?;
 
             crate::services::voucher_validation::validate_voucher_against_standard(
                 voucher,
                 &verified_standard,
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(AppFacadeError::from)?;
         }
         Ok(())
     }
@@ -221,25 +224,25 @@ impl AppService {
     }
 
     /// Helper method for read-only access to the wallet.
-    pub(super) fn get_wallet(&self) -> Result<&Wallet, String> {
+    pub(super) fn get_wallet(&self) -> Result<&Wallet, AppFacadeError> {
         match &self.state {
             AppState::Unlocked { wallet, .. } => Ok(wallet),
-            AppState::Locked => Err("Wallet is locked.".to_string()),
+            AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())),
         }
     }
 
     /// Helper method for access to the identity.
-    pub(super) fn get_identity(&self) -> Result<&UserIdentity, String> {
+    pub(super) fn get_identity(&self) -> Result<&UserIdentity, AppFacadeError> {
         match &self.state {
             AppState::Unlocked { identity, .. } => Ok(identity),
-            AppState::Locked => Err("Wallet is locked.".to_string()),
+            AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())),
         }
     }
 
     /// Encapsulates read access to the unlocked wallet.
-    pub(super) fn with_unlocked_ref<F, R>(&self, f: F) -> Result<R, String>
+    pub(super) fn with_unlocked_ref<F, R>(&self, f: F) -> Result<R, AppFacadeError>
     where
-        F: FnOnce(&Wallet, &UserIdentity, &FileStorage) -> Result<R, String>,
+        F: FnOnce(&Wallet, &UserIdentity, &FileStorage) -> Result<R, AppFacadeError>,
     {
         match &self.state {
             AppState::Unlocked {
@@ -248,7 +251,7 @@ impl AppService {
                 identity,
                 ..
             } => f(wallet, identity, storage),
-            AppState::Locked => Err("AppService is locked.".to_string()),
+            AppState::Locked => Err(AppFacadeError::WalletLocked("AppService is locked.".to_string())),
         }
     }
 
@@ -258,17 +261,17 @@ impl AppService {
         &mut self,
         password: Option<&str>,
         f: F,
-    ) -> Result<R, String>
+    ) -> Result<R, AppFacadeError>
     where
         F: FnOnce(
             &mut Wallet,
             &UserIdentity,
             &mut FileStorage,
             &crate::storage::AuthMethod,
-        ) -> TransactionOutcome<R, String>,
+        ) -> TransactionOutcome<R, AppFacadeError>,
     {
         // 1. Check fork-lock
-        self.check_fork_lock(password).map_err(|e| e.to_string())?;
+        self.check_fork_lock(password).map_err(AppFacadeError::from)?;
 
         // 2. Unpack state (temporarily replace with Locked)
         let old_state = std::mem::replace(&mut self.state, AppState::Locked);
@@ -282,7 +285,7 @@ impl AppService {
             } => {
                 // 3. Request file-lock (RAII)
                 let _lock =
-                    crate::storage::WalletLockGuard::new(&storage).map_err(|e| e.to_string())?;
+                    crate::storage::WalletLockGuard::new(&storage).map_err(AppFacadeError::from)?;
 
                 // 4. Resolve authentication
                 let auth = match Self::resolve_auth_method(password, &session_cache) {
@@ -294,7 +297,7 @@ impl AppService {
                             identity,
                             session_cache,
                         };
-                        return Err(e.to_string());
+                        return Err(AppFacadeError::from(e));
                     }
                 };
 
@@ -309,7 +312,7 @@ impl AppService {
                             identity,
                             session_cache,
                         };
-                        return Err(e.to_string());
+                        return Err(AppFacadeError::from(e));
                     }
                 };
 
@@ -326,7 +329,7 @@ impl AppService {
                                 identity,
                                 session_cache,
                             };
-                            return Err(format!("Failed to reload wallet: {}", e));
+                            return Err(AppFacadeError::ValidationError(format!("Failed to reload wallet: {}", e)));
                         }
                     }
                 }
@@ -347,7 +350,7 @@ impl AppService {
                                 identity,
                                 session_cache,
                             };
-                            return Err(e.to_string());
+                            return Err(AppFacadeError::from(e));
                         }
                         self.state = AppState::Unlocked {
                             storage,
@@ -358,7 +361,7 @@ impl AppService {
                         self.update_seal_after_state_change(password)?;
                         Ok(res)
                     }
-                    TransactionOutcome::CommitAndReturnError(err_msg) => {
+                    TransactionOutcome::CommitAndReturnError(err) => {
                         if let Err(e) = temp_wallet.save(&mut storage, &identity, &auth) {
                             self.state = AppState::Unlocked {
                                 storage,
@@ -366,7 +369,7 @@ impl AppService {
                                 identity,
                                 session_cache,
                             };
-                            return Err(e.to_string());
+                            return Err(AppFacadeError::from(e));
                         }
                         self.state = AppState::Unlocked {
                             storage,
@@ -375,26 +378,26 @@ impl AppService {
                             session_cache,
                         };
                         self.update_seal_after_state_change(password)?;
-                        Err(err_msg)
+                        Err(err)
                     }
-                    TransactionOutcome::Rollback(err_msg) => {
+                    TransactionOutcome::Rollback(err) => {
                         self.state = AppState::Unlocked {
                             storage,
                             wallet: current_wallet,
                             identity,
                             session_cache,
                         };
-                        Err(err_msg)
+                        Err(err)
                     }
                 }
             }
-            AppState::Locked => Err("AppService is locked.".to_string()),
+            AppState::Locked => Err(AppFacadeError::WalletLocked("AppService is locked.".to_string())),
         }
     }
 
     /// Checks the "Remember password" session, manages the timeout
     /// and the "sliding window" (resets 'last_activity').
-    pub fn get_session_key(&mut self) -> Result<[u8; 32], String> {
+    pub fn get_session_key(&mut self) -> Result<[u8; 32], AppFacadeError> {
         match &mut self.state {
             AppState::Unlocked {
                 storage: _,
@@ -407,17 +410,17 @@ impl AppService {
                     if now > cache.last_activity + cache.session_duration {
                         // --- Timeout! ---
                         *session_cache = None; // Clear key
-                        Err("Session timed out. Please provide password.".to_string())
+                        Err(AppFacadeError::SessionExpired("Session timed out. Please provide password.".to_string()))
                     } else {
                         // --- OK, activity detected ---
                         cache.last_activity = now; // "Sliding Window"
                         Ok(cache.session_key)
                     }
                 } else {
-                    Err("Password required. Please use 'unlock_session'.".to_string())
+                    Err(AppFacadeError::SessionNotActive("Password required. Please use 'unlock_session'.".to_string()))
                 }
             }
-            AppState::Locked => Err("Wallet is locked.".to_string()),
+            AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())),
         }
     }
 

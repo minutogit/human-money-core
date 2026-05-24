@@ -1,63 +1,63 @@
-use crate::app_service::{AppService, AppState};
+use crate::app_service::{AppService, AppState, AppFacadeError};
 use crate::models::layer2_api::{L2AuthPayload, L2StatusQuery};
 use crate::services::l2_gateway::{self, VerdictAction};
 use crate::storage::{AuthMethod, WalletLockGuard};
 use crate::wallet::instance::VoucherStatus;
 
 impl AppService {
-    pub fn generate_l2_lock_request(&self, local_instance_id: &str) -> Result<Vec<u8>, String> {
+    pub fn generate_l2_lock_request(&self, local_instance_id: &str) -> Result<Vec<u8>, AppFacadeError> {
         let (wallet, _identity) = match &self.state {
             AppState::Unlocked {
                 wallet, identity, ..
             } => (wallet, identity),
-            _ => return Err("Wallet is locked".to_string()),
+            _ => return Err(AppFacadeError::WalletLocked("Wallet is locked".to_string())),
         };
 
         let instance = wallet
             .get_voucher_instance(local_instance_id)
-            .ok_or_else(|| format!("Voucher {} not found", local_instance_id))?;
+            .ok_or_else(|| AppFacadeError::VoucherNotFound(local_instance_id.to_string()))?;
 
         let transaction = instance
             .voucher
             .transactions
             .last()
-            .ok_or_else(|| "No transactions found in voucher".to_string())?;
+            .ok_or_else(|| AppFacadeError::ValidationError("No transactions found in voucher".to_string()))?;
 
         // In the new Layer 2 semantics, the voucher id is derived from the first (init) transaction.
         let l2_voucher_id =
             l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])
-                .map_err(|e| e.to_string())?;
+                .map_err(AppFacadeError::from)?;
 
         // TODO: In the future, derive a proper ephemeral key. For now, use dummy bytes.
         let ephemeral_key = [0u8; 32];
         let request =
             l2_gateway::generate_lock_request(&l2_voucher_id, transaction, &ephemeral_key)
-                .map_err(|e| e.to_string())?;
+                .map_err(AppFacadeError::from)?;
 
-        serde_json::to_vec(&request).map_err(|e| e.to_string())
+        serde_json::to_vec(&request).map_err(AppFacadeError::from)
     }
 
     /// Generiert eine L2StatusQuery (Lese-Anfrage) für den aktuellen Stand eines Gutscheins.
-    pub fn generate_l2_status_query(&self, local_instance_id: &str) -> Result<Vec<u8>, String> {
+    pub fn generate_l2_status_query(&self, local_instance_id: &str) -> Result<Vec<u8>, AppFacadeError> {
         let (wallet, _identity) = match &self.state {
             AppState::Unlocked {
                 wallet, identity, ..
             } => (wallet, identity),
-            _ => return Err("Wallet is locked".to_string()),
+            _ => return Err(AppFacadeError::WalletLocked("Wallet is locked".to_string())),
         };
 
         let instance = wallet
             .get_voucher_instance(local_instance_id)
-            .ok_or_else(|| format!("Voucher {} not found", local_instance_id))?;
+            .ok_or_else(|| AppFacadeError::VoucherNotFound(local_instance_id.to_string()))?;
 
         let layer2_voucher_id =
             l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])
-                .map_err(|e| e.to_string())?;
+                .map_err(AppFacadeError::from)?;
 
         let challenge_ds_tag = if let Some(last_tx) = instance.voucher.transactions.last() {
-            l2_gateway::derive_challenge_tag(last_tx).map_err(|e| e.to_string())?
+            l2_gateway::derive_challenge_tag(last_tx).map_err(AppFacadeError::from)?
         } else {
-            return Err("Voucher has no transactions".to_string());
+            return Err(AppFacadeError::ValidationError("Voucher has no transactions".to_string()));
         };
 
         let locator_prefixes = l2_gateway::generate_locator_prefixes(&instance.voucher);
@@ -76,7 +76,7 @@ impl AppService {
             locator_prefixes,
         };
 
-        serde_json::to_vec(&query).map_err(|e| e.to_string())
+        serde_json::to_vec(&query).map_err(AppFacadeError::from)
     }
 
     /// Verarbeitet ein L2Verdict und führt die entsprechende Aktion auf dem Wallet aus.
@@ -85,35 +85,35 @@ impl AppService {
         local_instance_id: &str,
         response_bytes: &[u8],
         password: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppFacadeError> {
         let (wallet, _identity) = match &self.state {
             AppState::Unlocked {
                 wallet, identity, ..
             } => (wallet, identity),
-            _ => return Err("Wallet is locked".to_string()),
+            _ => return Err(AppFacadeError::WalletLocked("Wallet is locked".to_string())),
         };
 
         let instance = wallet
             .get_voucher_instance(local_instance_id)
-            .ok_or_else(|| format!("Voucher {} not found", local_instance_id))?;
+            .ok_or_else(|| AppFacadeError::VoucherNotFound(local_instance_id.to_string()))?;
 
         let last_tx = instance
             .voucher
             .transactions
             .last()
-            .ok_or_else(|| "No transactions found".to_string())?;
+            .ok_or_else(|| AppFacadeError::ValidationError("No transactions found".to_string()))?;
         let last_t_id = last_tx.t_id.clone();
         let challenge_ds_tag =
-            l2_gateway::derive_challenge_tag(last_tx).map_err(|e| e.to_string())?;
+            l2_gateway::derive_challenge_tag(last_tx).map_err(AppFacadeError::from)?;
         let expected_ephemeral_pub = last_tx.sender_ephemeral_pub.as_deref();
         let expected_voucher_id =
             l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])
-                .map_err(|e| e.to_string())?;
+                .map_err(AppFacadeError::from)?;
 
         let server_pubkey = wallet
             .profile
             .l2_server_pubkey
-            .ok_or_else(|| "L2 server public key not configured in wallet profile".to_string())?;
+            .ok_or_else(|| AppFacadeError::ValidationError("L2 server public key not configured in wallet profile".to_string()))?;
 
         let action = l2_gateway::process_l2_verdict(
             response_bytes,
@@ -123,7 +123,7 @@ impl AppService {
             expected_ephemeral_pub,
             &expected_voucher_id,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(AppFacadeError::from)?;
 
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
 
@@ -143,7 +143,7 @@ impl AppService {
                             identity,
                             session_cache,
                         };
-                        return Err(e.to_string());
+                        return Err(AppFacadeError::from(e));
                     }
                 };
 
@@ -197,7 +197,7 @@ impl AppService {
                                     identity,
                                     session_cache,
                                 };
-                                return Err("Session timed out or password required.".to_string());
+                                return Err(AppFacadeError::SessionExpired("Session timed out or password required.".to_string()));
                             }
                         }
 
@@ -212,7 +212,7 @@ impl AppService {
                                 },
                             ),
                             Err(e) => (
-                                Err(e.to_string()),
+                                Err(AppFacadeError::from(e)),
                                 AppState::Unlocked {
                                     storage,
                                     wallet,
@@ -239,7 +239,7 @@ impl AppService {
                     }
                 }
             }
-            AppState::Locked => (Err("Wallet is locked".to_string()), AppState::Locked),
+            AppState::Locked => (Err(AppFacadeError::WalletLocked("Wallet is locked".to_string())), AppState::Locked),
         };
 
         self.state = new_state;

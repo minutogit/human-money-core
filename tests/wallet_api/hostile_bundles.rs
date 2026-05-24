@@ -145,7 +145,7 @@ fn test_rejection_of_broken_transaction_chain() {
 
     // 3. ASSERT
     assert!(result.is_err());
-    let err_str = result.unwrap_err();
+    let err_str = result.unwrap_err().to_string();
     assert!(
         err_str.contains("Transaction chain broken")
             || err_str.contains("prev_hash does not match"),
@@ -314,7 +314,7 @@ fn test_rejection_of_self_received_bundle() {
 
     // 3. ASSERT
     assert!(result_self_receive.is_err());
-    let err_str = result_self_receive.unwrap_err();
+    let err_str = result_self_receive.unwrap_err().to_string();
     assert!(
         err_str.contains("Bundle has already been processed") || err_str.contains("Bundle Recipient Mismatch"),
         "Error should be Replay Check or Recipient Mismatch. Got: {}",
@@ -415,7 +415,7 @@ fn test_rejection_of_identical_bundle_replay() {
 
     // 5. ASSERT (Second Receive)
     assert!(result_second.is_err());
-    let err_str = result_second.unwrap_err();
+    let err_str = result_second.unwrap_err().to_string();
     assert!(
         err_str.contains("Bundle has already been processed"),
         "Error should be BundleAlreadyProcessed. Got: {}",
@@ -511,7 +511,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
 
     // 4. ASSERT (Second Receive)
     assert!(result_second.is_err());
-    let err_str = result_second.unwrap_err();
+    let err_str = result_second.unwrap_err().to_string();
     assert!(
         err_str.contains("Transaction fingerprint is already known"),
         "Error should be TransactionFingerprintAlreadyKnown. Got: {}",
@@ -648,7 +648,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
 
     // 3. ASSERT (PC Wallet)
     assert!(result_pc_receive.is_err());
-    let err_str = result_pc_receive.unwrap_err();
+    let err_str = result_pc_receive.unwrap_err().to_string();
     assert!(
         // Mit PrivacyMode::TrialDecryption wird der Container erfolgreich geöffnet
         // (da die Public Keys übereinstimmen), aber die Bundle-Validierung auf Layer 3

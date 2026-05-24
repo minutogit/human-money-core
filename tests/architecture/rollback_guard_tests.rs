@@ -52,8 +52,8 @@ mod tests {
         // Receive Bundle sollte blockiert sein
         let res = app.receive_bundle(b"fake data", &HashMap::new(), None, Some(PASSWORD), false);
         assert!(res.is_err(), "Receiving bundle should be blocked by fork lock");
-        let err = res.unwrap_err();
-        assert!(err.contains("lock") || err.contains("Lock") || err.contains("Fork") || err.contains("fork"));
+        let err_str = res.unwrap_err().to_string();
+        assert!(err_str.contains("lock") || err_str.contains("Lock") || err_str.contains("Fork") || err_str.contains("fork"));
     }
 
     #[test]

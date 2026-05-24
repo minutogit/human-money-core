@@ -8,9 +8,8 @@
 #[cfg(test)]
 mod tests {
 
-    use human_money_core::app_service::AppService;
+    use human_money_core::app_service::{AppService, ProfileInfo};
     use human_money_core::MnemonicLanguage;
-    use human_money_core::app_service::ProfileInfo;
     use human_money_core::services::voucher_manager::NewVoucherData;
     use human_money_core::test_utils;
     use human_money_core::test_utils::{ACTORS, generate_signed_standard_toml};
@@ -145,13 +144,13 @@ mod tests {
 
         // 4. Assert: Alle Aufrufe müssen fehlschlagen
         assert!(save_result.is_err());
-        assert!(save_result.unwrap_err().contains("Wallet is locked"));
+        assert!(save_result.unwrap_err().to_string().contains("Wallet is locked"));
         assert!(load_result.is_err());
-        assert!(load_result.unwrap_err().contains("Wallet is locked"));
+        assert!(load_result.unwrap_err().to_string().contains("Wallet is locked"));
         assert!(save_result_pw.is_err());
-        assert!(save_result_pw.unwrap_err().contains("Wallet is locked"));
+        assert!(save_result_pw.unwrap_err().to_string().contains("Wallet is locked"));
         assert!(load_result_pw.is_err());
-        assert!(load_result_pw.unwrap_err().contains("Wallet is locked"));
+        assert!(load_result_pw.unwrap_err().to_string().contains("Wallet is locked"));
     }
 
     /// **Test 3: test_data_encryption_fails_with_wrong_password()** (Angepasst für Modus A)
@@ -179,13 +178,13 @@ mod tests {
         let load_err = service
             .load_encrypted_data(data_name, Some(WRONG_PASSWORD))
             .unwrap_err();
-        assert!(load_err.contains("Authentication failed")); // Oder "Password verification failed"
+        assert!(load_err.to_string().contains("Authentication failed")); // Oder "Password verification failed"
 
         // 3. Assert: Versuch, mit falschem Passwort zu schreiben (Modus A), schlägt fehl
         let save_err = service
             .save_encrypted_data("other_data", &[0], Some(WRONG_PASSWORD))
             .unwrap_err();
-        assert!(save_err.contains("Authentication failed")); // Oder "Password verification failed"
+        assert!(save_err.to_string().contains("Authentication failed")); // Oder "Password verification failed"
     }
 
     // --- Teil 2: Absicherung des Roten Bereichs (lifecycle.rs) ---
@@ -207,7 +206,7 @@ mod tests {
             "test-id".to_string(),
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Failed to create new wallet"));
+        assert!(result.unwrap_err().to_string().contains("mnemonic"));
         assert!(service.get_user_id().is_err());
     }
 
@@ -240,6 +239,7 @@ mod tests {
         assert!(
             result
                 .unwrap_err()
+                .to_string()
                 .contains("Login failed (check password)")
         );
         assert!(
@@ -347,7 +347,7 @@ mod tests {
             test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Test", PASSWORD);
         let result = service.unlock_session(WRONG_PASSWORD, 60);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Password verification failed"));
+        assert!(result.unwrap_err().to_string().contains("Authentication failed"));
     }
 
     /// --- 5.2 Modus A: "Immer fragen" (Argument `Some(password)`) ---
@@ -389,7 +389,7 @@ mod tests {
         );
         assert!(result.is_err());
         // Der Fehler kommt von derive_key_for_session -> get_file_key -> AuthenticationFailed
-        assert!(result.unwrap_err().contains("Authentication failed"));
+        assert!(result.unwrap_err().to_string().contains("Authentication failed"));
     }
 
     /// --- 5.3 Modus B: "Passwort merken" (Argument `None` + Aktive Session) ---
@@ -409,7 +409,7 @@ mod tests {
 
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Password required.")); // KORREKTUR: Die Fehlermeldung ist kürzer.
+        assert!(result.unwrap_err().to_string().contains("Password required.")); // KORREKTUR: Die Fehlermeldung ist kürzer.
     }
 
     #[test]
@@ -445,7 +445,7 @@ mod tests {
 
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Session timed out."));
+        assert!(result.unwrap_err().to_string().contains("Session timed out."));
     }
 
     #[test]
@@ -490,14 +490,14 @@ mod tests {
             refresh_result.is_err(),
             "Refresh must fail for expired sessions"
         );
-        assert_eq!(refresh_result.unwrap_err(), "Session expired.");
+        assert_eq!(refresh_result.unwrap_err().to_string(), "Session expired.");
 
         // 4. Verifizieren, dass die Session nun auch gesperrt ist (Cache geleert).
         // Zugriff ohne Passwort (Modus B) muss fehlschlagen.
         let load_result = service.load_encrypted_data("test_data", None);
         assert!(load_result.is_err());
         assert!(
-            load_result.unwrap_err().contains("Password required"),
+            load_result.unwrap_err().to_string().contains("Password required"),
             "Session cache should have been cleared"
         );
     }
@@ -521,7 +521,7 @@ mod tests {
         // nicht nur "Password required". Der Status ist jetzt Locked, nicht mehr Unlocked.
         let result = service.load_encrypted_data("pre_logout", None);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Wallet is locked"));
+        assert!(result.unwrap_err().to_string().contains("Wallet is locked"));
     }
 
     #[test]
@@ -557,7 +557,7 @@ mod tests {
 
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Password required."));
+        assert!(result.unwrap_err().to_string().contains("Password required."));
     }
 
     /// --- 5.4 Edge Cases: Überschreiben der Session ---
@@ -603,7 +603,7 @@ mod tests {
             Some(WRONG_PASSWORD),
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Authentication failed"));
+        assert!(result.unwrap_err().to_string().contains("Authentication failed"));
     }
 
     /* ENDE: Neuer Testabschnitt */

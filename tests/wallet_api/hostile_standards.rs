@@ -79,7 +79,7 @@ fn test_disallowed_transaction_type() {
 
     // 3. ASSERT: Operation muss fehlschlagen
     assert!(result.is_err());
-    let error_string = result.unwrap_err();
+    let error_string = result.unwrap_err().to_string();
     assert!(
         error_string.contains("allow partial transfers"),
         "Error message should indicate that 'split' is not allowed. Got: {}",
@@ -128,7 +128,7 @@ fn test_violation_of_max_creation_validity() {
 
     // 3. ASSERT: Operation muss fehlschlagen
     assert!(result.is_err());
-    let error_string = result.unwrap_err();
+    let error_string = result.unwrap_err().to_string();
     assert!(
         error_string.contains("exceeds the maximum allowed standard validity"),
         "Error message should indicate that validity is too long. Got: {}",
