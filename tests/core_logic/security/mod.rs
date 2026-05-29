@@ -27,3 +27,5 @@ mod standard_validation;
 mod state_and_collaboration;
 mod trap_verification;
 mod vulnerabilities;
+mod identity_trap_audit;
+

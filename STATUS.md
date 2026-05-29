@@ -56,6 +56,7 @@ The core library is stable and feature-rich. Current focus areas:
 
 ## Recent Milestones
 
+- [x] **Security Audit (Identity Trap)**: Implemented 7 security audit tests in `tests/core_logic/security/identity_trap_audit.rs` verifying the mathematical correctness and robustness of the identity-trap mechanism against slope randomization, replay, Schnorr proof forgery, prefix independence, scalar malleability, and invalid/corrupted key extraction.
 - [x] Anti-Signature-Reuse-Firewall (security hardening)
 - [x] CEL-based dynamic validation engine migration
 - [x] L2 retention period and `deletable_at` refactoring
