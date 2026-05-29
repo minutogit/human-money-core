@@ -23,11 +23,12 @@ A double-spend (same input spent twice) forces reuse of $m$, enabling algebraic 
 
 **Threat:** A modified client derives random $m_1, m_2$ instead of the deterministic HKDF output.
 
-**Finding:** The ds_tag collision is still detected (ds_tag depends only on `prev_hash` and `sender_ephemeral_pub`, not on $m$). However, the identity extraction via the solver formula yields a mathematically meaningless point — the offender's real $ID$ is **not** revealed.
+**Finding:** The ds_tag collision is still detected (ds_tag depends only on `prev_hash` and `sender_ephemeral_pub`, not on $m$). However, the identity extraction via the solver formula yields a mathematically meaningless point — the offender's real $ID$ is **not** revealed to the public network. 
+*Update:* By embedding a Chaum-Pedersen DLEQ proof into the encrypted `RecipientPayload`, the *direct recipient* can mathematically verify that $m$ was deterministically derived. If the proof is invalid or missing, the recipient's wallet (Point-of-Sale) immediately rejects the transaction.
 
-**Risk assessment:** **Acceptable.** The double-spend is detected and the voucher is quarantined. The attacker gains nothing economically. Identity remains hidden, which shifts accountability to the voucher creator/guarantor via the social trust layer. This is an inherent limitation of the offline-first, no-global-consensus architecture and is by design.
+**Risk assessment:** **Mitigated (Client-Side / Point-of-Sale).** The DLEQ proof acts as a local firewall. While the global network still cannot extract the identity if an attacker uses a random slope, the attacker is now forced to send the fraudulent transaction to themselves (Sybil identity) or a colluding accomplice who explicitly bypasses the DLEQ verification. This isolates the fraud and drastically narrows the social tracing graph.
 
-**Test:** `test_random_slope_attack_identity_not_recoverable`
+**Test:** `test_random_slope_attack_identity_not_recoverable`, `test_random_slope_attack_detection`
 
 ### 2.2 Honest Double-Spend Recovery (Positive Control)
 
@@ -91,7 +92,7 @@ A double-spend (same input spent twice) forces reuse of $m$, enabling algebraic 
 
 | # | Attack Vector | Detection | ID Recovery | Status |
 |---|---|---|---|---|
-| 1 | Random Slope ($m$ randomized) | ✅ ds_tag collision | ❌ Garbage point | **By design** |
+| 1 | Random Slope ($m$ randomized) | ✅ ds_tag collision | ❌ Garbage point | **Mitigated (PoS Firewall)** |
 | 2 | Honest double-spend | ✅ ds_tag collision | ✅ Exact DID | **Correct** |
 | 3 | Trap Replay | ✅ U-mismatch rejection | N/A | **Mitigated** |
 | 4 | Forged ZKP | ✅ Schnorr rejection | N/A | **Mitigated** |
@@ -101,15 +102,15 @@ A double-spend (same input spent twice) forces reuse of $m$, enabling algebraic 
 
 ## 4. Open Considerations
 
-### 4.1 Random Slope as a Privacy Shield
+### 4.1 Random Slope and the Sybil/Accomplice Trap
 
-The Random Slope Attack (2.1) is the most interesting finding. An attacker **can** avoid identity revelation by using non-deterministic $m$ values, while the double-spend is still detected and quarantined. This is an inherent trade-off:
+The Random Slope Attack (2.1) highlights a fascinating architectural trade-off between privacy and verification. An attacker **can** avoid identity revelation on the public network by using non-deterministic $m$ values, but the system relies on a powerful hybrid mitigation strategy:
 
-- **Without global consensus**, the system cannot force honest $m$ derivation at the protocol level.
-- **The ZKP proves knowledge of *some* $m$**, but not that it was derived via HKDF. Proving the HKDF derivation path would require revealing $\text{sk}_\text{user}$ or a more complex zero-knowledge circuit.
-- **Mitigation is social**: The blocked voucher damages the creator's/guarantor's reputation, incentivizing them to only issue vouchers to trusted parties.
+- **Without global consensus**, the system cannot force honest $m$ derivation at the public protocol level without compromising sender privacy. 
+- **The Point-of-Sale Firewall:** Honest wallets will reject any transaction with an invalid DLEQ derivation proof.
+- **The Sybil/Accomplice Trap:** The DLEQ proof is not a global protection against the Random Slope, but a client-side integrity check that forces the attacker into the Sybil/accomplice trap. To succeed, the attacker *must* collude with an altered recipient client. When the voucher is quarantined, social tracing directly exposes this specific ring of accomplices.
 
-A future enhancement could explore **ZK-SNARK/STARK proofs** of correct HKDF derivation, but this would significantly increase complexity and may not be justified given the social-trust-based security model.
+A future enhancement could explore **ZK-SNARK/STARK proofs** of correct derivation for the global layer, but the current DLEQ-based localized firewall provides an exceptionally strong socio-economic deterrent without the massive overhead of full zero-knowledge circuits.
 
 ### 4.2 Test Coverage Gaps
 
