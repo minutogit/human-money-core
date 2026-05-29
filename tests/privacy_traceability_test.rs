@@ -87,6 +87,7 @@ mod tests {
             target_prefix: bob.identity.user_id.clone(),
             timestamp: 0,
             next_key_seed: bs58::encode([0u8; 32]).into_string(),
+            ..Default::default()
         };
         
         let guard = encrypt_recipient_payload(

@@ -1085,6 +1085,98 @@ pub fn get_pubkey_from_user_id(user_id: &str) -> Result<EdPublicKey, GetPubkeyEr
     EdPublicKey::from_bytes(&key_bytes_array).map_err(GetPubkeyError::ConversionFailed)
 }
 
+/// Derives the secret scalar corresponding to the public key point from an Ed25519 `SigningKey`.
+pub fn get_secret_scalar(signing_key: &SigningKey) -> curve25519_dalek::scalar::Scalar {
+    let mut hasher = Sha512::new();
+    hasher.update(&signing_key.to_bytes());
+    let hash = hasher.finalize();
+    let mut scalar_bytes: [u8; 32] = hash[..32].try_into().unwrap();
+    scalar_bytes[0] &= 248;
+    scalar_bytes[31] &= 127;
+    scalar_bytes[31] |= 64;
+    curve25519_dalek::scalar::Scalar::from_bytes_mod_order(scalar_bytes)
+}
+
+/// A secure, deterministic mapping of a byte array (e.g. prev_hash) to an Ed25519 curve point.
+#[allow(deprecated)]
+pub fn hash_to_curve(data: &[u8]) -> EdwardsPoint {
+    EdwardsPoint::nonspec_map_to_curve::<Sha512>(data)
+}
+
+/// Helper function to compute the DLEQ challenge.
+fn calculate_dleq_challenge(
+    g: &EdwardsPoint,
+    pk: &EdwardsPoint,
+    p: &EdwardsPoint,
+    k: &EdwardsPoint,
+    r1: &EdwardsPoint,
+    r2: &EdwardsPoint,
+) -> curve25519_dalek::scalar::Scalar {
+    let mut hasher = Sha256::new();
+    hasher.update(g.compress().as_bytes());
+    hasher.update(pk.compress().as_bytes());
+    hasher.update(p.compress().as_bytes());
+    hasher.update(k.compress().as_bytes());
+    hasher.update(r1.compress().as_bytes());
+    hasher.update(r2.compress().as_bytes());
+    let hash_result = hasher.finalize();
+    let hash_bytes: [u8; 32] = hash_result.into();
+    curve25519_dalek::scalar::Scalar::from_bytes_mod_order(hash_bytes)
+}
+
+/// Generates a Chaum-Pedersen Discrete Logarithm Equality (DLEQ) proof.
+/// Proves that log_G(pk_sender) == log_P(k_point) = sk_sender.
+pub fn generate_dleq_proof(
+    sk_sender: &curve25519_dalek::scalar::Scalar,
+    p_point: &EdwardsPoint,
+    k_point: &EdwardsPoint,
+) -> (curve25519_dalek::scalar::Scalar, curve25519_dalek::scalar::Scalar) {
+    let mut rng = rand::thread_rng();
+    let k = curve25519_dalek::scalar::Scalar::random(&mut rng);
+    let r1 = k * curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+    let r2 = k * p_point;
+    let pk_sender = sk_sender * curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+    
+    let c = calculate_dleq_challenge(
+        &curve25519_dalek::constants::ED25519_BASEPOINT_POINT,
+        &pk_sender,
+        p_point,
+        k_point,
+        &r1,
+        &r2,
+    );
+    let s = k + c * sk_sender;
+    (c, s)
+}
+
+/// Verifies a Chaum-Pedersen DLEQ proof.
+pub fn verify_dleq_proof(
+    pk_sender: &EdwardsPoint,
+    p_point: &EdwardsPoint,
+    k_point: &EdwardsPoint,
+    c: &curve25519_dalek::scalar::Scalar,
+    s: &curve25519_dalek::scalar::Scalar,
+) -> Result<(), VoucherCoreError> {
+    let r1_prime = s * curve25519_dalek::constants::ED25519_BASEPOINT_POINT - c * pk_sender;
+    let r2_prime = s * p_point - c * k_point;
+    
+    let c_prime = calculate_dleq_challenge(
+        &curve25519_dalek::constants::ED25519_BASEPOINT_POINT,
+        pk_sender,
+        p_point,
+        k_point,
+        &r1_prime,
+        &r2_prime,
+    );
+    
+    if *c != c_prime {
+        return Err(VoucherCoreError::InvalidTrapDerivation(
+            "DLEQ proof verification failed".to_string()
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

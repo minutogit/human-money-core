@@ -57,8 +57,8 @@ fn test_random_slope_attack_identity_not_recoverable() {
     let ds_tag = get_hash_from_slices(&[prev_hash_bytes, ephem_pub_bytes]);
 
     // Generate traps
-    let trap1 = generate_trap(ds_tag.clone(), &u_scalar1, &m1, &id_point, Some("prefix")).unwrap();
-    let trap2 = generate_trap(ds_tag.clone(), &u_scalar2, &m2, &id_point, Some("prefix")).unwrap();
+    let trap1 = generate_trap(ds_tag.clone(), &u_scalar1, &m1, &id_point, Some("prefix"), None, None).unwrap().0;
+    let trap2 = generate_trap(ds_tag.clone(), &u_scalar2, &m2, &id_point, Some("prefix"), None, None).unwrap().0;
 
     // Assertions
     // 1. ds_tag is identical
@@ -110,8 +110,8 @@ fn test_honest_double_spend_identity_always_recovered() {
     let ds_tag = get_hash_from_slices(&[prev_hash_bytes, ephem_pub_bytes]);
 
     // Generate traps
-    let trap1 = generate_trap(ds_tag.clone(), &u_scalar1, &m, &id_point, Some(prefix)).unwrap();
-    let trap2 = generate_trap(ds_tag.clone(), &u_scalar2, &m, &id_point, Some(prefix)).unwrap();
+    let trap1 = generate_trap(ds_tag.clone(), &u_scalar1, &m, &id_point, Some(prefix), None, None).unwrap().0;
+    let trap2 = generate_trap(ds_tag.clone(), &u_scalar2, &m, &id_point, Some(prefix), None, None).unwrap().0;
 
     // Assertions
     // 1. extract_id_point_from_raw_data(...) == id_point
@@ -156,7 +156,7 @@ fn test_trap_replay_rejected_by_u_mismatch() {
     // Create valid TrapData for Tx_A (amount="50", receiver_hash="hash_A")
     let u_input_a = format!("{}{}{}", ds_tag, "50", "hash_A");
     let u_scalar_a = hash_to_scalar(u_input_a.as_bytes());
-    let trap_a = generate_trap(ds_tag.clone(), &u_scalar_a, &m, &id_point, Some(prefix)).unwrap();
+    let trap_a = generate_trap(ds_tag.clone(), &u_scalar_a, &m, &id_point, Some(prefix), None, None).unwrap().0;
 
     // Create Tx_B with different data (amount="100", receiver_hash="hash_B")
     let u_input_b = format!("{}{}{}", ds_tag, "100", "hash_B");
@@ -300,7 +300,7 @@ fn test_scalar_malleability_no_bypass() {
         let ds_tag = get_hash_from_slices(&[prev_hash.as_bytes(), ephem_pub_bytes]);
 
         // Generate trap with the original u_scalar
-        let mut trap = generate_trap(ds_tag.clone(), &u_scalar, &m, &id_point, Some(prefix)).unwrap();
+        let mut trap = generate_trap(ds_tag.clone(), &u_scalar, &m, &id_point, Some(prefix), None, None).unwrap().0;
 
         // Inject the malleable representation u_plus_l_bytes into the trap data
         trap.u = bs58::encode(u_plus_l_bytes).into_string();
@@ -328,7 +328,7 @@ fn test_scalar_malleability_no_bypass() {
     let ephem_pub_bytes = b"ephem_pub_test_6";
     let ds_tag = get_hash_from_slices(&[prev_hash.as_bytes(), ephem_pub_bytes]);
 
-    let mut trap = generate_trap(ds_tag.clone(), &u_scalar, &m, &id_point, Some(prefix)).unwrap();
+    let mut trap = generate_trap(ds_tag.clone(), &u_scalar, &m, &id_point, Some(prefix), None, None).unwrap().0;
     trap.u = bs58::encode(over_long_bytes).into_string();
 
     let verify_result = verify_trap(
@@ -404,4 +404,116 @@ fn test_extracted_point_validity_check() {
     }
     
     assert_eq!(offender_id, "anonymous", "offender_id must not be updated with the invalid key");
+}
+
+/// Test 8: test_random_slope_attack_detection
+/// Intercepts a private transaction and modifies the trap blinded_id (simulating a non-deterministic random slope).
+/// The recipient wallet should reject the bundle with InvalidTrapDerivation.
+#[test]
+fn test_random_slope_attack_detection() {
+    use human_money_core::test_utils::{setup_in_memory_wallet, add_voucher_to_wallet, ACTORS, MINUTO_STANDARD, derive_holder_key};
+    use std::collections::HashMap;
+
+    let alice = &ACTORS.alice;
+    let bob = &ACTORS.bob;
+
+    let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
+    let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
+
+    let alice_local_id = add_voucher_to_wallet(
+        &mut alice_wallet,
+        &alice.identity,
+        "100",
+        &MINUTO_STANDARD.0,
+        true
+    ).unwrap();
+
+    let voucher = alice_wallet.voucher_store.vouchers.get(&alice_local_id).unwrap().voucher.clone();
+    let holder_key = derive_holder_key(&voucher, &alice.identity.signing_key);
+
+    // 1. Create a legitimate transaction (has a valid DLEQ proof in privacy_guard)
+    let (mut voucher_for_bob, _secrets) = human_money_core::services::voucher_manager::create_transaction(
+        &voucher,
+        &MINUTO_STANDARD.0,
+        &alice.identity.user_id,
+        &alice.identity.signing_key,
+        &holder_key,
+        &bob.identity.user_id,
+        "100",
+        None,
+    ).unwrap();
+
+    let v_id = human_money_core::services::l2_gateway::extract_layer2_voucher_id(&voucher_for_bob).unwrap();
+
+    // 2. Tamper with the trap: Random Slope Attack simulation.
+    // We generate a valid trap for a fake/random slope m_fake (which has a valid ZKP proof).
+    let last_tx = voucher_for_bob.transactions.last_mut().unwrap();
+    let trap = last_tx.trap_data.clone().unwrap();
+
+    let u_bytes = bs58::decode(&trap.u).into_vec().unwrap();
+    let u_scalar = curve25519_dalek::scalar::Scalar::from_bytes_mod_order(
+        u_bytes.try_into().unwrap()
+    );
+
+    let id_point = human_money_core::services::crypto_utils::ed25519_pk_to_curve_point(
+        &alice.identity.signing_key.verifying_key()
+    ).unwrap();
+
+    let prefix = last_tx.sender_id.as_deref().and_then(|id| {
+        human_money_core::services::crypto_utils::get_prefix_from_user_id(id)
+    });
+
+    let mut rng = rand::rngs::OsRng;
+    let m_fake = curve25519_dalek::scalar::Scalar::random(&mut rng);
+
+    let (fake_trap, _) = generate_trap(
+        trap.ds_tag.clone(),
+        &u_scalar,
+        &m_fake,
+        &id_point,
+        prefix,
+        None,
+        None,
+    ).unwrap();
+
+    last_tx.trap_data = Some(fake_trap);
+
+    // Re-sign the tampered transaction to pass signatures
+    let resigned_tx = human_money_core::test_utils::resign_transaction_ext(
+        last_tx.clone(),
+        &alice.identity.signing_key,
+        &v_id,
+        Some(&holder_key),
+    );
+    *last_tx = resigned_tx;
+
+    // 3. Encrypt bundle and attempt to process at recipient (Bob)
+    let (bundle_bytes, _header) = alice_wallet.create_and_encrypt_transaction_bundle(
+        &alice.identity,
+        vec![voucher_for_bob],
+        &bob.identity.user_id,
+        None,
+        vec![],
+        HashMap::new(),
+        None,
+    ).unwrap();
+
+    let mut standards = HashMap::new();
+    standards.insert(MINUTO_STANDARD.0.immutable.identity.uuid.clone(), MINUTO_STANDARD.0.clone());
+
+    let process_result = bob_wallet.process_encrypted_transaction_bundle(
+        &bob.identity,
+        &bundle_bytes,
+        None,
+        &standards,
+    );
+
+    // 4. Assert rejection due to invalid trap derivation!
+    assert!(process_result.is_err(), "Bundle should have been rejected!");
+    let err_string = process_result.unwrap_err().to_string();
+    assert!(
+        err_string.contains("InvalidTrapDerivation") || err_string.contains("Trap V point mismatch"),
+        "Expected InvalidTrapDerivation error, got: {}",
+        err_string
+    );
 }

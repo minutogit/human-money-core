@@ -47,49 +47,43 @@ pub fn hash_to_curve(input: &[u8]) -> EdwardsPoint {
     EdwardsPoint::nonspec_map_to_curve::<Sha512>(input)
 }
 
-/// Leitet den Slope `m` deterministisch via HKDF ab.
+/// Leitet den Slope `m` deterministisch ab.
 ///
 /// # Arguments
-/// * `prev_hash` - Der Hash der vorherigen Transaktion (Salt).
-/// * `secret_key_bytes` - Der private Schlüssel des Senders (IKM).
-/// * `prefix` - Das optionale Präfix der User-ID (Info). None für Root-Accounts.
+/// * `prev_hash` - Der Hash der vorherigen Transaktion.
+/// * `secret_key_bytes` - Der private Schlüssel des Senders.
+/// * `_prefix` - Ignored, kept for backward compatibility.
 ///
 /// # Returns
 /// Ein `Scalar`, der als `m` in der Trap-Gleichung verwendet wird.
 pub fn derive_m(
     prev_hash: &str,
     secret_key_bytes: &[u8],
-    prefix: Option<&str>,
+    _prefix: Option<&str>,
 ) -> Result<Scalar, VoucherCoreError> {
-    // Implementierung analog zu crypto_utils, aber spezifisch für Scalar-Ableitung.
-    // Wir nutzen HKDF-SHA256.
+    let key_bytes: [u8; 32] = secret_key_bytes.try_into().map_err(|_| {
+        VoucherCoreError::Crypto("secret_key_bytes must be exactly 32 bytes".to_string())
+    })?;
 
-    let salt = prev_hash.as_bytes();
-    let ikm = secret_key_bytes;
-
-    // HKDF-Extract
-    let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm);
-
-    // HKDF-Expand
-    // Wir benötigen 64 Bytes Output, um einen uniformen Scalar zu erzeugen (wide reduction).
-    // Für Root-Accounts (prefix = None) wird ein leerer String als Info verwendet.
-    let mut okm = [0u8; 64];
-    hkdf.expand(prefix.unwrap_or("").as_bytes(), &mut okm)
-        .map_err(|_| VoucherCoreError::Crypto("HKDF expansion for m failed".to_string()))?;
-
-    Ok(Scalar::from_bytes_mod_order_wide(&okm))
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
+    let sk_sender = crate::services::crypto_utils::get_secret_scalar(&signing_key);
+    
+    let prev_hash_bytes = bs58::decode(prev_hash)
+        .into_vec()
+        .unwrap_or_else(|_| prev_hash.as_bytes().to_vec());
+    let p_point = crate::services::crypto_utils::hash_to_curve(&prev_hash_bytes);
+    let k_point = sk_sender * p_point;
+    let m = hash_to_scalar(&k_point.compress().to_bytes());
+    Ok(m)
 }
 
-/// Generiert die Trap-Daten und den ZKP.
-///
-/// # Arguments
-/// * `u` - Der Challenge-Punkt (berechnet via hash_to_curve).
-/// * `m` - Der geheime Slope (Scalar).
-/// * `my_id_point` - Der öffentliche Identitätspunkt des Senders (ID).
-/// * `prefix` - Das optionale Präfix (wird in die ZKP-Challenge eingebunden). None für Root-Accounts.
-///
-/// # Returns
-/// Ein `TrapData`-Struct mit Base58-kodierten Werten.
+#[derive(Debug, Clone)]
+pub struct DleqProof {
+    pub trap_k_point: [u8; 32],
+    pub dleq_c: [u8; 32],
+    pub dleq_s: [u8; 32],
+}
+
 /// Generiert die Trap-Daten und den ZKP.
 ///
 /// # Arguments
@@ -97,17 +91,21 @@ pub fn derive_m(
 /// * `u_scalar` - Der variierende Challenge-Scalar (berechnet via hash_to_scalar).
 /// * `m` - Der geheime Slope (Scalar).
 /// * `my_id_point` - Der öffentliche Identitätspunkt des Senders (ID).
-/// * `prefix` - Das optionale Präfix (wird in die ZKP-Challenge eingebunden). None für Root-Accounts.
+/// * `prefix` - Das optionale Präfix. None für Root-Accounts.
+/// * `sk_sender` - Optional sender secret scalar (for DLEQ proof).
+/// * `p_point` - Optional generator point P (for DLEQ proof).
 ///
 /// # Returns
-/// Ein `TrapData`-Struct mit Base58-kodierten Werten.
+/// Ein `TrapData`-Struct und optional `DleqProof`.
 pub fn generate_trap(
     ds_tag: String,
     u_scalar: &Scalar,
     m: &Scalar,
     my_id_point: &EdwardsPoint,
     prefix: Option<&str>,
-) -> Result<TrapData, VoucherCoreError> {
+    sk_sender: Option<&Scalar>,
+    p_point: Option<&EdwardsPoint>,
+) -> Result<(TrapData, Option<DleqProof>), VoucherCoreError> {
     // 1. Berechne V = u * (m * G) + ID
     //    V = (u * m) * G + ID
     //    Wir definieren M = m * G (Slope Point)
@@ -149,12 +147,26 @@ pub fn generate_trap(
     proof_bytes.extend_from_slice(s.as_bytes());
     let proof_str = bs58::encode(proof_bytes).into_string();
 
-    Ok(TrapData {
+    let trap_data = TrapData {
         ds_tag,
         u: u_str,
         blinded_id: blinded_id_str,
         proof: proof_str,
-    })
+    };
+
+    let dleq_proof = if let (Some(sk), Some(p)) = (sk_sender, p_point) {
+        let k_point = sk * p;
+        let (c_dleq, s_dleq) = crate::services::crypto_utils::generate_dleq_proof(sk, p, &k_point);
+        Some(DleqProof {
+            trap_k_point: k_point.compress().to_bytes(),
+            dleq_c: c_dleq.to_bytes(),
+            dleq_s: s_dleq.to_bytes(),
+        })
+    } else {
+        None
+    };
+
+    Ok((trap_data, dleq_proof))
 }
 
 /// Verifiziert die Trap-Daten und den ZKP.

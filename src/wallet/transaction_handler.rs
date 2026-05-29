@@ -270,6 +270,86 @@ impl Wallet {
                         }.into());
                     }
 
+                    // Verify DLEQ Proof and deterministic trap derivation if proof fields are present
+                    let sender_pubkey = crate::services::crypto_utils::get_pubkey_from_user_id(&payload.sender_permanent_did)?;
+                    let id_point = crate::services::crypto_utils::ed25519_pk_to_curve_point(&sender_pubkey)?;
+
+                    if let Some(trap) = &last_tx.trap_data {
+                        let u_bytes = bs58::decode(&trap.u)
+                            .into_vec()
+                            .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+                        let u = curve25519_dalek::scalar::Scalar::from_bytes_mod_order(
+                            u_bytes.try_into().map_err(|_| {
+                                VoucherCoreError::Crypto("Invalid Scalar U length".to_string())
+                            })?,
+                        );
+
+                        let blinded_id_bytes = bs58::decode(&trap.blinded_id)
+                            .into_vec()
+                            .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+                        let v_point = curve25519_dalek::edwards::CompressedEdwardsY::from_slice(&blinded_id_bytes)
+                            .map_err(|_| VoucherCoreError::Crypto("Invalid Blinded-ID (V)".to_string()))?
+                            .decompress()
+                            .ok_or_else(|| VoucherCoreError::Crypto("Failed to decompress Blinded-ID V".to_string()))?;
+
+                        let prev_hash_bytes = bs58::decode(&last_tx.prev_hash)
+                            .into_vec()
+                            .unwrap_or_else(|_| last_tx.prev_hash.as_bytes().to_vec());
+                        let p_point = crate::services::crypto_utils::hash_to_curve(&prev_hash_bytes);
+
+                        if let (Some(k_str), Some(c_str), Some(s_str)) = (
+                            &payload.trap_k_point,
+                            &payload.dleq_c,
+                            &payload.dleq_s,
+                        ) {
+                            // 1. Decode K, c, s
+                            let k_bytes = bs58::decode(k_str)
+                                .into_vec()
+                                .map_err(|e| VoucherCoreError::Crypto(format!("Invalid K point Base58: {}", e)))?;
+                            let c_bytes = bs58::decode(c_str)
+                                .into_vec()
+                                .map_err(|e| VoucherCoreError::Crypto(format!("Invalid c Base58: {}", e)))?;
+                            let s_bytes = bs58::decode(s_str)
+                                .into_vec()
+                                .map_err(|e| VoucherCoreError::Crypto(format!("Invalid s Base58: {}", e)))?;
+
+                            let k_point = curve25519_dalek::edwards::CompressedEdwardsY::from_slice(&k_bytes)
+                                .map_err(|_| VoucherCoreError::Crypto("Invalid K point bytes".to_string()))?
+                                .decompress()
+                                .ok_or_else(|| VoucherCoreError::Crypto("Failed to decompress K point".to_string()))?;
+
+                            let c_scalar = curve25519_dalek::scalar::Scalar::from_bytes_mod_order(
+                                c_bytes.try_into().map_err(|_| {
+                                    VoucherCoreError::Crypto("Invalid c scalar length".to_string())
+                                })?,
+                            );
+                            let s_scalar = curve25519_dalek::scalar::Scalar::from_bytes_mod_order(
+                                s_bytes.try_into().map_err(|_| {
+                                    VoucherCoreError::Crypto("Invalid s scalar length".to_string())
+                                })?,
+                            );
+
+                            // 2. Perform DLEQ verification
+                            crate::services::crypto_utils::verify_dleq_proof(
+                                &id_point,
+                                &p_point,
+                                &k_point,
+                                &c_scalar,
+                                &s_scalar,
+                            )?;
+
+                            // 3. Verify trap identity derivation
+                            let m_expected = crate::services::trap_manager::hash_to_scalar(&k_point.compress().to_bytes());
+                            let v_expected = (u * m_expected) * curve25519_dalek::constants::ED25519_BASEPOINT_POINT + id_point;
+
+                            if v_expected != v_point {
+                                return Err(VoucherCoreError::InvalidTrapDerivation(
+                                    "Trap V point mismatch: slope m was not derived deterministically from the permanent key.".to_string()
+                                ));
+                            }
+                        }
+                    }
+
                     // Check target_prefix (Simple validation)
                     if !identity.user_id.starts_with(&payload.target_prefix) {
                         // Optional: Warning or Error if not addressed to us?

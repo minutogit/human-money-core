@@ -375,6 +375,8 @@ pub enum VoucherCoreError {
     KeyOrId(#[from] GetPubkeyError),
     #[error("Cryptography error: {0}")]
     Crypto(String),
+    #[error("Invalid trap derivation: {0}")]
+    InvalidTrapDerivation(String),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Generic error: {0}")]

@@ -90,6 +90,15 @@ pub struct RecipientPayload {
     pub timestamp: u64,
     /// Der Seed für den nächsten ephemeren Schlüssel.
     pub next_key_seed: String,
+    /// The public point K of the identity trap derived from sender_permanent_key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trap_k_point: Option<String>,
+    /// Challenge c component of the DLEQ proof.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dleq_c: Option<String>,
+    /// Response s component of the DLEQ proof.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dleq_s: Option<String>,
 }
 
 /// Repräsentiert eine einzelne Transaktion in der Transaktionskette des Gutscheins.
