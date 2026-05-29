@@ -185,39 +185,7 @@ pub fn create_transaction(
         (None, None)
     };
 
-    // 3. PAYLOAD ENCRYPTION: Send next_key_seed to recipient.
-    let encoded_recipient_seed = bs58::encode(recipient_seed).into_string();
-
-    let privacy_guard = if recipient_id.contains(":z") {
-        let target_prefix = recipient_id
-            .split(':')
-            .next()
-            .unwrap_or("unknown")
-            .to_string();
-
-        let payload = RecipientPayload {
-            sender_permanent_did: sender_id.to_string(),
-            target_prefix,
-            timestamp: Utc::now().timestamp() as u64,
-            next_key_seed: encoded_recipient_seed.clone(),
-        };
-
-        let (ephemeral_pk, ephemeral_sk) = generate_ephemeral_x25519_keypair();
-        let recipient_ed_pk = get_pubkey_from_user_id(recipient_id)?;
-        let recipient_x_pk = crate::services::crypto_utils::ed25519_pub_to_x25519(&recipient_ed_pk);
-        let shared_secret = perform_diffie_hellman(ephemeral_sk, &recipient_x_pk, recipient_id)?;
-        let payload_json = to_canonical_json(&payload)?;
-        let encrypted_bytes = encrypt_data(&shared_secret, payload_json.as_bytes())?;
-
-        let mut privacy_guard_bytes = Vec::new();
-        privacy_guard_bytes.extend_from_slice(ephemeral_pk.as_bytes());
-        privacy_guard_bytes.extend_from_slice(&encrypted_bytes);
-        Some(encode_base64(&privacy_guard_bytes))
-    } else {
-        None
-    };
-
-    // 4. TRAP Generation
+    // 3. TRAP Generation
     let prev_hash_bytes = bs58::decode(&prev_hash)
         .into_vec()
         .map_err(|_| VoucherCoreError::Crypto("Invalid prev_hash format".to_string()))?;
@@ -244,14 +212,66 @@ pub fn create_transaction(
     )?;
 
     let my_id_point = ed25519_pk_to_curve_point(&sender_permanent_key.verifying_key())?;
+    
+    let sk_sender_scalar = crate::services::crypto_utils::get_secret_scalar(sender_permanent_key);
+    let p_point = crate::services::crypto_utils::hash_to_curve(&prev_hash_bytes);
 
-    let trap_data = Some(generate_trap(
+    let (trap_data_val, dleq_proof_opt) = generate_trap(
         ds_tag.clone(),
         &u_scalar,
         &m,
         &my_id_point,
         sender_id_prefix,
-    )?);
+        Some(&sk_sender_scalar),
+        Some(&p_point),
+    )?;
+
+    let trap_data = Some(trap_data_val);
+
+    // 4. PAYLOAD ENCRYPTION: Send next_key_seed to recipient.
+    let encoded_recipient_seed = bs58::encode(recipient_seed).into_string();
+
+    let privacy_guard = if recipient_id.contains(":z") {
+        let target_prefix = recipient_id
+            .split(':')
+            .next()
+            .unwrap_or("unknown")
+            .to_string();
+
+        let (trap_k_point_str, dleq_c_str, dleq_s_str) = if let Some(dleq) = &dleq_proof_opt {
+            (
+                Some(bs58::encode(dleq.trap_k_point).into_string()),
+                Some(bs58::encode(dleq.dleq_c).into_string()),
+                Some(bs58::encode(dleq.dleq_s).into_string()),
+            )
+        } else {
+            (None, None, None)
+        };
+
+        let payload = RecipientPayload {
+            sender_permanent_did: sender_id.to_string(),
+            target_prefix,
+            timestamp: Utc::now().timestamp() as u64,
+            next_key_seed: encoded_recipient_seed.clone(),
+            trap_k_point: trap_k_point_str,
+            dleq_c: dleq_c_str,
+            dleq_s: dleq_s_str,
+        };
+
+        let (ephemeral_pk, ephemeral_sk) = generate_ephemeral_x25519_keypair();
+        let recipient_ed_pk = get_pubkey_from_user_id(recipient_id)?;
+        let recipient_x_pk = crate::services::crypto_utils::ed25519_pub_to_x25519(&recipient_ed_pk);
+        let shared_secret = perform_diffie_hellman(ephemeral_sk, &recipient_x_pk, recipient_id)?;
+        let payload_json = to_canonical_json(&payload)?;
+        let encrypted_bytes = encrypt_data(&shared_secret, payload_json.as_bytes())?;
+
+        let mut privacy_guard_bytes = Vec::new();
+        privacy_guard_bytes.extend_from_slice(ephemeral_pk.as_bytes());
+        privacy_guard_bytes.extend_from_slice(&encrypted_bytes);
+        Some(encode_base64(&privacy_guard_bytes))
+    } else {
+        None
+    };
 
     let mut new_transaction = Transaction {
         t_id: "".to_string(),

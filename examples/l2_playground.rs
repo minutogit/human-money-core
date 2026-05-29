@@ -1,8 +1,10 @@
-// examples/l2_playground.rs
-// run with: cargo run --example l2_playground
+//! # Layer 2 Chain of Authority Playground
 //!
-//! Playground zur Demonstration der Layer 2 Integration und der "Chain of Authority".
-//! Führt eine Sequenz von Transaktionen aus und zeigt die Verkettung im L2-Netzwerk.
+//! Demonstrates the Layer 2 integration and validation of the "Chain of Authority" (CoA).
+//! Executes a sequence of transactions to verify how anonymous transaction fingerprints,
+//! ephemeral public keys, and locking/status responses verify correct authority chains.
+//!
+//! Run with: `cargo run --example l2_playground`
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use human_money_core::models::layer2_api::{

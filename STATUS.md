@@ -1,9 +1,9 @@
 ---
 project: human-money-core
-version: "0.2.18"
+version: "0.2.20"
 phase: "active-development"
 health: "green"
-last_updated: "2026-05-24"
+last_updated: "2026-05-31"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -46,7 +46,7 @@ The core library is stable and feature-rich. Current focus areas:
 
 - **17 service modules**: crypto, voucher management, validation, conflict management, L2 gateway, etc.
 - **10 wallet modules**: lifecycle, transactions, queries, conflict handling, signatures
-- **Extensive test suite**: 7 test categories (architecture, core logic, persistence, services, validation, wallet API, L2 integration)
+- **Extensive test suite**: 7 test categories (architecture, core logic, persistence, services, validation, wallet API, app_service)
 
 ## Known Issues
 
@@ -56,6 +56,15 @@ The core library is stable and feature-rich. Current focus areas:
 
 ## Recent Milestones
 
+- [x] **VoucherCoreError Refactoring & Categorization**: Grouped and documented all `VoucherCoreError` variants with category comments and detailed docstrings, ensuring 100% Rustdoc coverage and clean error modularity.
+- [x] **Examples Directory Documentation**: Added `//!` doc comments to all nine playground files in `examples/` and created `examples/README.md` to cleanly index and document all example scripts.
+- [x] **Transaction Lifecycle Documentation**: Documented the 7-step transactional safety lifecycle (including rollback semantics, state isolation, generation checks, and process-wide locks) of `with_transactional_mut` and `TransactionOutcome` in `AppService`.
+- [x] **UserIdError & GetPubkeyError thiserror Migration**: Migrated the manually implemented Display and Error traits for `UserIdError` and `GetPubkeyError` in `crypto_identity.rs` to use `thiserror` for project-wide consistency and architectural cleanliness.
+- [x] **Cryptographic Utilities Modularity**: Decoupled the monolithic 1289-line `crypto_utils.rs` by splitting its functions into domain-specific sub-modules (`crypto_keys`, `crypto_symmetric`, `crypto_dh`, `crypto_identity`) and systematically refactored internal codebase imports to point directly to these modules, improving structural maintainability while preserving backward compatibility via the public facade.
+- [x] **Crypto Constants Centralization**: Centralized cryptographic domain separation constants (`ed25519 seed`, `human-money-core/x25519-exchange`, and `human-money-profile-folder-v1`) into a dedicated `crypto_constants` service module, eliminating hardcoded strings across `crypto_utils.rs` and `app_service/mod.rs` to ensure cryptographic stability.
+- [x] **Integration Test Consolidation**: Consolidated 17 separate floating integration test files into structured subdirectories (under `architecture`, `core_logic`, `persistence`, `services`, and `wallet_api`) and unified their 7 entry points into a single consolidated `tests/integration_tests.rs` runner, reducing compiled Cargo integration test binaries from 24 to 1 to optimize compilation times and developer velocity.
+- [x] **Random Slope Attack Mitigation (Identity Trap)**: Hardened the Identity Trap mechanism against the Random Slope Attack by replacing the deterministic HKDF-based slope derivation with a Discrete Logarithm Equality (DLEQ/Chaum-Pedersen) proof. Added a DLEQ proof generator and verification engine, updated `RecipientPayload` to securely transport proof parameters using Base58-encoded fields, integrated validation in `Wallet` to reject non-deterministic slopes prior to importing/accepting transaction bundles, and verified the implementation against a comprehensive test suite.
+- [x] **Security Audit (Identity Trap)**: Implemented 7 security audit tests in `tests/core_logic/security/identity_trap_audit.rs` verifying the mathematical correctness and robustness of the identity-trap mechanism against slope randomization, replay, Schnorr proof forgery, prefix independence, scalar malleability, and invalid/corrupted key extraction.
 - [x] Anti-Signature-Reuse-Firewall (security hardening)
 - [x] CEL-based dynamic validation engine migration
 - [x] L2 retention period and `deletable_at` refactoring
@@ -86,7 +95,7 @@ The core library is stable and feature-rich. Current focus areas:
 - [x] **Fuzzy-Search for historical voucher logs**: Resolved UI lookup errors by implementing a historical ID fallback mechanism in `Wallet::get_voucher_details`, allowing logs to correctly reference vouchers even after state-changing transactions.
 - [x] **Transactional Command Helpers**: Hardened AppService architecture with `with_transactional_mut` and `TransactionOutcome`, centralizing locking, atomic cloning, saving, and sealing to reduce boilerplate and eliminate state orchestration errors.
 - [x] **Core Refactoring & Modularity**: Modularized `voucher_manager`, `voucher_validation`, and `test_utils` into directory-based modules with facade patterns; removed legacy monolithic files (1400+ lines each) to reduce cognitive load and improve maintainability.
-- [x] **English Documentation Migration**: Completed transition to English comments and Rustdoc for core library entry points (`lib.rs`, `error.rs`, `app_service`), improving developer tool support and accessibility.
+- [x] **English Documentation Migration**: Completed transition to English comments and Rustdoc for core library entry points (`lib.rs`, `error.rs`, `app_service`), as well as storage and archive modules (`src/storage/`, `src/archive/`), improving developer tool support, maintainability, and accessibility.
 - [x] **README Architecture Overhaul**: Integrated comprehensive "Core Concepts" and updated technical architecture description to reflect the current identity-centric, offline-first design paradigm.
 - [x] **Refactored Voucher Proof Matching**: Moved `get_proof_id_for_voucher` matching heuristics from Tauri backend to core `Wallet` for zero-copy/no-DTO lookup, exposing it in `AppService` and simplifying command handlers.
 - [x] **WalletLockGuard Re-entrancy Bugfix**: Resolved a critical issue where `WalletLockGuard` drop destructor would delete the persistent lock file even when the lock was pre-existing (re-entrant lock), enabling stable sub-session data updates without losing parent session locks.

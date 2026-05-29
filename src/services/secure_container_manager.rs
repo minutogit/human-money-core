@@ -6,9 +6,14 @@
 use crate::error::VoucherCoreError;
 use crate::models::profile::UserIdentity;
 use crate::models::secure_container::{ContainerConfig, EncryptionType, JweRecipient, PayloadType, PrivacyMode, SecureContainer};
+use crate::services::crypto_symmetric::{
+    decrypt_data, decrypt_data_with_aad, decrypt_symmetric_password, encrypt_data,
+    encrypt_data_with_aad, encrypt_symmetric_password,
+};
+use crate::services::crypto_dh::{ed25519_pub_to_x25519, ed25519_sk_to_x25519_sk};
+use crate::services::crypto_identity::get_pubkey_from_user_id;
 use crate::services::crypto_utils::{
-    self, decode_base64, decrypt_data_with_aad, decrypt_symmetric_password, ed25519_pub_to_x25519, ed25519_sk_to_x25519_sk, encode_base64, encrypt_data_with_aad, encrypt_symmetric_password, get_hash,
-    get_pubkey_from_user_id,
+    self, decode_base64, encode_base64, get_hash,
 };
 use crate::services::utils::to_canonical_json;
 use hkdf::Hkdf;
@@ -99,7 +104,7 @@ pub fn create_secure_container(
 
                     let shared_secret = esk_priv_static.diffie_hellman(&recipient_pubkey_x);
                     let kek = derive_kek(shared_secret.as_bytes())?;
-                    let encrypted_payload_key = crypto_utils::encrypt_data(&kek, &payload_key)?;
+                    let encrypted_payload_key = encrypt_data(&kek, &payload_key)?;
 
                     // Header basierend auf PrivacyMode setzen
                     let header = match privacy_mode {
@@ -118,7 +123,7 @@ pub fn create_secure_container(
                 let sender_static_sk_x = ed25519_sk_to_x25519_sk(&sender_identity.signing_key);
                 let shared_secret_sender = sender_static_sk_x.diffie_hellman(&esk_pub);
                 let kek_sender = derive_kek(shared_secret_sender.as_bytes())?;
-                let encrypted_payload_key_sender = crypto_utils::encrypt_data(&kek_sender, &payload_key)?;
+                let encrypted_payload_key_sender = encrypt_data(&kek_sender, &payload_key)?;
 
                 // Header für Sender basierend auf PrivacyMode setzen
                 let sender_header = match privacy_mode {
@@ -287,7 +292,7 @@ pub fn open_secure_container(
                     let shared_secret = recipient_x25519_sk.diffie_hellman(&esk_pub);
                     let kek = derive_kek(shared_secret.as_bytes())?;
 
-                    if let Ok(payload_key_bytes) = crypto_utils::decrypt_data(&kek, &encrypted_payload_key) {
+                    if let Ok(payload_key_bytes) = decrypt_data(&kek, &encrypted_payload_key) {
                         if let Ok(key_array) = payload_key_bytes.try_into() {
                             decrypted_payload_key = Some(key_array);
                             break;
@@ -354,7 +359,8 @@ mod tests {
     use super::*;
     use crate::models::profile::UserIdentity;
     use crate::models::secure_container::PrivacyMode;
-    use crate::services::crypto_utils::{create_user_id, generate_ed25519_keypair_for_tests};
+    use crate::services::crypto_identity::create_user_id;
+    use crate::services::crypto_keys::generate_ed25519_keypair_for_tests;
 
     #[test]
     fn test_jwe_container_creation_and_opening() {

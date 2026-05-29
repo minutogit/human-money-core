@@ -1,7 +1,7 @@
 //! # src/app_service/conflict_handler.rs
 //!
-//! Enthält alle `AppService`-Funktionen, die sich auf das Management von
-//! Double-Spend-Konflikten beziehen.
+//! Contains all `AppService` functions related to the management of
+//! double-spend conflicts.
 
 use super::{AppService, AppState, AppFacadeError};
 use crate::models::conflict::{ProofOfDoubleSpend, ResolutionEndorsement};
@@ -9,38 +9,37 @@ use crate::wallet::ProofOfDoubleSpendSummary;
 use crate::wallet::CleanupReport;
 
 impl AppService {
-    // --- Konflikt-Management ---
+    // --- Conflict Management ---
 
-    /// Gibt eine Liste von Zusammenfassungen aller bekannten Double-Spend-Konflikte zurück.
+    /// Returns a list of summaries of all known double-spend conflicts.
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Wallet gesperrt (`Locked`) ist.
+    /// Fails if the wallet is locked (`Locked`).
     pub fn list_conflicts(&self) -> Result<Vec<ProofOfDoubleSpendSummary>, AppFacadeError> {
         Ok(self.get_wallet()?.list_conflicts())
     }
 
-    /// Ruft einen vollständigen `ProofOfDoubleSpend` anhand seiner ID ab.
+    /// Retrieves a complete `ProofOfDoubleSpend` by its ID.
     ///
-    /// Ideal, um die Details eines Konflikts anzuzeigen oder ihn für den
-    /// manuellen Austausch zu exportieren.
+    /// Ideal for displaying the details of a conflict or exporting it for
+    /// manual exchange.
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Wallet gesperrt ist oder kein Beweis mit dieser ID existiert.
+    /// Fails if the wallet is locked or no proof with this ID exists.
     pub fn get_proof_of_double_spend(&self, proof_id: &str) -> Result<ProofOfDoubleSpend, AppFacadeError> {
         self.get_wallet()?
             .get_proof_of_double_spend(proof_id)
             .map_err(AppFacadeError::from)
     }
 
-    /// Erstellt eine signierte Beilegungserklärung (`ResolutionEndorsement`) für einen Konflikt.
+    /// Creates a signed resolution endorsement (`ResolutionEndorsement`) for a conflict.
     ///
-    /// Diese Operation verändert den Wallet-Zustand nicht. Sie erzeugt ein
-    /// signiertes Objekt, das an andere Parteien gesendet werden kann, um zu
-    /// signalisieren, dass der Konflikt aus Sicht des Wallet-Inhabers (des Opfers)
-    /// gelöst wurde.
+    /// This operation does not change the wallet state. It generates a
+    /// signed object that can be sent to other parties to signal that
+    /// the conflict has been resolved from the perspective of the wallet owner (the victim).
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Wallet gesperrt ist oder der referenzierte Beweis nicht existiert.
+    /// Fails if the wallet is locked or the referenced proof does not exist.
     pub fn create_resolution_endorsement(
         &self,
         proof_id: &str,
@@ -67,7 +66,7 @@ impl AppService {
         note: Option<String>,
         password: Option<&str>,
     ) -> Result<(), AppFacadeError> {
-        // --- FORK-LOCK PRÜFUNG ---
+        // --- FORK-LOCK CHECK ---
         self.check_fork_lock(password).map_err(AppFacadeError::from)?;
 
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
@@ -118,7 +117,7 @@ impl AppService {
 
     /// Importiert einen Beweis direkt als Objekt.
     pub fn import_proof(&mut self, proof: ProofOfDoubleSpend, password: Option<&str>) -> Result<(), AppFacadeError> {
-        // --- FORK-LOCK PRÜFUNG ---
+        // --- FORK-LOCK CHECK ---
         self.check_fork_lock(password).map_err(AppFacadeError::from)?;
 
         let current_state = std::mem::replace(&mut self.state, AppState::Locked);
@@ -167,8 +166,7 @@ impl AppService {
         }
     }
 
-    /// Importiert einen Beweis aus einem Base64-kodierten JSON-String (Klartext-Export).
-    ///
+    /// Imports a proof from a Base64-encoded JSON string (plain text export).
     pub fn import_proof_from_json(&mut self, json_base64: &str, password: Option<&str>) -> Result<(), AppFacadeError> {
         let json_bytes = bs58::decode(json_base64)
             .into_vec()
@@ -179,7 +177,7 @@ impl AppService {
         self.import_proof(proof, password)
     }
 
-    /// Importiert einen Beweis aus einem `SecureContainer` (Sicherer Austausch).
+    /// Imports a proof from a `SecureContainer` (secure exchange).
     pub fn import_proof_from_container(&mut self, container_bytes: &[u8], password: Option<&str>) -> Result<(), AppFacadeError> {
         let proof = {
             if let AppState::Unlocked { identity, .. } = &self.state {
@@ -190,7 +188,7 @@ impl AppService {
                     return Err(AppFacadeError::ValidationError("Container does not contain a Double-Spend-Proof.".to_string()));
                 }
 
-                // Wallet-Identity wird benötigt, um den Container zu öffnen
+                // Wallet identity is required to open the container
                 let decrypted_payload = crate::services::secure_container_manager::open_secure_container(
                     &container,
                     identity,
@@ -210,24 +208,22 @@ impl AppService {
         self.import_proof(proof, password)
     }
 
-    /// Führt die Speicherbereinigung für Fingerprints und deren Metadaten durch.
+    /// Performs storage cleanup for fingerprints and their metadata.
     ///
-    /// Diese Methode implementiert die in der Architektur-Spezifikation definierte
-    /// Logik:
-    /// 1. Löschen aller abgelaufenen Fingerprints.
-    /// 2. Wenn das Speicherlimit (`MAX_FINGERPRINTS`) immer noch überschritten ist,
-    ///    werden die Fingerprints mit der höchsten `depth` (und ältestem `t_time`)
-    ///    gelöscht, bis das Limit wieder unterschritten ist.
+    /// This method implements the logic defined in the architecture specification:
+    /// 1. Delete all expired fingerprints.
+    /// 2. If the storage limit (`MAX_FINGERPRINTS`) is still exceeded,
+    ///    fingerprints with the highest `depth` (and oldest `t_time`)
+    ///    are deleted until the limit is no longer exceeded.
     ///
     /// # Returns
-    /// Ein `Result` mit einem `CleanupReport`, der Details über die Bereinigung
-    /// enthält, oder einen Fehler, falls der Prozess fehlschlägt.
+    /// A `Result` with a `CleanupReport` containing details about the cleanup,
+    /// or an error if the process fails.
     pub fn run_storage_cleanup(&mut self) -> Result<CleanupReport, AppFacadeError> {
         if let AppState::Unlocked { wallet, .. } = &mut self.state {
             let report = wallet.run_storage_cleanup(None, super::DEFAULT_ARCHIVE_GRACE_PERIOD_YEARS)?;
-            // Hinweis: Das Speichern des Wallets nach dem Cleanup wird dem Aufrufer
-            // überlassen (z.B. am Ende einer Operation), um mehrfaches Schreiben
-            // zu vermeiden.
+            // Note: Saving the wallet after cleanup is left to the caller
+            // (e.g. at the end of an operation) to avoid multiple writes.
             Ok(report)
         } else {
             Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string()))

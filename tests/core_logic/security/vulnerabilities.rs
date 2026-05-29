@@ -37,6 +37,7 @@ fn attach_test_privacy_guard(tx: &mut Transaction, _v_id: &str, recipient_id: &s
         target_prefix: recipient_id.split(':').next().unwrap_or("").to_string(),
         timestamp: 1625097600, // 2021-07-01 dummy timestamp
         next_key_seed: "test_seed_123".to_string(),
+        ..Default::default()
     };
     let payload_bytes = serde_json::to_vec(&payload).unwrap();
     let recipient_pubkey = human_money_core::services::crypto_utils::get_pubkey_from_user_id(recipient_id).unwrap();
@@ -359,7 +360,7 @@ fn generate_valid_trap_for_test(
 
     let my_id_point = ed25519_pk_to_curve_point(&sender_permanent_key.verifying_key()).unwrap();
 
-    generate_trap(ds_tag, &u_scalar, &m, &my_id_point, sender_id_prefix).unwrap()
+    generate_trap(ds_tag, &u_scalar, &m, &my_id_point, sender_id_prefix, None, None).unwrap().0
 }
 
 fn add_p2pkh_layer(tx: &mut Transaction, holder_secret: &ed25519_dalek::SigningKey) {
@@ -928,6 +929,7 @@ fn test_attack_inconsistent_split_transaction() {
         target_prefix: "victim".to_string(),
         timestamp: 1625097600,
         next_key_seed: "test".to_string(),
+        ..Default::default()
     };
     let _payload_bytes = serde_json::to_vec(&payload).unwrap();
     let inconsistent_tx = create_hacked_tx(

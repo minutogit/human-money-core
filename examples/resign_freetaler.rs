@@ -1,3 +1,9 @@
+//! # Resign FreeTaler Standard Example
+//!
+//! This helper script signs or resigns the FreeTaler v1 Standard Definition TOML definition file
+//! to update features (such as decimal places) and generate a valid cryptographic signature.
+//!
+//! Run with: `cargo run --example resign_freetaler`
 
 use human_money_core::services::crypto_utils;
 use human_money_core::services::utils::to_canonical_json;

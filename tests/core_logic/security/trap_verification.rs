@@ -8,7 +8,7 @@ use rand::rngs::OsRng;
 #[test]
 fn test_hkdf_determinism() {
     let prev_hash = "prev_hash_123456789";
-    let secret = b"super_secret_sender_key_32_bytes_long!!";
+    let secret = b"super_secret_sender_key_32_bytes";
     let prefix = "minuto:region_a";
 
     // 1. Run 100 times, must always be identical
@@ -87,12 +87,12 @@ fn test_random_slope_attack() {
     // Case 1: Real m
     let m_real = Scalar::random(&mut rng);
     let trap_real =
-        generate_trap("tag_1".to_string(), &u_scalar, &m_real, &id_point, Some("prefix")).unwrap();
+        generate_trap("tag_1".to_string(), &u_scalar, &m_real, &id_point, Some("prefix"), None, None).unwrap().0;
 
     // Case 2: Fake m
     let m_fake = Scalar::random(&mut rng);
     let trap_fake =
-        generate_trap("tag_1".to_string(), &u_scalar, &m_fake, &id_point, Some("prefix")).unwrap();
+        generate_trap("tag_1".to_string(), &u_scalar, &m_fake, &id_point, Some("prefix"), None, None).unwrap().0;
 
     // The ds_tag MUST be identical (it is passed in, so this test just confirms API usage)
     assert_eq!(trap_real.ds_tag, trap_fake.ds_tag);

@@ -179,7 +179,7 @@ fn extract_pubkey_from_did_key(did_key: &str) -> Result<EdPublicKey, VoucherCore
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::crypto_utils::generate_ed25519_keypair_for_tests;
+    use crate::services::crypto_keys::generate_ed25519_keypair_for_tests;
 
     #[test]
     fn test_jws_roundtrip() {

@@ -129,8 +129,8 @@ impl Wallet {
         let proof_store = storage.load_proofs(&identity.user_id, auth)?;
         let fingerprint_metadata = storage.load_fingerprint_metadata(&identity.user_id, auth)?;
 
-        // Sicherheitsüberprüfung, um sicherzustellen, dass die entschlüsselte Identität
-        // mit den Profildaten übereinstimmt.
+        // Security check to ensure that the decrypted identity
+        // matches the profile data.
         if profile.user_id != identity.user_id {
             return Err(StorageError::AuthenticationFailed.into());
         }
@@ -151,8 +151,8 @@ impl Wallet {
         };
 
         // --- EXPIRATION SWEEP ---
-        // Nach dem Deserialisieren, aber vor der Rückgabe: Prüfe alle Gutscheine
-        // auf Ablauf und generiere VoucherExpired-Events.
+        // After deserialization, but before returning: Check all vouchers
+        // for expiration and generate VoucherExpired events.
         let now = chrono::Utc::now();
         let expired_local_ids: Vec<(String, String, crate::models::wallet_event::EventBffData)> = {
             let mut expired = Vec::new();
@@ -193,7 +193,7 @@ impl Wallet {
                 bff_data,
             );
         }
-        // --- ENDE EXPIRATION SWEEP ---
+        // --- END EXPIRATION SWEEP ---
 
         wallet.rebuild_derived_stores()?;
         Ok((wallet, identity))
@@ -229,7 +229,7 @@ impl Wallet {
         storage.save_proofs(&identity.user_id, auth, &self.proof_store)?;
         storage.save_fingerprint_metadata(&identity.user_id, auth, &self.fingerprint_metadata)?;
 
-        // Zuletzt: Events persistieren. Nur bei vollständigem Erfolg clearen.
+        // Finally: Persist events. Only clear on complete success.
         if !self.pending_events.is_empty() {
             storage.append_events(&identity.user_id, auth, &self.pending_events)?;
             self.pending_events.clear();
@@ -263,7 +263,7 @@ impl Wallet {
     pub fn create_new_voucher(
         &mut self,
         identity: &UserIdentity,
-        // Die Signatur wird erweitert, um die verifizierten Daten zu erhalten
+        // The signature is expanded to preserve the verified data
         verified_standard: &VoucherStandardDefinition,
         standard_hash: &str,
         lang_preference: &str,
@@ -277,11 +277,11 @@ impl Wallet {
             lang_preference,
         )?;
 
-        // KORREKTE LOGIK ZUR ZUSTANDSVERWALTUNG:
-        // 1. Berechne die korrekte lokale ID basierend auf der `init`-Transaktion.
+        // CORRECT STATE MANAGEMENT LOGIC:
+        // 1. Calculate the correct local ID based on the `init` transaction.
         let local_id = Self::calculate_local_instance_id(&new_voucher, &identity.user_id)?;
 
-        // 2. Bestimme den initialen Status durch eine sofortige Validierung.
+        // 2. Determine the initial status through immediate validation.
         let initial_status = match voucher_validation::validate_voucher_against_standard(
             &new_voucher,
             verified_standard,
@@ -315,14 +315,14 @@ impl Wallet {
                     }],
                 }
             }
-            // Jeder andere Validierungsfehler bei der Erstellung ist ein fataler Fehler.
+            // Any other validation error during creation is a fatal error.
             Err(e) => return Err(e),
         };
 
-        // 3. Füge die Instanz mit der korrekten ID und dem korrekten Status hinzu.
+        // 3. Add the instance with the correct ID and status.
         self.add_voucher_instance(local_id.clone(), new_voucher.clone(), initial_status);
 
-        // 4. Event für die UI-Historie generieren.
+        // 4. Generate event for the UI history.
         let bff_data = crate::models::wallet_event::EventBffData {
             display_currency: crate::wallet::format_bff_name(
                 new_voucher.nominal_value.abbreviation.as_deref().unwrap_or(&new_voucher.nominal_value.unit),
@@ -340,7 +340,7 @@ impl Wallet {
             bff_data,
         );
 
-        // 5. WICHTIG: Baue die abgeleiteten Stores (Fingerprints, Metadaten) neu auf.
+        // 5. IMPORTANT: Rebuild the derived stores (fingerprints, metadata).
         self.rebuild_derived_stores()?;
 
         Ok(new_voucher)
@@ -354,13 +354,13 @@ impl Wallet {
         identity: &UserIdentity,
         auth: &AuthMethod,
     ) -> Result<crate::models::seal::WalletSeal, VoucherCoreError> {
-        // 1. Altes Siegel laden
+        // 1. Load old seal
         let record = storage.load_seal(&identity.user_id, auth)
             .map_err(VoucherCoreError::Storage)?
             .ok_or_else(|| VoucherCoreError::RequiresSealRecovery)?;
 
-        // 2. Neues Siegel mit erhöhter Epoche und neuer instance_id erstellen
-        // Wir nutzen dafür SealManager::recover_seal_epoch, da es genau das tut (Epoch + 1)
+        // 2. Create new seal with increased epoch and new instance_id
+        // We use SealManager::recover_seal_epoch for this, since it does exactly that (Epoch + 1)
         let state_hash = {
             let canonical = crate::services::utils::to_canonical_json(&self.own_fingerprints)?;
             crate::services::crypto_utils::get_hash(canonical.as_bytes())
@@ -374,7 +374,7 @@ impl Wallet {
             &self.local_instance_id,
         )?;
 
-        // 3. Speichern
+        // 3. Save
         let new_record = crate::models::seal::LocalSealRecord {
             seal: new_seal.clone(),
             sync_status: crate::models::seal::SyncStatus::PendingUpload,

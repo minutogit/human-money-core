@@ -54,6 +54,7 @@
 
 use crate::models::profile::UserIdentity;
 use crate::services::{bundle_processor, crypto_utils};
+use crate::services::crypto_constants::ARGON2_PROFILE_FOLDER_SALT;
 use crate::storage::{Storage, file_storage::FileStorage};
 use crate::wallet::Wallet;
 use serde::{Deserialize, Serialize};
@@ -128,12 +129,22 @@ pub struct AppService {
     state: AppState,
 }
 
+/// Represents the result of a mutating transaction, instructing the orchestrator
+/// on how to finalize the state changes.
 pub(super) enum TransactionOutcome<T, E> {
-    /// Successful transaction. State is saved, seal updated, T returned.
+    /// Indicates a successful operation. The temporary wallet state is saved to disk,
+    /// the cryptographic seal is updated, the main memory state is updated, and the successful
+    /// value `T` is returned.
     Commit(T),
-    /// Error, BUT the modified state should still be saved (e.g., self-healing).
+    /// Indicates an error occurred, but the modified wallet state must still be persisted.
+    /// This is used for self-healing, garbage-collection, or database maintenance tasks
+    /// where an error needs to be reported to the caller, but the structural updates (e.g., fixing integrity
+    /// issues or marking state transitions) must not be rolled back. The state is saved to disk,
+    /// seal is updated, and the error `E` is returned.
     CommitAndReturnError(E),
-    /// Abortion. State is discarded, no saving, no seal update, E returned.
+    /// Indicates the transaction must be aborted. All modifications made to the temporary
+    /// wallet state are discarded. No files are written, no seals are updated, and the error `E`
+    /// is returned. The memory state remains unchanged.
     Rollback(E),
 }
 
@@ -157,8 +168,7 @@ impl AppService {
 
         // 2. Use Argon2id key stretching for the anonymous folder name (Mobile/WASM tuned).
         // This provides significantly higher protection against brute-force attacks on the folder name.
-        const SALT: &[u8] = b"human-money-profile-folder-v1";
-        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT)
+        crypto_utils::derive_argon2_id(secret_string.as_bytes(), ARGON2_PROFILE_FOLDER_SALT)
             .unwrap_or_else(|_| crypto_utils::get_hash(secret_string.as_bytes()))
     }
 
@@ -255,8 +265,68 @@ impl AppService {
         }
     }
 
-    /// Orchestrates the lifecycle of a write operation (transaction).
-    /// Encapsulates locking, cloning, saving, and sealing.
+    /// Orchestrates the lifecycle of a mutating transaction on the wallet state.
+    ///
+    /// This method is the central safety boundary for state changes in the `AppService`.
+    /// It coordinates concurrent access control, memory isolation, file persistence, 
+    /// cryptographic signing (sealing), and automatic rollback in case of execution errors.
+    ///
+    /// # Architecture & Transaction Security Model
+    ///
+    /// In an offline-first system, preventing local database corruption, double-spends,
+    /// or race conditions during multi-threaded UI events is critical. `with_transactional_mut`
+    /// enforces transactional safety through a multi-layered verification and state isolation sequence.
+    ///
+    /// # The 7-Step Transaction Lifecycle
+    ///
+    /// 1. **Fork-Lock Verification:**
+    ///    Ensures that the local wallet state is not running on an invalid or outdated epoch chain.
+    ///    This checks if any fork or epoch mismatch occurred on the device to prevent double-spending
+    ///    or out-of-sync writes.
+    ///
+    /// 2. **State Isolation (Unpacking):**
+    ///    To satisfy Rust's strict mutability borrowing rules and prevent poisoned states in case of panics,
+    ///    the `state` of the `AppService` is temporarily replaced with `AppState::Locked`. If a panic occurs
+    ///    during execution, the wallet remains safely locked instead of leaving behind a corrupted memory reference.
+    ///
+    /// 3. **Physical File Locking:**
+    ///    Acquires an exclusive, process-wide RAII file lock (`WalletLockGuard`) on the underlying profile storage.
+    ///    This prevents concurrent database modifications from another thread or separate application process.
+    ///
+    /// 4. **Authentication & Generation Verification (Reload-Before-Write):**
+    ///    Resolves the `AuthMethod` (either via explicit password or valid session key). It then reads the wallet's
+    ///    generation number directly from storage and compares it to the memory-loaded version. If the disk generation
+    ///    differs (e.g. because another process wrote to it), the wallet is reloaded from disk into memory before
+    ///    continuing, preventing the clobbering of concurrent changes.
+    ///
+    /// 5. **Atomic Isolation (Cloning):**
+    ///    Clones the current `Wallet` state. The closure `f` operates exclusively on this isolated, temporary clone.
+    ///    If the transaction is aborted or rolls back, the original state is preserved and restored.
+    ///
+    /// 6. **Closure Execution:**
+    ///    Invokes the provided closure `f`, yielding a [`TransactionOutcome`].
+    ///
+    /// 7. **Outcome Evaluation:**
+    ///    - [`TransactionOutcome::Commit`]: Saves the mutated clone to disk, updates the active memory state,
+    ///      recomputes/updates the cryptographic `WalletSeal` to guarantee integrity, and returns the result.
+    ///      If persistence fails during the save operation, it safely rolls back to the original unmodified state.
+    ///      
+    ///    - [`TransactionOutcome::CommitAndReturnError`]: Saves the mutated clone to disk and updates the active
+    ///      memory state/seal, but still returns the application-level error. This is crucial for self-healing
+    ///      actions where we want to persist structural corrections even if a specific logic query failed.
+    ///      If save fails, it also falls back to the original memory state.
+    ///      
+    ///    - [`TransactionOutcome::Rollback`]: Instantly discards the mutated clone, restores the original
+    ///      unmodified state in memory, and returns the error without writing any changes to disk or updating the seal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`AppFacadeError`] if:
+    /// - The wallet is locked ([`AppFacadeError::WalletLocked`])
+    /// - The fork-lock check fails
+    /// - Authentication fails (e.g. session expired or wrong password)
+    /// - Reloading or saving the wallet storage fails
+    /// - The closure itself returns a failure outcome
     pub(super) fn with_transactional_mut<F, R>(
         &mut self,
         password: Option<&str>,
@@ -301,7 +371,7 @@ impl AppService {
                     }
                 };
 
-                // NEU: Prüfe ob unser RAM-State aktuell ist (Reload-Before-Write)
+                // NEW: Check if our RAM state is up to date (Reload-Before-Write)
                 let mut current_wallet = wallet;
                 let disk_generation = match storage.read_generation() {
                     Ok(gen_val) => gen_val,

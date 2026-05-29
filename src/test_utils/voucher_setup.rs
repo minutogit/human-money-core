@@ -531,6 +531,7 @@ pub fn attach_privacy_guard(tx: &mut Transaction, recipient_id: &str, sender_id:
         target_prefix: recipient_id.split(':').next().unwrap_or("").to_string(),
         timestamp: chrono::Utc::now().timestamp() as u64,
         next_key_seed: "test_seed_123".to_string(),
+        ..Default::default()
     };
     let payload_bytes = serde_json::to_vec(&payload).unwrap();
     let recipient_pubkey = crypto_utils::get_pubkey_from_user_id(recipient_id).unwrap();

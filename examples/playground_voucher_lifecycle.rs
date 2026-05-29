@@ -1,22 +1,23 @@
-// examples/playground_voucher_lifecycle.rs
-// run with: cargo run --example playground_voucher_lifecycle
+//! # Voucher Lifecycle Playground
 //!
+//! Demonstrates the complete lifecycle of a voucher using the high-level `AppService` facade.
+//! Shows voucher creation, async guarantor signing requests, automatic status activation,
+//! multi-transfers (splits), receipt verification, balance updates, and raw JSON output.
 //!
-//! Demonstriert den gesamten Lebenszyklus eines Gutscheins unter Verwendung der
-//! High-Level `AppService`-Fassade, so wie es eine echte Client-Anwendung tun würde.
+//! Run with: `cargo run --example playground_voucher_lifecycle`
 //!
-//! ### Simulierte Schritte:
-//! 1.  **Setup:** Erstellt separate `AppService`-Instanzen für alle Teilnehmer (Ersteller, 2 Bürgen, Empfänger).
-//! 2.  **Gutschein-Erstellung:** Der Ersteller legt einen neuen Gutschein an, der initial unvollständig ist.
-//! 3.  **Bürgen-Workflow (asynchron):**
-//!     - Ersteller sendet eine Signaturanfrage an Bürge 1.
-//!     - Bürge 1 signiert und sendet die Signatur zurück.
-//!     - Ersteller fügt die Signatur an. Der Gutschein ist immer noch unvollständig.
-//!     - Der Prozess wird für Bürge 2 wiederholt.
-//! 4.  **Aktivierung:** Nach Erhalt der zweiten Signatur wird der Gutschein automatisch `Active`.
-//! 5.  **Transfer:** Der Ersteller sendet einen Teilbetrag an einen Empfänger.
-//! 6.  **Verifizierung:** Die neuen Kontostände werden bei beiden Teilnehmern geprüft.
-//! 7.  **Rohdaten-Ausgabe:** Der finale Zustand des Gutscheins wird als JSON ausgegeben.
+//! ### Simulated Steps:
+//! 1. **Setup:** Creates separate `AppService` instances for all participants (Creator, 2 Guarantors, Recipient).
+//! 2. **Voucher Creation:** The Creator creates a new voucher, which is initially incomplete.
+//! 3. **Guarantor Workflow (async):**
+//!    - Creator sends a signature request to Guarantor 1.
+//!    - Guarantor 1 signs and returns the signature.
+//!    - Creator attaches the signature. The voucher remains incomplete.
+//!    - The process is repeated for Guarantor 2.
+//! 4. **Activation:** Upon receiving the second signature, the voucher automatically becomes `Active`.
+//! 5. **Transfer:** The Creator sends a partial amount to a Recipient.
+//! 6. **Verification:** The new balances are verified for both participants.
+//! 7. **Raw Data Output:** The final voucher state is printed as JSON.
 
 use human_money_core::app_service::AppService;
 use human_money_core::models::secure_container::{ContainerConfig, PrivacyMode};

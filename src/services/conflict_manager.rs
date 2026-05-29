@@ -1,8 +1,8 @@
 //! # src/services/conflict_manager.rs
 //!
-//! Dieses Modul kapselt die gesamte Geschäftslogik zur Erkennung, Verifizierung
-//! und Verwaltung von Double-Spending-Konflikten. Es operiert auf den
-//! Datenstrukturen des Wallets, ist aber von der `Wallet`-Fassade entkoppelt.
+//! This module encapsulates the entire business logic for detection, verification,
+//! and management of double-spending conflicts. It operates on the wallet's
+//! data structures but is decoupled from the `Wallet` facade.
 
 use std::collections::HashMap;
 
@@ -18,13 +18,13 @@ use crate::services::utils::{get_current_timestamp, to_canonical_json};
 use crate::wallet::DoubleSpendCheckResult;
 use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat};
 
-/// Erstellt einen einzelnen, anonymisierten Fingerprint für eine gegebene Transaktion.
-/// Enthält die Logik zur Anonymisierung des `valid_until`-Zeitstempels.
+/// Creates a single, anonymized fingerprint for a given transaction.
+/// Contains the logic for anonymizing the `valid_until` timestamp.
 pub fn create_fingerprint_for_transaction(
     transaction: &Transaction,
     voucher: &Voucher,
 ) -> Result<TransactionFingerprint, VoucherCoreError> {
-    // 1. Anonymisiere den `valid_until`-Zeitstempel durch Runden auf das Monatsende.
+    // 1. Anonymize the `valid_until` timestamp by rounding to the end of the month.
     let valid_until_rounded = {
         let parsed_date = DateTime::parse_from_rfc3339(&voucher.valid_until).map_err(|e| {
             VoucherCoreError::Generic(format!("Failed to parse valid_until: {}", e))
@@ -54,14 +54,14 @@ pub fn create_fingerprint_for_transaction(
         end_of_month_dt.to_rfc3339_opts(SecondsFormat::Micros, true)
     };
 
-    // 2. Erstelle den Fingerprint mit dem gerundeten Zeitstempel.
-    // NEU: Wir verwenden das 'ds_tag' aus den TrapData als kanonischen DS-Tag.
-    // Dies stellt sicher, dass der Fingerprint exakt mit der mathematischen Falle
-    // übereinstimmt. Nur für 'init' (die keine Trap hat) berechnen wir den Tag manuell.
+    // 2. Create the fingerprint with the rounded timestamp.
+    // NEW: We use the 'ds_tag' from the TrapData as the canonical DS tag.
+    // This ensures that the fingerprint matches the mathematical trap exactly.
+    // Only for 'init' (which has no trap) do we calculate the tag manually.
     let (tag, u, blinded_id) = if let Some(trap) = &transaction.trap_data {
         (trap.ds_tag.clone(), trap.u.clone(), trap.blinded_id.clone())
     } else {
-        // Falls der Hash kürzer ist, mit Nullen auffüllen.
+        // Pad with zeros if the hash is shorter.
         // SECURITY FIX: Use raw bytes for concatenation
         let prev_hash_bytes = bs58::decode(&transaction.prev_hash)
             .into_vec()
@@ -89,9 +89,9 @@ pub fn create_fingerprint_for_transaction(
     })
 }
 
-/// Durchsucht den `VoucherStore` und erstellt die aktuellen Fingerprint-Sammlungen.
-/// Diese Funktion partitioniert die Fingerprints korrekt in die kritischen "eigenen"
-/// und die allgemeine "bekannte" Historie.
+/// Scans the `VoucherStore` and builds the current fingerprint collections.
+/// This function correctly partitions the fingerprints into the critical "own"
+/// history and the general "known" history.
 pub fn scan_and_rebuild_fingerprints(
     voucher_store: &VoucherStore,
     user_id: &str,
@@ -100,8 +100,8 @@ pub fn scan_and_rebuild_fingerprints(
     let mut known = KnownFingerprints::default();
 
     for instance in voucher_store.vouchers.values() {
-        // Ignoriere Endorsed-Gutscheine beim Fingerprint-Scan, da diese dem Nutzer
-        // nicht gehören und nicht zur Double-Spend-Erkennung beitragen dürfen.
+        // Ignore endorsed vouchers during fingerprint scan, since they do not belong
+        // to the user and must not contribute to double-spend detection.
         if matches!(
             instance.status,
             crate::wallet::instance::VoucherStatus::Endorsed { .. }
@@ -112,8 +112,8 @@ pub fn scan_and_rebuild_fingerprints(
             let fingerprint = create_fingerprint_for_transaction(tx, &instance.voucher)?;
 
             // Jede Transaktion wird zur allgemeinen lokalen Historie hinzugefügt.
-            // KORREKTUR: Duplikate verhindern. Ein Vec wird verwendet, um die Reihenfolge
-            // zu bewahren, aber wir prüfen vor dem Hinzufügen auf Eindeutigkeit.
+            // CORRECTION: Prevent duplicates. A Vec is used to preserve order,
+            // but we check for uniqueness before adding.
             let known_entry = known
                 .local_history
                 .entry(fingerprint.ds_tag.clone())
@@ -122,15 +122,15 @@ pub fn scan_and_rebuild_fingerprints(
                 known_entry.push(fingerprint.clone());
             }
 
-            // Nur wenn der Nutzer der Sender war, wird der Fingerprint auch zu den
-            // kritischen "eigenen" Fingerprints hinzugefügt.
+            // Only if the user was the sender is the fingerprint also added to
+            // the critical "own" fingerprints.
             if tx.sender_id.as_deref() == Some(user_id) {
                 own.history
                     .entry(fingerprint.ds_tag.clone())
                     .or_default()
-                    .push(fingerprint.clone()); // Duplikate hier sind unwahrscheinlich, aber zur Sicherheit
+                    .push(fingerprint.clone()); // Duplicates here are unlikely, but just to be safe
 
-                // Wenn der Gutschein zusätzlich noch aktiv ist, kommt er in die "Hot-List".
+                // If the voucher is also active, it is added to the "Hot-List".
                 if matches!(
                     instance.status,
                     crate::wallet::instance::VoucherStatus::Active
@@ -149,18 +149,18 @@ pub fn scan_and_rebuild_fingerprints(
     Ok((own, known))
 }
 
-/// Führt eine vollständige Double-Spend-Prüfung durch, indem eigene und fremde
-/// Fingerprints kombiniert und auf Kollisionen geprüft werden.
+/// Performs a complete double-spend check by combining own and foreign
+/// fingerprints and checking for collisions.
 pub fn check_for_double_spend(
     own_fingerprints: &OwnFingerprints,
     known_fingerprints: &KnownFingerprints,
 ) -> DoubleSpendCheckResult {
-    println!("\n[DEBUG CONFLICT_MANAGER] --- Starte check_for_double_spend ---");
+    println!("\n[DEBUG CONFLICT_MANAGER] --- Starting check_for_double_spend ---");
     let mut result = DoubleSpendCheckResult::default();
 
-    // 1. Alle bekannten Fingerprints aus allen Quellen dedupliziert zusammenführen.
-    // Wir verwenden ein HashSet, um Duplikate (z.B. zwischen history und current_own)
-    // automatisch zu eliminieren.
+    // 1. Deduplicate and merge all known fingerprints from all sources.
+    // We use a HashSet to automatically eliminate duplicates
+    // (e.g., between history and current_own).
     let mut all_fingerprints_map: HashMap<
         String,
         std::collections::HashSet<TransactionFingerprint>,
@@ -189,11 +189,11 @@ pub fn check_for_double_spend(
             .collect::<std::collections::HashSet<_>>();
 
         if unique_t_ids.len() > 1 {
-            // 3. Einen Konflikt als "verifizierbar" einstufen, wenn der Wallet-Besitzer
-            // die beteiligten Fingerprints aus irgendeiner Quelle kennt — entweder aus
-            // der eigenen Transaktionshistorie (local_history) oder via Gossip empfangen
-            // (foreign_fingerprints). In beiden Fällen tragen die Fingerprints die
-            // kryptographischen Daten (u, blinded_id) für die DID-Key-Extraktion.
+            // 3. Classify a conflict as "verifiable" if the wallet owner
+            // knows the involved fingerprints from any source — either from
+            // the own transaction history (local_history) or received via gossip
+            // (foreign_fingerprints). In both cases, the fingerprints carry the
+            // cryptographic data (u, blinded_id) for DID key extraction.
             let is_verifiable = known_fingerprints.local_history.contains_key(&hash)
                 || known_fingerprints.foreign_fingerprints.contains_key(&hash);
             if is_verifiable {
@@ -206,11 +206,11 @@ pub fn check_for_double_spend(
     result
 }
 
-/// Erstellt einen fälschungssicheren, portablen Beweis (`ProofOfDoubleSpend`).
+/// Creates a tamper-proof, portable proof (`ProofOfDoubleSpend`).
 ///
-/// Diese Funktion ist rein für die Erstellung des Beweis-Objekts zuständig.
-/// Sie erhält alle notwendigen, bereits validierten Daten und signiert sie.
-/// Die deterministische `proof_id` wird hier generiert.
+/// This function is solely responsible for creating the proof object.
+/// It receives all necessary, already validated data and signs it.
+/// The deterministic `proof_id` is generated here.
 ///
 /// # Arguments
 /// * `offender_id` - Die ID des Verursachers.
@@ -229,18 +229,18 @@ pub fn create_proof_of_double_spend(
     reporter_identity: &UserIdentity,
     non_redeemable_test_voucher: bool,
 ) -> Result<ProofOfDoubleSpend, VoucherCoreError> {
-    // 1. Beweis-Objekt erstellen und signieren.
+    // 1. Create and sign the proof object.
     // SECURITY FIX: Use raw bytes for proof_id derivation
     let offender_pk_bytes = if let Some(pos) = offender_id.find("@did:key:z") {
         bs58::decode(&offender_id[pos + 10..])
             .into_vec()
             .map_err(|_| VoucherCoreError::Generic("Invalid offender_id did format".to_string()))?
     } else {
-        // Fallback für anonyme Offender (Gossip-Soft-Proofs):
-        // Wenn kein DID-Format vorliegt, verwende den Hash des offender_id-Strings
-        // als Ersatz für die Public-Key-Bytes. Dies ermöglicht deterministische
-        // proof_id-Berechnung auch für Konflikte, bei denen die Identität des
-        // Täters noch nicht mathematisch extrahiert wurde.
+        // Fallback for anonymous offenders (Gossip soft proofs):
+        // If there is no DID format, use the hash of the offender_id string
+        // as a replacement for the public key bytes. This enables deterministic
+        // proof_id calculation even for conflicts where the identity of the
+        // offender has not yet been mathematically extracted.
         offender_id.as_bytes().to_vec()
     };
 
@@ -274,8 +274,8 @@ pub fn create_proof_of_double_spend(
     Ok(proof)
 }
 
-/// Erstellt und signiert eine Beilegungserklärung (`ResolutionEndorsement`) für einen
-/// bestehenden Konfliktbeweis.
+/// Creates and signs a resolution endorsement (`ResolutionEndorsement`) for an
+/// existing conflict proof.
 ///
 /// # Arguments
 /// * `proof_id` - Die ID des `ProofOfDoubleSpend`, der beigelegt wird.
@@ -291,7 +291,7 @@ pub fn create_and_sign_resolution_endorsement(
 ) -> Result<ResolutionEndorsement, VoucherCoreError> {
     let resolution_timestamp = get_current_timestamp();
 
-    // 1. Temporäres Objekt für Hashing erstellen (ohne ID und Signatur)
+    // 1. Create temporary object for hashing (without ID and signature)
     let endorsement_data = serde_json::json!({
         "proof_id": proof_id,
         "victim_id": victim_identity.user_id,
@@ -299,12 +299,12 @@ pub fn create_and_sign_resolution_endorsement(
         "notes": notes
     });
 
-    // 2. ID und Signatur erzeugen
+    // 2. Generate ID and signature
     let endorsement_id = get_hash(to_canonical_json(&endorsement_data)?);
     let signature_bytes = sign_ed25519(&victim_identity.signing_key, endorsement_id.as_bytes());
     let victim_signature = bs58::encode(signature_bytes.to_bytes()).into_string();
 
-    // 3. Finales Objekt zusammenbauen
+    // 3. Assemble final object
     Ok(ResolutionEndorsement {
         endorsement_id,
         proof_id: proof_id.to_string(),
@@ -315,8 +315,8 @@ pub fn create_and_sign_resolution_endorsement(
     })
 }
 
-/// Entfernt alle abgelaufenen Fingerprints aus den nicht-kritischen Speichern.
-/// Gibt die Anzahl der entfernten Einträge zurück.
+/// Removes all expired fingerprints from non-critical stores.
+/// Returns the number of removed entries.
 pub fn cleanup_known_fingerprints(known_fingerprints: &mut KnownFingerprints) -> usize {
     let now = get_current_timestamp();
     let mut count: usize = 0;
@@ -329,8 +329,8 @@ pub fn cleanup_known_fingerprints(known_fingerprints: &mut KnownFingerprints) ->
     count
 }
 
-/// Bereinigt die persistente Fingerprint-History basierend auf einer längeren Aufbewahrungsfrist.
-/// Gibt die Anzahl der entfernten Einträge zurück.
+/// Cleans up the persistent fingerprint history based on a longer retention period.
+/// Returns the number of removed entries.
 pub fn cleanup_expired_histories(
     own_fingerprints: &mut OwnFingerprints,
     known_fingerprints: &mut KnownFingerprints,
@@ -347,7 +347,7 @@ pub fn cleanup_expired_histories(
                 let purge_date = valid_until + *grace_period;
                 return *now < purge_date;
             }
-            true // Bei Parse-Fehler vorsichtshalber behalten
+            true // In case of a parse error, keep it to be safe
         });
         count += before - fps.len();
         !fps.is_empty()
@@ -361,7 +361,7 @@ pub fn cleanup_expired_histories(
                 let purge_date = valid_until + *grace_period;
                 return *now < purge_date;
             }
-            true // Bei Parse-Fehler vorsichtshalber behalten
+            true // In case of a parse error, keep it to be safe
         });
         count += before - fps.len();
         !fps.is_empty()
@@ -369,16 +369,16 @@ pub fn cleanup_expired_histories(
     count
 }
 
-/// Serialisiert die Historie der eigenen gesendeten Transaktionen für den Export.
+/// Serializes the history of own sent transactions for export.
 pub fn export_own_fingerprints(
     own_fingerprints: &OwnFingerprints,
 ) -> Result<Vec<u8>, VoucherCoreError> {
-    // HINWEIS: Exportiert wird die gesamte bekannte Historie, da dies die wertvollste
-    // Information für den Abgleich mit Peers ist.
+    // NOTE: The entire known history is exported, as this is the most valuable
+    // information for matching with peers.
     Ok(serde_json::to_vec(&own_fingerprints.history)?)
 }
 
-/// Importiert und merged fremde Fingerprints in den Speicher.
+/// Imports and merges foreign fingerprints into memory.
 pub fn import_foreign_fingerprints(
     known_fingerprints: &mut KnownFingerprints,
     data: &[u8],
@@ -400,11 +400,11 @@ pub fn import_foreign_fingerprints(
     Ok(new_count)
 }
 
-/// Verschlüsselt den Zeitstempel einer Transaktion für die Verwendung in einem L2-Kontext.
+/// Encrypts the timestamp of a transaction for use in an L2 context.
 ///
-/// Die Verschlüsselung erfolgt via XOR mit einem Schlüssel, der deterministisch aus der
-/// Transaktion selbst abgeleitet wird. Dies stellt sicher, dass jeder, der die
-/// widersprüchlichen Transaktionen besitzt, den Zeitstempel entschlüsseln kann.
+/// Encryption is performed via XOR with a key that is deterministically derived from the
+/// transaction itself. This ensures that anyone who possesses the
+/// conflicting transactions can decrypt the timestamp.
 ///
 /// # Arguments
 /// * `transaction` - Die Transaktion, deren Zeitstempel verschlüsselt werden soll.
@@ -412,7 +412,7 @@ pub fn import_foreign_fingerprints(
 /// # Returns
 /// Ein `u128` Wert, der den verschlüsselten Zeitstempel in Nanosekunden darstellt.
 pub fn encrypt_transaction_timestamp(transaction: &Transaction) -> Result<u128, VoucherCoreError> {
-    // a. Zeitstempel parsen und in Nanosekunden (u128) umwandeln.
+    // a. Parse timestamp and convert to nanoseconds (u128).
     let nanos = DateTime::parse_from_rfc3339(&transaction.t_time)
         .map_err(|e| VoucherCoreError::Generic(format!("Failed to parse timestamp: {}", e)))?
         .timestamp_nanos_opt()
@@ -420,7 +420,7 @@ pub fn encrypt_transaction_timestamp(transaction: &Transaction) -> Result<u128, 
             VoucherCoreError::Generic("Invalid timestamp for nanosecond conversion".to_string())
         })? as u128;
 
-    // b. Schlüssel (u128) aus dem Hash von prev_hash und t_id ableiten.
+    // b. Derive key (u128) from the hash of prev_hash and t_id.
     // SECURITY FIX: Use raw bytes for key derivation hash
     let prev_hash_bytes = bs58::decode(&transaction.prev_hash)
         .into_vec()
@@ -434,20 +434,19 @@ pub fn encrypt_transaction_timestamp(transaction: &Transaction) -> Result<u128, 
         VoucherCoreError::Generic("Failed to decode base58 hash for key derivation".to_string())
     })?;
 
-    // Wir nehmen die ersten 16 Bytes (128 Bits) des Hashes als Schlüssel.
+    // We take the first 16 bytes (128 bits) of the hash as the key.
     let key_bytes: [u8; 16] = key_hash_bytes[..16]
         .try_into()
         .map_err(|_| VoucherCoreError::Generic("Hash too short for key derivation".to_string()))?;
     let key = u128::from_le_bytes(key_bytes);
 
-    // c. Zeitstempel via XOR verschlüsseln und zurückgeben.
+    // c. Encrypt timestamp via XOR and return it.
     Ok(nanos ^ key)
 }
 
-/// Entschlüsselt den Zeitstempel einer Transaktion, der mit `encrypt_transaction_timestamp`
-/// verschlüsselt wurde.
+/// Decrypts the timestamp of a transaction that was encrypted with `encrypt_transaction_timestamp`.
 ///
-/// Da die Verschlüsselung auf XOR basiert, ist die Entschlüsselungsfunktion identisch.
+/// Since encryption is based on XOR, the decryption function is identical.
 ///
 /// # Arguments
 /// * `transaction` - Die Transaktion, zu der der Zeitstempel gehört.

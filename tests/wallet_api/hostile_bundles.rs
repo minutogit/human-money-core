@@ -212,6 +212,7 @@ fn test_rejection_of_inconsistent_split_math() {
         target_prefix: id_recipient.split(':').next().unwrap_or("").to_string(),
         timestamp: 1625097600,
         next_key_seed: "test".to_string(),
+        ..Default::default()
     };
     let payload_bytes = serde_json::to_vec(&payload).unwrap();
     let recipient_pubkey = human_money_core::services::crypto_utils::get_pubkey_from_user_id(&id_recipient).unwrap();

@@ -1,7 +1,7 @@
 /// src/main.rs
-/// Hauptfunktion des Programms.
+/// Main function of the program.
 ///
-/// Startet die Anwendung und führt grundlegende Initialisierungen durch.
+/// Starts the application and performs basic initializations.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting program...");
 

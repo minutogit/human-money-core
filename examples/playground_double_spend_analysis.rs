@@ -1,10 +1,10 @@
-// examples/playground_double_spend_analysis.rs
-
 //! # Playground: Double-Spend Analysis
 //!
 //! This playground demonstrates the internal mechanics of Double-Spend Detection (DS-Tag).
 //! It creates a legitimate voucher, splits it, and then simulates a double-spend attempt
 //! by resetting the wallet state and spending the same voucher again to a different recipient.
+//!
+//! Run with: `cargo run --example playground_double_spend_analysis`
 //!
 //! **Goal:** Prove that modifying the amount does NOT change the DS-Tag, thus preventing
 //! evasion of double-spend detection.

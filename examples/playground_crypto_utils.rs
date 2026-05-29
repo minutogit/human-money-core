@@ -1,6 +1,13 @@
-// examples/playground_crypto_utils.rs
-// run with: cargo run --example playground_crypto_utils
-// more playgrounds
+//! # Cryptographic Utilities Playground
+//!
+//! Demonstrates the library's core cryptographic primitives:
+//! - Mnemonic generation and Ed25519 keypair derivation
+//! - Conversions from Ed25519 to X25519 key formats
+//! - Diffie-Hellman ephemeral key exchange
+//! - Ed25519 message signing and verification
+//! - User ID generation, checksumming, and key recovery
+//!
+//! Run with: `cargo run --example playground_crypto_utils`
 
 use human_money_core::MnemonicLanguage;
 use hex;

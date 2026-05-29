@@ -6,3 +6,5 @@
 pub mod archive;
 pub mod file_storage;
 pub mod event_chunking;
+pub mod integrity;
+pub mod event_log;

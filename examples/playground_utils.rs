@@ -1,6 +1,10 @@
-// examples/playground_utils.rs
-// run with: cargo run --example playground_utils
-// demonstrates the timestamp utility functions
+//! # Timestamp Utility Functions Demonstration
+//!
+//! Demonstrates the library's internal timestamp generation utility functions,
+//! showing how to get the current timestamp, how to calculate future timestamps,
+//! and how to determine the end of a given year.
+//!
+//! Run with: `cargo run --example playground_utils`
 
 use human_money_core::services::utils::{get_current_timestamp, get_timestamp};
 

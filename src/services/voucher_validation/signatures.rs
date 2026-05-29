@@ -1,7 +1,8 @@
 use crate::error::{ValidationError, VoucherCoreError};
 use crate::models::voucher::{Voucher, VoucherSignature};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
-use crate::services::crypto_utils::{get_hash_from_slices, get_pubkey_from_user_id, verify_ed25519};
+use crate::services::crypto_identity::get_pubkey_from_user_id;
+use crate::services::crypto_utils::{get_hash_from_slices, verify_ed25519};
 use crate::services::utils::to_canonical_json;
 use ed25519_dalek::Signature;
 use std::collections::HashSet;

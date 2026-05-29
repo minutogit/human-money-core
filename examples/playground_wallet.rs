@@ -1,13 +1,12 @@
-// examples/playground_wallet.rs
-// run with: cargo run --example playground_wallet
-//! # examples/playground_wallet.rs
+//! # Wallet Facade Playground
 //!
-//! Ein kurzer Playground für die Wallet-Fassade.
-//! 1. Erstellt zwei Identitäten (Alice als Senderin, Bob als Empfänger).
-//! 2. Initialisiert Alices Wallet und fügt einen neuen Gutschein hinzu.
-//! 3. Alice sendet den Gutschein über `wallet.execute_multi_transfer_and_bundle` an Bob.
-//! 4. Gibt den finalen Gutschein-Zustand und den dabei erzeugten
-//!    anonymen Transaktions-Fingerprint im Terminal aus.
+//! Demonstrates the high-level `Wallet` facade.
+//! - Creates deterministic user identities (Alice and Bob)
+//! - Initializes a wallet instance and registers active vouchers
+//! - Executes a multi-transfer and bundles the resulting transaction data
+//! - Inspects and prints the generated transaction fingerprint
+//!
+//! Run with: `cargo run --example playground_wallet`
 
 use human_money_core::models::profile::UserIdentity;
 use human_money_core::models::voucher::{Address, Collateral, ValueDefinition};

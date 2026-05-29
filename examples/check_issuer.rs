@@ -1,3 +1,8 @@
+//! # Check Issuer Example
+//!
+//! This example prints the calculated User ID for the default developer issuer key.
+//!
+//! Run with: `cargo run --example check_issuer`
 
 use std::fs;
 use human_money_core::services::crypto_utils;

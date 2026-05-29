@@ -37,7 +37,7 @@ impl AppService {
         serde_json::to_vec(&request).map_err(AppFacadeError::from)
     }
 
-    /// Generiert eine L2StatusQuery (Lese-Anfrage) für den aktuellen Stand eines Gutscheins.
+    /// Generates an L2StatusQuery (read query) for the current status of a voucher.
     pub fn generate_l2_status_query(&self, local_instance_id: &str) -> Result<Vec<u8>, AppFacadeError> {
         let (wallet, _identity) = match &self.state {
             AppState::Unlocked {
@@ -79,7 +79,7 @@ impl AppService {
         serde_json::to_vec(&query).map_err(AppFacadeError::from)
     }
 
-    /// Verarbeitet ein L2Verdict und führt die entsprechende Aktion auf dem Wallet aus.
+    /// Processes an L2Verdict and executes the corresponding action on the wallet.
     pub fn process_l2_response(
         &mut self,
         local_instance_id: &str,
@@ -149,7 +149,7 @@ impl AppService {
 
                 match action {
                     VerdictAction::ConfirmLocal => {
-                        // Erfolgreich verankert, hier in Zukunft Status anpassen z.B. L2Confirmed
+                        // Successfully anchored, update status in the future e.g. L2Confirmed
                         (
                             Ok(()),
                             AppState::Unlocked {
@@ -223,9 +223,9 @@ impl AppService {
                         }
                     }
                     VerdictAction::TriggerSync { sync_point } => {
-                        // Hier würde die Synchronisations-Logik starten.
-                        // Im Moment geben wir einen Fehler zurück, der die Sync-Notwendigkeit beschreibt,
-                        // oder wir loggen es einfach.
+                        // This is where the synchronization logic would start.
+                        // For now, we return an error describing the sync requirement,
+                        // or we simply log it.
                         println!("Sync needed from: {}", sync_point);
                         (
                             Ok(()),

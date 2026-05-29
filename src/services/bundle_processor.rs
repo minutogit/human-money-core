@@ -1,8 +1,8 @@
 //! # src/services/bundle_processor.rs
 //!
-//! Kapselt die Logik für das Erstellen, Verschlüsseln, Öffnen und Verifizieren
-//! von Transaktionsbündeln (`TransactionBundle`) und ihren `SecureContainer`.
-//! Dieses Modul ist zustandslos und operiert nur auf den ihm übergebenen Daten.
+//! Encapsulates the logic for creating, encrypting, opening, and verifying
+//! transaction bundles (`TransactionBundle`) and their `SecureContainer`.
+//! This module is stateless and only operates on the data passed to it.
 
 use ed25519_dalek::Signature;
 
@@ -12,19 +12,20 @@ use crate::models::conflict::TransactionFingerprint;
 use crate::models::profile::{TransactionBundle, UserIdentity};
 use crate::models::secure_container::{PayloadType, PrivacyMode, SecureContainer};
 use crate::models::voucher::Voucher;
+use crate::services::crypto_identity::get_pubkey_from_user_id;
 use crate::services::crypto_utils::{
-    decode_base64, get_hash, get_pubkey_from_user_id, sign_ed25519, verify_ed25519,
+    decode_base64, get_hash, sign_ed25519, verify_ed25519,
 };
 use crate::services::secure_container_manager::{create_secure_container, open_secure_container};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
 use std::collections::HashMap;
 
-/// Erstellt ein `TransactionBundle`, verpackt es in einen `SecureContainer` und serialisiert diesen.
-/// Diese Funktion ist zustandslos und modifiziert kein Wallet.
+/// Creates a `TransactionBundle`, wraps it in a `SecureContainer` and serializes it.
+/// This function is stateless and does not modify any wallet.
 ///
 /// # Returns
-/// Ein Tupel, das die serialisierten Bytes des `SecureContainer` und das vollständig
-/// erstellte `TransactionBundle` (inkl. ID und Signatur) enthält.
+/// A tuple containing the serialized bytes of the `SecureContainer` and the fully
+/// created `TransactionBundle` (including ID and signature).
 pub fn create_and_encrypt_bundle(
     identity: &UserIdentity,
     vouchers: Vec<Voucher>,
@@ -66,12 +67,12 @@ pub fn create_and_encrypt_bundle(
     Ok((container_bytes, bundle))
 }
 
-/// Öffnet einen `SecureContainer`, validiert den Inhalt als `TransactionBundle` und
-/// verifiziert dessen digitale Signatur.
-/// Diese Funktion ist zustandslos und modifiziert kein Wallet.
+/// Opens a `SecureContainer`, validates the content as `TransactionBundle` and
+/// verifies its digital signature.
+/// This function is stateless and does not modify any wallet.
 ///
 /// # Returns
-/// Das validierte `TransactionBundle`.
+/// The validated `TransactionBundle`.
 pub fn open_and_verify_bundle(
     identity: &UserIdentity,
     container_bytes: &[u8],
@@ -85,18 +86,18 @@ pub fn open_and_verify_bundle(
     let decrypted_bundle_bytes = open_secure_container(&container, identity, None)?;
     let bundle: TransactionBundle = serde_json::from_slice(&decrypted_bundle_bytes)?;
 
-    // Kaskadierte Verifizierung:
-    // 1. Zuerst die Signatur des *Containers* verifizieren.
-    //    Dafür benötigen wir die sender_id aus dem entschlüsselten Bundle.
+    // Cascaded verification:
+    // 1. First verify the signature of the *container*.
+    //    For this, we need the sender_id from the decrypted bundle.
     verify_container_signature(&mut container, &bundle.sender_id)?;
 
-    // 2. Dann die interne Signatur des *Bundles* verifizieren.
+    // 2. Then verify the internal signature of the *bundle*.
     verify_bundle_signature(&bundle)?;
 
     Ok(bundle)
 }
 
-/// Verifiziert die digitale Signatur des SecureContainers.
+/// Verifies the digital signature of the SecureContainer.
 fn verify_container_signature(
     container: &mut SecureContainer,
     sender_id: &str,
@@ -112,7 +113,7 @@ fn verify_container_signature(
     Ok(())
 }
 
-/// Verifiziert die digitale Signatur eines `TransactionBundle`.
+/// Verifies the digital signature of a `TransactionBundle`.
 fn verify_bundle_signature(bundle: &TransactionBundle) -> Result<(), VoucherCoreError> {
     let sender_pubkey_ed = get_pubkey_from_user_id(&bundle.sender_id)?;
     let signature_bytes = bs58::decode(&bundle.sender_signature)

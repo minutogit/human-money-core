@@ -1,6 +1,11 @@
 //! # src/services/mod.rs
 pub mod bundle_processor;
 pub mod conflict_manager;
+pub mod crypto_constants;
+pub mod crypto_keys;
+pub mod crypto_symmetric;
+pub mod crypto_dh;
+pub mod crypto_identity;
 pub mod crypto_utils;
 pub mod decimal_utils;
 pub mod dynamic_policy_engine;

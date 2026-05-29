@@ -1,14 +1,18 @@
 //! # src/storage/file_storage.rs
 //!
-//! Eine Implementierung des `Storage`-Traits, die Daten in mehreren verschlüsselten
-//! Dateien im Dateisystem speichert.
+//! An implementation of the `Storage` trait that stores data in multiple encrypted
+//! files in the file system.
 
 use super::{AuthMethod, Storage, StorageError};
 use crate::models::conflict::CanonicalMetadataStore;
 use crate::models::conflict::{KnownFingerprints, OwnFingerprints, ProofStore};
 use crate::models::storage_integrity::INTEGRITY_FILE_NAME;
 use crate::models::profile::{BundleMetadataStore, UserIdentity, UserProfile, VoucherStore};
-use crate::services::crypto_utils;
+mod crypto_utils {
+    pub use crate::services::crypto_keys::derive_ed25519_keypair;
+    pub use crate::services::crypto_symmetric::{decrypt_data, encrypt_data};
+    pub use crate::services::crypto_utils::get_hash;
+}
 #[cfg(not(any(test, feature = "test-utils")))]
 use argon2::Argon2;
 use base64::{Engine as _, engine::general_purpose};
@@ -18,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::{fs, io::Write, path::PathBuf};
 use sysinfo::{Pid, System};
 
-// --- Interne Konstanten und Strukturen ---
+// --- Internal Constants and Structures ---
 
 const SALT_SIZE: usize = 16;
 const KEY_SIZE: usize = 32;
@@ -34,7 +38,7 @@ const SEAL_FILE_NAME: &str = "seal.enc";
 const LEGACY_EVENTS_FILE_NAME: &str = "events.json.enc";
 const EVENTS_DIR_NAME: &str = "events";
 
-/// Privates Modul zur Kapselung der Serde-Logik für Base64-Kodierung von Vektoren.
+/// Private module to encapsulate Serde logic for Base64 encoding of vectors.
 mod base64_serde {
     use super::*;
     use serde::{Deserializer, Serializer};
@@ -59,7 +63,7 @@ mod base64_serde {
     }
 }
 
-/// Privates Modul zur Kapselung der Serde-Logik für Base64-Kodierung von festen Arrays.
+/// Private module to encapsulate Serde logic for Base64 encoding of fixed arrays.
 mod base64_array_serde {
     use super::*;
     use serde::{Deserializer, Serializer};
@@ -88,7 +92,7 @@ mod base64_array_serde {
     }
 }
 
-/// Container für das verschlüsselte Nutzerprofil, inklusive Key-Wrapping-Informationen.
+/// Container for the encrypted user profile, including key-wrapping information.
 #[derive(Serialize, Deserialize)]
 struct ProfileStorageContainer {
     #[serde(with = "base64_array_serde")]
@@ -103,88 +107,88 @@ struct ProfileStorageContainer {
     encrypted_profile_payload: Vec<u8>,
 }
 
-/// Bündelt das Profil und den privaten Schlüssel für die Speicherung.
+/// Bundles the profile and the private key for storage.
 #[derive(Serialize, Deserialize, Clone)]
 struct ProfilePayload {
     profile: UserProfile,
     signing_key_bytes: Vec<u8>,
 }
 
-/// Container für den verschlüsselten Gutschein-Store.
+/// Container for the encrypted voucher store.
 #[derive(Serialize, Deserialize)]
 struct VoucherStorageContainer {
     #[serde(with = "base64_serde")]
     encrypted_store_payload: Vec<u8>,
 }
 
-/// Container für die verschlüsselten Bundle-Metadaten.
+/// Container for the encrypted bundle metadata.
 #[derive(Serialize, Deserialize)]
 struct BundleMetadataContainer {
     #[serde(with = "base64_serde")]
     encrypted_store_payload: Vec<u8>,
 }
 
-/// Container für den `KnownFingerprints`-Store.
+/// Container for the `KnownFingerprints` store.
 #[derive(Serialize, Deserialize)]
 struct KnownFingerprintsContainer {
     #[serde(with = "base64_serde")]
     encrypted_store_payload: Vec<u8>,
 }
 
-/// Container für den `OwnFingerprints`-Store.
+/// Container for the `OwnFingerprints` store.
 #[derive(Serialize, Deserialize)]
 struct OwnFingerprintsContainer {
     #[serde(with = "base64_serde")]
     encrypted_store_payload: Vec<u8>,
 }
 
-/// Container für den verschlüsselten Proof-Store.
+/// Container for the encrypted proof store.
 #[derive(Serialize, Deserialize)]
 struct ProofStorageContainer {
     #[serde(with = "base64_serde")]
     encrypted_store_payload: Vec<u8>,
 }
 
-/// Container für den `CanonicalMetadataStore`.
+/// Container for the `CanonicalMetadataStore`.
 #[derive(Serialize, Deserialize)]
 struct FingerprintMetadataContainer {
     #[serde(with = "base64_serde")]
     encrypted_store_payload: Vec<u8>,
 }
 
-/// Container für den verschlüsselten `LocalSealRecord`.
+/// Container for the encrypted `LocalSealRecord`.
 #[derive(Serialize, Deserialize)]
 struct SealStorageContainer {
     #[serde(with = "base64_serde")]
     encrypted_store_payload: Vec<u8>,
 }
 
-/// Container für das verschlüsselte Wallet-Event-Log.
+/// Container for the encrypted wallet event log.
 #[derive(Serialize, Deserialize)]
 struct EventsStorageContainer {
     #[serde(with = "base64_serde")]
     encrypted_store_payload: Vec<u8>,
 }
 
-// --- FileStorage Implementierung ---
+// --- FileStorage Implementation ---
 
-/// Eine Implementierung des `Storage`-Traits, die Daten in verschlüsselten Dateien speichert.
+/// An implementation of the `Storage` trait that stores data in encrypted files.
 pub struct FileStorage {
-    /// Der Pfad zum spezifischen, anonymen Unterordner des Benutzers.
+    /// The path to the user's specific, anonymous subdirectory.
     pub user_storage_path: PathBuf,
-    /// Der Pfad zur Sperrdatei für dieses Wallet.
+    /// The path to the lock file for this wallet.
     lock_file_path: PathBuf,
 }
 
 impl FileStorage {
-    /// Erstellt eine neue `FileStorage`-Instanz für ein spezifisches Benutzerverzeichnis.
+    /// Creates a new `FileStorage` instance for a specific user directory.
     ///
-    /// Diese Methode ist nun entkoppelt von der Logik zur Erzeugung des Pfadnamens
-    /// und nimmt den vollständigen Pfad zum Benutzerverzeichnis direkt entgegen.
+    /// This method is now decoupled from the path name generation logic
+    /// and accepts the full path to the user directory directly.
     ///
     /// # Arguments
-    /// * `user_storage_path` - Der vollständige Pfad zum Verzeichnis, in dem die
-    ///   verschlüsselten Wallet-Dateien dieses Profils gespeichert sind oder werden sollen.
+    /// * `user_storage_path` - The full path to the directory where the
+    ///   encrypted wallet files of this profile are or should be stored.
     pub fn new(user_storage_path: impl Into<PathBuf>) -> Self {
         let path_buf = user_storage_path.into();
         FileStorage {
@@ -193,7 +197,7 @@ impl FileStorage {
         }
     }
 
-    /// Lädt den `ProfileStorageContainer`, um an die Schlüssel-Metadaten zu gelangen.
+    /// Loads the `ProfileStorageContainer` to access the key metadata.
     fn load_profile_container(&self) -> Result<ProfileStorageContainer, StorageError> {
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
         if !profile_path.exists() {
@@ -207,7 +211,7 @@ impl FileStorage {
     /// Holt den Master-Dateischlüssel unter Verwendung eines Passworts.
 
     /// Holt den Master-Dateischlüssel unter Verwendung einer beliebigen `AuthMethod`.
-    /// Diese Logik wird von allen `load_*`-Methoden benötigt.
+    /// This logic is required by all `load_*` methods.
     fn get_master_key_from_auth(&self, auth: &AuthMethod) -> Result<[u8; KEY_SIZE], StorageError> {
         let profile_container = self.load_profile_container()?;
         let file_key_bytes = get_file_key(auth, &profile_container)?;
@@ -232,8 +236,8 @@ impl Storage for FileStorage {
         &self,
         auth: &AuthMethod,
     ) -> Result<(UserProfile, VoucherStore, UserIdentity), StorageError> {
-        // Stelle sicher, dass der Ordner existiert, bevor wir lesen.
-        // Das Erstellen ist Aufgabe von `save_wallet` oder `create_profile`.
+        // Ensure the directory exists before reading.
+        // Creation is the task of `save_wallet` or `create_profile`.
         if !self.user_storage_path.exists() {
             return Err(StorageError::NotFound);
         }
@@ -246,13 +250,13 @@ impl Storage for FileStorage {
             serde_json::from_slice(&profile_container_bytes)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
-        // Entschlüssle den Master-Dateischlüssel basierend auf der Authentifizierungsmethode.
+        // Decrypt the master file key based on the authentication method.
         let file_key_bytes = get_file_key(auth, &profile_container)?;
         let file_key: [u8; KEY_SIZE] = file_key_bytes
             .try_into()
             .map_err(|_| StorageError::InvalidFormat("Invalid file key length".to_string()))?;
 
-        // Entschlüssele den Payload, der Profil und privaten Schlüssel enthält.
+        // Decrypt the payload containing the profile and private key.
         let payload_bytes =
             crypto_utils::decrypt_data(&file_key, &profile_container.encrypted_profile_payload)
                 .map_err(|e| {
@@ -261,7 +265,7 @@ impl Storage for FileStorage {
         let payload: ProfilePayload = serde_json::from_slice(&payload_bytes)
             .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
-        // Lade den VoucherStore.
+        // Load the VoucherStore.
         let store = if store_path.exists() {
             let store_container_bytes = fs::read(store_path)?;
             let store_container: VoucherStorageContainer =
@@ -278,7 +282,7 @@ impl Storage for FileStorage {
             VoucherStore::default()
         };
 
-        // Rekonstruiere die UserIdentity.
+        // Reconstruct the UserIdentity.
         let signing_key_bytes: &[u8; 32] = payload
             .signing_key_bytes
             .as_slice()
@@ -305,7 +309,7 @@ impl Storage for FileStorage {
         identity: &UserIdentity,
         auth: &AuthMethod,
     ) -> Result<(), StorageError> {
-        fs::create_dir_all(&self.user_storage_path)?; // Erstellt den Ordner, falls nicht vorhanden
+        fs::create_dir_all(&self.user_storage_path)?; // Creates the folder if not present
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
         let store_path = self.user_storage_path.join(VOUCHER_STORE_FILE_NAME);
 
@@ -318,7 +322,7 @@ impl Storage for FileStorage {
         };
 
         if !profile_path.exists() {
-            // Erstmaliges Speichern: Generiere alle Schlüssel und Salze.
+            // Initial save: Generate all keys and salts.
             let mut new_file_key = [0u8; KEY_SIZE];
             OsRng.fill_bytes(&mut new_file_key);
             file_key = new_file_key;
@@ -354,7 +358,7 @@ impl Storage for FileStorage {
                 encrypted_profile_payload: profile_payload,
             };
         } else {
-            // Aktualisieren eines bestehenden Wallets: Lade Container, entschlüssele Schlüssel und verschlüssele neuen Payload.
+            // Update an existing wallet: Load container, decrypt key, and encrypt new payload.
             let existing_container_bytes = fs::read(&profile_path)?;
             let mut existing_container: ProfileStorageContainer =
                 serde_json::from_slice(&existing_container_bytes)
@@ -372,7 +376,7 @@ impl Storage for FileStorage {
             profile_container = existing_container;
         }
 
-        // Speichere den VoucherStore.
+        // Save the VoucherStore.
         let store_payload =
             crypto_utils::encrypt_data(&file_key, &serde_json::to_vec(store).unwrap())
                 .map_err(|e| StorageError::Generic(e.to_string()))?;
@@ -380,7 +384,7 @@ impl Storage for FileStorage {
             encrypted_store_payload: store_payload,
         };
 
-        // Atomares Schreiben über temporäre Dateien.
+        // Atomic write via temporary files.
         let profile_tmp_path = self
             .user_storage_path
             .join(format!("{}.tmp", PROFILE_FILE_NAME));
@@ -757,7 +761,7 @@ impl Storage for FileStorage {
 
         let file_key = self.get_master_key_from_auth(auth)?;
 
-        // Wenn der Store leer ist, löschen wir die Datei, falls sie existiert.
+        // If the store is empty, we delete the file if it exists.
         if metadata.is_empty() {
             if metadata_path.exists() {
                 fs::remove_file(metadata_path)?;
@@ -792,16 +796,16 @@ impl Storage for FileStorage {
         name: &str,
         data: &[u8],
     ) -> Result<(), StorageError> {
-        // 1. Hole den Master-Schlüssel, der für alle Operationen dieses Wallets verwendet wird.
+        // 1. Get the master key used for all operations of this wallet.
         let master_key = self.get_master_key_from_auth(auth)?;
 
-        // 2. Erstelle einen sicheren Dateipfad (isoliert im Profil-Ordner).
-        // Wir verzichten auf den user_hash im Dateinamen, um Privacy-Leaks zu vermeiden.
+        // 2. Create a secure file path (isolated in the profile folder).
+        // We do not use the user_hash in the file name to avoid privacy leaks.
         let path = self
             .user_storage_path
             .join(format!("generic_{}.enc", name));
 
-        // 3. Verschlüssele die Daten und speichere sie.
+        // 3. Encrypt the data and save it.
         let ciphertext = crypto_utils::encrypt_data(&master_key, data)
             .map_err(|e| StorageError::Generic(e.to_string()))?;
         fs::write(&path, ciphertext).map_err(StorageError::Io)?;
@@ -809,17 +813,17 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    /// Lädt einen beliebigen, benannten und verschlüsselten Datenblock.
+    /// Loads any named and encrypted data block.
     fn load_arbitrary_data(
         &self,
         _user_id: &str,
         auth: &AuthMethod,
         name: &str,
     ) -> Result<Vec<u8>, StorageError> {
-        // 1. Leite den Master-Schlüssel aus der Authentifizierungsmethode ab.
+        // 1. Derive the master key from the authentication method.
         let master_key = self.get_master_key_from_auth(auth)?;
 
-        // 2. Konstruiere den Pfad, unter dem die Daten erwartet werden.
+        // 2. Construct the path where the data is expected.
         let path = self
             .user_storage_path
             .join(format!("generic_{}.enc", name));
@@ -828,19 +832,19 @@ impl Storage for FileStorage {
             return Err(StorageError::NotFound);
         }
 
-        // 3. Lese und entschlüssele die Daten.
+        // 3. Read and decrypt the data.
         let ciphertext = fs::read(&path).map_err(StorageError::Io)?;
         crypto_utils::decrypt_data(&master_key, &ciphertext)
             .map_err(|_| StorageError::AuthenticationFailed)
     }
 
     fn test_session_key(&self, session_key: &[u8; 32]) -> Result<(), StorageError> {
-        // Lade den Profil-Container
+        // Load the profile container
         let profile_container = self.load_profile_container()?;
 
-        // Versuche, den verschlüsselten Dateischlüssel mit dem gegebenen Session-Key zu entschlüsseln
-        // Dies wird fehlschlagen, wenn der Session-Key nicht mit dem richtigen Passwort abgeleitet wurde
-        let _decrypted = crate::services::crypto_utils::decrypt_data(
+        // Try to decrypt the encrypted file key with the given session key
+        // This will fail if the session key was not derived with the correct password
+        let _decrypted = crypto_utils::decrypt_data(
             session_key,
             &profile_container.password_wrapped_key_with_nonce,
         )
@@ -849,10 +853,10 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    // --- Implementierung der Sperrlogik ---
+    // --- Lock Logic Implementation ---
 
     fn lock(&self) -> Result<bool, StorageError> {
-        // Stelle sicher, dass das Verzeichnis existiert.
+        // Ensure the directory exists.
         fs::create_dir_all(&self.user_storage_path)?;
 
         let current_pid = std::process::id();
@@ -867,23 +871,23 @@ impl Storage for FileStorage {
             })?;
 
             // --- RE-ENTRANCY CHECK ---
-            // Wenn die PID in der Datei UNSERE ist, haben wir den Lock schon. Alles gut.
+            // If the PID in the file is OURS, we already have the lock. All good.
             if pid_val == current_pid {
                 return Ok(false);
             }
 
-            // Prüfe, ob der Prozess noch läuft
+            // Check if the process is still running
             let mut s = System::new();
             s.refresh_processes();
 
             if s.process(Pid::from_u32(pid_val)).is_some() {
-                // Prozess läuft noch -> Fehler!
+                // Process still running -> Error!
                 return Err(StorageError::LockFailed(format!(
                     "Wallet wird bereits von einem anderen Prozess (PID: {}) verwendet.",
-                    pid_val // FIX: Hier fehlte das Argument
+                    pid_val // FIX: Here the argument was missing
                 )));
             } else {
-                // Prozess tot -> Stale Lock
+                // Process dead -> Stale Lock
                 eprintln!(
                     "Veraltete Sperre (Stale Lock) von PID {} gefunden und entfernt.",
                     pid_val
@@ -891,7 +895,7 @@ impl Storage for FileStorage {
             }
         }
 
-        // Sperre erlangen: Eigene PID in die Lock-Datei schreiben.
+        // Acquire lock: Write own PID into lock file.
         let mut file = fs::File::create(&self.lock_file_path)?;
         file.write_all(current_pid.to_string().as_bytes())?;
 
@@ -900,12 +904,12 @@ impl Storage for FileStorage {
 
     fn unlock(&self) -> Result<(), StorageError> {
         if self.lock_file_path.exists() {
-            // Wir sollten prüfen, ob WIR der Besitzer sind, aber für RAII
-            // gehen wir davon aus, dass `unlock` nur aufgerufen wird, wenn `lock`
-            // erfolgreich war. Ein einfaches Löschen ist hier ausreichend.
+            // We should check if WE are the owner, but for RAII
+            // we assume that `unlock` is only called if `lock`
+            // was successful. A simple deletion is sufficient here.
             fs::remove_file(&self.lock_file_path)?;
         }
-        // Wenn die Datei nicht existiert, ist das auch "unlocked".
+        // If the file does not exist, it is also "unlocked".
         Ok(())
     }
 
@@ -1047,33 +1051,33 @@ impl Storage for FileStorage {
         let mut hashes = std::collections::HashMap::new();
         
         let entries = fs::read_dir(&self.user_storage_path).map_err(StorageError::Io)?;
-        // Scanne Hauptverzeichnis
+        // Scan main directory
         for entry in entries {
             let entry = entry.map_err(StorageError::Io)?;
             let file_name = entry.file_name();
             let name_str = file_name.to_string_lossy();
 
-            // Ignoriere Verzeichnisse
+            // Ignore directories
             if entry.file_type().map_err(StorageError::Io)?.is_dir() {
                 continue;
             }
 
-            // Ignoriere die Integrity-Datei selbst (Zirkelbezug vermeiden)
+            // Ignore the integrity file itself (avoid circular reference)
             if name_str == INTEGRITY_FILE_NAME {
                 continue;
             }
 
-            // Ignoriere versteckte Dateien (z.B. .lock)
+            // Ignore hidden files (e.g. .lock)
             if name_str.starts_with('.') {
                 continue;
             }
 
-            // Ignoriere den Session-Anker (neu und alt, um Privacy-Leaks in Integrity-Reports zu vermeiden)
+            // Ignore the session anchor (new and old, to avoid privacy leaks in integrity reports)
             if name_str.starts_with("generic___storage_session_anchor") {
                 continue;
             }
 
-            // Ignoriere Seal-Dateien (diese werden bereits logisch über den seal_hash im IntegrityRecord geschützt)
+            // Ignore seal files (these are already logically protected via the seal_hash in the IntegrityRecord)
             if name_str == SEAL_FILE_NAME || (name_str.starts_with("seal_") && name_str.ends_with(".json")) {
                 continue;
             }
@@ -1083,7 +1087,7 @@ impl Storage for FileStorage {
             }
         }
 
-        // Scanne Events-Unterverzeichnis
+        // Scan events subdirectory
         let events_dir = self.user_storage_path.join(EVENTS_DIR_NAME);
         if events_dir.exists() && events_dir.is_dir() {
             let event_entries = fs::read_dir(&events_dir).map_err(StorageError::Io)?;
@@ -1130,7 +1134,7 @@ impl Storage for FileStorage {
             let legacy_events: Vec<crate::models::wallet_event::WalletEvent> = serde_json::from_slice(&decrypted)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
-            // Gruppiere und schreibe in Chunks
+            // Group and write in chunks
             let mut groups: std::collections::HashMap<String, Vec<crate::models::wallet_event::WalletEvent>> = std::collections::HashMap::new();
             for ev in legacy_events {
                 let month = ev.timestamp.format("%Y_%m").to_string();
@@ -1142,7 +1146,7 @@ impl Storage for FileStorage {
 
             for (month, m_events) in groups {
                 let chunk_path = events_dir.join(format!("{}.json.enc", month));
-                // Da wir migrieren, überschreiben wir oder hängen an (falls schon neue Chunks existierten)
+                // Since we are migrating, we overwrite or append (if new chunks already existed)
                 let existing_events: Vec<crate::models::wallet_event::WalletEvent> = if chunk_path.exists() {
                     let c_bytes = fs::read(&chunk_path)?;
                     let c_container: EventsStorageContainer = serde_json::from_slice(&c_bytes)
@@ -1155,8 +1159,8 @@ impl Storage for FileStorage {
                     Vec::new()
                 };
                 
-                // Deduplizierung in O(N): Filtere m_events, um nur solche anzuhängen, 
-                // die noch nicht in existing_events existieren. Bewahrt die strikte Reihenfolge!
+                // Deduplication in O(N): Filter m_events to only append those
+                // that do not already exist in existing_events. Preserves strict order!
                 let existing_ids: std::collections::HashSet<String> = 
                     existing_events.iter().map(|e| e.event_id.clone()).collect();
                 
@@ -1177,11 +1181,11 @@ impl Storage for FileStorage {
                 fs::rename(&tmp_path, &chunk_path)?;
             }
 
-            // Abschluss der Migration
+            // Completion of migration
             fs::remove_file(&legacy_path)?;
         }
 
-        // 2. Neue Events gruppieren und anhängen
+        // 2. Group and append new events
         let mut groups: std::collections::HashMap<String, Vec<crate::models::wallet_event::WalletEvent>> = std::collections::HashMap::new();
         for ev in events {
             let month = ev.timestamp.format("%Y_%m").to_string();
@@ -1205,7 +1209,7 @@ impl Storage for FileStorage {
                 Vec::new()
             };
 
-            // Deduplizierung beim regulären Append (Schutz vor partiellen Abstürzen)
+            // Deduplication during regular append (protection against partial crashes)
             let existing_ids: std::collections::HashSet<String> = 
                 all_m_events.iter().map(|e| e.event_id.clone()).collect();
             
@@ -1240,7 +1244,7 @@ impl Storage for FileStorage {
         let mut current_offset = offset;
         let mut remaining_limit = limit;
 
-        // 1. Liste alle Chunks auf
+        // 1. List all chunks
         let events_dir = self.user_storage_path.join(EVENTS_DIR_NAME);
         let mut chunks = Vec::new();
         if events_dir.exists() && events_dir.is_dir() {
@@ -1254,10 +1258,10 @@ impl Storage for FileStorage {
             }
         }
 
-        // Sortiere absteigend (neueste zuerst)
+        // Sort descending (newest first)
         chunks.sort_by(|a, b| b.cmp(a));
 
-        // 2. Chunks sequenziell laden
+        // 2. Load chunks sequentially
         for chunk_name in chunks {
             if remaining_limit == 0 { break; }
 
@@ -1270,8 +1274,8 @@ impl Storage for FileStorage {
             let mut m_events: Vec<crate::models::wallet_event::WalletEvent> = serde_json::from_slice(&c_decrypted)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
             
-            // Innerhalb eines Chunks sind Events aufsteigend sortiert.
-            // Da wir die NEUESTEN zuerst wollen, müssen wir sie umkehren oder von hinten lesen.
+            // Inside a chunk, events are sorted in ascending order.
+            // Since we want the NEWEST first, we must reverse them or read from the back.
             m_events.reverse();
 
             let len = m_events.len();
@@ -1288,7 +1292,7 @@ impl Storage for FileStorage {
             current_offset = 0;
         }
 
-        // 3. Legacy-Support (falls Migration noch nicht lief)
+        // 3. Legacy support (if migration has not run yet)
         if remaining_limit > 0 {
             let legacy_path = self.user_storage_path.join(LEGACY_EVENTS_FILE_NAME);
             if legacy_path.exists() {
@@ -1315,9 +1319,9 @@ impl Storage for FileStorage {
     }
 }
 
-// --- Private Hilfsfunktionen ---
+// --- Private Helper Functions ---
 
-/// Entschlüsselt den Master-Dateischlüssel (`file_key`) basierend auf der Authentifizierungsmethode.
+/// Decrypts the master file key (`file_key`) based on the authentication method.
 fn get_file_key(
     auth: &AuthMethod,
     container: &ProfileStorageContainer,
@@ -1357,7 +1361,7 @@ fn get_argon2() -> Argon2<'static> {
     Argon2::default()
 }
 
-/// Leitet einen kryptographischen Schlüssel aus einem Passwort und Salt ab.
+/// Derives a cryptographic key from a password and salt.
 fn derive_key_from_password(
     password: &str,
     salt: &[u8; SALT_SIZE],
@@ -1383,7 +1387,7 @@ fn derive_key_from_password(
     }
 }
 
-/// Leitet einen kryptographischen Schlüssel aus dem privaten Schlüssel der Identität ab.
+/// Derives a cryptographic key from the private key of the identity.
 fn derive_key_from_signing_key(
     signing_key: &SigningKey,
     salt: &[u8; SALT_SIZE],
