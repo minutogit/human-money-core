@@ -1,6 +1,6 @@
 ---
 project: human-money-core
-version: "0.2.19"
+version: "0.2.20"
 phase: "active-development"
 health: "green"
 last_updated: "2026-05-31"
@@ -56,6 +56,8 @@ The core library is stable and feature-rich. Current focus areas:
 
 ## Recent Milestones
 
+- [x] **VoucherCoreError Refactoring & Categorization**: Grouped and documented all `VoucherCoreError` variants with category comments and detailed docstrings, ensuring 100% Rustdoc coverage and clean error modularity.
+- [x] **Examples Directory Documentation**: Added `//!` doc comments to all nine playground files in `examples/` and created `examples/README.md` to cleanly index and document all example scripts.
 - [x] **Transaction Lifecycle Documentation**: Documented the 7-step transactional safety lifecycle (including rollback semantics, state isolation, generation checks, and process-wide locks) of `with_transactional_mut` and `TransactionOutcome` in `AppService`.
 - [x] **UserIdError & GetPubkeyError thiserror Migration**: Migrated the manually implemented Display and Error traits for `UserIdError` and `GetPubkeyError` in `crypto_identity.rs` to use `thiserror` for project-wide consistency and architectural cleanliness.
 - [x] **Cryptographic Utilities Modularity**: Decoupled the monolithic 1289-line `crypto_utils.rs` by splitting its functions into domain-specific sub-modules (`crypto_keys`, `crypto_symmetric`, `crypto_dh`, `crypto_identity`) and systematically refactored internal codebase imports to point directly to these modules, improving structural maintainability while preserving backward compatibility via the public facade.

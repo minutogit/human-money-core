@@ -1,3 +1,11 @@
+//! # Layer 2 Mock Node Example
+//!
+//! This example implements a simplified, functional in-memory Layer 2 Node.
+//! It demonstrates how the wallet interacts with L2 nodes to query voucher statuses,
+//! request locks, and verify cryptographic response envelopes.
+//!
+//! Run with: `cargo run --example l2_mock_node`
+
 use human_money_core::models::layer2_api::{
     L2LockEntry, L2LockRequest, L2ResponseEnvelope, L2StatusQuery, L2Verdict,
 };
