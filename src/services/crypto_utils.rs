@@ -3,7 +3,7 @@
 //! Cryptographic utilities. This serves as a facade re-exporting the sub-modules
 //! while retaining core mathematical, hashing, and signature logic.
 
-// Symmetrische Verschlüsselung (re-exports)
+// Symmetric encryption (re-exports)
 pub use super::crypto_keys::*;
 pub use super::crypto_symmetric::*;
 pub use super::crypto_dh::*;
@@ -12,7 +12,7 @@ pub use super::crypto_identity::*;
 // BIP39 Mnemonic Phrase (delegated to mnemonic module)
 use crate::services::mnemonic::{MnemonicLanguage, MnemonicProcessor};
 
-// Symmetrische Verschlüsselung und Hashes
+// Symmetric encryption and hashes
 use sha2::{Digest as _, Sha512};
 use ed25519_dalek::{
     Signature, Signer, SigningKey, Verifier, VerifyingKey as EdPublicKey,
@@ -105,8 +105,8 @@ pub fn get_hash_from_slices(inputs: &[&[u8]]) -> String {
     use sha3::Digest;
     let mut hasher = sha3::Sha3_256::new();
     for input in inputs {
-        // Hängt die Länge des Segments davor (als 4-Byte Little Endian),
-        // macht es unmöglich, Grenzen zu verschieben.
+        // Prepends the segment length (as 4-byte Little Endian),
+        // making it impossible to shift boundaries.
         hasher.update(&(input.len() as u32).to_le_bytes());
         hasher.update(input);
     }
@@ -114,21 +114,21 @@ pub fn get_hash_from_slices(inputs: &[&[u8]]) -> String {
     bs58::encode(hash_bytes).into_string()
 }
 
-/// Erzeugt einen 4-stelligen, Base58-kodierten Kurz-Hash aus der User ID für
-/// speichereffizientes Tracking von bekannten Peers.
-/// Gibt die letzten 4 Bytes des Hashes als Array zurück, um Speicher zu sparen.
-/// ACHTUNG: Dies ist ein verkürzter Hash und dient nur als Heuristik.
+/// Generates a 4-character, base58-encoded short hash from the user ID for
+/// memory-efficient tracking of known peers.
+/// Returns the last 4 bytes of the hash as an array to save memory.
+/// WARNING: This is a truncated hash and serves only as a heuristic.
 pub fn get_short_hash_from_user_id(user_id: &str) -> [u8; 4] {
     let hash = get_hash(user_id.as_bytes());
 
-    // 1. Base58-String zurück in Bytes dekodieren
+    // 1. Decode base58 string back to bytes
     let hash_bytes = bs58::decode(&hash).into_vec().unwrap_or_default();
 
     let len = hash_bytes.len();
     let mut short_hash = [0u8; 4];
 
     if len >= 4 {
-        // 2. Die letzten 4 Bytes kopieren (beste Streuung)
+        // 2. Copy the last 4 bytes (best entropy spread)
         short_hash.copy_from_slice(&hash_bytes[len - 4..]);
     } else if len > 0 { // mutants: skip -- unreachable: SHA3-256 always produces 32 bytes, base58 never yields <4 bytes
         // Fallback: pad with leading zeros if hash is unexpectedly short.
@@ -137,8 +137,8 @@ pub fn get_short_hash_from_user_id(user_id: &str) -> [u8; 4] {
     short_hash
 }
 
-/// Konvertiert einen Ed25519 Public Key in einen EdwardsPoint auf der Kurve.
-/// Dies wird benötigt, um die ID in der Trap-Gleichung ($V = m \cdot U + ID$) zu verwenden.
+/// Converts an Ed25519 public key into an EdwardsPoint on the curve.
+/// This is required to use the ID in the trap equation ($V = m \cdot U + ID$).
 pub fn ed25519_pk_to_curve_point(ed_pub: &EdPublicKey) -> Result<EdwardsPoint, VoucherCoreError> {
     CompressedEdwardsY::from_slice(ed_pub.as_bytes())
         .map_err(|_| VoucherCoreError::Crypto("Invalid Ed25519 public key bytes".to_string()))?

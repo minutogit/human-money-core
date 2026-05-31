@@ -1,27 +1,27 @@
 //! # src/app_service/data_encryption.rs
 //!
-//! Enthält die `AppService`-Methoden zur Ver- und Entschlüsselung von
-//! beliebigen, anwendungsspezifischen Daten.
+//! Contains the `AppService` methods for encrypting and decrypting
+//! arbitrary, application-specific data.
 
 use super::{AppService, AppState, AppFacadeError};
 use crate::storage::{AuthMethod, Storage, WalletLockGuard};
 
 impl AppService {
-    // --- Generische Datenverschlüsselung ---
+    // --- Generic Data Encryption ---
 
-    /// Speichert einen beliebigen Byte-Slice verschlüsselt auf der Festplatte.
+    /// Saves an arbitrary byte slice encrypted on the disk.
     ///
-    /// Diese Methode nutzt den gleichen sicheren Verschlüsselungsmechanismus wie das Wallet selbst.
-    /// Sie ist ideal, um anwendungsspezifische Daten (z.B. Konfigurationen, Kontakte)
-    /// sicher abzulegen, ohne dass die App eigene Schlüssel verwalten muss.
+    /// This method uses the same secure encryption mechanism as the wallet itself.
+    /// It is ideal to store application-specific data (e.g. configurations, contacts)
+    /// securely without the app having to manage its own keys.
     ///
     /// # Arguments
-    /// * `name` - Ein eindeutiger Name für die Daten, dient als Dateiname (z.B. "settings").
-    /// * `data` - Der `&[u8]`-Slice, der gespeichert werden soll.
-    /// * `password` - Das aktuelle Passwort des Benutzers zum Verschlüsseln.
+    /// * `name` - A unique name for the data, serves as the filename (e.g. "settings").
+    /// * `data` - The `&[u8]` slice to be stored.
+    /// * `password` - The current password of the user for encryption.
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Wallet gesperrt ist oder der Schreibvorgang misslingt.
+    /// Fails if the wallet is locked or the write operation fails.
     pub fn save_encrypted_data(
         &mut self,
         name: &str,
@@ -34,19 +34,19 @@ impl AppService {
                     AppState::Unlocked {
                         storage, identity, ..
                     } => {
-                        // KORREKTUR: Modus A verwendet AuthMethod::Password
+                        // CORRECTION: Mode A uses AuthMethod::Password
                         let auth_method = AuthMethod::Password(pwd_str);
                         let result = {
-                            // --- SPERRE ERLANGEN (RAII) ---
+                            // --- ACQUIRE LOCK (RAII) ---
                             let _lock_guard =
                                 WalletLockGuard::new(storage).map_err(AppFacadeError::from)?;
-                            // --- SPERRE ENDE ---
+                            // --- END LOCK ---
                             storage
                                 .save_arbitrary_data(&identity.user_id, &auth_method, name, data)
                                 .map_err(AppFacadeError::from)
                         };
 
-                        // Siegel und Integrität aktualisieren (außer für den Session-Anker, da dieser ignoriert wird)
+                        // Update seal and integrity (except for the session anchor, as it is ignored)
                         if result.is_ok() && name != "__storage_session_anchor" {
                             let _ = self.update_seal_after_state_change(Some(pwd_str));
                         }
@@ -63,16 +63,16 @@ impl AppService {
                         storage, identity, ..
                     } => {
                         let result = {
-                            // --- SPERRE ERLANGEN (RAII) ---
+                            // --- ACQUIRE LOCK (RAII) ---
                             let _lock_guard =
                                 WalletLockGuard::new(storage).map_err(AppFacadeError::from)?;
-                            // --- SPERRE ENDE ---
+                            // --- END LOCK ---
                             storage
                                 .save_arbitrary_data(&identity.user_id, &auth_method, name, data)
                                 .map_err(AppFacadeError::from)
                         };
 
-                        // Siegel und Integrität aktualisieren (via Session-Key) (außer für den Session-Anker)
+                        // Update seal and integrity (via session key) (except for the session anchor)
                         if result.is_ok() && name != "__storage_session_anchor" {
                             let _ = self.update_seal_after_state_change(None);
                         }
@@ -84,18 +84,18 @@ impl AppService {
         };
     }
 
-    /// Lädt und entschlüsselt einen zuvor gespeicherten, beliebigen Datenblock.
+    /// Loads and decrypts a previously saved, arbitrary data block.
     ///
     /// # Arguments
-    /// * `name` - Der Name der zu ladenden Daten.
-    /// * `password` - Das Passwort des Benutzers. Aus Sicherheitsgründen wird das Passwort
-    ///   für jede Leseoperation benötigt, um den Entschlüsselungsschlüssel abzuleiten.
+    /// * `name` - The name of the data to be loaded.
+    /// * `password` - The password of the user. For security reasons, the password
+    ///   is required for each read operation to derive the decryption key.
     ///
     /// # Returns
-    /// Die entschlüsselten Daten als `Vec<u8>`.
+    /// The decrypted data as `Vec<u8>`.
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Wallet gesperrt ist, das Passwort falsch ist oder die Daten nicht gefunden werden können.
+    /// Fails if the wallet is locked, the password is incorrect, or the data cannot be found.
     pub fn load_encrypted_data(
         &mut self,
         name: &str,
@@ -107,7 +107,7 @@ impl AppService {
                     AppState::Unlocked {
                         storage, identity, ..
                     } => {
-                        // KORREKTUR: Modus A verwendet AuthMethod::Password
+                        // CORRECTION: Mode A uses AuthMethod::Password
                         let auth_method = AuthMethod::Password(pwd_str);
                         storage
                             .load_arbitrary_data(&identity.user_id, &auth_method, name)

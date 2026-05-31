@@ -32,9 +32,9 @@ pub fn ed25519_pub_to_x25519(ed_pub: &EdPublicKey) -> X25519PublicKey {
     X25519PublicKey::from(x25519_bytes)
 }
 
-/// Helper: Baut den deterministischen Info-String für HKDF auf.
-/// Die `recipient_id` wird zwingend einbezogen, um eine kryptographische Trennung
-/// zwischen verschiedenen SAIs (Separated Account Identities) desselben Nutzers zu erzwingen.
+/// Helper: Builds the deterministic info string for HKDF.
+/// The `recipient_id` is mandatory to enforce cryptographic separation
+/// between different SAIs (Separated Account Identities) of the same user.
 pub fn build_hkdf_info(pk1: &X25519PublicKey, pk2: &X25519PublicKey, recipient_id: &str) -> Vec<u8> {
     let mut info = Vec::with_capacity(HKDF_X25519_EXCHANGE_LABEL.len() + 64 + recipient_id.len() + 2);
     info.extend_from_slice(HKDF_X25519_EXCHANGE_LABEL);
@@ -87,14 +87,14 @@ pub fn perform_diffie_hellman(
     their_public: &X25519PublicKey,
     recipient_id: &str,
 ) -> Result<[u8; 32], VoucherCoreError> {
-    // 1. Eigenen Public Key ableiten (für Kontext-Bindung)
+    // 1. Derive own public key (for context binding)
     let our_public = X25519PublicKey::from(&our_secret);
 
     // 2. Rohes Shared Secret berechnen
     let shared_secret = our_secret.diffie_hellman(their_public);
 
-    // SICHERHEIT: Prüfen auf "non-contributory" Verhalten (z.B. Punkt im Unendlichen/Null).
-    // Dies verhindert Angriffe durch schwache Schlüssel oder manipulierte Public Keys.
+    // SECURITY: Check for non-contributory behavior (e.g. point at infinity/null).
+    // This prevents attacks using weak keys or manipulated public keys.
     if !shared_secret.was_contributory() {
         return Err(VoucherCoreError::Crypto(
             "Diffie-Hellman exchange was non-contributory (weak key).".to_string(),
@@ -111,23 +111,23 @@ pub fn perform_diffie_hellman(
     // - Unidirectionality does not require separation into Send/Receive keys.
     let hkdf = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
 
-    // KANONISIERUNG & Info-String Bau mit SAI-Binding
+    // CANONICALIZATION & info string construction with SAI-Binding
     let info = build_hkdf_info(&our_public, their_public, recipient_id);
 
-    // Ableitung des Schlüssels
+    // Derivation of the key
     let mut symmetric_key = [0u8; 32];
-    // expand sollte hier niemals fehlschlagen, da die Ausgabelänge fix ist.
+    // expand should never fail here since the output length is fixed.
     hkdf.expand(&info, &mut symmetric_key)
         .map_err(|_| VoucherCoreError::Crypto("HKDF expansion failed".to_string()))?;
 
     Ok(symmetric_key)
 }
 
-/// Konvertiert einen Ed25519 Signaturschlüssel in einen X25519 geheimen Schlüssel für Diffie-Hellman.
+/// Converts an Ed25519 signature key to an X25519 secret key for Diffie-Hellman.
 ///
-/// Dies ist das Gegenstück zum öffentlichen Schlüssel `ed25519_pub_to_x25519`. Es ermöglicht die
-/// Ableitung eines Schlüssel-Vereinbarungsschlüssels (X25519) aus einem langfristigen
-/// Identitätsschlüssel (Ed25519).
+/// This is the counterpart to the public key `ed25519_pub_to_x25519`. It enables the
+/// derivation of a key agreement key (X25519) from a long-term
+/// identity key (Ed25519).
 ///
 /// # Arguments
 ///
@@ -137,27 +137,27 @@ pub fn perform_diffie_hellman(
 ///
 /// Der entsprechende statische geheime X25519-Schlüssel (`StaticSecret`).
 ///
-/// # Sicherheit
+/// # Security
 ///
-/// Die Konvertierung folgt der Standardmethode, bei der der Seed des privaten Ed25519-Schlüssels
-/// mit SHA-512 gehasht wird. Die unteren 32 Bytes des Hashes werden verwendet. Die Funktion
-/// `StaticSecret::from` führt anschließend das für X25519 erforderliche Clamping durch.
+/// The conversion follows the standard method, where the seed of the private Ed25519 key
+/// is hashed with SHA-512. The lower 32 bytes of the hash are used. The function
+/// `StaticSecret::from` then performs the clamping required for X25519.
 pub fn ed25519_sk_to_x25519_sk(ed_sk: &SigningKey) -> StaticSecret {
     let mut hasher = Sha512::new();
     hasher.update(&ed_sk.to_bytes());
     let hash = hasher.finalize();
-    // Wir müssen dem Compiler den Zieltyp für `try_into` explizit angeben.
+    // We must explicitly specify the target type for `try_into` to the compiler.
     let key_bytes: [u8; 32] = hash[..32]
         .try_into()
         .expect("SHA512 hash is guaranteed to be 64 bytes");
     StaticSecret::from(key_bytes)
 }
 
-/// Verschlüsselt den Privacy Guard Payload für den Empfänger.
+/// Encrypts the Privacy Guard payload for the recipient.
 ///
 /// # Arguments
-/// * `payload_bytes` - Die serialisierten Daten des RecipientPayload.
-/// * `recipient_public_key_ed` - Der permanente Public Key (Ed25519) des Empfängers.
+/// * `payload_bytes` - The serialized data of the RecipientPayload.
+/// * `recipient_public_key_ed` - The permanent public key (Ed25519) of the recipient.
 pub fn encrypt_recipient_payload(
     payload_bytes: &[u8],
     recipient_public_key_ed: &EdPublicKey,
@@ -174,11 +174,11 @@ pub fn encrypt_recipient_payload(
     Ok(encode_base64(&privacy_guard_bytes))
 }
 
-/// Entschlüsselt den Privacy Guard Payload für den Empfänger.
+/// Decrypts the Privacy Guard payload for the recipient.
 ///
 /// # Arguments
-/// * `privacy_guard_base64` - Der Base64-kodierte Guard-String.
-/// * `recipient_secret_key` - Der permanente Signing Key des Empfängers (wird in StaticSecret umgewandelt).
+/// * `privacy_guard_base64` - The Base64-encoded guard string.
+/// * `recipient_secret_key` - The permanent signing key of the recipient (will be converted to StaticSecret).
 ///
 /// # Returns
 /// Der entschlüsselte Byte-Vector (JSON Payload).
@@ -214,7 +214,7 @@ pub fn decrypt_recipient_payload(
     let shared_point = recipient_secret_x.diffie_hellman(&ephemeral_pk_x);
     let shared_secret_bytes = shared_point.as_bytes();
 
-    // 5. HKDF Derivation mit SAI-Binding
+    // 5. HKDF Derivation with SAI-Binding
     let recipient_public_x = X25519PublicKey::from(&recipient_secret_x);
     let info = build_hkdf_info(&ephemeral_pk_x, &recipient_public_x, recipient_id);
 

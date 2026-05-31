@@ -1,7 +1,7 @@
 //! # src/archive/file_archive.rs
 //!
-//! Eine Implementierung des `VoucherArchive`-Traits, die jeden Gutschein-Zustand
-//! als separate JSON-Datei in einer strukturierten Verzeichnishierarchie speichert.
+//! An implementation of the `VoucherArchive` trait that stores each voucher state
+//! as a separate JSON file in a structured directory hierarchy.
 use super::{ArchiveError, VoucherArchive};
 use crate::models::voucher::Transaction;
 use crate::models::voucher::Voucher;
@@ -9,10 +9,10 @@ use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::services::utils::to_canonical_json;
 use std::{fs, path::PathBuf};
 
-/// Ein minimaler Platzhalter, der das `VoucherArchive`-Trait implementiert,
-/// aber keine Daten speichert oder findet. Wird verwendet, wenn kein echtes
-/// Archive-Backend konfiguriert ist, damit die Beweis-Erstellung trotzdem
-/// mit den lokalen Daten im voucher_store durchgeführt werden kann.
+/// A minimal placeholder that implements the `VoucherArchive` trait,
+/// but does not store or find any data. Used when no real
+/// archive backend is configured, so that proof generation can still
+/// be performed with local data in the voucher_store.
 pub struct NoOpArchive;
 
 impl VoucherArchive for NoOpArchive {
@@ -38,23 +38,23 @@ impl VoucherArchive for NoOpArchive {
     }
 }
 
-/// Eine Implementierung des `VoucherArchive`-Traits, die auf dem Dateisystem basiert.
+/// An implementation of the `VoucherArchive` trait based on the file system.
 ///
-/// Die Struktur ist: `base_path/voucher_id/transaction_id.json`
+/// The structure is: `base_path/voucher_id/transaction_id.json`
 pub struct FileVoucherArchive {
     archive_directory: PathBuf,
 }
 
 impl FileVoucherArchive {
-    /// Erstellt eine neue `FileVoucherArchive`-Instanz für ein bestimmtes Basisverzeichnis.
+    /// Creates a new `FileVoucherArchive` instance for a specific base directory.
     pub fn new(path: impl Into<PathBuf>) -> Self {
         FileVoucherArchive {
             archive_directory: path.into(),
         }
     }
 
-    // TODO: Eine Bereinigungsfunktion (`purge_deep_archive`) implementieren,
-    //       die Zustände nach Ablauf einer Aufbewahrungsfrist löscht.
+    // TODO: Implement a cleanup function (`purge_deep_archive`)
+    //       that deletes states after a retention period has expired.
 }
 
 impl VoucherArchive for FileVoucherArchive {
@@ -64,25 +64,25 @@ impl VoucherArchive for FileVoucherArchive {
         _owner_id: &str,
         _standard: &VoucherStandardDefinition,
     ) -> Result<(), ArchiveError> {
-        // TODO: Die Archiv-Dateien sollten verschlüsselt werden.
+        // TODO: The archive files should be encrypted.
 
-        // Jeder Zustand wird durch die ID der letzten Transaktion eindeutig identifiziert.
+        // Each state is uniquely identified by the ID of the last transaction.
         let last_tx = voucher.transactions.last().ok_or_else(|| {
             ArchiveError::Generic("Cannot archive voucher with no transactions.".to_string())
         })?;
 
-        // Erstelle ein Unterverzeichnis für jeden Gutschein, um die Zustände zu gruppieren.
+        // Create a subdirectory for each voucher to group the states.
         let voucher_dir = self.archive_directory.join(&voucher.voucher_id);
         fs::create_dir_all(&voucher_dir)?;
 
         let file_path = voucher_dir.join(format!("{}.json", &last_tx.t_id));
         if file_path.exists() {
-            return Ok(()); // Bereits archiviert, alles in Ordnung.
+            return Ok(()); // Already archived, all good.
         }
 
         let json_content = to_canonical_json(voucher)?;
 
-        // Atomares Schreiben
+        // Atomic write
         let temp_file_path = voucher_dir.join(format!("{}.json.tmp", &last_tx.t_id));
         fs::write(&temp_file_path, json_content)?;
         fs::rename(&temp_file_path, &file_path)?;
@@ -106,7 +106,7 @@ impl VoucherArchive for FileVoucherArchive {
         &self,
         t_id: &str,
     ) -> Result<Option<(Voucher, Transaction)>, ArchiveError> {
-        // Durchsuche alle Unterverzeichnisse (jedes `voucher_id`-Verzeichnis).
+        // Search all subdirectories (each `voucher_id` directory).
         for voucher_dir_entry in fs::read_dir(&self.archive_directory)? {
             let voucher_dir_path = voucher_dir_entry?.path();
             if voucher_dir_path.is_dir() {
@@ -126,7 +126,7 @@ impl VoucherArchive for FileVoucherArchive {
         Ok(None)
     }
     fn find_voucher_by_tx_id(&self, t_id: &str) -> Result<Option<Voucher>, ArchiveError> {
-        // Nutze die bereits vorhandene Logik von `find_transaction_by_id`.
+        // Use the existing logic of `find_transaction_by_id`.
         if let Some((voucher, _)) = self.find_transaction_by_id(t_id)? {
             Ok(Some(voucher))
         } else {

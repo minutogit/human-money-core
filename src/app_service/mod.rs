@@ -301,7 +301,7 @@ impl AppService {
                     }
                 };
 
-                // NEU: Prüfe ob unser RAM-State aktuell ist (Reload-Before-Write)
+                // NEW: Check if our RAM state is up to date (Reload-Before-Write)
                 let mut current_wallet = wallet;
                 let disk_generation = match storage.read_generation() {
                     Ok(gen_val) => gen_val,

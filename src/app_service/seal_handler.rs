@@ -1,8 +1,8 @@
 //! # src/app_service/seal_handler.rs
 //!
-//! Enthält die WalletSeal-Orchestrierungslogik des `AppService`.
-//! Verwaltet den Lebenszyklus des Siegels, das lokale Sync-Tracking
-//! und die Fork-Erkennung mit Hard Lock.
+//! Contains the WalletSeal orchestration logic of the `AppService`.
+//! Manages the lifecycle of the seal, local sync tracking,
+//! and fork detection with Hard Lock.
 
 use super::{AppService, AppState, AppFacadeError};
 use crate::error::VoucherCoreError;
@@ -14,10 +14,10 @@ use crate::storage::{AuthMethod, Storage};
 use crate::services::crypto_utils::get_hash;
 
 impl AppService {
-    /// Prüft die Integrität aller Speicher-Items gegen den Storage Integrity Record.
+    /// Checks the integrity of all storage items against the Storage Integrity Record.
     ///
     /// # Arguments
-    /// * `password` - Optional, für die Authentifizierung.
+    /// * `password` - Optional, for authentication.
     pub fn check_integrity(
         &mut self,
         password: Option<&str>,
@@ -49,7 +49,7 @@ impl AppService {
                         .map_err(AppFacadeError::from)
                     }
                     (None, Some(_)) => Ok(crate::models::storage_integrity::IntegrityReport::MissingIntegrityRecord),
-                    (Some(_), None) => Ok(crate::models::storage_integrity::IntegrityReport::Valid), // Sollte nicht vorkommen
+                    (Some(_), None) => Ok(crate::models::storage_integrity::IntegrityReport::Valid), // Should not happen
                     (None, None) => Ok(crate::models::storage_integrity::IntegrityReport::Valid), // Migration
                 }
             }
@@ -57,14 +57,14 @@ impl AppService {
         }
     }
 
-    /// Repariert den Storage Integrity Record, indem der aktuelle Zustand der Dateien als "korrekt" akzeptiert wird.
+    /// Repairs the Storage Integrity Record by accepting the current state of the files as "correct".
     ///
-    /// Diese Methode sollte nur aufgerufen werden, wenn der Nutzer die Integritätswarnung
-    /// explizit bestätigt hat (z.B. "OK, ich akzeptiere diese Änderungen").
-    /// Erzeugt einen neuen, signierten Integrity Record für alle aktuell vorhandenen Datensätze.
+    /// This method should only be called if the user has explicitly confirmed the integrity
+    /// warning (e.g., "OK, I accept these changes").
+    /// Creates a new, signed Integrity Record for all currently existing records.
     ///
     /// # Arguments
-    /// * `password` - Optional, für die Authentifizierung.
+    /// * `password` - Optional, for authentication.
     pub fn repair_integrity(&mut self, password: Option<&str>) -> Result<(), AppFacadeError> {
         match &mut self.state {
             AppState::Unlocked {
@@ -77,23 +77,23 @@ impl AppService {
                 let auth = Self::resolve_auth_method(password, session_cache)
                     .map_err(AppFacadeError::from)?;
 
-                // 1. Aktuelles Siegel laden (Basispunkt für den Integrity Record)
+                // 1. Load current seal (base point for the integrity record)
                 let record = storage
                     .load_seal(&identity.user_id, &auth)
                     .map_err(AppFacadeError::from)?
                     .ok_or_else(|| AppFacadeError::ValidationError("No seal found. Cannot repair integrity without seal.".to_string()))?;
 
-                // 2. Aktuelle Hashes von der Platte lesen
+                // 2. Read current hashes from disk
                 let hashes = storage.get_all_item_hashes().map_err(AppFacadeError::from)?;
 
-                // 3. Neuen Integrity Record erstellen
+                // 3. Create a new integrity record
                 let integrity_record = IntegrityManager::create_integrity_record(
                     identity,
                     &record.seal,
                     hashes,
                 ).map_err(AppFacadeError::from)?;
 
-                // 4. Speichern
+                // 4. Save
                 storage
                     .save_integrity(&identity.user_id, &integrity_record)
                     .map_err(AppFacadeError::from)?;
@@ -104,9 +104,9 @@ impl AppService {
         }
     }
 
-    // --- B) Lokales Sync-Tracking (Upload-Workflow für Client-Apps) ---
+    // --- B) Local Sync Tracking (Upload Workflow for Client Apps) ---
 
-    /// Gibt den aktuellen Sync-Status des lokalen Siegels zurück.
+    /// Returns the current sync status of the local seal.
     pub fn get_seal_sync_status(&self) -> Result<SyncStatus, AppFacadeError> {
         match &self.state {
             AppState::Unlocked {
@@ -129,7 +129,7 @@ impl AppService {
         }
     }
 
-    /// Liefert das reine `WalletSeal` (ohne Metadaten!) als JSON-Byte-Array für den Upload.
+    /// Returns the raw `WalletSeal` (without metadata!) as a JSON byte array for upload.
     pub fn get_seal_for_upload(&self) -> Result<Option<Vec<u8>>, AppFacadeError> {
         match &self.state {
             AppState::Unlocked {
@@ -159,7 +159,7 @@ impl AppService {
         }
     }
 
-    /// Bestätigt den erfolgreichen Upload eines Siegels an den Server.
+    /// Acknowledges the successful upload of a seal to the server.
     pub fn acknowledge_seal_sync(
         &mut self,
         uploaded_seal_hash: &str,
@@ -274,7 +274,7 @@ impl AppService {
         result
     }
 
-    // --- C) Remote Sync Prüfung & Hard Lock ---
+    // --- C) Remote Sync Check & Hard Lock ---
 
     /// Vergleicht ein vom Server heruntergeladenes Siegel mit dem lokalen Siegel.
     pub fn compare_remote_seal(
@@ -326,7 +326,7 @@ impl AppService {
                     Ok(crate::models::seal::SealValidationResult::Valid) => {},
                     Ok(crate::models::seal::SealValidationResult::LegacyValid) => {},
                     Ok(crate::models::seal::SealValidationResult::DeviceMismatch { .. }) => {
-                        // Remote-Siegel von anderem Gerät ist für Vergleich OK (Indikator für Fork-Check)
+                        // Remote seal from other device is OK for comparison (indicator for fork check)
                     },
                     Ok(other) => {
                         self.state = AppState::Unlocked {
@@ -395,7 +395,7 @@ impl AppService {
         result
     }
 
-    // --- Interne Hilfsmethoden ---
+    // --- Internal helper methods ---
 
     fn get_read_auth(
         &self,
@@ -422,12 +422,12 @@ impl AppService {
         let seal_record = storage.load_seal("", &auth).ok().flatten();
 
         if let Some(record) = &seal_record {
-            // Fork-Lock prüfen
+            // Check fork lock
             if record.is_locked_due_to_fork {
                 return Err(AppFacadeError::WalletLockedDueToFork("Security Lockdown: Wallet is locked due to a detected fork. Recovery required.".to_string()));
             }
 
-            // Siegel-Integrität und Instance-ID prüfen
+            // Check seal integrity and instance ID
             let validation = SealManager::verify_seal_integrity(
                 &record.seal,
                 &record.seal.payload.user_id,
@@ -460,7 +460,7 @@ impl AppService {
                 }
             }
 
-            // Lade den ROHEN own_fingerprints Store direkt aus dem Storage
+            // Load the RAW own_fingerprints store directly from storage
             let raw_own_fingerprints = storage
                 .load_own_fingerprints("", &auth)
                 .map_err(AppFacadeError::from)?;
@@ -490,7 +490,7 @@ impl AppService {
             .load_seal(&identity.user_id, &auth)
             .map_err(AppFacadeError::from)?;
 
-        // Nur migrieren, wenn nötig (Legacy-Binding oder kein Siegel vorhanden)
+        // Only migrate if necessary (legacy binding or no seal present)
         if needs_legacy_binding || seal_record.is_none() {
             let state_hash = {
                 let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
@@ -499,7 +499,7 @@ impl AppService {
             };
 
             let migrated_seal = if needs_legacy_binding && seal_record.is_some() {
-                // Legacy Migration: Existierendes Siegel updaten, um den tx_nonce zu erhalten
+                // Legacy Migration: Update existing seal to preserve the tx_nonce
                 let existing_record = seal_record.unwrap();
                 SealManager::update_seal(
                     &existing_record.seal,
@@ -509,7 +509,7 @@ impl AppService {
                 )
                 .map_err(AppFacadeError::from)?
             } else {
-                // Komplett neues Siegel (Genesis)
+                // Completely new seal (Genesis)
                 SealManager::create_initial_seal(
                     &identity.user_id,
                     identity,
@@ -528,7 +528,7 @@ impl AppService {
                 .save_seal(&identity.user_id, &auth, &new_record)
                 .map_err(AppFacadeError::from)?;
 
-            // Integrität für das neue migrierte Siegel initialisieren
+            // Initialize integrity for the new migrated seal
             let hashes = storage.get_all_item_hashes().unwrap_or_default();
             if let Ok(ir) = crate::services::integrity_manager::IntegrityManager::create_integrity_record(
                 identity,

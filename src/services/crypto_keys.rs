@@ -59,14 +59,14 @@ pub fn derive_ed25519_keypair(
     Ok((public_key, signing_key))
 }
 
-/// Leitet ein kurzlebiges (ephemeral) Schlüsselpaar deterministisch aus einem Master-Schlüssel und einem Seed ab.
-/// Verwendet HKDF-SHA256.
+/// Derives an ephemeral keypair deterministically from a master key and a seed.
+/// Uses HKDF-SHA256.
 ///
 /// # Key Binding (Context Protection)
-/// Um Context-Hopping zu verhindern, wird das `context_prefix` (z.B. "minuto:regio")
-/// in die Ableitung eingebunden. Dadurch ist der resultierende Schlüssel mathematisch
-/// an diesen Kontext gebunden. Ein Versuch, denselben Seed für einen anderen Kontext
-/// zu verwenden, führt zu einem anderen Schlüssel.
+/// To prevent context-hopping, the `context_prefix` (e.g., "minuto:regio")
+/// is incorporated into the derivation. This mathematically binds the resulting
+/// key to this specific context. Attempting to use the same seed in a different
+/// context yields a completely different key.
 pub fn derive_ephemeral_key_pair(
     master_key: &SigningKey,
     seed: &[u8],
@@ -93,24 +93,24 @@ pub fn derive_ephemeral_key_pair(
     Ok((signing_key, public_key))
 }
 
-/// Erzeugt ein zufälliges oder deterministisches Ed25519-Schlüsselpaar für Testzwecke.
+/// Generates a random or deterministic Ed25519 keypair for test purposes.
 ///
-/// # Warnung
-/// **Diese Funktion ist NICHT für den produktiven Einsatz geeignet!**
-/// Der deterministische Pfad verwendet eine einfache Hash-Funktion und ist nicht
-/// gegen Brute-Force-Angriffe gehärtet. Er dient ausschließlich dazu, in Tests
-/// reproduzierbare Schlüsselpaare zu erzeugen.
+/// # Warning
+/// **This function is NOT suitable for production use!**
+/// The deterministic path uses a simple hash function and is not hardened
+/// against brute-force attacks. It is intended solely to generate reproducible
+/// keypairs in tests.
 ///
 /// # Arguments
-/// * `seed` - Ein optionaler String.
-///   - `None`: Erzeugt ein vollständig zufälliges, neues Schlüsselpaar.
-///   - `Some(seed_str)`: Erzeugt ein deterministisches Schlüsselpaar aus dem Seed-String.
+/// * `seed` - An optional string.
+///   - `None`: Generates a completely random, new keypair.
+///   - `Some(seed_str)`: Generates a deterministic keypair from the seed string.
 ///
 /// # Returns
-/// Ein Tupel, das den öffentlichen und den privaten Ed25519-Schlüssel enthält.
+/// A tuple containing the public and private Ed25519 keys.
 pub fn generate_ed25519_keypair_for_tests(seed: Option<&str>) -> (EdPublicKey, SigningKey) {
     if let Some(seed_str) = seed {
-        // Deterministischer Pfad: Seed hashen, um einen 32-Byte-Schlüssel zu erzeugen.
+        // Deterministic path: Hash seed to generate a 32-byte key.
         let mut hasher = Sha512::new();
         hasher.update(seed_str.as_bytes());
         let hash_result = hasher.finalize();
@@ -121,8 +121,8 @@ pub fn generate_ed25519_keypair_for_tests(seed: Option<&str>) -> (EdPublicKey, S
         let signing_key = SigningKey::from_bytes(&key_bytes);
         (signing_key.verifying_key(), signing_key)
     } else {
-        // Sicherer, zufälliger Pfad für allgemeine Tests.
-        // Wir müssen RngCore importieren, um die fill_bytes-Methode nutzen zu können.
+        // Secure, random path for general tests.
+        // We need to import RngCore to use the fill_bytes method.
         let mut csprng = OsRng;
         let mut key_bytes = [0u8; 32];
         csprng.fill_bytes(&mut key_bytes); // Benötigt `use rand_core::RngCore;`
@@ -173,7 +173,7 @@ mod tests {
         assert_eq!(priv_hex, "5c74be5597f0750c4afeb185c0f08df35dffc55cb858fae6bf64a45427bccb86");
         
         let pub_hex = hex::encode(pub_key.as_bytes());
-        // Der öffentliche Schlüssel ergibt sich deterministisch aus dem privaten Seed
+        // The public key is derived deterministically from the private seed
         assert_eq!(pub_hex, "8e07aa919abc1427adf010d10467dfba6f1f354b6707916dc9c059771ec13ecd");
     }
 

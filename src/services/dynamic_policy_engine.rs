@@ -35,7 +35,7 @@ impl DynamicPolicyEngine {
             let _ = context.add_variable("Transaction", t_val);
         }
 
-        // Custom Functions registrieren
+        // Register custom functions
         Self::register_custom_functions(&mut context);
 
         let result = program
@@ -89,7 +89,7 @@ impl DynamicPolicyEngine {
 
     /// Registers the custom functions needed for checking domains (like Decimal checks)
     fn register_custom_functions(context: &mut Context) {
-        // Implementierung der in .dev/Business Rules Engines.md spezifizierten Custom Function
+        // Implementation of the custom function specified in .dev/Business Rules Engines.md
         context.add_function("check_decimals", |amount_str: std::sync::Arc<String>, max_places: i64| -> bool {
             if let Ok(dec) = Decimal::from_str(&amount_str) {
                 return dec.scale() <= max_places as u32;
@@ -118,21 +118,21 @@ mod tests {
             ]
         });
 
-        // Basis Objekt-Zugriff
+        // Basic object access
         assert_eq!(
             DynamicPolicyEngine::evaluate_rule("Voucher.nominal_value.unit == 'Minuto'", &voucher_json, None),
             Ok(true)
         );
 
-        // Test der injizierten Custom Function check_decimals
-        // 50.000 hat 3 Nachkommastellen
+        // Test the injected custom function check_decimals
+        // 50.000 has 3 decimal places
         assert_eq!(
             DynamicPolicyEngine::evaluate_rule("check_decimals(Voucher.nominal_value.amount, 3)", &voucher_json, None),
             Ok(true)
         );
         assert_eq!(
             DynamicPolicyEngine::evaluate_rule("check_decimals(Voucher.nominal_value.amount, 2)", &voucher_json, None),
-            Ok(false) // Schlägt korrekt fehl, da 3 > 2
+            Ok(false) // Fails correctly because 3 > 2
         );
     }
 }

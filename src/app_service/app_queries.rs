@@ -1,25 +1,25 @@
 //! # src/app_service/app_queries.rs
 //!
-//! Enthält alle reinen Lese-Operationen (Queries) des `AppService`.
+//! Contains all read-only operations (Queries) of the `AppService`.
 use super::{AppService, AppState, AppFacadeError};
 use crate::models::profile::PublicProfile;
 use crate::wallet::{AggregatedBalance, AssetClassSummary, instance::VoucherStatus};
 use crate::wallet::{VoucherDetails, VoucherSummary};
 
 impl AppService {
-    // --- Datenabfragen (Queries) ---
+    // --- Data Queries (Queries) ---
 
-    /// Gibt eine Liste von Zusammenfassungen aller Gutscheine im Wallet zurück.
-    /// Die Liste kann optional nach Gutschein-Standards (UUIDs), Status und Test-Status gefiltert werden.
+    /// Returns a list of summaries of all vouchers in the wallet.
+    /// The list can optionally be filtered by voucher standards (UUIDs), status, and test status.
     ///
     /// # Arguments
-    /// * `voucher_standard_uuid_filter` - Ein optionaler Slice (`&[String]`) von UUIDs.
-    /// * `status_filter`                - Ein optionaler Slice (`&[VoucherStatus]`) von Status-Enums.
-    /// * `test_filter`                  - Ein optionaler Boolean. Wenn `Some(true)`, werden nur Testgutscheine zurückgegeben.
-    ///                                    Wenn `None`, wird nicht nach Test-Status gefiltert.
+    /// * `voucher_standard_uuid_filter` - An optional slice (`&[String]`) of UUIDs.
+    /// * `status_filter`                - An optional slice (`&[VoucherStatus]`) of status enums.
+    /// * `test_filter`                  - An optional boolean. If `Some(true)`, only test vouchers are returned.
+    ///                                    If `None`, it is not filtered by test status.
     ///
     /// # Returns
-    /// Ein `Vec<VoucherSummary>` mit den wichtigsten Daten jedes Gutscheins, basierend auf den Filtern.
+    /// A `Vec<VoucherSummary>` containing the most important data of each voucher, based on the filters.
     pub fn get_voucher_summaries(
         &self,
         voucher_standard_uuid_filter: Option<&[String]>,
@@ -36,60 +36,60 @@ impl AppService {
         })
     }
 
-    /// Aggregiert die Guthaben aller aktiven Gutscheine, gruppiert nach Währung.
+    /// Aggregates the balances of all active vouchers, grouped by currency.
     ///
     /// # Returns
-    /// Eine `HashMap`, die von der Währungseinheit (z.B. "Minuten") auf den Gesamtbetrag abbildet.
+    /// A `Vec<AggregatedBalance>` containing the balances grouped by currency.
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Wallet gesperrt (`Locked`) ist.
+    /// Fails if the wallet is locked (`Locked`).
     pub fn get_total_balance_by_currency(&self) -> Result<Vec<AggregatedBalance>, AppFacadeError> {
         self.with_unlocked_ref(|wallet, identity, _| {
             Ok(wallet.get_total_balance_by_currency(Some(identity)))
         })
     }
 
-    /// Ermittelt alle im Wallet aktiven Asset-Klassen (Standard + Test-Status).
-    /// Dies dient der UI zum sauberen Befüllen von Filter-Dropdowns.
+    /// Determines all active asset classes in the wallet (standard + test status).
+    /// This serves the UI for cleanly populating filter dropdowns.
     pub fn get_active_asset_classes(&self) -> Result<Vec<AssetClassSummary>, AppFacadeError> {
         self.with_unlocked_ref(|wallet, _, _| Ok(wallet.get_active_asset_classes()))
     }
 
-    /// Ruft eine detaillierte Ansicht für einen einzelnen Gutschein ab.
+    /// Retrieves a detailed view for a single voucher.
     ///
     /// # Arguments
-    /// * `local_id` - Die lokale, eindeutige ID der Gutschein-Instanz im Wallet.
+    /// * `local_id` - The local, unique ID of the voucher instance in the wallet.
     ///
     /// # Returns
-    /// Die `VoucherDetails`-Struktur mit dem vollständigen Gutschein-Objekt.
+    /// The `VoucherDetails` structure with the full voucher object.
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Wallet gesperrt ist oder keine Gutschein-Instanz mit dieser ID existiert.
+    /// Fails if the wallet is locked or no voucher instance with this ID exists.
     pub fn get_voucher_details(&self, local_id: &str) -> Result<VoucherDetails, AppFacadeError> {
         self.with_unlocked_ref(|wallet, _, _| {
             wallet.get_voucher_details(local_id).map_err(AppFacadeError::from)
         })
     }
 
-    /// Gibt die User-ID des Wallet-Inhabers zurück.
+    /// Returns the user ID of the wallet owner.
     ///
     /// # Returns
-    /// Die `did:key`-basierte User-ID als String.
+    /// The `did:key`-based user ID as a string.
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Wallet gesperrt (`Locked`) ist.
+    /// Fails if the wallet is locked (`Locked`).
     pub fn get_user_id(&self) -> Result<String, AppFacadeError> {
         Ok(self.get_wallet()?.get_user_id().to_string())
     }
 
-    /// Hilfsfunktion für Apps: Extrahiert die Liste der erlaubten Signatur-Rollen
-    /// aus einem Gutschein-Standard (TOML).
+    /// Helper function for apps: Extracts the list of allowed signature roles
+    /// from a voucher standard (TOML).
     ///
     /// # Arguments
-    /// * `standard_toml_content` - Der Inhalt der Standard-Definitionsdatei (TOML).
+    /// * `standard_toml_content` - The content of the standard definition file (TOML).
     ///
     /// # Returns
-    /// Ein `Vec<String>` mit den Rollen-Namen (z.B. ["guarantor", "notary", "approver"]).
+    /// A `Vec<String>` containing the role names (e.g. ["guarantor", "notary", "approver"]).
     pub fn get_allowed_signature_roles_from_standard(
         &self,
         standard_toml_content: &str,
@@ -98,10 +98,10 @@ impl AppService {
         Ok(verified_standard.immutable.issuance.allowed_signature_roles)
     }
 
-    /// Parst einen Gutschein-Standard (TOML) in ein typsicheres Objekt.
-    /// Dient als Single Source of Truth für Client-Applikationen.
+    /// Parses a voucher standard (TOML) into a type-safe object.
+    /// Serves as the Single Source of Truth for client applications.
     ///
-    /// Diese Funktion verifiziert auch die kryptographische Signatur des Standards.
+    /// This function also verifies the cryptographic signature of the standard.
     pub fn parse_voucher_standard(
         &self,
         standard_toml_content: &str,
@@ -136,8 +136,8 @@ impl AppService {
         })
     }
 
-    /// Prüft den Ruf einer User-ID basierend auf den lokalen Beweisen.
-    /// Wird von der GUI vor Transaktionen aufgerufen, um Warnungen anzuzeigen.
+    /// Checks the reputation of a user ID based on local proofs.
+    /// Called by the GUI before transactions to display warnings.
     pub fn check_reputation(
         &self,
         offender_id: &str,
@@ -145,7 +145,7 @@ impl AppService {
         Ok(self.get_wallet()?.check_reputation(offender_id))
     }
 
-    /// Ermittelt die Identität des Absenders eines Gutscheins (ggf. durch Entschlüsselung).
+    /// Determines the identity of the sender of a voucher (possibly by decryption).
     pub fn get_voucher_source_sender(&self, local_instance_id: &str) -> Result<Option<String>, AppFacadeError> {
         let wallet = self.get_wallet()?;
         let identity = self.get_identity()?;
@@ -154,11 +154,11 @@ impl AppService {
             .map_err(AppFacadeError::from)
     }
 
-    /// Lädt die Event-Historie des Wallets (BFF-Query).
+    /// Loads the event history of the wallet (BFF query).
     ///
-    /// **Achtung Architektur/API:** Da diese Abfrage den Session-Timer (Sliding Window) 
-    /// aktualisiert, erfordert sie eine mutable Referenz (`&mut self`). Wenn der `AppService` 
-    /// hinter einem `RwLock` liegt, muss für diese Abfrage ein Write-Lock angefordert werden!
+    /// **Note Architecture/API:** Since this query updates the session timer (sliding window),
+    /// it requires a mutable reference (`&mut self`). If the `AppService`
+    /// is behind an `RwLock`, a write lock must be requested for this query!
     pub fn get_event_history(
         &mut self,
         offset: usize,
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_parse_voucher_standard_and_serialization() {
-        // Wir nutzen den Bypass, um keine echte Signatur für den Test-TOML generieren zu müssen.
+        // We use the bypass to avoid having to generate a real signature for the test TOML.
         #[cfg(feature = "test-utils")]
         crate::set_signature_bypass(true);
 
@@ -239,10 +239,10 @@ signature = "5aomSjj76rEb4VVjhAd6p6qvmU79wkkTpj84AnY3D9p8xRDNfxBqKL4EbEHTKfPevgg
         assert_eq!(standard.immutable.identity.name, "Test Standard");
         assert_eq!(standard.immutable.blueprint.unit, "TestUnit");
 
-        // Test Serialisierung (Sollte snake_case bleiben um kryptographische Stabilität zu wahren)
+        // Test serialization (should remain snake_case to preserve cryptographic stability)
         let json_str = serde_json::to_string(&standard).unwrap();
         
-        // Überprüfe, ob Felder in Rust-idiomatischem snake_case ausgegeben werden
+        // Check if fields are outputted in Rust-idiomatic snake_case
         assert!(json_str.contains("\"issuer_name\""));
         assert!(json_str.contains("\"allow_partial_transfers\""));
         assert!(json_str.contains("\"primary_redemption_type\""));

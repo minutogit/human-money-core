@@ -1,7 +1,7 @@
 //! # src/storage/mod.rs
 //!
-//! Definiert die Abstraktion für die persistente Speicherung von Wallet-Daten.
-//! Dies ermöglicht es, die Kernlogik von der konkreten Speichermethode zu entkoppeln.
+//! Defines the abstraction for persistent storage of wallet data.
+//! This decouples the core logic from the concrete storage method.
 
 use crate::models::conflict::{
     CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, ProofStore,
@@ -10,7 +10,7 @@ use crate::models::profile::{BundleMetadataStore, UserIdentity, UserProfile, Vou
 pub mod file_storage;
 use thiserror::Error;
 
-/// Ein generischer Fehler-Typ für alle Speicheroperationen.
+/// A generic error type for all storage operations.
 #[derive(Debug, Error)]
 pub enum StorageError {
     #[error("Authentication failed: Invalid password or recovery identity.")]
@@ -38,20 +38,20 @@ pub enum StorageError {
     StateConflict(String),
 }
 
-/// Authentifizierungsmethode für den Speicherzugriff
+/// Authentication method for storage access
 pub enum AuthMethod<'a> {
-    /// Das Passwort des Benutzers (wird zur Key-Ableitung verwendet)
+    /// The password of the user (used for key derivation)
     Password(&'a str),
-    /// Ein bereits abgeleiteter Session-Key (überspringt die Key-Ableitung)
+    /// An already derived session key (skips key derivation)
     SessionKey([u8; 32]),
-    /// Authentifizierung mittels einer Mnemonic-Phrase (für die Wiederherstellung).
+    /// Authentication via a mnemonic phrase (for recovery).
     Mnemonic(&'a str, Option<&'a str>, crate::services::mnemonic::MnemonicLanguage),
-    /// Authentifizierung mittels der kryptographischen Identität (für die Wiederherstellung).
+    /// Authentication via the cryptographic identity (for recovery).
     RecoveryIdentity(&'a UserIdentity),
 }
 
 impl<'a> AuthMethod<'a> {
-    /// Extrahiert das Passwort als `&str`, wenn die Methode `Password` ist.
+    /// Extracts the password as `&str` if the method is `Password`.
     pub fn get_password(&self) -> Result<&'a str, StorageError> {
         match self {
             AuthMethod::Password(p) => Ok(p),
@@ -61,7 +61,7 @@ impl<'a> AuthMethod<'a> {
         }
     }
 
-    /// Extrahiert den Session-Key, wenn die Methode `SessionKey` ist.
+    /// Extracts the session key if the method is `SessionKey`.
     pub fn get_session_key(&self) -> Result<[u8; 32], StorageError> {
         match self {
             AuthMethod::SessionKey(key) => Ok(*key),
@@ -72,20 +72,20 @@ impl<'a> AuthMethod<'a> {
     }
 }
 
-/// Die Schnittstelle für persistente Speicherung.
-/// Jede Methode ist eine atomare Operation für ein komplettes Wallet.
+/// The interface for persistent storage.
+/// Each method is an atomic operation for a complete wallet.
 pub trait Storage {
-    /// Leitet den Speicherschlüssel (SessionKey) aus dem Passwort ab.
+    /// Derives the storage key (SessionKey) from the password.
     fn derive_key_for_session(&self, password: &str) -> Result<[u8; 32], StorageError>;
 
-    /// Lädt und entschlüsselt das Kern-Wallet (Profil und VoucherStore).
+    /// Loads and decrypts the core wallet (profile and VoucherStore).
     fn load_wallet(
         &self,
         auth: &AuthMethod,
     ) -> Result<(UserProfile, VoucherStore, UserIdentity), StorageError>;
 
-    /// Speichert und verschlüsselt das Kern-Wallet (Profil und VoucherStore).
-    /// Muss auch die `UserIdentity` erhalten, um beim ersten Speichern den Wiederherstellungs-Schlüssel zu erstellen.
+    /// Saves and encrypts the core wallet (profile and VoucherStore).
+    /// Must also receive the `UserIdentity` to create the recovery key during the first save.
     fn save_wallet(
         &mut self,
         profile: &UserProfile,
@@ -94,24 +94,24 @@ pub trait Storage {
         auth: &AuthMethod,
     ) -> Result<(), StorageError>;
 
-    /// Setzt das Passwort zurück, indem es das Passwort-Schloss mit dem Wiederherstellungs-Schlüssel neu erstellt.
+    /// Resets the password by recreating the password lock with the recovery key.
     fn reset_password(
         &mut self,
         identity: &UserIdentity,
         new_password: &str,
     ) -> Result<(), StorageError>;
 
-    /// Prüft, ob bereits ein Profil am Speicherort existiert.
+    /// Checks if a profile already exists at the storage location.
     fn profile_exists(&self) -> bool;
 
-    /// Lädt und entschlüsselt den `KnownFingerprints`-Store.
+    /// Loads and decrypts the `KnownFingerprints` store.
     fn load_known_fingerprints(
         &self,
         user_id: &str,
         auth: &AuthMethod,
     ) -> Result<KnownFingerprints, StorageError>;
 
-    /// Speichert und verschlüsselt den `KnownFingerprints`-Store.
+    /// Saves and encrypts the `KnownFingerprints` store.
     fn save_known_fingerprints(
         &mut self,
         user_id: &str,
@@ -119,14 +119,14 @@ pub trait Storage {
         fingerprints: &KnownFingerprints,
     ) -> Result<(), StorageError>;
 
-    /// Lädt und entschlüsselt den kritischen `OwnFingerprints`-Store.
+    /// Loads and decrypts the critical `OwnFingerprints` store.
     fn load_own_fingerprints(
         &self,
         user_id: &str,
         auth: &AuthMethod,
     ) -> Result<OwnFingerprints, StorageError>;
 
-    /// Speichert und verschlüsselt den kritischen `OwnFingerprints`-Store.
+    /// Saves and encrypts the critical `OwnFingerprints` store.
     fn save_own_fingerprints(
         &mut self,
         user_id: &str,
@@ -134,14 +134,14 @@ pub trait Storage {
         fingerprints: &OwnFingerprints,
     ) -> Result<(), StorageError>;
 
-    /// Lädt und entschlüsselt die Metadaten der Transaktionsbündel.
+    /// Loads and decrypts transaction bundle metadata.
     fn load_bundle_metadata(
         &self,
         user_id: &str,
         auth: &AuthMethod,
     ) -> Result<BundleMetadataStore, StorageError>;
 
-    /// Speichert und verschlüsselt die Metadaten der Transaktionsbündel.
+    /// Saves and encrypts transaction bundle metadata.
     fn save_bundle_metadata(
         &mut self,
         user_id: &str,
@@ -149,10 +149,10 @@ pub trait Storage {
         metadata: &BundleMetadataStore,
     ) -> Result<(), StorageError>;
 
-    /// Lädt und entschlüsselt den ProofStore.
+    /// Loads and decrypts the ProofStore.
     fn load_proofs(&self, user_id: &str, auth: &AuthMethod) -> Result<ProofStore, StorageError>;
 
-    /// Speichert und verschlüsselt den ProofStore.
+    /// Saves and encrypts the ProofStore.
     fn save_proofs(
         &mut self,
         user_id: &str,
@@ -160,14 +160,14 @@ pub trait Storage {
         proof_store: &ProofStore,
     ) -> Result<(), StorageError>;
 
-    /// Lädt den kanonischen Speicher für Fingerprint-Metadaten.
+    /// Loads the canonical store for fingerprint metadata.
     fn load_fingerprint_metadata(
         &self,
         user_id: &str,
         auth: &AuthMethod,
     ) -> Result<CanonicalMetadataStore, StorageError>;
 
-    /// Speichert den kanonischen Speicher für Fingerprint-Metadaten.
+    /// Saves the canonical store for fingerprint metadata.
     fn save_fingerprint_metadata(
         &mut self,
         user_id: &str,
@@ -175,16 +175,16 @@ pub trait Storage {
         metadata: &CanonicalMetadataStore,
     ) -> Result<(), StorageError>;
 
-    /// Speichert einen beliebigen, benannten Datenblock verschlüsselt.
+    /// Saves any named data block encrypted.
     ///
-    /// Diese Funktion ermöglicht es der Anwendung, eigene Daten sicher im Kontext des
-    /// Wallets zu speichern, ohne eigene Schlüssel verwalten zu müssen.
+    /// This function allows the application to securely store its own data in the context of the
+    /// wallet, without having to manage its own keys.
     ///
     /// # Arguments
-    /// * `user_id` - Die ID des Benutzers, dem die Daten zugeordnet sind.
-    /// * `auth` - Die Authentifizierungsmethode zum Verschlüsseln.
-    /// * `name` - Ein eindeutiger Name für den Datenblock (z.B. "app_settings").
-    /// * `data` - Die zu verschlüsselnden Rohdaten.
+    /// * `user_id` - The ID of the user to whom the data is associated.
+    /// * `auth` - The authentication method for encryption.
+    /// * `name` - A unique name for the data block (e.g. "app_settings").
+    /// * `data` - The raw data to be encrypted.
     fn save_arbitrary_data(
         &mut self,
         user_id: &str,
@@ -193,12 +193,12 @@ pub trait Storage {
         data: &[u8],
     ) -> Result<(), StorageError>;
 
-    /// Lädt einen beliebigen, benannten und verschlüsselten Datenblock.
+    /// Loads any named and encrypted data block.
     ///
     /// # Arguments
-    /// * `user_id` - Die ID des Benutzers, dem die Daten zugeordnet sind.
-    /// * `auth` - Die Authentifizierungsmethode zum Entschlüsseln.
-    /// * `name` - Der Name des zu ladenden Datenblocks.
+    /// * `user_id` - The ID of the user to whom the data is associated.
+    /// * `auth` - The authentication method for decryption.
+    /// * `name` - The name of the data block to be loaded.
     fn load_arbitrary_data(
         &self,
         user_id: &str,
@@ -206,19 +206,19 @@ pub trait Storage {
         name: &str,
     ) -> Result<Vec<u8>, StorageError>;
 
-    /// Überprüft, ob ein abgeleiteter Session-Key gültig ist, indem versucht wird,
-    /// damit auf verschlüsselte Daten zuzugreifen.
+    /// Verifies whether a derived session key is valid by attempting to
+    /// access encrypted data with it.
     fn test_session_key(&self, session_key: &[u8; 32]) -> Result<(), StorageError>;
 
-    /// Speichert den Siegel-Wrapper streng lokal (außerhalb von Cloud-Sync-Ordnern).
+    /// Saves the seal wrapper strictly locally (outside of cloud sync folders).
     ///
-    /// Der `LocalSealRecord` enthält das kryptographische Siegel plus lokale Metadaten
-    /// (SyncStatus, Fork-Lock). Diese Daten dürfen niemals an den Server gesendet werden.
+    /// The `LocalSealRecord` contains the cryptographic seal plus local metadata
+    /// (SyncStatus, fork lock). This data must never be sent to the server.
     ///
     /// # Arguments
-    /// * `user_id` - Die ID des Benutzers.
-    /// * `auth` - Die Authentifizierungsmethode zum Verschlüsseln.
-    /// * `record` - Der zu speichernde Siegel-Wrapper.
+    /// * `user_id` - The ID of the user.
+    /// * `auth` - The authentication method for encryption.
+    /// * `record` - The seal wrapper to be stored.
     fn save_seal(
         &mut self,
         user_id: &str,
@@ -226,54 +226,54 @@ pub trait Storage {
         record: &crate::models::seal::LocalSealRecord,
     ) -> Result<(), StorageError>;
 
-    /// Lädt den lokalen Siegel-Wrapper.
+    /// Loads the local seal wrapper.
     ///
-    /// Gibt `Ok(None)` zurück, wenn noch kein Siegel existiert (z.B. bei Migration
-    /// bestehender Wallets ohne Siegel).
+    /// Returns `Ok(None)` if no seal exists yet (e.g. during migration
+    /// of existing wallets without a seal).
     ///
     /// # Arguments
-    /// * `user_id` - Die ID des Benutzers.
-    /// * `auth` - Die Authentifizierungsmethode zum Entschlüsseln.
+    /// * `user_id` - The ID of the user.
+    /// * `auth` - The authentication method for decryption.
     fn load_seal(
         &self,
         user_id: &str,
         auth: &AuthMethod,
     ) -> Result<Option<crate::models::seal::LocalSealRecord>, StorageError>;
 
-    /// Berechnet den SHA3-256 Hash eines Elements im Wallet-Speicher.
+    /// Computes the SHA3-256 hash of an element in the wallet storage.
     ///
     /// # Arguments
-    /// * `name` - Der Name des Elements/der Tabelle/der Datei (z.B. "profile.enc").
+    /// * `name` - The name of the element/table/file (e.g. "profile.enc").
     fn get_item_hash(&self, name: &str) -> Result<String, StorageError>;
 
-    /// Speichert den Storage Integrity Record.
-    /// Der Integrity Record ist Klartext, aber kryptographisch signiert.
+    /// Saves the storage integrity record.
+    /// The integrity record is plain text but cryptographically signed.
     ///
     /// # Arguments
-    /// * `user_id` - Die ID des Benutzers.
-    /// * `record` - Der zu speichernde Integrity-Datensatz.
+    /// * `user_id` - The ID of the user.
+    /// * `record` - The integrity record to be stored.
     fn save_integrity(
         &mut self,
         user_id: &str,
         record: &crate::models::storage_integrity::LocalIntegrityRecord,
     ) -> Result<(), StorageError>;
 
-    /// Lädt den Storage Integrity Record.
+    /// Loads the storage integrity record.
     ///
     /// # Arguments
-    /// * `user_id` - Die ID des Benutzers.
+    /// * `user_id` - The ID of the user.
     fn load_integrity(
         &self,
         user_id: &str,
     ) -> Result<Option<crate::models::storage_integrity::LocalIntegrityRecord>, StorageError>;
 
-    /// Berechnet die Hashes aller relevanten logischen Speicher-Elemente.
+    /// Computes the hashes of all relevant logical storage elements.
     fn get_all_item_hashes(&self) -> Result<std::collections::HashMap<String, String>, StorageError>;
 
-    /// Fügt eine Batch von Wallet-Events an das persistierte Event-Log an.
+    /// Appends a batch of wallet events to the persisted event log.
     ///
-    /// Die Implementierung sollte die existierende Datei laden/entschlüsseln,
-    /// die neuen Events anhängen und in einem Rutsch verschlüsselt zurückschreiben.
+    /// The implementation should load/decrypt the existing file,
+    /// append the new events, and write them back encrypted in one go.
     fn append_events(
         &mut self,
         user_id: &str,
@@ -281,13 +281,13 @@ pub trait Storage {
         events: &[crate::models::wallet_event::WalletEvent],
     ) -> Result<(), StorageError>;
 
-    /// Lädt eine paginierte Ansicht des persistierten Event-Logs.
+    /// Loads a paginated view of the persisted event log.
     ///
     /// # Arguments
-    /// * `user_id` - Die ID des Benutzers.
-    /// * `auth` - Die Authentifizierungsmethode zum Entschlüsseln.
-    /// * `offset` - Der Offset für die Pagination.
-    /// * `limit` - Die maximale Anzahl der zurückzugebenden Events.
+    /// * `user_id` - The ID of the user.
+    /// * `auth` - The authentication method for decryption.
+    /// * `offset` - The offset for pagination.
+    /// * `limit` - The maximum number of events to return.
     fn load_events(
         &self,
         user_id: &str,
@@ -296,48 +296,48 @@ pub trait Storage {
         limit: usize,
     ) -> Result<Vec<crate::models::wallet_event::WalletEvent>, StorageError>;
 
-    /// Versucht, eine exklusive, prozessweite Sperre für den Wallet-Speicher zu erlangen.
-    /// Muss die "Stale Lock"-Prüfung (z.B. PID) implementieren.
+    /// Attempts to acquire an exclusive, process-wide lock for the wallet storage.
+    /// Must implement "stale lock" checking (e.g. PID).
     ///
-    /// Gibt `Ok(true)` zurück, wenn eine neue Sperre erfolgreich erlangt wurde.
-    /// Gibt `Ok(false)` zurück, wenn die Sperre bereits von UNS selbst gehalten wird (Re-Entrancy).
-    /// Gibt `Err(StorageError::LockFailed)` zurück, wenn die Sperre aktiv von einem
-    /// *anderen lebenden* Prozess gehalten wird.
+    /// Returns `Ok(true)` if a new lock was successfully acquired.
+    /// Returns `Ok(false)` if the lock is already held by OURSELVES (re-entrancy).
+    /// Returns `Err(StorageError::LockFailed)` if the lock is actively held by
+    /// *another live* process.
     fn lock(&self) -> Result<bool, StorageError>;
 
-    /// Gibt die exklusive Sperre wieder frei.
-    /// Diese Methode sollte nur bei einem sauberen Logout aufgerufen werden.
-    /// Für Operationen sollte der `WalletLockGuard` verwendet werden.
+    /// Releases the exclusive lock.
+    /// This method should only be called during a clean logout.
+    /// The `WalletLockGuard` should be used for operations.
     fn unlock(&self) -> Result<(), StorageError>;
 
-    /// Gibt den Pfad zur Sperrdatei zurück (für den RAII Guard).
+    /// Returns the path to the lock file (for the RAII guard).
     fn get_lock_file_path(&self) -> &std::path::PathBuf;
 
-    /// Liest den aktuellen Generationszähler von der Platte.
-    /// Falls die Datei nicht existiert, wird 0 zurückgegeben.
+    /// Reads the current generation counter from the disk.
+    /// If the file does not exist, 0 is returned.
     fn read_generation(&self) -> Result<u64, StorageError>;
 
-    /// Schreibt den neuen Generationszähler auf die Platte.
-    /// Prüft atomar, ob der aktuelle Zähler dem erwarteten Wert entspricht.
+    /// Writes the new generation counter to the disk.
+    /// Atomically checks if the current counter matches the expected value.
     fn write_generation(&mut self, expected: u64, new: u64) -> Result<(), StorageError>;
 }
 
 // --- RAII Lock Guard ---
 
-/// Ein RAII-Guard, der sicherstellt, dass eine Sperre automatisch
-/// freigegeben wird, wenn der Guard aus dem Geltungsbereich (Scope) fällt.
+/// An RAII guard that ensures a lock is automatically
+/// released when the guard goes out of scope.
 ///
-/// Dieser Guard sollte für *transaktionale* Operationen wie `create_transfer_bundle`
-/// oder `receive_bundle` verwendet werden.
+/// This guard should be used for *transactional* operations like `create_transfer_bundle`
+/// or `receive_bundle`.
 pub struct WalletLockGuard {
     lock_file_path: std::path::PathBuf,
     was_already_locked: bool,
 }
 
 impl WalletLockGuard {
-    /// Erstellt einen neuen Guard und versucht sofort, die Sperre zu erlangen.
+    /// Creates a new guard and immediately attempts to acquire the lock.
     pub fn new(storage: &dyn Storage) -> Result<Self, StorageError> {
-        let is_newly_locked = storage.lock()?; // Sperre beim Erstellen erlangen
+        let is_newly_locked = storage.lock()?; // Acquire lock upon creation
         let lock_file_path = storage.get_lock_file_path().clone();
         Ok(Self {
             lock_file_path,
@@ -346,14 +346,14 @@ impl WalletLockGuard {
     }
 }
 
-/// Wird automatisch aufgerufen, wenn die Variable `_lock_guard` den Scope verlässt.
+    /// Automatically called when the `_lock_guard` variable leaves the scope.
 impl Drop for WalletLockGuard {
     fn drop(&mut self) {
         use std::fs;
-        // Lösche die Datei NUR, wenn wir sie selbst erzeugt haben (was_already_locked == false)
+        // Delete the file ONLY if we created it ourselves (was_already_locked == false)
         if !self.was_already_locked && self.lock_file_path.exists() {
             if let Err(e) = fs::remove_file(&self.lock_file_path) {
-                // WICHTIG: In `drop` niemals paniken!
+                // IMPORTANT: Never panic in `drop`!
                 eprintln!(
                     "Schwerwiegender Fehler: Wallet-Sperre konnte nicht freigegeben werden: {:?}",
                     e

@@ -21,20 +21,20 @@ pub fn get_prefix_from_user_id(user_id: &str) -> Option<&str> {
             if prefix_part.is_empty() { None } else { Some(prefix_part) }
         }
     } else {
-        None // Root-Account (reine did:key)
+        None // Root-Account (pure did:key)
     }
 }
 
 /// Error types for user ID creation.
 #[derive(Debug)]
 pub enum UserIdError {
-    /// Das Präfix ist zu lang (maximal 63 Zeichen erlaubt).
+    /// The prefix is too long (maximum 63 characters allowed).
     PrefixTooLong(usize),
-    /// Das Präfix enthält ungültige Zeichen.
+    /// The prefix contains invalid characters.
     InvalidPrefixChars,
-    /// Das Präfix darf nicht mit einem Bindestrich beginnen oder enden.
+    /// The prefix must not start or end with a hyphen.
     InvalidPrefixStartEnd,
-    /// Das Präfix darf keine zwei aufeinanderfolgenden Bindestriche enthalten.
+    /// The prefix must not contain two consecutive hyphens.
     PrefixHasConsecutiveSeparators,
 }
 
@@ -60,11 +60,11 @@ impl fmt::Display for UserIdError {
 
 impl std::error::Error for UserIdError {}
 
-/// Generiert eine User-ID mit optionalem Präfix und einer obligatorischen Prüfsumme.
+/// Generates a user ID with an optional prefix and a mandatory checksum.
 ///
-/// Das Format ist:
-/// - Mit Präfix: `[präfix:]prüfsumme@did:key:z...`
-/// - Ohne Präfix (Root-Account): `did:key:z...`
+/// The format is:
+/// - With prefix: `[prefix:]checksum@did:key:z...`
+/// - Without prefix (Root account): `did:key:z...`
 pub fn create_user_id(
     public_key: &EdPublicKey,
     user_prefix: Option<&str>,
@@ -76,17 +76,17 @@ pub fn create_user_id(
     bytes_to_encode.extend_from_slice(&public_key.to_bytes());
     let did_key = format!("did:key:z{}", bs58::encode(bytes_to_encode).into_string());
 
-    // Root-Account: Kein Präfix, Rückgabe der reinen did:key
+    // Root account: No prefix, returns the pure did:key
     if user_prefix.is_none() {
         return Ok(did_key);
     }
 
-    // Mit Präfix: Validierung und Prüfsummen-Logik
+    // With prefix: Validation and checksum logic
     let prefix_str = user_prefix.unwrap();
     let prefix = prefix_str.to_lowercase();
 
     if prefix.is_empty() {
-        return Ok(did_key); // Leerer String wird als Root-Account behandelt
+        return Ok(did_key); // Empty string is treated as a Root account
     }
     if prefix.len() > 63 {
         return Err(UserIdError::PrefixTooLong(prefix.len()));
@@ -104,7 +104,7 @@ pub fn create_user_id(
         return Err(UserIdError::PrefixHasConsecutiveSeparators);
     }
 
-    // Generiere Prüfsumme
+    // Generate checksum
     let checksum_input = format!("{}{}", prefix, did_key);
     let hash = get_hash(checksum_input.as_bytes());
     let checksum = &hash[hash.len() - 3..];
@@ -117,8 +117,8 @@ pub fn create_user_id(
 /// Validates a user ID string.
 ///
 /// Supports both formats:
-/// - Mit Präfix: `[präfix:]prüfsumme@did:key:z...`
-/// - Ohne Präfix (Root-Account): `did:key:z...`
+/// - With prefix: `[prefix:]checksum@did:key:z...`
+/// - Without prefix (Root account): `did:key:z...`
 ///
 /// # Arguments
 ///
@@ -128,16 +128,16 @@ pub fn create_user_id(
 ///
 /// `true` if the user ID is valid, `false` otherwise.
 pub fn validate_user_id(user_id: &str) -> bool {
-    // Root-Account: Reine did:key ohne @
+    // Root account: Pure did:key without @
     if !user_id.contains('@') {
-        // Prüfe, ob es mit did:key:z beginnt und ein gültiger Ed25519-Schlüssel ist
+        // Check if it starts with did:key:z and is a valid Ed25519 key
         if !user_id.starts_with("did:key:z") {
             return false;
         }
         return get_pubkey_from_user_id(user_id).is_ok();
     }
 
-    // Mit Präfix: Validierung der Prüfsumme
+    // With prefix: Validation of the checksum
     let parts: Vec<&str> = user_id.split('@').collect();
     if parts.len() != 2 {
         return false;
