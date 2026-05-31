@@ -327,20 +327,6 @@ This file contains tests for wallet state management and collaboration.
 -   `test_collaborative_fraud_detection_with_fingerprints`: Tests collaborative fraud detection, where two wallets exchange fingerprints, and one wallet detects a verifiable double-spend conflict based on the imported fingerprints.
 -   `test_serialization_roundtrip_with_special_chars`: Verifies that a voucher containing special characters in its fields can be successfully serialized to JSON and deserialized back, maintaining data integrity.
 
-### `tests/architecture_tests.rs`
-This file serves as the entry point for architecture-related tests, binding modules like `hardening.rs` and `resilience_and_gossip.rs`. It does not contain direct test functions.
+### `tests/integration_tests.rs`
+This file serves as the single unified entry point for all integration tests, binding all subdirectories under `tests/` (such as `app_service`, `architecture`, `core_logic`, `persistence`, `services`, `validation`, and `wallet_api`) into a single compiled binary. This drastically improves Cargo compilation performance and keeps the repository's root test directory clean.
 
-### `tests/services_tests.rs`
-This file serves as the entry point for service-level tests, binding the `services` module. It does not contain direct test functions.
-
-### `tests/persistence_tests.rs`
-This file serves as the main entry point for all persistence tests, binding the `persistence` module. It does not contain direct test functions.
-
-### `tests/core_logic_tests.rs`
-This file serves as the entry point for core logic and security tests, binding the `core_logic` module. It does not contain direct test functions.
-
-### `tests/wallet_api_tests.rs`
-This file serves as the entry point for all integration tests related to the public high-level `AppService` API, binding the `wallet_api` module. It does not contain direct test functions.
-
-### `tests/validation_tests.rs`
-This file serves as the main entry point for all validation and integrity tests of vouchers and standards, binding the `validation` module. It does not contain direct test functions.
