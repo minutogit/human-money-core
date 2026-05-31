@@ -12,8 +12,9 @@ use crate::models::conflict::TransactionFingerprint;
 use crate::models::profile::{TransactionBundle, UserIdentity};
 use crate::models::secure_container::{PayloadType, PrivacyMode, SecureContainer};
 use crate::models::voucher::Voucher;
+use crate::services::crypto_identity::get_pubkey_from_user_id;
 use crate::services::crypto_utils::{
-    decode_base64, get_hash, get_pubkey_from_user_id, sign_ed25519, verify_ed25519,
+    decode_base64, get_hash, sign_ed25519, verify_ed25519,
 };
 use crate::services::secure_container_manager::{create_secure_container, open_secure_container};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};

@@ -11,6 +11,7 @@ use crate::services::integrity_manager::IntegrityManager;
 use crate::services::seal_manager::SealManager;
 use crate::storage::file_storage::FileStorage;
 use crate::storage::{AuthMethod, Storage};
+use crate::services::crypto_utils::get_hash;
 
 impl AppService {
     /// Prüft die Integrität aller Speicher-Items gegen den Storage Integrity Record.
@@ -467,7 +468,7 @@ impl AppService {
             let current_state_hash = {
                 let canonical = crate::services::utils::to_canonical_json(&raw_own_fingerprints)
                     .map_err(AppFacadeError::from)?;
-                crate::services::crypto_utils::get_hash(canonical.as_bytes())
+                get_hash(canonical.as_bytes())
             };
 
             if record.seal.payload.state_hash != current_state_hash {
@@ -494,7 +495,7 @@ impl AppService {
             let state_hash = {
                 let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
                     .map_err(AppFacadeError::from)?;
-                crate::services::crypto_utils::get_hash(canonical.as_bytes())
+                get_hash(canonical.as_bytes())
             };
 
             let migrated_seal = if needs_legacy_binding && seal_record.is_some() {
@@ -615,7 +616,7 @@ impl AppService {
                     let canonical =
                         crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
                             .map_err(AppFacadeError::from)?;
-                    crate::services::crypto_utils::get_hash(canonical.as_bytes())
+                    get_hash(canonical.as_bytes())
                 };
 
                 let updated_seal = match record_opt {

@@ -9,6 +9,7 @@ use crate::services::seal_manager::SealManager;
 use crate::storage::{AuthMethod, Storage, file_storage::FileStorage};
 use crate::wallet::Wallet;
 use crate::services::mnemonic::MnemonicLanguage;
+use crate::services::crypto_utils::{generate_mnemonic, validate_mnemonic_phrase, get_hash};
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -65,7 +66,7 @@ impl AppService {
     ///
     /// Diese Methode ist statisch und kann ohne geladenes Wallet aufgerufen werden.
     pub fn generate_mnemonic(word_count: u32, language: MnemonicLanguage) -> Result<String, AppFacadeError> {
-        crate::services::crypto_utils::generate_mnemonic(word_count as usize, language)
+        generate_mnemonic(word_count as usize, language)
             .map_err(|e| AppFacadeError::CryptoError(e.to_string()))
     }
 
@@ -78,7 +79,7 @@ impl AppService {
     ///
     /// Diese Methode ist statisch und kann ohne geladenes Wallet aufgerufen werden.
     pub fn validate_mnemonic(mnemonic: &str, language: MnemonicLanguage) -> Result<(), AppFacadeError> {
-        crate::services::crypto_utils::validate_mnemonic_phrase(mnemonic, language)
+        validate_mnemonic_phrase(mnemonic, language)
             .map_err(|e| AppFacadeError::CryptoError(e.to_string()))
     }
 
@@ -137,7 +138,7 @@ impl AppService {
         let state_hash = {
             let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
                 .map_err(AppFacadeError::from)?;
-            crate::services::crypto_utils::get_hash(canonical.as_bytes())
+            get_hash(canonical.as_bytes())
         };
         let initial_seal = SealManager::create_initial_seal(
             &identity.user_id,
@@ -358,7 +359,7 @@ impl AppService {
             let current_state_hash = {
                 let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
                     .map_err(AppFacadeError::from)?;
-                crate::services::crypto_utils::get_hash(canonical.as_bytes())
+                get_hash(canonical.as_bytes())
             };
 
             let recovered_seal = SealManager::recover_seal_epoch(

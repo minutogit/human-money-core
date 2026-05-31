@@ -1,7 +1,8 @@
 use crate::error::{ValidationError, VoucherCoreError};
 use crate::models::voucher::{Transaction, Voucher};
 use crate::models::voucher_standard_definition::{VoucherStandardDefinition, PrivacyMode};
-use crate::services::crypto_utils::{self, get_hash, get_hash_from_slices, ed25519_pk_to_curve_point, get_pubkey_from_user_id};
+use crate::services::crypto_identity::{get_pubkey_from_user_id, get_prefix_from_user_id};
+use crate::services::crypto_utils::{get_hash, get_hash_from_slices, ed25519_pk_to_curve_point};
 use crate::services::utils::to_canonical_json;
 use crate::services::trap_manager::verify_trap;
 use ed25519_dalek::{Signature, Verifier};
@@ -316,7 +317,7 @@ pub fn verify_transactions(
             if let Some(sender_id) = &tx.sender_id {
                 if let Ok(signer_pk) = get_pubkey_from_user_id(sender_id) {
                     if let Ok(signer_id_point) = ed25519_pk_to_curve_point(&signer_pk) {
-                        let sender_prefix = crypto_utils::get_prefix_from_user_id(sender_id);
+                        let sender_prefix = get_prefix_from_user_id(sender_id);
 
                         let u_input_varying = format!(
                             "{}{}{}",

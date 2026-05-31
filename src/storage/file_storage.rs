@@ -8,7 +8,11 @@ use crate::models::conflict::CanonicalMetadataStore;
 use crate::models::conflict::{KnownFingerprints, OwnFingerprints, ProofStore};
 use crate::models::storage_integrity::INTEGRITY_FILE_NAME;
 use crate::models::profile::{BundleMetadataStore, UserIdentity, UserProfile, VoucherStore};
-use crate::services::crypto_utils;
+mod crypto_utils {
+    pub use crate::services::crypto_keys::derive_ed25519_keypair;
+    pub use crate::services::crypto_symmetric::{decrypt_data, encrypt_data};
+    pub use crate::services::crypto_utils::get_hash;
+}
 #[cfg(not(any(test, feature = "test-utils")))]
 use argon2::Argon2;
 use base64::{Engine as _, engine::general_purpose};
@@ -840,7 +844,7 @@ impl Storage for FileStorage {
 
         // Versuche, den verschlüsselten Dateischlüssel mit dem gegebenen Session-Key zu entschlüsseln
         // Dies wird fehlschlagen, wenn der Session-Key nicht mit dem richtigen Passwort abgeleitet wurde
-        let _decrypted = crate::services::crypto_utils::decrypt_data(
+        let _decrypted = crypto_utils::decrypt_data(
             session_key,
             &profile_container.password_wrapped_key_with_nonce,
         )

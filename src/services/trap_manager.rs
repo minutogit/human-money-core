@@ -14,6 +14,7 @@ use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use sha2::{Digest, Sha512};
+use crate::services::crypto_utils::{get_secret_scalar, generate_dleq_proof};
 use std::convert::TryInto;
 
 /// Generiert einen deterministischen EdwardsPoint aus beliebigen Eingabedaten.
@@ -66,12 +67,12 @@ pub fn derive_m(
     })?;
 
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
-    let sk_sender = crate::services::crypto_utils::get_secret_scalar(&signing_key);
+    let sk_sender = get_secret_scalar(&signing_key);
     
     let prev_hash_bytes = bs58::decode(prev_hash)
         .into_vec()
         .unwrap_or_else(|_| prev_hash.as_bytes().to_vec());
-    let p_point = crate::services::crypto_utils::hash_to_curve(&prev_hash_bytes);
+    let p_point = hash_to_curve(&prev_hash_bytes);
     let k_point = sk_sender * p_point;
     let m = hash_to_scalar(&k_point.compress().to_bytes());
     Ok(m)
@@ -156,7 +157,7 @@ pub fn generate_trap(
 
     let dleq_proof = if let (Some(sk), Some(p)) = (sk_sender, p_point) {
         let k_point = sk * p;
-        let (c_dleq, s_dleq) = crate::services::crypto_utils::generate_dleq_proof(sk, p, &k_point);
+        let (c_dleq, s_dleq) = generate_dleq_proof(sk, p, &k_point);
         Some(DleqProof {
             trap_k_point: k_point.compress().to_bytes(),
             dleq_c: c_dleq.to_bytes(),
