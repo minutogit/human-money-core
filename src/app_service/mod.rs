@@ -54,6 +54,7 @@
 
 use crate::models::profile::UserIdentity;
 use crate::services::{bundle_processor, crypto_utils};
+use crate::services::crypto_constants::ARGON2_PROFILE_FOLDER_SALT;
 use crate::storage::{Storage, file_storage::FileStorage};
 use crate::wallet::Wallet;
 use serde::{Deserialize, Serialize};
@@ -157,8 +158,7 @@ impl AppService {
 
         // 2. Use Argon2id key stretching for the anonymous folder name (Mobile/WASM tuned).
         // This provides significantly higher protection against brute-force attacks on the folder name.
-        const SALT: &[u8] = b"human-money-profile-folder-v1";
-        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT)
+        crypto_utils::derive_argon2_id(secret_string.as_bytes(), ARGON2_PROFILE_FOLDER_SALT)
             .unwrap_or_else(|_| crypto_utils::get_hash(secret_string.as_bytes()))
     }
 

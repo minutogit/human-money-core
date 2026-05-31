@@ -35,6 +35,9 @@ use std::convert::TryInto;
 use std::fmt;
 
 use crate::error::VoucherCoreError;
+use crate::services::crypto_constants::{
+    HKDF_X25519_EXCHANGE_LABEL, SLIP10_ED25519_SEED_LABEL,
+};
 use base64::{Engine as _, engine::general_purpose};
 
 /// Generates a mnemonic phrase with a specified word count and language.
@@ -180,7 +183,7 @@ pub fn derive_ed25519_keypair(
 
     // Standard SLIP-0010 Master Key Derivation for Ed25519
     // I = HMAC-SHA512(key="ed25519 seed", Data=Seed)
-    let mut hmac = <Hmac<Sha512> as hmac::Mac>::new_from_slice(b"ed25519 seed")
+    let mut hmac = <Hmac<Sha512> as hmac::Mac>::new_from_slice(SLIP10_ED25519_SEED_LABEL)
         .map_err(|e| VoucherCoreError::Crypto(format!("HMAC initialization failed: {}", e)))?;
     hmac.update(&bip39_seed[..]);
     let result = hmac.finalize().into_bytes();
@@ -303,9 +306,8 @@ pub fn ed25519_pk_to_curve_point(ed_pub: &EdPublicKey) -> Result<EdwardsPoint, V
 /// Die `recipient_id` wird zwingend einbezogen, um eine kryptographische Trennung
 /// zwischen verschiedenen SAIs (Separated Account Identities) desselben Nutzers zu erzwingen.
 pub fn build_hkdf_info(pk1: &X25519PublicKey, pk2: &X25519PublicKey, recipient_id: &str) -> Vec<u8> {
-    const LABEL: &[u8] = b"human-money-core/x25519-exchange";
-    let mut info = Vec::with_capacity(LABEL.len() + 64 + recipient_id.len() + 2);
-    info.extend_from_slice(LABEL);
+    let mut info = Vec::with_capacity(HKDF_X25519_EXCHANGE_LABEL.len() + 64 + recipient_id.len() + 2);
+    info.extend_from_slice(HKDF_X25519_EXCHANGE_LABEL);
     info.extend_from_slice(b"|");
     info.extend_from_slice(recipient_id.as_bytes());
     info.extend_from_slice(b"|");
@@ -1268,7 +1270,7 @@ mod tests {
         // SLIP-0010 Test Vector 1 (ed25519)
         // Seed: 000102030405060708090a0b0c0d0e0f
         // Expected IL: 2b4be7f19ee27bbf30c667b642d5f4aa69fd169872f8fc3059c08ebae2eb19e7
-        let key = b"ed25519 seed";
+        let key = SLIP10_ED25519_SEED_LABEL;
         let data = hex::decode("000102030405060708090a0b0c0d0e0f").unwrap();
         let mut mac = <Hmac<Sha512> as hmac::Mac>::new_from_slice(key).unwrap();
         mac.update(&data);
