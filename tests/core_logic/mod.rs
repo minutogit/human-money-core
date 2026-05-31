@@ -18,3 +18,7 @@ pub mod lifecycle;
 pub mod math;
 pub mod privacy_modes;
 pub mod security;
+pub mod wot_conformance;
+pub mod privacy_traceability;
+pub mod privacy_split_workflows;
+pub mod voucher_traceability_deep;

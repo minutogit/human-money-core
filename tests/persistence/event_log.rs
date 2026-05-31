@@ -13,7 +13,7 @@ fn test_voucher_creation_emits_event() {
         .expect("Failed to create profile");
 
     // Load standard
-    let standard_toml = include_str!("../voucher_standards/minuto_v1/standard.toml");
+    let standard_toml = include_str!("../../voucher_standards/minuto_v1/standard.toml");
     
     let user_id = app.get_user_id().expect("User ID missing");
 
@@ -64,7 +64,7 @@ fn test_status_transition_emits_event() {
         .expect("Failed to create profile");
 
     // 1. Create a voucher (will be Incomplete due to missing signatures in Minuto standard)
-    let standard_toml = include_str!("../voucher_standards/minuto_v1/standard.toml");
+    let standard_toml = include_str!("../../voucher_standards/minuto_v1/standard.toml");
     let user_id = app.get_user_id().expect("User ID missing");
     let data = NewVoucherData {
         validity_duration: Some("P3Y".to_string()),

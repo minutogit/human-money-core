@@ -3,7 +3,7 @@ project: human-money-core
 version: "0.2.19"
 phase: "active-development"
 health: "green"
-last_updated: "2026-05-30"
+last_updated: "2026-05-31"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -46,7 +46,7 @@ The core library is stable and feature-rich. Current focus areas:
 
 - **17 service modules**: crypto, voucher management, validation, conflict management, L2 gateway, etc.
 - **10 wallet modules**: lifecycle, transactions, queries, conflict handling, signatures
-- **Extensive test suite**: 7 test categories (architecture, core logic, persistence, services, validation, wallet API, L2 integration)
+- **Extensive test suite**: 7 test categories (architecture, core logic, persistence, services, validation, wallet API, app_service)
 
 ## Known Issues
 
@@ -56,6 +56,7 @@ The core library is stable and feature-rich. Current focus areas:
 
 ## Recent Milestones
 
+- [x] **Integration Test Consolidation**: Consolidated 17 separate floating integration test files into structured subdirectories (under `architecture`, `core_logic`, `persistence`, `services`, and `wallet_api`), reducing compiled Cargo integration test binaries from 24 to 7 to optimize compilation times and developer velocity.
 - [x] **Random Slope Attack Mitigation (Identity Trap)**: Hardened the Identity Trap mechanism against the Random Slope Attack by replacing the deterministic HKDF-based slope derivation with a Discrete Logarithm Equality (DLEQ/Chaum-Pedersen) proof. Added a DLEQ proof generator and verification engine, updated `RecipientPayload` to securely transport proof parameters using Base58-encoded fields, integrated validation in `Wallet` to reject non-deterministic slopes prior to importing/accepting transaction bundles, and verified the implementation against a comprehensive test suite.
 - [x] **Security Audit (Identity Trap)**: Implemented 7 security audit tests in `tests/core_logic/security/identity_trap_audit.rs` verifying the mathematical correctness and robustness of the identity-trap mechanism against slope randomization, replay, Schnorr proof forgery, prefix independence, scalar malleability, and invalid/corrupted key extraction.
 - [x] Anti-Signature-Reuse-Firewall (security hardening)

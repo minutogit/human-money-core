@@ -28,4 +28,7 @@ mod state_and_collaboration;
 mod trap_verification;
 mod vulnerabilities;
 mod identity_trap_audit;
+pub mod forced_double_spend_stealth_vulnerability;
+pub mod privacy_mode_compliance;
+pub mod concurrent_access_vulnerability;
 
