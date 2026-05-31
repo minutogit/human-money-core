@@ -56,6 +56,7 @@ The core library is stable and feature-rich. Current focus areas:
 
 ## Recent Milestones
 
+- [x] **UserIdError & GetPubkeyError thiserror Migration**: Migrated the manually implemented Display and Error traits for `UserIdError` and `GetPubkeyError` in `crypto_identity.rs` to use `thiserror` for project-wide consistency and architectural cleanliness.
 - [x] **Cryptographic Utilities Modularity**: Decoupled the monolithic 1289-line `crypto_utils.rs` by splitting its functions into domain-specific sub-modules (`crypto_keys`, `crypto_symmetric`, `crypto_dh`, `crypto_identity`) and systematically refactored internal codebase imports to point directly to these modules, improving structural maintainability while preserving backward compatibility via the public facade.
 - [x] **Crypto Constants Centralization**: Centralized cryptographic domain separation constants (`ed25519 seed`, `human-money-core/x25519-exchange`, and `human-money-profile-folder-v1`) into a dedicated `crypto_constants` service module, eliminating hardcoded strings across `crypto_utils.rs` and `app_service/mod.rs` to ensure cryptographic stability.
 - [x] **Integration Test Consolidation**: Consolidated 17 separate floating integration test files into structured subdirectories (under `architecture`, `core_logic`, `persistence`, `services`, and `wallet_api`) and unified their 7 entry points into a single consolidated `tests/integration_tests.rs` runner, reducing compiled Cargo integration test binaries from 24 to 1 to optimize compilation times and developer velocity.

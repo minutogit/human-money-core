@@ -2,9 +2,9 @@
 //!
 //! Contains User Identity (DID Key) parsing, validation, and prefix extraction.
 
-use std::fmt;
 use std::convert::TryInto;
 use ed25519_dalek::{VerifyingKey as EdPublicKey, SignatureError};
+use thiserror::Error;
 use crate::services::crypto_utils::get_hash;
 
 /// Extracts the prefix from a user ID string.
@@ -26,39 +26,21 @@ pub fn get_prefix_from_user_id(user_id: &str) -> Option<&str> {
 }
 
 /// Error types for user ID creation.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum UserIdError {
     /// The prefix is too long (maximum 63 characters allowed).
+    #[error("Prefix is too long: {0} characters (maximum is 63).")]
     PrefixTooLong(usize),
     /// The prefix contains invalid characters.
+    #[error("Prefix contains invalid characters. Only lowercase letters (a-z), numbers (0-9), and hyphens (-) are allowed.")]
     InvalidPrefixChars,
     /// The prefix must not start or end with a hyphen.
+    #[error("Prefix must not start or end with a hyphen.")]
     InvalidPrefixStartEnd,
     /// The prefix must not contain two consecutive hyphens.
+    #[error("Prefix contains consecutive separators (- or :)")]
     PrefixHasConsecutiveSeparators,
 }
-
-impl fmt::Display for UserIdError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            UserIdError::PrefixTooLong(len) => {
-                write!(f, "Prefix is too long: {} characters (maximum is 63).", len)
-            }
-            UserIdError::InvalidPrefixChars => write!(
-                f,
-                "Prefix contains invalid characters. Only lowercase letters (a-z), numbers (0-9), and hyphens (-) are allowed."
-            ),
-            UserIdError::InvalidPrefixStartEnd => {
-                write!(f, "Prefix must not start or end with a hyphen.")
-            }
-            UserIdError::PrefixHasConsecutiveSeparators => {
-                write!(f, "Prefix contains consecutive separators (- or :)")
-            }
-        }
-    }
-}
-
-impl std::error::Error for UserIdError {}
 
 /// Generates a user ID with an optional prefix and a mandatory checksum.
 ///
@@ -177,58 +159,26 @@ pub fn validate_user_id(user_id: &str) -> bool {
 }
 
 /// Custom error type for `get_pubkey_from_user_id` function.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum GetPubkeyError {
     /// The prefix is invalid (e.g., empty string before '@').
+    #[error("Invalid prefix format (e.g., empty prefix is not allowed)")]
     InvalidPrefix,
     /// Indicates that the user ID format is invalid (e.g., missing 'did:key:z').
+    #[error("Invalid user ID format (must be '[prefix]@[did:key:z...]' or 'did:key:z...')")]
     InvalidDidFormat,
     /// Indicates that Base58 decoding failed.
-    DecodingFailed(bs58::decode::Error),
+    #[error("Base58 decoding failed: {0}")]
+    DecodingFailed(#[source] bs58::decode::Error),
     /// Indicates that the decoded key bytes have an invalid multicodec prefix.
+    #[error("Decoded key has invalid multicodec prefix (expected 0xed01 for Ed25519)")]
     InvalidMulticodec,
     /// Indicates that the decoded public key payload has an invalid length.
+    #[error("Decoded public key has invalid length (expected 32, got {0})")]
     InvalidLength(usize),
     /// Indicates that public key conversion failed.
-    ConversionFailed(SignatureError),
-}
-
-impl std::fmt::Display for GetPubkeyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GetPubkeyError::InvalidPrefix => {
-                write!(
-                    f,
-                    "Invalid prefix format (e.g., empty prefix is not allowed)"
-                )
-            }
-            GetPubkeyError::InvalidDidFormat => write!(
-                f,
-                "Invalid user ID format (must be '[prefix]@[did:key:z...]' or 'did:key:z...')"
-            ),
-            GetPubkeyError::DecodingFailed(e) => write!(f, "Base58 decoding failed: {}", e),
-            GetPubkeyError::InvalidMulticodec => write!(
-                f,
-                "Decoded key has invalid multicodec prefix (expected 0xed01 for Ed25519)"
-            ),
-            GetPubkeyError::InvalidLength(len) => write!(
-                f,
-                "Decoded public key has invalid length (expected 32, got {})",
-                len
-            ),
-            GetPubkeyError::ConversionFailed(e) => write!(f, "Public key conversion failed: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for GetPubkeyError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            GetPubkeyError::DecodingFailed(e) => Some(e),
-            GetPubkeyError::ConversionFailed(e) => Some(e),
-            _ => None,
-        }
-    }
+    #[error("Public key conversion failed: {0}")]
+    ConversionFailed(#[source] SignatureError),
 }
 
 /// Extracts the Ed25519 public key from a user ID string.
