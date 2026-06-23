@@ -7,9 +7,16 @@ use ed25519_dalek::{VerifyingKey as EdPublicKey, SignatureError};
 use thiserror::Error;
 use crate::services::crypto_utils::get_hash;
 
+/// Sanitizes a user ID string by removing all whitespace characters.
+/// DID keys never contain spaces, tabs, or newlines, so this is always safe.
+fn sanitize_user_id(input: &str) -> String {
+    input.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
 /// Extracts the prefix from a user ID string.
 /// Returns None for Root-Accounts (pure did:key without @).
 pub fn get_prefix_from_user_id(user_id: &str) -> Option<&str> {
+    let user_id = user_id.trim();
     if let Some(pos) = user_id.rfind('@') {
         let prefix_part = &user_id[..pos];
         // Extract only the prefix part before the checksum (e.g., "prefix" from "prefix:checksum")
@@ -110,6 +117,8 @@ pub fn create_user_id(
 ///
 /// `true` if the user ID is valid, `false` otherwise.
 pub fn validate_user_id(user_id: &str) -> bool {
+    let sanitized = sanitize_user_id(user_id);
+    let user_id = &sanitized;
     // Root account: Pure did:key without @
     if !user_id.contains('@') {
         // Check if it starts with did:key:z and is a valid Ed25519 key
@@ -191,6 +200,8 @@ pub enum GetPubkeyError {
 ///
 /// A `Result` containing the `EdPublicKey` or a `GetPubkeyError`.
 pub fn get_pubkey_from_user_id(user_id: &str) -> Result<EdPublicKey, GetPubkeyError> {
+    let sanitized = sanitize_user_id(user_id);
+    let user_id = &sanitized;
     const DID_KEY_PREFIX: &str = "did:key:z";
     const ED25519_MULTICODEC_PREFIX: [u8; 2] = [0xed, 0x01];
 
@@ -251,5 +262,33 @@ mod tests {
 
         let invalid_id3 = valid_id.replace("valid-prefix", "invalid--");
         assert!(!validate_user_id(&invalid_id3));
+    }
+
+    #[test]
+    fn test_whitespace_handling_in_user_id() {
+        let (pub_key, _) = generate_ed25519_keypair_for_tests(None);
+        let valid_id = create_user_id(&pub_key, None).unwrap(); // Root-Account
+
+        // Trailing space
+        assert!(validate_user_id(&format!("{} ", valid_id)));
+        // Leading tab
+        assert!(validate_user_id(&format!("\t{}", valid_id)));
+        // Trailing newline
+        assert!(validate_user_id(&format!("{}\n", valid_id)));
+        // Newline in the middle (e.g. from email line-wrap)
+        let mid = valid_id.len() / 2;
+        let wrapped = format!("{}\n{}", &valid_id[..mid], &valid_id[mid..]);
+        assert!(validate_user_id(&wrapped));
+        // get_pubkey should also work with whitespace
+        assert!(get_pubkey_from_user_id(&format!("{} \t\n", valid_id)).is_ok());
+    }
+
+    #[test]
+    fn test_whitespace_handling_with_prefix() {
+        let (pub_key, _) = generate_ed25519_keypair_for_tests(None);
+        let valid_id = create_user_id(&pub_key, Some("test-prefix")).unwrap();
+
+        assert!(validate_user_id(&format!("  {} ", valid_id)));
+        assert!(get_pubkey_from_user_id(&format!("{}\t", valid_id)).is_ok());
     }
 }
