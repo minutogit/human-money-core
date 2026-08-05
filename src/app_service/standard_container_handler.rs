@@ -64,39 +64,43 @@ impl AppService {
         container_bytes: &[u8],
         password: Option<&str>,
     ) -> Result<VoucherStandardDefinition, AppFacadeError> {
-        let container: SecureContainer =
-            serde_json::from_slice(container_bytes).map_err(|e| AppFacadeError::JsonError(e.to_string()))?;
+        let toml_str = match serde_json::from_slice::<SecureContainer>(container_bytes) {
+            Ok(container) => {
+                if container.c != PayloadType::VoucherStandardDefinition {
+                    return Err(AppFacadeError::ValidationError(
+                        "Invalid payload type: expected VoucherStandardDefinition".to_string(),
+                    ));
+                }
 
-        if container.c != PayloadType::VoucherStandardDefinition {
-            return Err(AppFacadeError::ValidationError(
-                "Invalid payload type: expected VoucherStandardDefinition".to_string(),
-            ));
-        }
+                let dummy_identity = UserIdentity::default();
+                let identity = match &self.state {
+                    AppState::Unlocked { identity, .. } => identity,
+                    AppState::Locked => &dummy_identity,
+                };
 
-        // Use active identity if unlocked, or fallback to default identity for Cleartext/Password opening if locked.
-        let dummy_identity = UserIdentity::default();
-        let identity = match &self.state {
-            AppState::Unlocked { identity, .. } => identity,
-            AppState::Locked => &dummy_identity,
+                let payload_bytes = open_secure_container(&container, identity, password)
+                    .map_err(AppFacadeError::from)?;
+
+                String::from_utf8(payload_bytes)
+                    .map_err(|e| AppFacadeError::ValidationError(format!("Invalid UTF-8 in container payload: {}", e)))?
+            }
+            Err(_) => {
+                String::from_utf8(container_bytes.to_vec())
+                    .map_err(|e| AppFacadeError::ValidationError(format!("Invalid UTF-8 in standard file: {}", e)))?
+            }
         };
-
-        let payload_bytes = open_secure_container(&container, identity, password)
-            .map_err(AppFacadeError::from)?;
-
-        let toml_str = String::from_utf8(payload_bytes)
-            .map_err(|e| AppFacadeError::ValidationError(format!("Invalid UTF-8 in container payload: {}", e)))?;
 
         let (verified_standard, _) = verify_and_parse_standard(&toml_str).map_err(AppFacadeError::from)?;
         Ok(verified_standard)
     }
 
-    /// Imports a `.standard` container file into the specified target directory (`voucher_standards/`).
+    /// Imports a `.standard` container file or a raw `standard.toml` file into `voucher_standards/`.
     ///
-    /// The method opens the container, verifies the standard TOML, extracts its UUID,
+    /// The method opens the container or parses raw TOML, verifies the standard, extracts its UUID,
     /// creates the subdirectory `target_dir/<standard_uuid>/`, and writes `standard.toml`.
     ///
     /// # Arguments
-    /// * `container_bytes` - JSON-serialized `SecureContainer` bytes.
+    /// * `container_bytes` - JSON-serialized `SecureContainer` bytes OR raw UTF-8 `standard.toml` bytes.
     /// * `password` - Optional password if the container is symmetrically encrypted.
     /// * `target_dir` - Path to the `voucher_standards` base directory.
     ///
@@ -108,26 +112,31 @@ impl AppService {
         password: Option<&str>,
         target_dir: &Path,
     ) -> Result<String, AppFacadeError> {
-        let container: SecureContainer =
-            serde_json::from_slice(container_bytes).map_err(|e| AppFacadeError::JsonError(e.to_string()))?;
+        let toml_str = match serde_json::from_slice::<SecureContainer>(container_bytes) {
+            Ok(container) => {
+                if container.c != PayloadType::VoucherStandardDefinition {
+                    return Err(AppFacadeError::ValidationError(
+                        "Invalid payload type: expected VoucherStandardDefinition".to_string(),
+                    ));
+                }
 
-        if container.c != PayloadType::VoucherStandardDefinition {
-            return Err(AppFacadeError::ValidationError(
-                "Invalid payload type: expected VoucherStandardDefinition".to_string(),
-            ));
-        }
+                let dummy_identity = UserIdentity::default();
+                let identity = match &self.state {
+                    AppState::Unlocked { identity, .. } => identity,
+                    AppState::Locked => &dummy_identity,
+                };
 
-        let dummy_identity = UserIdentity::default();
-        let identity = match &self.state {
-            AppState::Unlocked { identity, .. } => identity,
-            AppState::Locked => &dummy_identity,
+                let payload_bytes = open_secure_container(&container, identity, password)
+                    .map_err(AppFacadeError::from)?;
+
+                String::from_utf8(payload_bytes)
+                    .map_err(|e| AppFacadeError::ValidationError(format!("Invalid UTF-8 in container payload: {}", e)))?
+            }
+            Err(_) => {
+                String::from_utf8(container_bytes.to_vec())
+                    .map_err(|e| AppFacadeError::ValidationError(format!("Invalid UTF-8 in standard file: {}", e)))?
+            }
         };
-
-        let payload_bytes = open_secure_container(&container, identity, password)
-            .map_err(AppFacadeError::from)?;
-
-        let toml_str = String::from_utf8(payload_bytes)
-            .map_err(|e| AppFacadeError::ValidationError(format!("Invalid UTF-8 in container payload: {}", e)))?;
 
         let (verified_standard, _) = verify_and_parse_standard(&toml_str).map_err(AppFacadeError::from)?;
         let standard_uuid = verified_standard.immutable.identity.uuid;
@@ -308,6 +317,38 @@ signature = "5aomSjj76rEb4VVjhAd6p6qvmU79wkkTpj84AnY3D9p8xRDNfxBqKL4EbEHTKfPevgg
         } else {
             panic!("Expected ValidationError for invalid payload type");
         }
+
+        #[cfg(feature = "test-utils")]
+        crate::set_signature_bypass(false);
+    }
+
+    #[test]
+    fn test_inspect_import_raw_toml() {
+        #[cfg(feature = "test-utils")]
+        crate::set_signature_bypass(true);
+
+        let (app, temp_dir) = setup_test_app("test_standard_raw_toml");
+        let target_standards_dir = temp_dir.join("voucher_standards");
+
+        let raw_toml_bytes = SAMPLE_TOML.as_bytes();
+
+        // 1. Inspect raw TOML bytes directly
+        let def = app
+            .inspect_voucher_standard_container(raw_toml_bytes, None)
+            .expect("Inspect raw TOML failed");
+        assert_eq!(def.immutable.identity.uuid, "test-standard-uuid-12345");
+
+        // 2. Import raw TOML bytes directly
+        let uuid = app
+            .import_voucher_standard(raw_toml_bytes, None, &target_standards_dir)
+            .expect("Import raw TOML failed");
+        assert_eq!(uuid, "test-standard-uuid-12345");
+
+        // 3. Verify file saved on disk
+        let saved_file = target_standards_dir
+            .join("test-standard-uuid-12345")
+            .join("standard.toml");
+        assert!(saved_file.exists());
 
         #[cfg(feature = "test-utils")]
         crate::set_signature_bypass(false);
