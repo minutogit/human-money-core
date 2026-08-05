@@ -23,6 +23,8 @@ pub enum PayloadType {
     TrustAssertion,
     /// Der Payload ist ein `ProofOfDoubleSpend` (Betrugsbeweis).
     ProofOfDoubleSpend,
+    /// Der Payload ist eine `VoucherStandardDefinition` (.standard TOML-Datei).
+    VoucherStandardDefinition,
     /// Ein generischer Typ für zukünftige, noch nicht definierte Anwendungsfälle.
     Generic(String),
 }
@@ -47,6 +49,7 @@ impl PayloadType {
             PayloadType::DetachedSignature => format!("{}/signing/1.0/response.md", base_url),
             PayloadType::ProofOfDoubleSpend => format!("{}/conflict/1.0/proof.md", base_url),
             PayloadType::TrustAssertion => format!("{}/trust/1.0/assertion.md", base_url),
+            PayloadType::VoucherStandardDefinition => format!("{}/standard/1.0/definition.md", base_url),
             PayloadType::Generic(s) => format!("{}/generic/1.0/{}.md", base_url, s),
         }
     }
@@ -238,6 +241,10 @@ mod tests {
         assert_eq!(
             PayloadType::TrustAssertion.to_didcomm_uri(),
             format!("{}/trust/1.0/assertion.md", base)
+        );
+        assert_eq!(
+            PayloadType::VoucherStandardDefinition.to_didcomm_uri(),
+            format!("{}/standard/1.0/definition.md", base)
         );
         assert_eq!(
             PayloadType::Generic("custom".to_string()).to_didcomm_uri(),

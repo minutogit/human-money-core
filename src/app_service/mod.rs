@@ -78,6 +78,7 @@ pub mod data_encryption;
 pub mod l2_facade;
 pub mod lifecycle;
 pub mod seal_handler;
+pub mod standard_container_handler;
 
 /// Represents the publicly visible information of a profile.
 /// Used to pass a list of available profiles to the frontend.
