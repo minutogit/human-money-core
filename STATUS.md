@@ -1,9 +1,9 @@
 ---
 project: human-money-core
-version: "0.2.20"
+version: "0.2.21"
 phase: "active-development"
 health: "green"
-last_updated: "2026-05-31"
+last_updated: "2026-08-13"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -56,6 +56,7 @@ The core library is stable and feature-rich. Current focus areas:
 
 ## Recent Milestones
 
+- [x] **Voucher Standard Definition Hardening & Documentation**: Added comprehensive Rustdoc `///` comments to `VoucherStandardDefinition` and all sub-structs/enums, synchronized technical specification (`06_standard_definition.md`) with code (`allowed_t_types`, `stealth` privacy mode, `collateral_type` variants), and added detailed educational inline TOML comments across reference files (`minuto_v1`, `freetaler_v1`, `standard_template.toml`) while strictly preserving cryptographic signatures.
 - [x] **VoucherCoreError Refactoring & Categorization**: Grouped and documented all `VoucherCoreError` variants with category comments and detailed docstrings, ensuring 100% Rustdoc coverage and clean error modularity.
 - [x] **Examples Directory Documentation**: Added `//!` doc comments to all nine playground files in `examples/` and created `examples/README.md` to cleanly index and document all example scripts.
 - [x] **Transaction Lifecycle Documentation**: Documented the 7-step transactional safety lifecycle (including rollback semantics, state isolation, generation checks, and process-wide locks) of `with_transactional_mut` and `TransactionOutcome` in `AppService`.
