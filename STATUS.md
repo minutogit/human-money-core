@@ -56,6 +56,7 @@ The core library is stable and feature-rich. Current focus areas:
 
 ## Recent Milestones
 
+- [x] **WASM Target-Gating & Compilation Safety**: Placed OS-specific dependencies (`sysinfo`, `tokio`, `reqwest`) under target-gated dependency blocks (`target.'cfg(not(target_arch = "wasm32"))'`) in `Cargo.toml` and guarded OS system calls in `FileStorage`, enabling direct `wasm32-unknown-unknown` compilation for `human_money_core`.
 - [x] **Voucher Standard Definition Hardening & Documentation**: Added comprehensive Rustdoc `///` comments to `VoucherStandardDefinition` and all sub-structs/enums, synchronized technical specification (`06_standard_definition.md`) with code (`allowed_t_types`, `stealth` privacy mode, `collateral_type` variants), and added detailed educational inline TOML comments across reference files (`minuto_v1`, `freetaler_v1`, `standard_template.toml`) while strictly preserving cryptographic signatures.
 - [x] **VoucherCoreError Refactoring & Categorization**: Grouped and documented all `VoucherCoreError` variants with category comments and detailed docstrings, ensuring 100% Rustdoc coverage and clean error modularity.
 - [x] **Examples Directory Documentation**: Added `//!` doc comments to all nine playground files in `examples/` and created `examples/README.md` to cleanly index and document all example scripts.

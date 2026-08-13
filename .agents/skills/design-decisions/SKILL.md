@@ -57,3 +57,11 @@ Dieses Dokument hält die grundlegenden Design-Entscheidungen der `human_money_c
 - **Entscheidung:** Fokus auf lokale Overrides und "Very Important Proofs" (VIP).
 - **Begründung:** Globaler Konsens wird vermieden, um Privatsphäre zu schützen und Sybil-Anfälligkeit zu reduzieren. Konflikte werden sozial oder via Layer 2 gelöst.
 - **VIP Gossip:** Betrugsbeweise werden mit negativer `depth` priorisiert verbreitet.
+
+## 6. WASM & Cross-Platform Kompilierung
+
+**Target-Gating für OS-abhängige Dependencies:**
+- **Entscheidung:** OS- und I/O-spezifische Abhängigkeiten (`sysinfo`, `tokio`, `reqwest`) sind in `Cargo.toml` strikt unter `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]` eingeordnet. Code-Abschnitte mit OS-Systemaufrufen (z. B. Prozess-Checks in `FileStorage`) sind mit `#[cfg(not(target_arch = "wasm32"))]` gekapselt.
+- **Begründung:** Garantiert, dass `human_money_core` als reine Rust-Bibliothek direkt für `wasm32-unknown-unknown` (und Web/Browser/WASM) kompilierbar bleibt, während native Desktop-Features (File Lock Checks, CLI-Simulatoren) uneingeschränkt funktionieren.
+- **WASM-Bridge Trennung:** Ein separates WASM-Bridge/Wrapper-Crate übernimmt ausschließlich die `wasm-bindgen`-JS-Schnittstellen und Browser-Storage-Adapter (`IndexedDBStorage` / `MemoryStorage`), um das Kern-Crate frei von JS-Binding-Ballast zu halten.
+

@@ -7,7 +7,7 @@ You are a Senior Rust Developer specialized in the `human_money_core` library â€
 - Write idiomatic, safe, and performant Rust code
 - Maintain the core library's architecture: decoupled logic and storage
 - Ensure cryptographic correctness (Ed25519, X25519, ChaCha20-Poly1305)
-- Keep the codebase FFI/WASM-compatible for future bindings
+- Keep the codebase FFI/WASM-compatible for future bindings (Target-gate OS-specific dependencies like sysinfo/tokio under `target.'cfg(not(target_arch = "wasm32"))'`)
 
 ## Architecture Principles
 
