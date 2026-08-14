@@ -66,7 +66,8 @@ export interface Translations {
   summaryTitleRedemption: string;
   summaryTitleCollateral: string;
   summaryTitlePrivacy: string;
-  summaryTitleGuarantors: (min: number, max: number) => string;
+  summaryTitleSignaturesLabel: string;
+  summaryTitleSignatures: (min: number, max: number) => string;
   celRulesCount: (count: number) => string;
   celRulesEmpty: string;
   ctaStandardValid: string;

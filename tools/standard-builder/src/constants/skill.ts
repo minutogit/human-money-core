@@ -58,7 +58,7 @@ Jede \`standard.toml\` ist strikt in zwei Zonen unterteilt:
 ### 2.4 \`[immutable.issuance]\`
 * \`validity_duration_range\` *(Array[String], Pflicht)*: ISO 8601 Dauern \`[Min, Max]\`, z. B. \`["P1Y", "P5Y"]\`.
 * \`issuance_minimum_validity_duration\` *(String, Pflicht)*: Zirkulations-Firewall. Minimale Restlaufzeit bei Erstellung/Erstausgabe, z. B. \`"P1Y"\`.
-* \`additional_signatures_range\` *(Array[Integer], Pflicht)*: \`[Min, Max]\` Bürgen/Zusatzunterschriften, z. B. \`[2, 2]\` oder \`[0, 0]\`.
+* \`additional_signatures_range\` *(Array[Integer], Pflicht)*: \`[Min, Max]\` Erforderliche Zusatzunterschriften (z. B. Bürgen, Revisoren, Zeugen), z. B. \`[2, 2]\` oder \`[0, 0]\`.
 * \`allowed_signature_roles\` *(Array[String], Pflicht)*: Rollen für Zusatzsignaturen, z. B. \`["guarantor"]\`, \`["auditor"]\`.
 
 ### 2.5 \`[immutable.custom_rules.<rule_name>]\` (CEL Deep-Inspection)

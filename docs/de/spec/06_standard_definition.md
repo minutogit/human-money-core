@@ -97,8 +97,8 @@ Diese Variablen werden vom `human_money_core` direkt in performante Rust-Structs
 |---|---|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `validity_duration_range` | Array[String] | ISO 8601 Zeiträume. Definiert den Rahmen, wie lange ein Gutschein maximal gültig sein darf. Bsp: `["P1Y", "P5Y"]` (1 bis 5 Jahre).                                                                                                              |
 | `issuance_minimum_validity_duration` | String | **Zirkulations-Firewall:** Der Erstller darf einen  Gutschein nur dann "in Umlauf" bringen, wenn zu diesem Zeitpunkt noch mindestens dieser Zeitraum als Restgültigkeit übrig ist (Bsp: `"P1Y"`). Verhindert zu schnell ablaufender Gutscheine. |
-| `additional_signatures_range` | Array[Integer] | Anzahl benötigter Mitunterzeichner bei der Erstellung. Bsp: `[2, 3]` (2 bis 3 Bürgen). `[0, 0]` für keine.                                                                                                                                      |
-| `allowed_signature_roles` | Array[String] | Welche Rollen dürfen mitunterzeichnen? (Meist `"guarantor"`, optional `"auditor"` etc.).                                                                                                                                                        |
+| `additional_signatures_range` | Array[Integer] | Anzahl benötigter Mitunterzeichner / Zusatzsignaturen bei der Erstellung. Bsp: `[2, 2]` (2 Zusatzsignaturen wie Bürgen/Revisoren) oder `[0, 0]` für keine. |
+| `allowed_signature_roles` | Array[String] | Welche Rollen dürfen mitunterzeichnen? (z. B. `"guarantor"`, `"auditor"`, `"witness"`, `"trustee"` etc.).                                        |
 
 
 #### 5.1.6 Custom Rules (Deep-Inspection via CEL)

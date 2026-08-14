@@ -432,9 +432,9 @@ Please fix these errors and provide the complete, valid standard.toml inside a \
                   </span>
                 </div>
                 <div className="summary-card">
-                  <span className="summary-label">{t.featuresSectionTitle}</span>
+                  <span className="summary-label">{t.summaryTitleSignaturesLabel}</span>
                   <span className="summary-value">
-                    {t.summaryTitleGuarantors(
+                    {t.summaryTitleSignatures(
                       diagnostic.summary.additional_signatures_range[0],
                       diagnostic.summary.additional_signatures_range[1]
                     )}

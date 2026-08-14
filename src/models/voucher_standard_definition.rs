@@ -127,9 +127,9 @@ pub struct ImmutableIssuance {
     pub validity_duration_range: Vec<String>,
     /// Zirkulations-Firewall: Erforderliche Restgültigkeit bei Erstellung/Erstausgabe (z. B. `"P1Y"`).
     pub issuance_minimum_validity_duration: String,
-    /// Erforderliche Anzahl zusätzlicher Signaturen/Bürgen [Min, Max] (z. B. `[2, 2]` oder `[0, 3]`).
+    /// Erforderliche Anzahl zusätzlicher Signaturen (z. B. Bürgen, Revisoren, Zeugen) [Min, Max] (z. B. `[2, 2]` oder `[0, 0]`).
     pub additional_signatures_range: Vec<u32>,
-    /// Erlaubte Signatur-Rollen für Zusatz-Signaturen (z. B. `["guarantor"]`).
+    /// Erlaubte Signatur-Rollen für Zusatz-Signaturen (z. B. `["guarantor"]`, `["auditor"]`, `["witness"]`).
     pub allowed_signature_roles: Vec<String>,
 }
 
