@@ -110,7 +110,10 @@ pub struct ImmutableBlueprint {
 pub struct ImmutableFeatures {
     /// Erlaubt Teilübertragungen (`split`). Wenn `false`, kann der Gutschein nur als Ganzes weitergegeben werden.
     pub allow_partial_transfers: bool,
-    /// UI-Hinweis: Wenn `true`, dürfen Guthaben in der Wallet als Gesamtsaldo aufsummiert werden.
+    /// Fungibility and balance aggregation rule: defines whether vouchers of this standard represent
+    /// interchangeable/summable currency units (`true`) or distinct non-fungible certificates (`false`).
+    /// Directly controls balance and transfer aggregation (`TransferSummary`) in core logic and is therefore
+    /// an essential part of the immutable `logic_hash`.
     pub balances_are_summable: bool,
     /// Maximale Anzahl an Nachkommastellen (`0` für Ganzzahlen wie Minuten, `2` für Währungen).
     pub amount_decimal_places: u8,

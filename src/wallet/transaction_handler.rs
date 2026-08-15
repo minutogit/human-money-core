@@ -387,7 +387,8 @@ impl Wallet {
                 voucher.non_redeemable_test_voucher
             );
 
-            // 5. Akkumuliere den Wert, basierend auf 'is_summable'
+            // 5. Accumulate value based on fungibility rule (balances_are_summable)
+            // Fungible currency units are summed; non-fungible items are counted as distinct certificates.
             if standard.immutable.features.balances_are_summable {
                 let current_sum = transfer_summary
                     .summable_amounts

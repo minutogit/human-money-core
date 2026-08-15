@@ -47,7 +47,7 @@ Jede `standard.toml` ist strikt in zwei Zonen unterteilt:
 
 ### 2.3 `[immutable.features]`
 * `allow_partial_transfers` *(Boolean, Pflicht)*: `true` erlaubt `split`-Transaktionen. Wenn `false`, kann der Gutschein nur als Ganzes transferiert werden.
-* `balances_are_summable` *(Boolean, Pflicht)*: `true` zeigt Wallets an, dass Gutscheine als Gesamtsaldo addiert werden dürfen.
+* `balances_are_summable` *(Boolean, Pflicht)*: `true` für fungible Währungen (Beträge dürfen im Core und in Wallets als Gesamtsaldo aufsummiert werden); `false` für diskrete Einzelzertifikate/NFTs.
 * `amount_decimal_places` *(Integer, Pflicht)*: `0` für unteilbare Einheiten (wie Minuten), `2` für Währungen (Cents), `3` oder mehr für Gewichte/Krypto.
 * `privacy_mode` *(String Enum, Pflicht)*:
   * `"public"`: Vollständig öffentliche Transaktionen auf Layer 2.

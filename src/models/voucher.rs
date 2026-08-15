@@ -35,11 +35,16 @@ pub struct ValueDefinition {
     pub description: Option<String>,
 }
 
-/// Definiert die (optionale) Besicherung eines Gutscheins.
+/// Defines the (optional) collateral/backing of a voucher (extension point for physical assets or fiat).
+///
+/// Design note:
+/// For standards using `collateral_type = "personal_guarantee"` (e.g. Minuto), this object remains
+/// `None` by default, as the backing is natively represented via the cryptographic signatures
+/// of guarantors (`signatures`).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct Collateral {
-    /// Die Felder 'unit', 'amount', 'abbreviation', 'description'
-    /// werden direkt von ValueDefinition hier eingebettet.
+    /// The fields 'unit', 'amount', 'abbreviation', 'description'
+    /// are embedded directly from ValueDefinition.
     #[serde(flatten)]
     pub value: ValueDefinition,
 
@@ -204,7 +209,7 @@ pub struct Voucher {
     pub non_redeemable_test_voucher: bool,
     /// Definiert den Nennwert des Gutscheins.
     pub nominal_value: ValueDefinition,
-    /// Informationen zur Besicherung des Gutscheins.
+    /// Optional collateral/backing information for the voucher (typically `None` for personal_guarantee).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub collateral: Option<Collateral>,
     /// Detaillierte Informationen zum Ersteller des Gutscheins.
