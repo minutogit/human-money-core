@@ -20,6 +20,8 @@ use ed25519_dalek::SigningKey;
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::{fs, io::Write, path::PathBuf};
+
+#[cfg(not(target_arch = "wasm32"))]
 use sysinfo::{Pid, System};
 
 // --- Internal Constants and Structures ---
@@ -877,21 +879,24 @@ impl Storage for FileStorage {
             }
 
             // Check if the process is still running
-            let mut s = System::new();
-            s.refresh_processes();
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let mut s = System::new();
+                s.refresh_processes();
 
-            if s.process(Pid::from_u32(pid_val)).is_some() {
-                // Process still running -> Error!
-                return Err(StorageError::LockFailed(format!(
-                    "Wallet wird bereits von einem anderen Prozess (PID: {}) verwendet.",
-                    pid_val // FIX: Here the argument was missing
-                )));
-            } else {
-                // Process dead -> Stale Lock
-                eprintln!(
-                    "Veraltete Sperre (Stale Lock) von PID {} gefunden und entfernt.",
-                    pid_val
-                ); // FIX: Variable pid -> pid_val
+                if s.process(Pid::from_u32(pid_val)).is_some() {
+                    // Process still running -> Error!
+                    return Err(StorageError::LockFailed(format!(
+                        "Wallet wird bereits von einem anderen Prozess (PID: {}) verwendet.",
+                        pid_val
+                    )));
+                } else {
+                    // Process dead -> Stale Lock
+                    eprintln!(
+                        "Veraltete Sperre (Stale Lock) von PID {} gefunden und entfernt.",
+                        pid_val
+                    );
+                }
             }
         }
 
