@@ -68,7 +68,7 @@ fn test_full_creation_and_validation_cycle() {
     // unabhängig vom Zustand der globalen MINUTO_STANDARD-Variable.
     let (minuto_standard_with_rounding, standard_hash) =
         create_custom_standard(&MINUTO_STANDARD.0, |s| {
-            s.mutable.app_config.round_up_validity_to = Some("end_of_year".to_string());
+            s.mutable.app_config.round_up_validity_to = Some("P1Y".to_string());
         });
 
     // 2. Erstellung

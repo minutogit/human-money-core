@@ -149,10 +149,14 @@ pub fn verify_validity_duration(
             })?
             .with_timezone(&chrono::Utc);
 
-        let max_valid_until_dt = crate::services::voucher_manager::add_iso8601_duration(
+        let mut max_valid_until_dt = crate::services::voucher_manager::add_iso8601_duration(
             creation_dt,
             &standard_max_duration,
         )?;
+
+        if let Some(rounding_str) = &standard.mutable.app_config.round_up_validity_to {
+            max_valid_until_dt = crate::services::voucher_manager::round_up_date(max_valid_until_dt, rounding_str)?;
+        }
 
         let actual_valid_until_dt = chrono::DateTime::parse_from_rfc3339(&voucher.valid_until)
             .map_err(|_| ValidationError::InvalidDateLogic {

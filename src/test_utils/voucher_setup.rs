@@ -193,12 +193,8 @@ pub fn create_voucher_for_manipulation(
             .expect("Failed to calculate validity in test helper");
 
     if let Some(rule) = &standard.mutable.app_config.round_up_validity_to {
-        if rule == "end_of_year" {
-            use chrono::{Datelike, TimeZone};
-            let rounded_date =
-                chrono::NaiveDate::from_ymd_opt(valid_until_dt.year(), 12, 31).unwrap();
-            let rounded_time = chrono::NaiveTime::from_hms_micro_opt(23, 59, 59, 999_999).unwrap();
-            valid_until_dt = chrono::Utc.from_utc_datetime(&rounded_date.and_time(rounded_time));
+        if let Ok(rounded) = crate::services::voucher_manager::date_utils::round_up_date(valid_until_dt, rule) {
+            valid_until_dt = rounded;
         }
     }
 

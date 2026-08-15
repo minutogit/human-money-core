@@ -121,7 +121,7 @@ Hier wird die Common Expression Language (CEL) für Sonderregeln eingebettet. De
 | Feld | Typ | Beschreibung |
 |---|---|---|
 | `default_validity_duration` | String | Welcher Wert soll im "Erstellen"-Formular der Wallet vorausgewählt sein? |
-| `round_up_validity_to` | String | UI-Hinweis: Sollen Ablaufdaten z.B. immer auf das Jahresende (`"P1Y"`) gerundet werden? |
+| `round_up_validity_to` | String | Stichtagsanker für Gutscheinablauf: `"P1D"` (Tagesende), `"P1M"` (Monatsende), `"P3M"` (Quartalsende), `"P6M"` (Halbjahresende) oder `"P1Y"` (Jahresende). Das maximal erlaubte Gültigkeitsdatum bei der Validierung entspricht `round_up(creation_date + max_duration, round_up_validity_to)`. |
 | `server_history_retention` | String | Anweisung an L2-Nodes: Wie lange nach dem Ablaufdatum eines Gutscheins (`expires_at`) müssen die kryptographischen Beweise (Transaktionshistorie) noch gespeichert werden, bevor sie sicher gelöscht (Garbage Collection) werden dürfen? Bsp: `"P6M"` (6 Monate). |
 
 #### 5.2.3 i18n (Übersetzungs-Maps)

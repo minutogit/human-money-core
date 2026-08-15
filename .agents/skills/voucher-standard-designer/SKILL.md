@@ -90,7 +90,7 @@ message = "Der Aussteller darf nicht als eigener Bürge auftreten."
 
 ### 2.7 `[mutable.app_config]`
 * `default_validity_duration` *(String ISO 8601, Optional)*: z. B. `"P5Y"`.
-* `round_up_validity_to` *(String ISO 8601, Optional)*: z. B. `"P1Y"` (Rundung auf Jahresende).
+* `round_up_validity_to` *(String ISO 8601, Optional)*: Stichtagsanker (`"P1D"`, `"P1M"`, `"P3M"`, `"P6M"`, `"P1Y"`). Z. B. `"P1Y"` (Rundung auf Jahresende).
 * `server_history_retention` *(String ISO 8601, Optional)*: Aufbewahrungsfrist für L2-Nodes nach Gutscheinablauf, z. B. `"P6M"`.
 
 ### 2.8 `[mutable.i18n]` (Bilingual Embedding)
