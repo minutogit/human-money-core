@@ -35,7 +35,7 @@ fn test_privacy_guard_tampering() {
     // 3. Verify -> Should Fail "Fail-Fast"
     // The signature covers this field, so signature check fails first.
     // BUT we want to test if the *decryption* or *hash check* fails if we bypass signature?
-    // Spec: "Sofortige Ablehnung, Fail-Fast" -> Hash-Check or Signature-Check.
+    // Spec: "Immediate rejection, fail-fast" -> Hash-Check or Signature-Check.
     // If signature check is first, that's fine.
     // If we use bypass, we check if decryption fails.
 
@@ -68,7 +68,7 @@ fn test_context_prefix_spoofing() {
     // Let's use `setup_voucher_with_one_tx` and assume it creates a valid transaction for a recipient.
     // If we can't easily inject a spoofed prefix, we might need a specific unit test for `TransactionHandler`.
     // I will mark this as "TODO: implementation requires creating a manual payload with separate tool" if I can't find a helper.
-    // BUT verify the intention: "Der Empfänger entschlüsselt... Vergleicht...".
+    // BUT verify the intention: "The recipient decrypts... compares...".
     // This is a Service/Wallet logic test.
 
     // As `architecture` test, maybe I can use `WalletService`?
@@ -131,7 +131,7 @@ fn test_premature_reveal() {
     // Compile error if not exists (Good).
     // But we want runtime check on JSON.
 
-    // "Er darf nur als Hash (receiver_ephemeral_pub_hash) oder verschlüsselt... vorkommen."
+    // "It may only appear as a hash (receiver_ephemeral_pub_hash) or encrypted..."
 
     // Check if `receiver_ephemeral_pub` key exists in JSON.
     let val: serde_json::Value = serde_json::from_str(&json).unwrap();

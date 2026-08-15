@@ -1,54 +1,54 @@
 //! # src/models/storage_integrity.rs
 //!
-//! Definiert die Datenstrukturen für die Storage Integrity (Integritätsschutz).
-//! Der Integrity Record fungiert als "Inhaltsverzeichnis mit Prüfsummen" für alle Items
-//! im Wallet-Speicher.
+//! Defines the data structures for Storage Integrity (integrity protection).
+//! The Integrity Record functions as a "table of contents with checksums" for all items
+//! in wallet storage.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub const INTEGRITY_FILE_NAME: &str = "storage_integrity.json";
 
-/// Der kryptographisch signierte Datensatz der Storage Integrity.
+/// The cryptographically signed record of storage integrity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocalIntegrityRecord {
-    /// Die tatsächlichen Nutzdaten der Storage Integrity.
+    /// The actual payload of storage integrity.
     pub payload: IntegrityPayload,
-    /// Ed25519-Signatur über die kanonische JSON-Serialisierung des `payload`.
-    /// Diese Signatur bindet die Storage Integrity an die Identität des Nutzers.
+    /// Ed25519 signature over the canonical JSON serialization of the `payload`.
+    /// This signature binds the storage integrity to the user's identity.
     pub signature: String,
 }
 
-/// Die tatsächlichen Nutzdaten der Storage Integrity.
+/// The actual payload of storage integrity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IntegrityPayload {
-    /// Schema-Version (aktuell 1).
+    /// Schema version (currently 1).
     pub version: u32,
-    /// Verknüpfung mit dem aktuellen WalletSeal (Base58-Hash des Siegels).
-    /// Stellt sicher, dass die Storage Integrity zu einer bestimmten State-Epoche gehört.
+    /// Link to the current WalletSeal (Base58 hash of the seal).
+    /// Ensures that storage integrity belongs to a specific state epoch.
     pub seal_hash: String,
-    /// Map von Speicher-Item (Name/Key) zu SHA3-256 Hash.
+    /// Map of storage item (name/key) to SHA3-256 hash.
     pub item_hashes: HashMap<String, String>,
-    /// ISO-8601 Zeitstempel der Erstellung.
+    /// ISO-8601 timestamp of creation.
     pub timestamp: String,
 }
 
-/// Der Integritätsbericht des Speichers.
-/// Wird verwendet, um dem Nutzer (oder der App) den Status der Speicher-Integrität anzuzeigen.
+/// The integrity report of the storage.
+/// Used to indicate the status of storage integrity to the user (or app).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum IntegrityReport {
-    /// Alles in Ordnung.
+    /// Everything is fine.
     Valid,
-    /// Items, die im Integrity Record stehen, aber im Speicher fehlen.
+    /// Items that are listed in the integrity record, but missing from storage.
     MissingItems(Vec<String>),
-    /// Items, deren berechneter Hash nicht mit dem Integrity Record übereinstimmt.
+    /// Items whose calculated hash does not match the integrity record.
     ManipulatedItems(Vec<String>),
-    /// Items im Speicher, die NICHT im Integrity Record stehen (unbekannte Daten).
+    /// Items in storage that are NOT listed in the integrity record (unknown data).
     UnknownItems(Vec<String>),
-    /// Integrity Record passt nicht zur aktuellen Wallet-Epoche (Rollback-Versuch).
+    /// Integrity record does not match the current wallet epoch (rollback attempt).
     IntegrityOutdated,
-    /// Die Signatur des Integrity Record ist ungültig (Manipulation am Record selbst).
+    /// The signature of the integrity record is invalid (tampering with the record itself).
     InvalidSignature,
-    /// Der Integrity Record fehlt vollständig (obwohl ein Siegel existiert).
+    /// The integrity record is completely missing (even though a seal exists).
     MissingIntegrityRecord,
 }

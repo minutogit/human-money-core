@@ -1,10 +1,10 @@
 // tests/services/crypto.rs
 // cargo test --test services_tests
 //!
-//! Bündelt alle kryptographischen Tests, inklusive der Logik für
-//! den Secure Container und allgemeine Krypto-Hilfsfunktionen.
+//! Bundles all cryptographic tests, including logic for
+//! the Secure Container and general crypto utilities.
 
-// Explizite Pfadangabe für das `test_utils`-Modul, um Unklarheiten zu vermeiden.
+// Explicit path specification for the `test_utils` module to avoid ambiguities.
 
 // --- Tests from test_secure_container.rs ---
 use human_money_core::VoucherCoreError;
@@ -17,16 +17,16 @@ use human_money_core::test_utils::ACTORS;
 #[test]
 fn test_multi_recipient_secure_container() {
     // --- 1. SETUP ---
-    // Erstelle einen Sender (Alice) und drei weitere Personen.
-    // Bob und Carol werden die legitimen Empfänger sein.
-    // Dave ist ein unbefugter Dritter.
+    // Create a sender (Alice) and three other individuals.
+    // Bob and Carol will be the legitimate recipients.
+    // Dave is an unauthorized third party.
     let alice_identity = &ACTORS.alice;
     let bob_identity = &ACTORS.bob;
     let carol_identity = &ACTORS.charlie; // Charlie represents Carol
     let david_identity = &ACTORS.david;
 
     // --- 2. CONTAINER CREATION ---
-    // Alice erstellt eine geheime Nachricht für Bob und Carol.
+    // Alice creates a secret message for Bob and Carol.
     let secret_payload = b"This is a secret message for Bob and Carol!";
     let recipient_ids = vec![bob_identity.user_id.clone(), carol_identity.user_id.clone()];
 
@@ -40,7 +40,7 @@ fn test_multi_recipient_secure_container() {
 
     // --- 3. VERIFICATION BY RECIPIENTS ---
 
-    // Bob versucht, den Container zu öffnen.
+    // Bob attempts to open the container.
     let bob_payload = open_secure_container(&container, &bob_identity, None).unwrap();
     assert_eq!(bob_payload, secret_payload);
     assert_eq!(
@@ -49,7 +49,7 @@ fn test_multi_recipient_secure_container() {
     );
     println!("SUCCESS: Bob successfully opened the container.");
 
-    // Carol versucht, denselben Container zu öffnen.
+    // Carol attempts to open the same container.
     let carol_payload = open_secure_container(&container, &carol_identity, None).unwrap();
     assert_eq!(carol_payload, secret_payload);
     assert_eq!(
@@ -60,14 +60,14 @@ fn test_multi_recipient_secure_container() {
 
     // --- 4. VERIFICATION FAILURE BY UNAUTHORIZED USER ---
 
-    // David versucht, den Container zu öffnen. Dies muss fehlschlagen.
+    // David attempts to open the container. This must fail.
     let david_result = open_secure_container(&container, david_identity, None);
     assert!(david_result.is_err());
 
-    // Überprüfe, ob der Fehler der richtige ist.
+    // Verify that the error is correct.
     match david_result.unwrap_err() {
         VoucherCoreError::Container(ContainerManagerError::NotAnIntendedRecipient) => {
-            // Korrekter Fehlertyp
+            // Correct error type
             println!("SUCCESS: Dave was correctly denied access.");
         }
         e => panic!(
@@ -77,8 +77,8 @@ fn test_multi_recipient_secure_container() {
     }
 }
 
-/// Testet, ob der Sender einen von ihm erstellten Container später wieder öffnen kann.
-/// Dies ist der kritische Testfall für das "Double Key Wrapping".
+/// Tests whether the sender can re-open a container they created.
+/// This is the critical test case for "Double Key Wrapping".
 #[test]
 fn test_sender_can_reopen_container() {
     // --- 1. SETUP ---
@@ -87,7 +87,7 @@ fn test_sender_can_reopen_container() {
     let payload = b"message for recipient that sender must be able to read later";
 
     // --- 2. CONTAINER CREATION ---
-    // Sender erstellt einen Container für den Empfänger.
+    // Sender creates a container for the recipient.
     let container = create_secure_container(
         sender,
         ContainerConfig::TargetDids(vec![recipient.user_id.clone()], PrivacyMode::TrialDecryption),
@@ -96,16 +96,16 @@ fn test_sender_can_reopen_container() {
     )
     .unwrap();
 
-    // --- 3. VERIFICATION BY RECIPIENT (Standardfall) ---
-    // Der Empfänger kann den Container öffnen.
+    // --- 3. VERIFICATION BY RECIPIENT (Standard Case) ---
+    // The recipient can open the container.
     let recipient_payload = open_secure_container(&container, recipient, None).unwrap();
     assert_eq!(
         recipient_payload, payload,
         "Recipient should be able to open the container"
     );
 
-    // --- 4. VERIFICATION BY SENDER (Wichtiger Testfall) ---
-    // Der Sender muss denselben Container ebenfalls öffnen können.
+    // --- 4. VERIFICATION BY SENDER (Critical Test Case) ---
+    // The sender must also be able to open the same container.
     let sender_payload = open_secure_container(&container, sender, None).unwrap();
     assert_eq!(
         sender_payload, payload,
@@ -149,7 +149,7 @@ fn test_derive_ed25519_keypair() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_validate_mnemonic() {
-    // 1. Test mit einer bekanntermaßen gültigen Phrase
+    // 1. Test with a known valid phrase
     let valid_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
     let result = validate_mnemonic_phrase(valid_mnemonic, MnemonicLanguage::English);
     assert!(
@@ -159,7 +159,7 @@ fn test_validate_mnemonic() {
     );
     println!("SUCCESS: Correctly validated a valid mnemonic.");
 
-    // 2. Test mit einem ungültigen Wort
+    // 2. Test with an invalid word
     let invalid_word_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon hello";
     let result = validate_mnemonic_phrase(invalid_word_mnemonic, MnemonicLanguage::English);
     assert!(
@@ -168,8 +168,8 @@ fn test_validate_mnemonic() {
     );
     println!("SUCCESS: Correctly identified a mnemonic with an invalid word.");
 
-    // 3. Test mit einer ungültigen Prüfsumme
-    // "about" wurde durch "abandon" ersetzt, was die Prüfsumme ungültig macht.
+    // 3. Test with an invalid checksum
+    // "about" was replaced by "abandon", making the checksum invalid.
     let bad_checksum_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
     let result = validate_mnemonic_phrase(bad_checksum_mnemonic, MnemonicLanguage::English);
     assert!(
@@ -179,36 +179,36 @@ fn test_validate_mnemonic() {
     println!("SUCCESS: Correctly identified a mnemonic with a bad checksum.");
 }
 
-/// Testet die Erstellung von User-IDs für Root-Accounts und Präfix-Accounts.
+/// Tests user ID creation for root accounts and prefix accounts.
 ///
-/// Ein Root-Account wird durch ein fehlendes (`None`) oder leeres (`Some("")`)
-/// Präfix definiert. In diesem Fall wird die reine `did:key` zurückgegeben.
-/// Dies ermöglicht eine einfache Interoperabilität und ein flaches Kontomodell
-/// für Nutzer, die keine SAI-Trennung benötigen.
+/// A root account is defined by a missing (`None`) or empty (`Some("")`)
+/// prefix. In this case, the pure `did:key` is returned.
+/// This enables simple interoperability and a flat account model
+/// for users who do not require SAI separation.
 #[test]
 fn test_user_id_creation_supports_root_and_prefix() -> Result<(), Box<dyn std::error::Error>> {
     let mnemonic = generate_mnemonic(24, MnemonicLanguage::English)?;
     let (ed_pub, _) = derive_ed25519_keypair(&mnemonic, None, MnemonicLanguage::English)?;
 
-    // 1. Test: `None` als Präfix erzeugt einen Root-Account (reine did:key)
+    // 1. Test: `None` as prefix creates a root account (pure did:key)
     let root_id_none = create_user_id(&ed_pub, None).unwrap();
     assert!(!root_id_none.contains('@'));
     assert!(root_id_none.starts_with("did:key:z"));
     println!("Root ID (None): {}", root_id_none);
 
-    // 2. Test: Ein leeres String-Präfix erzeugt ebenfalls einen Root-Account
+    // 2. Test: An empty string prefix also creates a root account
     let root_id_empty = create_user_id(&ed_pub, Some("")).unwrap();
     assert_eq!(root_id_none, root_id_empty);
     println!("Root ID (empty string): {}", root_id_empty);
 
-    // 3. Test: Ein gültiges Präfix erzeugt eine SAI-ID mit Prüfsumme
+    // 3. Test: A valid prefix creates a SAI ID with checksum
     let prefix = "pc";
     let user_id_with_prefix = create_user_id(&ed_pub, Some(prefix))?;
     assert!(user_id_with_prefix.contains('@'));
     assert!(user_id_with_prefix.starts_with("pc:"));
     println!("User ID (prefix '{}'): {}", prefix, user_id_with_prefix);
 
-    // Validierung für alle Formate
+    // Validation for all formats
     assert!(validate_user_id(&root_id_none));
     assert!(validate_user_id(&user_id_with_prefix));
     
@@ -294,14 +294,13 @@ fn test_get_pubkey_from_user_id() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_static_encryption_flow() {
-    // 1. Erzeuge zwei deterministische Identitäten für einen wiederholbaren Test.
+    // 1. Generate two deterministic identities for a repeatable test.
     let (alice_ed_pub, alice_ed_sk) = generate_ed25519_keypair_for_tests(Some("alice"));
     let (bob_ed_pub, bob_ed_sk) = generate_ed25519_keypair_for_tests(Some("bob"));
 
-    // 2. Teste die Konvertierung des geheimen Schlüssels.
-    // Die Konvertierung muss konsistent sein: Der aus dem konvertierten geheimen Schlüssel
-    // abgeleitete öffentliche Schlüssel muss mit dem direkt konvertierten öffentlichen
-    // Schlüssel übereinstimmen.
+    // 2. Test private key conversion.
+    // The conversion must be consistent: The public key derived from the converted
+    // private key must match the directly converted public key.
     let alice_x_sk_static = ed25519_sk_to_x25519_sk(&alice_ed_sk);
     let alice_x_pub_from_sk = X25519PublicKey::from(&alice_x_sk_static);
     let alice_x_pub_from_pub = ed25519_pub_to_x25519(&alice_ed_pub);
@@ -311,26 +310,26 @@ fn test_static_encryption_flow() {
     );
     println!("SUCCESS: Private key conversion (Ed25519 -> X25519) is consistent.");
 
-    // 3. Führe einen statischen Diffie-Hellman-Austausch durch.
-    // Alice verwendet ihren statischen geheimen Schlüssel und Bobs öffentlichen Schlüssel.
+    // 3. Perform a static Diffie-Hellman exchange.
+    // Alice uses her static private key and Bob's public key.
     let bob_x_pub = ed25519_pub_to_x25519(&bob_ed_pub);
     let shared_secret_alice = alice_x_sk_static.diffie_hellman(&bob_x_pub);
 
-    // Bob macht dasselbe mit seinem statischen geheimen Schlüssel und Alice' öffentlichem Schlüssel.
+    // Bob does the same with his static private key and Alice's public key.
     let bob_x_sk_static = ed25519_sk_to_x25519_sk(&bob_ed_sk);
     let shared_secret_bob = bob_x_sk_static.diffie_hellman(&alice_x_pub_from_pub);
 
-    // Beide müssen zum selben Ergebnis kommen.
+    // Both must arrive at the same result.
     assert_eq!(shared_secret_alice.as_bytes(), shared_secret_bob.as_bytes());
     println!("SUCCESS: Static Diffie-Hellman resulted in a matching shared secret.");
 
-    // 4. Leite einen sicheren Verschlüsselungsschlüssel aus dem gemeinsamen Geheimnis ab (Best Practice).
+    // 4. Derive a secure encryption key from the shared secret (Best Practice).
     let hkdf = Hkdf::<Sha256>::new(None, shared_secret_alice.as_bytes());
     let mut encryption_key = [0u8; 32];
     hkdf.expand(b"voucher-p2p-encryption", &mut encryption_key)
         .unwrap();
 
-    // 5. Teste die Ver- und Entschlüsselung.
+    // 5. Test encryption and decryption.
     let plaintext = b"This is a secret message for Bob.";
     println!("Plaintext: '{}'", std::str::from_utf8(plaintext).unwrap());
 
@@ -339,7 +338,7 @@ fn test_static_encryption_flow() {
         "Encrypted (hex, nonce prefixed): {}",
         hex::encode(&encrypted_data)
     );
-    assert_ne!(plaintext, &encrypted_data[..]); // Sicherstellen, dass es kein Klartext ist.
+    assert_ne!(plaintext, &encrypted_data[..]); // Ensure it is not plaintext.
 
     let decrypted_data = decrypt_data(&encryption_key, &encrypted_data).unwrap();
     println!(
@@ -349,11 +348,12 @@ fn test_static_encryption_flow() {
     assert_eq!(plaintext.to_vec(), decrypted_data);
     println!("SUCCESS: Message was encrypted and decrypted correctly.");
 
-    // 6. Negativtest: Entschlüsselung mit falschem Schlüssel muss fehlschlagen.
+    // 6. Negative test: Decryption with wrong key must fail.
     let mut wrong_key = encryption_key;
-    wrong_key[0] ^= 0xff; // Einen Bit im Schlüssel ändern.
+    wrong_key[0] ^= 0xff; // Flip one bit in the key.
     let result = decrypt_data(&wrong_key, &encrypted_data);
     assert!(result.is_err(), "Decryption should fail with a wrong key");
     println!("SUCCESS: Decryption correctly failed with the wrong key.");
 }
+
 

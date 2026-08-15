@@ -1,7 +1,7 @@
 // tests/wallet_api/conflict_management.rs
 // cargo test --test wallet_api_tests wallet_api::conflict_management
 //!
-//! Testet die Wallet-Methoden zur Verwaltung von Konfliktbeweisen
+//! Tests wallet methods for managing conflict proofs
 //! (List-Conflicts, Get-Proof, Add-Resolution, Cleanup).
 
 use human_money_core::test_utils::ACTORS;
@@ -275,4 +275,3 @@ fn test_get_proof_id_for_voucher_all_heuristics() {
         assert_eq!(wallet.get_proof_id_for_voucher(local_id), Some("proof_case_5".to_string()));
     }
 }
-

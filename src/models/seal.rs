@@ -1,126 +1,126 @@
 //! # src/models/seal.rs
 //!
-//! Definiert die Datenstrukturen für den WalletSeal-Mechanismus (Rollback Guard).
-//! Schützt vor State Rollbacks, Multi-Device-Forks und alten Replay-Bundles
-//! nach einer Wiederherstellung.
+//! Defines the data structures for the WalletSeal mechanism (Rollback Guard).
+//! Protects against state rollbacks, multi-device forks, and old replay bundles
+//! after a recovery.
 //!
-//! ## Architektur: Wire-Format vs. Storage-Format
+//! ## Architecture: Wire Format vs. Storage Format
 //!
-//! Das Design trennt strikt zwischen dem **Wire-Format** (`WalletSeal` - wird
-//! an den Server/Layer-2 gesendet) und dem **Storage-Format** (`LocalSealRecord` -
-//! wird nur lokal auf der Festplatte gespeichert). Diese Trennung verhindert:
-//! - Das versehentliche Hochladen von lokalen Metadaten (z.B. `SyncStatus`).
-//! - Signatur-Endlosschleifen, da nur das reine `WalletSeal` signiert und
-//!   synchronisiert wird.
+//! The design strictly separates the **Wire Format** (`WalletSeal` - sent to
+//! the server/Layer 2) and the **Storage Format** (`LocalSealRecord` -
+//! stored only locally on disk). This separation prevents:
+//! - Accidental uploading of local metadata (e.g. `SyncStatus`).
+//! - Infinite signature loops, since only the pure `WalletSeal` is signed and
+//!   synchronized.
 
 use serde::{Deserialize, Serialize};
 
-/// Die kryptographisch signierte Hülle des Siegels (Wire-Format für Uploads).
+/// Cryptographically signed envelope of the seal (wire format for uploads).
 ///
-/// Enthält die signierten Nutzdaten (`SealPayload`) und die Ed25519-Signatur
-/// über die kanonische JSON-Serialisierung des Payloads.
+/// Contains the signed payload (`SealPayload`) and the Ed25519 signature
+/// over the canonical JSON serialization of the payload.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WalletSeal {
-    /// Die tatsächlichen Nutzdaten des Siegels.
+    /// The actual payload of the seal.
     pub payload: SealPayload,
-    /// Ed25519-Signatur über die kanonische JSON-Serialisierung des `payload`.
-    /// Kodiert als Base58-String für konsistente Darstellung.
+    /// Ed25519 signature over the canonical JSON serialization of the `payload`.
+    /// Encoded as a Base58 string for consistent representation.
     pub signature: String,
 }
 
-/// Die tatsächlichen Nutzdaten des Siegels (Zähler, Hashes, Metadaten).
+/// The actual payload of the seal (counters, hashes, metadata).
 ///
-/// Diese Struktur wird kanonisch serialisiert und dann signiert, um die
-/// Integrität des Wallet-Zustands kryptographisch zu verankern.
+/// This structure is canonically serialized and then signed to
+/// cryptographically anchor the integrity of the wallet state.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SealPayload {
-    /// Schema-Version (aktuell 1). Erlaubt zukünftige Migration.
+    /// Schema version (currently 1). Allows future migration.
     pub version: u32,
-    /// Die vollständige User-ID (inkl. SAI-Präfix), z.B. `pc:aB3@did:key:z...`
+    /// The full user ID (incl. SAI prefix), e.g. `pc:aB3@did:key:z...`
     pub user_id: String,
-    /// Epoche des Siegels: 0 = Initial (neues Wallet), +1 bei jeder Recovery.
-    /// Wird strikt inkrementiert und niemals zurückgesetzt.
+    /// Epoch of the seal: 0 = Initial (new wallet), +1 on each recovery.
+    /// Strictly incremented and never reset.
     pub epoch: u32,
-    /// ISO-8601 Zeitstempel des Starts der aktuellen Epoche.
-    /// Wird für das Zonen-Modell beim Bündel-Empfang verwendet, um Pre-Epoch
-    /// Replays zu erkennen.
+    /// ISO-8601 timestamp of the start of the current epoch.
+    /// Used for the zone model during bundle reception to detect
+    /// pre-epoch replays.
     pub epoch_start_time: String,
-    /// Monotoner Transaktionszähler innerhalb der aktuellen Epoche.
-    /// Wird bei jeder ausgehenden Transaktion um 1 erhöht.
-    /// Wird bei Epoch-Wechsel (Recovery) auf 0 zurückgesetzt.
+    /// Monotonic transaction counter within the current epoch.
+    /// Incremented by 1 on every outgoing transaction.
+    /// Reset to 0 on epoch change (recovery).
     pub tx_nonce: u64,
-    /// Base58-kodierter SHA3-256 Hash des vorherigen `WalletSeal`.
-    /// Bildet eine kryptographische Hashkette zur Erkennung von Forks.
-    /// Beim allerersten Siegel: Hash eines leeren Strings (deterministischer Genesis).
+    /// Base58-encoded SHA3-256 hash of the previous `WalletSeal`.
+    /// Forms a cryptographic hash chain for detecting forks.
+    /// For the very first seal: hash of an empty string (deterministic genesis).
     pub prev_seal_hash: String,
-    /// Base58-kodierter SHA3-256 Hash des aktuellen `OwnFingerprints`-Stores.
-    /// Verankert den kritischen Wallet-Zustand im Siegel, um Rollbacks zu erkennen.
+    /// Base58-encoded SHA3-256 hash of the current `OwnFingerprints` store.
+    /// Anchors the critical wallet state in the seal to detect rollbacks.
     pub state_hash: String,
-    /// ISO-8601 Zeitstempel der Siegelerstellung.
+    /// ISO-8601 timestamp of seal creation.
     pub timestamp: String,
-    /// Eindeutige ID des Geräts, auf dem die Wallet initialisiert wurde.
-    /// Dient als Schutz vor Klonen der Wallet-Dateien auf andere Geräte.
+    /// Unique ID of the device on which the wallet was initialized.
+    /// Serves as protection against cloning wallet files to other devices.
     #[serde(default)]
     pub instance_id: String,
 }
 
-/// Der lokale Speicher-Wrapper für die Festplatte (Storage-Format).
+/// The local storage wrapper for disk (storage format).
 ///
-/// Enthält das reine kryptographische Siegel plus lokale Metadaten, die
-/// niemals an den Server gesendet werden dürfen.
+/// Contains the pure cryptographic seal plus local metadata that
+/// must never be sent to the server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocalSealRecord {
-    /// Das reine kryptographische Siegel (Wire-Format).
+    /// The pure cryptographic seal (wire format).
     pub seal: WalletSeal,
-    /// Der lokale Upload-Status bezüglich der Cloud/Layer-2.
+    /// The local upload status regarding cloud/Layer 2.
     pub sync_status: SyncStatus,
-    /// Persistente Sperre, falls ein Multi-Device-Fork erkannt wurde.
-    /// Kann nur durch `recover_wallet_and_set_new_password` aufgehoben werden.
+    /// Persistent lock if a multi-device fork was detected.
+    /// Can only be cleared via `recover_wallet_and_set_new_password`.
     pub is_locked_due_to_fork: bool,
 }
 
-/// Status des lokalen Siegels bezüglich der Cloud/Layer-2.
+/// Status of the local seal regarding cloud/Layer 2.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SyncStatus {
-    /// Siegel wurde lokal geändert (neue Transaktion, Recovery), muss noch
-    /// online gesichert werden.
+    /// Seal was modified locally (new transaction, recovery), needs to be
+    /// backed up online.
     PendingUpload,
-    /// Das aktuelle Siegel ist nachweislich in der Cloud gesichert.
+    /// The current seal is verifiably backed up in the cloud.
     Synced,
 }
 
-/// Das Ergebnis eines Vergleichs zwischen lokalem und entferntem Siegel.
+/// The result of comparing a local and a remote seal.
 ///
-/// Wird von `SealManager::compare_seals` zurückgegeben und bestimmt die
-/// nächste Aktion des Sync-Workflows.
+/// Returned by `SealManager::compare_seals` and determines the
+/// next action in the sync workflow.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SealSyncState {
-    /// Lokal und Remote sind exakt identisch. Kein Handlungsbedarf.
+    /// Local and remote are exactly identical. No action needed.
     Synchronized,
-    /// Lokaler `tx_nonce` ist höher und die Hash-Kette baut korrekt auf.
-    /// Push empfohlen (lokales Siegel hochladen).
+    /// Local `tx_nonce` is higher and the hash chain builds up correctly.
+    /// Push recommended (upload local seal).
     LocalIsNewer,
-    /// Remote `tx_nonce` ist höher und die Hash-Kette baut korrekt auf.
-    /// Pull erforderlich — lokaler Zustand ist veraltet!
+    /// Remote `tx_nonce` is higher and the hash chain builds up correctly.
+    /// Pull required — local state is outdated!
     RemoteIsNewer,
-    /// Die Hash-Ketten stimmen nicht überein, obwohl eine Seite neuer ist.
-    /// Indikator für einen Multi-Device-Konflikt oder Backup-Wiederherstellung.
-    /// **Trigger für den Hard Lock!**
+    /// The hash chains do not match, even though one side is newer.
+    /// Indicator of a multi-device conflict or backup restore.
+    /// **Triggers a hard lock!**
     ForkDetected,
 }
 
-/// Ergebnis der Integritätsprüfung eines Siegels.
+/// Result of a seal integrity check.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SealValidationResult {
-    /// Das Siegel ist gültig und an das korrekte Gerät gebunden.
+    /// The seal is valid and bound to the correct device.
     Valid,
-    /// Das Siegel ist gültig, aber noch nicht an ein Gerät gebunden (Legacy).
+    /// The seal is valid, but not yet bound to a device (legacy).
     LegacyValid,
-    /// Die Signatur ist ungültig.
+    /// The signature is invalid.
     InvalidSignature,
-    /// Die User-ID im Siegel stimmt nicht mit dem Wallet überein.
+    /// The user ID in the seal does not match the wallet.
     UserMismatch,
-    /// Die Device-ID (instance_id) im Siegel stimmt nicht mit dem aktuellen Host überein.
-    /// Indikator für ein geklontes Wallet.
+    /// The device ID (instance_id) in the seal does not match the current host.
+    /// Indicator of a cloned wallet.
     DeviceMismatch { expected: String, actual: String },
 }

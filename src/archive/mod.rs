@@ -1,8 +1,8 @@
 //! # src/archive/mod.rs
 //!
-//! Definiert die Abstraktion für ein persistentes Archiv von Gutschein-Zuständen.
-//! Dies ermöglicht es, jeden historischen Zustand eines Gutscheins zu speichern und
-//! später für Vergleiche (z.B. zur Double-Spend-Analyse) abzurufen.
+//! Defines the abstraction for a persistent archive of voucher states.
+//! This allows storing every historical state of a voucher and retrieving it
+//! later for comparisons (e.g. for double-spend analysis).
 
 use crate::models::voucher::{Transaction, Voucher};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
@@ -10,7 +10,7 @@ use thiserror::Error;
 
 pub mod file_archive;
 
-/// Ein generischer Fehler-Typ für alle Archiv-Operationen.
+/// A generic error type for all archive operations.
 #[derive(Debug, Error)]
 pub enum ArchiveError {
     #[error("Voucher state not found for the given identifier.")]
@@ -26,21 +26,21 @@ pub enum ArchiveError {
     Generic(String),
 }
 
-/// Die Schnittstelle für ein persistentes Gutschein-Archiv.
-/// Im Gegensatz zum `Storage`-Trait, das den *aktuellen* Wallet-Zustand verwaltet,
-/// dient das `VoucherArchive` dazu, *jeden jemals gesehenen* Zustand eines Gutscheins
-/// zu speichern, um eine lückenlose Historie für forensische Analysen zu schaffen.
+/// The interface for a persistent voucher archive.
+/// Unlike the `Storage` trait which manages the *current* wallet state,
+/// `VoucherArchive` serves to store *every state ever seen* of a voucher,
+/// creating an unbroken history for forensic analysis.
 pub trait VoucherArchive {
-    /// Speichert eine Kopie des übergebenen Gutschein-Zustands bedingungslos im Archiv.
+    /// Stores a copy of the given voucher state unconditionally in the archive.
     ///
-    /// Diese Methode dient der forensischen Protokollierung. Jeder relevante Zustand
-    /// eines Gutscheins (z.B. bei Empfang oder nach Erstellung einer neuen Transaktion)
-    /// wird hier abgelegt, um eine lückenlose und überprüfbare Historie zu schaffen.
+    /// This method is used for forensic logging. Every relevant state
+    /// of a voucher (e.g. upon receipt or after creating a new transaction)
+    /// is stored here to establish a complete and verifiable history.
     ///
     /// # Arguments
-    /// * `voucher` - Der Gutschein-Zustand, der archiviert werden soll.
-    /// * `owner_id` - Die ID des Nutzers, in dessen Kontext die Archivierung stattfindet.
-    /// * `standard` - Die zugehörige Standard-Definition des Gutscheins.
+    /// * `voucher` - The voucher state to archive.
+    /// * `owner_id` - The ID of the user in whose context the archiving takes place.
+    /// * `standard` - The associated standard definition of the voucher.
     fn archive_voucher(
         &self,
         voucher: &Voucher,
@@ -48,17 +48,17 @@ pub trait VoucherArchive {
         standard: &VoucherStandardDefinition,
     ) -> Result<(), ArchiveError>;
 
-    /// Ruft einen archivierten Gutschein anhand seiner ID ab.
+    /// Retrieves an archived voucher by its ID.
     fn get_archived_voucher(&self, voucher_id: &str) -> Result<Voucher, ArchiveError>;
 
-    /// Findet einen Gutschein und die darin enthaltene Transaktion anhand der Transaktions-ID.
+    /// Finds a voucher and the transaction contained within by transaction ID.
     ///
-    /// Diese Methode durchsucht das gesamte Archiv.
+    /// This method searches the entire archive.
     fn find_transaction_by_id(
         &self,
         t_id: &str,
     ) -> Result<Option<(Voucher, Transaction)>, ArchiveError>;
 
-    /// Findet einen Gutschein anhand einer enthaltenen Transaktions-ID.
+    /// Finds a voucher by a contained transaction ID.
     fn find_voucher_by_tx_id(&self, t_id: &str) -> Result<Option<Voucher>, ArchiveError>;
 }

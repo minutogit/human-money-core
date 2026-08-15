@@ -1,7 +1,7 @@
 // tests/core_logic/security/state_and_collaboration.rs
 // cargo test --test core_logic_tests
 
-// HINWEIS: Importiert das Modul, das im `mod.rs` bereitgestellt wird.
+// NOTE: Imports module provided in `mod.rs`.
 use self::test_utils::{ACTORS, FREETALER_STANDARD, setup_in_memory_wallet};
 use super::test_utils;
 use ed25519_dalek::SigningKey;
@@ -19,20 +19,20 @@ use human_money_core::{create_transaction, create_voucher, to_canonical_json};
 use rust_decimal_macros::dec;
 
 // ===================================================================================
-// HILFSFUNKTIONEN & SETUP (Kopiert aus vulnerabilities.rs)
+// HELPER FUNCTIONS & SETUP (Copied from vulnerabilities.rs)
 // ===================================================================================
 
-// HINWEIS: Alle Helferfunktionen (mutate_*, etc.)
-// wurden in vulnerabilities.rs belassen, um die Duplizierung
-// zu minimieren und die Abhängigkeiten klar zu halten.
-// Wir kopieren nur die benötigten Helfer.
+// NOTE: All helper functions (mutate_*, etc.)
+// were left in vulnerabilities.rs to minimize duplication
+// and keep dependencies clear.
+// We only copy the required helpers.
 
-/// Erstellt ein frisches, leeres In-Memory-Wallet für einen Akteur.
+/// Creates a fresh, empty in-memory wallet for an actor.
 fn setup_test_wallet(identity: &UserIdentity) -> Wallet {
     setup_in_memory_wallet(identity)
 }
 
-/// **NEUER STUB:** Erstellt einen Test-Creator für die neuen Tests.
+/// **NEW STUB:** Creates a test creator for the new tests.
 fn setup_creator() -> (SigningKey, human_money_core::models::profile::PublicProfile) {
     let (public_key, signing_key) =
         crypto_utils::generate_ed25519_keypair_for_tests(Some("creator_stub"));
@@ -46,7 +46,7 @@ fn setup_creator() -> (SigningKey, human_money_core::models::profile::PublicProf
     (signing_key, creator)
 }
 
-/// **NEUER STUB:** Erstellt Test-Voucher-Daten für die neuen Tests.
+/// **NEW STUB:** Creates test voucher data for the new tests.
 fn create_test_voucher_data_with_amount(
     creator_profile: human_money_core::models::profile::PublicProfile,
     amount: &str,
@@ -64,7 +64,7 @@ fn create_test_voucher_data_with_amount(
 }
 
 // ===================================================================================
-// WALLET-ZUSTANDSVERWALTUNG & KOLLABORATION TESTS (Klasse 5/6)
+// WALLET STATE MANAGEMENT & COLLABORATION TESTS (Class 5/6)
 // ===================================================================================
 
 #[test]
@@ -75,7 +75,7 @@ fn test_wallet_state_management_on_split() {
     let mut wallet_a = setup_test_wallet(a_identity);
     let mut wallet_b = setup_test_wallet(b_identity);
 
-    // 2. Erstelle einen Gutschein explizit und füge ihn zu Wallet A hinzu, um das Setup zu verdeutlichen.
+    // 2. Create a voucher explicitly and add it to Wallet A to clarify setup.
     let creator_data = human_money_core::models::profile::PublicProfile {
         id: Some(a_identity.user_id.clone()),
         first_name: Some("Alice".to_string()),
@@ -103,7 +103,7 @@ fn test_wallet_state_management_on_split() {
 
     let local_id =
         Wallet::calculate_local_instance_id(&initial_voucher, &a_identity.user_id).unwrap();
-    // KORREKTUR: Manuelle Insertion inkl. Seed
+    // CORRECTION: Manual insertion incl. seed
     let instance_a = human_money_core::wallet::instance::VoucherInstance {
         voucher: initial_voucher.clone(),
         status: human_money_core::wallet::instance::VoucherStatus::Active,
@@ -121,7 +121,7 @@ fn test_wallet_state_management_on_split() {
         .unwrap()
         .clone();
 
-    // 3. Aktion: Wallet A sendet 40 an Wallet B
+    // 3. Action: Wallet A sends 40 to Wallet B
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: b_identity.user_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
@@ -143,7 +143,7 @@ fn test_wallet_state_management_on_split() {
         .execute_multi_transfer_and_bundle(&a_identity, &standards, request, None)
         .unwrap();
 
-    // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+    // CORRECTION: The map must contain the standard being processed.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
         standard.immutable.identity.uuid.clone(),
@@ -153,9 +153,9 @@ fn test_wallet_state_management_on_split() {
         .process_encrypted_transaction_bundle(&b_identity, &bundle_to_b, None, &standards_for_bob)
         .unwrap();
 
-    // 4. Verifizierung (Wallet A)
-    // NACH ÄNDERUNG: Wallet A sollte jetzt nur noch EINE Instanz haben - den aktiven Restbetrag.
-    // Die ursprüngliche Instanz wird gelöscht, nicht archiviert.
+    // 4. Verification (Wallet A)
+    // AFTER CHANGE: Wallet A should now only have ONE instance - the active remaining balance.
+    // The original instance is deleted, not archived.
     assert_eq!(
         wallet_a.voucher_store.vouchers.len(),
         1,
@@ -182,7 +182,7 @@ fn test_wallet_state_management_on_split() {
         get_spendable_balance(&remainder_instance.voucher, &a_identity.user_id, standard, None).unwrap();
     assert_eq!(remainder_balance, dec!(60));
 
-    // 5. Verifizierung (Wallet B)
+    // 5. Verification (Wallet B)
     assert_eq!(
         wallet_b.voucher_store.vouchers.len(),
         1,
@@ -203,11 +203,11 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
     let mut alice_wallet = setup_test_wallet(a_identity);
     let b_identity = &ACTORS.bob;
     let mut bob_wallet = setup_test_wallet(b_identity);
-    // Wir verwenden den "Hacker" als böswilligen Akteur Eve
+    // We use the "hacker" as malicious actor Eve
     let eve_identity = &ACTORS.hacker;
     let mut eve_wallet = setup_test_wallet(eve_identity);
 
-    // 2. Akt 1 (Double Spend)
+    // 2. Act 1 (Double Spend)
     let mut eve_creator = setup_creator().1;
     eve_creator.id = Some(eve_identity.user_id.clone());
     let voucher_data = create_test_voucher_data_with_amount(eve_creator, "100");
@@ -254,7 +254,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
     )
     .unwrap();
 
-    // Eve verpackt und sendet die Gutscheine
+    // Eve bundles and sends the vouchers
     let (bundle_to_alice, _header) = eve_wallet
         .create_and_encrypt_transaction_bundle(
             &eve_identity,
@@ -278,7 +278,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
         )
         .unwrap();
 
-    // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+    // CORRECTION: The map must contain the standard being processed.
     let mut standards_map = std::collections::HashMap::new();
     standards_map.insert(
         standard.immutable.identity.uuid.clone(),
@@ -292,18 +292,18 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
         .process_encrypted_transaction_bundle(&b_identity, &bundle_to_bob, None, &standards_map)
         .unwrap();
 
-    // 3. Akt 2 (Austausch)
+    // 3. Act 2 (Exchange)
     println!("\n[DEBUG TEST] --- Phase 2: Austausch ---");
     alice_wallet.scan_and_rebuild_fingerprints().unwrap();
-    // KORREKTUR: Für die kollaborative Betrugserkennung muss Alice ihre gesamte lokale
-    // Historie teilen, nicht nur die Fingerprints von Transaktionen, die sie gesendet hat.
+    // CORRECTION: For collaborative fraud detection, Alice must share her entire local
+    // history, not just fingerprints of transactions she sent.
     println!(
         "[DEBUG TEST] Alice's local_history nach Scan: {:#?}",
         alice_wallet.known_fingerprints.local_history
     );
 
-    // KORREKTUR: Für die kollaborative Betrugserkennung muss Alice ihre gesamte lokale
-    // Historie teilen, nicht nur die Fingerprints von Transaktionen, die sie gesendet hat.
+    // CORRECTION: For collaborative fraud detection, Alice must share her entire local
+    // history, not just fingerprints of transactions she sent.
     let alice_fingerprints =
         serde_json::to_vec(&alice_wallet.known_fingerprints.local_history).unwrap();
     println!(
@@ -323,7 +323,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
         bob_wallet.known_fingerprints.foreign_fingerprints
     );
 
-    // 4. Akt 3 (Aufdeckung)
+    // 4. Act 3 (Detection)
     println!("\n[DEBUG TEST] --- Phase 3: Aufdeckung ---");
     bob_wallet.scan_and_rebuild_fingerprints().unwrap();
     println!(
@@ -336,7 +336,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
         check_result
     );
 
-    // 5. Verifizierung
+    // 5. Verification
     assert!(
         check_result.unverifiable_warnings.is_empty(),
         "There should be no unverifiable warnings."
@@ -360,7 +360,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
 fn test_serialization_roundtrip_with_special_chars() {
     // 1. Setup
     let (signing_key, mut creator) = setup_creator();
-    creator.first_name = Some("Jörg-ẞtråße".to_string()); // Sonderzeichen
+    creator.first_name = Some("Jörg-ẞtråße".to_string()); // Special characters
 
     let voucher_data = create_test_voucher_data_with_amount(creator, "123");
 
@@ -377,10 +377,10 @@ fn test_serialization_roundtrip_with_special_chars() {
     let mut original_voucher =
         create_voucher(voucher_data, standard, standard_hash, &signing_key).unwrap();
 
-    // Mache den Gutschein komplexer
+    // Make the voucher more complex
     let g1_identity = &ACTORS.guarantor1;
 
-    // **KORRIGIERTER AUFRUF:** Metadaten werden jetzt bei der Erstellung übergeben.
+    // **CORRECTED CALL:** Metadata is now passed during creation.
     let guarantor_sig = VoucherSignature {
         signer_id: g1_identity.user_id.clone(),
         role: "guarantor".to_string(),
@@ -395,7 +395,7 @@ fn test_serialization_roundtrip_with_special_chars() {
         ..Default::default()
     };
 
-    // HINWEIS: create_guarantor_signature wurde entfernt, muss neu erstellt werden
+    // NOTE: create_guarantor_signature was removed, must be created afresh
     let mut sig_obj = guarantor_sig.clone();
     let mut sig_obj_for_id = sig_obj.clone();
     sig_obj_for_id.signature_id = "".to_string();
@@ -409,8 +409,8 @@ fn test_serialization_roundtrip_with_special_chars() {
     sig_obj.signature = bs58::encode(signature.to_bytes()).into_string();
     original_voucher.signatures.push(sig_obj);
 
-    // FÜGE ZWEITEN BÜRGEN HINZU, UM DIE VALIDIERUNG ZU ERFÜLLEN
-    // ÄNDERUNG: Gender auf "2" gesetzt, um die Regel des Minuto-Standards zu erfüllen.
+    // ADD SECOND GUARANTOR TO SATISFY VALIDATION
+    // CHANGE: Gender set to "2" to satisfy Minuto standard rule.
     let second_guarantor_identity = &ACTORS.guarantor2;
     let second_guarantor_sig = VoucherSignature {
         signer_id: second_guarantor_identity.user_id.clone(),
@@ -454,12 +454,12 @@ fn test_serialization_roundtrip_with_special_chars() {
     .unwrap();
     original_voucher = ov;
 
-    // 2. Aktion
-    // Wir verwenden serde_json::to_string direkt, um den Prozess ohne unsere Wrapper zu testen.
+    // 2. Action
+    // We use serde_json::to_string directly to test the process without our wrappers.
     let json_string = serde_json::to_string(&original_voucher).unwrap();
     let deserialized_voucher: Voucher = serde_json::from_str(&json_string).unwrap();
 
-    // 3. Verifizierung
+    // 3. Verification
     assert_eq!(
         original_voucher, deserialized_voucher,
         "The deserialized voucher must be identical to the original."

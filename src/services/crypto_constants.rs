@@ -1,22 +1,22 @@
-//! # Kryptographische Domain-Separatoren
+//! # Cryptographic Domain Separators
 //!
-//! Dieses Modul zentralisiert alle Salt-, Label- und Info-Strings, die zur
-//! Domain-Separation in kryptographischen Operationen verwendet werden.
+//! This module centralizes all salt, label, and info strings used for
+//! domain separation in cryptographic operations.
 //!
-//! ## Wichtig
-//! Diese Konstanten sind kryptographisch gebunden. Eine Änderung eines dieser
-//! Werte bricht die Kompatibilität mit bestehenden Schlüsseln und Daten.
-//! Änderungen erfordern eine neue Protokollversion.
+//! ## Important
+//! These constants are cryptographically bound. Changing any of these
+//! values breaks compatibility with existing keys and data.
+//! Changes require a new protocol version.
 
-/// SLIP-0010 Master-Key-Ableitung: Standard HMAC-Key für Ed25519.
-/// Entspricht dem SLIP-0010-Standard: `HMAC-SHA512(key="ed25519 seed", data=seed)`.
+/// SLIP-0010 master key derivation: Standard HMAC key for Ed25519.
+/// Corresponds to SLIP-0010 standard: `HMAC-SHA512(key="ed25519 seed", data=seed)`.
 pub const SLIP10_ED25519_SEED_LABEL: &[u8] = b"ed25519 seed";
 
-/// HKDF-Label für den X25519 Diffie-Hellman Schlüsselaustausch.
-/// Bindet den abgeleiteten SharedSecret an den `human-money-core`-Kontext.
+/// HKDF label for X25519 Diffie-Hellman key exchange.
+/// Binds the derived SharedSecret to the `human-money-core` context.
 pub const HKDF_X25519_EXCHANGE_LABEL: &[u8] = b"human-money-core/x25519-exchange";
 
-/// Argon2id Salt-Suffix für die Profil-Ordner-ID-Ableitung.
-/// Wird in `AppService` verwendet, um eine deterministische Ordner-ID
-/// aus dem Profil-Passwort abzuleiten.
+/// Argon2id salt suffix for profile folder ID derivation.
+/// Used in `AppService` to derive a deterministic folder ID
+/// from the profile password.
 pub const ARGON2_PROFILE_FOLDER_SALT: &[u8] = b"human-money-profile-folder-v1";

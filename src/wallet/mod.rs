@@ -60,8 +60,8 @@ pub struct Wallet {
     /// In-RAM events that have not yet been persistently flushed to disk.
     /// Saved atomically and cleared during `Wallet::save`.
     pub pending_events: Vec<crate::models::wallet_event::WalletEvent>,
-    /// Der Generationszähler, der beim Laden gelesen wurde.
-    /// Wird bei save() gegen die Platte verglichen.
+    /// The generation counter read during loading.
+    /// Checked against disk during save().
     pub(crate) loaded_generation: u64,
 }
 

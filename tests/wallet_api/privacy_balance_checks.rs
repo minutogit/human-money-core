@@ -43,8 +43,8 @@ fn test_deep_privacy_balance_calculation() {
     let mut dave = test_utils::setup_in_memory_wallet(&ACTORS.david.identity);
 
     // =========================================================================
-    // Schritt 0: Setup & Init
-    // Alice erstellt einen Gutschein über 1000.
+    // Step 0: Setup & Init
+    // Alice creates a voucher for 1000.
     // =========================================================================
     let _start_id = test_utils::add_voucher_to_wallet(
         &mut alice, 
@@ -54,14 +54,14 @@ fn test_deep_privacy_balance_calculation() {
         true
     ).expect("Voucher creation failed");
 
-    assert_eq!(get_balance(&alice, &ACTORS.alice.identity), 1000.0, "Alices Guthaben nach Init ist inkorrekt");
-    assert_eq!(get_balance(&bob, &ACTORS.bob.identity), 0.0, "Bobs Guthaben nach Init ist inkorrekt");
-    assert_eq!(get_balance(&charlie, &ACTORS.charlie.identity), 0.0, "Charlies Guthaben nach Init ist inkorrekt");
-    assert_eq!(get_balance(&dave, &ACTORS.david.identity), 0.0, "Daves Guthaben nach Init ist inkorrekt");
+    assert_eq!(get_balance(&alice, &ACTORS.alice.identity), 1000.0, "Alice's balance after init is incorrect");
+    assert_eq!(get_balance(&bob, &ACTORS.bob.identity), 0.0, "Bob's balance after init is incorrect");
+    assert_eq!(get_balance(&charlie, &ACTORS.charlie.identity), 0.0, "Charlie's balance after init is incorrect");
+    assert_eq!(get_balance(&dave, &ACTORS.david.identity), 0.0, "Dave's balance after init is incorrect");
 
     // =========================================================================
-    // Schritt 1: Der erste große Split
-    // Alice sendet 300 an Bob (Privacy Mode).
+    // Step 1: The first large split
+    // Alice sends 300 to Bob (Privacy Mode).
     // =========================================================================
     let alice_vouchers_before = list_active(&alice, &ACTORS.alice.identity);
     let alice_source_id_1 = alice_vouchers_before[0].local_instance_id.clone();
@@ -72,18 +72,18 @@ fn test_deep_privacy_balance_calculation() {
             recipient_id: ACTORS.bob.user_id.clone(),
             sources: vec![SourceTransfer { local_instance_id: alice_source_id_1, amount_to_send: "300".to_string() }],
             notes: None, sender_profile_name: None, use_privacy_mode: Some(true),
-        }, None).expect("Transfer Alice -> Bob fehlgeschlagen");
+        }, None).expect("Transfer Alice -> Bob failed");
 
     bob.process_encrypted_transaction_bundle(&ACTORS.bob.identity, &b1, None, &standards_map).unwrap();
 
-    assert_eq!(get_balance(&alice, &ACTORS.alice.identity), 700.0, "Alices Guthaben nach Schritt 1 ist inkorrekt (Change wurde ggf. nicht erkannt)");
-    assert_eq!(get_balance(&bob, &ACTORS.bob.identity), 300.0, "Bobs Guthaben nach Schritt 1 ist inkorrekt");
-    assert_eq!(get_balance(&charlie, &ACTORS.charlie.identity), 0.0, "Charlies Guthaben nach Schritt 1 ist inkorrekt");
-    assert_eq!(get_balance(&dave, &ACTORS.david.identity), 0.0, "Daves Guthaben nach Schritt 1 ist inkorrekt");
+    assert_eq!(get_balance(&alice, &ACTORS.alice.identity), 700.0, "Alice's balance after step 1 is incorrect (change might not have been recognized)");
+    assert_eq!(get_balance(&bob, &ACTORS.bob.identity), 300.0, "Bob's balance after step 1 is incorrect");
+    assert_eq!(get_balance(&charlie, &ACTORS.charlie.identity), 0.0, "Charlie's balance after step 1 is incorrect");
+    assert_eq!(get_balance(&dave, &ACTORS.david.identity), 0.0, "Dave's balance after step 1 is incorrect");
 
     // =========================================================================
-    // Schritt 2: Verketteter Split (Empfänger splittet weiter)
-    // Bob sendet 100 von seinen 300 an Charlie.
+    // Step 2: Chained split (Recipient splits further)
+    // Bob sends 100 of his 300 to Charlie.
     // =========================================================================
     let bob_vouchers_before = list_active(&bob, &ACTORS.bob.identity);
     let bob_source_id = bob_vouchers_before[0].local_instance_id.clone();
@@ -94,18 +94,18 @@ fn test_deep_privacy_balance_calculation() {
             recipient_id: ACTORS.charlie.user_id.clone(),
             sources: vec![SourceTransfer { local_instance_id: bob_source_id, amount_to_send: "100".to_string() }],
             notes: None, sender_profile_name: None, use_privacy_mode: Some(true),
-        }, None).expect("Transfer Bob -> Charlie fehlgeschlagen");
+        }, None).expect("Transfer Bob -> Charlie failed");
 
     charlie.process_encrypted_transaction_bundle(&ACTORS.charlie.identity, &b2, None, &standards_map).unwrap();
 
-    assert_eq!(get_balance(&alice, &ACTORS.alice.identity), 700.0, "Alices Guthaben nach Schritt 2 ist inkorrekt (sollte unberührt bleiben)");
-    assert_eq!(get_balance(&bob, &ACTORS.bob.identity), 200.0, "Bobs Guthaben nach Schritt 2 ist inkorrekt (sollte 200 Wechselgeld sein)");
-    assert_eq!(get_balance(&charlie, &ACTORS.charlie.identity), 100.0, "Charlies Guthaben nach Schritt 2 ist inkorrekt");
-    assert_eq!(get_balance(&dave, &ACTORS.david.identity), 0.0, "Daves Guthaben nach Schritt 2 ist inkorrekt");
+    assert_eq!(get_balance(&alice, &ACTORS.alice.identity), 700.0, "Alice's balance after step 2 is incorrect (should remain unchanged)");
+    assert_eq!(get_balance(&bob, &ACTORS.bob.identity), 200.0, "Bob's balance after step 2 is incorrect (should be 200 change)");
+    assert_eq!(get_balance(&charlie, &ACTORS.charlie.identity), 100.0, "Charlie's balance after step 2 is incorrect");
+    assert_eq!(get_balance(&dave, &ACTORS.david.identity), 0.0, "Dave's balance after step 2 is incorrect");
 
     // =========================================================================
-    // Schritt 3: Paralleler Split (Ursprungs-Sender splittet erneut)
-    // Alice sendet 250 von ihren verbliebenen 700 an Dave.
+    // Step 3: Parallel split (Original sender splits again)
+    // Alice sends 250 of her remaining 700 to Dave.
     // =========================================================================
     let alice_vouchers_step3 = list_active(&alice, &ACTORS.alice.identity);
     let alice_source_id_3 = alice_vouchers_step3.iter().find(|v| v.current_amount == "700.00").expect("Alice must have her 700 voucher").local_instance_id.clone();
@@ -116,18 +116,18 @@ fn test_deep_privacy_balance_calculation() {
             recipient_id: ACTORS.david.user_id.clone(),
             sources: vec![SourceTransfer { local_instance_id: alice_source_id_3, amount_to_send: "250".to_string() }],
             notes: None, sender_profile_name: None, use_privacy_mode: Some(true),
-        }, None).expect("Transfer Alice -> Dave fehlgeschlagen");
+        }, None).expect("Transfer Alice -> Dave failed");
 
     dave.process_encrypted_transaction_bundle(&ACTORS.david.identity, &b3, None, &standards_map).unwrap();
 
-    assert_eq!(get_balance(&alice, &ACTORS.alice.identity), 450.0, "Alices Guthaben nach Schritt 3 ist inkorrekt (700 - 250)");
-    assert_eq!(get_balance(&bob, &ACTORS.bob.identity), 200.0, "Bobs Guthaben nach Schritt 3 ist inkorrekt (sollte unberührt bleiben)");
-    assert_eq!(get_balance(&charlie, &ACTORS.charlie.identity), 100.0, "Charlies Guthaben nach Schritt 3 ist inkorrekt (sollte unberührt bleiben)");
-    assert_eq!(get_balance(&dave, &ACTORS.david.identity), 250.0, "Daves Guthaben nach Schritt 3 ist inkorrekt");
+    assert_eq!(get_balance(&alice, &ACTORS.alice.identity), 450.0, "Alice's balance after step 3 is incorrect (700 - 250)");
+    assert_eq!(get_balance(&bob, &ACTORS.bob.identity), 200.0, "Bob's balance after step 3 is incorrect (should remain unchanged)");
+    assert_eq!(get_balance(&charlie, &ACTORS.charlie.identity), 100.0, "Charlie's balance after step 3 is incorrect (should remain unchanged)");
+    assert_eq!(get_balance(&dave, &ACTORS.david.identity), 250.0, "Dave's balance after step 3 is incorrect");
 
     // =========================================================================
-    // Schritt 4: Der Zusammenfluss (Aggregation-Check)
-    // Charlie sendet seine gesamten 100 an Dave (Full Transfer, kein Split).
+    // Step 4: Merging / aggregation check
+    // Charlie sends his entire 100 to Dave (Full Transfer, no split).
     // =========================================================================
     let charlie_vouchers = list_active(&charlie, &ACTORS.charlie.identity);
     let charlie_source_id = charlie_vouchers[0].local_instance_id.clone();
@@ -138,12 +138,12 @@ fn test_deep_privacy_balance_calculation() {
             recipient_id: ACTORS.david.user_id.clone(),
             sources: vec![SourceTransfer { local_instance_id: charlie_source_id, amount_to_send: "100".to_string() }],
             notes: None, sender_profile_name: None, use_privacy_mode: Some(true),
-        }, None).expect("Transfer Charlie -> Dave fehlgeschlagen");
+        }, None).expect("Transfer Charlie -> Dave failed");
 
     dave.process_encrypted_transaction_bundle(&ACTORS.david.identity, &b4, None, &standards_map).unwrap();
 
-    assert_eq!(get_balance(&alice, &ACTORS.alice.identity), 450.0, "Alices Guthaben nach Schritt 4 ist inkorrekt");
-    assert_eq!(get_balance(&bob, &ACTORS.bob.identity), 200.0, "Bobs Guthaben nach Schritt 4 ist inkorrekt");
-    assert_eq!(get_balance(&charlie, &ACTORS.charlie.identity), 0.0, "Charlies Guthaben nach Schritt 4 ist inkorrekt (sollte 0 sein)");
-    assert_eq!(get_balance(&dave, &ACTORS.david.identity), 350.0, "Daves Guthaben nach Schritt 4 ist inkorrekt (Summe aus 250 + 100)");
+    assert_eq!(get_balance(&alice, &ACTORS.alice.identity), 450.0, "Alice's balance after step 4 is incorrect");
+    assert_eq!(get_balance(&bob, &ACTORS.bob.identity), 200.0, "Bob's balance after step 4 is incorrect");
+    assert_eq!(get_balance(&charlie, &ACTORS.charlie.identity), 0.0, "Charlie's balance after step 4 is incorrect (should be 0)");
+    assert_eq!(get_balance(&dave, &ACTORS.david.identity), 350.0, "Dave's balance after step 4 is incorrect (sum of 250 + 100)");
 }

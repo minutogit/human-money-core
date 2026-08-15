@@ -1,5 +1,5 @@
 //! # src/wallet/reputation_tests.rs
-//! Modultests für das Reputationsmanagement und den ProofStore.
+//! Unit tests for reputation management and ProofStore.
 
 #[cfg(test)]
 mod tests {
@@ -61,7 +61,7 @@ mod tests {
         
         let mut proof = create_dummy_proof(proof_id, "offender");
         
-        // 1. Manuellem Override setzen
+        // 1. Set manual override
         wallet.proof_store.proofs.insert(proof_id.to_string(), ProofStoreEntry {
             proof: proof.clone(),
             local_override: true,
@@ -69,11 +69,11 @@ mod tests {
             conflict_role: ConflictRole::Victim,
         });
 
-        // 2. Erneuter Import desselben Beweises (z.B. mit anderer Signatur oder Metadaten)
+        // 2. Re-import same proof (e.g. with different signature or metadata)
         proof.reporter_id = "malicious_reporter".to_string();
         wallet.import_proof(proof).unwrap();
 
-        // 3. Verifizieren, dass der lokale Stand (Override) erhalten blieb
+        // 3. Verify that local state (override) was preserved
         let entry = wallet.proof_store.proofs.get(proof_id).unwrap();
         assert_eq!(entry.local_override, true);
         assert_eq!(entry.proof.reporter_id, "reporter", "Original reporter should not be overwritten");
@@ -84,7 +84,7 @@ mod tests {
         let identity = &ACTORS.alice;
         let mut wallet = setup_in_memory_wallet(identity);
 
-        // 1. Zwei normale Fingerprints (Tiefe 0 und Tiefe 5)
+        // 1. Two normal fingerprints (depth 0 and depth 5)
         wallet.fingerprint_metadata.insert("norm_0".to_string(), FingerprintMetadata { depth: 0, ..Default::default() });
         wallet.own_fingerprints.history.insert(
             "norm_0".to_string(), 
@@ -97,33 +97,33 @@ mod tests {
             vec![TransactionFingerprint { ds_tag: "norm_5".to_string(), ..Default::default() }]
         );
 
-        // 2. Ein leicht gealterter VIP-Fingerprint (-3) -> Effektive Tiefe: abs(-3) - 2 = 1
+        // 2. A slightly aged VIP fingerprint (-3) -> Effective depth: abs(-3) - 2 = 1
         wallet.fingerprint_metadata.insert("vip_minus_3".to_string(), FingerprintMetadata { depth: -3, ..Default::default() });
         wallet.own_fingerprints.history.insert(
             "vip_minus_3".to_string(), 
             vec![TransactionFingerprint { ds_tag: "vip_minus_3".to_string(), ..Default::default() }]
         );
 
-        // 3. Ein stark gealterter VIP-Fingerprint (-10) -> Effektive Tiefe: abs(-10) - 2 = 8
+        // 3. A heavily aged VIP fingerprint (-10) -> Effective depth: abs(-10) - 2 = 8
         wallet.fingerprint_metadata.insert("vip_minus_10".to_string(), FingerprintMetadata { depth: -10, ..Default::default() });
         wallet.own_fingerprints.history.insert(
             "vip_minus_10".to_string(), 
             vec![TransactionFingerprint { ds_tag: "vip_minus_10".to_string(), ..Default::default() }]
         );
 
-        // Auswahl für Bundle
+        // Selection for bundle
         let (selected, _) = wallet.select_fingerprints_for_bundle("recipient", &[]).unwrap();
 
-        // Verifikation der Sortier-Reihenfolge basierend auf effektiver Tiefe!
-        // Platz 1: norm_0 (effektiv: 0)
-        // Platz 2: vip_minus_3 (effektiv: 1)
-        // Platz 3: norm_5 (effektiv: 5)
-        // Platz 4: vip_minus_10 (effektiv: 8)
+        // Verification of sort order based on effective depth!
+        // Rank 1: norm_0 (effective: 0)
+        // Rank 2: vip_minus_3 (effective: 1)
+        // Rank 3: norm_5 (effective: 5)
+        // Rank 4: vip_minus_10 (effective: 8)
         
         assert_eq!(selected[0].ds_tag, "norm_0");
-        assert_eq!(selected[1].ds_tag, "vip_minus_3", "VIP mit -3 muss wie Tiefe 1 behandelt werden!");
+        assert_eq!(selected[1].ds_tag, "vip_minus_3", "VIP with -3 must be treated as depth 1!");
         assert_eq!(selected[2].ds_tag, "norm_5");
-        assert_eq!(selected[3].ds_tag, "vip_minus_10", "Stark gealterter VIP muss hinter frischem Normalen landen!");
+        assert_eq!(selected[3].ds_tag, "vip_minus_10", "Heavily aged VIP must land behind fresh normal fingerprint!");
     }
 
     #[test]
@@ -136,17 +136,17 @@ mod tests {
             ..Default::default()
         };
 
-        // Fall 1: Asymmetrischer VIP-Spam (nur ein Fingerprint mit -2)
+        // Case 1: Asymmetric VIP spam (only one fingerprint with -2)
         let f1 = TransactionFingerprint { ds_tag: "f1".to_string(), ..Default::default() };
         let mut depths = HashMap::new();
         depths.insert("f1".to_string(), -2);
 
         wallet.process_received_fingerprints(&bundle_header, &[], &[f1], &depths).unwrap();
         
-        // Muss auf positiv normalisiert werden (z.B. 1 + 1 = 2)
+        // Must be normalized to positive (e.g. 1 + 1 = 2)
         assert!(wallet.fingerprint_metadata["f1"].depth > 0);
 
-        // Fall 2: Symmetrischer VIP (Zwei Partner mit -2)
+        // Case 2: Symmetric VIP (two partners with -2)
         let f2a = TransactionFingerprint { ds_tag: "fraud".to_string(), t_id: "t1".to_string(), ..Default::default() };
         let f2b = TransactionFingerprint { ds_tag: "fraud".to_string(), t_id: "t2".to_string(), ..Default::default() };
         let mut depths2 = HashMap::new();
@@ -154,7 +154,7 @@ mod tests {
 
         wallet.process_received_fingerprints(&bundle_header, &[], &[f2a, f2b], &depths2).unwrap();
         
-        // Muss VIP bleiben und altern (-2 -> -3)
+        // Must remain VIP and age (-2 -> -3)
         assert_eq!(wallet.fingerprint_metadata["fraud"].depth, -3);
     }
 
@@ -165,7 +165,7 @@ mod tests {
         
         let ds_tag = "loop_tag".to_string();
         wallet.fingerprint_metadata.insert(ds_tag.clone(), FingerprintMetadata {
-            depth: -10, // Bereits gealtert
+            depth: -10, // Already aged
             ..Default::default()
         });
         wallet.known_fingerprints.foreign_fingerprints.insert(ds_tag.clone(), vec![
@@ -176,7 +176,7 @@ mod tests {
             sender_id: "sender".to_string(), ..Default::default()
         };
         
-        // Jemand sendet den Fingerprint "frisch" mit -1
+        // Someone sends the fingerprint "fresh" with -1
         let f = TransactionFingerprint { ds_tag: ds_tag.clone(), t_id: "t1".to_string(), ..Default::default() };
         let f2 = TransactionFingerprint { ds_tag: ds_tag.clone(), t_id: "t2".to_string(), ..Default::default() };
         let mut depths = HashMap::new();
@@ -184,7 +184,7 @@ mod tests {
 
         wallet.process_received_fingerprints(&bundle_header, &[], &[f, f2], &depths).unwrap();
         
-        // Muss bei -10 bleiben (-1 ist "frischer" und wird ignoriert)
+        // Must stay at -10 (-1 is "fresher" and is ignored)
         assert_eq!(wallet.fingerprint_metadata[&ds_tag].depth, -10);
     }
 
@@ -204,7 +204,7 @@ mod tests {
 
         wallet.process_received_fingerprints(&bundle_header, &[], &[f1, f2], &depths).unwrap();
         
-        assert_eq!(wallet.fingerprint_metadata["bound"].depth, -128); // Darf nicht umbrechen
+        assert_eq!(wallet.fingerprint_metadata["bound"].depth, -128); // Must not overflow/wrap
     }
 
     #[test]
@@ -213,12 +213,12 @@ mod tests {
         let mut wallet = setup_in_memory_wallet(identity);
         let offender = "bad_guy";
 
-        // Proof A: Gelöst via Override
+        // Proof A: Resolved via override
         let proof_a = create_dummy_proof("proof_a", offender);
         wallet.import_proof(proof_a).unwrap();
         wallet.set_conflict_local_override("proof_a", true, Some("Resolved A".to_string())).unwrap();
 
-        // Proof B: Ungelöst
+        // Proof B: Unresolved
         let proof_b = create_dummy_proof("proof_b", offender);
         wallet.import_proof(proof_b).unwrap();
 
@@ -238,66 +238,66 @@ mod tests {
         let mut wallet = setup_in_memory_wallet(identity);
         let ds_tag = "transition_tag".to_string();
 
-        // 1. Setup: Fingerprint ist lokal bereits als "normal" (positiv) bekannt
+        // 1. Setup: Fingerprint is already known locally as "normal" (positive)
         wallet.fingerprint_metadata.insert(ds_tag.clone(), FingerprintMetadata {
-            depth: 5, // Positive Tiefe (harmlos)
+            depth: 5, // Positive depth (harmless)
             ..Default::default()
         });
         wallet.known_fingerprints.foreign_fingerprints.insert(ds_tag.clone(), vec![
             TransactionFingerprint { ds_tag: ds_tag.clone(), t_id: "t_old".to_string(), ..Default::default() }
         ]);
 
-        // 2. Aktion: Ein legitimes, symmetrisches VIP-Update (Betrugserkennung) trifft ein
+        // 2. Action: A legitimate, symmetric VIP update (fraud detection) arrives
         let bundle_header = crate::models::profile::TransactionBundleHeader {
             sender_id: "sender".to_string(), ..Default::default()
         };
-        // Zwei Fingerprints mit demselben ds_tag erfüllen die Symmetrie-Regel
+        // Two fingerprints with the same ds_tag satisfy the symmetry rule
         let f1 = TransactionFingerprint { ds_tag: ds_tag.clone(), t_id: "t1".to_string(), ..Default::default() };
         let f2 = TransactionFingerprint { ds_tag: ds_tag.clone(), t_id: "t2".to_string(), ..Default::default() };
         
         let mut depths = HashMap::new();
-        depths.insert(ds_tag.clone(), -2); // Eingehender VIP-Status
+        depths.insert(ds_tag.clone(), -2); // Incoming VIP status
 
         wallet.process_received_fingerprints(&bundle_header, &[], &[f1, f2], &depths).unwrap();
 
-        // 3. Verifikation: Der positive Wert (5) muss vom negativen überschrieben worden sein.
-        // Bei received_depth = -2 greift die Alterung via saturating_sub(1), das Ergebnis muss also -3 sein.
+        // 3. Verification: The positive value (5) must have been overwritten by the negative value.
+        // For received_depth = -2, aging via saturating_sub(1) applies, so the result must be -3.
         let updated_depth = wallet.fingerprint_metadata[&ds_tag].depth;
         assert_eq!(
             updated_depth, -3, 
-            "Der positive Wert (5) muss durch das legitime VIP-Update (-2 - 1 = -3) überschrieben werden!"
+            "The positive value (5) must be overwritten by the legitimate VIP update (-2 - 1 = -3)!"
         );
     }
 
     #[test]
     fn test_conflict_role_victim_identification() {
-        // Testet die Erkennungslogik: Wenn eine der betrügerischen Transaktionen
-        // einen Gutschein betrifft, den wir lokal besitzen und der dadurch in Quarantäne ist,
-        // MUSS unsere Rolle "Victim" sein.
+        // Tests detection logic: If one of the fraudulent transactions
+        // affects a voucher that we own locally and is therefore quarantined,
+        // our role MUST be "Victim".
         
         let identity = &ACTORS.alice;
         let mut wallet = setup_in_memory_wallet(identity);
         
-        // 1. Wir simulieren einen lokalen Gutschein, der Opfer eines Double-Spends wurde
+        // 1. Simulate a local voucher that fell victim to a double-spend
         let tx_id_victim = "tx_local_victim_123";
         let mut instance = crate::wallet::instance::VoucherInstance {
             local_instance_id: "inst_1".to_string(),
-            // Status ist Quarantäne (wurde durch den Konflikt dorthin verschoben)
+            // Status is Quarantined (moved there due to the conflict)
             status: VoucherStatus::Quarantined { reason: "Double Spend".to_string() },
             ..Default::default()
         };
-        // Historie enthält die betroffene Transaktion
+        // History contains the affected transaction
         instance.voucher.transactions.push(Transaction { t_id: tx_id_victim.to_string(), ..Default::default() });
         wallet.voucher_store.vouchers.insert("inst_1".to_string(), instance);
         
-        // 2. Wir erstellen einen simulierten Beweis, dessen Kollision uns betrifft
+        // 2. Create a simulated proof whose collision affects us
         let mut proof = create_dummy_proof("p_role_test", "offender");
         proof.conflicting_transactions = vec![
-            Transaction { t_id: tx_id_victim.to_string(), ..Default::default() }, // Unser Pfad
-            Transaction { t_id: "tx_foreign_456".to_string(), ..Default::default() }, // Der andere Pfad
+            Transaction { t_id: tx_id_victim.to_string(), ..Default::default() }, // Our path
+            Transaction { t_id: "tx_foreign_456".to_string(), ..Default::default() }, // Other path
         ];
         
-        // 3. Wir führen exakt die Rollen-Check-Logik aus dem transaction_handler aus
+        // 3. Execute exact role check logic from transaction_handler
         let mut conflict_role = ConflictRole::Witness;
         for tx in &proof.conflicting_transactions {
             if let Some(local_inst) = wallet.find_local_voucher_by_tx_id(&tx.t_id) {
@@ -308,24 +308,24 @@ mod tests {
             }
         }
         
-        // 4. Verifikation
+        // 4. Verification
         assert_eq!(
             conflict_role, 
             ConflictRole::Victim, 
-            "Der Nutzer muss als Opfer (Victim) erkannt werden, da sein lokaler Gutschein betroffen und in Quarantäne ist."
+            "The user must be identified as Victim since their local voucher is affected and quarantined."
         );
     }
 
     #[test]
     fn test_bundle_selection_priority_at_max_limit() {
-        // Testet den Vorrang beim Senden: Wenn das Limit von 150 erreicht ist,
-        // müssen VIP-Fingerprints (negativ) mitgesendet werden. Normale, schwache
-        // Fingerprints (hohe positive Tiefe) werden für dieses Bundle ignoriert.
+        // Tests transmission priority: When the limit of 150 is reached,
+        // VIP fingerprints (negative) must be sent. Normal, weak
+        // fingerprints (high positive depth) are ignored for this bundle.
         
         let identity = &ACTORS.alice;
         let mut wallet = setup_in_memory_wallet(identity);
 
-        // 1. System mit 150 regulären Fingerprints füllen (alle Tiefe 10)
+        // 1. Fill system with 150 regular fingerprints (all depth 10)
         for i in 1..=150 {
             let ds_tag = format!("norm_{:03}", i);
             wallet.fingerprint_metadata.insert(ds_tag.clone(), FingerprintMetadata {
@@ -338,7 +338,7 @@ mod tests {
             );
         }
 
-        // 2. Einen VIP-Fingerprint hinzufügen (Tiefe -1)
+        // 2. Add a VIP fingerprint (depth -1)
         let vip_tag = "vip_fraud".to_string();
         wallet.fingerprint_metadata.insert(vip_tag.clone(), FingerprintMetadata {
             depth: -1,
@@ -349,27 +349,28 @@ mod tests {
             vec![TransactionFingerprint { ds_tag: vip_tag.clone(), ..Default::default() }]
         );
 
-        // Wir haben nun 151 Fingerprints im Speicher.
-        // 3. Bundle-Auswahl triggern (greift auf MAX_FINGERPRINTS_TO_SEND = 150 zu)
+        // We now have 151 fingerprints in memory.
+        // 3. Trigger bundle selection (accesses MAX_FINGERPRINTS_TO_SEND = 150)
         let (selected, _depths) = wallet.select_fingerprints_for_bundle("recipient", &[]).unwrap();
 
-        // 4. Verifikation
+        // 4. Verification
         assert_eq!(
             selected.len(), 
             150, 
-            "Das Hard-Limit von exakt 150 Fingerprints im Bundle muss strikt eingehalten werden."
+            "The hard limit of exactly 150 fingerprints in the bundle must be strictly respected."
         );
         
-        // Der VIP-Fingerprint MUSS sich einen Platz gesichert haben
+        // The VIP fingerprint MUST have secured a spot
         assert!(
             selected.iter().any(|f| f.ds_tag == vip_tag), 
-            "Der VIP-Fingerprint wurde nicht priorisiert! Er muss trotz des Limits im Bundle sein."
+            "The VIP fingerprint was not prioritized! It must be in the bundle despite the limit."
         );
         
-        // Der schwächste reguläre Fingerprint (Tiefe 150) wurde durch den VIP verdrängt / nicht ausgewählt
+        // The weakest regular fingerprint (depth 150) was displaced / not selected in favor of the VIP
         assert!(
             !selected.iter().any(|f| f.ds_tag == "norm_150"), 
-            "Der schwächste reguläre Fingerprint hätte zugunsten des VIP-Fingerprints ignoriert werden müssen."
+            "The weakest regular fingerprint should have been ignored in favor of the VIP fingerprint."
         );
     }
 }
+

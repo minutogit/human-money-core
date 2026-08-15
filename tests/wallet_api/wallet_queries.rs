@@ -119,11 +119,11 @@ fn test_get_voucher_details_fuzzy_lookup_success() {
     let mut wallet = setup_in_memory_wallet(identity);
     let user_id = &identity.user_id;
 
-    // 1. Erstelle einen Gutschein mit zwei Transaktionen
+    // 1. Create a voucher with two transactions
     let mut v = Voucher::default();
     v.voucher_id = "v1".to_string();
     
-    // Initiale Transaktion (TX1)
+    // Initial transaction (TX1)
     v.transactions.push(Transaction {
         t_id: "tx1".to_string(),
         recipient_id: user_id.clone(),
@@ -132,7 +132,7 @@ fn test_get_voucher_details_fuzzy_lookup_success() {
     
     let id_tx1 = human_money_core::services::crypto_utils::get_hash(format!("v1tx1{}", user_id));
     
-    // Zweite Transaktion (TX2) - simuliert einen Transfer/Split
+    // Second transaction (TX2) - simulates a transfer/split
     v.transactions.push(Transaction {
         t_id: "tx2".to_string(),
         recipient_id: user_id.clone(),
@@ -142,18 +142,18 @@ fn test_get_voucher_details_fuzzy_lookup_success() {
     
     let id_tx2 = human_money_core::services::crypto_utils::get_hash(format!("v1tx2{}", user_id));
     
-    // Aktueller Zustand im Wallet ist ID_TX2
+    // Current state in wallet is ID_TX2
     wallet.voucher_store.vouchers.insert(id_tx2.clone(), VoucherInstance {
         voucher: v,
         status: VoucherStatus::Active,
         local_instance_id: id_tx2.clone(),
     });
 
-    // Prüfung A: Direkter Lookup (TX2)
+    // Check A: Direct lookup (TX2)
     let details = wallet.get_voucher_details(&id_tx2).unwrap();
     assert_eq!(details.local_instance_id, id_tx2);
 
-    // Prüfung B: Fuzzy Lookup (TX1) - Dies ist der Kern der Neuerung!
+    // Check B: Fuzzy lookup (TX1) - This is the core new feature!
     let details_fuzzy = wallet.get_voucher_details(&id_tx1).expect("Fuzzy lookup should find the voucher via historical ID");
     assert_eq!(details_fuzzy.local_instance_id, id_tx2, "Should return the current ID");
 }

@@ -30,7 +30,7 @@ use tempfile::tempdir;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- VOUCHER LIFECYCLE PLAYGROUND (AppService API) ---");
 
-    // --- 1. SETUP: Erstelle Services für alle Teilnehmer ---
+    // --- 1. SETUP: Create services for all participants ---
     let dir_creator = tempdir()?;
     let dir_g1 = tempdir()?;
     let dir_g2 = tempdir()?;
@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut service_recipient = AppService::new(dir_recipient.path())?;
     let mut service_charlie = AppService::new(dir_charlie.path())?;
 
-    // Erstelle Profile für alle Teilnehmer
+    // Create profiles for all participants
     service_creator.create_profile(
         "Creator",
         &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let g1_id = service_g1.get_user_id()?;
     let g2_id = service_g2.get_user_id()?;
 
-    // Erstellen einer vollständigen Address-Struktur für Bürge 1
+    // Create full Address structure for Guarantor 1
     let g1_address = human_money_core::models::voucher::Address {
         street: "Bürgenstraße".to_string(),
         house_number: "789".to_string(),
@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         full_address: "Bürgenstraße 789, 98765 Bürgenstadt, Deutschland".to_string(),
     };
 
-    // Erstellen eines vollständigen PublicProfile für Bürge 1 mit Beispielwerten
+    // Create full PublicProfile for Guarantor 1 with sample values
     let g1_profile = human_money_core::models::profile::PublicProfile {
         protocol_version: Some("v1".to_string()),
         id: Some(g1_id.clone()),
@@ -123,7 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         picture_url: None,
     };
 
-    // Aktualisieren des Profils für Bürge 1
+    // Update profile for Guarantor 1
     {
         let (wallet, _identity) = service_g1.get_unlocked_mut_for_test();
         wallet.profile.first_name = g1_profile.first_name.clone();
@@ -138,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         wallet.profile.url = g1_profile.url.clone();
     }
 
-    // Erstellen einer vollständigen Address-Struktur für Bürge 2
+    // Create full Address structure for Guarantor 2
     let g2_address = human_money_core::models::voucher::Address {
         street: "Bürgenstraße".to_string(),
         house_number: "456".to_string(),
@@ -148,7 +148,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         full_address: "Bürgenstraße 456, 54321 Bürgenstadt, Deutschland".to_string(),
     };
 
-    // Erstellen eines vollständigen PublicProfile für Bürge 2 mit Beispielwerten
+    // Create full PublicProfile for Guarantor 2 with sample values
     let g2_profile = human_money_core::models::profile::PublicProfile {
         protocol_version: Some("v1".to_string()),
         id: Some(g2_id.clone()),
@@ -167,7 +167,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         picture_url: None,
     };
 
-    // Aktualisieren des Profils für Bürge 2
+    // Update profile for Guarantor 2
     {
         let (wallet, _identity) = service_g2.get_unlocked_mut_for_test();
         wallet.profile.first_name = g2_profile.first_name.clone();
@@ -189,14 +189,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let charlie_id = service_charlie.get_user_id()?;
     println!("\n✅ Profile für Ersteller, 2 Bürgen und Empfänger erstellt.");
 
-    // Lade den Minuto-Standard
+    // Load Minuto standard
     let standard_toml = std::fs::read_to_string("voucher_standards/minuto_v1/standard.toml")?;
     let (standard, _) = verify_and_parse_standard(&standard_toml)?;
 
-    // --- 2. Gutschein-Erstellung durch den Ersteller ---
+    // --- 2. Voucher creation by creator ---
     println!("\n--- SCHRITT 2: Ersteller legt einen neuen (unvollständigen) Gutschein an ---");
 
-    // Erstellen einer vollständigen Address-Struktur mit Beispielwerten
+    // Create full Address structure with sample values
     let address = human_money_core::models::voucher::Address {
         street: "Musterstraße".to_string(),
         house_number: "123".to_string(),
@@ -206,7 +206,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         full_address: "Musterstraße 123, 12345 Musterstadt, Deutschland".to_string(),
     };
 
-    // Erstellen eines vollständigen PublicProfile mit Beispielwerten
+    // Create full PublicProfile with sample values
     let complete_creator_profile = human_money_core::models::profile::PublicProfile {
         protocol_version: Some("v1".to_string()),
         id: Some(creator_id.clone()),
@@ -251,17 +251,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert!(matches!(summary.status, VoucherStatus::Incomplete { .. }));
 
-    // --- 3. Bürgen-Workflow ---
+    // --- 3. Guarantor workflow ---
     println!("\n--- SCHRITT 3: Asynchroner Bürgen-Workflow ---");
 
-    // **Teil A: Bürge 1**
+    // **Part A: Guarantor 1**
     println!("\n  -> Ersteller sendet Signaturanfrage an Bürge 1...");
     let _request_bundle_to_g1 = service_creator.create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g1_id.clone(), PrivacyMode::TrialDecryption))?;
-    // In einer echten App würde `request_bundle_to_g1` nun z.B. via QR-Code übertragen.
+    // In a real app, request_bundle_to_g1 would be transferred e.g. via QR code.
 
     println!("  -> Bürge 1 empfängt die Anfrage, signiert und sendet die Signatur zurück...");
-    // Der Bürge muss den Gutschein aus dem Bundle extrahieren, um ihn zu signieren.
-    // In einer echten App würde die App des Bürgen das Bundle öffnen. Hier simulieren wir das.
+    // The guarantor must extract the voucher from the bundle to sign it.
+    // In a real app, guarantor's app would open the bundle. Here we simulate that.
     let response_bundle_from_g1 = service_g1.create_detached_signature_response_bundle(
         &created_voucher,
         "guarantor",
@@ -287,7 +287,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         VoucherStatus::Incomplete { .. }
     ));
 
-    // **Teil B: Bürge 2**
+    // **Part B: Guarantor 2**
     println!("\n  -> Ersteller sendet Signaturanfrage an Bürge 2...");
     let _request_bundle_to_g2 = service_creator.create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g2_id.clone(), PrivacyMode::TrialDecryption))?;
 
@@ -308,7 +308,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(password),
     )?;
 
-    // --- 4. Aktivierung des Gutscheins ---
+    // --- 4. Activation of voucher ---
     println!("\n--- SCHRITT 4: Gutschein wird automatisch aktiviert ---");
     let final_details = service_creator.get_voucher_details(&local_id)?;
     println!(
@@ -317,7 +317,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   -> Finaler Status: {:?}", final_details.status);
     assert!(matches!(final_details.status, VoucherStatus::Active));
 
-    // --- 5. Transfer eines Teilbetrags ---
+    // --- 5. Partial transfer ---
     println!("\n--- SCHRITT 5: Ersteller sendet 25 Minuto an den Empfänger ---");
     let mut standards_map = HashMap::new();
     standards_map.insert(standard.immutable.identity.uuid.clone(), standard_toml.clone());
@@ -339,7 +339,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..
     } = service_creator.create_transfer_bundle(request, &standards_toml, None, Some(password))?;
 
-    // --- 6. Verifizierung der Kontostände ---
+    // --- 6. Balance verification ---
     println!("\n--- SCHRITT 6: Empfänger erhält das Bundle und Kontostände werden geprüft ---");
     service_recipient.receive_bundle(&transfer_bundle, &standards_map, None, Some(password), false)?;
 
@@ -349,36 +349,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   -> Kontostand Ersteller: {:?}", balance_creator);
     println!("   -> Kontostand Empfänger: {:?}", balance_recipient);
 
-    // KORREKTUR: Suchen Sie den Saldo im Vec<AggregatedBalance> anhand der Einheit.
+    // Find balance in Vec<AggregatedBalance> by unit.
     let creator_balance_str = balance_creator
         .iter()
-        .find(|b| b.unit == "m") // Suchen nach Abkürzung 'm', nicht 'Minuto'
+        .find(|b| b.unit == "m") // Search for abbreviation 'm', not 'Minuto'
         .map(|b| b.total_amount.as_str())
         .unwrap_or("0");
     let recipient_balance_str = balance_recipient
         .iter()
-        .find(|b| b.unit == "m") // Suchen nach Abkürzung 'm', nicht 'Minuto'
+        .find(|b| b.unit == "m") // Search for abbreviation 'm', not 'Minuto'
         .map(|b| b.total_amount.as_str())
         .unwrap_or("0");
     assert_eq!(creator_balance_str, "35");
     assert_eq!(recipient_balance_str, "25");
 
-    // --- SCHRITT 7: Zweiter Transfer in der Kette ---
+    // --- STEP 7: Second transfer in chain ---
     println!("\n--- SCHRITT 7: Empfänger sendet 10 Minuto an einen neuen Teilnehmer (Charlie) ---");
 
-    // Finde die local_id des Gutscheins im Wallet des ersten Empfängers
+    // Find local_id of voucher in wallet of first recipient
     let recipient_summary = service_recipient
         .get_voucher_summaries(None, None, None)?
         .pop()
         .unwrap();
     let recipient_local_id = recipient_summary.local_instance_id;
 
-    // Der erste Empfänger erstellt jetzt das Transfer-Bundle für Charlie
+    // First recipient creates transfer bundle for Charlie
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: charlie_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: recipient_local_id.clone(),
-            amount_to_send: "25".to_string(), // (ÄNDERUNG) Sende den vollen Restbetrag
+            amount_to_send: "25".to_string(), // Send full remaining amount
         }],
         notes: Some("Weitergereicht!".to_string()),
         sender_profile_name: None,
@@ -391,7 +391,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..
     } = service_recipient.create_transfer_bundle(request, &standards_toml, None, Some(password))?;
 
-    // Charlie empfängt das Bundle
+    // Charlie receives bundle
     service_charlie.receive_bundle(
         &transfer_bundle_to_charlie,
         &standards_map,
@@ -400,7 +400,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         false,
     )?;
 
-    // Überprüfe die finalen Kontostände
+    // Verify final balances
     let balance_recipient_after_send = service_recipient.get_total_balance_by_currency()?;
     let balance_charlie = service_charlie.get_total_balance_by_currency()?;
     println!(
@@ -412,11 +412,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         balance_charlie
     );
 
-    // KORREKTUR: Suchen Sie den Saldo im Vec<AggregatedBalance> anhand der Einheit.
+    // Find balance in Vec<AggregatedBalance> by unit.
     let recipient_has_balance = balance_recipient_after_send.iter().any(|b| b.unit == "m");
     let charlie_balance_str = balance_charlie
         .iter()
-        .find(|b| b.unit == "m") // Suchen nach Abkürzung 'm', nicht 'Minuto'
+        .find(|b| b.unit == "m") // Search for abbreviation 'm', not 'Minuto'
         .map(|b| b.total_amount.as_str())
         .unwrap_or("0");
     assert!(
@@ -425,7 +425,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert_eq!(charlie_balance_str, "25");
 
-    // --- 8. Finale Rohdaten-Ausgabe ---
+    // --- 8. Final raw data output ---
     println!("\n--- SCHRITT 8: Finale Rohdaten-Ausgabe des Gutscheins bei Charlie ---");
     let charlie_summary = service_charlie
         .get_voucher_summaries(None, None, None)?

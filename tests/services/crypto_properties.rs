@@ -1,19 +1,19 @@
 // tests/services/crypto_properties.rs
 // cargo test --test services_tests
 //!
-//! Eigenschafts- und Grenztests für `src/services/crypto_utils.rs`.
+//! Property and boundary tests for `src/services/crypto_utils.rs`.
 //!
-//! Diese Tests sichern die grundlegenden Invarianten (Korrektheit, Determinismus,
-//! Eingabevalidierung) der kryptographischen Hilfsfunktionen ab. Sie ergänzen die
-//! allgemeinen Integrationstests in `crypto.rs` mit präziseren Randfall-Szenarien:
+//! These tests verify the fundamental invariants (correctness, determinism,
+//! input validation) of the cryptographic utility functions. They complement the
+//! general integration tests in `crypto.rs` with more precise edge-case scenarios:
 //!
-//! - **Vollständigkeit**: Werden alle gültigen Eingaben korrekt verarbeitet?
-//! - **Ablehnung**: Werden ungültige Eingaben zuverlässig zurückgewiesen?
-//! - **Determinismus**: Liefern Funktionen für gleiche Eingaben immer dasselbe Ergebnis?
-//! - **Kommutiativität**: Ist die Reihenfolge von Argumenten irrelevant wo erwartet?
-//! - **Fehlermeldungen**: Enthalten Fehlertypen aussagekräftige Texte für Endnutzer/Logging?
+//! - **Completeness**: Are all valid inputs processed correctly?
+//! - **Rejection**: Are invalid inputs reliably rejected?
+//! - **Determinism**: Do functions always produce the same result for identical inputs?
+//! - **Commutativity**: Is the argument order irrelevant where expected?
+//! - **Error messages**: Do error types contain descriptive text for end users/logging?
 //!
-//! Ausführen: `cargo test --test services_tests services::crypto_properties`
+//! Run: `cargo test --test services_tests services::crypto_properties`
 
 use human_money_core::MnemonicLanguage;
 use human_money_core::services::crypto_utils::{
@@ -22,15 +22,15 @@ use human_money_core::services::crypto_utils::{
 };
 
 // =============================================================================
-// Mnemonic-Generierung
+// Mnemonic Generation
 // =============================================================================
 
-/// Alle fünf vom BIP-39-Standard unterstützten Wortanzahlen (12, 15, 18, 21, 24)
-/// müssen eine Phrase mit exakt dieser Wortzahl erzeugen.
+/// All five word counts supported by the BIP-39 standard (12, 15, 18, 21, 24)
+/// must generate a phrase with exactly that word count.
 ///
-/// Hintergrund: BIP-39 definiert Entropielängen von 128–256 Bit in 32-Bit-Schritten,
-/// was den Wortanzahlen 12, 15, 18, 21 und 24 entspricht. Jede davon ist ein
-/// eigenständiger, unterstützter Anwendungsfall.
+/// Background: BIP-39 defines entropy lengths from 128–256 bits in 32-bit increments,
+/// which corresponds to word counts 12, 15, 18, 21, and 24. Each of these is an
+/// independent, supported use case.
 #[test]
 fn test_mnemonic_generation_covers_all_bip39_sizes() -> Result<(), Box<dyn std::error::Error>> {
     let valid_counts = [12usize, 15, 18, 21, 24];
@@ -46,8 +46,8 @@ fn test_mnemonic_generation_covers_all_bip39_sizes() -> Result<(), Box<dyn std::
     Ok(())
 }
 
-/// Wortanzahlen, die kein BIP-39-Entropie-Vielfaches ergeben (z. B. 11, 13, 0),
-/// müssen mit einem Fehler abgelehnt werden.
+/// Word counts that do not correspond to a BIP-39 entropy multiple (e.g. 11, 13, 0)
+/// must be rejected with an error.
 #[test]
 fn test_mnemonic_generation_rejects_unsupported_sizes() {
     assert!(generate_mnemonic(11, MnemonicLanguage::English).is_err(), "11 words is not a BIP-39 size");
@@ -56,14 +56,14 @@ fn test_mnemonic_generation_rejects_unsupported_sizes() {
 }
 
 // =============================================================================
-// Kurzform-Hash von User-IDs
+// Short Hash of User IDs
 // =============================================================================
 
-/// `get_short_hash_from_user_id` dient als kompaktes Heuristik-Merkmal für bekannte Peers.
-/// Diese Invarianten müssen gelten:
-/// - Deterministisch (gleiche ID → gleicher Hash)
-/// - Einzigartig (verschiedene IDs → verschiedene Hashes, statistisch)
-/// - Feste 4-Byte-Ausgabe (kein leerer, trivialer oder variabler Rückgabewert)
+/// `get_short_hash_from_user_id` serves as a compact heuristic identifier for known peers.
+/// The following invariants must hold:
+/// - Deterministic (same ID -> same hash)
+/// - Unique (different IDs -> different hashes, statistically)
+/// - Fixed 4-byte output (no empty, trivial, or variable return value)
 #[test]
 fn test_short_hash_is_deterministic_unique_and_fixed_size() {
     use human_money_core::services::crypto_utils::get_short_hash_from_user_id;
@@ -71,31 +71,31 @@ fn test_short_hash_is_deterministic_unique_and_fixed_size() {
     let hash_alice = get_short_hash_from_user_id("alice@did:key:z6MkTest1");
     let hash_bob   = get_short_hash_from_user_id("bob@did:key:z6MkTest2");
 
-    // Verschiedene IDs → verschiedene Hashes (kein konstanterRückgabewert)
+    // Different IDs -> different hashes (no constant return value)
     assert_ne!(hash_alice, hash_bob, "Different user IDs must produce different short hashes");
 
-    // Deterministisch: gleiche Eingabe → gleicher Hash
+    // Deterministic: same input -> same hash
     let hash_alice_again = get_short_hash_from_user_id("alice@did:key:z6MkTest1");
     assert_eq!(hash_alice, hash_alice_again, "Short hash must be deterministic");
 
-    // Keine trivialen Konstanten als Rückgabewert
+    // No trivial constants as return value
     assert_ne!(hash_alice, [0u8; 4], "Short hash must not be all-zero");
     assert_ne!(hash_alice, [1u8; 4], "Short hash must not be all-one");
 
-    // Ausgabelänge immer genau 4 Bytes, unabhängig von der Eingabelänge
+    // Output length is always exactly 4 bytes, regardless of input length
     let hash_single_char = get_short_hash_from_user_id("x");
     assert_eq!(hash_single_char.len(), 4, "Short hash must always be exactly 4 bytes");
 }
 
 // =============================================================================
-// HKDF-Info-Vektor (build_hkdf_info)
+// HKDF Info Vector (build_hkdf_info)
 // =============================================================================
 
-/// Der HKDF-Info-Vektor muss beide Schlüssel-Bytes und das Label enthalten.
-/// Er darf nicht leer sein und muss sich bei verschiedenen Schlüsselpaaren unterscheiden.
+/// The HKDF info vector must contain both key bytes and the label.
+/// It must not be empty and must differ for different key pairs.
 ///
-/// Hintergrund: `build_hkdf_info` kodiert beide Public Keys in einen deterministischen,
-/// reihenfolgeunabhängigen Kontext-String für den HKDF-Expand-Schritt beim DH-Austausch.
+/// Background: `build_hkdf_info` encodes both public keys into a deterministic,
+/// order-independent context string for the HKDF-Expand step during DH key exchange.
 #[test]
 fn test_hkdf_info_contains_key_material_and_differs_per_keypair() {
     use human_money_core::services::crypto_utils::{build_hkdf_info, generate_ephemeral_x25519_keypair};
@@ -105,20 +105,20 @@ fn test_hkdf_info_contains_key_material_and_differs_per_keypair() {
 
     let info = build_hkdf_info(&pk1, &pk2, "test-id");
 
-    // Kein leerer Vektor
+    // Non-empty vector
     assert!(!info.is_empty(), "HKDF info must not be empty");
-    // Muss das Label (32 Bytes) plus mindestens einen Schlüssel (32 Bytes) enthalten
+    // Must contain the label (32 bytes) plus at least one key (32 bytes)
     assert!(info.len() > 32, "HKDF info must include label + key material (> 32 bytes)");
 
-    // Andere Schlüssel → anderer Info-Vektor
+    // Different keys -> different info vector
     let (pk3, _) = generate_ephemeral_x25519_keypair();
     let info_different = build_hkdf_info(&pk1, &pk3, "test-id");
     assert_ne!(info, info_different, "Different key pairs must produce different HKDF info");
 }
 
-/// Der Info-Vektor muss unabhängig von der Argumentreihenfolge identisch sein
-/// (Kommutativität). Das ist notwendig, damit Sender und Empfänger denselben
-/// symmetrischen Schlüssel ableiten, ohne die Reihenfolge vorab abstimmen zu müssen.
+/// The info vector must be identical regardless of argument order
+/// (commutativity). This is necessary so sender and recipient can derive the same
+/// symmetric key without coordinating the order in advance.
 #[test]
 fn test_hkdf_info_is_independent_of_argument_order() {
     use human_money_core::services::crypto_utils::{
@@ -138,7 +138,7 @@ fn test_hkdf_info_is_independent_of_argument_order() {
         "build_hkdf_info must produce the same result regardless of argument order"
     );
 
-    // Mindestens einer der Schlüssel muss als Byte-Sequenz im Ergebnis auffindbar sein
+    // At least one of the keys must be found as a byte sequence in the result
     let contains_a = info_ab.windows(32).any(|w| w == pk_a.as_bytes());
     let contains_b = info_ab.windows(32).any(|w| w == pk_b.as_bytes());
     assert!(
@@ -148,16 +148,16 @@ fn test_hkdf_info_is_independent_of_argument_order() {
 }
 
 // =============================================================================
-// Mindestlänge für verschlüsselte Empfänger-Payloads
+// Minimum Length for Encrypted Recipient Payloads
 // =============================================================================
 
-/// Ein verschlüsseltes Privacy-Guard-Paket besteht aus einem ephemeren Public Key
-/// (32 Bytes) gefolgt von Nonce + Ciphertext (min. 12 Bytes). Eingaben unter diesem
-/// Schwellwert von 44 Bytes müssen sofort mit einem Fehler abgelehnt werden,
-/// bevor eine Entschlüsselung versucht wird.
+/// An encrypted Privacy Guard package consists of an ephemeral public key
+/// (32 bytes) followed by nonce + ciphertext (min. 12 bytes). Inputs below this
+/// threshold of 44 bytes must be rejected immediately with an error
+/// before decryption is attempted.
 ///
-/// Grenzfälle mit unterschiedlichen Unterschreitungen decken ab, dass die Prüfung
-/// korrekt implementiert ist (z. B. nicht mit Subtraktion statt Addition).
+/// Edge cases with various lengths below the threshold verify that the check
+/// is implemented correctly (e.g. not using subtraction instead of addition).
 #[test]
 fn test_recipient_payload_decryption_requires_minimum_byte_length() {
     use base64::Engine as _;
@@ -166,25 +166,25 @@ fn test_recipient_payload_decryption_requires_minimum_byte_length() {
 
     let (_, sk) = generate_ed25519_keypair_for_tests(Some("min-length-test"));
 
-    // 43 Bytes = 32 + 11 → fehlt 1 Byte für den Nonce
+    // 43 bytes = 32 + 11 -> 1 byte missing for the nonce
     assert!(
         decrypt_recipient_payload(&engine.encode([0u8; 43]), &sk, "test-id").is_err(),
         "43 bytes (one short) must be rejected"
     );
 
-    // 20 Bytes → weit unterhalb der Grenze
+    // 20 bytes -> far below the boundary
     assert!(
         decrypt_recipient_payload(&engine.encode([0u8; 20]), &sk, "test-id").is_err(),
         "20 bytes must be rejected"
     );
 
-    // 21 Bytes → immer noch zu kurz
+    // 21 bytes -> still too short
     assert!(
         decrypt_recipient_payload(&engine.encode([0u8; 21]), &sk, "test-id").is_err(),
         "21 bytes must be rejected"
     );
 
-    // 0 Bytes → leere Eingabe muss abgelehnt werden
+    // 0 bytes -> empty input must be rejected
     assert!(
         decrypt_recipient_payload(&engine.encode([0u8; 0]), &sk, "test-id").is_err(),
         "empty input must be rejected"
@@ -192,16 +192,16 @@ fn test_recipient_payload_decryption_requires_minimum_byte_length() {
 }
 
 // =============================================================================
-// Nonce-Präfix bei symmetrischer Entschlüsselung
+// Nonce Prefix in Symmetric Decryption
 // =============================================================================
 
-/// `decrypt_data` erwartet ein vorangestelltes 12-Byte-Nonce (ChaCha20-Poly1305).
-/// Eingaben unter 12 Bytes müssen mit `InvalidLength` abgelehnt werden.
-/// Eingaben ab 12 Bytes passieren die Längenprüfung und scheitern erst bei der
-/// AEAD-Verifikation (anderer Fehlertyp: `DecryptionFailed`).
+/// `decrypt_data` expects a prepended 12-byte nonce (ChaCha20-Poly1305).
+/// Inputs under 12 bytes must be rejected with `InvalidLength`.
+/// Inputs of 12 bytes or more pass the length check and fail only at
+/// AEAD verification (different error type: `DecryptionFailed`).
 ///
-/// Das unterschiedliche Fehlerverhalten für 11 vs. 12 Bytes ist die relevante Invariante:
-/// Es zeigt, dass die Längenprüfung einen exakten, korrekten Schwellwert verwendet.
+/// The differing error behavior for 11 vs. 12 bytes is the relevant invariant:
+/// It demonstrates that the length check uses an exact, correct threshold.
 #[test]
 fn test_symmetric_decryption_distinguishes_length_error_from_decryption_error() {
     use chacha20poly1305::aead::{OsRng, rand_core::RngCore};
@@ -209,7 +209,7 @@ fn test_symmetric_decryption_distinguishes_length_error_from_decryption_error() 
     let mut key = [0u8; 32];
     OsRng.fill_bytes(&mut key);
 
-    // 11 Bytes → zu kurz für einen Nonce → InvalidLength
+    // 11 bytes -> too short for a nonce -> InvalidLength
     let err_11 = decrypt_data(&key, &[0u8; 11]).unwrap_err();
     let err_str_11 = format!("{err_11:?}");
     assert!(
@@ -217,7 +217,7 @@ fn test_symmetric_decryption_distinguishes_length_error_from_decryption_error() 
         "Input shorter than NONCE_SIZE must produce an InvalidLength error, got: {err_str_11}"
     );
 
-    // 12 Bytes → Nonce OK, aber kein Ciphertext → DecryptionFailed (kein InvalidLength)
+    // 12 bytes -> nonce OK, but no ciphertext -> DecryptionFailed (not InvalidLength)
     let err_12 = decrypt_data(&key, &[0u8; 12]).unwrap_err();
     let err_str_12 = format!("{err_12:?}");
     assert!(
@@ -226,16 +226,16 @@ fn test_symmetric_decryption_distinguishes_length_error_from_decryption_error() 
          Got: {err_str_12}"
     );
 
-    // Leere Eingabe → muss ebenfalls fehlschlagen
+    // Empty input -> must also fail
     assert!(decrypt_data(&key, &[]).is_err(), "Empty input must fail");
 }
 
 // =============================================================================
-// Präfix-Validierung bei User-ID-Erstellung
+// Prefix Validation During User ID Creation
 // =============================================================================
 
-/// Das Präfix einer User-ID darf maximal 63 Zeichen lang sein.
-/// Exakt 63 Zeichen sind erlaubt; ab 64 Zeichen wird `PrefixTooLong` zurückgegeben.
+/// The prefix of a user ID may be at most 63 characters long.
+/// Exactly 63 characters are allowed; from 64 characters onward, `PrefixTooLong` is returned.
 #[test]
 fn test_user_id_prefix_length_is_enforced_at_63_chars() {
     let (pub_key, _) = generate_ed25519_keypair_for_tests(Some("length-boundary"));
@@ -250,25 +250,25 @@ fn test_user_id_prefix_length_is_enforced_at_63_chars() {
     );
 }
 
-/// Das Präfix darf nur Kleinbuchstaben (a–z), Ziffern (0–9) und Bindestriche (-) enthalten.
-/// Großbuchstaben werden automatisch in Kleinbuchstaben umgewandelt.
-/// Leerzeichen, '@', Sonderzeichen u. ä. sind nicht erlaubt.
+/// The prefix may only contain lowercase letters (a–z), digits (0–9), and hyphens (-).
+/// Uppercase letters are automatically converted to lowercase.
+/// Spaces, '@', special characters, etc. are not allowed.
 #[test]
 fn test_user_id_prefix_only_allows_lowercase_digits_and_hyphens() {
     let (pub_key, _) = generate_ed25519_keypair_for_tests(Some("charset-test"));
 
-    // Großbuchstaben werden via to_lowercase normalisiert → gültig
+    // Uppercase letters are normalized via to_lowercase -> valid
     let result_upper = create_user_id(&pub_key, Some("ABC"));
     assert!(result_upper.is_ok(), "Uppercase 'ABC' is normalized to 'abc' and must be accepted");
 
-    // Leerzeichen → ungültig
+    // Space -> invalid
     let result_space = create_user_id(&pub_key, Some("my prefix"));
     assert!(
         matches!(result_space, Err(UserIdError::InvalidPrefixChars)),
         "Space in prefix must be rejected as InvalidPrefixChars, got: {:?}", result_space
     );
 
-    // '@'-Zeichen → ungültig (kollidiert mit dem ID-Format-Trennzeichen)
+    // '@' character -> invalid (collides with the ID format delimiter)
     let result_at = create_user_id(&pub_key, Some("pre@fix"));
     assert!(
         matches!(result_at, Err(UserIdError::InvalidPrefixChars)),
@@ -276,9 +276,9 @@ fn test_user_id_prefix_only_allows_lowercase_digits_and_hyphens() {
     );
 }
 
-/// Bindestriche am Anfang oder Ende des Präfixes sind nicht erlaubt,
-/// da sie zu konfusen oder schwer lesbaren IDs führen würden ("–account:…").
-/// Jede dieser Positionen muss unabhängig abgelehnt werden.
+/// Hyphens at the start or end of the prefix are not allowed,
+/// as they would result in confusing or hard-to-read IDs ("-account:...").
+/// Each of these positions must be rejected independently.
 #[test]
 fn test_user_id_prefix_cannot_start_or_end_with_hyphen() {
     let (pub_key, _) = generate_ed25519_keypair_for_tests(Some("hyphen-position"));
@@ -295,13 +295,13 @@ fn test_user_id_prefix_cannot_start_or_end_with_hyphen() {
         "Trailing hyphen must be rejected, got: {:?}", r_trailing
     );
 
-    // Bindestrich in der Mitte ist erlaubt (üblicher Trennstrich in Kontextnamen)
+    // Hyphen in the middle is allowed (common separator in context names)
     let r_middle = create_user_id(&pub_key, Some("my-prefix"));
     assert!(r_middle.is_ok(), "Hyphen in the middle must be accepted, got: {:?}", r_middle.err());
 }
 
-/// Doppelte Trenner (`--`) sind nicht erlaubt, da sie kein sinnvolles Namensmuster darstellen
-/// und zu Parsing-Ambiguitäten führen könnten.
+/// Consecutive delimiters (`--`) are not allowed, as they do not represent a reasonable naming pattern
+/// and could lead to parsing ambiguities.
 #[test]
 fn test_user_id_prefix_cannot_contain_consecutive_hyphens() {
     let (pub_key, _) = generate_ed25519_keypair_for_tests(Some("consec-hyphens"));
@@ -312,64 +312,64 @@ fn test_user_id_prefix_cannot_contain_consecutive_hyphens() {
         "Double hyphen '--' must be rejected, got: {:?}", r_double
     );
 
-    // Doppelpunkte sind als Zeichen ebenfalls unzulässig
+    // Colons are also disallowed as characters
     assert!(create_user_id(&pub_key, Some(":prefix")).is_err(),  "Leading ':' must fail");
     assert!(create_user_id(&pub_key, Some("ab::cd")).is_err(),   "'::' must fail");
     assert!(create_user_id(&pub_key, Some("prefix:")).is_err(),  "Trailing ':' must fail");
 
-    // Einzelner Bindestrich bleibt erlaubt
+    // Single hyphen remains allowed
     let r_single = create_user_id(&pub_key, Some("my-prefix"));
     assert!(r_single.is_ok(), "Single hyphen must still be accepted");
 }
 
 // =============================================================================
-// Validierung bestehender User-IDs
+// Validation of Existing User IDs
 // =============================================================================
 
-/// `validate_user_id` muss klar strukturell ungültige Strings ablehnen
-/// und eine gültige ID akzeptieren. Außerdem muss eine nachträglich manipulierte
-/// Prüfsumme erkannt werden (Integritätsschutz).
+/// `validate_user_id` must reject clearly structurally invalid strings
+/// and accept a valid ID. In addition, a tampered checksum
+/// must be detected (integrity protection).
 #[test]
 fn test_user_id_validation_rejects_malformed_input_and_detects_tampering() {
-    // 1. Strukturell ungültige Strings müssen abgelehnt werden
+    // 1. Structurally invalid strings must be rejected
     assert!(!validate_user_id(""),              "Empty string must fail");
     assert!(!validate_user_id("not-a-user-id"), "Plain string must fail");
     assert!(!validate_user_id("only@one"),      "Missing DID part must fail");
     assert!(!validate_user_id("a@@did:key:z"), "Double '@' must fail");
     assert!(!validate_user_id("x@NOTADID"),    "Non-DID suffix must fail");
 
-    // 2. Root-Account (reine did:key) muss akzeptiert werden
+    // 2. Root account (pure did:key) must be accepted
     let (pub_key_root, _) = generate_ed25519_keypair_for_tests(Some("root-ok"));
     let root_id = create_user_id(&pub_key_root, None).unwrap();
     assert!(validate_user_id(&root_id), "Root account ID must be valid");
 
-    // 2. Korrekte Präfix-ID muss akzeptiert werden
+    // 3. Correct prefix ID must be accepted
     let (pub_key_prefix, _) = generate_ed25519_keypair_for_tests(Some("validate-ok"));
     let valid_id = create_user_id(&pub_key_prefix, Some("test")).unwrap();
     assert!(validate_user_id(&valid_id), "Correctly generated prefix ID must be valid");
 
-    // Nachträgliche Manipulation der Prüfsumme muss erkannt werden
+    // Tampered checksum must be detected and rejected
     let mut tampered = valid_id.clone();
     let last = tampered.pop().unwrap();
     tampered.push(if last == 'A' { 'B' } else { 'A' });
     assert!(!validate_user_id(&tampered), "Tampered checksum must be detected and rejected");
 }
 
-/// Ein Präfix mit mehr als 63 Zeichen in einer manuell konstruierten ID
-/// (die nie durch `create_user_id` erzeugt werden kann) muss von
-/// `validate_user_id` ebenfalls abgelehnt werden.
+/// A prefix with more than 63 characters in a manually constructed ID
+/// (which can never be generated by `create_user_id`) must also be rejected
+/// by `validate_user_id`.
 ///
-/// Dies stellt sicher, dass die Längenbeschränkung nicht nur bei der Erstellung,
-/// sondern auch bei der Validierung eingehender IDs greift.
+/// This ensures that the length limitation is enforced not only during creation,
+/// but also during validation of incoming IDs.
 #[test]
 fn test_user_id_validation_enforces_prefix_length_limit() {
     let (pub_key, _) = generate_ed25519_keypair_for_tests(Some("pfx-len-validate"));
 
-    // Valide ID mit maximalem 63-Zeichen-Präfix muss akzeptiert werden
+    // Valid ID with max 63-char prefix must be accepted
     let valid_id = create_user_id(&pub_key, Some(&"a".repeat(63))).unwrap();
     assert!(validate_user_id(&valid_id), "Max-length (63-char) prefix must be valid");
 
-    // Manuell konstruierte ID mit 64-Zeichen-Präfix muss abgelehnt werden
+    // Manually constructed ID with 64-char prefix must be rejected
     let at_pos     = valid_id.find('@').unwrap();
     let did_part   = &valid_id[at_pos..];
     let last_colon = valid_id[..at_pos].rfind(':').unwrap();
@@ -378,13 +378,13 @@ fn test_user_id_validation_enforces_prefix_length_limit() {
     assert!(!validate_user_id(&oversized), "Over-length prefix ID must be rejected by validator");
 }
 
-/// Jede einzelne Präfix-Formatregel muss unabhängig zur Ablehnung führen.
-/// Insbesondere: führender Bindestrich, abschließender Bindestrich und
-/// doppelte Bindestriche müssen jeweils allein ausreichen.
+/// Each individual prefix format rule must independently trigger rejection.
+/// In particular: leading hyphen, trailing hyphen, and consecutive hyphens
+/// must each be sufficient on their own.
 ///
-/// Hintergrund: Die Regeln sind mit OR verknüpft. Würden sie mit AND verknüpft,
-/// müssten mehrere Fehler gleichzeitig auftreten — was in der Praxis seltener vorkommt
-/// und Fehler verbergen würde.
+/// Background: The rules are connected with OR. If they were connected with AND,
+/// multiple errors would have to occur simultaneously — which is rarer in practice
+/// and would hide errors.
 #[test]
 fn test_user_id_validation_each_prefix_rule_independently_triggers_rejection() {
     let (pub_key, _) = generate_ed25519_keypair_for_tests(Some("indep-rules"));
@@ -394,60 +394,60 @@ fn test_user_id_validation_each_prefix_rule_independently_triggers_rejection() {
     let last_colon = valid_id[..at_pos].rfind(':').unwrap();
     let checksum   = &valid_id[last_colon + 1..at_pos];
 
-    // Nur führender Bindestrich → muss ablehnen
+    // Leading hyphen only -> must reject
     assert!(
         !validate_user_id(&format!("-valid:{checksum}{did_part}")),
         "Leading hyphen alone must trigger rejection"
     );
 
-    // Nur abschließender Bindestrich → muss ablehnen
+    // Trailing hyphen only -> must reject
     assert!(
         !validate_user_id(&format!("valid-:{checksum}{did_part}")),
         "Trailing hyphen alone must trigger rejection"
     );
 
-    // Nur doppelter Bindestrich → muss ablehnen
+    // Double hyphen only -> must reject
     assert!(
         !validate_user_id(&format!("val--id:{checksum}{did_part}")),
         "Double hyphen alone must trigger rejection"
     );
 
-    // Original-ID bleibt weiterhin gültig (Positiv-Kontrolle)
+    // Original valid ID still passes (positive control)
     assert!(validate_user_id(&valid_id), "Original valid ID must still pass");
 }
 
-/// Im Präfix sind Bindestriche und Ziffern explizit erlaubt.
-/// Dies prüft, dass diese erlaubten Zeichen nicht fälschlich gesperrt werden.
+/// Hyphens and digits are explicitly allowed in the prefix.
+/// This verifies that these permitted characters are not mistakenly blocked.
 #[test]
 fn test_user_id_validation_accepts_hyphens_and_digits_in_prefix() {
     let (pub_key, _) = generate_ed25519_keypair_for_tests(Some("allowed-charset"));
 
-    // Ziffern im Präfix → erlaubt
+    // Digits in prefix -> allowed
     let id_digit = create_user_id(&pub_key, Some("pre1fix")).unwrap();
     assert!(validate_user_id(&id_digit), "Prefix containing a digit must be valid");
 
-    // Bindestrich in der Mitte → erlaubt
+    // Hyphen in the middle -> allowed
     let id_hyphen = create_user_id(&pub_key, Some("my-account")).unwrap();
     assert!(
         validate_user_id(&id_hyphen),
         "Prefix 'my-account' with a middle hyphen must be valid"
     );
 
-    // Mehrere Bindestriche (nicht aufeinanderfolgend) → erlaubt
+    // Multiple hyphens (non-consecutive) -> allowed
     let id_multi = create_user_id(&pub_key, Some("my-long-id")).unwrap();
     assert!(validate_user_id(&id_multi), "Prefix 'my-long-id' with multiple hyphens must be valid");
 
-    // Ungültige Zeichen in konstruierten IDs → muss abgelehnt werden
+    // Invalid characters in constructed IDs -> must be rejected
     assert!(!validate_user_id("pre@fix:abc@did:key:zabc"), "Prefix with '@' must be rejected");
     assert!(!validate_user_id("pre fix:abc@did:key:zabc"), "Prefix with space must be rejected");
 }
 
 // =============================================================================
-// Fehlermeldungen (Display & Error::source)
+// Error Messages (Display & Error::source)
 // =============================================================================
 
-/// Alle Varianten von `UserIdError` müssen eine nicht-leere, lesbare Fehlermeldung liefern.
-/// Das ist wichtig für aussagekräftige Rückmeldungen an Nutzer und Entwickler.
+/// All variants of `UserIdError` must provide a non-empty, readable error message.
+/// This is important for meaningful feedback to users and developers.
 #[test]
 fn test_user_id_error_variants_have_descriptive_messages() {
     let errors = [
@@ -465,16 +465,16 @@ fn test_user_id_error_variants_have_descriptive_messages() {
     }
 }
 
-/// `GetPubkeyError` muss für alle Varianten eine lesbare Fehlermeldung liefern.
-/// Bei Varianten, die eine Ursache wrappen (`DecodingFailed`, `ConversionFailed`),
-/// muss `Error::source()` `Some` zurückgeben, damit die Ursachenkette nachvollziehbar ist.
-/// Alle anderen Varianten sollten `None` zurückgeben.
+/// `GetPubkeyError` must provide a readable error message for all variants.
+/// For variants that wrap a cause (`DecodingFailed`, `ConversionFailed`),
+/// `Error::source()` must return `Some` so that the causal chain can be traced.
+/// All other variants should return `None`.
 #[test]
 fn test_get_pubkey_error_has_readable_messages_and_correct_cause_chain() {
     use human_money_core::services::crypto_utils::GetPubkeyError;
     use std::error::Error;
 
-    // Display muss für alle terminalen Varianten eine nicht-leere Meldung liefern
+    // Display must provide a non-empty message for all terminal variants
     for e in [
         GetPubkeyError::InvalidPrefix,
         GetPubkeyError::InvalidDidFormat,
@@ -484,13 +484,13 @@ fn test_get_pubkey_error_has_readable_messages_and_correct_cause_chain() {
         assert!(!format!("{e}").is_empty(), "Display for {e:?} must not be empty");
     }
 
-    // Varianten ohne Ursache → source() == None
+    // Variants without cause -> source() == None
     assert!(GetPubkeyError::InvalidPrefix.source().is_none(),    "No source for InvalidPrefix");
     assert!(GetPubkeyError::InvalidDidFormat.source().is_none(), "No source for InvalidDidFormat");
     assert!(GetPubkeyError::InvalidMulticodec.source().is_none(),"No source for InvalidMulticodec");
     assert!(GetPubkeyError::InvalidLength(0).source().is_none(), "No source for InvalidLength");
 
-    // DecodingFailed wraps a bs58 error → source() muss die Ursache durchreichen
+    // DecodingFailed wraps a bs58 error -> source() must forward the cause
     let decode_err = bs58::decode("!invalid!").into_vec().unwrap_err();
     let e_decode = GetPubkeyError::DecodingFailed(decode_err);
     assert!(
@@ -500,16 +500,16 @@ fn test_get_pubkey_error_has_readable_messages_and_correct_cause_chain() {
 }
 
 // =============================================================================
-// Kurvenableitungen (ed25519_pk_to_curve_point)
+// Curve Derivations (ed25519_pk_to_curve_point)
 // =============================================================================
 
-/// `ed25519_pk_to_curve_point` konvertiert einen Ed25519-Verifikationsschlüssel
-/// in einen Punkt auf der Edwards25519-Kurve. Diese Funktion wird u. a. für
-/// kryptographische Trap-Berechnungen verwendet.
+/// `ed25519_pk_to_curve_point` converts an Ed25519 verification key
+/// into a point on the Edwards25519 curve. This function is used,
+/// among other things, for cryptographic trap computations.
 ///
-/// Invarianten:
-/// - Verschiedene Schlüssel → verschiedene Kurvenpunkte (keine Kollision)
-/// - Gleicher Schlüssel → immer derselbe Punkt (Determinismus)
+/// Invariants:
+/// - Different keys -> different curve points (no collision)
+/// - Same key -> always the same point (determinism)
 #[test]
 fn test_curve_point_derivation_is_injective_and_deterministic() {
     use human_money_core::services::crypto_utils::{
@@ -522,16 +522,17 @@ fn test_curve_point_derivation_is_injective_and_deterministic() {
     let point_a = ed25519_pk_to_curve_point(&pub_key_a).unwrap();
     let point_b = ed25519_pk_to_curve_point(&pub_key_b).unwrap();
 
-    // Verschiedene Schlüssel → verschiedene Punkte (Injektivität)
+    // Different keys -> different points (injectivity)
     assert_ne!(
         point_a, point_b,
         "Different public keys must map to different Edwards curve points"
     );
 
-    // Deterministisch: gleicher Schlüssel → immer gleicher Punkt
+    // Deterministic: same key -> always same point
     let point_a_again = ed25519_pk_to_curve_point(&pub_key_a).unwrap();
     assert_eq!(
         point_a, point_a_again,
         "Same public key must always produce the same curve point"
     );
 }
+

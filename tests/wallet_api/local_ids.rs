@@ -1,9 +1,9 @@
 // tests/wallet_api/local_ids.rs
 // cargo test --test wallet_api_tests wallet_api::local_ids
 //!
-//! Verifiziert die Logik zur Berechnung von lokalen Gutschein-Instanz-IDs.
-//! Diese IDs müssen pfadabhängig und besitzerspezifisch sein, um
-//! Kollisionen bei Splits und Bounce-Backs zu verhindern.
+//! Verifies the logic for computing local voucher instance IDs.
+//! These IDs must be path-dependent and owner-specific to
+//! prevent collisions in splits and bounce-backs.
 
 use human_money_core::test_utils::{self, ACTORS};
 use human_money_core::Wallet;
@@ -122,7 +122,7 @@ fn test_correct_id_for_archived_state() {
 
 #[test]
 fn test_error_when_user_has_no_balance_or_history() {
-    // Wir nutzen hier einen explizit öffentlichen Standard, damit DIDs verglichen werden können.
+    // We use an explicitly public standard here so DIDs can be compared.
     let (standard, standard_hash) = (&test_utils::FREETALER_STANDARD.0, &test_utils::FREETALER_STANDARD.1);
     let mut public_standard = standard.clone();
     public_standard.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;

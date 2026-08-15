@@ -1,9 +1,9 @@
 //! tests/validation/unit_service.rs
 //!
-//! Unit-Tests für die Validierung mittels der neuen CEL-basierten DynamicPolicyEngine.
-//! Diese Tests ersetzen die alten, imperativen Rust-Tests und verifizieren, dass die
-//! dynamischen Regeln (Regex, Listenfilterung, Custom Functions) exakt wie die 
-//! zuvor gelöschten FieldGroupRules und ContentRules funktionieren.
+//! Unit tests for validation using the new CEL-based DynamicPolicyEngine.
+//! These tests replace the old, imperative Rust tests and verify that
+//! dynamic rules (regex, list filtering, custom functions) work exactly like the
+//! previously removed FieldGroupRules and ContentRules.
 
 use human_money_core::services::dynamic_policy_engine::DynamicPolicyEngine;
 use serde_json::json;
@@ -14,7 +14,7 @@ fn test_cel_content_rules_fixed_fields() {
         "nominal_value": { "unit": "EUR", "amount": "50.00" }
     });
     
-    // Unit muss exakt "EUR" sein
+    // Unit must be exactly "EUR"
     let expr = "Voucher.nominal_value.unit == 'EUR'";
     assert_eq!(DynamicPolicyEngine::evaluate_rule(expr, &voucher_json, None), Ok(true));
     
@@ -28,14 +28,14 @@ fn test_cel_regex_patterns() {
         "creator": { "first_name": "Alice" }
     });
     
-    // cel-interpreter native regex Evaluierung
+    // cel-interpreter native regex evaluation
     let expr = "Voucher.creator.first_name.matches('^[A-Z][a-z]+$')";
     assert_eq!(DynamicPolicyEngine::evaluate_rule(expr, &voucher_json, None), Ok(true));
 }
 
 #[test]
 fn test_cel_field_group_rules_gender_counting() {
-    // Ersetzt die komplexe validate_field_group_rules für die Bürgen-Diversität
+    // Replaces the complex validate_field_group_rules for guarantor diversity
     let voucher_json = json!({
         "signatures": [
             { "role": "creator" },
@@ -45,16 +45,17 @@ fn test_cel_field_group_rules_gender_counting() {
         ]
     });
     
-    // Regel: Es müssen exakt zwei männliche Bürgen (gender == '1') vorhanden sein.
-    // Wir nutzen `has()` Makros, um Panic bei fehlenden Feldern zu vermeiden (Safe Navigation).
+    // Rule: Exactly two male guarantors (gender == '1') must be present.
+    // We use `has()` macros to avoid panic on missing fields (Safe Navigation).
     let expr_male = "Voucher.signatures.filter(s, has(s.role) && s.role == 'guarantor' && has(s.details) && has(s.details.gender) && s.details.gender == '1').size() == 2";
     assert_eq!(DynamicPolicyEngine::evaluate_rule(expr_male, &voucher_json, None), Ok(true));
 
-    // Regel: Es muss exakt ein weiblicher Bürge (gender == '2') vorhanden sein.
+    // Rule: Exactly one female guarantor (gender == '2') must be present.
     let expr_female = "Voucher.signatures.filter(s, has(s.role) && s.role == 'guarantor' && has(s.details) && has(s.details.gender) && s.details.gender == '2').size() == 1";
     assert_eq!(DynamicPolicyEngine::evaluate_rule(expr_female, &voucher_json, None), Ok(true));
     
-    // Negativ-Test: Keine drei weiblichen Bürgen
+    // Negative test: Not three female guarantors
     let expr_fail = "Voucher.signatures.filter(s, has(s.role) && s.role == 'guarantor' && has(s.details) && has(s.details.gender) && s.details.gender == '2').size() == 3";
     assert_eq!(DynamicPolicyEngine::evaluate_rule(expr_fail, &voucher_json, None), Ok(false));
 }
+

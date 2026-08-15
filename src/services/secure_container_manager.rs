@@ -1,7 +1,7 @@
 //! # src/services/secure_container_manager.rs
 //!
-//! Enthält die Kernlogik zur Erstellung, Verschlüsselung, Entschlüsselung und Verifizierung
-//! des anonymisierten `SecureContainer`. Implementiert Forward Secrecy und Double-Key-Wrapping.
+//! Contains core logic for creating, encrypting, decrypting, and verifying
+//! the anonymized `SecureContainer`. Implements Forward Secrecy and Double-Key-Wrapping.
 
 use crate::error::VoucherCoreError;
 use crate::models::profile::UserIdentity;
@@ -22,7 +22,7 @@ use serde_json::json;
 use sha2::Sha256;
 use zeroize::Zeroize;
 
-/// Definiert die Fehler, die im `secure_container_manager`-Modul auftreten können.
+/// Defines errors that can occur in the `secure_container_manager` module.
 #[derive(Debug, thiserror::Error)]
 pub enum ContainerManagerError {
     #[error("The current user is not in the list of recipients for this container.")]
@@ -39,27 +39,27 @@ pub enum ContainerManagerError {
     InvalidEncryptionConfig,
 }
 
-/// Erstellt, verschlüsselt und signiert einen JWE-kompatiblen `SecureContainer` mit konfigurierbarer Verschlüsselung.
+/// Creates, encrypts, and signs a JWE-compatible `SecureContainer` with configurable encryption.
 ///
-/// Diese Funktion implementiert RFC 7516 JSON Web Encryption (JWE) General Serialization.
-/// Für asymmetrische Verschlüsselung wird ein Protected Header mit alg, enc, typ und epk erstellt,
-/// und die Payload mit dem Protected Header als AAD verschlüsselt.
+/// This function implements RFC 7516 JSON Web Encryption (JWE) General Serialization.
+/// For asymmetric encryption, a Protected Header with alg, enc, typ, and epk is created,
+/// and the payload is encrypted using the Protected Header as AAD.
 ///
 /// # Arguments
-/// * `sender_identity` - Die Identität des Senders, inklusive seiner Schlüssel.
-/// * `config` - Die Verschlüsselungskonfiguration (TargetDid, Password, oder Cleartext).
-/// * `payload` - Die zu verschlüsselnden Rohdaten (z.B. ein serialisiertes JSON-Objekt).
-/// * `content_type` - Die Art des Payloads.
+/// * `sender_identity` - The sender's identity, including keys.
+/// * `config` - The encryption configuration (TargetDid, Password, or Cleartext).
+/// * `payload` - The raw payload data to encrypt (e.g. a serialized JSON object).
+/// * `content_type` - The payload type.
 ///
 /// # Returns
-/// Ein `Result`, das den vollständig konfigurierten `SecureContainer` oder einen `VoucherCoreError` enthält.
+/// A `Result` containing the fully configured `SecureContainer` or a `VoucherCoreError`.
 pub fn create_secure_container(
     sender_identity: &UserIdentity,
     config: ContainerConfig,
     payload: &[u8],
     content_type: PayloadType,
 ) -> Result<SecureContainer, VoucherCoreError> {
-    // Sicherheits-Check: Plaintext darf nicht für finanzielle Payloads verwendet werden
+    // Security check: Plaintext must not be used for financial payloads
     if config == ContainerConfig::Cleartext && content_type == PayloadType::TransactionBundle {
         return Err(ContainerManagerError::PlaintextNotAllowedForFinancialPayload.into());
     }
@@ -72,14 +72,14 @@ pub fn create_secure_container(
 
     let (encryption_type, protected, recipients, iv, ciphertext, tag, salt) = match config {
         ContainerConfig::TargetDid(_, _) | ContainerConfig::TargetDids(_, _) => {
-            // Asymmetrische Verschlüsselung (JWE-Format)
+            // Asymmetric encryption (JWE format)
             let esk_priv_static = x25519_dalek::StaticSecret::random_from_rng(OsRng);
             let esk_pub = x25519_dalek::PublicKey::from(&esk_priv_static);
 
-            // Ephemeral Public Key als Base64url für den Protected Header
+            // Ephemeral public key as Base64url for protected header
             let epk_b64 = encode_base64(esk_pub.as_bytes());
 
-            // Protected Header aufbauen (RFC 7516)
+            // Build protected header (RFC 7516)
             let protected_header = json!({
                 "alg": "ECDH-ES+A256KW",
                 "enc": "C20P", // ChaCha20-Poly1305
@@ -90,14 +90,14 @@ pub fn create_secure_container(
                 .map_err(|e| VoucherCoreError::Crypto(format!("Failed to serialize protected header: {}", e)))?;
             let protected_b64 = encode_base64(protected_json.as_bytes());
 
-            // Payload-Key generieren und verschlüsseln
+            // Generate and encrypt payload key
             let (recipients_vec, mut payload_key) = {
                 let mut payload_key = [0u8; 32];
                 OsRng.fill_bytes(&mut payload_key);
 
                 let mut recipients = Vec::new();
 
-                // Key Wrapping für alle Empfänger
+                // Key wrapping for all recipients
                 for recipient_id in recipient_ids {
                     let recipient_pubkey_ed = get_pubkey_from_user_id(&recipient_id)?;
                     let recipient_pubkey_x = ed25519_pub_to_x25519(&recipient_pubkey_ed);
@@ -106,7 +106,7 @@ pub fn create_secure_container(
                     let kek = derive_kek(shared_secret.as_bytes())?;
                     let encrypted_payload_key = encrypt_data(&kek, &payload_key)?;
 
-                    // Header basierend auf PrivacyMode setzen
+                    // Set header based on PrivacyMode
                     let header = match privacy_mode {
                         PrivacyMode::TrialDecryption => None,
                         PrivacyMode::HashedRouting => Some(json!({"kid": get_hash(&recipient_id)})),
@@ -119,13 +119,13 @@ pub fn create_secure_container(
                     });
                 }
 
-                // Double-Key-Wrapping für den Sender
+                // Double-Key-Wrapping for the sender
                 let sender_static_sk_x = ed25519_sk_to_x25519_sk(&sender_identity.signing_key);
                 let shared_secret_sender = sender_static_sk_x.diffie_hellman(&esk_pub);
                 let kek_sender = derive_kek(shared_secret_sender.as_bytes())?;
                 let encrypted_payload_key_sender = encrypt_data(&kek_sender, &payload_key)?;
 
-                // Header für Sender basierend auf PrivacyMode setzen
+                // Set header for sender based on PrivacyMode
                 let sender_header = match privacy_mode {
                     PrivacyMode::TrialDecryption => None,
                     PrivacyMode::HashedRouting => Some(json!({"kid": get_hash(&sender_identity.user_id), "sender": true})),
@@ -140,8 +140,8 @@ pub fn create_secure_container(
                 (recipients, payload_key)
             };
 
-            // Payload mit AAD (Protected Header) verschlüsseln
-            // In JWE ist AAD der base64url-encodierte Protected Header String (ASCII)
+            // Encrypt payload with AAD (protected header)
+            // In JWE, AAD is the base64url-encoded protected header string (ASCII)
             let (nonce_bytes, ciphertext_bytes, tag_bytes) = encrypt_data_with_aad(
                 &payload_key,
                 payload,
@@ -165,12 +165,12 @@ pub fn create_secure_container(
             )
         }
         ContainerConfig::Password(password) => {
-            // Symmetrische Verschlüsselung mit Passwort
+            // Symmetric encryption with password
             let (ciphertext, salt) = encrypt_symmetric_password(payload, &password)?;
             let encrypted_payload_b64 = encode_base64(&ciphertext);
             let salt_b64 = encode_base64(&salt);
 
-            // Leerer Protected Header für symmetrische Verschlüsselung
+            // Empty protected header for symmetric encryption
             let protected_b64 = String::new();
             let recipients = Vec::new();
             let iv_b64 = String::new();
@@ -187,7 +187,7 @@ pub fn create_secure_container(
             )
         }
         ContainerConfig::Cleartext => {
-            // Keine Verschlüsselung (Base64-kodierter Klartext)
+            // No encryption (Base64-encoded cleartext)
             let encrypted_payload_b64 = encode_base64(payload);
 
             let protected_b64 = String::new();
@@ -207,7 +207,7 @@ pub fn create_secure_container(
         }
     };
 
-    // Container zusammenbauen (JWE-Format)
+    // Assemble container (JWE format)
     let mut container = SecureContainer {
         protected,
         unprotected: None,
@@ -222,29 +222,29 @@ pub fn create_secure_container(
         c: content_type.clone(),
     };
 
-    // Die container_id aus dem Hash des kanonischen Inhalts generieren
+    // Generate container_id from hash of canonical content
     let container_json_for_id = to_canonical_json(&container)?;
     container.i = get_hash(container_json_for_id);
 
-    // Die container_id signieren
+    // Sign the container_id
     let signature = crypto_utils::sign_ed25519(&sender_identity.signing_key, container.i.as_bytes());
     container.signature = encode_base64(&signature.to_bytes());
 
     Ok(container)
 }
 
-/// Entschlüsselt den Payload eines JWE-kompatiblen `SecureContainer` mit konfigurierbarer Verschlüsselung.
-/// **Achtung:** Diese Funktion verifiziert NICHT die Signatur des Containers, da
-/// dafür die `sender_id` aus dem (noch verschlüsselten) Payload benötigt wird.
-/// Die Signatur-Verifizierung ist die Verantwortung des Aufrufers (z.B. `bundle_processor`).
+/// Decrypts the payload of a JWE-compatible `SecureContainer` with configurable encryption.
+/// **Note:** This function does NOT verify the container's signature, as
+/// the `sender_id` from the (still encrypted) payload is required for that.
+/// Signature verification is the caller's responsibility (e.g. `bundle_processor`).
 ///
 /// # Arguments
-/// * `container` - Der zu öffnende `SecureContainer`.
-/// * `recipient_identity` - Die Identität des Empfängers (des aktuellen Nutzers).
-/// * `password` - Optionales Passwort für symmetrische Verschlüsselung.
+/// * `container` - The `SecureContainer` to open.
+/// * `recipient_identity` - The identity of the recipient (the current user).
+/// * `password` - Optional password for symmetric encryption.
 ///
 /// # Returns
-/// Ein `Result`, das die entschlüsselten Payload-Daten oder einen `VoucherCoreError` enthält.
+/// A `Result` containing the decrypted payload data or a `VoucherCoreError`.
 pub fn open_secure_container(
     container: &SecureContainer,
     recipient_identity: &UserIdentity,
@@ -252,10 +252,10 @@ pub fn open_secure_container(
 ) -> Result<Vec<u8>, VoucherCoreError> {
     match container.et {
         EncryptionType::Asymmetric => {
-            // JWE-Format für asymmetrische Verschlüsselung
+            // JWE format for asymmetric encryption
             let recipient_x25519_sk = ed25519_sk_to_x25519_sk(&recipient_identity.signing_key);
 
-            // Protected Header dekodieren und epk extrahieren
+            // Decode protected header and extract epk
             if container.protected.is_empty() {
                 return Err(VoucherCoreError::Crypto("Protected header is required for asymmetric encryption".to_string()));
             }
@@ -273,17 +273,17 @@ pub fn open_secure_container(
                     .map_err(|_| VoucherCoreError::Crypto("Invalid ephemeral key length".to_string()))?,
             );
 
-            // Suche den passenden Empfänger im recipients-Array
+            // Search for matching recipient in recipients array
             let mut decrypted_payload_key: Option<[u8; 32]> = None;
 
-            // Hash der eigenen ID einmalig berechnen für HashedRouting
+            // Compute hash of own ID once for HashedRouting
             let my_hash = get_hash(&recipient_identity.user_id);
 
             for recipient in &container.recipients {
                 let should_try_decrypt = match recipient.header.as_ref().and_then(|h| h.get("kid")).and_then(|v| v.as_str()) {
-                    // Wenn eine kid vorhanden ist, prüfe ob es meine Klartext-ID oder mein Hash ist
+                    // If kid is present, check whether it is my plaintext ID or my hash
                     Some(kid) => kid == recipient_identity.user_id || kid == my_hash,
-                    // Wenn kein Header/kid vorhanden ist, MÜSSEN wir es versuchen (Trial Decryption Fallback)
+                    // If no header/kid is present, we MUST try (Trial Decryption Fallback)
                     None => true,
                 };
 
@@ -304,15 +304,15 @@ pub fn open_secure_container(
             let mut payload_key = decrypted_payload_key
                 .ok_or(ContainerManagerError::NotAnIntendedRecipient)?;
 
-            // Ciphertext und Tag dekodieren
+            // Decode ciphertext and tag
             let iv = decode_base64(&container.iv)?;
             let ciphertext = decode_base64(&container.ciphertext)?;
             let tag = decode_base64(&container.tag)?;
 
-            // Protected Header als AAD verwenden
+            // Use protected header as AAD
             let aad = container.protected.as_bytes();
 
-            // Payload mit AAD entschlüsseln
+            // Decrypt payload with AAD
             let plaintext = decrypt_data_with_aad(
                 &payload_key,
                 &iv,
@@ -325,7 +325,7 @@ pub fn open_secure_container(
             Ok(plaintext)
         }
         EncryptionType::Symmetric => {
-            // Symmetrische Verschlüsselung mit Passwort
+            // Symmetric encryption with password
             let password = password.ok_or(ContainerManagerError::PasswordRequired)?;
             let salt_b64 = container.salt.as_ref().ok_or_else(|| {
                 VoucherCoreError::Crypto("Salt missing for symmetric encryption".to_string())
@@ -339,13 +339,13 @@ pub fn open_secure_container(
             decrypt_symmetric_password(&encrypted_payload, password, &salt_array)
         }
         EncryptionType::None => {
-            // Keine Verschlüsselung (einfach base64-dekodieren)
+            // No encryption (simply base64-decode)
             decode_base64(&container.ciphertext)
         }
     }
 }
 
-/// Leitet einen Key-Encryption-Key (KEK) aus einem Shared Secret mittels HKDF ab.
+/// Derives a Key-Encryption-Key (KEK) from a shared secret via HKDF.
 fn derive_kek(shared_secret: &[u8]) -> Result<[u8; 32], ContainerManagerError> {
     let hkdf = Hkdf::<Sha256>::new(None, shared_secret);
     let mut kek = [0u8; 32];
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn test_jwe_container_creation_and_opening() {
-        // Erstelle Sender- und Empfänger-Identitäten
+        // Create sender and recipient identities
         let (sender_pub, sender_sk) = generate_ed25519_keypair_for_tests(Some("sender_seed"));
         let sender_id = create_user_id(&sender_pub, Some("sender")).unwrap();
         let sender_identity = UserIdentity {
@@ -381,7 +381,7 @@ mod tests {
             public_key: recipient_pub,
         };
 
-        // Erstelle einen Container mit JWE-Format
+        // Create a container in JWE format
         let payload = b"Test payload data";
         let config = ContainerConfig::TargetDid(recipient_id.clone(), PrivacyMode::TrialDecryption);
         let content_type = PayloadType::TransactionBundle;
@@ -389,7 +389,7 @@ mod tests {
         let container = create_secure_container(&sender_identity, config, payload, content_type)
             .expect("Failed to create container");
 
-        // Verifiziere JWE-Struktur
+        // Verify JWE structure
         assert!(!container.protected.is_empty(), "Protected header should not be empty");
         assert!(!container.recipients.is_empty(), "Recipients should not be empty");
         assert!(!container.iv.is_empty(), "IV should not be empty");
@@ -397,7 +397,7 @@ mod tests {
         assert!(!container.tag.is_empty(), "Tag should not be empty");
         assert!(!container.signature.is_empty(), "Signature should not be empty");
 
-        // Öffne den Container als Empfänger
+        // Open container as recipient
         let decrypted_payload = open_secure_container(&container, &recipient_identity, None)
             .expect("Failed to open container");
 
@@ -406,7 +406,7 @@ mod tests {
 
     #[test]
     fn test_jwe_container_sender_can_open() {
-        // Erstelle Sender-Identität
+        // Create sender identity
         let (sender_pub, sender_sk) = generate_ed25519_keypair_for_tests(Some("sender_seed"));
         let sender_id = create_user_id(&sender_pub, Some("sender")).unwrap();
         let sender_identity = UserIdentity {
@@ -418,7 +418,7 @@ mod tests {
         let (recipient_pub, _) = generate_ed25519_keypair_for_tests(Some("recipient_seed"));
         let recipient_id = create_user_id(&recipient_pub, Some("recipient")).unwrap();
 
-        // Erstelle einen Container
+        // Create a container
         let payload = b"Test payload for sender";
         let config = ContainerConfig::TargetDid(recipient_id, PrivacyMode::TrialDecryption);
         let content_type = PayloadType::VoucherForSigning;
@@ -426,7 +426,7 @@ mod tests {
         let container = create_secure_container(&sender_identity, config, payload, content_type)
             .expect("Failed to create container");
 
-        // Öffne den Container als Sender (sollte funktionieren dank Double-Key-Wrapping)
+        // Open container as sender (should work thanks to Double-Key-Wrapping)
         let decrypted_payload = open_secure_container(&container, &sender_identity, None)
             .expect("Failed to open container as sender");
 
@@ -466,7 +466,7 @@ mod tests {
         let container = create_secure_container(&sender_identity, config, payload, content_type)
             .expect("Failed to create container");
 
-        // Beide Empfänger sollten den Container öffnen können
+        // Both recipients should be able to open the container
         let decrypted1 = open_secure_container(&container, &recipient1_identity, None)
             .expect("Recipient 1 failed to open container");
         assert_eq!(decrypted1, payload);

@@ -1,6 +1,6 @@
 // tests/services/jws_profile.rs
 //!
-//! Roundtrip-Tests für JWS Profile Service (RFC 7515 Compact Serialization).
+//! Roundtrip tests for JWS Profile Service (RFC 7515 Compact Serialization).
 
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::services::crypto_utils::generate_ed25519_keypair_for_tests;
@@ -10,17 +10,17 @@ use human_money_core::services::jws_profile_service::{
 
 #[test]
 fn test_jws_profile_roundtrip_complete() {
-    // Erzeuge ein Test-Schlüsselpaar
+    // Generate a test keypair
     let (public_key, signing_key) = generate_ed25519_keypair_for_tests(Some("jws_test_seed"));
 
-    // Erstelle eine did:key
+    // Create a did:key
     const ED25519_MULTICODEC_PREFIX: [u8; 2] = [0xed, 0x01];
     let mut bytes_to_encode = Vec::with_capacity(34);
     bytes_to_encode.extend_from_slice(&ED25519_MULTICODEC_PREFIX);
     bytes_to_encode.extend_from_slice(&public_key.to_bytes());
     let did_key = format!("did:key:z{}", bs58::encode(bytes_to_encode).into_string());
 
-    // Erstelle ein vollständiges Test-Profil
+    // Create a complete test profile
     let mut profile = PublicProfile::default();
     profile.id = Some(did_key.clone());
     profile.protocol_version = Some("v1".to_string());
@@ -31,28 +31,28 @@ fn test_jws_profile_roundtrip_complete() {
     profile.email = Some("anna@example.com".to_string());
     profile.service_offer = Some("Webentwicklung".to_string());
 
-    // Export als JWS
+    // Export as JWS
     let jws_result = export_profile_as_jws(&signing_key, &profile);
     assert!(jws_result.is_ok(), "JWS export should succeed");
     let jws = jws_result.unwrap();
 
-    // Verifiziere das JWS-Format (3 Teile durch Punkte getrennt)
+    // Verify JWS format (3 parts separated by dots)
     let parts: Vec<&str> = jws.split('.').collect();
     assert_eq!(parts.len(), 3, "JWS must have exactly 3 parts");
 
-    // Import und Verifizierung
+    // Import and verification
     let import_result = verify_and_import_jws_profile(&jws);
     assert!(import_result.is_ok(), "JWS import should succeed");
     let (imported_profile, imported_did) = import_result.unwrap();
 
-    // Vergleiche das importierte Profil mit dem Original
+    // Compare imported profile with original
     assert_eq!(imported_profile, profile, "Imported profile should match original");
     assert_eq!(imported_did, did_key, "Imported did:key should match original");
 }
 
 #[test]
 fn test_jws_profile_minimal() {
-    // Test mit einem minimalen Profil (nur ID und protocol_version)
+    // Test with a minimal profile (only ID and protocol_version)
     let (public_key, signing_key) = generate_ed25519_keypair_for_tests(Some("minimal_seed"));
 
     const ED25519_MULTICODEC_PREFIX: [u8; 2] = [0xed, 0x01];
@@ -73,7 +73,7 @@ fn test_jws_profile_minimal() {
 
 #[test]
 fn test_jws_profile_invalid_signature() {
-    // Test: Manipulierte Signatur sollte fehlschlagen
+    // Test: Manipulated signature should fail
     let (public_key, signing_key) = generate_ed25519_keypair_for_tests(Some("sig_test"));
 
     const ED25519_MULTICODEC_PREFIX: [u8; 2] = [0xed, 0x01];
@@ -88,7 +88,7 @@ fn test_jws_profile_invalid_signature() {
 
     let mut jws = export_profile_as_jws(&signing_key, &profile).expect("Export failed");
 
-    // Manipuliere die Signatur (ersetze das letzte Zeichen)
+    // Manipulate the signature (replace the last character)
     let last_char = jws.pop().unwrap();
     jws.push(if last_char == 'A' { 'B' } else { 'A' });
 
@@ -98,7 +98,7 @@ fn test_jws_profile_invalid_signature() {
 
 #[test]
 fn test_jws_profile_missing_parts() {
-    // Test: Fehlende Teile im JWS sollten fehlschlagen
+    // Test: Missing parts in JWS should fail
     let result = verify_and_import_jws_profile("invalid.jws");
     assert!(result.is_err());
 
@@ -108,10 +108,10 @@ fn test_jws_profile_missing_parts() {
 
 #[test]
 fn test_jws_profile_missing_id() {
-    // Test: Profil ohne ID sollte fehlschlagen
+    // Test: Profile without ID should fail
     let (_, signing_key) = generate_ed25519_keypair_for_tests(Some("no_id_test"));
 
-    let profile = PublicProfile::default(); // Keine ID gesetzt
+    let profile = PublicProfile::default(); // No ID set
 
     let jws = export_profile_as_jws(&signing_key, &profile).expect("Export succeeded");
 
@@ -121,7 +121,7 @@ fn test_jws_profile_missing_id() {
 
 #[test]
 fn test_jws_profile_protocol_version_persistence() {
-    // Test: Die protocol_version sollte korrekt serialisiert werden
+    // Test: protocol_version should be serialized correctly
     let (public_key, signing_key) = generate_ed25519_keypair_for_tests(Some("version_test"));
 
     const ED25519_MULTICODEC_PREFIX: [u8; 2] = [0xed, 0x01];
@@ -132,7 +132,7 @@ fn test_jws_profile_protocol_version_persistence() {
 
     let mut profile = PublicProfile::default();
     profile.id = Some(did_key);
-    profile.protocol_version = Some("v2".to_string()); // Andere Version
+    profile.protocol_version = Some("v2".to_string()); // Different version
 
     let jws = export_profile_as_jws(&signing_key, &profile).expect("Export failed");
     let (imported_profile, _) = verify_and_import_jws_profile(&jws).expect("Import failed");
@@ -146,7 +146,7 @@ fn test_jws_profile_protocol_version_persistence() {
 
 #[test]
 fn test_jws_profile_unicode_support() {
-    // Test: Unicode-Zeichen (z.B. Umlaute) sollten korrekt behandelt werden
+    // Test: Unicode characters (e.g. umlauts) should be handled correctly
     let (public_key, signing_key) = generate_ed25519_keypair_for_tests(Some("unicode_test"));
 
     const ED25519_MULTICODEC_PREFIX: [u8; 2] = [0xed, 0x01];
@@ -169,3 +169,4 @@ fn test_jws_profile_unicode_support() {
         Some("Müller-Lüdenscheidt".to_string())
     );
 }
+

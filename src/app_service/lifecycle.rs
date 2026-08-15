@@ -1,7 +1,7 @@
 //! # src/app_service/lifecycle.rs
 //!
-//! Enthält alle Funktionen, die den Lebenszyklus des `AppService` steuern,
-//! wie Initialisierung, Login/Logout und Wiederherstellung.
+//! Contains all functions controlling the lifecycle of `AppService`,
+//! such as initialization, login/logout, and recovery.
 
 use super::{AppService, AppState, ProfileInfo, AppFacadeError};
 use crate::models::seal::{LocalSealRecord, SyncStatus};
@@ -19,11 +19,11 @@ const PROFILES_INDEX_FILE: &str = "profiles.json";
 impl AppService {
     // --- Lifecycle Management ---
 
-    /// Initialisiert einen neuen `AppService` im `Locked`-Zustand.
+    /// Initializes a new `AppService` in the `Locked` state.
     ///
     /// # Arguments
-    /// * `base_storage_path` - Der Pfad zum Basisverzeichnis, in dem alle
-    ///   Profil-Unterverzeichnisse und die `profiles.json` gespeichert werden.
+    /// * `base_storage_path` - The path to the base directory where all
+    ///   profile subdirectories and `profiles.json` are stored.
     pub fn new(base_storage_path: &Path) -> Result<Self, AppFacadeError> {
         fs::create_dir_all(base_storage_path)
             .map_err(|e| AppFacadeError::StorageError(format!("Failed to create base storage directory: {}", e)))?;
@@ -38,14 +38,14 @@ impl AppService {
         matches!(self.state, AppState::Unlocked { .. })
     }
 
-    /// Listet alle verfügbaren, im Basisverzeichnis konfigurierten Profile auf.
+    /// Lists all available profiles configured in the base directory.
     ///
-    /// Liest die zentrale `profiles.json`-Datei und gibt eine Liste von `ProfileInfo`-
-    /// Objekten zurück, die für die Anzeige in einem Login-Screen verwendet werden kann.
+    /// Reads the central `profiles.json` file and returns a list of `ProfileInfo`
+    /// objects suitable for display in a login screen.
     ///
     /// # Returns
-    /// Ein `Result` mit einem Vektor von `ProfileInfo` oder einer Fehlermeldung,
-    /// falls die Indexdatei nicht gelesen oder geparst werden kann.
+    /// A `Result` containing a vector of `ProfileInfo` or an error message
+    /// if the index file cannot be read or parsed.
     pub fn list_profiles(&self) -> Result<Vec<ProfileInfo>, AppFacadeError> {
         let index_path = self.base_storage_path.join(PROFILES_INDEX_FILE);
         if !index_path.exists() {
@@ -62,39 +62,39 @@ impl AppService {
             .map_err(|e| AppFacadeError::JsonError(format!("Could not parse profiles index file: {}", e)))
     }
 
-    /// Generiert eine neue BIP-39 Mnemonic-Phrase (Seed-Wörter).
+    /// Generates a new BIP-39 mnemonic phrase (seed words).
     ///
-    /// Diese Methode ist statisch und kann ohne geladenes Wallet aufgerufen werden.
+    /// This method is static and can be called without a loaded wallet.
     pub fn generate_mnemonic(word_count: u32, language: MnemonicLanguage) -> Result<String, AppFacadeError> {
         generate_mnemonic(word_count as usize, language)
             .map_err(|e| AppFacadeError::CryptoError(e.to_string()))
     }
 
-    /// Gibt die Wortliste für eine bestimmte Sprache zurück.
+    /// Returns the word list for a specific language.
     pub fn get_mnemonic_wordlist(language: MnemonicLanguage) -> Vec<&'static str> {
         crate::services::mnemonic::MnemonicProcessor::get_wordlist(language)
     }
 
-    /// Validiert eine vom Benutzer eingegebene BIP-39 Mnemonic-Phrase.
+    /// Validates a BIP-39 mnemonic phrase entered by the user.
     ///
-    /// Diese Methode ist statisch und kann ohne geladenes Wallet aufgerufen werden.
+    /// This method is static and can be called without a loaded wallet.
     pub fn validate_mnemonic(mnemonic: &str, language: MnemonicLanguage) -> Result<(), AppFacadeError> {
         validate_mnemonic_phrase(mnemonic, language)
             .map_err(|e| AppFacadeError::CryptoError(e.to_string()))
     }
 
-    /// Erstellt ein komplett neues Benutzerprofil und Wallet und speichert es verschlüsselt.
+    /// Creates a completely new user profile and wallet and stores it encrypted.
     ///
-    /// Diese Funktion leitet einen anonymen Ordnernamen aus den Secrets ab, speichert
-    /// das Wallet in diesem Ordner und fügt einen Eintrag zur zentralen `profiles.json` hinzu.
-    /// Bei Erfolg wird der Service in den `Unlocked`-Zustand versetzt.
+    /// This function derives an anonymous folder name from secrets, stores
+    /// the wallet in this folder, and adds an entry to the central `profiles.json`.
+    /// On success, the service transitions to the `Unlocked` state.
     ///
     /// # Arguments
-    /// * `profile_name` - Der menschenlesbare Name für das neue Profil. Muss eindeutig sein.
-    /// * `mnemonic` - Die BIP39 Mnemonic-Phrase zur Generierung der Master-Keys.
-    /// * `passphrase` - Eine optionale, zusätzliche Passphrase für die Mnemonic.
-    /// * `user_prefix` - Ein optionales Präfix für die `did:key`-basierte User-ID.
-    /// * `password` - Das Passwort, mit dem das neue Wallet verschlüsselt wird.
+    /// * `profile_name` - The human-readable name for the new profile. Must be unique.
+    /// * `mnemonic` - The BIP-39 mnemonic phrase for generating master keys.
+    /// * `passphrase` - An optional additional passphrase for the mnemonic.
+    /// * `user_prefix` - An optional prefix for the `did:key`-based user ID.
+    /// * `password` - The password used to encrypt the new wallet.
     pub fn create_profile(
         &mut self,
         profile_name: &str,
@@ -190,15 +190,15 @@ impl AppService {
         Ok(())
     }
 
-    /// Entsperrt ein existierendes Wallet und lädt es in den Speicher.
+    /// Unlocks an existing wallet and loads it into memory.
     ///
     /// # Arguments
-    /// * `folder_name` - Der anonyme Ordnername des zu ladenden Profils.
-    /// * `password` - Das Passwort zum Entschlüsseln des Wallets.
+    /// * `folder_name` - The anonymous folder name of the profile to load.
+    /// * `password` - The password to decrypt the wallet.
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Profil nicht existiert, das Passwort falsch ist oder
-    /// die Wallet-Dateien nicht gelesen werden können.
+    /// Fails if the profile does not exist, password is incorrect, or
+    /// wallet files cannot be read.
     pub fn login(
         &mut self,
         folder_name: &str,
@@ -216,7 +216,7 @@ impl AppService {
 
         let mut storage = FileStorage::new(profile_path);
 
-        // --- WALLET SEAL: Siegel laden und ROHEN State-Hash verifizieren ---
+        // --- WALLET SEAL: Load seal and verify RAW state hash ---
         let needs_legacy_binding = Self::verify_seal_on_login(&storage, password, &local_instance_id)
             .map_err(AppFacadeError::from)?;
         // --- WALLET SEAL: Pre-Check END ---
@@ -300,13 +300,13 @@ impl AppService {
         Ok(())
     }
 
-    /// Stellt ein Wallet mit der Mnemonic-Phrase wieder her und setzt ein neues Passwort.
+    /// Recovers a wallet using the mnemonic phrase and sets a new password.
     ///
     /// # Arguments
-    /// * `folder_name` - Der anonyme Ordnername des wiederherzustellenden Profils.
-    /// * `mnemonic` - Die Mnemonic-Phrase zur Wiederherstellung des Wallets.
-    /// * `passphrase` - Die optionale Passphrase, die bei der Erstellung verwendet wurde.
-    /// * `new_password` - Das neue Passwort, mit dem das Wallet verschlüsselt werden soll.
+    /// * `folder_name` - The anonymous folder name of the profile to recover.
+    /// * `mnemonic` - The mnemonic phrase for wallet recovery.
+    /// * `passphrase` - Optional passphrase used during creation.
+    /// * `new_password` - The new password with which to encrypt the wallet.
     pub fn recover_wallet_and_set_new_password(
         &mut self,
         folder_name: &str,
@@ -410,9 +410,9 @@ impl AppService {
         Ok(())
     }
 
-    /// Sperrt das Wallet und entfernt sensible Daten (privater Schlüssel, Session Key) aus dem Speicher.
+    /// Locks the wallet and removes sensitive data (private key, session key) from memory.
     ///
-    /// Setzt den Zustand zurück auf `Locked`. Diese Operation kann nicht fehlschlagen.
+    /// Resets state back to `Locked`. This operation cannot fail.
     pub fn logout(&mut self) {
         if let AppState::Unlocked { storage, .. } = &self.state {
             let _ = storage.unlock(); // Ignore errors during unlock
@@ -420,14 +420,14 @@ impl AppService {
         self.state = AppState::Locked;
     }
 
-    /// Aktiviert die "Passwort merken"-Funktion für eine bestimmte Dauer (in Sekunden).
+    /// Activates the "remember password" feature for a specified duration (in seconds).
     ///
-    /// Verifiziert das Passwort, leitet den Speicherschlüssel ab und hält diesen im Speicher.
-    /// Dies ist die Voraussetzung, um Aktionen ohne erneute Passworteingabe durchzuführen.
+    /// Verifies the password, derives the storage key, and keeps it in memory.
+    /// This is the prerequisite for performing actions without re-entering password.
     ///
     /// # Arguments
-    /// * `password` - Das Passwort zur Verifizierung und Key-Ableitung.
-    /// * `duration_seconds` - Die Dauer der Sitzung in Sekunden.
+    /// * `password` - Password for verification and key derivation.
+    /// * `duration_seconds` - Session duration in seconds.
     pub fn unlock_session(&mut self, password: &str, duration_seconds: u64) -> Result<(), AppFacadeError> {
         match &mut self.state {
             AppState::Unlocked {
@@ -460,22 +460,22 @@ impl AppService {
         }
     }
 
-    /// Deaktiviert die "Passwort merken"-Funktion sofort und löscht den zwischengespeicherten Speicherschlüssel aus dem RAM.
+    /// Deactivates the "remember password" feature immediately and clears the cached storage key from RAM.
     ///
-    /// Der `AppService` bleibt `Unlocked` (Lesezugriff geht), aber Aktionen erfordern nun `unlock_session` oder `password`-Argument.
+    /// `AppService` remains `Unlocked` (read access works), but actions now require `unlock_session` or a `password` argument.
     pub fn lock_session(&mut self) {
         if let AppState::Unlocked { session_cache, .. } = &mut self.state {
             *session_cache = None;
         }
     }
 
-    /// Setzt den Inaktivitäts-Timer der "Passwort merken"-Sitzung zurück.
+    /// Resets the inactivity timer of the "remember password" session.
     ///
-    /// Ideal, um dies bei UI-Aktivität (Klicks, Mausbewegung) aufzurufen, damit die Sitzung nicht abläuft, während der Benutzer aktiv ist.
+    /// Ideal to call on UI activity (clicks, mouse movement) so the session does not expire while the user is active.
     ///
     /// # Returns
-    /// * `Ok(())` - Wenn die Session aktiv war und erfolgreich verlängert wurde.
-    /// * `Err(String)` - Wenn die Session bereits abgelaufen war (wird gesperrt), keine Session aktiv ist oder das Wallet gesperrt ist.
+    /// * `Ok(())` - If the session was active and was successfully extended.
+    /// * `Err(...)` - If the session was already expired (will be locked), no session is active, or wallet is locked.
     pub fn refresh_session_activity(&mut self) -> Result<(), AppFacadeError> {
         if let AppState::Unlocked { session_cache, .. } = &mut self.state {
             // Check if a session exists at all
@@ -496,8 +496,8 @@ impl AppService {
         Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string()))
     }
 
-    /// Erzwingt die Bindung des Wallets an das aktuelle Gerät (Handover).
-    /// Dies wird aufgerufen, wenn der Login aufgrund eines `DeviceMismatch` fehlschlägt.
+    /// Forces binding of the wallet to the current device (handover).
+    /// Called when login fails due to `DeviceMismatch`.
     pub fn handover_to_this_device(
         &mut self,
         folder_name: &str,
@@ -545,7 +545,7 @@ impl AppService {
         Ok(())
     }
 
-    /// Prüft, ob der App-Entwickler die `instance_id` unsicher als Datei gespeichert hat.
+    /// Checks whether the app developer stored `instance_id` insecurely as a file.
     /// Also check the parent directory to catch typical Tauri/Electron AppData folders.
     fn check_instance_id_trap(&self, profile_path: &Path) -> Result<(), AppFacadeError> {
         let mut bad_paths = vec![
@@ -570,8 +570,8 @@ impl AppService {
         Ok(())
     }
 
-    /// Löscht ein Benutzerprofil dauerhaft vom Gerät.
-    /// Erfordert das Passwort zur Bestätigung.
+    /// Permanently deletes a user profile from the device.
+    /// Requires password confirmation.
     pub fn delete_profile(&mut self, folder_name: &str, password: &str) -> Result<(), AppFacadeError> {
         let profile_path = self.base_storage_path.join(folder_name);
         if !profile_path.exists() {
@@ -612,8 +612,8 @@ impl AppService {
         Ok(())
     }
 
-    /// Verifiziert das Passwort eines Profils und gibt die User-ID (DID) zurück.
-    /// Nützlich für Sicherheits-Bestätigungen vor kritischen Aktionen (wie Löschen).
+    /// Verifies profile password and returns the user ID (DID).
+    /// Useful for security confirmations before critical actions (such as deletion).
     pub fn get_profile_id_with_password(&self, folder_name: &str, password: &str) -> Result<String, AppFacadeError> {
         let profile_path = self.base_storage_path.join(folder_name);
         if !profile_path.exists() {
@@ -630,5 +630,3 @@ impl AppService {
         Ok(identity.user_id.clone())
     }
 }
-
-

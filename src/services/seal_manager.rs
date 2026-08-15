@@ -1,13 +1,13 @@
 //! # src/services/seal_manager.rs
 //!
-//! Zustandsloser Service für die Erstellung, Aktualisierung und Verifizierung
-//! von `WalletSeal`-Objekten (Rollback Guard).
+//! Stateless service for creating, updating, and verifying
+//! `WalletSeal` objects (Rollback Guard).
 //!
-//! Dieses Modul implementiert die kryptographische Logik des Siegel-Mechanismus:
-//! - Hashketten-Verwaltung (prev_seal_hash)
-//! - Signaturerstellung und -verifizierung
-//! - Epoch-Management (Recovery)
-//! - Seal-Vergleich für Sync-Erkennung
+//! This module implements the cryptographic logic of the seal mechanism:
+//! - Hash chain management (prev_seal_hash)
+//! - Signature creation and verification
+//! - Epoch management (Recovery)
+//! - Seal comparison for sync detection
 
 use crate::error::VoucherCoreError;
 use crate::models::profile::UserIdentity;
@@ -15,26 +15,26 @@ use crate::models::seal::{SealPayload, SealSyncState, WalletSeal};
 use crate::services::crypto_utils::{get_hash, sign_ed25519, verify_ed25519};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
 
-/// Zustandsloser Manager für WalletSeal-Operationen.
+/// Stateless manager for WalletSeal operations.
 ///
-/// Alle Methoden sind statisch/assoziiert – der SealManager hält keinen
-/// internen Zustand. Er implementiert die reine kryptographische Logik.
+/// All methods are static/associated – SealManager maintains no
+/// internal state. It implements pure cryptographic logic.
 pub struct SealManager;
 
 impl SealManager {
-    /// Erstellt das allererste Siegel bei einem völlig neuen Wallet (Epoch 0).
+    /// Creates the very first seal for a brand-new wallet (Epoch 0).
     ///
-    /// Das initiale Siegel hat:
+    /// The initial seal has:
     /// - `epoch = 0`
     /// - `tx_nonce = 0`
-    /// - `prev_seal_hash = Hash("")` (deterministischer Genesis)
+    /// - `prev_seal_hash = Hash("")` (deterministic genesis)
     /// - `epoch_start_time = now()`
     ///
     /// # Arguments
-    /// * `user_id` - Die vollständige User-ID (inkl. SAI-Präfix).
-    /// * `identity` - Die kryptographische Identität zum Signieren.
-    /// * `initial_state_hash` - Hash des initialen OwnFingerprints-Stores.
-    /// * `local_instance_id` - Eindeutige ID des lokalen Geräts.
+    /// * `user_id` - The full user ID (incl. SAI prefix).
+    /// * `identity` - The cryptographic identity for signing.
+    /// * `initial_state_hash` - Hash of the initial OwnFingerprints store.
+    /// * `local_instance_id` - Unique ID of the local device.
     pub fn create_initial_seal(
         user_id: &str,
         identity: &UserIdentity,
@@ -49,7 +49,7 @@ impl SealManager {
             epoch: 0,
             epoch_start_time: now.clone(),
             tx_nonce: 0,
-            prev_seal_hash: get_hash(""), // Deterministischer Genesis-Hash
+            prev_seal_hash: get_hash(""), // Deterministic genesis hash
             state_hash: initial_state_hash.to_string(),
             timestamp: now,
             instance_id: local_instance_id.to_string(),
@@ -58,25 +58,25 @@ impl SealManager {
         Self::sign_payload(payload, identity)
     }
 
-    /// Aktualisiert ein Siegel nach einer Transaktion.
+    /// Updates a seal after a transaction.
     ///
-    /// - Inkrementiert `tx_nonce` um 1
-    /// - Verkettet den Hash des vorherigen Siegels in `prev_seal_hash`
-    /// - Aktualisiert `state_hash` und `timestamp`
-    /// - Epoch und `epoch_start_time` bleiben unverändert
+    /// - Increments `tx_nonce` by 1
+    /// - Chains the hash of the previous seal into `prev_seal_hash`
+    /// - Updates `state_hash` and `timestamp`
+    /// - Epoch and `epoch_start_time` remain unchanged
     ///
     /// # Arguments
-    /// * `prev_seal` - Das vorherige, gültige Siegel.
-    /// * `identity` - Die kryptographische Identität zum Signieren.
-    /// * `new_state_hash` - Hash des aktualisierten OwnFingerprints-Stores.
-    /// * `local_instance_id` - Eindeutige ID des lokalen Geräts.
+    /// * `prev_seal` - The previous valid seal.
+    /// * `identity` - The cryptographic identity for signing.
+    /// * `new_state_hash` - Hash of the updated OwnFingerprints store.
+    /// * `local_instance_id` - Unique ID of the local device.
     pub fn update_seal(
         prev_seal: &WalletSeal,
         identity: &UserIdentity,
         new_state_hash: &str,
         local_instance_id: &str,
     ) -> Result<WalletSeal, VoucherCoreError> {
-        // Hash des vorherigen Siegels berechnen (kanonische Serialisierung)
+        // Compute hash of previous seal (canonical serialization)
         let prev_seal_canonical = to_canonical_json(prev_seal)?;
         let prev_hash = get_hash(prev_seal_canonical.as_bytes());
 
@@ -95,26 +95,26 @@ impl SealManager {
         Self::sign_payload(payload, identity)
     }
 
-    /// Verifiziert die Signatur und die Integrität eines Siegels.
+    /// Verifies the signature and integrity of a seal.
     ///
-    /// Prüft:
-    /// 1. Die User-ID im Payload entspricht dem erwarteten Wert.
-    /// 2. Die instance_id entspricht dem lokalen Gerät (Clone Protection).
-    /// 3. Der erwartete Public Key kann die Signatur verifizieren.
-    /// 4. Die Schema-Version ist unterstützt.
+    /// Checks:
+    /// 1. User ID in payload matches expected value.
+    /// 2. instance_id matches local device (Clone Protection).
+    /// 3. Expected public key can verify signature.
+    /// 4. Schema version is supported.
     ///
     /// # Arguments
-    /// * `seal` - Das zu verifizierende Siegel.
-    /// * `expected_user_id` - Die erwartete User-ID.
-    /// * `expected_pubkey_user_id` - Die User-ID, aus der der Public Key extrahiert wird.
-    /// * `local_instance_id` - Eindeutige ID des lokalen Geräts zur Prüfung gegen Klone.
+    /// * `seal` - The seal to verify.
+    /// * `expected_user_id` - The expected user ID.
+    /// * `expected_pubkey_user_id` - The user ID from which the public key is extracted.
+    /// * `local_instance_id` - Unique ID of the local device for clone checking.
     pub fn verify_seal_integrity(
         seal: &WalletSeal,
         expected_user_id: &str,
         expected_pubkey_user_id: &str,
         local_instance_id: &str,
     ) -> Result<crate::models::seal::SealValidationResult, VoucherCoreError> {
-        // 1. Version prüfen
+        // 1. Check version
         if seal.payload.version != 1 {
             return Err(VoucherCoreError::Generic(format!(
                 "Unsupported seal version: {}. Expected: 1",
@@ -123,13 +123,13 @@ impl SealManager {
         }
 
 
-        // 2. User-ID prüfen
+        // 2. Check user ID
         if seal.payload.user_id != expected_user_id {
             return Ok(crate::models::seal::SealValidationResult::UserMismatch);
         }
 
-        // 3. Instance-ID prüfen (Cloning Protection)
-        // Ausnahme: Wenn seal.payload.instance_id.is_empty() (Legacy Wallet), ist es gültig.
+        // 3. Check instance ID (Cloning Protection)
+        // Exception: If seal.payload.instance_id.is_empty() (Legacy Wallet), it is valid.
         if !seal.payload.instance_id.is_empty() && seal.payload.instance_id != local_instance_id {
             return Ok(crate::models::seal::SealValidationResult::DeviceMismatch {
                 expected: seal.payload.instance_id.clone(),
@@ -137,7 +137,7 @@ impl SealManager {
             });
         }
 
-        // 4. Public Key extrahieren und Signatur verifizieren
+        // 4. Extract public key and verify signature
         let pubkey = crate::services::crypto_utils::get_pubkey_from_user_id(expected_pubkey_user_id)?;
 
         let payload_canonical = to_canonical_json(&seal.payload)?;
@@ -161,21 +161,21 @@ impl SealManager {
         }
     }
 
-    /// Leitet eine neue Epoche ein (Recovery). Epoch wird strikt inkrementiert.
+    /// Initiates a new epoch (Recovery). Epoch is strictly incremented.
     ///
-    /// Wird nach einer erfolgreichen Wallet-Wiederherstellung aufgerufen.
-    /// - `epoch` wird um 1 erhöht (oder auf 1, wenn kein vorheriges Siegel existiert).
-    /// - `tx_nonce` wird auf 0 zurückgesetzt.
-    /// - `epoch_start_time` wird auf den aktuellen Zeitpunkt gesetzt.
-    /// - `prev_seal_hash` verweist auf das letzte bekannte Siegel (falls vorhanden).
-    /// - `instance_id` wird auf das neue Gerät gebunden.
+    /// Called after a successful wallet recovery.
+    /// - `epoch` is incremented by 1 (or set to 1 if no previous seal exists).
+    /// - `tx_nonce` is reset to 0.
+    /// - `epoch_start_time` is set to current timestamp.
+    /// - `prev_seal_hash` points to last known seal (if available).
+    /// - `instance_id` is bound to the new device.
     ///
     /// # Arguments
-    /// * `last_known_seal` - Das letzte bekannte Siegel (kann `None` sein bei komplettem Verlust).
-    /// * `user_id` - Die User-ID des wiederhergestellten Wallets.
-    /// * `identity` - Die kryptographische Identität zum Signieren.
-    /// * `current_state_hash` - Hash des aktuellen OwnFingerprints-Stores nach Recovery.
-    /// * `local_instance_id` - Eindeutige ID des lokalen Geräts.
+    /// * `last_known_seal` - The last known seal (can be `None` in case of complete loss).
+    /// * `user_id` - The user ID of the recovered wallet.
+    /// * `identity` - The cryptographic identity for signing.
+    /// * `current_state_hash` - Hash of current OwnFingerprints store after recovery.
+    /// * `local_instance_id` - Unique ID of the local device.
     pub fn recover_seal_epoch(
         last_known_seal: Option<&WalletSeal>,
         user_id: &str,
@@ -192,7 +192,7 @@ impl SealManager {
                 (seal.payload.epoch + 1, hash)
             }
             None => {
-                // Kompletter Datenverlust: Starte bei Epoch 1 mit Genesis-Hash
+                // Complete data loss: Start at Epoch 1 with genesis hash
                 (1, get_hash(""))
             }
         };
@@ -212,37 +212,36 @@ impl SealManager {
         Self::sign_payload(payload, identity)
     }
 
-    /// Vergleicht zwei verifizierte Siegel und ermittelt den Synchronisationsstatus.
+    /// Compares two verified seals and determines synchronization state.
     ///
-    /// # Logik
-    /// 1. **Synchronized**: Beide Payloads sind identisch.
-    /// 2. **LocalIsNewer**: Lokaler `tx_nonce` ist höher UND die Hash-Kette
-    ///    baut korrekt auf dem Remote-Siegel auf.
-    /// 3. **RemoteIsNewer**: Umgekehrt – Remote ist weiter fortgeschritten.
-    /// 4. **ForkDetected**: Die Hash-Ketten divergieren (unterschiedliche
-    ///    `prev_seal_hash` trotz fortgeschrittener Nonce).
+    /// # Logic
+    /// 1. **Synchronized**: Both payloads are identical.
+    /// 2. **LocalIsNewer**: Local `tx_nonce` is higher AND the hash chain
+    ///    correctly builds upon the remote seal.
+    /// 3. **RemoteIsNewer**: Vice versa – Remote is further advanced.
+    /// 4. **ForkDetected**: Hash chains diverge (different
+    ///    `prev_seal_hash` despite advanced nonce).
     ///
     /// # Arguments
-    /// * `local` - Das lokale Siegel.
-    /// * `remote` - Das vom Server heruntergeladene Siegel.
+    /// * `local` - The local seal.
+    /// * `remote` - The seal downloaded from server.
     pub fn compare_seals(local: &WalletSeal, remote: &WalletSeal) -> SealSyncState {
-        // Schneller Pfad: Identische Payloads
+        // Fast path: Identical payloads
         if local.payload == remote.payload {
             return SealSyncState::Synchronized;
         }
 
-        // Hash des jeweils anderen Siegels berechnen (für Kettenverifikation)
+        // Calculate hash of each other's seal (for chain verification)
         let local_canonical = to_canonical_json(local).unwrap_or_default();
         let local_hash = get_hash(local_canonical.as_bytes());
 
         let remote_canonical = to_canonical_json(remote).unwrap_or_default();
         let remote_hash = get_hash(remote_canonical.as_bytes());
 
-        // Epochen-Vergleich: Verschiedene Epochen sind ein Fork-Signal,
-        // es sei denn, eine Seite hat korrekt eine Recovery durchgeführt.
+        // Epoch comparison: Different epochs are a fork signal,
+        // unless one side correctly performed a recovery.
         if local.payload.epoch != remote.payload.epoch {
-            // Wenn die Epochen unterschiedlich sind, muss die Hashkette
-            // korrekt auf das vorherige Siegel verweisen.
+            // If epochs differ, the hash chain must correctly reference the previous seal.
             if local.payload.epoch > remote.payload.epoch
                 && local.payload.prev_seal_hash == remote_hash
             {
@@ -256,21 +255,21 @@ impl SealManager {
             return SealSyncState::ForkDetected;
         }
 
-        // Gleiche Epoche: Nonce-basierter Vergleich mit Hash-Ketten-Check
+        // Same epoch: Nonce-based comparison with hash chain check
         if local.payload.tx_nonce > remote.payload.tx_nonce {
-            // Lokal ist weiter. Prüfe, ob die Kette zum Remote zurückführt.
-            // Für eine direkte Nachfolge (nonce + 1) muss prev_seal_hash == remote_hash sein.
-            // Für größere Abstände prüfen wir nur, dass die allgemeine Richtung stimmt.
+            // Local is further ahead. Check whether the chain leads back to remote.
+            // For direct succession (nonce + 1), prev_seal_hash == remote_hash must hold.
+            // For larger distances, we only check that the general direction matches.
             if local.payload.tx_nonce == remote.payload.tx_nonce + 1
                 && local.payload.prev_seal_hash == remote_hash
             {
                 return SealSyncState::LocalIsNewer;
             }
-            // Bei größerem Abstand kann die Kette nicht direkt verifiziert werden.
-            // Wir vertrauen der Nonce-Reihenfolge, solange die Epochen gleich sind.
-            // Für strikte Sicherheit: ForkDetected bei unbekanntem prev_hash.
+            // For larger distances, the chain cannot be verified directly.
+            // We trust nonce ordering as long as epochs are equal.
+            // For strict security: ForkDetected on unknown prev_hash.
             if local.payload.tx_nonce > remote.payload.tx_nonce + 1 {
-                // Kann nicht direkt verifiziert werden → LocalIsNewer als heuristisch
+                // Cannot be directly verified -> LocalIsNewer as heuristic
                 return SealSyncState::LocalIsNewer;
             }
             SealSyncState::ForkDetected
@@ -285,22 +284,22 @@ impl SealManager {
             }
             SealSyncState::ForkDetected
         } else {
-            // Gleiche Nonce, aber unterschiedlicher Payload → Fork
+            // Same nonce, but different payload -> Fork
             SealSyncState::ForkDetected
         }
     }
 
-    /// Berechnet den Hash eines WalletSeal für Vergleiche und Sync-Zwecke.
+    /// Computes the hash of a WalletSeal for comparisons and sync purposes.
     ///
-    /// Verwendet die kanonische JSON-Serialisierung gefolgt von SHA3-256/Base58.
+    /// Uses canonical JSON serialization followed by SHA3-256/Base58.
     pub fn compute_seal_hash(seal: &WalletSeal) -> Result<String, VoucherCoreError> {
         let canonical = to_canonical_json(seal)?;
         Ok(get_hash(canonical.as_bytes()))
     }
 
-    // --- Private Hilfsmethoden ---
+    // --- Private helper methods ---
 
-    /// Signiert einen `SealPayload` und erstellt ein vollständiges `WalletSeal`.
+    /// Signs a `SealPayload` and creates a complete `WalletSeal`.
     fn sign_payload(
         payload: SealPayload,
         identity: &UserIdentity,
@@ -355,7 +354,7 @@ mod tests {
         assert_eq!(seal.payload.instance_id, instance_id);
         assert!(!seal.signature.is_empty());
 
-        // Signatur muss verifizierbar sein
+        // Signature must be verifiable
         let result = SealManager::verify_seal_integrity(&seal, &identity.user_id, &identity.user_id, instance_id)
             .expect("Verification call should succeed");
         assert_eq!(result, crate::models::seal::SealValidationResult::Valid);
@@ -378,15 +377,15 @@ mod tests {
         let seal_2 = SealManager::update_seal(&seal_1, &identity, &state_hash_2, instance_id).unwrap();
 
         assert_eq!(seal_2.payload.tx_nonce, 1);
-        assert_eq!(seal_2.payload.epoch, 0); // Epoch bleibt
+        assert_eq!(seal_2.payload.epoch, 0); // Epoch remains
         assert_eq!(seal_2.payload.state_hash, state_hash_2);
         assert_eq!(seal_2.payload.instance_id, instance_id);
 
-        // prev_seal_hash muss auf seal_1 verweisen
+        // prev_seal_hash must reference seal_1
         let seal_1_hash = SealManager::compute_seal_hash(&seal_1).unwrap();
         assert_eq!(seal_2.payload.prev_seal_hash, seal_1_hash);
 
-        // Signatur gültig
+        // Signature valid
         let result = SealManager::verify_seal_integrity(&seal_2, &identity.user_id, &identity.user_id, instance_id)
             .expect("Verification call should succeed");
         assert_eq!(result, crate::models::seal::SealValidationResult::Valid);
@@ -405,7 +404,7 @@ mod tests {
             instance_id,
         ).unwrap();
 
-        // Manipuliere den tx_nonce
+        // Manipulate tx_nonce
         seal.payload.tx_nonce = 999;
 
         let result = SealManager::verify_seal_integrity(&seal, &identity.user_id, &identity.user_id, instance_id).unwrap();
@@ -426,11 +425,11 @@ mod tests {
             instance_a,
         ).unwrap();
 
-        // Verifizierung auf Gerät A erfolgreich
+        // Verification on device A succeeds
         let result_a = SealManager::verify_seal_integrity(&seal, &identity.user_id, &identity.user_id, instance_a).unwrap();
         assert_eq!(result_a, crate::models::seal::SealValidationResult::Valid);
 
-        // Verifizierung auf Gerät B schlägt mit DeviceMismatch fehl
+        // Verification on device B fails with DeviceMismatch
         let result_b = SealManager::verify_seal_integrity(&seal, &identity.user_id, &identity.user_id, instance_b).unwrap();
         assert!(matches!(result_b, crate::models::seal::SealValidationResult::DeviceMismatch { .. }));
     }
@@ -441,7 +440,7 @@ mod tests {
         let state_hash_1 = get_hash("state_1");
         let state_hash_2 = get_hash("state_after_recovery");
         let instance_a = "device_a";
-        let instance_b = "device_b"; // Neues Gerät nach Recovery
+        let instance_b = "device_b"; // New device after recovery
 
         let seal_1 = SealManager::create_initial_seal(
             &identity.user_id,
@@ -534,11 +533,11 @@ mod tests {
             instance_id,
         ).unwrap();
 
-        // Zwei unabhängige Updates auf demselben Basis-Siegel → Fork
+        // Two independent updates on the same base seal -> Fork
         let seal_branch_a = SealManager::update_seal(&seal_base, &identity, &get_hash("state_a"), instance_id).unwrap();
         let seal_branch_b = SealManager::update_seal(&seal_base, &identity, &get_hash("state_b"), instance_id).unwrap();
 
-        // Beide haben nonce 1, aber unterschiedliche Payloads → Fork
+        // Both have nonce 1, but different payloads -> Fork
         assert_eq!(
             SealManager::compare_seals(&seal_branch_a, &seal_branch_b),
             SealSyncState::ForkDetected

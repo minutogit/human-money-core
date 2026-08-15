@@ -1,9 +1,9 @@
 // tests/persistence/file_storage.rs
 // cargo test --test persistence_tests
 //!
-//! Enthält Integrationstests für das refaktorierte Profil- und VoucherStore-Management,
-//! inklusive der Passwort-Wiederherstellungslogik und Randbedingungen.
-//! Ursprünglich in `tests/test_file_storage.rs`.
+//! Contains integration tests for the refactored profile and VoucherStore management,
+//! including password recovery logic and edge cases.
+//! Originally in `tests/test_file_storage.rs`.
 
 use human_money_core::UserIdentity;
 use human_money_core::VoucherStatus;
@@ -17,13 +17,13 @@ use human_money_core::{FileStorage, Storage, StorageError, Wallet};
 use std::fs;
 use tempfile::tempdir;
 
-// Lade die Test-Hilfsfunktionen aus dem übergeordneten Verzeichnis.
+// Load test helper functions from the parent directory.
 
 use human_money_core::test_utils::{
     ACTORS, FREETALER_STANDARD, add_voucher_to_wallet, setup_in_memory_wallet,
 };
 
-// --- Hilfsfunktionen ---
+// --- Helper Functions ---
 fn create_test_voucher(identity: &UserIdentity) -> Voucher {
     let new_voucher_data = NewVoucherData {
         creator_profile: human_money_core::models::profile::PublicProfile {
@@ -46,7 +46,6 @@ fn create_test_voucher(identity: &UserIdentity) -> Voucher {
         },
         ..Default::default()
     };
-    // KORREKTUR: Passe den Aufruf an die neue 5-parametrige Signatur an.
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     voucher_manager::create_voucher(
         new_voucher_data,
@@ -79,19 +78,19 @@ fn test_wallet_creation_save_and_load() {
 
     let mut wallet = setup_in_memory_wallet(identity);
 
-    // 2. Speichern
+    // 2. Save
     wallet
         .save(&mut storage, &identity, &AuthMethod::Password(password))
         .expect("Failed to save wallet");
 
-    // 3. Laden und Verifizieren
+    // 3. Load and verify
     let (loaded_wallet, loaded_identity) =
         Wallet::load(&storage, &AuthMethod::Password(password), "test-id".to_string()).expect("Failed to load wallet");
     assert_eq!(wallet.profile.user_id, loaded_wallet.profile.user_id);
     assert_eq!(identity.user_id, loaded_identity.user_id);
     assert!(loaded_wallet.voucher_store.vouchers.is_empty());
 
-    // 4. Fehlerfall: Falsches Passwort
+    // 4. Error case: Wrong password
     let result = Wallet::load(&storage, &AuthMethod::Password("wrongpassword"), "test-id".to_string());
     assert!(matches!(
         result,
@@ -103,7 +102,7 @@ fn test_wallet_creation_save_and_load() {
 
 #[test]
 fn test_password_recovery_and_reset_with_data() {
-    // 1. Setup: Erstelle ein Profil mit einem Gutschein.
+    // 1. Setup: Create a profile with a voucher.
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let initial_password = "my-secret-password";
     let identity = &ACTORS.test_user;
@@ -135,13 +134,13 @@ fn test_password_recovery_and_reset_with_data() {
         )
         .expect("Initial save failed");
 
-    // 2. Wiederherstellung mit der Mnemonic-Phrase (Identität).
-    // Erzeuge eine Identität für die Referenz (borrow) und eine zweite für die Wertübergabe (move).
+    // 2. Recovery with the mnemonic phrase (identity).
+    // Create an identity for reference (borrow) and a second for value passing (move).
     let (recovered_wallet, recovered_identity) =
         Wallet::load(&storage, &AuthMethod::RecoveryIdentity(identity), "test-id".to_string())
             .expect("Recovery with correct identity should succeed");
 
-    // Überprüfe, ob die wiederhergestellten Daten (inkl. Gutschein) korrekt sind.
+    // Verify that the recovered data (including voucher) is correct.
     assert_eq!(wallet.profile.user_id, recovered_wallet.profile.user_id);
     assert_eq!(identity.user_id, recovered_identity.user_id);
     assert_eq!(
@@ -156,14 +155,14 @@ fn test_password_recovery_and_reset_with_data() {
             .contains_key(&local_id)
     );
 
-    // 3. Passwort zurücksetzen.
+    // 3. Reset password.
     let new_password = "my-new-strong-password-456";
     storage
         .reset_password(identity, new_password)
         .expect("Password reset should succeed");
 
-    // 4. Verifizierung nach dem Reset.
-    // Login mit altem Passwort muss fehlschlagen.
+    // 4. Verification after reset.
+    // Login with old password must fail.
     let result = Wallet::load(&storage, &AuthMethod::Password(initial_password), "test-id".to_string());
     assert!(matches!(
         result,
@@ -172,7 +171,7 @@ fn test_password_recovery_and_reset_with_data() {
         ))
     ));
 
-    // Login mit neuem Passwort muss erfolgreich sein und die Daten müssen intakt sein.
+    // Login with new password must succeed and data must be intact.
     let (final_wallet, _) = Wallet::load(&storage, &AuthMethod::Password(new_password), "test-id".to_string())
         .expect("Login with new password should succeed");
 
@@ -184,7 +183,7 @@ fn test_password_recovery_and_reset_with_data() {
     );
     assert!(final_wallet.voucher_store.vouchers.contains_key(&local_id));
 
-    // 5. Fehlerfall: Wiederherstellung mit der falschen Identität.
+    // 5. Error case: Recovery with the wrong identity.
     let imposter_identity = &ACTORS.hacker;
     let result = Wallet::load(&storage, &AuthMethod::RecoveryIdentity(imposter_identity), "test-id".to_string());
     assert!(matches!(
@@ -218,10 +217,10 @@ fn test_load_with_missing_voucher_store() {
         .save(&mut storage, &identity, &AuthMethod::Password(password))
         .unwrap();
 
-    // Lösche die Gutschein-Datei
+    // Delete the voucher file
     fs::remove_file(storage.user_storage_path.join("vouchers.enc")).unwrap();
 
-    // Das Laden sollte trotzdem erfolgreich sein und einen leeren Store zurückgeben
+    // Loading should still succeed and return an empty store
     let (loaded_wallet, _) = Wallet::load(&storage, &AuthMethod::Password(password), "test-id".to_string())
         .expect("Loading with missing voucher store should succeed");
 
@@ -255,14 +254,14 @@ fn test_load_from_corrupted_profile_file() {
         .save(&mut storage, &identity, &AuthMethod::Password(password))
         .unwrap();
 
-    // Beschädige die Profil-Datei
-    // KORREKTUR: Pfad muss auf den User-Unterordner zeigen
+    // Corrupt the profile file
+    // Path must point to user subfolder
     let profile_path = storage.user_storage_path.join("profile.enc");
     let mut contents = fs::read(&profile_path).unwrap();
-    contents.truncate(contents.len() / 2); // Schneide die Hälfte ab
+    contents.truncate(contents.len() / 2); // Cut off half
     fs::write(&profile_path, contents).unwrap();
 
-    // Das Laden sollte mit einem Deserialisierungs- oder Formatfehler fehlschlagen
+    // Loading should fail with a deserialization or format error
     let result = Wallet::load(&storage, &AuthMethod::Password(password), "test-id".to_string());
     assert!(matches!(
         result,
@@ -290,7 +289,7 @@ fn test_empty_password_handling() {
 
     let mut wallet = setup_in_memory_wallet(identity);
 
-    // Speichern mit leerem Passwort sollte funktionieren
+    // Saving with empty password should work
     wallet
         .save(
             &mut storage,
@@ -299,12 +298,12 @@ fn test_empty_password_handling() {
         )
         .expect("Saving with empty password should succeed");
 
-    // Laden mit leerem Passwort sollte funktionieren
+    // Loading with empty password should work
     let (loaded_wallet, _) = Wallet::load(&storage, &AuthMethod::Password(empty_password), "test-id".to_string())
         .expect("Loading with empty password should succeed");
     assert_eq!(wallet.profile.user_id, loaded_wallet.profile.user_id);
 
-    // Laden mit einem falschen, nicht-leeren Passwort sollte fehlschlagen
+    // Loading with a wrong, non-empty password should fail
     let result = Wallet::load(&storage, &AuthMethod::Password("a-real-password"), "test-id".to_string());
     assert!(matches!(
         result,
@@ -320,7 +319,7 @@ fn test_save_and_load_with_bundle_history() {
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let password = "strongpassword123";
 
-    // Erstelle Sender (Alice) und Empfänger (Bob)
+    // Create sender (Alice) and recipient (Bob)
     let alice_identity = &ACTORS.alice;
     let folder_name = {
         let secret_string = format!(
@@ -339,7 +338,7 @@ fn test_save_and_load_with_bundle_history() {
     let mut alice_wallet = setup_in_memory_wallet(alice_identity);
 
     let (freetaler_standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
-    // Alice erstellt einen Gutschein und fügt ihn ihrem Wallet hinzu
+    // Alice creates a voucher and adds it to her wallet
     let local_id = add_voucher_to_wallet(
         &mut alice_wallet,
         alice_identity,
@@ -349,12 +348,12 @@ fn test_save_and_load_with_bundle_history() {
     )
     .unwrap();
 
-    // 2. Aktion: Führe eine Transaktion durch, um Bundle-Metadaten zu erzeugen.
+    // 2. Action: Perform a transaction to generate bundle metadata.
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_identity.user_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_id.clone(),
-            amount_to_send: "100".to_string(), // Sende den vollen Betrag
+            amount_to_send: "100".to_string(), // Send full amount
         }],
         notes: Some("Test transfer".to_string()),
         sender_profile_name: None,
@@ -376,7 +375,7 @@ fn test_save_and_load_with_bundle_history() {
         )
         .expect("Transfer failed");
 
-    // Überprüfe den Zustand vor dem Speichern
+    // Verify state before saving
     assert_eq!(alice_wallet.bundle_meta_store.history.len(), 1);
     let original_bundle_id = alice_wallet
         .bundle_meta_store
@@ -386,7 +385,7 @@ fn test_save_and_load_with_bundle_history() {
         .unwrap()
         .clone();
 
-    // 3. Speichern
+    // 3. Save
     alice_wallet
         .save(
             &mut storage,
@@ -395,14 +394,14 @@ fn test_save_and_load_with_bundle_history() {
         )
         .expect("Failed to save wallet with history");
 
-    // Überprüfe, ob die neue Metadaten-Datei erstellt wurde
+    // Verify that the new metadata file was created
     assert!(storage.user_storage_path.join("bundles.meta.enc").exists());
 
-    // 4. Laden und Verifizieren
+    // 4. Load and verify
     let (loaded_wallet, _) =
         Wallet::load(&storage, &AuthMethod::Password(password), "test-id".to_string()).expect("Failed to load wallet");
 
-    // **Die entscheidende Prüfung:** Wurde die Historie korrekt geladen?
+    // **The crucial check:** Was history loaded correctly?
     assert_eq!(
         loaded_wallet.bundle_meta_store.history.len(),
         1,
@@ -417,7 +416,7 @@ fn test_save_and_load_with_bundle_history() {
     assert_eq!(loaded_wallet.profile.user_id, alice_wallet.profile.user_id);
 }
 
-/// Ein Hilfs-Struct, um das Speichern von serialisierten Daten zu testen.
+/// Helper struct to test saving serialized data.
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug, Clone)]
 struct AppSettings {
     theme: String,
@@ -450,13 +449,13 @@ fn test_save_and_load_arbitrary_data() {
     );
     let mut wallet = setup_in_memory_wallet(identity);
 
-    // WICHTIG: Zuerst das Wallet speichern, damit die Schlüssel-Infrastruktur
-    // (master_key.enc, recovery_key.enc) für die Verschlüsselung initialisiert wird.
+    // IMPORTANT: Save the wallet first to initialize the key infrastructure
+    // (master_key.enc, recovery_key.enc) for encryption.
     wallet
         .save(&mut storage, identity, &AuthMethod::Password(password))
         .expect("Initial wallet save failed");
 
-    // 2. Erstelle Testdaten (einfach und komplex)
+    // 2. Create test data (simple and complex)
     let blob_name1 = "simple_blob";
     let simple_data = b"this is some raw byte data".to_vec();
 
@@ -468,7 +467,7 @@ fn test_save_and_load_arbitrary_data() {
     };
     let complex_data_bytes = bincode::serialize(&complex_data).unwrap();
 
-    // 3. Speichern der Daten
+    // 3. Save the data
     println!("--> Saving blobs to storage...");
     storage
         .save_arbitrary_data(
@@ -490,7 +489,7 @@ fn test_save_and_load_arbitrary_data() {
 
     println!("--> Blobs saved successfully.");
 
-    // Überprüfe, ob die Dateien OHNE den benutzerspezifischen Hash erstellt wurden
+    // Verify that the files were created WITHOUT the user-specific hash
     let expected_path1 = storage
         .user_storage_path
         .join(format!("generic_{}.enc", blob_name1));
@@ -509,7 +508,7 @@ fn test_save_and_load_arbitrary_data() {
         "File for complex blob was not created at the expected path!"
     );
 
-    // 4. Laden und Verifizieren
+    // 4. Load and verify
     let loaded_simple_data = storage
         .load_arbitrary_data(
             &identity.user_id,
@@ -530,8 +529,8 @@ fn test_save_and_load_arbitrary_data() {
         bincode::deserialize(&loaded_complex_data_bytes).unwrap();
     assert_eq!(complex_data, loaded_complex_data);
 
-    // 5. Fehlerfälle
-    // Falsches Passwort
+    // 5. Error cases
+    // Wrong password
     let res = storage.load_arbitrary_data(
         &identity.user_id,
         &AuthMethod::Password("wrong-pass"),
@@ -539,7 +538,7 @@ fn test_save_and_load_arbitrary_data() {
     );
     assert!(matches!(res, Err(StorageError::AuthenticationFailed)));
 
-    // Nicht existierende Daten
+    // Non-existent data
     let res = storage.load_arbitrary_data(
         &identity.user_id,
         &AuthMethod::Password(password),
@@ -547,7 +546,7 @@ fn test_save_and_load_arbitrary_data() {
     );
     assert!(matches!(res, Err(StorageError::NotFound)));
 
-    // 6. Überschreiben testen
+    // 6. Test overwriting
     let new_simple_data = b"this is updated data".to_vec();
     storage
         .save_arbitrary_data(
@@ -569,10 +568,10 @@ fn test_save_and_load_arbitrary_data() {
     assert_ne!(simple_data, reloaded_data);
 }
 
-/// Testet den "Re-entrancy"-Schutz (Wiedereintrittsschutz).
-/// Szenario: Ein Prozess (PID X) hält bereits eine Sperre (simuliert durch manuelles Erstellen der .lock Datei).
-/// Derselbe Prozess versucht über eine zweite Storage-Instanz erneut zu schreiben.
-/// Erwartung: Der Lock-Mechanismus erkennt, dass die PID in der Datei die eigene ist, und erlaubt den Zugriff.
+/// Tests re-entrancy protection.
+/// Scenario: A process (PID X) already holds a lock (simulated by manually creating the .lock file).
+/// The same process attempts to write again via a second Storage instance.
+/// Expectation: The lock mechanism detects that the PID in the file is its own and permits access.
 #[test]
 fn test_storage_reentrancy_same_process() {
     // 1. Setup
@@ -580,7 +579,7 @@ fn test_storage_reentrancy_same_process() {
     let password = "reentrancy_check";
     let identity = &ACTORS.alice;
 
-    // Pfad-Berechnung analog zu anderen Tests
+    // Path computation analogous to other tests
     let folder_name = {
         let secret_string = format!(
             "{}{}{}",
@@ -593,25 +592,25 @@ fn test_storage_reentrancy_same_process() {
     };
     let user_storage_path = temp_dir.path().join(folder_name);
 
-    // Instanz 1: Initialisieren, um Keys anzulegen (damit save_arbitrary_data später nicht an Auth scheitert)
+    // Instance 1: Initialize to create keys (so save_arbitrary_data doesn't fail on auth later)
     let mut storage1 = FileStorage::new(user_storage_path.clone());
     let mut wallet = setup_in_memory_wallet(identity);
     wallet
         .save(&mut storage1, identity, &AuthMethod::Password(password))
         .expect("Initial setup save failed");
 
-    // 2. SIMULATION: Wir injizieren manuell eine Lock-Datei mit UNSERER aktuellen PID.
-    // Das simuliert, dass wir (oder ein anderer Thread in diesem Prozess) den Lock halten.
+    // 2. SIMULATION: Manually inject a lock file with OUR current PID.
+    // This simulates that we (or another thread in this process) hold the lock.
     let lock_path = user_storage_path.join(".wallet.lock");
     let current_pid = std::process::id();
     fs::write(&lock_path, current_pid.to_string()).expect("Failed to inject fake lock file");
 
-    // 3. Instanz 2: Zugriff auf denselben Pfad
+    // 3. Instance 2: Access the same path
     let mut storage2 = FileStorage::new(user_storage_path);
 
-    // 4. ACT: Versuch, Daten zu speichern.
-    // Dies ruft intern lock() auf. Wenn der Re-entrancy-Fix fehlt, würde er die Lock-Datei sehen,
-    // die PID lesen und einen LockFailed werfen, weil er "denkt", er sei blockiert.
+    // 4. ACT: Attempt to save data.
+    // This internally calls lock(). If the re-entrancy fix is missing, it would see the lock file,
+    // read the PID, and throw LockFailed because it "thinks" it is blocked.
     let res = storage2.save_arbitrary_data(
         &identity.user_id,
         &AuthMethod::Password(password),
@@ -622,15 +621,15 @@ fn test_storage_reentrancy_same_process() {
     // 5. ASSERT
     assert!(
         res.is_ok(),
-        "Re-entrancy Check failed! Prozess hat sich selbst ausgesperrt. Error: {:?}",
+        "Re-entrancy check failed! Process locked itself out. Error: {:?}",
         res.err()
     );
 }
 
 // ============================================================================
-// Erweiterte Speicher-Tests
-// Überprüft Randfall-Verhalten von FileStorage: Lock-Lifecycle, Pfadkorrektheit,
-// Profil-Existenzprüfung sowie Persistenz von Fingerprint-Datenstrukturen.
+// Extended Storage Tests
+// Verifies edge-case behavior of FileStorage: Lock lifecycle, path correctness,
+// profile existence checks, and persistence of fingerprint data structures.
 // ============================================================================
 
 use human_money_core::models::conflict::{
@@ -638,7 +637,7 @@ use human_money_core::models::conflict::{
 };
 use std::collections::HashMap;
 
-/// Erstellt einen minimalen `TransactionFingerprint` für Tests.
+/// Creates a minimal `TransactionFingerprint` for testing.
 fn dummy_fingerprint(key: &str) -> TransactionFingerprint {
     TransactionFingerprint {
         ds_tag: key.to_string(),
@@ -651,7 +650,7 @@ fn dummy_fingerprint(key: &str) -> TransactionFingerprint {
     }
 }
 
-/// Hilfsfunktion: Erstellt einen vollständig initialisierten FileStorage mit gespeichertem Wallet.
+/// Helper function: Creates a fully initialized FileStorage with saved wallet.
 fn setup_file_storage_with_wallet(
     user_storage_path: std::path::PathBuf,
     identity: &human_money_core::UserIdentity,
@@ -665,11 +664,11 @@ fn setup_file_storage_with_wallet(
     storage
 }
 
-/// Prüft, dass die `.wallet.lock`-Datei nach einem vollständigen Schreibvorgang
-/// (lock → write → unlock) wieder gelöscht wurde.
+/// Verifies that the `.wallet.lock` file is deleted after a complete write operation
+/// (lock → write → unlock).
 ///
-/// Ein korrekt implementiertes `unlock()` muss die Lock-Datei entfernen;
-/// bleibt sie bestehen, ist der Unlock-Pfad defekt.
+/// A correctly implemented `unlock()` must remove the lock file;
+/// if it remains, the unlock path is broken.
 #[test]
 fn test_lock_file_is_deleted_after_unlock() {
     let temp_dir = tempdir().expect("tempdir");
@@ -679,7 +678,7 @@ fn test_lock_file_is_deleted_after_unlock() {
 
     let mut storage = setup_file_storage_with_wallet(path, identity, password);
 
-    // Führe einen Schreibvorgang durch – dieser ruft intern lock() und unlock() auf.
+    // Perform a write operation – this internally calls lock() and unlock().
     storage
         .save_arbitrary_data(
             &identity.user_id,
@@ -689,16 +688,15 @@ fn test_lock_file_is_deleted_after_unlock() {
         )
         .expect("save_arbitrary_data should succeed");
 
-    // Nach dem Schreiben MUSS die Lock-Datei wieder entfernt worden sein.
+    // After writing, the lock file MUST have been removed.
     assert!(
         !storage.get_lock_file_path().exists(),
-        ".wallet.lock muss nach unlock() gelöscht sein, existiert aber noch!"
+        ".wallet.lock must be deleted after unlock(), but still exists!"
     );
 }
 
-/// Prüft, dass `get_lock_file_path()` den korrekten, storage-spezifischen Pfad
-/// zurückgibt: Dateiname muss `.wallet.lock` sein und das übergeordnete
-/// Verzeichnis muss dem konfigurierten Storage-Pfad entsprechen.
+/// Verifies that `get_lock_file_path()` returns the correct, storage-specific path:
+/// filename must be `.wallet.lock` and the parent directory must match the configured storage path.
 #[test]
 fn test_get_lock_file_path_is_correct() {
     let temp_dir = tempdir().expect("tempdir");
@@ -707,24 +705,24 @@ fn test_get_lock_file_path_is_correct() {
 
     let lock_path = storage.get_lock_file_path();
 
-    // Der Dateiname muss exakt ".wallet.lock" sein.
+    // The filename must be exactly ".wallet.lock".
     assert_eq!(
         lock_path.file_name().and_then(|n| n.to_str()),
         Some(".wallet.lock"),
-        "Lock-Dateiname muss '.wallet.lock' sein"
+        "Lock filename must be '.wallet.lock'"
     );
 
-    // Das übergeordnete Verzeichnis muss der storage-Pfad sein.
+    // The parent directory must be the storage path.
     assert_eq!(
         lock_path.parent().expect("must have parent"),
         storage_path,
-        "Lock-Datei muss im korrekten Wallet-Verzeichnis liegen"
+        "Lock file must reside in the correct wallet directory"
     );
 }
 
-/// Prüft, dass `profile_exists()` in allen relevanten Zuständen den korrekten
-/// booleschen Wert liefert: `false` vor dem ersten Speichern, `true` danach,
-/// und wieder `false` nachdem die Profil-Datei manuell entfernt wurde.
+/// Verifies that `profile_exists()` returns the correct boolean in all relevant states:
+/// `false` before first save, `true` after,
+/// and `false` again after the profile file is manually removed.
 #[test]
 fn test_profile_exists_returns_correct_booleans() {
     let temp_dir = tempdir().expect("tempdir");
@@ -733,35 +731,35 @@ fn test_profile_exists_returns_correct_booleans() {
     let path = temp_dir.path().join("exists_wallet");
     let mut storage = FileStorage::new(path.clone());
 
-    // Vor dem Speichern existiert kein Profil.
+    // Before saving, no profile exists.
     assert!(
         !storage.profile_exists(),
-        "profile_exists() muss false zurückgeben, bevor das Profil gespeichert wurde"
+        "profile_exists() must return false before the profile is saved"
     );
 
-    // Speichern, um das Profil anzulegen.
+    // Save to create profile.
     let mut wallet = setup_in_memory_wallet(identity);
     wallet
         .save(&mut storage, identity, &AuthMethod::Password(password))
         .expect("save");
 
-    // Nach dem Speichern existiert das Profil.
+    // After saving, profile exists.
     assert!(
         storage.profile_exists(),
-        "profile_exists() muss true zurückgeben, nachdem das Profil gespeichert wurde"
+        "profile_exists() must return true after the profile has been saved"
     );
 
-    // Manuell löschen → wieder false.
+    // Manually delete -> false again.
     fs::remove_file(path.join("profile.enc")).expect("remove profile.enc");
     assert!(
         !storage.profile_exists(),
-        "profile_exists() muss false zurückgeben, nachdem profile.enc gelöscht wurde"
+        "profile_exists() must return false after profile.enc was deleted"
     );
 }
 
-/// Prüft, dass `KnownFingerprints` korrekt gespeichert und wieder geladen werden.
-/// Nach dem Laden müssen alle gespeicherten Einträge vollständig und inhaltlich
-/// identisch vorhanden sein.
+/// Verifies that `KnownFingerprints` are saved and loaded correctly.
+/// After loading, all saved entries must be present completely and
+/// with identical content.
 #[test]
 fn test_known_fingerprints_persist_and_load() {
     let temp_dir = tempdir().expect("tempdir");
@@ -772,41 +770,41 @@ fn test_known_fingerprints_persist_and_load() {
     let mut storage = setup_file_storage_with_wallet(path, identity, password);
     let auth = AuthMethod::Password(password);
 
-    // Erstelle einen KnownFingerprints-Store mit einem konkreten Eintrag.
+    // Create a KnownFingerprints store with a concrete entry.
     let mut store = KnownFingerprints::default();
     store
         .local_history
         .insert("voucher-abc".to_string(), vec![dummy_fingerprint("tag-1")]);
 
-    // Speichern.
+    // Save.
     storage
         .save_known_fingerprints(&identity.user_id, &auth, &store)
         .expect("save_known_fingerprints should succeed");
 
-    // Laden und prüfen.
+    // Load and verify.
     let loaded = storage
         .load_known_fingerprints(&identity.user_id, &auth)
         .expect("load_known_fingerprints should succeed");
 
     assert!(
         loaded.local_history.contains_key("voucher-abc"),
-        "'voucher-abc' muss nach dem Laden in local_history vorhanden sein"
+        "'voucher-abc' must be present in local_history after loading"
     );
     assert_eq!(
         loaded.local_history["voucher-abc"].len(),
         1,
-        "Es muss genau 1 Fingerprint in local_history['voucher-abc'] sein"
+        "There must be exactly 1 fingerprint in local_history['voucher-abc']"
     );
     assert_eq!(
         loaded.local_history["voucher-abc"][0].ds_tag,
         "tag-1",
-        "Der ds_tag des geladenen Fingerprints muss 'tag-1' sein"
+        "The ds_tag of the loaded fingerprint must be 'tag-1'"
     );
 }
 
-/// Prüft, dass `OwnFingerprints` korrekt gespeichert und wieder geladen werden.
-/// Analog zu `test_known_fingerprints_persist_and_load`, jedoch für die eigene
-/// Fingerprint-Historie.
+/// Verifies that `OwnFingerprints` are saved and loaded correctly.
+/// Analogous to `test_known_fingerprints_persist_and_load`, but for own
+/// fingerprint history.
 #[test]
 fn test_own_fingerprints_persist_and_load() {
     let temp_dir = tempdir().expect("tempdir");
@@ -817,35 +815,35 @@ fn test_own_fingerprints_persist_and_load() {
     let mut storage = setup_file_storage_with_wallet(path, identity, password);
     let auth = AuthMethod::Password(password);
 
-    // Erstelle einen OwnFingerprints-Store mit einem konkreten Eintrag in der Historie.
+    // Create an OwnFingerprints store with a concrete entry in history.
     let mut store = OwnFingerprints::default();
     store
         .history
         .insert("voucher-xyz".to_string(), vec![dummy_fingerprint("own-tag-1")]);
 
-    // Speichern.
+    // Save.
     storage
         .save_own_fingerprints(&identity.user_id, &auth, &store)
         .expect("save_own_fingerprints should succeed");
 
-    // Laden und prüfen.
+    // Load and verify.
     let loaded = storage
         .load_own_fingerprints(&identity.user_id, &auth)
         .expect("load_own_fingerprints should succeed");
 
     assert!(
         loaded.history.contains_key("voucher-xyz"),
-        "'voucher-xyz' muss nach dem Laden in OwnFingerprints::history vorhanden sein"
+        "'voucher-xyz' must be present in OwnFingerprints::history after loading"
     );
     assert_eq!(
         loaded.history["voucher-xyz"][0].ds_tag,
         "own-tag-1",
-        "Der ds_tag des geladenen Fingerprints muss 'own-tag-1' sein"
+        "The ds_tag of the loaded fingerprint must be 'own-tag-1'"
     );
 }
 
-/// Prüft, dass der `CanonicalMetadataStore` (eine `HashMap<String, FingerprintMetadata>`)
-/// korrekt gespeichert und wieder geladen wird, inklusive aller Feldwerte.
+/// Verifies that `CanonicalMetadataStore` (a `HashMap<String, FingerprintMetadata>`)
+/// is saved and loaded correctly, including all field values.
 #[test]
 fn test_fingerprint_metadata_persists_and_loads() {
     let temp_dir = tempdir().expect("tempdir");
@@ -856,30 +854,30 @@ fn test_fingerprint_metadata_persists_and_loads() {
     let mut storage = setup_file_storage_with_wallet(path, identity, password);
     let auth = AuthMethod::Password(password);
 
-    // Erstelle einen CanonicalMetadataStore (= HashMap<String, FingerprintMetadata>) mit Inhalt.
+    // Create a CanonicalMetadataStore (= HashMap<String, FingerprintMetadata>) with content.
     let mut metadata_store: HashMap<String, FingerprintMetadata> = HashMap::new();
     let mut meta = FingerprintMetadata::default();
     meta.depth = 3;
     metadata_store.insert("ds_tag_sentinel".to_string(), meta);
 
-    // Speichern.
+    // Save.
     storage
         .save_fingerprint_metadata(&identity.user_id, &auth, &metadata_store)
         .expect("save_fingerprint_metadata should succeed");
 
-    // Laden und prüfen.
+    // Load and verify.
     let loaded = storage
         .load_fingerprint_metadata(&identity.user_id, &auth)
         .expect("load_fingerprint_metadata should succeed");
 
     assert!(
         loaded.contains_key("ds_tag_sentinel"),
-        "'ds_tag_sentinel' muss nach dem Laden im CanonicalMetadataStore vorhanden sein"
+        "'ds_tag_sentinel' must be present in CanonicalMetadataStore after loading"
     );
     assert_eq!(
         loaded["ds_tag_sentinel"].depth,
         3,
-        "depth muss nach dem Laden den gespeicherten Wert 3 haben"
+        "depth must have the saved value 3 after loading"
     );
 }
 
@@ -892,34 +890,31 @@ fn test_wallet_lock_guard_does_not_delete_persistent_lock() {
     let dir = tempdir().unwrap();
     let storage = FileStorage::new(dir.path());
 
-    // 1. Simuliere einen Login: Sperre manuell erlangen
+    // 1. Simulate login: Acquire lock manually
     storage.lock().expect("Initial lock should succeed");
     assert!(
         storage.get_lock_file_path().exists(),
         "Lock file should exist after manual lock"
     );
 
-    // 2. Simuliere eine temporäre Datenoperation (z.B. save_encrypted_data)
+    // 2. Simulate temporary data operation (e.g. save_encrypted_data)
     {
         let _guard = WalletLockGuard::new(&storage).expect("Guard creation should succeed via re-entrancy");
         assert!(
             storage.get_lock_file_path().exists(),
             "Lock file should exist inside guard scope"
         );
-    } // HIER: Der Guard wird gedroppt.
+    } // HERE: The guard is dropped.
 
-    // 3. REGRESSION CHECK: Die Sperrdatei MUSS weiterhin existieren,
-    // da die übergeordnete Session noch aktiv ist!
-    // (Dieser Assert wird vor dem Bugfix fehlschlagen)
+    // 3. REGRESSION CHECK: Lock file MUST still exist,
+    // because the outer session is still active!
+    // (This assert would fail before the bugfix)
     assert!(
         storage.get_lock_file_path().exists(),
-        "REGRESSION BUG: WalletLockGuard hat die Sperrdatei beim Drop gelöscht, obwohl der Lock bereits vorher bestand!"
+        "REGRESSION BUG: WalletLockGuard deleted lock file on drop although lock already existed previously!"
     );
 
-    // 4. Simuliere Logout
+    // 4. Simulate logout
     storage.unlock().unwrap();
     assert!(!storage.get_lock_file_path().exists());
 }
-
-
-

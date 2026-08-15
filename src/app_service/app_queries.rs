@@ -175,7 +175,7 @@ impl AppService {
         
         let wallet = self.get_wallet()?;
         
-        // Da AppService den Storage besitzt, können wir ihn hier nutzen.
+        // Since AppService owns the storage, we can use it here.
         match &self.state {
             AppState::Unlocked { storage, .. } => {
                 wallet.get_event_history(storage, &auth, offset, limit)

@@ -11,12 +11,12 @@ pub use wallet_setup::*;
 use lazy_static::lazy_static;
 
 lazy_static! {
-    /// Ein deterministischer Herausgeber, der zum Signieren der Test-Standards verwendet wird.
+    /// A deterministic issuer used to sign test standards.
     pub static ref TEST_ISSUER: actors::TestUser = actors::init_test_issuer();
 }
 
 lazy_static! {
-    /// Initialisiert einmalig alle Akteure, sodass sie in allen Tests wiederverwendet werden können.
+    /// Initializes all actors once so they can be reused across all tests.
     pub static ref ACTORS: actors::TestActors = actors::init_actors();
 }
 

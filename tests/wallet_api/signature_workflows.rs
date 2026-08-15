@@ -1,11 +1,11 @@
 // tests/wallet_api/signature_workflows.rs
 // cargo test --test wallet_api_tests
 //!
-//! Enthält Integrationstests speziell für die Signatur-Workflows,
-//! die über die `AppService`- und `Wallet`-Fassaden gesteuert werden.
-//! Dies umfasst das Anfordern, Erstellen und Anhängen von Signaturen.
+//! Contains integration tests specifically for signature workflows
+//! controlled via the `AppService` and `Wallet` facades.
+//! This includes requesting, creating, and attaching signatures.
 
-// Binde das `test_utils` Modul explizit über seinen Dateipfad ein.
+// Explicitly include the `test_utils` module via its file path.
 
 use human_money_core::{
     UserIdentity, VoucherCoreError, VoucherInstance, VoucherStatus, Wallet,
@@ -30,8 +30,8 @@ use human_money_core::{
 use std::{fs, path::PathBuf};
 use tempfile::tempdir;
 
-/// Hilfsfunktion, um einen Standard-Gutschein für Tests zu erstellen und
-/// direkt in das Wallet einer Testperson zu legen.
+/// Helper function to create a standard voucher for tests and
+/// place it directly into a test subject's wallet.
 fn setup_voucher_for_alice(
     alice_wallet: &mut Wallet,
     alice_identity: &UserIdentity,
@@ -43,7 +43,7 @@ fn setup_voucher_for_alice(
             id: Some(alice_identity.user_id.clone()),
             ..Default::default()
         },
-        // KORREKTUR: Fehlender Betrag (verursachte InvalidAmountFormat)
+        // FIX: Missing amount (caused InvalidAmountFormat)
         nominal_value: ValueDefinition {
             amount: "60".to_string(),
             ..Default::default()
@@ -70,19 +70,19 @@ fn setup_voucher_for_alice(
 
 // --- 1. Wallet Signature Workflows ---
 
-/// Testet den vollständigen Signatur-Workflow über die `Wallet`-Fassade.
+/// Tests the complete signature workflow via the `Wallet` facade.
 ///
-/// ### Szenario:
-/// 1.  Alice erstellt einen Gutschein, der laut Standard Bürgen benötigt.
-///     Die initiale Validierung schlägt daher fehl.
-/// 2.  Alice erstellt eine Signaturanfrage (`SecureContainer`) und sendet sie an Bob.
-/// 3.  Bob empfängt die Anfrage, öffnet den Container, extrahiert den Gutschein,
-///     erstellt seine Bürgen-Signatur und sendet diese in einer Antwort zurück.
-/// 4.  Alice empfängt Bobs Antwort, verarbeitet sie und fügt die Signatur
-///     an ihren Gutschein an.
-/// 5.  Die finale Verifizierung zeigt, dass der Gutschein nun eine Signatur hat,
-///     aber die Validierung immer noch fehlschlägt, weil die *Anzahl* der
-///     benötigten Bürgen nicht erfüllt ist.
+/// ### Scenario:
+/// 1.  Alice creates a voucher that requires guarantors according to the standard.
+///     Initial validation therefore fails.
+/// 2.  Alice creates a signing request (`SecureContainer`) and sends it to Bob.
+/// 3.  Bob receives the request, opens the container, extracts the voucher,
+///     creates his guarantor signature, and returns it in a response.
+/// 4.  Alice receives Bob's response, processes it, and attaches the signature
+///     to her voucher.
+/// 5.  Final verification shows that the voucher now has a signature,
+///     but validation still fails because the *number* of
+///     required guarantors is not met.
 #[test]
 fn api_wallet_full_signature_workflow() {
     human_money_core::set_signature_bypass(true);
@@ -132,13 +132,13 @@ fn api_wallet_full_signature_workflow() {
         .unwrap();
 
     let instance = alice_wallet.voucher_store.vouchers.get(&local_id).unwrap();
-    // KORREKTUR: Der Gutschein hat jetzt 2 Signaturen:
+    // FIX: The voucher now has 2 signatures:
     // 0: creator
     // 1: bob (guarantor)
     assert_eq!(instance.voucher.signatures.len(), 2);
     assert_eq!(instance.voucher.signatures[1].signer_id, bob.user_id);
-    // Prüfe, ob die verschachtelten Details (via `include_details: true`) vorhanden sind
-    // (Das Wallet-Profil von Bob ist leer, daher sind die Felder None)
+    // Check if the nested details (via `include_details: true`) are present
+    // (Bob's wallet profile is empty, so fields are None)
     assert!(instance.voucher.signatures[1].details.is_some());
 
     let validation_result =
@@ -152,12 +152,12 @@ fn api_wallet_full_signature_workflow() {
     ));
 }
 
-/// Stellt sicher, dass ein `SecureContainer` nicht von einem falschen Empfänger geöffnet werden kann.
+/// Ensures that a `SecureContainer` cannot be opened by an incorrect recipient.
 ///
-/// ### Szenario:
-/// 1.  Alice erstellt eine Signaturanfrage, die explizit an Bob adressiert ist.
-/// 2.  Eve (eine dritte Partei) fängt die Anfrage ab und versucht, sie zu öffnen.
-/// 3.  Der Versuch schlägt mit `NotAnIntendedRecipient` fehl.
+/// ### Scenario:
+/// 1.  Alice creates a signing request explicitly addressed to Bob.
+/// 2.  Eve (a third party) intercepts the request and tries to open it.
+/// 3.  The attempt fails with `NotAnIntendedRecipient`.
 #[test]
 fn api_wallet_signature_fail_wrong_recipient() {
     human_money_core::set_signature_bypass(true);
@@ -180,14 +180,14 @@ fn api_wallet_signature_fail_wrong_recipient() {
     ));
 }
 
-/// Stellt sicher, dass ein manipulierter `SecureContainer` abgewiesen wird.
+/// Ensures that a tampered `SecureContainer` is rejected.
 ///
-/// ### Szenario:
-/// 1.  Bob erstellt eine gültige Signatur-Antwort für Alice.
-/// 2.  Ein Angreifer manipuliert ein Byte im verschlüsselten Payload des Containers.
-/// 3.  Alice versucht, die manipulierte Antwort zu verarbeiten.
-/// 4.  Der Prozess schlägt fehl, weil die Entschlüsselung aufgrund des
-///     Authentifizierungsfehlers (AEAD) fehlschlägt.
+/// ### Scenario:
+/// 1.  Bob creates a valid signature response for Alice.
+/// 2.  An attacker tampers with a byte in the encrypted payload of the container.
+/// 3.  Alice attempts to process the tampered response.
+/// 4.  The process fails because decryption fails due to an
+///     authentication error (AEAD).
 #[test]
 fn api_wallet_signature_fail_tampered_container() {
     human_money_core::set_signature_bypass(true);
@@ -213,10 +213,10 @@ fn api_wallet_signature_fail_tampered_container() {
 
     let mut container: SecureContainer = serde_json::from_slice(&response_bytes).unwrap();
 
-    // Manipuliere den Base64-String des Ciphertexts, um einen AEAD-Fehler zu provozieren.
+    // Tamper with the Base64 ciphertext string to trigger an AEAD error.
     let mut chars: Vec<char> = container.ciphertext.chars().collect();
     if chars.len() > 10 {
-        // Tausche ein Zeichen aus, um die Signatur ungültig zu machen.
+        // Swap a character to invalidate the signature.
         chars[10] = if chars[10] == 'A' { 'B' } else { 'A' };
     }
     container.ciphertext = chars.into_iter().collect();
@@ -230,16 +230,16 @@ fn api_wallet_signature_fail_tampered_container() {
     ));
 }
 
-/// Stellt sicher, dass eine Signatur für einen unbekannten Gutschein abgewiesen wird.
+/// Ensures that a signature for an unknown voucher is rejected.
 ///
-/// ### Szenario:
-/// 1.  Alice hat Gutschein A in ihrem Wallet. Sie hat auch Gutschein B erstellt,
-///     ihn aber nicht in ihr Wallet gelegt.
-/// 2.  Bob soll Gutschein A signieren, erstellt aber fälschlicherweise eine Signatur,
-///     die sich auf die ID von Gutschein B bezieht.
-/// 3.  Alice versucht, diese Signatur zu verarbeiten.
-/// 4.  Der Prozess schlägt mit `VoucherNotFound` fehl, da ihr Wallet den Gutschein
-///     mit der ID von B nicht kennt, an den die Signatur angehängt werden soll.
+/// ### Scenario:
+/// 1.  Alice has voucher A in her wallet. She also created voucher B,
+///     but did not put it in her wallet.
+/// 2.  Bob is supposed to sign voucher A, but mistakenly creates a signature
+///     that references the ID of voucher B.
+/// 3.  Alice attempts to process this signature.
+/// 4.  The process fails with `VoucherNotFound` because her wallet does not know the voucher
+///     with ID of B to which the signature should be attached.
 #[test]
 fn api_wallet_signature_fail_mismatched_voucher_id() {
     human_money_core::set_signature_bypass(true);
@@ -290,13 +290,13 @@ fn api_wallet_signature_fail_mismatched_voucher_id() {
     ));
 }
 
-/// Stellt sicher, dass die Verarbeitung fehlschlägt, wenn der Payload-Typ nicht erwartet wird.
+/// Ensures that processing fails when the payload type is unexpected.
 ///
-/// ### Szenario:
-/// 1.  Alice erstellt einen Container vom Typ `VoucherForSigning`.
-/// 2.  Sie versucht, diesen Container mit der Funktion `process_and_attach_signature`
-///     zu verarbeiten, die einen Payload vom Typ `DetachedSignature` erwartet.
-/// 3.  Der Prozess schlägt mit `InvalidPayloadType` fehl.
+/// ### Scenario:
+/// 1.  Alice creates a container of type `VoucherForSigning`.
+/// 2.  She attempts to process this container with `process_and_attach_signature`,
+///     which expects a payload of type `DetachedSignature`.
+/// 3.  The process fails with `InvalidPayloadType`.
 #[test]
 fn api_wallet_signature_fail_wrong_payload_type() {
     human_money_core::set_signature_bypass(true);
@@ -319,16 +319,16 @@ fn api_wallet_signature_fail_wrong_payload_type() {
 
 // --- 2. AppService Signature Workflows ---
 
-/// Testet den vollständigen Signatur-Workflow über die `AppService`-Fassade.
+/// Tests the complete signature workflow via the `AppService` facade.
 ///
-/// ### Szenario:
-/// 1.  Zwei `AppService`-Instanzen für einen Ersteller und einen Bürgen werden eingerichtet.
-/// 2.  Der Ersteller legt einen Gutschein an.
-/// 3.  Der Ersteller fordert eine Signatur vom Bürgen an.
-/// 4.  Der Bürge empfängt die Anfrage, erstellt eine `AdditionalSignature`
-///     (passend zum FreeTaler-Standard) und sendet sie zurück.
-/// 5.  Der Ersteller empfängt die Antwort und fügt die Signatur erfolgreich an.
-/// 6.  Die Details des Gutscheins zeigen die neue Signatur an.
+/// ### Scenario:
+/// 1.  Two `AppService` instances are set up for a creator and a guarantor.
+/// 2.  The creator creates a voucher.
+/// 3.  The creator requests a signature from the guarantor.
+/// 4.  The guarantor receives the request, creates an `AdditionalSignature`
+///     (matching the FreeTaler standard), and returns it.
+/// 5.  The creator receives the response and successfully attaches the signature.
+/// 6.  Voucher details display the new signature.
 #[test]
 fn api_app_service_full_signature_workflow() {
     human_money_core::set_signature_bypass(true);
@@ -380,7 +380,7 @@ fn api_app_service_full_signature_workflow() {
             .login(&profile_guarantor.folder_name, password, false, "test-id".to_string())
             .unwrap();
         let guarantor_identity = service_guarantor.get_unlocked_mut_for_test().1;
-        // Der Sender (creator) ist bekannt, wir brauchen ihn nicht aus dem Container.
+        // The sender (creator) is known; we do not need to extract them from the container.
         debug_open_container(&request_bytes, guarantor_identity).unwrap()
     };
     let _signature_data = create_additional_signature_data(
@@ -391,7 +391,7 @@ fn api_app_service_full_signature_workflow() {
     let response_bytes = service_guarantor
         .create_detached_signature_response_bundle(
             &voucher_to_sign,
-            "notary", // Role (basierend auf `create_additional_signature_data`)
+            "notary", // Role (based on `create_additional_signature_data`)
             true,     // include_details
             ContainerConfig::TargetDid(service_creator.get_user_id().unwrap(), PrivacyMode::TrialDecryption),
             Some(password),
@@ -403,9 +403,9 @@ fn api_app_service_full_signature_workflow() {
         .unwrap();
 
     let details = service_creator.get_voucher_details(&local_id).unwrap();
-    // KORREKTUR: 2 Signaturen (creator + notary)
+    // FIX: 2 signatures (creator + notary)
     assert_eq!(details.voucher.signatures.len(), 2);
-    // KORREKTUR: Finde die Signatur, die *nicht* "creator" und *nicht* "guarantor" ist.
+    // FIX: Find the signature that is *not* "creator" and *not* "guarantor".
     assert_eq!(
         details
             .voucher
@@ -418,25 +418,25 @@ fn api_app_service_full_signature_workflow() {
     );
 }
 
-/// Testet den Signatur-Roundtrip für einen Standard, der Signaturen erfordert (Minuto).
+/// Tests the signature roundtrip for a standard that requires signatures (Minuto).
 ///
-/// ### Szenario:
-/// 1.  Alice erstellt einen Minuto-Gutschein, der ohne Bürgen ungültig ist.
-/// 2.  Sie fordert eine Signatur von Bob an.
-/// 3.  Bob empfängt die Anfrage, erstellt eine `GuarantorSignature` und sendet
-///     diese in einer verschlüsselten Antwort zurück.
-/// 4.  Alice empfängt die Antwort und fügt die Signatur an ihren Gutschein an.
-/// 5.  Der Gutschein hat danach eine Signatur von Bob.
+/// ### Scenario:
+/// 1.  Alice creates a Minuto voucher, which is invalid without guarantors.
+/// 2.  She requests a signature from Bob.
+/// 3.  Bob receives the request, creates a `GuarantorSignature`, and returns
+///     it in an encrypted response.
+/// 4.  Alice receives the response and attaches the signature to her voucher.
+/// 5.  The voucher then has a signature from Bob.
 #[test]
 fn api_wallet_signature_roundtrip_minuto_required() {
     human_money_core::set_signature_bypass(true);
     let alice = &ACTORS.alice;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
     let bob = &ACTORS.bob;
-    let mut bob_wallet = setup_in_memory_wallet(&bob.identity); // Bobs Wallet für die Antwort
+    let mut bob_wallet = setup_in_memory_wallet(&bob.identity); // Bob's wallet for the response
     let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
-    // Erstelle einen Minuto-Gutschein, der noch Bürgen braucht. `false` = nicht valide erstellen.
+    // Create a Minuto voucher that still needs guarantors. `false` = create as invalid.
     let voucher_id = add_voucher_to_wallet(
         &mut alice_wallet,
         &alice.identity,
@@ -446,30 +446,30 @@ fn api_wallet_signature_roundtrip_minuto_required() {
     )
     .unwrap();
 
-    // Alice erstellt eine Signaturanfrage für Bob
+    // Alice creates a signing request for Bob
     let request_bytes = alice_wallet
         .create_signing_request(&alice.identity, &voucher_id, ContainerConfig::TargetDid(bob.identity.user_id.clone(), PrivacyMode::TrialDecryption))
         .unwrap();
 
-    // Bob verarbeitet die Anfrage und erstellt eine Antwort
+    // Bob processes the request and creates a response
     let voucher_for_signing = debug_open_container(&request_bytes, &bob.identity).unwrap();
 
-    // Bob erstellt seine Signatur-Daten (als Enum)
+    // Bob creates his signature data (as enum)
     let mut signature_data_enum = test_utils::create_guarantor_signature_data(
         &bob.identity,
         "1",
         &voucher_for_signing.voucher_id,
     );
-    // Wir modifizieren die innere Struktur via Pattern Matching
+    // We modify the inner structure via pattern matching
     let DetachedSignature::Signature(guarantor_struct) = &mut signature_data_enum;
     assert_eq!(guarantor_struct.role, "guarantor");
-    // Das Setzen von `first_name` etc. ist nicht mehr nötig, da `create_detached_signature_response`
-    // die `details` (PublicProfile) aus dem Wallet (hier Bob) automatisch einfügt.
-    // Wir müssen Bobs Wallet-Profil füllen, damit die Details ankommen.
+    // Setting `first_name` etc. is no longer necessary because `create_detached_signature_response`
+    // automatically inserts `details` (PublicProfile) from the wallet (here Bob).
+    // We must populate Bob's wallet profile so the details arrive.
     bob_wallet.profile.first_name = Some("Bob".to_string());
     bob_wallet.profile.last_name = Some("Builder".to_string());
 
-    // Bob erstellt die verschlüsselte Antwort mit der Signatur
+    // Bob creates the encrypted response with the signature
     let response_bytes = bob_wallet
         .create_detached_signature_response(
             &bob.identity,
@@ -480,25 +480,25 @@ fn api_wallet_signature_roundtrip_minuto_required() {
         )
         .unwrap();
 
-    // Alice verarbeitet die Signatur-Antwort
+    // Alice processes the signature response
     alice_wallet
         .process_and_attach_signature(&alice.identity, &response_bytes, None)
         .unwrap();
 
-    // Assert: Der Gutschein hat jetzt genau eine Signatur von Bob
+    // Assert: The voucher now has exactly one signature from Bob
     let final_instance = alice_wallet
         .voucher_store
         .vouchers
         .get(&voucher_id)
         .unwrap();
-    // KORREKTUR: 2 Signaturen (creator + bob)
+    // FIX: 2 signatures (creator + bob)
     assert_eq!(final_instance.voucher.signatures.len(), 2);
     assert_eq!(
         final_instance.voucher.signatures[1].signer_id,
         bob.identity.user_id
     );
-    // Prüfe die verschachtelten Details
-    // KORREKTUR: Index 1
+    // Check the nested details
+    // FIX: Index 1
     let details = final_instance.voucher.signatures[1]
         .details
         .as_ref()
@@ -507,23 +507,23 @@ fn api_wallet_signature_roundtrip_minuto_required() {
     assert_eq!(details.last_name.as_deref(), Some("Builder"));
 }
 
-/// Testet den vollständigen Bürgen-Workflow über die `AppService`-Fassade,
-/// insbesondere den Statusübergang von `Incomplete` zu `Active`.
+/// Tests the complete guarantor workflow via the `AppService` facade,
+/// specifically the state transition from `Incomplete` to `Active`.
 ///
-/// ### Szenario:
-/// 1.  Ein Ersteller und zwei Bürgen werden als separate `AppService`-Instanzen initialisiert.
-/// 2.  Der Ersteller erstellt einen neuen Gutschein nach dem Minuto-Standard, der
-///     zwei Bürgen erfordert.
-/// 3.  **Assertion 1:** Der Gutschein hat initial den Status `Incomplete`.
-/// 4.  Der Ersteller fordert Signaturen von beiden Bürgen an und fügt diese nacheinander an.
-/// 5.  **Assertion 2:** Nach dem Anfügen der ersten Signatur ist der Status immer
-///     noch `Incomplete`, aber mit einer aktualisierten Begründung.
-/// 6.  **Assertion 3:** Nach dem Anfügen der zweiten (und letzten benötigten) Signatur
-///     wechselt der Status des Gutscheins zu `Active`.
+/// ### Scenario:
+/// 1.  A creator and two guarantors are initialized as separate `AppService` instances.
+/// 2.  The creator creates a new voucher following the Minuto standard, which
+///     requires two guarantors.
+/// 3.  **Assertion 1:** The voucher initially has status `Incomplete`.
+/// 4.  The creator requests signatures from both guarantors and attaches them sequentially.
+/// 5.  **Assertion 2:** After attaching the first signature, the status is still
+///     `Incomplete`, but with an updated reason.
+/// 6.  **Assertion 3:** After attaching the second (and final required) signature,
+///     the voucher status changes to `Active`.
 #[test]
 fn test_full_guarantor_workflow_via_app_service() {
     human_money_core::set_signature_bypass(true);
-    // --- 1. Setup: Drei separate Benutzer simulieren ---
+    // --- 1. Setup: Simulate three separate users ---
     let dir_creator = tempdir().expect("Failed to create temp dir for creator");
     let dir_g1 = tempdir().expect("Failed to create temp dir for guarantor1");
     let dir_g2 = tempdir().expect("Failed to create temp dir for guarantor2");
@@ -552,8 +552,8 @@ fn test_full_guarantor_workflow_via_app_service() {
     );
     let g2_id = service_g2.get_user_id().unwrap();
 
-    // --- 2. Schritt 1: Erstellung des unvollständigen Gutscheins ---
-    // RUFE NUN DIE KORRIGIERTE API-FUNKTION AUF
+    // --- 2. Step 1: Creation of incomplete voucher ---
+    // NOW CALL THE FIXED API FUNCTION
     let voucher_data = NewVoucherData {
         creator_profile: human_money_core::models::profile::PublicProfile {
             id: Some(creator_id.clone()),
@@ -567,8 +567,8 @@ fn test_full_guarantor_workflow_via_app_service() {
         ..Default::default()
     };
 
-    // Diese Funktion sollte dank des Patches in `command_handler.rs` jetzt
-    // einen `Incomplete` Gutschein korrekt erstellen, anstatt zu paniken.
+    // Thanks to the patch in `command_handler.rs`, this function should now
+    // correctly create an `Incomplete` voucher instead of panicking.
     let _created_voucher = service_creator
         .create_new_voucher(&minuto_standard_toml, voucher_data, Some(password))
         .expect("create_new_voucher should now succeed for incomplete vouchers");
@@ -580,7 +580,7 @@ fn test_full_guarantor_workflow_via_app_service() {
         .expect("Wallet should contain one voucher");
     let local_id = summary.local_instance_id;
 
-    // --- 3. Assertion 1: Status ist `Incomplete` ---
+    // --- 3. Assertion 1: Status is `Incomplete` ---
     let details_before = service_creator
         .get_voucher_details(&local_id)
         .expect("Should find voucher details");
@@ -589,15 +589,15 @@ fn test_full_guarantor_workflow_via_app_service() {
         VoucherStatus::Incomplete { .. }
     ));
 
-    // --- 4. Schritt 2: Simulieren des Signaturprozesses ---
+    // --- 4. Step 2: Simulate signing process ---
 
-    // --- Signatur von Bürge 1 ---
+    // --- Signature from Guarantor 1 ---
     let _request_bundle_1 = service_creator
         .create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g1_id.clone(), PrivacyMode::TrialDecryption))
         .expect("Failed to create signing request for G1");
 
-    // KORREKTUR: Wir müssen das Profil von G1 (Bürge 1) mit den
-    // Gender-Daten füllen, *bevor* die Signatur erstellt wird.
+    // FIX: We must populate G1's (Guarantor 1) profile with
+    // gender data *before* the signature is created.
     service_g1
         .login(&profile_g1.folder_name, password, false, "test-id".to_string())
         .unwrap();
@@ -606,9 +606,9 @@ fn test_full_guarantor_workflow_via_app_service() {
     wallet_g1.profile.service_offer = Some("Test Service Offer".to_string());
     wallet_g1.profile.needs = Some("Test Needs".to_string());
 
-    // Hinweis: In der neuen Struktur setzt create_detached_signature_response_bundle
-    // die Details nur, wenn include_details=true und der AppService das unterstützt.
-    // Hier müssen wir direkt eine Signatur mit Details erstellen.
+    // Note: In the new structure, create_detached_signature_response_bundle
+    // only sets details if include_details=true and the AppService supports it.
+    // Here we must directly create a signature with details.
     let response_bundle_1 = service_g1
         .create_detached_signature_response_bundle(
             &details_before.voucher,
@@ -627,21 +627,21 @@ fn test_full_guarantor_workflow_via_app_service() {
         VoucherStatus::Incomplete { .. }
     ));
 
-    // --- Signatur von Bürge 2 ---
+    // --- Signature from Guarantor 2 ---
     let _request_bundle_2 = service_creator
         .create_signing_request_bundle(&local_id, ContainerConfig::TargetDid(g2_id.clone(), PrivacyMode::TrialDecryption))
         .expect("Failed to create signing request for G2");
 
-    // KORREKTUR: Wir müssen das Profil von G2 (Bürge 2) mit den
-    // Gender-Daten füllen, *bevor* die Signatur erstellt wird.
+    // FIX: We must populate G2's (Guarantor 2) profile with
+    // gender data *before* the signature is created.
     service_g2
         .login(&profile_g2.folder_name, password, false, "test-id".to_string())
         .unwrap();
     let (wallet_g2, _) = service_g2.get_unlocked_mut_for_test();
     wallet_g2.profile.gender = Some("2".to_string());
 
-    // Hinweis: In der neuen Struktur setzt create_detached_signature_response_bundle
-    // die Details nur, wenn include_details=true und der AppService das unterstützt.
+    // Note: In the new structure, create_detached_signature_response_bundle
+    // only sets details if include_details=true and the AppService supports it.
     let response_bundle_2 = service_g2
         .create_detached_signature_response_bundle(
             &details_mid.voucher,
@@ -655,15 +655,15 @@ fn test_full_guarantor_workflow_via_app_service() {
         .process_and_attach_signature(&response_bundle_2, &minuto_standard_toml, None, Some(password))
         .expect("Failed to attach G2's signature");
 
-    // --- 5. Assertion 3: Überprüfung des finalen `Active`-Zustands ---
+    // --- 5. Assertion 3: Verify final `Active` state ---
     let details_after = service_creator.get_voucher_details(&local_id).unwrap();
     assert_eq!(
         details_after.status,
         VoucherStatus::Active,
         "Final voucher status should be Active"
     );
-    // Überprüfe die verschachtelten Gender-Daten
-    // KORREKTUR: Index 0 ist der Ersteller. Die Bürgen sind an Index 1 und 2.
+    // Verify nested gender data
+    // FIX: Index 0 is the creator. Guarantors are at index 1 and 2.
     let g1_sig = details_after
         .voucher
         .signatures
@@ -674,7 +674,7 @@ fn test_full_guarantor_workflow_via_app_service() {
         g1_sig.details.as_ref().unwrap().gender.as_deref(),
         Some("1")
     );
-    // Überprüfe die neuen Felder
+    // Verify new fields
     assert_eq!(
         g1_sig.details.as_ref().unwrap().service_offer.as_deref(),
         Some("Test Service Offer")
@@ -684,7 +684,7 @@ fn test_full_guarantor_workflow_via_app_service() {
         Some("Test Needs")
     );
 
-    // Überprüfe Bürge 2
+    // Verify Guarantor 2
     let g2_sig = details_after
         .voucher
         .signatures
@@ -697,14 +697,14 @@ fn test_full_guarantor_workflow_via_app_service() {
     );
 }
 
-/// Testet den Signatur-Roundtrip für einen Standard mit optionalen Signaturen (FreeTaler).
+/// Tests signature roundtrip for a standard with optional signatures (FreeTaler).
 ///
-/// ### Szenario:
-/// 1.  Alice erstellt einen FreeTaler-Gutschein, der initial gültig ist, da `needed_guarantors = 0`.
-/// 2.  Sie fordert trotzdem eine optionale Signatur von Bob an.
-/// 3.  Bob empfängt und beantwortet die Anfrage.
-/// 4.  Alice fügt die optionale Signatur erfolgreich an.
-/// 5.  Der Gutschein hat danach eine Signatur, obwohl sie nicht erforderlich war.
+/// ### Scenario:
+/// 1.  Alice creates a FreeTaler voucher, which is initially valid because `needed_guarantors = 0`.
+/// 2.  She requests an optional signature from Bob anyway.
+/// 3.  Bob receives and responds to the request.
+/// 4.  Alice successfully attaches the optional signature.
+/// 5.  The voucher then has a signature, even though it was not required.
 #[test]
 fn api_wallet_signature_roundtrip_silver_optional() {
     human_money_core::set_signature_bypass(true);
@@ -736,8 +736,8 @@ fn api_wallet_signature_roundtrip_silver_optional() {
     );
     let DetachedSignature::Signature(guarantor_struct) = &mut signature_data_enum;
     assert_eq!(guarantor_struct.role, "guarantor");
-    // Das Setzen von `first_name` etc. ist nicht mehr nötig, da `create_detached_signature_response`
-    // die `details` (PublicProfile) aus dem Wallet (hier Bob) automatisch einfügt.
+    // Setting `first_name` etc. is no longer necessary because `create_detached_signature_response`
+    // automatically inserts `details` (PublicProfile) from the wallet (here Bob).
 
     let response_bytes = bob_wallet
         .create_detached_signature_response(
@@ -758,14 +758,14 @@ fn api_wallet_signature_roundtrip_silver_optional() {
         .vouchers
         .get(&voucher_id)
         .unwrap();
-    // KORREKTUR: 2 Signaturen (creator + bob)
+    // FIX: 2 signatures (creator + bob)
     assert_eq!(final_instance.voucher.signatures.len(), 2);
-    // Details sollten `None` sein, da `include_details: false`
-    // KORREKTUR: Index 1
+    // Details should be `None` because `include_details: false`
+    // FIX: Index 1
     assert!(final_instance.voucher.signatures[1].details.is_none());
 }
 
-/// Testet die Signaturanfrage und -antwort via symmetrischer Verschlüsselung (Passwort).
+/// Tests signature request and response via symmetric encryption (password).
 #[test]
 fn api_app_service_symmetric_signature_workflow() {
     human_money_core::set_signature_bypass(true);
@@ -787,7 +787,7 @@ fn api_app_service_symmetric_signature_workflow() {
         wallet_password,
     );
 
-    // 1. Creator erstellt einen Gutschein
+    // 1. Creator creates a voucher
     let _voucher = service_creator
         .create_new_voucher(
             &freetaler_standard_toml,
@@ -809,12 +809,12 @@ fn api_app_service_symmetric_signature_workflow() {
         .local_instance_id
         .clone();
 
-    // 2. Creator erstellt eine Signaturanfrage, die mit einem PASSWORT verschlüsselt ist (statt DID)
+    // 2. Creator creates a signing request encrypted with a PASSWORD (instead of DID)
     let request_bytes = service_creator
         .create_signing_request_bundle(&local_id, ContainerConfig::Password(container_password.to_string()))
         .unwrap();
 
-    // 3. Bürge öffnet den Container mit demselben Passwort
+    // 3. Guarantor opens the container with the same password
     service_guarantor.login(&profile_guarantor.folder_name, wallet_password, false, "test-id".to_string()).unwrap();
     let unlocked_guarantor = service_guarantor.get_unlocked_mut_for_test();
     let guarantor_identity = unlocked_guarantor.1;
@@ -828,7 +828,7 @@ fn api_app_service_symmetric_signature_workflow() {
     
     let voucher_to_sign: human_money_core::models::voucher::Voucher = serde_json::from_slice(&opened_payload).unwrap();
 
-    // 4. Bürge erstellt eine Antwort, die ebenfalls mit demselben PASSWORT verschlüsselt ist
+    // 4. Guarantor creates a response also encrypted with the same PASSWORD
     let response_bytes = service_guarantor
         .create_detached_signature_response_bundle(
             &voucher_to_sign,
@@ -839,7 +839,7 @@ fn api_app_service_symmetric_signature_workflow() {
         )
         .unwrap();
 
-    // 5. Creator fügt die Antwort an und nutzt dabei das PASSWORT zur Entschlüsselung
+    // 5. Creator attaches response using PASSWORD for decryption
     service_creator
         .process_and_attach_signature(
             &response_bytes,
@@ -855,12 +855,12 @@ fn api_app_service_symmetric_signature_workflow() {
 
 // --- 3. Signature Removal Tests ---
 
-/// Testet das erfolgreiche Entfernen einer Zusatzsignatur im Incomplete-Status.
+/// Tests the successful removal of an additional signature in Incomplete status.
 ///
-/// ### Szenario:
-/// 1. Gutschein wird erstellt (Status Incomplete), eine Zusatzsignatur (Bürge) wird angehängt.
-/// 2. remove_signature wird vom Creator für die angehängte Signatur-ID aufgerufen.
-/// 3. Erwartung: Ok(()). Die signatures-Liste ist danach reduziert.
+/// ### Scenario:
+/// 1. Voucher is created (status Incomplete), an additional signature (guarantor) is attached.
+/// 2. remove_signature is called by Creator for the attached signature ID.
+/// 3. Expectation: Ok(()). The signatures list is subsequently reduced.
 #[test]
 fn test_remove_signature_success_incomplete_state() {
     human_money_core::set_signature_bypass(true);
@@ -870,7 +870,7 @@ fn test_remove_signature_success_incomplete_state() {
     let bob_wallet = setup_in_memory_wallet(&bob.identity);
     let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
-    // Erstelle einen Gutschein im Incomplete-Status
+    // Create a voucher in Incomplete status
     let voucher_id = add_voucher_to_wallet(
         &mut alice_wallet,
         &alice.identity,
@@ -880,7 +880,7 @@ fn test_remove_signature_success_incomplete_state() {
     )
     .unwrap();
 
-    // Füge eine Bürgen-Signatur hinzu
+    // Add a guarantor signature
     let request_bytes = alice_wallet
         .create_signing_request(
             &alice.identity,
@@ -916,15 +916,15 @@ fn test_remove_signature_success_incomplete_state() {
         .vouchers
         .get(&voucher_id)
         .unwrap();
-    // 2 Signaturen: creator + bob
+    // 2 signatures: creator + bob
     assert_eq!(instance_before.voucher.signatures.len(), 2);
     let bob_signature_id = instance_before.voucher.signatures[1].signature_id.clone();
 
-    // Entferne die Signatur
+    // Remove the signature
     let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, &bob_signature_id);
     assert!(result.is_ok());
 
-    // Überprüfe, dass die Signatur entfernt wurde
+    // Verify that the signature was removed
     let instance_after = alice_wallet
         .voucher_store
         .vouchers
@@ -934,13 +934,13 @@ fn test_remove_signature_success_incomplete_state() {
     assert_eq!(instance_after.voucher.signatures[0].role, "creator");
 }
 
-/// Testet, dass das Entfernen einer Signatur im Active-Status fehlschlägt.
+/// Tests that removing a signature fails in Active status.
 ///
-/// ### Szenario:
-/// 1. Gutschein wird erstellt, erhält genügend Signaturen um in den Status Active zu wechseln.
-/// 2. Eine zusätzliche (überschüssige) Signatur wird angehängt.
-/// 3. remove_signature wird vom Creator für die überschüssige Signatur aufgerufen.
-/// 4. Erwartung: Err(SignatureRemovalRequiresIncomplete).
+/// ### Scenario:
+/// 1. Voucher is created, receives sufficient signatures to transition to Active status.
+/// 2. An additional (surplus) signature is attached.
+/// 3. remove_signature is called by Creator for the surplus signature.
+/// 4. Expectation: Err(SignatureRemovalRequiresIncomplete).
 #[test]
 fn test_remove_signature_fails_active_state() {
     human_money_core::set_signature_bypass(true);
@@ -952,7 +952,7 @@ fn test_remove_signature_fails_active_state() {
     let charlie_wallet = setup_in_memory_wallet(&charlie.identity);
     let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
-    // Erstelle einen Gutschein
+    // Create a voucher
     let voucher_id = add_voucher_to_wallet(
         &mut alice_wallet,
         &alice.identity,
@@ -962,7 +962,7 @@ fn test_remove_signature_fails_active_state() {
     )
     .unwrap();
 
-    // Füge zwei Bürgen-Signaturen hinzu (Minuto benötigt 2)
+    // Add two guarantor signatures (Minuto requires 2)
     for (signer, wallet) in [(&bob.identity, &bob_wallet), (&charlie.identity, &charlie_wallet)] {
         let request_bytes = alice_wallet
             .create_signing_request(
@@ -995,7 +995,7 @@ fn test_remove_signature_fails_active_state() {
             .unwrap();
     }
 
-    // Füge eine dritte (überschüssige) Signatur hinzu
+    // Add a third (surplus) signature
     let request_bytes = alice_wallet
         .create_signing_request(
             &alice.identity,
@@ -1026,7 +1026,7 @@ fn test_remove_signature_fails_active_state() {
         .process_and_attach_signature(&alice.identity, &response_bytes, None)
         .unwrap();
 
-    // Setze den Status manuell auf Active, um die Sperre zu testen
+    // Manually set status to Active to test the lock
     alice_wallet.update_voucher_status(&voucher_id, VoucherStatus::Active);
 
     let instance_before = alice_wallet
@@ -1034,12 +1034,12 @@ fn test_remove_signature_fails_active_state() {
         .vouchers
         .get(&voucher_id)
         .unwrap();
-    // 4 Signaturen: creator + 2 required guarantors + 1 extra
+    // 4 signatures: creator + 2 required guarantors + 1 extra
     assert_eq!(instance_before.status, VoucherStatus::Active);
     assert_eq!(instance_before.voucher.signatures.len(), 4);
     let extra_signature_id = instance_before.voucher.signatures[3].signature_id.clone();
 
-    // Entferne die überschüssige Signatur
+    // Remove surplus signature
     let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, &extra_signature_id);
     
     assert!(matches!(
@@ -1047,7 +1047,7 @@ fn test_remove_signature_fails_active_state() {
         VoucherCoreError::SignatureRemovalRequiresIncomplete(VoucherStatus::Active)
     ));
 
-    // Überprüfe, dass die Signatur noch vorhanden ist
+    // Verify that the signature is still present
     let instance_after = alice_wallet
         .voucher_store
         .vouchers
@@ -1057,12 +1057,12 @@ fn test_remove_signature_fails_active_state() {
     assert_eq!(instance_after.status, VoucherStatus::Active);
 }
 
-/// Testet, dass das Entfernen einer Signatur den Status auf Incomplete setzt.
+/// Tests that removing a signature sets status to Incomplete.
 ///
-/// ### Szenario:
-/// 1. Gutschein benötigt laut Standard exakt 2 Bürgen. Er hat 2 Bürgen und befindet sich im Status Active.
-/// 2. remove_signature wird erfolgreich für einen der Bürgen aufgerufen.
-/// 3. Erwartung: Ok(()). Der Löschvorgang ist erfolgreich, aber der Status wechselt auf Incomplete.
+/// ### Scenario:
+/// 1. Voucher requires exactly 2 guarantors according to standard. It has 2 guarantors and is in Active status.
+/// 2. remove_signature is successfully called for one of the guarantors.
+/// 3. Expectation: Ok(()). The deletion succeeds, but status transitions to Incomplete.
 #[test]
 fn test_remove_signature_triggers_status_downgrade() {
     human_money_core::set_signature_bypass(true);
@@ -1074,7 +1074,7 @@ fn test_remove_signature_triggers_status_downgrade() {
     let charlie_wallet = setup_in_memory_wallet(&charlie.identity);
     let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
-    // Erstelle einen Gutschein
+    // Create a voucher
     let voucher_id = add_voucher_to_wallet(
         &mut alice_wallet,
         &alice.identity,
@@ -1084,7 +1084,7 @@ fn test_remove_signature_triggers_status_downgrade() {
     )
     .unwrap();
 
-    // Füge zwei Bürgen-Signaturen hinzu (Minuto benötigt 2: 1 männlich, 1 weiblich)
+    // Add two guarantor signatures (Minuto requires 2: 1 male, 1 female)
     for (signer, wallet) in [(&bob.identity, &bob_wallet), (&charlie.identity, &charlie_wallet)] {
         let request_bytes = alice_wallet
             .create_signing_request(
@@ -1122,10 +1122,10 @@ fn test_remove_signature_triggers_status_downgrade() {
         .vouchers
         .get(&voucher_id)
         .unwrap();
-    // 3 Signaturen: creator + 2 guarantors
+    // 3 signatures: creator + 2 guarantors
     assert_eq!(instance_before.voucher.signatures.len(), 3);
-    // Status sollte Active sein (da Minuto-Anforderungen erfüllt)
-    // Wir setzen den Status manuell auf Active für den Test
+    // Status should be Active (since Minuto requirements are met)
+    // We manually set status to Active for the test
     alice_wallet.update_voucher_status(&voucher_id, VoucherStatus::Active);
 
     let instance_after_update = alice_wallet
@@ -1137,7 +1137,7 @@ fn test_remove_signature_triggers_status_downgrade() {
 
     let guarantor_signature_id = instance_after_update.voucher.signatures[1].signature_id.clone();
 
-    // Entferne einen der Bürgen -> Sollte fehlschlagen da Active
+    // Remove one of the guarantors -> Should fail because Active
     let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, &guarantor_signature_id);
     
     assert!(matches!(
@@ -1145,7 +1145,7 @@ fn test_remove_signature_triggers_status_downgrade() {
         VoucherCoreError::SignatureRemovalRequiresIncomplete(VoucherStatus::Active)
     ));
 
-    // Überprüfe, dass der Status Active geblieben ist und nichts entfernt wurde
+    // Verify that status remained Active and nothing was removed
     let instance_final = alice_wallet
         .voucher_store
         .vouchers
@@ -1155,12 +1155,12 @@ fn test_remove_signature_triggers_status_downgrade() {
     assert_eq!(instance_final.voucher.signatures.len(), 3);
 }
 
-/// Testet, dass die Creator-Signatur nicht entfernt werden kann.
+/// Tests that the creator signature cannot be removed.
 ///
-/// ### Szenario:
-/// 1. Gutschein (Status Incomplete oder Active) enthält eine Signatur mit der Rolle creator.
-/// 2. remove_signature wird vom Creator für diese Signatur-ID aufgerufen.
-/// 3. Erwartung: Err(CannotRemoveCreatorSignature).
+/// ### Scenario:
+/// 1. Voucher (status Incomplete or Active) contains a signature with role creator.
+/// 2. remove_signature is called by Creator for this signature ID.
+/// 3. Expectation: Err(CannotRemoveCreatorSignature).
 #[test]
 fn test_remove_signature_fails_creator_signature() {
     human_money_core::set_signature_bypass(true);
@@ -1184,7 +1184,7 @@ fn test_remove_signature_fails_creator_signature() {
         .unwrap();
     let creator_signature_id = instance.voucher.signatures[0].signature_id.clone();
 
-    // Versuche, die Creator-Signatur zu entfernen
+    // Attempt to remove the creator signature
     let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, &creator_signature_id);
 
     assert!(matches!(
@@ -1192,7 +1192,7 @@ fn test_remove_signature_fails_creator_signature() {
         VoucherCoreError::CannotRemoveCreatorSignature
     ));
 
-    // Überprüfe, dass die Signatur noch vorhanden ist
+    // Verify that the signature is still present
     let instance_after = alice_wallet
         .voucher_store
         .vouchers
@@ -1201,12 +1201,12 @@ fn test_remove_signature_fails_creator_signature() {
     assert_eq!(instance_after.voucher.signatures.len(), 1);
 }
 
-/// Testet, dass nur der Creator Signaturen entfernen kann.
+/// Tests that only the creator can remove signatures.
 ///
-/// ### Szenario:
-/// 1. Gutschein wird von Identität A (Creator) erstellt.
-/// 2. Identität B versucht, eine Signatur zu entfernen.
-/// 3. Erwartung: Err(NotTheCreator).
+/// ### Scenario:
+/// 1. Voucher is created by Identity A (Creator).
+/// 2. Identity B attempts to remove a signature.
+/// 3. Expectation: Err(NotTheCreator).
 #[test]
 fn test_remove_signature_fails_not_the_creator() {
     human_money_core::set_signature_bypass(true);
@@ -1224,18 +1224,18 @@ fn test_remove_signature_fails_not_the_creator() {
     )
     .unwrap();
 
-    // Bob versucht, eine Signatur zu entfernen
+    // Bob attempts to remove a signature
     let result = alice_wallet.remove_signature(&bob.identity, &voucher_id, "any-signature-id");
 
     assert!(matches!(result.unwrap_err(), VoucherCoreError::NotTheCreator));
 }
 
-/// Testet, dass Signaturen nicht entfernt werden können, wenn der Gutschein bereits via Transfer in Umlauf ist.
+/// Tests that signatures cannot be removed when the voucher is already in circulation via transfer.
 ///
-/// ### Szenario:
-/// 1. Creator erstellt Gutschein, hängt Signatur an, und tätigt einen vollständigen Transfer.
-/// 2. remove_signature wird vom Creator aufgerufen.
-/// 3. Erwartung: Err(VoucherAlreadyInCirculation).
+/// ### Scenario:
+/// 1. Creator creates voucher, attaches signature, and performs a full transfer.
+/// 2. remove_signature is called by Creator.
+/// 3. Expectation: Err(VoucherAlreadyInCirculation).
 #[test]
 fn test_remove_signature_fails_already_in_circulation_via_transfer() {
     human_money_core::set_signature_bypass(true);
@@ -1253,21 +1253,21 @@ fn test_remove_signature_fails_already_in_circulation_via_transfer() {
     )
     .unwrap();
 
-    // Simuliere einen Transfer durch Hinzufügen einer zweiten Transaktion
+    // Simulate a transfer by adding a second transaction
     let instance = alice_wallet
         .voucher_store
         .vouchers
         .get_mut(&voucher_id)
         .unwrap();
     
-    // Füge eine Dummy-Transaktion hinzu, um Umlauf zu simulieren
+    // Add a dummy transaction to simulate circulation
     let mut dummy_tx = instance.voucher.transactions[0].clone();
     dummy_tx.t_id = format!("{}-2", dummy_tx.t_id);
-    dummy_tx.t_type = String::new(); // leer = voller Transfer
+    dummy_tx.t_type = String::new(); // empty = full transfer
     dummy_tx.prev_hash = instance.voucher.transactions[0].t_id.clone();
     instance.voucher.transactions.push(dummy_tx);
 
-    // Versuche, eine Signatur zu entfernen
+    // Attempt to remove a signature
     let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, "any-signature-id");
 
     assert!(matches!(
@@ -1276,12 +1276,12 @@ fn test_remove_signature_fails_already_in_circulation_via_transfer() {
     ));
 }
 
-/// Testet, dass Signaturen nicht entfernt werden können, wenn der Gutschein bereits via Split in Umlauf ist.
+/// Tests that signatures cannot be removed when the voucher is already in circulation via split.
 ///
-/// ### Szenario:
-/// 1. Creator erstellt Gutschein und teilt (split) den Gutschein.
-/// 2. remove_signature wird vom Creator aufgerufen.
-/// 3. Erwartung: Err(VoucherAlreadyInCirculation).
+/// ### Scenario:
+/// 1. Creator creates voucher and splits the voucher.
+/// 2. remove_signature is called by Creator.
+/// 3. Expectation: Err(VoucherAlreadyInCirculation).
 #[test]
 fn test_remove_signature_fails_already_in_circulation_via_split() {
     human_money_core::set_signature_bypass(true);
@@ -1298,21 +1298,21 @@ fn test_remove_signature_fails_already_in_circulation_via_split() {
     )
     .unwrap();
 
-    // Simuliere einen Split durch Hinzufügen einer zweiten Transaktion
+    // Simulate a split by adding a second transaction
     let instance = alice_wallet
         .voucher_store
         .vouchers
         .get_mut(&voucher_id)
         .unwrap();
     
-    // Füge eine Dummy-Transaktion hinzu, um Umlauf zu simulieren
+    // Add a dummy transaction to simulate circulation
     let mut dummy_tx = instance.voucher.transactions[0].clone();
     dummy_tx.t_id = format!("{}-2", dummy_tx.t_id);
     dummy_tx.t_type = "split".to_string();
     dummy_tx.prev_hash = instance.voucher.transactions[0].t_id.clone();
     instance.voucher.transactions.push(dummy_tx);
 
-    // Versuche, eine Signatur zu entfernen
+    // Attempt to remove a signature
     let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, "any-signature-id");
 
     assert!(matches!(
@@ -1321,8 +1321,12 @@ fn test_remove_signature_fails_already_in_circulation_via_split() {
     ));
 }
 
-/// 2. remove_signature wird aufgerufen.
-/// 3. Erwartung: Err(SignatureRemovalRequiresIncomplete).
+/// Tests that removing a signature fails in an invalid status (e.g. Quarantined).
+///
+/// ### Scenario:
+/// 1. Voucher status is set to Quarantined.
+/// 2. remove_signature is called.
+/// 3. Expectation: Err(SignatureRemovalRequiresIncomplete).
 #[test]
 fn test_remove_signature_fails_invalid_state() {
     human_money_core::set_signature_bypass(true);
@@ -1339,7 +1343,7 @@ fn test_remove_signature_fails_invalid_state() {
     )
     .unwrap();
 
-    // Setze den Gutschein auf Quarantined
+    // Set voucher to Quarantined
     alice_wallet.update_voucher_status(
         &voucher_id,
         VoucherStatus::Quarantined {
@@ -1347,7 +1351,7 @@ fn test_remove_signature_fails_invalid_state() {
         },
     );
 
-    // Versuche, eine Signatur zu entfernen
+    // Attempt to remove a signature
     let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, "any-signature-id");
 
     assert!(matches!(
@@ -1356,12 +1360,12 @@ fn test_remove_signature_fails_invalid_state() {
     ));
 }
 
-/// Testet das Entfernen einer nicht existierenden Signatur-ID.
+/// Tests removing a non-existent signature ID.
 ///
-/// ### Szenario:
-/// 1. Gutschein mit Signatur ID sig-123.
-/// 2. remove_signature wird mit signature_id = "sig-999" aufgerufen.
-/// 3. Erwartung: Err(Generic) mit Nachricht "Signature with ID ... not found".
+/// ### Scenario:
+/// 1. Voucher with signature ID sig-123.
+/// 2. remove_signature is called with signature_id = "sig-999".
+/// 3. Expectation: Err(Generic) with message "Signature with ID ... not found".
 #[test]
 fn test_remove_signature_non_existent_signature_id() {
     human_money_core::set_signature_bypass(true);
@@ -1378,7 +1382,7 @@ fn test_remove_signature_non_existent_signature_id() {
     )
     .unwrap();
 
-    // Versuche, eine nicht existierende Signatur zu entfernen
+    // Attempt to remove a non-existent signature
     let result = alice_wallet.remove_signature(&alice.identity, &voucher_id, "sig-999");
 
     assert!(matches!(
@@ -1387,18 +1391,18 @@ fn test_remove_signature_non_existent_signature_id() {
     ));
 }
 
-/// Testet das Entfernen einer Signatur von einem nicht existierenden Gutschein.
+/// Tests removing a signature from a non-existent voucher.
 ///
-/// ### Szenario:
-/// 1. Aufruf von remove_signature mit einer local_instance_id, die nicht existiert.
-/// 2. Erwartung: Err(VoucherNotFound).
+/// ### Scenario:
+/// 1. Call remove_signature with a local_instance_id that does not exist.
+/// 2. Expectation: Err(VoucherNotFound).
 #[test]
 fn test_remove_signature_non_existent_voucher_id() {
     human_money_core::set_signature_bypass(true);
     let alice = &ACTORS.alice;
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
 
-    // Versuche, eine Signatur von einem nicht existierenden Gutschein zu entfernen
+    // Attempt to remove a signature from a non-existent voucher
     let result = alice_wallet.remove_signature(&alice.identity, "non-existent-voucher", "sig-123");
 
     assert!(matches!(

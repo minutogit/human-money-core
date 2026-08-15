@@ -1,7 +1,7 @@
 //! # src/wallet/conflict_handler.rs
 //!
-//! Enthält die Implementierung der `Wallet`-Methoden, die für die
-//! Double-Spend-Erkennung und -Verwaltung zuständig sind.
+//! Contains the implementation of `Wallet` methods responsible for
+//! double-spend detection and management.
 
 use super::{DoubleSpendCheckResult, Wallet};
 use crate::archive::VoucherArchive;
@@ -9,7 +9,7 @@ use crate::error::{ValidationError, VoucherCoreError};
 use crate::models::profile::VoucherStore;
 use crate::models::{
     conflict::{
-        FingerprintMetadata, ProofOfDoubleSpend, ResolutionEndorsement, TransactionFingerprint,
+        ProofOfDoubleSpend, ResolutionEndorsement, TransactionFingerprint,
     },
     profile::{TransactionBundleHeader, UserIdentity},
     voucher::Voucher,
@@ -20,21 +20,21 @@ use crate::wallet::ProofOfDoubleSpendSummary;
 use crate::wallet::instance::VoucherStatus;
 use std::collections::HashMap;
 
-/// Methoden zur Verwaltung des Fingerprint-Speichers und der Double-Spending-Logik.
+/// Methods for managing the fingerprint store and double-spending logic.
 impl Wallet {
-    /// Durchsucht alle eigenen Gutscheine und aktualisiert den `own_fingerprints`-Store.
-    /// WICHTIG: Diese Funktion bewahrt die bereits importierten `foreign_fingerprints`.
+    /// Scans all own vouchers and updates the `own_fingerprints` store.
+    /// IMPORTANT: This function preserves already imported `foreign_fingerprints`.
     pub fn scan_and_rebuild_fingerprints(&mut self) -> Result<(), VoucherCoreError> {
         let (own, mut known) = conflict_manager::scan_and_rebuild_fingerprints(
             &self.voucher_store,
             &self.profile.user_id,
         )?;
-        // Bewahre die existierenden Historien, da diese nicht (vollständig) aus dem
-        // lokalen `voucher_store` rekonstruiert werden können (z.B. nach Archivierung).
+        // Preserve existing histories, as these cannot be (fully) reconstructed from the
+        // local `voucher_store` (e.g. after archiving).
         known.foreign_fingerprints =
             std::mem::take(&mut self.known_fingerprints.foreign_fingerprints);
         
-        // NEU: Auch local_history bewahren/mergen
+        // NEW: Also preserve/merge local_history
         let old_local_history = std::mem::take(&mut self.known_fingerprints.local_history);
         for (hash, fps) in old_local_history {
             let entry = known.local_history.entry(hash).or_default();
@@ -50,32 +50,32 @@ impl Wallet {
         Ok(())
     }
 
-    /// Führt eine vollständige Double-Spend-Prüfung durch.
+    /// Performs a full double-spend check.
     pub fn check_for_double_spend(&self) -> DoubleSpendCheckResult {
         conflict_manager::check_for_double_spend(&self.own_fingerprints, &self.known_fingerprints)
     }
 
-    /// Entfernt alle abgelaufenen Fingerprints aus dem Speicher.
-    /// Gibt die Anzahl der entfernten Einträge zurück.
+    /// Removes all expired fingerprints from storage.
+    /// Returns the number of removed entries.
     pub fn cleanup_expired_fingerprints(&mut self) -> usize {
         conflict_manager::cleanup_known_fingerprints(&mut self.known_fingerprints)
     }
 
-    /// Serialisiert die eigenen Fingerprints für den Export.
+    /// Serializes own fingerprints for export.
     pub fn export_own_fingerprints(&self) -> Result<Vec<u8>, VoucherCoreError> {
         conflict_manager::export_own_fingerprints(&self.own_fingerprints)
     }
 
-    /// Importiert und merged fremde Fingerprints in den Speicher.
+    /// Imports and merges foreign fingerprints into storage.
     pub fn import_foreign_fingerprints(&mut self, data: &[u8]) -> Result<usize, VoucherCoreError> {
         conflict_manager::import_foreign_fingerprints(&mut self.known_fingerprints, data)
     }
 
-    /// Gibt eine Liste von Zusammenfassungen aller bekannten Double-Spend-Konflikte zurück.
+    /// Returns a list of summaries of all known double-spend conflicts.
     ///
-    /// Diese Methode iteriert durch den `proof_store` und erstellt für jeden
-    /// `ProofStoreEntry` eine vereinfachte `ProofOfDoubleSpendSummary`.
-    /// Der Status (`is_resolved`, `has_l2_verdict`) wird dabei dynamisch ermittelt.
+    /// This method iterates through the `proof_store` and creates a simplified
+    /// `ProofOfDoubleSpendSummary` for each `ProofStoreEntry`.
+    /// The status (`is_resolved`, `has_l2_verdict`) is determined dynamically.
     pub fn list_conflicts(&self) -> Vec<ProofOfDoubleSpendSummary> {
         self.proof_store
             .proofs
@@ -103,10 +103,10 @@ impl Wallet {
             .collect()
     }
 
-    /// Ruft einen vollständigen `ProofOfDoubleSpend` anhand seiner ID ab.
+    /// Retrieves a complete `ProofOfDoubleSpend` by its ID.
     ///
     /// # Arguments
-    /// * `proof_id` - Die deterministische ID des zu suchenden Beweises.
+    /// * `proof_id` - The deterministic ID of the proof to search for.
     pub fn get_proof_of_double_spend(
         &self,
         proof_id: &str,
@@ -187,22 +187,22 @@ impl Wallet {
     }
 
 
-    /// Erstellt eine signierte Beilegungserklärung (`ResolutionEndorsement`) für einen Konflikt.
+    /// Creates a signed resolution endorsement (`ResolutionEndorsement`) for a conflict.
     ///
-    /// Diese Methode verändert den Wallet-Zustand nicht, sondern erzeugt nur das
-    /// signierte Objekt, das dann an andere Parteien gesendet werden kann.
+    /// This method does not mutate the wallet state, but only creates the
+    /// signed object which can then be transmitted to other parties.
     ///
     /// # Arguments
-    /// * `identity` - Die Identität des Wallet-Besitzers (des Opfers), der die Beilegung signiert.
-    /// * `proof_id` - Die ID des Konflikts, der beigelegt wird.
-    /// * `notes` - Eine optionale, menschenlesbare Notiz.
+    /// * `identity` - The identity of the wallet owner (the victim) signing the resolution.
+    /// * `proof_id` - The ID of the conflict being resolved.
+    /// * `notes` - An optional human-readable note.
     pub fn create_resolution_endorsement(
         &self,
         identity: &UserIdentity,
         proof_id: &str,
         notes: Option<String>,
     ) -> Result<ResolutionEndorsement, VoucherCoreError> {
-        // Sicherstellen, dass der Beweis existiert, bevor eine Beilegung erstellt wird.
+        // Ensure that the proof exists before creating an endorsement.
         if !self.proof_store.proofs.contains_key(proof_id) {
             return Err(VoucherCoreError::Generic(format!(
                 "Cannot create endorsement: Proof with ID '{}' not found.",
@@ -212,7 +212,7 @@ impl Wallet {
         conflict_manager::create_and_sign_resolution_endorsement(proof_id, identity, notes)
     }
 
-    /// Fügt eine (extern erhaltene) Beilegungserklärung zu einem bestehenden Konfliktbeweis hinzu.
+    /// Adds an (externally received) resolution endorsement to an existing conflict proof.
     pub fn add_resolution_endorsement(
         &mut self,
         endorsement: ResolutionEndorsement,
@@ -237,8 +237,8 @@ impl Wallet {
         Ok(())
     }
 
-    /// Setzt den lokalen Override für einen Konflikt.
-    /// Dies erlaubt es dem Nutzer, einem Täter trotz eines Beweises lokal wieder zu vertrauen.
+    /// Sets the local override for a conflict.
+    /// This allows the user to locally re-trust an offender despite an existing proof.
     pub fn set_conflict_local_override(
         &mut self,
         proof_id: &str,
@@ -253,18 +253,18 @@ impl Wallet {
         Ok(())
     }
 
-    /// Importiert einen externen Beweis in den ProofStore.
+    /// Imports an external proof into the ProofStore.
     ///
-    /// # Immunitäts-Regel (MVP):
-    /// Wenn der Beweis lokal bereits existiert, wird der Import ignoriert.
-    /// Dies verhindert, dass externe Daten lokale Entscheidungen (Overrides) überschreiben.
+    /// # Immunity Rule (MVP):
+    /// If the proof already exists locally, the import is ignored.
+    /// This prevents external data from overwriting local decisions (overrides).
     pub fn import_proof(&mut self, proof: ProofOfDoubleSpend) -> Result<(), VoucherCoreError> {
         if self.proof_store.proofs.contains_key(&proof.proof_id) {
-            // Bereits bekannt -> Ignorieren (Immunität lokaler Entscheidungen)
+            // Already known -> Ignore (immunity of local decisions)
             return Ok(());
         }
 
-        // --- Konfliktlösung (Offline-Gewinner ermitteln und Verlierer unter Quarantäne stellen) ---
+        // --- Conflict resolution (determine offline winner and quarantine losers) ---
         let mut winner_tx_id: Option<String> = None;
         let mut earliest_dt: Option<chrono::DateTime<chrono::FixedOffset>> = None;
 
@@ -327,7 +327,7 @@ impl Wallet {
             }
         }
 
-        // Emittierte VoucherQuarantined-Events in pending_events übernehmen.
+        // Record emitted VoucherQuarantined events into pending_events.
         for (local_id, voucher_id, bff_data) in quarantined_events {
             self.emit_event(
                 crate::models::wallet_event::WalletEventType::VoucherQuarantined,
@@ -337,9 +337,9 @@ impl Wallet {
             );
         }
 
-        // --- Bestimmung der Rolle (Opfer vs. Zeuge) ---
-        // REFINEMENT: Wir sind nur ein Opfer, wenn wir KEINEN aktiven Gutschein für diesen
-        // Konflikt-Tag haben, aber mindestens einer existiert (der nun in Quarantäne ist).
+        // --- Role determination (victim vs. witness) ---
+        // REFINEMENT: We are only a victim if we have NO active voucher for this
+        // conflict tag, but at least one exists (which is now in quarantine).
         let mut has_active = false;
         let mut has_quarantined = false;
         
@@ -370,9 +370,9 @@ impl Wallet {
         Ok(())
     }
 
-    // --- NEU HINZUGEFÜGT AUS MOD.RS ---
+    // --- NEWLY ADDED FROM MOD.RS ---
 
-    /// Verifiziert einen Konflikt und erstellt einen Beweis. Interne Methode.
+    /// Verifies a conflict and creates a proof. Internal method.
     pub(super) fn verify_and_create_proof(
         &self,
         identity: &UserIdentity,
@@ -382,7 +382,7 @@ impl Wallet {
         let mut conflicting_transactions = Vec::new();
         let mut missing_t_ids = Vec::new();
 
-        // 1. Finde die vollständigen Transaktionen zu den Fingerprints.
+        // 1. Find the complete transactions corresponding to the fingerprints.
         for fp in fingerprints {
             if let Some(tx) = self.find_transaction_in_stores(&fp.t_id, archive)? {
                 conflicting_transactions.push(tx);
@@ -392,21 +392,21 @@ impl Wallet {
         }
 
         if conflicting_transactions.is_empty() {
-            // FIX: Für reine Gossip-Konflikte hat der lokale Wallet die Transaktionen
-            // nie in seinem Store. Wenn wir >= 2 Fingerprints mit unterschiedlichen
-            // t_ids haben, können wir dennoch einen "Gossip Soft Proof" erstellen.
+            // FIX: For pure gossip conflicts, the local wallet never has the transactions
+            // in its store. If we have >= 2 fingerprints with distinct
+            // t_ids, we can still create a "Gossip Soft Proof".
             if fingerprints.len() >= 2 {
                 let unique_t_ids: std::collections::HashSet<_> =
                     fingerprints.iter().map(|fp| &fp.t_id).collect();
                 if unique_t_ids.len() >= 2 {
-                    // Erzeuge synthetische Transaktionen aus den Fingerprint-Daten.
-                    // Die offender_id kann nur als ANONYMOUS gesetzt werden, da die
-                    // vollständige mathematische Identitätswiederherstellung (V = u·M + ID)
-                    // erst mit den echten TrapData (u, blinded_id) möglich ist — aber
-                    // der Gossip-Empfänger hat genug Daten für einen Soft Proof.
+                    // Create synthetic transactions from fingerprint data.
+                    // The offender_id can only be set to ANONYMOUS, as full
+                    // mathematical identity recovery (V = u·M + ID)
+                    // is only possible with real TrapData (u, blinded_id) — but
+                    // the gossip recipient has enough data for a soft proof.
                     let offender_id = crate::models::voucher::ANONYMOUS_ID.to_string();
-                    // Verwende den ds_tag als Proxy für den fork_point_prev_hash,
-                    // da der eigentliche prev_hash nicht verfügbar ist.
+                    // Use ds_tag as a proxy for fork_point_prev_hash,
+                    // as the actual prev_hash is not available.
                     let fork_point_prev_hash = fingerprints[0].ds_tag.clone();
 
                     for fp in fingerprints {
@@ -419,7 +419,7 @@ impl Wallet {
                         conflicting_transactions.push(synthetic_tx);
                     }
 
-                    // Überspringe die Missing-Generierung (alles bereits abgedeckt)
+                    // Skip missing generation (all already covered)
                     missing_t_ids.clear();
                 } else {
                     return Ok(None);
@@ -429,19 +429,19 @@ impl Wallet {
             }
         }
 
-        // 2. Extrahiere Kerndaten von der ERSTEN gefundenen Transaktion.
+        // 2. Extract core data from the FIRST found transaction.
         let mut offender_id = conflicting_transactions[0]
             .sender_id
             .clone()
             .unwrap_or(crate::models::voucher::ANONYMOUS_ID.to_string());
 
-        // --- MATHEMATISCHE ENTLARVUNG ---
-        // Falls die Identität anonym ist (Stealth-Modus oder Gossip-Soft-Proof), versuchen wir
-        // sie mathematisch aus den Trap-Daten der Fingerprints wiederherzustellen.
+        // --- MATHEMATICAL DE-ANONYMIZATION ---
+        // If the identity is anonymous (stealth mode or gossip soft proof), we try to
+        // mathematically recover it from the trap data of the fingerprints.
         if offender_id == crate::models::voucher::ANONYMOUS_ID && fingerprints.len() >= 2 {
             let f1 = &fingerprints[0];
             let f2 = &fingerprints[1];
-            // Nur wenn es sich um echte mathematische Traps handelt (nicht 'init'-Fingerprints)
+            // Only if these are real mathematical traps (not 'init' fingerprints)
             if f1.u != "none" && f2.u != "none" {
                 if let Ok(point) = crate::services::trap_manager::extract_id_point_from_raw_data(
                     &f1.ds_tag,
@@ -453,7 +453,7 @@ impl Wallet {
                 ) {
                     let pk_bytes = point.compress().to_bytes();
                     if let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes) {
-                        // Erstelle eine DID-Key ID (im Root-Account Format ohne Präfix)
+                        // Create a DID-Key ID (in root account format without prefix)
                         if let Ok(did_id) = crate::services::crypto_utils::create_user_id(&pk, None)
                         {
                             offender_id = did_id;
@@ -475,7 +475,7 @@ impl Wallet {
             conflicting_transactions.push(synthetic_tx);
         }
 
-        // 5. Versuche L2-Verifikation für alle verfügbaren Transaktionen.
+        // 5. Attempt L2 verification for all available transactions.
         let mut _verified_tx_count = 0;
         let mut voucher_valid_until = "unknown".to_string();
         let mut affected_voucher_name = None;
@@ -505,9 +505,9 @@ impl Wallet {
         }
 
 
-        // 6. Erstelle das Beweis-Objekt. 
-        // WICHTIG: Wir erstellen den Beweis JETZT IMMER, wenn wir >= 2 Kandidaten haben,
-        // auch wenn sie nicht kryptographisch voll verifiziert werden konnten ("Soft Proof").
+        // 6. Create the proof object.
+        // IMPORTANT: We NOW ALWAYS create the proof if we have >= 2 candidates,
+        // even if they could not be fully cryptographically verified ("Soft Proof").
         if conflicting_transactions.len() < 2 {
             return Ok(None);
         }
@@ -521,11 +521,11 @@ impl Wallet {
             is_test_voucher,
         )?;
 
-        // Metadaten setzen
+        // Set metadata
         proof.affected_voucher_name = affected_voucher_name;
         proof.voucher_standard_uuid = voucher_standard_uuid;
 
-        // Falls wir den Beweis bereits kennen und ein L2-Urteil oder Resolutions haben, übernehmen!
+        // If we already know the proof and have an L2 verdict or resolutions, adopt them!
         if let Some(existing_entry) = self.proof_store.proofs.get(&proof.proof_id) {
             proof.layer2_verdict = existing_entry.proof.layer2_verdict.clone();
             proof.resolutions = existing_entry.proof.resolutions.clone();
@@ -534,20 +534,20 @@ impl Wallet {
         Ok(Some(proof))
     }
 
-    /// Interne Hilfsfunktion für Layer-2-Replay-Schutz.
+    /// Internal helper function for Layer 2 replay protection.
     ///
-    /// Prüft die Fingerprints der letzten Transaktionen aller eingehenden Gutscheine
-    /// in einem Bundle gegen die gesamte bekannte Fingerprint-Historie des Wallets.
+    /// Checks the fingerprints of the latest transactions of all incoming vouchers
+    /// in a bundle against the entire known fingerprint history of the wallet.
     ///
     /// # Errors
-    /// Gibt `VoucherCoreError::TransactionFingerprintAlreadyKnown` zurück, wenn
-    /// einer der Fingerprints bereits in `own_fingerprints` oder `known_fingerprints`
-    /// (sowohl `local_history` als auch `foreign_fingerprints`) vorhanden ist UND
-    /// die `t_id` ebenfalls übereinstimmt (Replay-Angriff).
+    /// Returns `VoucherCoreError::TransactionFingerprintAlreadyKnown` if
+    /// one of the fingerprints is already present in `own_fingerprints` or `known_fingerprints`
+    /// (both `local_history` and `foreign_fingerprints`) AND
+    /// the `t_id` also matches (replay attack).
     ///
-    /// Ein Double-Spend (gleicher `fingerprint_hash`, aber NEUE `t_id`) wird
-    /// *absichtlich durchgelassen*, damit er von der nachgelagerten
-    /// Konfliktlösungslogik ("Earliest Wins") behandelt werden kann.
+    /// A double-spend (same `fingerprint_hash`, but NEW `t_id`) is
+    /// *intentionally permitted* so that it can be handled by the downstream
+    /// conflict resolution logic ("Earliest Wins").
     pub(super) fn check_bundle_fingerprints_against_history(
         &self,
         vouchers: &[Voucher],
@@ -559,14 +559,14 @@ impl Wallet {
                 ))
             })?;
 
-            // Berechne den relevanten Fingerprint (die "Kollisions-ID")
+            // Calculate the relevant fingerprint (the "collision ID")
             let fingerprint =
                 conflict_manager::create_fingerprint_for_transaction(last_tx, voucher)?;
             let fingerprint_hash = fingerprint.ds_tag;
 
-            // --- KORRIGIERTE LOGIK: Unterscheide Replay vs. Double Spend ---
+            // --- CORRECTED LOGIC: Distinguish replay vs. double spend ---
 
-            // 1. Sammle alle bekannten t_ids für diesen Fingerprint-Hash
+            // 1. Collect all known t_ids for this fingerprint hash
             let mut known_t_ids = std::collections::HashSet::new();
 
             if let Some(t_ids_vec) = self.own_fingerprints.history.get(&fingerprint_hash) {
@@ -589,40 +589,40 @@ impl Wallet {
                 }
             }
 
-            // 2. Prüfe, ob der Fingerprint-Hash überhaupt bekannt ist.
+            // 2. Check if the fingerprint hash is known at all.
             if !known_t_ids.is_empty() {
-                // Der Fingerprint-Hash ist bekannt.
-                // 3. Prüfe, ob die *spezifische t_id* auch bekannt ist.
+                // The fingerprint hash is known.
+                // 3. Check if the *specific t_id* is also known.
                 let incoming_t_id = &last_tx.t_id;
 
                 if known_t_ids.contains(incoming_t_id) {
-                    // --- FALL A (Echter Replay) ---
-                    // Wir haben DIESE EXAKTE Transaktion (gleicher Hash, gleiche t_id)
-                    // schon einmal gesehen. Das ist ein Replay-Angriff.
+                    // --- CASE A (True replay) ---
+                    // We have seen THIS EXACT transaction (same hash, same t_id)
+                    // before. This is a replay attack.
                     return Err(VoucherCoreError::TransactionFingerprintAlreadyKnown {
                         fingerprint_hash,
                     });
                 }
-                // --- FALL B (Double Spend) ---
-                // Der Hash ist bekannt, aber die t_id ist NEU.
-                // Dies ist ein Double Spend. Wir lassen ihn passieren, damit
-                // die "Earliest Wins"-Heuristik ihn fangen kann.
+                // --- CASE B (Double spend) ---
+                // The hash is known, but the t_id is NEW.
+                // This is a double spend. We let it pass so that
+                // the "Earliest Wins" heuristic can catch it.
             }
         }
 
         Ok(())
     }
 
-    /// Wählt Fingerprints für die Weiterleitung in einem Bundle aus, basierend auf der Heuristik.
+    /// Selects fingerprints for forwarding in a bundle, based on the heuristic.
     ///
     /// # Logic
-    /// 1. Markiert alle Fingerprints des zu sendenden Gutscheins als implizit bekannt für den Empfänger.
-    /// 2. Priorisiert negative "VIP"-Fingerprints (Betrugserkennung).
-    /// 3. Iteriert aufwärts durch alle bekannten positiven Fingerprints.
-    /// 4. Wählt bis zu `MAX_FINGERPRINTS_TO_SEND` Kandidaten aus.
+    /// 1. Marks all fingerprints of the voucher being sent as implicitly known to the recipient.
+    /// 2. Prioritizes negative "VIP" fingerprints (fraud detection).
+    /// 3. Iterates upward through all known positive fingerprints.
+    /// 4. Selects up to `MAX_FINGERPRINTS_TO_SEND` candidates.
     ///
     /// # Returns
-    /// Ein Tupel aus (`Vec<TransactionFingerprint>`, `HashMap<String, i8>`) für das Bundle.
+    /// A tuple of (`Vec<TransactionFingerprint>`, `HashMap<String, i8>`) for the bundle.
     pub fn select_fingerprints_for_bundle(
         &mut self,
         recipient_id: &str,
@@ -630,13 +630,13 @@ impl Wallet {
     ) -> Result<(Vec<TransactionFingerprint>, HashMap<String, i8>), VoucherCoreError> {
         const MAX_FINGERPRINTS_TO_SEND: usize = 150;
 
-        // Verwende den speichereffizienten Kurz-Hash (gibt [u8; 4] zurück)
+        // Use memory-efficient short hash (returns [u8; 4])
         let recipient_short_hash = get_short_hash_from_user_id(recipient_id);
 
         let mut selected_fingerprints = Vec::new();
         let mut selected_depths = HashMap::new();
 
-        // Schritt 1: Implizit bekannte Fingerprints des aktuellen Transfers markieren
+        // Step 1: Mark implicitly known fingerprints of the current transfer
         for voucher in vouchers_in_bundle {
             for tx in &voucher.transactions {
                 let fingerprint =
@@ -647,7 +647,7 @@ impl Wallet {
             }
         }
 
-        // Schritt 2: Alle bekannten Fingerprints sammeln
+        // Step 2: Collect all known fingerprints
         let mut all_known_fingerprints: Vec<TransactionFingerprint> = self
             .own_fingerprints
             .history
@@ -663,13 +663,13 @@ impl Wallet {
             .cloned()
             .collect();
 
-        // Sortierung: Berechnung der "Effektiven Tiefe" für organische Verdrängung
+        // Sorting: Calculate "effective depth" for organic displacement
         all_known_fingerprints.sort_by(|a, b| {
             let depth_a = self.fingerprint_metadata.get(&a.ds_tag).map(|m| m.depth).unwrap_or(0);
             let depth_b = self.fingerprint_metadata.get(&b.ds_tag).map(|m| m.depth).unwrap_or(0);
             
-            // Berechnung: VIPs erhalten einen 2-Hops Vorsprung.
-            // Wir casten auf i16, damit wir bei (1 - 2) = -1 keinen Underflow riskieren.
+            // Calculation: VIPs get a 2-hop lead.
+            // Cast to i16 to avoid underflow risks on (1 - 2) = -1.
             let eff_a = if depth_a < 0 { (depth_a.abs() as i16) - 2 } else { depth_a as i16 };
             let eff_b = if depth_b < 0 { (depth_b.abs() as i16) - 2 } else { depth_b as i16 };
             
@@ -682,7 +682,7 @@ impl Wallet {
             }
 
             if let Some(meta) = self.fingerprint_metadata.get_mut(&fp.ds_tag) {
-                // Nur wenn der Empfänger ihn noch nicht kennt
+                // Only if the recipient does not know it yet
                 if !meta.known_by_peers.contains(&recipient_short_hash) {
                     meta.known_by_peers.insert(recipient_short_hash);
                     selected_fingerprints.push(fp.clone());
@@ -694,7 +694,7 @@ impl Wallet {
         Ok((selected_fingerprints, selected_depths))
     }
 
-    /// Verarbeitet empfangene Fingerprints (aktiv und implizit) und aktualisiert die Metadaten.
+    /// Processes received fingerprints (active and implicit) and updates metadata.
     pub(super) fn process_received_fingerprints(
         &mut self,
         bundle_header: &TransactionBundleHeader,
@@ -702,11 +702,11 @@ impl Wallet {
         forwarded_fingerprints: &[TransactionFingerprint],
         fingerprint_depths: &HashMap<String, i8>,
     ) -> Result<(), VoucherCoreError> {
-        // Verwende den speichereffizienten Kurz-Hash
+        // Use memory-efficient short hash
         let sender_short_hash = get_short_hash_from_user_id(&bundle_header.sender_id);
 
-        // Phase 1: Aktiver Austausch (aus dem Bundle)
-        // Wir gruppieren die Fingerprints nach ds_tag, um Symmetrie-Prüfung bei VIPs durchzuführen.
+        // Phase 1: Active exchange (from the bundle)
+        // Group fingerprints by ds_tag to perform symmetry check for VIPs.
         let mut ds_groups: HashMap<String, Vec<(&TransactionFingerprint, i8)>> = HashMap::new();
         for fp in forwarded_fingerprints {
             if let Some(&depth) = fingerprint_depths.get(&fp.ds_tag) {
@@ -719,37 +719,37 @@ impl Wallet {
             
             let mut received_depth = group[0].1;
 
-            // --- Symmetrie-Prüfung für VIP-Fingerprints ---
+            // --- Symmetry check for VIP fingerprints ---
             if received_depth < 0 {
-                // Ein negativer VIP-Fingerprint muss immer im Partner-Duo kommen (Symmetrie).
-                // Und beide müssen exakt dieselbe depth aufweisen.
+                // A negative VIP fingerprint must always come as a partner pair (symmetry).
+                // And both must have the exact same depth.
                 let is_symmetric = group.len() >= 2 && group.iter().all(|(_, d)| *d == received_depth);
                 
                 if !is_symmetric {
-                    // Asymmetrischer VIP-Spam: Normalisieren auf positive Strafe (z.B. 1)
+                    // Asymmetric VIP spam: Normalize to positive penalty (e.g. 1)
                     received_depth = 1;
                 }
             }
 
-            // --- Loop-Protection & Alterung ---
+            // --- Loop protection & aging ---
             let meta = self.fingerprint_metadata.entry(ds_tag.clone()).or_default();
             
-            // Loop-Schutz: Wenn der Fingerprint bereits lokal als VIP bekannt ist, 
-            // ignorieren wir weitere negative Updates aus dem Gossip, um Replay-Loops 
-            // zu verhindern. Die lokale Alterung bzw. Erst-Entdeckung hat Vorrang.
+            // Loop protection: If the fingerprint is already locally known as VIP,
+            // ignore further negative updates from gossip to prevent replay loops.
+            // Local aging / initial discovery takes precedence.
             if meta.depth < 0 && received_depth < 0 {
                 continue;
             } else if meta.depth > 0 && received_depth < 0 {
-                // Übergang von normal zu VIP: Wir übernehmen den VIP-Status.
+                // Transition from normal to VIP: Adopt VIP status.
                 let new_depth = received_depth.saturating_sub(1);
                 meta.depth = new_depth;
             } else {
-                // Min-Merge / Update für alle anderen Fälle (normal zu normal, neu zu VIP, etc.)
+                // Min-Merge / update for all other cases (normal to normal, new to VIP, etc.)
                 let new_depth = if received_depth < 0 {
-                    // VIP-Alterung: saturating_sub(1) macht es negativer (-1 -> -2 -> ... -> -128)
+                    // VIP aging: saturating_sub(1) makes it more negative (-1 -> -2 -> ... -> -128)
                     received_depth.saturating_sub(1)
                 } else {
-                    // Normale Alterung
+                    // Normal aging
                     received_depth.saturating_add(1)
                 };
 
@@ -759,10 +759,10 @@ impl Wallet {
             }
             meta.known_by_peers.insert(sender_short_hash);
 
-            // FIX: Gossip-Fingerprints persistent in foreign_fingerprints speichern.
-            // Bisher wurden nur die Metadaten aktualisiert; die TransactionFingerprint-Objekte
-            // selbst wurden nie abgelegt. Ohne diese Persistenz kann check_for_double_spend()
-            // keine Kollisionen erkennen, die ausschließlich auf Gossip-Daten basieren.
+            // FIX: Persistently store gossip fingerprints in foreign_fingerprints.
+            // Previously only metadata was updated; the TransactionFingerprint objects
+            // themselves were never stored. Without this persistence, check_for_double_spend()
+            // cannot detect collisions based solely on gossip data.
             for (fp, _depth) in &group {
                 let entry = self
                     .known_fingerprints
@@ -775,7 +775,7 @@ impl Wallet {
             }
         }
 
-        // Phase 2: Implizite Bestätigung (aus der Gutscheinkette)
+        // Phase 2: Implicit confirmation (from voucher chain)
         for voucher in vouchers {
             let tx_count = voucher.transactions.len();
             for (i, tx) in voucher.transactions.iter().enumerate() {
@@ -787,8 +787,7 @@ impl Wallet {
                 let meta = self
                     .fingerprint_metadata
                     .entry(fingerprint.ds_tag.clone())
-                    .or_insert_with(FingerprintMetadata::default);
-
+                    .or_default();
                 meta.depth = depth_in_chain;
                 meta.known_by_peers.insert(sender_short_hash);
             }
@@ -797,14 +796,14 @@ impl Wallet {
     }
 }
 
-/// Gekapselte Offline-Konfliktlösung via "Earliest Wins"-Heuristik.
+/// Encapsulated offline conflict resolution via "Earliest Wins" heuristic.
 pub(super) fn resolve_conflict_offline(
     voucher_store: &mut VoucherStore,
     fingerprints: &[crate::models::conflict::TransactionFingerprint],
 ) {
     let tx_ids: std::collections::HashSet<_> = fingerprints.iter().map(|fp| &fp.t_id).collect();
 
-    // --- 1. Lese-Phase: Finde den Gewinner, ohne den Store zu verändern ---
+    // --- 1. Read phase: Find the winner without mutating the store ---
     let conflicting_txs: Vec<_> = voucher_store
         .vouchers
         .values()
@@ -837,10 +836,10 @@ pub(super) fn resolve_conflict_offline(
         }
     }
 
-    // --- 2. Schreib-Phase: Aktualisiere den Status basierend auf der Gewinner-ID ---
+    // --- 2. Write phase: Update status based on winner ID ---
     if let Some(winner_id) = winner_id {
         for instance in voucher_store.vouchers.values_mut() {
-            // Finde heraus, ob diese Instanz eine der Konflikt-Transaktionen enthält.
+            // Check if this instance contains one of the conflicting transactions.
             if let Some(tx) = instance
                 .voucher
                 .transactions
@@ -858,5 +857,3 @@ pub(super) fn resolve_conflict_offline(
         }
     }
 }
-
-

@@ -1,7 +1,7 @@
 //! # src/services/standard_manager.rs
 //!
-//! Dieses Modul enthält die Kernlogik zur Verarbeitung und Verifizierung
-//! von `VoucherStandardDefinition`-Dateien (standard.toml).
+//! This module contains core logic for processing and verifying
+//! `VoucherStandardDefinition` files (standard.toml).
 
 use crate::error::{StandardDefinitionError, VoucherCoreError};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
@@ -11,43 +11,42 @@ use std::collections::HashMap;
 
 use ed25519_dalek::Signature;
 
-/// Verarbeitet einen TOML-String, der eine Gutschein-Standard-Definition enthält.
+/// Processes a TOML string containing a voucher standard definition.
 ///
-/// Diese Funktion führt die folgenden Schritte aus:
-/// 1. Parst den TOML-String in die `VoucherStandardDefinition`-Struktur.
-/// 2. Kanonisiert die Definition (ohne Signatur) in einen stabilen JSON-String.
-/// 3. Berechnet den Hash des gesamten kanonischen JSON-Strings für die Signaturprüfung.
-/// 4. Verifiziert die im TOML enthaltene Ed25519-Signatur.
-/// 5. Berechnet den `logic_hash` separat nur über die [immutable]-Zone.
+/// This function performs the following steps:
+/// 1. Parses the TOML string into the `VoucherStandardDefinition` struct.
+/// 2. Canonicalizes the definition (without signature) into a stable JSON string.
+/// 3. Computes the hash of the full canonical JSON string for signature verification.
+/// 4. Verifies the Ed25519 signature contained in the TOML.
+/// 5. Computes the `logic_hash` separately over the `[immutable]` zone only.
 ///
 /// # Arguments
-/// * `toml_str` - Der Inhalt der `standard.toml`-Datei als String.
+/// * `toml_str` - The content of the `standard.toml` file as a string.
 ///
 /// # Returns
-/// Ein `Result`, das bei Erfolg ein Tupel mit der verifizierten `VoucherStandardDefinition`
-/// und dem berechneten `String` des `logic_hash` enthält. Bei einem Fehler wird
-/// ein `VoucherCoreError` zurückgegeben.
+/// A `Result` containing, on success, a tuple with the verified `VoucherStandardDefinition`
+/// and the computed `String` of the `logic_hash`. On error, a `VoucherCoreError` is returned.
 pub fn verify_and_parse_standard(
     toml_str: &str,
 ) -> Result<(VoucherStandardDefinition, String), VoucherCoreError> {
-    // 1. Parse den TOML-String in die Rust-Struktur.
+    // 1. Parse the TOML string into the Rust struct.
     let mut standard: VoucherStandardDefinition = toml::from_str(toml_str)?;
 
-    // Stelle sicher, dass der Signatur-Block vorhanden ist.
+    // Ensure that the signature block is present.
     let signature_block = standard.signature.clone().ok_or_else(|| {
         VoucherCoreError::Standard(StandardDefinitionError::MissingSignatureBlock)
     })?;
 
-    // 2. Erstelle eine temporäre Version der Struktur OHNE die Signatur für die Kanonisierung.
+    // 2. Create a temporary version of the struct WITHOUT signature for canonicalization.
     standard.signature = None;
 
-    // 3. Serialisiere die Struktur (immutable + mutable, ohne Signatur) in einen kanonischen JSON-String.
+    // 3. Serialize struct (immutable + mutable, without signature) into a canonical JSON string.
     let canonical_json_all = to_canonical_json(&standard)?;
 
-    // 4. Berechne den Hash zur Signaturprüfung.
+    // 4. Compute hash for signature verification.
     let signature_hash = get_hash(canonical_json_all.as_bytes());
 
-    // 5. Dekodiere die Signatur, validiere ihr Format und extrahiere den Public Key.
+    // 5. Decode signature, validate its format, and extract public key.
     let signature_bytes = bs58::decode(&signature_block.signature)
         .into_vec()
         .map_err(|e| {
@@ -60,7 +59,7 @@ pub fn verify_and_parse_standard(
 
     let public_key = get_pubkey_from_user_id(&signature_block.issuer_id)?;
 
-    // 6. Verifiziere die Signatur gegen den Hash des gesamten (signierten) Bodys.
+    // 6. Verify signature against hash of the entire (signed) body.
     #[cfg(feature = "test-utils")]
     {
         if !crate::is_signature_bypass_active() {
@@ -80,29 +79,29 @@ pub fn verify_and_parse_standard(
         }
     }
 
-    // 7. Berechne den logic_hash NUR über die [immutable]-Zone.
+    // 7. Compute logic_hash over the [immutable] zone ONLY.
     let canonical_json_immutable = to_canonical_json(&standard.immutable)?;
     let logic_hash = get_hash(canonical_json_immutable.as_bytes());
 
-    // 8. Setze den Signaturblock wieder in die Struktur ein und gib das Ergebnis zurück.
+    // 8. Restore signature block in struct and return result.
     standard.signature = Some(signature_block);
 
     Ok((standard, logic_hash))
 }
 
-/// Löst einen lokalisierten Text gemäß der im Plan definierten Fallback-Logik auf.
+/// Resolves localized text according to fallback logic defined in the specification.
 ///
-/// Die Suchreihenfolge ist:
-/// 1. Direkte Übereinstimmung mit `lang_preference`.
-/// 2. Fallback auf Englisch ("en").
-/// 3. Fallback auf einen beliebigen verfügbaren Text in der Liste.
+/// Search order:
+/// 1. Direct match with `lang_preference`.
+/// 2. Fallback to English ("en").
+/// 3. Fallback to any available text in the list.
 ///
 /// # Arguments
-/// * `texts` - Eine Map von Sprachcodes zu Texten.
-/// * `lang_preference` - Der bevorzugte Sprachcode (z.B. "de", "es").
+/// * `texts` - A map of language codes to texts.
+/// * `lang_preference` - Preferred language code (e.g. "de", "es").
 ///
 /// # Returns
-/// Ein `Option<&str>`, das den gefundenen Text enthält oder `None`, wenn die Liste leer ist.
+/// An `Option<&str>` containing the found text, or `None` if the list is empty.
 pub fn get_localized_text<'a>(
     texts: &'a HashMap<String, String>,
     lang_preference: &str,
@@ -111,17 +110,17 @@ pub fn get_localized_text<'a>(
         return None;
     }
 
-    // 1. Suche nach direkter Übereinstimmung.
+    // 1. Search for direct match.
     if let Some(text) = texts.get(lang_preference) {
         return Some(text.as_str());
     }
 
-    // 2. Fallback auf Englisch.
+    // 2. Fallback to English.
     if let Some(text) = texts.get("en") {
         return Some(text.as_str());
     }
 
-    // 3. Fallback auf das lexikographisch erste Element (für Determinismus).
+    // 3. Fallback to lexicographically first element (for determinism).
     let mut keys: Vec<&String> = texts.keys().collect();
     keys.sort();
     keys.first()

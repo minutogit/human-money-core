@@ -1,9 +1,9 @@
 // tests/wallet_api/lifecycle_and_data.rs
 // cargo test --test wallet_api_tests
 //!
-//! Enthält Robustheitstests für die kritischen `AppService`-Funktionen
-//! in den Bereichen Lebenszyklus (Erstellung, Login, Wiederherstellung) und
-//! generische Datenverschlüsselung.
+//! Contains robustness tests for critical `AppService` functions
+//! in the areas of lifecycle (creation, login, recovery) and
+//! generic data encryption.
 
 #[cfg(test)]
 mod tests {
@@ -14,17 +14,17 @@ mod tests {
     use human_money_core::test_utils;
     use human_money_core::test_utils::{ACTORS, generate_signed_standard_toml};
     use tempfile::tempdir;
-    // HINZUGEFÜGT: Imports für den neuen Testplan
+    // ADDED: Imports for new test plan
     use human_money_core::wallet::MultiTransferRequest;
     use std::collections::HashMap;
 
     const PASSWORD: &str = "correct-password-123";
     const WRONG_PASSWORD: &str = "wrong-password-!@#";
 
-    // --- Interne Test-Hilfsfunktionen ---
+    // --- Internal test helper functions ---
 
-    /// Erstellt eine Dummy-Transferanfrage für Tests.
-    /// Benötigt einen Service, der bereits einen Gutschein hat.
+    /// Creates a dummy transfer request for testing.
+    /// Requires a service that already has a voucher.
     fn create_dummy_transfer_request(service: &mut AppService) -> MultiTransferRequest {
         let summary = service
             .get_voucher_summaries(None, None, None)
@@ -43,9 +43,9 @@ mod tests {
         }
     }
 
-    /// Hilfsfunktion, die einen Service erstellt UND einen Gutschein darin anlegt.
-    /// Notwendig für alle Tests, die `create_transfer_bundle` aufrufen wollen.
-    /// Gibt auch das TempDir zurück, um sicherzustellen, dass es während des Tests existiert.
+    /// Helper function that creates a service AND creates a voucher within it.
+    /// Required for all tests that want to call `create_transfer_bundle`.
+    /// Also returns TempDir to ensure it exists during the test.
     fn setup_service_with_voucher(
         password: &str,
     ) -> (AppService, ProfileInfo, String, tempfile::TempDir) {
@@ -72,8 +72,8 @@ mod tests {
         let signed_standard =
             generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
 
-        // HINWEIS: Dieser Aufruf MUSS Some(password) (Modus A) verwenden, da setup_service_with_profile
-        // (und der darin enthaltene Anker-Fix) KEINE Modus B-Session startet.
+        // NOTE: This call MUST use Some(password) (Mode A), as setup_service_with_profile
+        // (and the anchor fix contained within) does NOT start a Mode B session.
         let _voucher = service
             .create_new_voucher(&signed_standard, voucher_data, Some(password))
             .expect("Voucher creation in setup_service_with_voucher failed");
@@ -87,15 +87,15 @@ mod tests {
         (service, profile, local_id, dir)
     }
 
-    // --- Teil 1: Absicherung des Gelben Bereichs (data_encryption.rs) ---
+    // --- Part 1: Guarding the Yellow Area (data_encryption.rs) ---
 
-    /// **Test 1: test_data_encryption_workflow()** (Angepasst für Modus B)
+    /// **Test 1: test_data_encryption_workflow()** (Adapted for Mode B)
     ///
-    /// Überprüft den kompletten "Happy Path" des generischen Datenspeichers
-    /// im "Passwort merken"-Modus (Modus B).
+    /// Verifies the complete "Happy Path" of generic data storage
+    /// in "remember password" mode (Mode B).
     #[test]
     fn test_data_encryption_workflow() {
-        // 1. Profil erstellen und entsperren
+        // 1. Create profile and unlock
         let dir = tempdir().unwrap();
         let (mut service, _) = test_utils::setup_service_with_profile(
             dir.path(),
@@ -104,45 +104,45 @@ mod tests {
             PASSWORD,
         );
 
-        // 2. Daten speichern (mit Modus B)
+        // 2. Save data (with Mode B)
         let data_name = "user_settings";
         let original_data = b"some secret application data".to_vec();
         service
             .save_encrypted_data(data_name, &original_data, Some(PASSWORD))
             .expect("Saving data should succeed");
 
-        // 3. Daten laden (mit Modus B)
+        // 3. Load data (with Mode B)
         let loaded_data = service
             .load_encrypted_data(data_name, Some(PASSWORD))
             .expect("Loading data should succeed");
 
-        // 4. Assert: Geladene Daten müssen den Originaldaten entsprechen
+        // 4. Assert: Loaded data must match original data
         assert_eq!(original_data, loaded_data);
     }
 
     /// **Test 2: test_data_encryption_fails_when_locked()**
     ///
-    /// Stellt sicher, dass im `Locked`-Zustand kein Zugriff auf sensible Daten möglich ist.
+    /// Ensures that no access to sensitive data is possible in the `Locked` state.
     #[test]
     fn test_data_encryption_fails_when_locked() {
         let dir = tempdir().unwrap();
-        // 1. Profil erstellen (Service ist danach entsperrt)
+        // 1. Create profile (service is unlocked afterwards)
         let (mut service, _) = test_utils::setup_service_with_profile(
             dir.path(),
             &ACTORS.test_user,
             "Lock User",
             PASSWORD,
         );
-        // 2. Service sperren
+        // 2. Lock service
         service.logout();
 
-        // 3. Versuche zu speichern und zu laden (mit Modus A oder B - beides muss fehlschlagen)
+        // 3. Attempt to save and load (with Mode A or B - both must fail)
         let save_result = service.save_encrypted_data("any_data", &[1, 2, 3], None);
         let load_result = service.load_encrypted_data("any_data", None);
         let save_result_pw = service.save_encrypted_data("any_data", &[1, 2, 3], Some(PASSWORD));
         let load_result_pw = service.load_encrypted_data("any_data", Some(PASSWORD));
 
-        // 4. Assert: Alle Aufrufe müssen fehlschlagen
+        // 4. Assert: All calls must fail
         assert!(save_result.is_err());
         assert!(save_result.unwrap_err().to_string().contains("Wallet is locked"));
         assert!(load_result.is_err());
@@ -153,13 +153,13 @@ mod tests {
         assert!(load_result_pw.unwrap_err().to_string().contains("Wallet is locked"));
     }
 
-    /// **Test 3: test_data_encryption_fails_with_wrong_password()** (Angepasst für Modus A)
+    /// **Test 3: test_data_encryption_fails_with_wrong_password()** (Adapted for Mode A)
     ///
-    /// Verifiziert die Passwort-Prüfung für den Datenspeicher im "Immer fragen"-Modus (Modus A).
+    /// Verifies password checking for data storage in "always ask" mode (Mode A).
     #[test]
     fn test_data_encryption_fails_with_wrong_password() {
         let dir = tempdir().unwrap();
-        // 1. Profil erstellen
+        // 1. Create profile
         let (mut service, _) = test_utils::setup_service_with_profile(
             dir.path(),
             &ACTORS.test_user,
@@ -169,28 +169,28 @@ mod tests {
 
         let data_name = "user_settings";
         let original_data = b"some config".to_vec();
-        // Speichere mit Modus A (Some(PASSWORD))
+        // Save with Mode A (Some(PASSWORD))
         service
             .save_encrypted_data(data_name, &original_data, Some(PASSWORD))
             .expect("Saving data with correct password should work");
 
-        // 2. Assert: Versuch, mit falschem Passwort zu laden (Modus A), schlägt fehl
+        // 2. Assert: Attempting to load with wrong password (Mode A) fails
         let load_err = service
             .load_encrypted_data(data_name, Some(WRONG_PASSWORD))
             .unwrap_err();
-        assert!(load_err.to_string().contains("Authentication failed")); // Oder "Password verification failed"
+        assert!(load_err.to_string().contains("Authentication failed")); // Or "Password verification failed"
 
-        // 3. Assert: Versuch, mit falschem Passwort zu schreiben (Modus A), schlägt fehl
+        // 3. Assert: Attempting to write with wrong password (Mode A) fails
         let save_err = service
             .save_encrypted_data("other_data", &[0], Some(WRONG_PASSWORD))
             .unwrap_err();
-        assert!(save_err.to_string().contains("Authentication failed")); // Oder "Password verification failed"
+        assert!(save_err.to_string().contains("Authentication failed")); // Or "Password verification failed"
     }
 
-    // --- Teil 2: Absicherung des Roten Bereichs (lifecycle.rs) ---
+    // --- Part 2: Guarding the Red Area (lifecycle.rs) ---
 
     /// **Test 4: test_create_profile_fails_with_invalid_mnemonic()**
-    /// (Unverändert, da `create_profile` keine Session-Logik verwendet)
+    /// (Unchanged because `create_profile` does not use session logic)
     #[test]
     fn test_create_profile_fails_with_invalid_mnemonic() {
         let dir = tempdir().unwrap();
@@ -210,7 +210,7 @@ mod tests {
         assert!(service.get_user_id().is_err());
     }
 
-    /// **Test 4.2: Passphrase beeinflusst Schlüsselableitung** (Plan C)
+    /// **Test 4.2: Passphrase affects key derivation** (Plan C)
     #[test]
     fn test_passphrase_affects_keypair() {
         use human_money_core::Wallet;
@@ -223,7 +223,7 @@ mod tests {
     }
 
     /// **Test 5: test_login_fails_with_wrong_password()**
-    /// (Unverändert, da `login` keine Session-Logik verwendet)
+    /// (Unchanged because `login` does not use session logic)
     #[test]
     fn test_login_fails_with_wrong_password() {
         let dir = tempdir().unwrap();
@@ -248,14 +248,14 @@ mod tests {
         );
     }
 
-    /// **Test 6: test_recovery_preserves_wallet_data()** (Angepasst für Modus B)
+    /// **Test 6: test_recovery_preserves_wallet_data()** (Adapted for Mode B)
     ///
-    /// Stellt sicher, dass die Passwort-Wiederherstellung bestehende Wallet-Inhalte erhält.
+    /// Ensures that password recovery preserves existing wallet contents.
     #[test]
     fn test_recovery_preserves_wallet_data() {
         let dir = tempdir().unwrap();
         let test_user = &ACTORS.test_user;
-        // 1. Profil erstellen
+        // 1. Create profile
         let (mut service, profile_info) = test_utils::setup_service_with_profile(
             dir.path(),
             test_user,
@@ -263,7 +263,7 @@ mod tests {
             PASSWORD,
         );
 
-        // 2. Einen Test-Gutschein erstellen (benötigt Modus B)
+        // 2. Create a test voucher (requires Mode B)
         let user_id = service.get_user_id().unwrap();
 
         let voucher_data = NewVoucherData {
@@ -282,20 +282,20 @@ mod tests {
         let signed_standard =
             generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
         let created_voucher = service
-            // KORREKTUR: Der Login (via setup_service_with_profile) startet keine Session.
-            // Wir MÜSSEN Modus A (Some(PASSWORD)) verwenden.
+            // FIX: Login (via setup_service_with_profile) does not start a session.
+            // We MUST use Mode A (Some(PASSWORD)).
             .create_new_voucher(&signed_standard, voucher_data, Some(PASSWORD))
             .expect("Voucher creation should succeed");
 
-        // 3. Prüfen, ob der Gutschein vorhanden ist
+        // 3. Check if the voucher is present
         let summaries_before = service.get_voucher_summaries(None, None, None).unwrap();
         assert_eq!(summaries_before.len(), 1);
         let local_id = summaries_before[0].local_instance_id.clone();
 
-        // 4. Service sperren
+        // 4. Lock service
         service.logout();
 
-        // 5. Wallet wiederherstellen und neues Passwort setzen
+        // 5. Recover wallet and set new password
         service
             .recover_wallet_and_set_new_password(
                 &profile_info.folder_name,
@@ -307,7 +307,7 @@ mod tests {
             )
             .expect("Recovery should succeed");
 
-        // 6. Assert: Der Gutschein muss nach der Wiederherstellung noch vorhanden sein
+        // 6. Assert: Voucher must still be present after recovery
         let details_after = service.get_voucher_details(&local_id).unwrap();
         assert_eq!(details_after.local_instance_id, local_id);
         assert_eq!(details_after.voucher.voucher_id, created_voucher.voucher_id);
@@ -317,25 +317,25 @@ mod tests {
         assert_eq!(integrity_report, human_money_core::models::storage_integrity::IntegrityReport::Valid, "Integrity must be Valid after recovery");
     }
 
-    /* * ANFANG: Neuer Testabschnitt (aus Testplan 5)
-     * HINWEIS: Die Tests 1-3 sind bereits oben abgedeckt (test_data_encryption_...).
-     * Wir fügen hier die neuen Tests für Session-Management hinzu.
+    /* * START: New test section (from Test Plan 5)
+     * NOTE: Tests 1-3 are already covered above (test_data_encryption_...).
+     * We add the new tests for session management here.
      */
 
-    /// # 5. Tests für Session-Management und Flexible Authentifizierung
+    /// # 5. Tests for Session Management and Flexible Authentication
     ///
-    /// Diese Tests verifizieren die "Sicheres Passwort merken"-Funktion (Plan B),
-    /// die beide Modi abdeckt: "Immer fragen" (Modus A) und "Passwort merken" (Modus B).
+    /// These tests verify the "Secure password remembering" feature (Plan B),
+    /// which covers both modes: "Always ask" (Mode A) and "Remember password" (Mode B).
 
-    /// --- 5.1 Grundlegende Session-Verwaltung ---
+    /// --- 5.1 Basic Session Management ---
 
     #[test]
     fn test_session_unlock_session_success() {
         let dir = tempdir().unwrap();
         let (mut service, _) =
             test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Test", PASSWORD);
-        // HINWEIS: setup_service_with_profile verlässt den Service im Unlocked-Zustand.
-        // Dieser Test prüft, ob unlock_session mit dem korrekten PW im Unlocked-Zustand funktioniert.
+        // NOTE: setup_service_with_profile leaves the service in the Unlocked state.
+        // This test checks whether unlock_session works with the correct PW in the Unlocked state.
         let result = service.unlock_session(PASSWORD, 60);
         assert!(result.is_ok());
     }
@@ -350,13 +350,13 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("Authentication failed"));
     }
 
-    /// --- 5.2 Modus A: "Immer fragen" (Argument `Some(password)`) ---
+    /// --- 5.2 Mode A: "Always ask" (Argument `Some(password)`) ---
 
     #[test]
     fn test_session_mode_a_action_succeeds_with_password_only() {
         let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
-        // setup_service_with_voucher hinterlässt den Service im Unlocked-Zustand,
-        // aber OHNE aktive Session (da lock_session() entfernt wurde).
+        // setup_service_with_voucher leaves the service in the Unlocked state,
+        // but WITHOUT active session (since lock_session() was removed).
         let request = create_dummy_transfer_request(&mut service);
 
         // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
@@ -388,17 +388,17 @@ mod tests {
             Some(WRONG_PASSWORD),
         );
         assert!(result.is_err());
-        // Der Fehler kommt von derive_key_for_session -> get_file_key -> AuthenticationFailed
+        // Error comes from derive_key_for_session -> get_file_key -> AuthenticationFailed
         assert!(result.unwrap_err().to_string().contains("Authentication failed"));
     }
 
-    /// --- 5.3 Modus B: "Passwort merken" (Argument `None` + Aktive Session) ---
+    /// --- 5.3 Mode B: "Remember password" (Argument `None` + Active Session) ---
 
     #[test]
     fn test_session_mode_b_action_fails_without_session() {
         let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
-        // Service ist Unlocked, aber Session ist Locked (da setup_service_with_voucher lock_session() entfernt hat)
-        // Der Aufruf mit `None` muss fehlschlagen.
+        // Service is Unlocked, but Session is Locked (since setup_service_with_voucher removed lock_session())
+        // The call with `None` must fail.
         let request = create_dummy_transfer_request(&mut service);
 
         // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
@@ -409,13 +409,13 @@ mod tests {
 
         let result = service.create_transfer_bundle(request, &standard_definitions, None, None);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Password required.")); // KORREKTUR: Die Fehlermeldung ist kürzer.
+        assert!(result.unwrap_err().to_string().contains("Password required.")); // FIX: Error message is shorter.
     }
 
     #[test]
     fn test_session_mode_b_action_succeeds_with_session() {
         let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
-        // Session explizit für diesen Test entsperren
+        // Explicitly unlock session for this test
         service.unlock_session(PASSWORD, 60).unwrap();
         let request = create_dummy_transfer_request(&mut service);
 
@@ -432,8 +432,8 @@ mod tests {
     #[test]
     fn test_session_mode_b_timeout() {
         let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
-        // Session explizit für diesen Test entsperren
-        service.unlock_session(PASSWORD, 1).unwrap(); // 1 Sekunde Timeout
+        // Explicitly unlock session for this test
+        service.unlock_session(PASSWORD, 1).unwrap(); // 1 second timeout
         std::thread::sleep(std::time::Duration::from_secs(2));
         let request = create_dummy_transfer_request(&mut service);
 
@@ -451,13 +451,13 @@ mod tests {
     #[test]
     fn test_session_mode_b_refresh_activity_sliding_window() {
         let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
-        // Session explizit für diesen Test entsperren
-        service.unlock_session(PASSWORD, 3).unwrap(); // 3 Sekunden Timeout
+        // Explicitly unlock session for this test
+        service.unlock_session(PASSWORD, 3).unwrap(); // 3 seconds timeout
         std::thread::sleep(std::time::Duration::from_secs(2));
         service
             .refresh_session_activity()
-            .expect("Refresh should succeed within timeout"); // Timer zurücksetzen
-        std::thread::sleep(std::time::Duration::from_secs(2)); // Gesamt 4s vergangen
+            .expect("Refresh should succeed within timeout"); // Reset timer
+        std::thread::sleep(std::time::Duration::from_secs(2)); // Total 4s elapsed
         let request = create_dummy_transfer_request(&mut service);
 
         // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
@@ -477,14 +477,14 @@ mod tests {
     fn test_refresh_fails_on_expired_session() {
         let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
 
-        // 1. Session mit kurzem Timeout (1 Sekunde) starten
+        // 1. Start session with short timeout (1 second)
         service.unlock_session(PASSWORD, 1).unwrap();
 
-        // 2. Warten, bis die Session physisch abgelaufen ist (2 Sekunden)
+        // 2. Wait until session has physically expired (2 seconds)
         std::thread::sleep(std::time::Duration::from_secs(2));
 
-        // 3. Versuchen, die abgelaufene Session zu aktualisieren.
-        // Dies muss nun fehlschlagen, da der Core den Timeout validiert.
+        // 3. Attempt to refresh expired session.
+        // This must now fail because the core validates the timeout.
         let refresh_result = service.refresh_session_activity();
         assert!(
             refresh_result.is_err(),
@@ -492,8 +492,8 @@ mod tests {
         );
         assert_eq!(refresh_result.unwrap_err().to_string(), "Session expired.");
 
-        // 4. Verifizieren, dass die Session nun auch gesperrt ist (Cache geleert).
-        // Zugriff ohne Passwort (Modus B) muss fehlschlagen.
+        // 4. Verify that session is now also locked (cache cleared).
+        // Access without password (Mode B) must fail.
         let load_result = service.load_encrypted_data("test_data", None);
         assert!(load_result.is_err());
         assert!(
@@ -506,19 +506,19 @@ mod tests {
     fn test_logout_clears_active_session_immediately() {
         let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
 
-        // 1. Session starten (Modus B aktivieren)
+        // 1. Start session (activate Mode B)
         service.unlock_session(PASSWORD, 60).unwrap();
 
-        // 2. Verify: Aktion ohne Passwort klappt
+        // 2. Verify: Action without password succeeds
         service
             .save_encrypted_data("pre_logout", b"data", None)
             .expect("Session should work");
 
-        // 3. Logout durchführen (Hard Reset)
+        // 3. Perform logout (hard reset)
         service.logout();
 
-        // 4. Verify: Zugriff muss komplett verweigert werden (Wallet is locked),
-        // nicht nur "Password required". Der Status ist jetzt Locked, nicht mehr Unlocked.
+        // 4. Verify: Access must be completely denied (Wallet is locked),
+        // not just "Password required". Status is now Locked, no longer Unlocked.
         let result = service.load_encrypted_data("pre_logout", None);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Wallet is locked"));
@@ -529,11 +529,11 @@ mod tests {
         let dir = tempdir().unwrap();
         let (mut service, _profile) =
             test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Test", PASSWORD);
-        // Session explizit für diesen Test entsperren
-        service.unlock_session(PASSWORD, 3).unwrap(); // 3 Sekunden Timeout
+        // Explicitly unlock session for this test
+        service.unlock_session(PASSWORD, 3).unwrap(); // 3 seconds timeout
         std::thread::sleep(std::time::Duration::from_secs(2));
-        service.save_encrypted_data("test1", b"data", None).unwrap(); // Aktion setzt Timer zurück
-        std::thread::sleep(std::time::Duration::from_secs(2)); // Gesamt 4s vergangen
+        service.save_encrypted_data("test1", b"data", None).unwrap(); // Action resets timer
+        std::thread::sleep(std::time::Duration::from_secs(2)); // Total 4s elapsed
         let result = service.load_encrypted_data("test1", None);
         assert!(
             result.is_ok(),
@@ -544,9 +544,9 @@ mod tests {
     #[test]
     fn test_session_mode_b_lock_session_works() {
         let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
-        // Session explizit für diesen Test entsperren
+        // Explicitly unlock session for this test
         service.unlock_session(PASSWORD, 60).unwrap();
-        service.lock_session(); // Session manuell sperren
+        service.lock_session(); // Manually lock session
         let request = create_dummy_transfer_request(&mut service);
 
         // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
@@ -560,13 +560,13 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("Password required."));
     }
 
-    /// --- 5.4 Edge Cases: Überschreiben der Session ---
+    /// --- 5.4 Edge Cases: Overriding the Session ---
 
     #[test]
     fn test_session_mode_a_overrides_mode_b_succeeds() {
         let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
-        // Session explizit für diesen Test entsperren
-        service.unlock_session(PASSWORD, 60).unwrap(); // Modus B ist aktiv
+        // Explicitly unlock session for this test
+        service.unlock_session(PASSWORD, 60).unwrap(); // Mode B is active
         let request = create_dummy_transfer_request(&mut service);
 
         // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
@@ -579,15 +579,15 @@ mod tests {
             service.create_transfer_bundle(request, &standard_definitions, None, Some(PASSWORD));
         assert!(
             result.is_ok(),
-            "Modus A (Some(pass)) sollte Vorrang vor Modus B (Session) haben."
+            "Mode A (Some(pass)) should take precedence over Mode B (Session)."
         );
     }
 
     #[test]
     fn test_session_mode_a_wrong_password_fails_even_if_mode_b_is_active() {
         let (mut service, _profile, _local_id, _dir) = setup_service_with_voucher(PASSWORD);
-        // Session explizit für diesen Test entsperren
-        service.unlock_session(PASSWORD, 60).unwrap(); // Modus B ist aktiv
+        // Explicitly unlock session for this test
+        service.unlock_session(PASSWORD, 60).unwrap(); // Mode B is active
         let request = create_dummy_transfer_request(&mut service);
 
         // Load the standard definition for a1b2c3d4-e5f6-4789-8012-3456789abcde
@@ -606,5 +606,5 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("Authentication failed"));
     }
 
-    /* ENDE: Neuer Testabschnitt */
+    /* END: New test section */
 }

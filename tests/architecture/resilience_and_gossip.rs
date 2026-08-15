@@ -1,9 +1,9 @@
 // tests/architecture/resilience_and_gossip.rs
 // cargo test --test architecture_tests
 //!
-//! Testet die Kernfunktionen der neuen Architektur:
-//! - Resilienz: Speicherbereinigung (Cleanup) und Wiederherstellung (Recovery).
-//! - Gossip: Die korrekte Verbreitung und Aktualisierung von Fingerprint-Metadaten.
+//! Tests the core functions of the new architecture:
+//! - Resilience: Storage cleanup and recovery.
+//! - Gossip: Correct propagation and updating of fingerprint metadata.
 
 #[cfg(test)]
 mod tests {
@@ -18,27 +18,27 @@ mod tests {
 
     const PASSWORD: &str = "test-password-123";
 
-    /// Hilfsfunktion, um eine saubere Testumgebung mit zwei AppService-Instanzen zu erstellen.
-    /// Die Services sind NICHT automatisch eingeloggt, um Locking-Konflikte zu vermeiden.
+    /// Helper function to create a clean test environment with two AppService instances.
+    /// Services are NOT automatically logged in to prevent locking conflicts.
     fn setup_test_environment(
         dir: &TempDir,
     ) -> ((AppService, ProfileInfo), (AppService, ProfileInfo)) {
-        // Alice erstellen
+        // Create Alice
         let (alice_service, alice_profile) =
             test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", PASSWORD);
 
-        // Bob erstellen
+        // Create Bob
         let (bob_service, bob_profile) =
             test_utils::setup_service_with_profile(dir.path(), &ACTORS.bob, "Bob", "password");
 
         ((alice_service, alice_profile), (bob_service, bob_profile))
     }
 
-    /// Hilfsfunktion: Erstellt und sendet ein Bundle, das nur Fingerprints enthält.
+    /// Helper function: Creates and sends a bundle containing only fingerprints.
     fn create_and_send_fingerprint_bundle(
         sender_service: &mut AppService,
         recipient_id: &str,
-        fingerprints: Vec<(TransactionFingerprint, i8)>, // Tupel von (Fingerprint, depth)
+        fingerprints: Vec<(TransactionFingerprint, i8)>, // Tuple of (Fingerprint, depth)
     ) -> Vec<u8> {
         let (fprints, depths): (Vec<_>, HashMap<_, _>) = fingerprints
             .into_iter()
@@ -52,7 +52,7 @@ mod tests {
         let (bundle_bytes, _header) = wallet
             .create_and_encrypt_transaction_bundle(
                 identity,
-                vec![], // Keine Gutscheine
+                vec![], // No vouchers
                 recipient_id,
                 None,
                 forwarded_fingerprints,
@@ -64,7 +64,7 @@ mod tests {
     }
 
     //==============================================================================
-    // C. Speicherbereinigungs-Tests (Resilienz im Betrieb)
+    // C. Storage Cleanup Tests (Resilience in Operation)
     //==============================================================================
 
     #[test]
@@ -119,8 +119,8 @@ mod tests {
         let report = service.run_storage_cleanup().unwrap();
         let wallet_state = service.get_unlocked_mut_for_test().0;
 
-        // Mit den aktuellen Konstanten (MAX_FINGERPRINTS = 20_000) wird Phase 2 des Cleanups
-        // in diesem Test nicht ausgelöst. Die Assertion wird auf 0 korrigiert.
+        // With current constants (MAX_FINGERPRINTS = 20_000), Phase 2 of cleanup
+        // is not triggered in this test. The assertion is corrected to 0.
         assert_eq!(report.limit_based_fingerprints_removed, 0);
 
         assert_eq!(report.expired_fingerprints_removed, 1);
@@ -160,14 +160,14 @@ mod tests {
                 ds_tag: key.clone(),
                 u: String::new(),
                 blinded_id: String::new(),
-                t_id: format!("tx_{:02}", i), // Padding für korrekte lexikalische Sortierung
+                t_id: format!("tx_{:02}", i), // Padding for correct lexical sorting
                 encrypted_timestamp: 0,
                 layer2_signature: String::new(),
                 deletable_at: String::new(),
             };
             let mut meta = FingerprintMetadata::default();
             meta.depth = match i {
-                0 | 1 => 5, // Höchste depth, werden zuerst gelöscht
+                0 | 1 => 5, // Highest depth, deleted first
                 _ => 1,
             };
             wallet
@@ -177,8 +177,8 @@ mod tests {
             wallet.fingerprint_metadata.insert(key, meta);
         }
 
-        // WHEN: Die Speicherbereinigung wird direkt auf dem Wallet mit einem
-        // niedrigen Limit für den Test getriggert.
+        // WHEN: Storage cleanup is triggered directly on the wallet with a
+        // low limit for the test.
         let report = service
             .get_unlocked_mut_for_test()
             .0
@@ -186,7 +186,7 @@ mod tests {
             .unwrap();
         assert_eq!(report.limit_based_fingerprints_removed, 2);
 
-        // THEN: Die 2 Fingerprints mit der höchsten `depth` wurden entfernt.
+        // THEN: The 2 fingerprints with the highest `depth` were removed.
         let final_wallet = service.get_unlocked_mut_for_test().0;
         assert_eq!(final_wallet.fingerprint_metadata.len(), 10);
         assert!(!final_wallet.fingerprint_metadata.contains_key("key_0"));
@@ -196,7 +196,7 @@ mod tests {
     }
 
     //==============================================================================
-    // D. Tests zur Robustheit und Wiederherstellung (Recovery)
+    // D. Tests for Robustness and Recovery
     //==============================================================================
 
     #[test]
@@ -239,8 +239,8 @@ mod tests {
         let wallet_path = dir.path().join(&profile.folder_name);
         service.logout();
 
-        // WICHTIG: Die Datei `fingerprint_metadata.enc` muss existieren, bevor sie gelöscht wird.
-        // Der Fix in `Wallet::create_new_voucher` stellt dies nun sicher.
+        // IMPORTANT: The file `fingerprint_metadata.enc` must exist before being deleted.
+        // The fix in `Wallet::create_new_voucher` ensures this.
         let metadata_path = wallet_path.join("fingerprint_metadata.enc");
         assert!(
             metadata_path.exists(),
@@ -248,8 +248,8 @@ mod tests {
         );
 
         std::fs::remove_file(metadata_path).unwrap();
-        // Auch das Siegel entfernen, da es den alten state_hash enthält.
-        // Bei echtem Datenverlust wäre das Siegel ebenfalls betroffen.
+        // Also remove the seal as it contains the old state_hash.
+        // In real data loss, the seal would also be affected.
         let seal_path = wallet_path.join("seal.enc");
         if seal_path.exists() {
             std::fs::remove_file(seal_path).unwrap();
@@ -304,7 +304,7 @@ mod tests {
         service.logout();
         std::fs::remove_file(wallet_path.join("own_fingerprints.enc")).unwrap();
         std::fs::remove_file(wallet_path.join("known_fingerprints.enc")).unwrap();
-        // Auch das Siegel entfernen, da es den alten state_hash enthält.
+        // Also remove the seal as it contains the old state_hash.
         let seal_path = wallet_path.join("seal.enc");
         if seal_path.exists() {
             std::fs::remove_file(seal_path).unwrap();
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_recovery_initializes_depth_correctly() {
-        // GIVEN: Ein Wallet mit einem Gutschein mit 3 Transaktionen wird gespeichert.
+        // GIVEN: A wallet with a voucher having 3 transactions is saved.
         let dir = tempdir().unwrap();
         let ((mut alice_service, alice_profile), (mut bob_service, bob_profile)) =
             setup_test_environment(&dir);
@@ -337,7 +337,7 @@ mod tests {
             std::fs::remove_file(&bob_lock_file).unwrap();
         }
 
-        // Alice einloggen
+        // Log in Alice
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
@@ -368,9 +368,9 @@ mod tests {
 
         // Tx 2: Alice -> Bob
 
-        // FIX: Wir müssen die ECHTE User-ID von Bob aus seinem Service holen.
-        // Die statische ID in ACTORS.bob unterscheidet sich von der im Service generierten ID
-        // aufgrund unterschiedlicher Key-Derivation-Methoden (Test-Fast vs. Prod-Slow).
+        // FIX: We need to retrieve Bob's REAL user ID from his service.
+        // The static ID in ACTORS.bob differs from the ID generated in the service
+        // due to different key derivation methods (test-fast vs prod-slow).
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
@@ -403,10 +403,10 @@ mod tests {
             bundle1_result
         };
 
-        // Alice ausloggen
+        // Log out Alice
         alice_service.logout();
 
-        // Bob einloggen und Bundle empfangen
+        // Log in Bob and receive bundle
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
@@ -423,7 +423,7 @@ mod tests {
             .clone();
 
         // Tx 3: Bob -> Alice
-        // FIX: Hole die echte ID von Alice
+        // FIX: Retrieve real ID of Alice
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
@@ -452,10 +452,10 @@ mod tests {
             .create_transfer_bundle(request, &standards_toml, None, Some("password"))
             .unwrap();
 
-        // Bob ausloggen
+        // Log out Bob
         bob_service.logout();
 
-        // Alice wieder einloggen und Bundle empfangen
+        // Log in Alice again and receive bundle
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
@@ -482,18 +482,18 @@ mod tests {
         let wallet_path = dir.path().join(&alice_profile.folder_name);
         alice_service.logout();
         std::fs::remove_file(wallet_path.join("fingerprint_metadata.enc")).unwrap();
-        // Auch das Siegel entfernen, da es den alten state_hash enthält.
+        // Also remove the seal as it contains the old state_hash.
         let seal_path = wallet_path.join("seal.enc");
         if seal_path.exists() {
             std::fs::remove_file(seal_path).unwrap();
         }
 
-        // WHEN: Alice' Wallet wird wiederhergestellt
+        // WHEN: Alice's wallet is restored
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
-        // THEN: Die `depth` der Transaktionen in der Kette ist korrekt initialisiert (0=neueste, 1, 2=älteste)
+        // THEN: The `depth` of transactions in the chain is correctly initialized (0=newest, 1, 2=oldest)
         let (wallet, _) = alice_service.get_unlocked_mut_for_test();
         let _voucher = &wallet
             .voucher_store
@@ -503,10 +503,10 @@ mod tests {
             .unwrap()
             .voucher;
 
-        // KORREKTUR: Der Test muss die korrekte "min(depth)"-Logik widerspiegeln.
-        // Die archivierte Instanz (2 Txs) erzeugt für die erste Transaktion depth=1.
-        // Die aktive Instanz (3 Txs) erzeugt für die erste Transaktion depth=2.
-        // Die korrekte Regel "min gewinnt" führt dazu, dass depth=1 persistiert wird.
+        // CORRECTION: The test must reflect the correct "min(depth)" logic.
+        // The archived instance (2 Txs) produces depth=1 for the first transaction.
+        // The active instance (3 Txs) produces depth=2 for the first transaction.
+        // The correct rule "min wins" results in depth=1 being persisted.
         let _fp_tx1 = wallet
             .fingerprint_metadata
             .values()
@@ -525,7 +525,7 @@ mod tests {
     }
 
     //==============================================================================
-    // A. Core-Logik-Tests (Verbreitung & Merging)
+    // A. Core Logic Tests (Propagation & Merging)
     //==============================================================================
 
     #[test]
@@ -546,7 +546,7 @@ mod tests {
             std::fs::remove_file(&bob_lock_file).unwrap();
         }
 
-        // Alice einloggen
+        // Log in Alice
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
@@ -563,10 +563,10 @@ mod tests {
             deletable_at: (Utc::now() + Duration::days(10)).to_rfc3339(),
         };
 
-        // Alice ausloggen
+        // Log out Alice
         alice_service.logout();
 
-        // Bob einloggen und Metadaten setzen
+        // Log in Bob and set metadata
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
@@ -584,20 +584,20 @@ mod tests {
 
         let bob_id = bob_service.get_user_id().unwrap();
 
-        // Bob ausloggen
+        // Log out Bob
         bob_service.logout();
 
-        // Alice wieder einloggen und Bundle erstellen
+        // Log in Alice again and create bundle
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
         let bundle_bytes =
             create_and_send_fingerprint_bundle(&mut alice_service, &bob_id, vec![(fingerprint, 2)]);
 
-        // Alice ausloggen
+        // Log out Alice
         alice_service.logout();
 
-        // Bob wieder einloggen und Bundle empfangen
+        // Log in Bob again and receive bundle
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
@@ -634,7 +634,7 @@ mod tests {
             std::fs::remove_file(&bob_lock_file).unwrap();
         }
 
-        // Bob einloggen und Metadaten setzen
+        // Log in Bob and set metadata
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
@@ -650,10 +650,10 @@ mod tests {
             deletable_at: (Utc::now() + Duration::days(365)).to_rfc3339(),
         };
 
-        // Manipuliere den Zustand direkt im Speicher.
-        // WICHTIG: Wir loggen Bob NICHT aus. Da Alice und Bob unterschiedliche Ordner nutzen,
-        // gibt es keinen Locking-Konflikt. So verhindern wir, dass der Rebuild-Prozess beim
-        // Login unsere manuellen Daten (die keine backing Vouchers haben) löscht.
+        // Manipulate state directly in memory.
+        // IMPORTANT: We do NOT log Bob out. Since Alice and Bob use different folders,
+        // there is no locking conflict. This prevents the rebuild process on login
+        // from deleting our manual data (which has no backing vouchers).
         {
             let (wallet, _) = bob_service.get_unlocked_mut_for_test();
             wallet.fingerprint_metadata.insert(
@@ -670,17 +670,17 @@ mod tests {
         }
         let bob_id = bob_service.get_user_id().unwrap();
 
-        // Alice einloggen und Bundle erstellen
+        // Log in Alice and create bundle
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
         let bundle_bytes =
             create_and_send_fingerprint_bundle(&mut alice_service, &bob_id, vec![(fingerprint, 5)]); // sender_depth + 1 = 6
 
-        // Alice ausloggen
+        // Log out Alice
         alice_service.logout();
 
-        // Bob (immer noch eingeloggt) empfängt das Bundle
+        // Bob (still logged in) receives the bundle
         bob_service
             .receive_bundle(&bundle_bytes, &HashMap::new(), None, Some("password"), false)
             .unwrap();
@@ -706,7 +706,7 @@ mod tests {
             std::fs::remove_file(&alice_lock_file).unwrap();
         }
 
-        // Alice einloggen
+        // Log in Alice
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
@@ -741,9 +741,9 @@ mod tests {
             .unwrap()
             .clone();
 
-        let bob_id = ACTORS.bob.user_id.clone(); // Verwende bekannte ID
+        let bob_id = ACTORS.bob.user_id.clone(); // Use known ID
 
-        // NEU: Berechne den erwarteten Kurz-Hash für die Assertion
+        // NEW: Calculate expected short hash for assertion
         let bob_short_hash = human_money_core::crypto_utils::get_short_hash_from_user_id(&bob_id);
 
         let request = human_money_core::wallet::MultiTransferRequest {
@@ -796,7 +796,7 @@ mod tests {
             std::fs::remove_file(&bob_lock_file).unwrap();
         }
 
-        // Alice einloggen
+        // Log in Alice
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
@@ -829,9 +829,9 @@ mod tests {
                 .insert(key, vec![fp]);
         }
 
-        // WHEN: Alice einen Transfer auslöst, der die Heuristik intern verwendet.
+        // WHEN: Alice triggers a transfer that uses the heuristic internally.
 
-        // FIX: Hole die echte ID von Bob (da Test-User andere IDs haben können als ACTORS)
+        // FIX: Retrieve real ID of Bob (since test users may have different IDs than ACTORS)
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
@@ -843,7 +843,7 @@ mod tests {
         let (bundle_bytes, _header) = wallet
             .create_and_encrypt_transaction_bundle(
                 alice_identity,
-                vec![], // Kein echter Gutschein-Transfer nötig
+                vec![], // No real voucher transfer needed
                 &bob_id,
                 None,
                 fingerprints_to_send,
@@ -852,10 +852,10 @@ mod tests {
             )
             .unwrap();
 
-        // Alice ausloggen
+        // Log out Alice
         alice_service.logout();
 
-        // THEN: Wir öffnen das Bundle, um zu prüfen, was ausgewählt wurde.
+        // THEN: We open the bundle to check what was selected.
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
@@ -863,8 +863,8 @@ mod tests {
         let bundle = bundle_processor::open_and_verify_bundle(bob_identity, &bundle_bytes).unwrap();
         let selected = bundle.forwarded_fingerprints;
 
-        // Die Logik ist "gierig" und sammelt auch Fingerprints mit höherer `depth`,
-        // um das Kontingent zu füllen. Daher ist 5 das korrekte Ergebnis.
+        // The logic is "greedy" and also collects fingerprints with higher `depth`
+        // to fill the quota. Therefore 5 is the correct result.
         assert_eq!(selected.len(), 5);
         let depths: Vec<i8> = selected
             .iter()
@@ -892,14 +892,14 @@ mod tests {
             std::fs::remove_file(&bob_lock_file).unwrap();
         }
 
-        // Bob einloggen um ID zu bekommen
+        // Log in Bob to get ID
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         let bob_id = bob_service.get_user_id().unwrap();
         bob_service.logout();
 
-        // Alice einloggen
+        // Log in Alice
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
@@ -928,7 +928,7 @@ mod tests {
             .local_history
             .insert(key, vec![fp]);
 
-        // WHEN: Alice einen neuen Transfer an Bob erstellt
+        // WHEN: Alice creates a new transfer to Bob
         let (bundle_bytes, _header) = wallet
             .create_and_encrypt_transaction_bundle(
                 alice_identity,
@@ -941,10 +941,10 @@ mod tests {
             )
             .unwrap();
 
-        // Alice ausloggen
+        // Log out Alice
         alice_service.logout();
 
-        // THEN: Der bereits bekannte Fingerprint wird nicht erneut gesendet.
+        // THEN: The already known fingerprint is not sent again.
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
@@ -974,13 +974,13 @@ mod tests {
             std::fs::remove_file(&bob_lock_file).unwrap();
         }
 
-        // Alice einloggen
+        // Log in Alice
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
         let (wallet, alice_identity) = alice_service.get_unlocked_mut_for_test();
 
-        // GIVEN: Ein Wallet mit 200 Fingerprints bei depth = 0
+        // GIVEN: A wallet with 200 fingerprints at depth = 0
         for i in 0..200 {
             let key = format!("key_{}", i);
             let fp = TransactionFingerprint {
@@ -1005,9 +1005,9 @@ mod tests {
                 .insert(key, vec![fp]);
         }
 
-        // WHEN: Ein Transfer ausgelöst wird
+        // WHEN: A transfer is triggered
 
-        // FIX: Hole die echte ID von Bob
+        // FIX: Retrieve real ID of Bob
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
@@ -1028,10 +1028,10 @@ mod tests {
             )
             .unwrap();
 
-        // Alice ausloggen
+        // Log out Alice
         alice_service.logout();
 
-        // THEN: Das Kontingent von 150 wird exakt gefüllt
+        // THEN: The quota of 150 is filled exactly
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
@@ -1039,7 +1039,7 @@ mod tests {
         let bundle = bundle_processor::open_and_verify_bundle(bob_identity, &bundle_bytes).unwrap();
         let selected = bundle.forwarded_fingerprints;
 
-        // THEN: Das Kontingent von 150 wird exakt gefüllt
+        // THEN: The quota of 150 is filled exactly
         assert_eq!(selected.len(), CONTINGENT_SIZE);
     }
 }

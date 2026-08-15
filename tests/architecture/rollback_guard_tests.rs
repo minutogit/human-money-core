@@ -49,7 +49,7 @@ mod tests {
         app = AppService::new(dir.path()).unwrap();
         let _ = app.login(&ACTORS.alice.identity.user_id, PASSWORD, false, "test-id".to_string());
 
-        // Receive Bundle sollte blockiert sein
+        // Receiving bundle should be blocked
         let res = app.receive_bundle(b"fake data", &HashMap::new(), None, Some(PASSWORD), false);
         assert!(res.is_err(), "Receiving bundle should be blocked by fork lock");
         let err_str = res.unwrap_err().to_string();
