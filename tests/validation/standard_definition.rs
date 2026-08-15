@@ -1,8 +1,8 @@
 // tests/validation/standard_definition.rs
 // cargo test --test validation_tests
 //!
-//! Enthält alle Tests zur Verifizierung der Gutschein-Standard-Definitionen (TOML),
-//! deren korrekte Integration in den Gutschein und Härtungstests.
+//! Contains all tests for verifying Voucher Standard definitions (TOML),
+//! their correct integration into vouchers, and security hardening tests.
 
 use ed25519_dalek::Signer;
 use human_money_core::VoucherCoreError;
@@ -16,7 +16,7 @@ use human_money_core::test_utils::{
     generate_signed_standard_toml, setup_in_memory_wallet,
 };
 
-/// Prüft das Parsen und die kryptographische Verifizierung von Standard-Dateien.
+/// Tests parsing and cryptographic verification of standard files.
 #[cfg(test)]
 mod parsing_and_verification {
     use super::*;
@@ -139,7 +139,7 @@ mod parsing_and_verification {
     }
 }
 
-/// Prüft das korrekte Zusammenspiel zwischen einem Gutschein und seinem Standard.
+/// Tests correct interaction between a voucher and its standard.
 #[cfg(test)]
 mod integration_with_voucher {
     use super::*;
@@ -202,7 +202,7 @@ mod integration_with_voucher {
     }
 }
 
-/// Prüft die Robustheit gegen manipulierte oder ungültige Standard-Definitionen.
+/// Tests robustness against tampered or invalid standard definitions.
 #[cfg(test)]
 mod security_hardening {
     use super::*;
@@ -284,7 +284,7 @@ mod security_hardening {
     }
 }
 
-/// Prüft die Einhaltung spezifischer Parameter-Einschränkungen.
+/// Tests enforcement of specific parameter constraints.
 #[cfg(test)]
 mod specific_parameter_constraints {
     use super::*;
@@ -294,7 +294,7 @@ mod specific_parameter_constraints {
 
     #[test]
     fn test_validity_duration_range_enforcement() {
-        // 1. Erstelle einen Standard mit validity_duration_range: 1 Jahr bis 3 Jahre
+        // 1. Create a standard with validity_duration_range: 1 year to 3 years
         let (standard, hash) =
             human_money_core::test_utils::create_custom_standard(&FREETALER_STANDARD.0, |s| {
                 s.immutable.issuance.validity_duration_range = vec!["P1Y".to_string(), "P3Y".to_string()];
@@ -302,7 +302,7 @@ mod specific_parameter_constraints {
 
         let creator = &ACTORS.alice.identity;
 
-        // 2. Versuche einen Gutschein mit 4 Jahren (unzulässig) zu erstellen
+        // 2. Attempt to create a voucher with 4 years (invalid)
         let data_invalid = NewVoucherData {
             creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(creator.user_id.clone()),
@@ -318,7 +318,7 @@ mod specific_parameter_constraints {
         let result_invalid = create_voucher(data_invalid, &standard, &hash, &creator.signing_key);
         assert!(result_invalid.is_err(), "Voucher with 4 years should be rejected (max 3 allowed)");
 
-        // 3. Versuche einen Gutschein mit 2 Jahren (zulässig) zu erstellen
+        // 3. Attempt to create a voucher with 2 years (valid)
         let data_valid = NewVoucherData {
             creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(creator.user_id.clone()),
@@ -337,7 +337,7 @@ mod specific_parameter_constraints {
 
     #[test]
     fn test_validity_duration_range_min_enforcement() {
-        // 1. Standard mit validity_duration_range: 3 Jahre bis 5 Jahre, issuance_minimum_validity_duration: 1 Jahr
+        // 1. Standard with validity_duration_range: 3 years to 5 years, issuance_minimum_validity_duration: 1 year
         let (standard, hash) =
             human_money_core::test_utils::create_custom_standard(&FREETALER_STANDARD.0, |s| {
                 s.immutable.issuance.validity_duration_range = vec!["P3Y".to_string(), "P5Y".to_string()];
@@ -346,7 +346,7 @@ mod specific_parameter_constraints {
 
         let creator = &ACTORS.alice.identity;
 
-        // 2. Versuche einen Gutschein mit 2 Jahren zu erstellen (unzulässig, da < P3Y)
+        // 2. Attempt to create a voucher with 2 years (invalid, as < P3Y)
         let data_invalid = NewVoucherData {
             creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(creator.user_id.clone()),
@@ -362,7 +362,7 @@ mod specific_parameter_constraints {
         let result_invalid = create_voucher(data_invalid, &standard, &hash, &creator.signing_key);
         assert!(result_invalid.is_err(), "Voucher with 2 years should be rejected when min range is 3 years");
 
-        // 3. Versuche einen Gutschein mit 4 Jahren (zulässig) zu erstellen
+        // 3. Attempt to create a voucher with 4 years (valid)
         let data_valid = NewVoucherData {
             creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(creator.user_id.clone()),
@@ -378,7 +378,7 @@ mod specific_parameter_constraints {
         let result_valid = create_voucher(data_valid, &standard, &hash, &creator.signing_key);
         assert!(result_valid.is_ok(), "Voucher with 4 years should be accepted");
 
-        // 4. Teste direkte Standard-Validierung mit manipulierter Gültigkeit (2 Jahre)
+        // 4. Test direct standard validation with manipulated validity (2 years)
         let mut voucher = result_valid.unwrap();
         let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date)
             .unwrap()
@@ -387,7 +387,7 @@ mod specific_parameter_constraints {
             human_money_core::services::voucher_manager::add_iso8601_duration(creation_dt, "P2Y").unwrap();
         voucher.valid_until = two_years_later.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
 
-        // Re-hashe den Voucher
+        // Re-hash the voucher
         let mut voucher_to_hash = voucher.clone();
         voucher_to_hash.voucher_id = "".to_string();
         voucher_to_hash.transactions.clear();
@@ -419,10 +419,10 @@ mod specific_parameter_constraints {
         let mut voucher = wallet.voucher_store.vouchers.values().next().unwrap().voucher.clone();
         assert_eq!(voucher.nominal_value.unit, standard.immutable.blueprint.unit);
 
-        // Manipuliere die Einheit des Gutscheins
+        // Manipulate voucher unit
         voucher.nominal_value.unit = "Gramm Gold".to_string();
 
-        // Re-hashe den Voucher, damit verify_voucher_hash nicht fehlschlägt
+        // Re-hash the voucher so verify_voucher_hash doesn't fail
         let mut voucher_to_hash = voucher.clone();
         voucher_to_hash.voucher_id = "".to_string();
         voucher_to_hash.transactions.clear();
@@ -446,7 +446,7 @@ mod specific_parameter_constraints {
 
     #[test]
     fn test_allowed_signature_roles_enforcement() {
-        // 1. Erstelle einen Standard, der nur die Rolle "Official Approver" erlaubt
+        // 1. Create a standard that only allows the "Official Approver" role
         let (standard, _hash) =
             human_money_core::test_utils::create_custom_standard(&FREETALER_STANDARD.0, |s| {
                 s.immutable.issuance.allowed_signature_roles = vec!["Official Approver".to_string()];
@@ -458,7 +458,7 @@ mod specific_parameter_constraints {
         
         let mut voucher = wallet.voucher_store.vouchers.values().next().unwrap().voucher.clone();
 
-        // 2. Füge eine Signatur mit der Rolle "Hacker" hinzu
+        // 2. Add a signature with role "Hacker"
         use human_money_core::models::voucher::VoucherSignature;
         voucher.signatures.push(VoucherSignature {
             role: "Hacker".to_string(),
@@ -466,7 +466,7 @@ mod specific_parameter_constraints {
             ..Default::default()
         });
 
-        // 3. Validierung gegen Standard muss fehlschlagen
+        // 3. Validation against standard must fail
         let result = validate_voucher_against_standard(&voucher, &standard);
         assert!(result.is_err(), "Signature with role 'Hacker' should be rejected");
         assert!(result.unwrap_err().to_string().contains("is not an allowed signature role"));
@@ -477,7 +477,7 @@ mod specific_parameter_constraints {
         // 1. Test invalid primary_redemption_type
         let invalid_toml_1 = FREETALER_STANDARD.0.clone();
         let mut toml_str_1 = toml::to_string(&invalid_toml_1).unwrap();
-        // Suchen nach dem exakten Variant-Namen (snake_case)
+        // Search for the exact variant name (snake_case)
         toml_str_1 = toml_str_1.replace("primary_redemption_type = \"goods_or_services\"", "primary_redemption_type = \"magic\"");
         
         let result_1 = verify_and_parse_standard(&toml_str_1);
@@ -501,4 +501,5 @@ mod specific_parameter_constraints {
         assert!(result_3.is_err(), "Invalid privacy_mode 'super_secret' should fail parsing");
     }
 }
+
 

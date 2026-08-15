@@ -1,26 +1,26 @@
 //! # src/services/utils.rs
 //!
-//! Enthält allgemeine Hilfsfunktionen, z.B. für Zeitstempel und kanonische Serialisierung.
+//! Contains general helper functions, e.g. for timestamps and canonical serialization.
 
 use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use serde::Serialize;
 use serde_json_canonicalizer::to_string;
 
-/// Serialisiert eine beliebige `Serialize`-bare Struktur in einen kanonischen JSON-String
-/// gemäß RFC 8785 (JCS - JSON Canonicalization Scheme).
+/// Serializes any `Serialize`-able struct into a canonical JSON string
+/// according to RFC 8785 (JCS - JSON Canonicalization Scheme).
 ///
-/// Dies stellt sicher, dass die Ausgabe deterministisch ist:
-/// - Schlüssel in Objekten sind alphabetisch sortiert.
-/// - Keine überflüssigen Leerzeichen.
+/// This ensures deterministic output:
+/// - Keys in objects are sorted lexicographically.
+/// - No superfluous whitespace.
 ///
-/// Diese Funktion ist essenziell für die kryptographische Signatur und Verifizierung,
-/// da sie garantiert, dass derselbe logische Inhalt immer denselben Hash erzeugt.
+/// This function is essential for cryptographic signatures and verification,
+/// as it guarantees that the same logical content always produces the exact same hash.
 ///
 /// # Arguments
-/// * `value` - Ein Wert, der `serde::Serialize` implementiert.
+/// * `value` - A value that implements `serde::Serialize`.
 ///
 /// # Returns
-/// Ein `Result`, das entweder den kompakten, kanonischen JSON-String oder einen `UtilsError` enthält.
+/// A `Result` containing either the compact, canonical JSON string or a `serde_json::Error`.
 pub fn to_canonical_json<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
     to_string(value)
 }
@@ -137,20 +137,20 @@ pub fn set_mock_time(time: Option<String>) {
     MOCK_TIME.with(|t| *t.borrow_mut() = time);
 }
 
-/// Die maximale Zeitspanne in der Zukunft, die wir für einen Zeitstempel akzeptieren.
-/// Alles darüber hinaus wird als "Hard Reject" abgelehnt.
-/// 2 Stunden (7200 Sekunden) erlauben moderate Clock-Drifts und Zeitzonen-Probleme.
+/// The maximum timespan into the future that we accept for a timestamp.
+/// Anything beyond this is rejected as a "Hard Reject".
+/// 2 hours (7200 seconds) accommodate moderate clock drifts and timezone issues.
 pub const MAX_FUTURE_GRACE_PERIOD_SECONDS: i64 = 7200;
 
-/// Prüft, ob ein Zeitstempel zu weit in der Zukunft liegt.
+/// Checks whether a timestamp is too far in the future.
 ///
 /// # Arguments
-/// * `timestamp_iso` - Der zu prüfende Zeitstempel im ISO 8601 Format.
-/// * `entity_name` - Name der Einheit (z.B. "Bundle", "Transaction") für die Fehlermeldung.
-/// * `id` - ID der Einheit für die Fehlermeldung.
+/// * `timestamp_iso` - The timestamp to check in ISO 8601 format.
+/// * `entity_name` - Name of the entity (e.g. "Bundle", "Transaction") for the error message.
+/// * `id` - ID of the entity for the error message.
 ///
 /// # Returns
-/// `Ok(())` wenn der Zeitstempel innerhalb der Toleranz liegt, ansonsten einen `VoucherCoreError`.
+/// `Ok(())` if the timestamp is within tolerance, otherwise a `VoucherCoreError`.
 pub fn verify_not_far_in_future(
     timestamp_iso: &str,
     entity_name: &str,

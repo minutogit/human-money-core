@@ -1,235 +1,238 @@
 //! # voucher_standard_definition.rs
 //!
-//! Definiert die Rust-Datenstrukturen für Gutschein-Standards (`standard.toml`).
+//! Defines the Rust data structures for Voucher Standards (`standard.toml`).
 //!
-//! Ein Gutschein-Standard fungiert als die verfassungsartige Grundlage einer spezifischen
-//! Währung oder Verrechnungseinheit. Diese Struktur trennt strikt zwischen unratifizierbaren
-//! Konsensregeln (Immutable Zone) und anpassbaren Präsentationsdaten (Mutable Zone).
+//! A Voucher Standard acts as the constitution-like foundation of a specific
+//! currency or unit of account. This structure strictly separates unratifiable
+//! consensus rules (Immutable Zone) from customizable presentation data (Mutable Zone).
 //!
-//! ## Das Zwei-Zonen-Modell
-//! - **Immutable Zone (`[immutable]`):** Enthält alle konsensrelevanten Parameter (Identität,
-//!   Blueprint, Features, Issuance, CEL-Regeln). Aus dieser Zone wird der deterministische
-//!   `logic_hash` (SHA-256) berechnet. Jede Änderung in dieser Zone führt zu einem neuen `logic_hash`
-//!   und bricht die Kompatibilität zu bereits erstellten Gutscheinen.
-//! - **Mutable Zone (`[mutable]`):** Enthält UI-relevante Metadaten, App-Konfigurationen und
-//!   i18n-Übersetzungen. Änderungen hier verändern den `logic_hash` **nicht**, erfordern jedoch
-//!   eine Erneuerung der Herausgeber-Signatur im `[signature]`-Block.
+//! ## The Two-Zone Model
+//! - **Immutable Zone (`[immutable]`):** Contains all consensus-relevant parameters (identity,
+//!   blueprint, features, issuance, CEL rules). The deterministic `logic_hash` (SHA-256) is
+//!   calculated from this zone. Any change in this zone results in a new `logic_hash`
+//!   and breaks compatibility with previously created vouchers.
+//! - **Mutable Zone (`[mutable]`):** Contains UI-relevant metadata, app configurations, and
+//!   i18n translations. Changes here do **not** alter the `logic_hash`, but require
+//!   renewing the issuer signature in the `[signature]` block.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Definiert eine dynamische CEL-Regel (Common Expression Language).
+/// Defines a dynamic CEL (Common Expression Language) rule.
 ///
-/// Dynamische Regeln erlauben Deep-Inspection bei der Gutschein-Validierung,
-/// die über den deklarativen Fast-Path hinausgeht.
+/// Dynamic rules allow deep inspection during voucher validation
+/// that goes beyond the declarative fast path.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct DynamicRule {
-    /// Der auszuführende CEL-Ausdruck (z. B. `Transaction.amount <= 5000` oder `Voucher.signatures.exists(...)`).
+    /// The CEL expression to execute (e.g. `Transaction.amount <= 5000` or `Voucher.signatures.exists(...)`).
     pub expression: String,
-    /// Die Fehlermeldung, die zurückgegeben wird, wenn der CEL-Ausdruck zu `false` evaluiert.
+    /// The error message returned when the CEL expression evaluates to `false`.
     pub message: String,
 }
 
-/// Enthält die eindeutigen Identitätsmerkmale eines Standards.
+/// Contains the unique identity attributes of a standard.
 ///
-/// Diese Daten liegen in der Immutable Zone und sind kryptographisch an den `logic_hash` gebunden.
+/// This data resides in the Immutable Zone and is cryptographically bound to the `logic_hash`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct ImmutableIdentity {
-    /// Der ökonomische Anker als UUID v4 (z. B. `"123e4567-e89b-12d3-a456-426614174000"`).
-    /// Überlebt Standard-Updates, solange die Währung ökonomisch identisch bleibt.
+    /// The economic anchor as UUID v4 (e.g. `"123e4567-e89b-12d3-a456-426614174000"`).
+    /// Survives standard updates as long as the currency remains economically identical.
     pub uuid: String,
-    /// Der offizielle Name des Standards (z. B. `"Minuto Regional"`).
+    /// The official name of the standard (e.g. `"Minuto Regional"`).
     pub name: String,
-    /// Das offizielle Währungskürzel (z. B. `"MIN"`). Empfohlen: Max. 5 Zeichen.
+    /// The official currency abbreviation (e.g. `"MIN"`). Recommended: Max. 5 characters.
     pub abbreviation: String,
 }
 
-/// Der primäre Einlösungszweck eines Gutscheins.
+/// The primary redemption type of a voucher.
 ///
-/// Dient der steuerlichen und juristischen Klassifizierung auf Anwendungsebene.
-/// Serde-Serialisierung erfolgt im `snake_case`.
+/// Used for tax and legal classification at the application layer.
+/// Serde serialization uses `snake_case`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PrimaryRedemptionType {
-    /// Gegenwerte in Waren oder Dienstleistungen (Standard).
+    /// Countervalues in goods or services (default).
     #[default]
     GoodsOrServices,
-    /// Zeitwertbasierte Gutscheine (z. B. Stunden/Minuten Arbeitszeit).
+    /// Time-value based vouchers (e.g. hours/minutes of labor).
     Time,
-    /// Sach- oder Rohstoffbesicherte Gutscheine (z. B. Edelmetalle, Ernteanteile).
+    /// Physical-asset or commodity backed vouchers (e.g. precious metals, harvest shares).
     PhysicalAsset,
 }
 
-/// Die Art der Besicherung eines Gutscheins.
+/// The type of collateral / backing for a voucher.
 ///
-/// Definiert den ökonomischen Schutz- und Vertrauensmechanismus der Währung.
-/// Serde-Serialisierung erfolgt im `snake_case`.
+/// Defines the economic protection and trust mechanism of the currency.
+/// Serde serialization uses `snake_case`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CollateralType {
-    /// Persönliche Leistungsgarantie und Bürgschaften durch Personen (Standard).
+    /// Personal performance guarantee and personal guarantees by individuals (default).
     #[default]
     PersonalGuarantee,
-    /// Gedeckt durch Fiat-Geldguthaben.
+    /// Backed by fiat money balances.
     FiatBacked,
-    /// Gedeckt durch Kryptowährungen oder Smart-Contract-Reserven.
+    /// Backed by cryptocurrencies or smart contract reserves.
     CryptoBacked,
-    /// Gedeckt durch physische Werte oder Vermögensgegenstände.
+    /// Backed by physical assets or commodities.
     PhysicalAsset,
 }
 
-/// Der Datenschutz- und Transparenz-Modus für L2-Transaktionen.
+/// The privacy and transparency mode for L2 transactions.
 ///
-/// Steuert, wie Transaktionsdaten auf Layer 2 verarbeitet und verschleiert werden dürfen.
-/// Serde-Serialisierung erfolgt im `snake_case`.
+/// Controls how transaction data may be processed and obfuscated on Layer 2.
+/// Serde serialization uses `snake_case`.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PrivacyMode {
-    /// Transaktionen sind vollständig öffentlich und nachvollziehbar.
+    /// Transactions are fully public and traceable.
     #[default]
     Public,
-    /// Transaktionen erzwingen Zero-Knowledge-Proofs / Stealth-Adressen zur Verschleierung.
+    /// Transactions enforce zero-knowledge proofs / stealth addresses for obfuscation.
     Stealth,
-    /// Der Absender/Nutzer kann pro Transaktion zwischen öffentlich und verschleiert wählen.
+    /// The sender/user can choose between public and obfuscated per transaction.
     Flexible,
 }
 
-/// Feste Startwerte und Basiseigenschaften für Gutscheine dieses Standards.
+/// Fixed initial values and base properties for vouchers of this standard.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct ImmutableBlueprint {
-    /// Die Nennwert-Einheit des Gutscheins (z. B. `"Minuten"`, `"Taler"`).
+    /// The nominal unit of the voucher (e.g. `"Minuten"`, `"Taler"`).
     pub unit: String,
-    /// Der primäre Einlösungszweck (Enum: `goods_or_services`, `time`, `physical_asset`).
+    /// The primary redemption purpose (Enum: `goods_or_services`, `time`, `physical_asset`).
     pub primary_redemption_type: PrimaryRedemptionType,
-    /// Die Art der Besicherung (Enum: `personal_guarantee`, `fiat_backed`, `crypto_backed`, `physical_asset`).
+    /// The type of collateral (Enum: `personal_guarantee`, `fiat_backed`, `crypto_backed`, `physical_asset`).
     pub collateral_type: CollateralType,
 }
 
-/// Steuert das funktionale Verhalten und die Einschränkungen in der Wallet-Software.
+/// Controls functional behavior and restrictions in wallet software.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct ImmutableFeatures {
-    /// Erlaubt Teilübertragungen (`split`). Wenn `false`, kann der Gutschein nur als Ganzes weitergegeben werden.
+    /// Allows partial transfers (`split`). If `false`, the voucher can only be transferred in its entirety.
     pub allow_partial_transfers: bool,
-    /// UI-Hinweis: Wenn `true`, dürfen Guthaben in der Wallet als Gesamtsaldo aufsummiert werden.
+    /// Fungibility and balance aggregation rule: defines whether vouchers of this standard represent
+    /// interchangeable/summable currency units (`true`) or distinct non-fungible certificates (`false`).
+    /// Directly controls balance and transfer aggregation (`TransferSummary`) in core logic and is therefore
+    /// an essential part of the immutable `logic_hash`.
     pub balances_are_summable: bool,
-    /// Maximale Anzahl an Nachkommastellen (`0` für Ganzzahlen wie Minuten, `2` für Währungen).
+    /// Maximum number of decimal places (`0` for integers like minutes, `2` for currencies).
     pub amount_decimal_places: u8,
-    /// Transparenz- und Datenschutz-Modus (`public`, `stealth`, `flexible`).
+    /// Transparency and privacy mode (`public`, `stealth`, `flexible`).
     pub privacy_mode: PrivacyMode,
-    /// Erlaubte Transaktions-Typen für Gutscheine dieses Standards (z. B. `["init", "transfer", "split"]`).
+    /// Allowed transaction types for vouchers of this standard (e.g. `["init", "transfer", "split"]`).
     pub allowed_t_types: Vec<String>,
 }
 
-/// Regeln zur Erstellung und Ausgabe neuer Gutscheine (Issuance Firewall).
+/// Rules for creating and issuing new vouchers (Issuance Firewall).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct ImmutableIssuance {
-    /// ISO 8601 Zeiträume für erlaubte Gesamtlaufzeiten [Min, Max] (z. B. `["P1Y", "P5Y"]`).
+    /// ISO 8601 duration ranges for allowed total validity durations [Min, Max] (e.g. `["P1Y", "P5Y"]`).
     pub validity_duration_range: Vec<String>,
-    /// Zirkulations-Firewall: Erforderliche Restgültigkeit bei Erstellung/Erstausgabe (z. B. `"P1Y"`).
+    /// Circulation firewall: Required remaining validity duration upon creation/issuance (e.g. `"P1Y"`).
     pub issuance_minimum_validity_duration: String,
-    /// Erforderliche Anzahl zusätzlicher Signaturen (z. B. Bürgen, Revisoren, Zeugen) [Min, Max] (z. B. `[2, 2]` oder `[0, 0]`).
+    /// Required number of additional signatures (e.g. guarantors, auditors, witnesses) [Min, Max] (e.g. `[2, 2]` or `[0, 0]`).
     pub additional_signatures_range: Vec<u32>,
-    /// Erlaubte Signatur-Rollen für Zusatz-Signaturen (z. B. `["guarantor"]`, `["auditor"]`, `["witness"]`).
+    /// Allowed signature roles for additional signatures (e.g. `["guarantor"]`, `["auditor"]`, `["witness"]`).
     pub allowed_signature_roles: Vec<String>,
 }
 
-/// Die unratifizierbare Konsens-Zone (`[immutable]`).
+/// The unratifiable consensus zone (`[immutable]`).
 ///
-/// Alle hier enthaltenen Daten fließen direkt in den deterministischen SHA-256 `logic_hash` ein.
+/// All data contained here directly feeds into the deterministic SHA-256 `logic_hash`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct ImmutableZone {
-    /// Identitätsmerkmale (UUID, Name, Kürzel).
+    /// Identity attributes (UUID, name, abbreviation).
     pub identity: ImmutableIdentity,
-    /// Basiskonfiguration und Einlösungsart.
+    /// Base configuration and redemption type.
     pub blueprint: ImmutableBlueprint,
-    /// Funktionsumfang und Wallet-Einschränkungen.
+    /// Functional scope and wallet restrictions.
     pub features: ImmutableFeatures,
-    /// Regeln für Gutschein-Erstellung und Mitunterzeichner.
+    /// Rules for voucher creation and co-signers.
     pub issuance: ImmutableIssuance,
-    /// Dynamische CEL-Validierungsregeln für Deep-Inspection.
+    /// Dynamic CEL validation rules for deep inspection.
     #[serde(default)]
     pub custom_rules: HashMap<String, DynamicRule>,
 }
 
-/// Metadaten des Herausgebers zur Auffindbarkeit und Dokumentation.
+/// Issuer metadata for discoverability and documentation.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct MutableMetadata {
-    /// Offizieller Name der ausgebenden Organisation oder Gemeinschaft.
+    /// Official name of the issuing organization or community.
     pub issuer_name: String,
-    /// Optionale Webadresse zur Homepage des Standards.
+    /// Optional website URL for the standard's homepage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub homepage_url: Option<String>,
-    /// Optionale Webadresse zur rechtlichen oder technischen Dokumentation.
+    /// Optional web URL for legal or technical documentation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub documentation_url: Option<String>,
-    /// Stichwörter zur Kategorisierung in Standard-Verzeichnissen.
+    /// Keywords for categorization in standard directories.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keywords: Vec<String>,
 }
 
-/// App- und UX-Empfehlungen für Wallet-Clients und L2-Nodes.
+/// App and UX recommendations for wallet clients and L2 nodes.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct MutableAppConfig {
-    /// Empfohlener Standardwert für die Gültigkeitsdauer im Erstellungs-Formular (ISO 8601, z. B. `"P5Y"`).
+    /// Recommended default value for the validity duration in the creation form (ISO 8601, e.g. `"P5Y"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_validity_duration: Option<String>,
-    /// UI-Hinweis zur Aufrundung des Ablaufdatums (z. B. `"P1Y"` für Ende des Zieljahres).
+    /// UI hint for rounding up the expiration date (e.g. `"P1Y"` for the end of the target year).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub round_up_validity_to: Option<String>,
-    /// Anforderung an L2-Nodes zur Historien-Aufbewahrung nach Ablauf des Gutscheins (ISO 8601, z. B. `"P6M"`).
+    /// Requirement for L2 nodes regarding history retention after voucher expiration (ISO 8601, e.g. `"P6M"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_history_retention: Option<String>,
 }
 
-/// Mehrsprachige Texte und Beschreibungen (i18n-Autarkie).
+/// Multilingual texts and descriptions (i18n self-containment).
 ///
-/// Schlüssel entsprechen den ISO-Sprachcodes (z. B. `"de"`, `"en"`).
+/// Keys correspond to ISO language codes (e.g. `"de"`, `"en"`).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct MutableI18n {
-    /// Haupt-Vertragstexte mit Platzhaltern wie `{{amount}}`.
+    /// Main contract texts with placeholders such as `{{amount}}`.
     #[serde(default)]
     pub descriptions: HashMap<String, String>,
-    /// Rechtliche Hinweise oder Kleingedrucktes.
+    /// Legal notices or fine print.
     #[serde(default)]
     pub footnotes: HashMap<String, String>,
-    /// Beschreibungen des Besicherungs-Mechanismus.
+    /// Descriptions of the collateral mechanism.
     #[serde(default)]
     pub collateral_descriptions: HashMap<String, String>,
 }
 
-/// Die anpassbare Präsentations-Zone (`[mutable]`).
+/// The customizable presentation zone (`[mutable]`).
 ///
-/// Änderungen in dieser Zone verändern den `logic_hash` **nicht**. Sie erlauben es dem Herausgeber,
-/// Beschreibungen, Links oder i18n-Texte zu aktualisieren, ohne bestehende Gutscheine zu entwerten.
+/// Changes in this zone do **not** alter the `logic_hash`. They allow the issuer to
+/// update descriptions, links, or i18n texts without invalidating existing vouchers.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct MutableZone {
-    /// Herausgeber-Metadaten und Links.
+    /// Issuer metadata and links.
     pub metadata: MutableMetadata,
-    /// UX-Defaults und L2-Retention-Einstellungen.
+    /// UX defaults and L2 retention settings.
     #[serde(default)]
     pub app_config: MutableAppConfig,
-    /// Mehrsprachige Vertragstexte und Beschreibungen.
+    /// Multilingual contract texts and descriptions.
     #[serde(default)]
     pub i18n: MutableI18n,
 }
 
-/// Enthält die kryptographische Signatur, die die Authentizität des Standards beweist.
+/// Contains the cryptographic signature proving the authenticity of the standard.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct SignatureBlock {
-    /// Die `did:key` des Herausgebers (enthält den öffentlichen Schlüssel).
+    /// The `did:key` of the issuer (contains the public key).
     pub issuer_id: String,
-    /// Die Base58-kodierte Ed25519-Signatur über den kanonisierten Inhalt der Standard-Datei.
+    /// The Base58-encoded Ed25519 signature over the canonical content of the standard file.
     pub signature: String,
 }
 
-/// Das Haupt-Struct, das die gesamte signierte Gutschein-Standard-Definition kapselt.
+/// The main struct encapsulating the entire signed voucher standard definition.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct VoucherStandardDefinition {
-    /// Unveränderlicher Konsens-Kern (bestimmt den `logic_hash`).
+    /// Immutable consensus core (determines the `logic_hash`).
     pub immutable: ImmutableZone,
-    /// Anpassbare Metadaten und i18n-Übersetzungen.
+    /// Customizable metadata and i18n translations.
     pub mutable: MutableZone,
-    /// Kryptographische Signatur des Herausgebers (optional bei unvollständig geladenen oder noch unsignierten Standards).
+    /// Cryptographic signature of the issuer (optional for incompletely loaded or unsigned standards).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<SignatureBlock>,
 }

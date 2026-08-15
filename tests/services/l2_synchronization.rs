@@ -53,7 +53,7 @@ impl MockL2Node {
         self.vouchers.insert(req.layer2_voucher_id.clone());
 
         let ds_tag = if req.is_genesis {
-            // Bei Genesis nutzen wir die t_id als Key (da kein ds_tag vorhanden)
+            // For genesis we use t_id as key (since no ds_tag is present)
             bs58::encode(req.transaction_hash).into_string()
         } else {
             req.ds_tag.clone().expect("Non-genesis must have ds_tag")

@@ -1,24 +1,24 @@
 // tests/core_logic/security/mod.rs
 // cargo test --test core_logic_tests
 
-//! # Test-Suite für Sicherheitsaspekte und Betrugserkennung
+//! # Test suite for security aspects and fraud detection
 //!
-//! Diese Datei bündelt zwei kritische Bereiche der Gutschein-Sicherheit:
+//! This file bundles two critical areas of voucher security:
 //!
-//! 1.  **Lokale Double-Spending-Erkennung:**
-//!     - Überprüfung der Fingerprint-Verwaltung.
-//!     - End-to-End-Szenario zur Erkennung eines Betrugsversuchs.
+//! 1.  **Local double-spending detection:**
+//!     - Verification of fingerprint management.
+//!     - End-to-end scenario for detecting a fraud attempt.
 //!
-//! 2.  **Sicherheitslücken & Angriffs-Simulationen:**
-//!     - Simulation von Angriffen durch einen böswilligen Akteur ("Hacker").
-//!     - Überprüfung der Robustheit der Validierungslogik (`voucher_validation.rs`).
-//!     - Fuzzing-Tests zur Prüfung der strukturellen Integrität.
+//! 2.  **Vulnerabilities & attack simulations:**
+//!     - Simulation of attacks by a malicious actor ("hacker").
+//!     - Robustness checks of validation logic (`voucher_validation.rs`).
+//!     - Fuzzing tests to verify structural integrity.
 
-// Importiert die Hilfsfunktionen, damit sie für die Submodule
-// als `super::test_utils` verfügbar sind.
+// Import helper functions so they are available to submodules
+// as `super::test_utils`.
 use human_money_core::test_utils;
 
-// Deklariert die beiden getrennten Test-Dateien als Module.
+// Declare the test files as modules.
 mod double_spend;
 mod double_spend_identification;
 mod privacy_evasion;
@@ -31,4 +31,3 @@ mod identity_trap_audit;
 pub mod forced_double_spend_stealth_vulnerability;
 pub mod privacy_mode_compliance;
 pub mod concurrent_access_vulnerability;
-

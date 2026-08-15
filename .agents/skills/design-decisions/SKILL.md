@@ -17,6 +17,10 @@ Dieses Dokument hält die grundlegenden Design-Entscheidungen der `human_money_c
 - **Entscheidung:** Nutzung von TOML für die Definitionsdateien der Gutschein-Standards.
 - **Begründung:** TOML erlaubt Kommentare, was die Lesbarkeit und Dokumentation der Standards erheblich verbessert. JSON bietet diese Möglichkeit nicht.
 
+**Besicherungskonzept (Collateral vs. Bürgen):**
+- **Entscheidung:** Strikte Entkopplung von `Standard.blueprint.collateral_type` (Währungstyp-Klassifikation) und `Voucher.collateral` (optionaler Payload-Container). Bei `personal_guarantee` (z. B. Minuto) ist `voucher.collateral = None`, da Bürgschaften originär über kryptographische Signaturen (`signatures` mit Rolle `guarantor`) abgebildet werden. Für Sachwerte/Fiat bleibt `voucher.collateral` als offener Extension Point erhalten. Eine Verpflichtung zur Befüllung wird nicht im Core hardgecodet, sondern bei Bedarf dynamisch über CEL-Regeln (`custom_rules`) erzwungen.
+- **Begründung:** Verhindert vorzeitiges Over-Engineering und juristische Fehlannahmen im Core, hält Gutscheine schlank und ermöglicht spätere Sachwert-Erweiterungen ohne Breaking Changes.
+
 ## 2. Wallet-Architektur
 
 **local_voucher_instance_id:**

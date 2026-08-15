@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use toml;
 
 lazy_static! {
-    /// Lädt den Minuto-Standard und signiert ihn zur Laufzeit für die Tests.
+    /// Loads the Minuto standard and signs it at runtime for tests.
     pub static ref MINUTO_STANDARD: (VoucherStandardDefinition, String) = {
         let issuer = &TEST_ISSUER;
         let toml_str = include_str!("../../voucher_standards/minuto_v1/standard.toml");
@@ -32,7 +32,7 @@ lazy_static! {
         (standard, logic_hash)
     };
 
-    /// Lädt den FreeTaler-Standard und signiert ihn zur Laufzeit für die Tests.
+    /// Loads the FreeTaler standard and signs it at runtime for tests.
     pub static ref FREETALER_STANDARD: (VoucherStandardDefinition, String) = {
         let issuer = &TEST_ISSUER;
         let toml_str = include_str!("../../voucher_standards/freetaler_v1/standard.toml");
@@ -50,7 +50,7 @@ lazy_static! {
         (standard, logic_hash)
     };
 
-    /// Lädt den `required_signatures`-Test-Standard und signiert ihn zur Laufzeit.
+    /// Loads the `required_signatures` test standard and signs it at runtime.
     pub static ref REQUIRED_SIG_STANDARD: (VoucherStandardDefinition, String) = {
         let issuer_for_signing = &TEST_ISSUER;
         let toml_str = include_str!("../../tests/test_data/standards/standard_required_signatures.toml");

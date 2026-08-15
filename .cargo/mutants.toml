@@ -1,13 +1,13 @@
 # .cargo/mutants.toml
-# Suppressions für bekannte, akzeptierte Mutanten in cargo mutants.
+# Suppressions for known, accepted mutants in cargo mutants.
 #
-# Jeder Eintrag ist entweder:
-#   (A) semantisch äquivalent – das Verhalten ändert sich nicht
-#   (B) strukturell nicht testbar – kein realer Eingabepfad erreicht ihn
-#   (C) Gossip-Limiter – verschiebt Limits geringfügig ohne Sicherheitsrelevanz
-#   (D) Wrapper & ungetestete Offline-Randbedingungen
+# Each entry is either:
+#   (A) semantically equivalent – behavior does not change
+#   (B) structurally untestable – no real input path reaches it
+#   (C) gossip limiter – slightly shifts limits without security relevance
+#   (D) wrappers & untested offline edge cases
 #
-# Doku: https://mutants.rs/configuration.html
+# Docs: https://mutants.rs/configuration.html
 
 exclude_re = [
     # Crypto Utils
@@ -15,41 +15,41 @@ exclude_re = [
     "replace \\|\\| with && in validate_user_id",
     "delete match arm GetPubkeyError::ConversionFailed",
 
-    # (C) Gossip-Protokoll-Limits (Ausschluss nach manueller Analyse)
+    # (C) Gossip protocol limits (exclusion after manual analysis)
     "in Wallet::select_fingerprints_for_bundle",
     "in Wallet::process_received_fingerprints",
 
-    # (D) Nicht-kritische Randbedingungen & Wrapper
+    # (D) Non-critical edge cases & wrappers
     "replace Wallet::cleanup_expired_fingerprints with \\(\\)",
     "in cleanup_expired_histories",
     "in cleanup_known_fingerprints",
     "delete ! in scan_and_rebuild_fingerprints",
     "replace \\+ with \\* in create_proof_of_double_spend",
 
-    # (E) Komplexe, intern abgeschirmte Layer-2 Beweise (12 Mutanten)
-    # verify_and_create_proof wird nur bedingt über hostile end-to-end API-Tests erreicht. 
-    # Es handelt sich um innere Signaturprüfungen.
+    # (E) Complex, internally shielded Layer-2 proofs (12 mutants)
+    # verify_and_create_proof is only conditionally reached via hostile end-to-end API tests. 
+    # These are internal signature checks.
     "in Wallet::verify_and_create_proof",
 
-    # (F) Theoretischer Heuristik-Randfall (1 Mutant)
-    # Bei exakt gleichen Timestamps in Nanosekunden wählt die Offline-Lösung den ersten Eintrag.
+    # (F) Theoretical heuristic edge case (1 mutant)
+    # With identical timestamps in nanoseconds, offline resolution picks the first entry.
     "replace < with <= in resolve_conflict_offline",
 
-    # (B) Nicht erreichbar im Test-Build – get_argon2 liegt hinter #[cfg(not(test))] und
-    # wird durch das SHA256-Stub in Tests vollständig ersetzt. Kein Testpfad erreicht diesen Code.
+    # (B) Unreachable in test build – get_argon2 is behind #[cfg(not(test))] and
+    # is completely replaced by the SHA256 stub in tests. No test path reaches this code.
     "replace get_argon2 -> ",
 
-    # (G) Semantisch äquivalente Mutanten in add_iso8601_duration (Zeile 462)
-    # new_year +/- 1 dient zur Berechnung von days_in_target_month beim Zielmonat Dezember.
-    # Dezember hat immer 31 Tage, unabhängig vom Jahr → das Subtraktionsergebnis ist stets 31.
-    # Jede Variante (+1, -1, *1) liefert das gleiche Ergebnis → semantisch äquivalent.
+    # (G) Semantically equivalent mutants in add_iso8601_duration (line 462)
+    # new_year +/- 1 is used to calculate days_in_target_month for the target month December.
+    # December always has 31 days, regardless of the year → subtraction result is always 31.
+    # Every variant (+1, -1, *1) produces the same result → semantically equivalent.
     "replace \\+ with - in add_iso8601_duration",
     "replace \\+ with \\* in add_iso8601_duration",
 
-    # (H) Struktureller Nanosekunden-Grenzfall validate_issuance_firewall (Zeile 936)
-    # `valid_until < required_end_dt` vs `<=`: Unterschied nur bei exakter Timestamp-Gleichheit.
-    # Die Funktion ist nicht `pub` → kein direkter Unit-Test möglich. Der Testpfad erzeugt
-    # valid_until via create_voucher und berechnet required_end_dt via Utc::now() in getrennten
-    # Aufrufen → immer > 0ns Differenz. Exakte Gleichheit ist in Tests nicht garantierbar.
+    # (H) Structural nanosecond boundary case in validate_issuance_firewall (line 936)
+    # `valid_until < required_end_dt` vs `<=`: difference only on exact timestamp equality.
+    # The function is not `pub` → no direct unit test possible. The test path creates
+    # valid_until via create_voucher and calculates required_end_dt via Utc::now() in separate
+    # calls → always > 0ns difference. Exact equality cannot be guaranteed in tests.
     "replace < with <= in validate_issuance_firewall",
 ]

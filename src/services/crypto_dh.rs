@@ -90,7 +90,7 @@ pub fn perform_diffie_hellman(
     // 1. Derive own public key (for context binding)
     let our_public = X25519PublicKey::from(&our_secret);
 
-    // 2. Rohes Shared Secret berechnen
+    // 2. Calculate raw shared secret
     let shared_secret = our_secret.diffie_hellman(their_public);
 
     // SECURITY: Check for non-contributory behavior (e.g. point at infinity/null).
@@ -131,11 +131,11 @@ pub fn perform_diffie_hellman(
 ///
 /// # Arguments
 ///
-/// * `ed_sk` - Der geheime Ed25519 Signaturschlüssel (`SigningKey`).
+/// * `ed_sk` - The secret Ed25519 signing key (`SigningKey`).
 ///
 /// # Returns
 ///
-/// Der entsprechende statische geheime X25519-Schlüssel (`StaticSecret`).
+/// The corresponding static secret X25519 key (`StaticSecret`).
 ///
 /// # Security
 ///
@@ -181,7 +181,7 @@ pub fn encrypt_recipient_payload(
 /// * `recipient_secret_key` - The permanent signing key of the recipient (will be converted to StaticSecret).
 ///
 /// # Returns
-/// Der entschlüsselte Byte-Vector (JSON Payload).
+/// The decrypted byte vector (JSON payload).
 pub fn decrypt_recipient_payload(
     privacy_guard_base64: &str,
     recipient_secret_key: &SigningKey,

@@ -13,15 +13,15 @@ fn test_valid_until_matches_creation_date() {
     // Verifies that a voucher is valid even if valid_until is exactly equal to creation_date.
     let (standard, _standard_hash, _, _, mut voucher, _) = setup_voucher_with_one_tx();
     
-    // Wir setzen valid_until exakt auf creation_date
+    // Set valid_until exactly to creation_date
     voucher.valid_until = voucher.creation_date.clone();
     
-    // Das Original-System erlaubt dies (bzw. fängt es an dieser Stelle _nicht_ durch die < Logik ab)
-    // Ein Mutant mit `<=` würde hier einen InvalidDateLogic werfen.
-    // Wir validieren gegen den Standard (Standard kann es wegen Minimum später ablehnen, aber der
-    // spezifische Check für "valid_until < creation_dt" darf nicht fehlschlagen). 
-    // ACHTUNG: Der nächste Check (verify_validity_duration) würde fehlschlagen, wenn min_duration > 0.
-    // Um nur den ersten Check zu passieren, können wir den Standard so patchen, dass min_duration = 0 ist.
+    // The original system allows this (or does not intercept it via the < logic at this point).
+    // A mutant with <= would throw an InvalidDateLogic here.
+    // We validate against the standard (standard can reject it later due to minimum, but the
+    // specific check for "valid_until < creation_dt" must not fail). 
+    // ATTENTION: The next check (verify_validity_duration) would fail if min_duration > 0.
+    // To pass only the first check, we can patch the standard so min_duration = 0.
     let mut modified_std = standard.clone();
     modified_std.immutable.issuance.issuance_minimum_validity_duration = "".to_string();
     let mod_std_hash = human_money_core::crypto_utils::get_hash(
@@ -39,7 +39,7 @@ fn test_valid_until_matches_creation_date() {
         human_money_core::to_canonical_json(&voucher_to_hash).unwrap()
     );
 
-    // Initial Transaction muss den neuen voucher_id als prev_hash haben
+    // Initial transaction must have the new voucher_id as prev_hash
     if !voucher.transactions.is_empty() {
         voucher.transactions[0].prev_hash = voucher.voucher_id.clone();
         
@@ -53,10 +53,10 @@ fn test_valid_until_matches_creation_date() {
         );
     }
 
-    // Umgehe verify_signature Fehlschläge
+    // Bypass verify_signature failures
     human_money_core::set_signature_bypass(true);
     
-    // Wir ignorieren Signaturfehler und konzentrieren uns darauf, dass kein InvalidDateLogic zurückkommt.
+    // We ignore signature errors and focus on ensuring no InvalidDateLogic is returned.
     let res = validate_voucher_against_standard(&voucher, &modified_std);
 
     if let Err(e) = res {
@@ -91,7 +91,7 @@ fn test_transaction_type_validation() {
 fn test_signature_count_limits() {
     let (standard, _, _, _, mut voucher, _) = setup_voucher_with_one_tx();
 
-    // Im FreeTaler Standard ist max_sigs zB 0. Wenn wir eine zusätzliche Signatur hinzufügen:
+    // In FreeTaler standard max_sigs is e.g. 0. If we add an additional signature:
     let (vk, _) = human_money_core::crypto_utils::generate_ed25519_keypair_for_tests(Some("dummy"));
     let dummy_id = human_money_core::crypto_utils::create_user_id(&vk, Some("dummy")).unwrap();
 
@@ -101,7 +101,7 @@ fn test_signature_count_limits() {
         signer_id: dummy_id,
         signature: "sig1".to_string(),
         signature_time: voucher.creation_date.clone(),
-        role: "guarantor".to_string(), // Eine nicht ausgenommene (nicht "creator") Rolle
+        role: "guarantor".to_string(), // A non-exempt (non-"creator") role
         details: None,
     };
     voucher.signatures.push(dummy_sig);
@@ -121,7 +121,7 @@ fn test_signature_count_limits() {
     if let Err(human_money_core::error::VoucherCoreError::Validation(ValidationError::CountOutOfBounds { .. })) = res {
         // Expected
     } else {
-        panic!("Falscher oder kein Error. Erhalten: {:?}", res);
+        panic!("Wrong or no error. Received: {:?}", res);
     }
 }
 
@@ -146,7 +146,7 @@ fn test_transaction_amount_precision() {
     voucher.transactions[1].t_id = human_money_core::crypto_utils::get_hash(
         human_money_core::to_canonical_json(&voucher.transactions[1]).unwrap()
     );
-    // Bypass verlangt, dass die Felder da sind und gültig formatiert
+    // Bypass requires fields to be present and validly formatted
     voucher.transactions[1].layer2_signature = old_l2;
     voucher.transactions[1].sender_identity_signature = old_id;
 
@@ -240,18 +240,18 @@ fn test_p2pkh_recipient_match() {
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
 
-    // Mühsam, wir basteln einfach eine eigene tx1 rein (Fake Transfer)
+    // Construct our own tx1 (fake transfer)
     let mut bad_voucher = voucher.clone();
     let mut tx1 = bad_voucher.transactions[0].clone();
     
     let old_l2 = tx1.layer2_signature.clone();
     let old_id = tx1.sender_identity_signature.clone();
     
-    // Wir manipulieren tx1 zuerst
+    // Manipulate tx1 first
     tx1.layer2_signature = None;
     tx1.sender_identity_signature = None;
     tx1.recipient_id = alice.user_id.clone();
-    tx1.receiver_ephemeral_pub_hash = Some("hash123".to_string()); // Erwarteter Hash
+    tx1.receiver_ephemeral_pub_hash = Some("hash123".to_string()); // Expected hash
     tx1.t_id = "".to_string();
     tx1.t_id = human_money_core::crypto_utils::get_hash(
         human_money_core::to_canonical_json(&tx1).unwrap()
@@ -260,7 +260,7 @@ fn test_p2pkh_recipient_match() {
     tx1.sender_identity_signature = old_id.clone();
     bad_voucher.transactions[0] = tx1.clone();
 
-    // Wir faken einen Transfer von Alice zu Bob
+    // Fake a transfer from Alice to Bob
     let mut tx2 = tx1.clone();
     tx2.layer2_signature = None;
     tx2.sender_identity_signature = None;
@@ -270,11 +270,11 @@ fn test_p2pkh_recipient_match() {
     );
     tx2.t_type = "transfer".to_string();
     tx2.t_time = human_money_core::utils::get_current_timestamp();
-    // Der Mutant sitzt an: if prev_tx.recipient_id == tx.sender_id.unwrap() 
+    // The mutant sits at: if prev_tx.recipient_id == tx.sender_id.unwrap() 
     tx2.sender_id = Some(alice.user_id.clone()); 
     tx2.recipient_id = bob.user_id.clone();
 
-    // tx2 Sender Ephemeral Pub wird manipuliert, sodass der Hash NICHT zu hash123 passt.
+    // tx2 sender ephemeral pub is manipulated so the hash does NOT match hash123.
     tx2.sender_ephemeral_pub = Some("11111111111111111111111111111111".to_string());
     
     tx2.t_id = human_money_core::crypto_utils::get_hash(
@@ -307,12 +307,11 @@ fn test_p2pkh_change_output_verification() {
     // Verifies that when spending change, the ephemeral pub must match the previous change_ephemeral_pub_hash.
     let (standard, _, _, _, voucher, _secrets) = setup_voucher_with_one_tx();
     
-    // Erstelle einen Bad Voucher mit einer initialen Transaktion (wir nutzen den Setup)
-    
+    // Create a bad voucher with an initial transaction (we use the setup)
     let old_l2 = voucher.transactions[0].layer2_signature.clone();
     let old_id = voucher.transactions[0].sender_identity_signature.clone();
     
-    // tx1 modifizieren: Alice schickt an Bob, behält aber ein Change
+    // Modify tx1: Alice sends to Bob, but keeps change
     use human_money_core::create_transaction;
     
     let alice = &human_money_core::test_utils::ACTORS.alice;
@@ -339,7 +338,7 @@ fn test_p2pkh_change_output_verification() {
     tx1.layer2_signature = None;
     tx1.sender_identity_signature = None;
     tx1.receiver_ephemeral_pub_hash = Some("hashBob".to_string());
-    tx1.change_ephemeral_pub_hash = Some("hashChangeAlice".to_string()); // Erwarteter Hash für das Change
+    tx1.change_ephemeral_pub_hash = Some("hashChangeAlice".to_string()); // Expected hash for change
     tx1.t_id = "".to_string();
     tx1.t_id = human_money_core::crypto_utils::get_hash(
         human_money_core::to_canonical_json(&tx1).unwrap()
@@ -348,7 +347,7 @@ fn test_p2pkh_change_output_verification() {
     tx1.sender_identity_signature = old_id.clone();
     bad_voucher.transactions[1] = tx1.clone();
 
-    // Wir faken einen Transfer von Alice (aus dem Change) zu Charlie
+    // Fake a transfer from Alice (from change) to Charlie
     let mut tx2 = tx1.clone();
     tx2.trap_data = None;
     tx2.layer2_signature = None;
@@ -360,14 +359,12 @@ fn test_p2pkh_change_output_verification() {
     );
     tx2.t_type = "transfer".to_string();
     tx2.t_time = human_money_core::utils::get_current_timestamp();
-    // Um in Zeile 627 zu landen: prev_tx.recipient_id == tx.sender_id
-    // Da tx1.recipient_id == bob ist, müssen wir tx2.sender_id = bob setzen!
-    // ABER was ist wenn bob den Hash für Change Alice auflösen will? 
-    // Der Code lautet: (Zeile 607) if prev_tx.recipient_id == tx.sender_id -> OK, dann checke pub_hash gegen receiver_hash, wenn nicht, dann change_hash.
+    // To land at prev_tx.recipient_id == tx.sender_id check:
+    // Since tx1.recipient_id == bob, we must set tx2.sender_id = bob!
     tx2.sender_id = Some(bob.user_id.clone()); 
     tx2.recipient_id = alice.user_id.clone();
 
-    // tx2 Sender Ephemeral Pub wird manipuliert, sodass der Hash NICHT zu "hashChangeAlice" passt und auch nicht zu "hashBob"
+    // tx2 sender ephemeral pub is manipulated so the hash does NOT match "hashChangeAlice" or "hashBob"
     tx2.sender_ephemeral_pub = Some("11111111111111111111111111111111".to_string());
     
     tx2.t_id = human_money_core::crypto_utils::get_hash(
@@ -401,8 +398,8 @@ fn test_p2pkh_recipient_id_fallback() {
     let (standard, _, _, _, voucher, _) = human_money_core::test_utils::setup_voucher_with_one_tx();
     let mut bad_voucher = voucher.clone();
     
-    // Wir erzeugen einen ungültigen Transfer, bei dem "Charlie" das Geld von "Bob" (recipient von tx1) ausgeben will.
-    // Aber wir nutzen explizite IDs (Public Mode), damit wir in Zeile 640 landen.
+    // Create an invalid transfer where "Charlie" tries to spend "Bob's" money (recipient of tx1).
+    // Using explicit IDs (Public Mode).
     let mut tx2 = bad_voucher.transactions[0].clone();
     tx2.layer2_signature = None;
     tx2.sender_identity_signature = None;
@@ -413,7 +410,7 @@ fn test_p2pkh_recipient_id_fallback() {
     tx2.t_type = "transfer".to_string();
     tx2.t_time = human_money_core::utils::get_current_timestamp();
     
-    // Bob war Recipient. Charlie will senden.
+    // Bob was recipient. Charlie wants to send.
     tx2.sender_id = Some("Charlie".to_string()); 
     tx2.recipient_id = "Dave".to_string();
     tx2.sender_ephemeral_pub = Some("11111111111111111111111111111111".to_string());
@@ -520,7 +517,7 @@ fn test_trap_data_privacy_validation() {
     // Verifies that TrapData blinded_id does not contain sensitive characters like ':' or '@'.
     let (standard, _, _, _, voucher, secrets) = human_money_core::test_utils::setup_voucher_with_one_tx();
     
-    // Füge TrapData zu einem Transfer bei mit @ (Email leak). Init wird für TrapData übersprungen!
+    // Attach TrapData to a transfer with @ (email leak). Init is skipped for TrapData!
     use human_money_core::create_transaction;
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
@@ -539,7 +536,7 @@ fn test_trap_data_privacy_validation() {
     ).unwrap();
 
     next_voucher.transactions[2].trap_data = Some(human_money_core::models::voucher::TrapData {
-        ds_tag: "tag123".to_string(), // In bypass wird der Hash nicht validiert
+        ds_tag: "tag123".to_string(), // In bypass, hash is not validated
         blinded_id: "user@domain.com".to_string(), // Illegal!
         proof: "".to_string(),
         u: "".to_string(),
@@ -557,7 +554,7 @@ fn test_trap_data_privacy_validation() {
     if let Err(human_money_core::error::VoucherCoreError::Validation(human_money_core::error::ValidationError::TrapDataInvalid { .. })) = res {
         // Expected
     } else {
-        panic!("Falscher oder kein Error. Erhalten: {:?}", res);
+        panic!("Wrong or no error. Received: {:?}", res);
     }
 }
 
@@ -566,13 +563,13 @@ fn test_balance_attribution_logic() {
     // Verifies that unspent funds are correctly attributed to the holder's balance.
     let (standard, _, _, _, voucher, secrets) = human_money_core::test_utils::setup_voucher_with_one_tx();
     
-    // Wir nutzen das echte Setup, das eine valide Kette init -> transfer erstellt hat
+    // We use the real setup that created a valid chain init -> transfer
     let alice = &human_money_core::test_utils::ACTORS.alice;
     let bob = &human_money_core::test_utils::ACTORS.bob;
     let seed_bytes = bs58::decode(&secrets.recipient_seed).into_vec().unwrap();
     let bob_signing_key = ed25519_dalek::SigningKey::from_bytes(seed_bytes.as_slice().try_into().unwrap());
 
-    // Erstelle Transfer (echt & valide)
+    // Create transfer (real & valid)
     let (next_voucher, _) = human_money_core::create_transaction(
         &voucher,
         standard,
@@ -584,7 +581,7 @@ fn test_balance_attribution_logic() {
         None,
     ).unwrap();
     
-    // verify_transactions auf den echten, gültigen Voucher aufrufen
+    // Call verify_transactions on the real, valid voucher
     human_money_core::set_signature_bypass(true);
     let res = human_money_core::services::voucher_validation::verify_transactions(&next_voucher, standard);
     human_money_core::set_signature_bypass(false);
@@ -630,7 +627,7 @@ fn test_init_transaction_party_rules() {
     if let Err(human_money_core::error::VoucherCoreError::Validation(human_money_core::error::ValidationError::InitPartyMismatch { .. })) = res {
         // Expected
     } else {
-        panic!("Falscher oder kein Error. Erhalten: {:?}", res);
+        panic!("Wrong or no error. Received: {:?}", res);
     }
 }
 
@@ -639,13 +636,13 @@ fn test_p2pkh_identity_match_isolation() {
     // Verifies that the identity-based match (fallback) correctly allows spending if hash-match is unavailable.
     let (standard, _, _, _, mut voucher, _) = setup_voucher_with_one_tx();
     
-    // Erstelle Split-Kette
+    // Create split chain
     voucher.transactions[1].t_type = "split".to_string();
     voucher.transactions[1].amount = "10.00".to_string();
     voucher.transactions[1].sender_remaining_amount = Some("90.00".to_string());
     voucher.transactions[1].sender_id = Some(ACTORS.alice.user_id.clone()); 
     
-    // Alice schickt an Bob
+    // Alice sends to Bob
     let bob_id = ACTORS.bob.user_id.clone();
     voucher.transactions[1].recipient_id = bob_id.clone();
     
@@ -657,7 +654,7 @@ fn test_p2pkh_identity_match_isolation() {
         human_money_core::to_canonical_json(&voucher.transactions[1]).unwrap()
     );
 
-    // TX2: Alice (Sender) nutzt ihr Restgeld (Change)
+    // TX2: Alice (sender) uses her change
     let mut tx2 = voucher.transactions[1].clone();
     tx2.t_type = "transfer".to_string();
     tx2.amount = "90.00".to_string();
@@ -665,8 +662,8 @@ fn test_p2pkh_identity_match_isolation() {
     tx2.prev_hash = voucher.transactions[1].t_id.clone();
     tx2.sender_id = Some(ACTORS.alice.user_id.clone()); 
     
-    // SABOTAGE: Wir geben einen falschen ephemeral_pub an, der NICHT zum change_hash von tx1 passt
-    // Somit MUSS die Logik über den ID-Match (line 642) gehen.
+    // SABOTAGE: We provide a wrong ephemeral_pub that does NOT match the change_hash of tx1
+    // Thus, logic MUST go through ID-match (line 642).
     tx2.sender_ephemeral_pub = Some("bs58_encoded_dummy".to_string()); 
     
     tx2.t_id = "".to_string();
@@ -680,9 +677,9 @@ fn test_p2pkh_identity_match_isolation() {
     let res = verify_transactions(&voucher, standard);
     human_money_core::set_signature_bypass(false);
 
-    // Baseline: Sollte ERFOLG sein, da ID-Match Alice == Alice (line 642) greift.
-    // Mutant: an line 642 wird == zu !=. Dann greift der ID-Match NICHT.
-    // Da auch der Hash-Match (wegen Sabotage) NICHT greift -> Error.
+    // Baseline: Should be SUCCESS because ID-match Alice == Alice (line 642) applies.
+    // Mutant: at line 642 == becomes !=. Then ID-match does NOT apply.
+    // Since hash-match also does NOT apply (due to sabotage) -> Error.
     if let Err(e) = res {
          match e {
              human_money_core::error::VoucherCoreError::Validation(human_money_core::error::ValidationError::InvalidTransaction(msg)) => {

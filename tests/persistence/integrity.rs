@@ -13,24 +13,24 @@ fn test_wallet_integrity_missing_item() {
     let mnemonic = AppService::generate_mnemonic(12, MnemonicLanguage::English).unwrap();
     let password = "test-password";
     
-    // Profil erstellen - das sollte auch den initialen Digest schreiben
+    // Create profile - this should also write initial digest
     app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
-    // 1. Initialer Check - sollte Valid sein
+    // 1. Initial check - should be Valid
     let report = app.check_integrity(Some(password)).expect("Integrity check failed");
     assert_eq!(report, IntegrityReport::Valid);
     
-    // 2. Info holen um den Pfad zu finden
+    // 2. Fetch info to locate path
     let profiles = app.list_profiles().unwrap();
     let folder_name = &profiles[0].folder_name;
     let wallet_path = base_path.join(folder_name);
     
-    // 3. Eine wichtige Datei löschen (z.B. vouchers.enc)
+    // 3. Delete an important file (e.g. vouchers.enc)
     let vouchers_file = wallet_path.join("vouchers.enc");
     assert!(vouchers_file.exists(), "vouchers.enc should exist");
     fs::remove_file(vouchers_file).unwrap();
     
-    // 4. Check erneut - sollte MissingItems melden
+    // 4. Check again - should report MissingItems
     let report = app.check_integrity(Some(password)).unwrap();
     match report {
         IntegrityReport::MissingItems(items) => {
@@ -52,16 +52,16 @@ fn test_wallet_integrity_manipulated_item() {
     
     app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
-    // 1. Info holen um den Pfad zu finden
+    // 1. Fetch info to locate path
     let profiles = app.list_profiles().unwrap();
     let folder_name = &profiles[0].folder_name;
     let wallet_path = base_path.join(folder_name);
     
-    // 2. Eine Datei manipulieren
+    // 2. Manipulate a file
     let vouchers_file = wallet_path.join("vouchers.enc");
     fs::write(vouchers_file, b"corrupted data").unwrap();
     
-    // 3. Check - sollte ManipulatedItems melden
+    // 3. Check - should report ManipulatedItems
     let report = app.check_integrity(Some(password)).unwrap();
     match report {
         IntegrityReport::ManipulatedItems(items) => {
@@ -83,16 +83,16 @@ fn test_wallet_integrity_unknown_item() {
     
     app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
-    // 1. Info holen um den Pfad zu finden
+    // 1. Fetch info to locate path
     let profiles = app.list_profiles().unwrap();
     let folder_name = &profiles[0].folder_name;
     let wallet_path = base_path.join(folder_name);
     
-    // 2. Eine unbekannte Datei erstellen
+    // 2. Create an unknown file
     let unknown_file = wallet_path.join("unknown_attacker_file.txt");
     fs::write(unknown_file, b"evil").unwrap();
     
-    // 3. Check - sollte UnknownItems melden
+    // 3. Check - should report UnknownItems
     let report = app.check_integrity(Some(password)).unwrap();
     match report {
         IntegrityReport::UnknownItems(items) => {
@@ -114,16 +114,16 @@ fn test_wallet_integrity_missing_digest() {
     
     app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
-    // 1. Info holen um den Pfad zu finden
+    // 1. Fetch info to locate path
     let profiles = app.list_profiles().unwrap();
     let folder_name = &profiles[0].folder_name;
     let wallet_path = base_path.join(folder_name);
     
-    // 2. Integrity Record löschen
+    // 2. Delete Integrity Record
     let integrity_file = wallet_path.join("storage_integrity.json");
     fs::remove_file(integrity_file).unwrap();
     
-    // 3. Check - sollte MissingIntegrityRecord melden
+    // 3. Check - should report MissingIntegrityRecord
     let report = app.check_integrity(Some(password)).unwrap();
     assert_eq!(report, IntegrityReport::MissingIntegrityRecord);
 }
@@ -139,24 +139,24 @@ fn test_wallet_integrity_invalid_signature() {
     
     app.create_profile("Test Profil", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
-    // 1. Info holen um den Pfad zu finden
+    // 1. Fetch info to locate path
     let profiles = app.list_profiles().unwrap();
     let folder_name = &profiles[0].folder_name;
     let wallet_path = base_path.join(folder_name);
     
-    // 2. Integrity Record manipulieren (Signatur-Bruch)
+    // 2. Manipulate Integrity Record (break signature)
     let integrity_file = wallet_path.join("storage_integrity.json");
     let content = fs::read_to_string(&integrity_file).unwrap();
     println!("Integrity Record content: {}", content);
     
-    // Wir manipulieren den payload, damit die Signatur bricht.
+    // We manipulate the payload so that the signature breaks.
     let manipulated = content.replace("\"version\": 1", "\"version\": 2")
                              .replace("\"version\":1", "\"version\":2");
     
     assert_ne!(content, manipulated, "Integrity Record manipulation failed - string matching issue?");
     fs::write(integrity_file, manipulated).unwrap();
     
-    // 3. Check - sollte InvalidSignature melden
+    // 3. Check - should report InvalidSignature
     let report = app.check_integrity(Some(password)).unwrap();
     assert_eq!(report, IntegrityReport::InvalidSignature);
 }
@@ -176,21 +176,21 @@ fn test_wallet_integrity_repair() {
     let folder_name = &profiles[0].folder_name;
     let wallet_path = base_path.join(folder_name);
     
-    // 1. Eine Datei manipulieren
+    // 1. Manipulate a file
     let vouchers_file = wallet_path.join("vouchers.enc");
     fs::write(vouchers_file, b"legitimate manual change").unwrap();
     
-    // 2. Check - sollte ManipulatedItems melden
+    // 2. Check - should report ManipulatedItems
     let report = app.check_integrity(Some(password)).unwrap();
     match report {
         IntegrityReport::ManipulatedItems(_) => (),
         other => panic!("Expected ManipulatedItems, got {:?}", other),
     }
     
-    // 3. Reparatur ausführen (Nutzer sagt "OK")
+    // 3. Execute repair (user confirms "OK")
     app.repair_integrity(Some(password)).expect("Repair failed");
     
-    // 4. Check erneut - sollte jetzt Valid sein
+    // 4. Check again - should now be Valid
     let report = app.check_integrity(Some(password)).unwrap();
     assert_eq!(report, IntegrityReport::Valid);
 }
@@ -204,25 +204,25 @@ fn test_wallet_integrity_missing_bundles_meta_after_restart() {
     let mnemonic = AppService::generate_mnemonic(12, MnemonicLanguage::English).unwrap();
     let password = "test-password";
     
-    // Profil erstellen
+    // Create profile
     app.create_profile("Bundles Test", &mnemonic, None, Some("test"), password, MnemonicLanguage::English, "test-id".to_string()).unwrap();
     
-    // 1. Initialer Check - sollte Valid sein
+    // 1. Initial check - should be Valid
     let report = app.check_integrity(Some(password)).expect("Integrity check failed");
     assert_eq!(report, IntegrityReport::Valid);
     
-    // 2. Info holen um den Pfad zu finden
+    // 2. Fetch info to locate path
     let profiles = app.list_profiles().unwrap();
     let folder_name = &profiles[0].folder_name;
     let wallet_path = base_path.join(folder_name);
     
-    // 3. bundles.meta.enc löschen
+    // 3. Delete bundles.meta.enc
     let bundles_meta_file = wallet_path.join("bundles.meta.enc");
     if bundles_meta_file.exists() {
         fs::remove_file(bundles_meta_file).unwrap();
     }
     
-    // 4. Check - sollte MissingItems mit bundles.meta.enc melden
+    // 4. Check - should report MissingItems containing bundles.meta.enc
     let report = app.check_integrity(Some(password)).unwrap();
     match report {
         IntegrityReport::MissingItems(items) => {
@@ -233,7 +233,7 @@ fn test_wallet_integrity_missing_bundles_meta_after_restart() {
         other => panic!("Expected MissingItems, got {:?}", other),
     }
     
-    // 5. Wallet logout und login simulieren (Neustart)
+    // 5. Simulate wallet logout and login (restart)
     app.logout();
     
     let mut app2 = AppService::new(base_path).unwrap();
@@ -241,11 +241,11 @@ fn test_wallet_integrity_missing_bundles_meta_after_restart() {
     let folder_name2 = &profiles2[0].folder_name;
     app2.login(folder_name2, password, false, "test-id".to_string()).expect("Login failed");
     
-    // 6. Nach dem Neustart sollte die Datei noch fehlen (wird nicht automatisch recreated)
+    // 6. After restart, the file should still be missing (not automatically recreated)
     let bundles_meta_file_after = wallet_path.join("bundles.meta.enc");
     assert!(!bundles_meta_file_after.exists(), "bundles.meta.enc should still be missing after restart");
     
-    // 7. Check erneut - sollte immer noch MissingItems melden, da login() den Zustand NICHT mehr blind versiegelt
+    // 7. Check again - should still report MissingItems, because login() NO LONGER blindly reseals the state
     let report = app2.check_integrity(Some(password)).unwrap();
     match report {
         IntegrityReport::MissingItems(items) => {
@@ -255,7 +255,7 @@ fn test_wallet_integrity_missing_bundles_meta_after_restart() {
         other => panic!("Expected MissingItems after login, got {:?}", other),
     }
     
-    // 8. Reparatur ausführen - erst jetzt sollte es Valid sein
+    // 8. Execute repair - only now should it be Valid
     app2.repair_integrity(Some(password)).expect("Repair failed");
     let report = app2.check_integrity(Some(password)).unwrap();
     assert_eq!(report, IntegrityReport::Valid, "Integrity should be Valid ONLY after explicit repair");

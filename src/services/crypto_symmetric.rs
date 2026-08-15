@@ -202,7 +202,7 @@ pub fn decrypt_data_with_aad(
 ///
 /// # Returns
 ///
-/// A tuple containing (ciphertext including nonce, salt[16]) or a `VoucherCoreError`.
+/// * `Ok(Vec<u8>)` - The encrypted data (including nonce, `salt[16]`) or a `VoucherCoreError`.
 pub fn encrypt_symmetric_password(
     payload: &[u8],
     password: &str,

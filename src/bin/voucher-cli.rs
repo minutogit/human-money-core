@@ -1,10 +1,10 @@
 //! src/bin/voucher-cli.rs
 //!
-//! Ein Kommandozeilen-Tool zum Verwalten und Signieren von Gutschein-Standards.
+//! A command-line tool for managing and signing voucher standards.
 //!
-//! ## Befehle:
-//! - `generate-keys`: Erzeugt ein neues Schlüsselpaar für den Herausgeber.
-//! - `sign-standard`: Signiert eine gegebene Standard-Definitionsdatei.
+//! ## Commands:
+//! - `generate-keys`: Generates a new key pair for the issuer.
+//! - `sign-standard`: Signs a given standard definition file.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -17,7 +17,7 @@ use human_money_core::{
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Das Haupt-Struct für das CLI-Tool, das von `clap` geparst wird.
+/// Main struct for the CLI tool parsed by `clap`.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -25,32 +25,32 @@ struct Cli {
     command: Commands,
 }
 
-/// Definiert die verfügbaren Unterbefehle.
+/// Defines available subcommands.
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Erzeugt ein neues Ed25519-Schlüsselpaar und eine Mnemonic-Phrase für den Herausgeber.
+    /// Generates a new Ed25519 key pair and mnemonic phrase for the issuer.
     GenerateKeys {
-        /// Das Präfix für die User-ID (z.B. "0" für den Standard-Issuer).
+        /// Prefix for the user ID (e.g. "0" for standard issuer).
         #[arg(short, long)]
         prefix: String,
     },
 
-    /// Signiert eine Standard-Definitionsdatei mit einem gegebenen privaten Schlüssel.
+    /// Signs a standard definition file with a given private key.
     SignStandard {
-        /// Pfad zur privaten Schlüsseldatei des Herausgebers (z.B. target/dev-keys/issuer.key).
+        /// Path to issuer's private key file (e.g. target/dev-keys/issuer.key).
         #[arg(short, long)]
         key: PathBuf,
 
-        /// Das Präfix für die User-ID (z.B. "0" für den Standard-Issuer).
+        /// Prefix for user ID (e.g. "0" for standard issuer).
         #[arg(short, long)]
         prefix: String,
 
-        /// Pfad zur .toml-Datei des Standards, die signiert werden soll.
+        /// Path to standard .toml file to be signed.
         standard_file: PathBuf,
     },
 }
 
-/// Hauptfunktion des Programms.
+/// Main program entry point.
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -66,7 +66,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Logik für den `generate-keys`-Befehl.
+/// Logic for the `generate-keys` command.
 fn generate_keys(prefix: &str) -> Result<()> {
     let key_dir = Path::new("target/dev-keys");
     fs::create_dir_all(key_dir).with_context(|| {
@@ -81,7 +81,7 @@ fn generate_keys(prefix: &str) -> Result<()> {
 
     println!("🔑 Erzeuge neue Mnemonic-Phrase und Schlüsselpaar...");
 
-    // 1. Mnemonic erzeugen und speichern
+    // 1. Generate and save mnemonic
     let mnemonic = crypto_utils::generate_mnemonic(12, MnemonicLanguage::English)
         .map_err(|e| anyhow::anyhow!(e.to_string()))
         .context("Mnemonic konnte nicht generiert werden")?;
@@ -92,10 +92,10 @@ fn generate_keys(prefix: &str) -> Result<()> {
         )
     })?;
 
-    // 2. Schlüsselpaar aus Mnemonic ableiten
+    // 2. Derive key pair from mnemonic
     let (public_key, signing_key) = crypto_utils::derive_ed25519_keypair(&mnemonic, None, MnemonicLanguage::English)?;
 
-    // 3. Privaten Schlüssel speichern
+    // 3. Save private key
     fs::write(&key_path, signing_key.to_bytes()).with_context(|| {
         format!(
             "Konnte privaten Schlüssel nicht in {} schreiben",
@@ -103,7 +103,7 @@ fn generate_keys(prefix: &str) -> Result<()> {
         )
     })?;
 
-    // 4. Issuer ID generieren und ausgeben
+    // 4. Generate and output Issuer ID
     let issuer_id = crypto_utils::create_user_id(&public_key, Some(prefix))
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
@@ -118,11 +118,11 @@ fn generate_keys(prefix: &str) -> Result<()> {
     Ok(())
 }
 
-/// Logik für den `sign-standard`-Befehl.
+/// Logic for the `sign-standard` command.
 fn sign_standard(key_path: &Path, prefix: &str, standard_path: &Path) -> Result<()> {
     println!("✍️  Signiere Standard: {}", standard_path.display());
 
-    // 1. Privaten Schlüssel laden
+    // 1. Load private key
     let key_bytes: [u8; 32] = fs::read(key_path)
         .with_context(|| {
             format!(
@@ -135,7 +135,7 @@ fn sign_standard(key_path: &Path, prefix: &str, standard_path: &Path) -> Result<
     let signing_key = SigningKey::from_bytes(&key_bytes);
     let public_key = signing_key.verifying_key();
 
-    // 2. Standard-Datei laden
+    // 2. Load standard file
     let toml_content = fs::read_to_string(standard_path).with_context(|| {
         format!(
             "Konnte Standard-Datei {} nicht laden",
@@ -143,38 +143,38 @@ fn sign_standard(key_path: &Path, prefix: &str, standard_path: &Path) -> Result<
         )
     })?;
 
-    // 3. Alten Signatur-Block entfernen und kanonischen Inhalt für die Signatur erstellen
+    // 3. Remove old signature block and prepare canonical content for signing
     let mut toml_value: toml::Value = toml::from_str(&toml_content)?;
     if let Some(table) = toml_value.as_table_mut() {
         table.remove("signature");
     }
 
-    // 4. Kanonische Form für die Signatur erstellen
+    // 4. Create canonical form for signature
     let mut standard_def: VoucherStandardDefinition =
         toml::from_str(&toml::to_string(&toml_value)?)?;
-    standard_def.signature = None; // Sicherstellen, dass die Signatur für die Kanonisierung leer ist
+    standard_def.signature = None; // Ensure signature is empty for canonicalization
     let canonical_json = to_canonical_json(&standard_def)
         .context("Kanonisches JSON konnte nicht erstellt werden")?;
 
-    // 5. Hash berechnen und signieren
+    // 5. Compute hash and sign
     let hash_to_sign = get_hash(canonical_json.as_bytes());
     let signature = crypto_utils::sign_ed25519(&signing_key, hash_to_sign.as_bytes());
     let signature_b58 = bs58::encode(signature.to_bytes()).into_string();
 
-    // 6. Issuer ID erstellen
+    // 6. Create Issuer ID
     let issuer_id = crypto_utils::create_user_id(&public_key, Some(prefix))
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-    // 7. Neuen Signatur-Block erstellen
+    // 7. Create new signature block
     let signature_block = format!(
-        "\n[signature]\n# Die `did:key` des Herausgebers, die seinen öffentlichen Schlüssel enthält.\nissuer_id = \"{}\"\n\n# Die finale Base58-kodierte Ed25519-Signatur des kanonisierten Inhalts (ohne diesen Block).\nsignature = \"{}\"\n",
+        "\n[signature]\n# The issuer `did:key` containing their public key.\nissuer_id = \"{}\"\n\n# The final Base58-encoded Ed25519 signature of the canonicalized content (without this block).\nsignature = \"{}\"\n",
         issuer_id, signature_b58
     );
 
-    // 8. Signatur in die ursprüngliche Datei einfügen, ohne die Formatierung zu verändern
+    // 8. Insert signature into original file without modifying formatting
     let final_toml_content = update_signature_in_toml(&toml_content, &signature_block);
 
-    // 9. Datei überschreiben
+    // 9. Overwrite file
     fs::write(standard_path, final_toml_content).with_context(|| {
         format!(
             "Konnte signierten Standard nicht in {} schreiben",
@@ -186,19 +186,20 @@ fn sign_standard(key_path: &Path, prefix: &str, standard_path: &Path) -> Result<
     Ok(())
 }
 
-/// Hilfsfunktion zum Aktualisieren des Signaturblocks in einer TOML-Datei
-/// ohne die ursprüngliche Formatierung zu verändern
+/// Helper function to update the signature block in a TOML file
+/// without altering original formatting
 fn update_signature_in_toml(original_content: &str, new_signature_block: &str) -> String {
-    // Suchen des Signaturblocks in der Datei
+    // Locate signature block in file
     let signature_start = original_content.find("\n[signature]");
 
     if let Some(pos) = signature_start {
-        // Wenn ein Signaturblock gefunden wurde, ersetzen wir ihn
-        // Wir behalten die Leerzeile vor dem [signature] Block bei
+        // If a signature block was found, replace it
+        // Preserve empty line before [signature] block
         let content_before_signature = &original_content[..pos + 1];
         content_before_signature.to_string() + new_signature_block.trim_start()
     } else {
-        // Wenn kein Signaturblock gefunden wurde, fügen wir ihn am Ende hinzu
+        // If no signature block was found, append at the end
         original_content.trim_end().to_string() + new_signature_block
     }
 }
+

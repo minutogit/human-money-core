@@ -111,7 +111,7 @@ pub fn scan_and_rebuild_fingerprints(
         for tx in &instance.voucher.transactions {
             let fingerprint = create_fingerprint_for_transaction(tx, &instance.voucher)?;
 
-            // Jede Transaktion wird zur allgemeinen lokalen Historie hinzugefügt.
+            // Every transaction is added to the general local history.
             // CORRECTION: Prevent duplicates. A Vec is used to preserve order,
             // but we check for uniqueness before adding.
             let known_entry = known
@@ -213,14 +213,15 @@ pub fn check_for_double_spend(
 /// The deterministic `proof_id` is generated here.
 ///
 /// # Arguments
-/// * `offender_id` - Die ID des Verursachers.
-/// * `fork_point_prev_hash` - Der `prev_hash`, an dem die Transaktionen abzweigen.
-/// * `conflicting_transactions` - Die bereits verifizierten, widersprüchlichen Transaktionen.
-/// * `voucher_valid_until` - Das Gültigkeitsdatum des betroffenen Gutscheins.
-/// * `reporter_identity` - Die Identität des Wallet-Besitzers, der den Beweis erstellt.
+/// * `offender_id` - The ID of the offender.
+/// * `fork_point_prev_hash` - The `prev_hash` where transactions branch off.
+/// * `conflicting_transactions` - The verified conflicting transactions.
+/// * `deletable_at` - The expiration/retention timestamp.
+/// * `reporter_identity` - The identity of the wallet owner creating the proof.
+/// * `non_redeemable_test_voucher` - Flag indicating whether it is a test voucher.
 ///
 /// # Returns
-/// Ein `Result`, das bei Erfolg das erstellte `ProofOfDoubleSpend`-Objekt enthält.
+/// A `Result` containing the created `ProofOfDoubleSpend` object on success.
 pub fn create_proof_of_double_spend(
     offender_id: String,
     fork_point_prev_hash: String,
@@ -278,12 +279,12 @@ pub fn create_proof_of_double_spend(
 /// existing conflict proof.
 ///
 /// # Arguments
-/// * `proof_id` - Die ID des `ProofOfDoubleSpend`, der beigelegt wird.
-/// * `victim_identity` - Die Identität des Opfers, das die Beilegung bestätigt.
-/// * `notes` - Eine optionale, menschenlesbare Notiz.
+/// * `proof_id` - The ID of the `ProofOfDoubleSpend` being resolved.
+/// * `victim_identity` - The identity of the victim confirming the resolution.
+/// * `notes` - An optional human-readable note.
 ///
 /// # Returns
-/// Ein `Result`, das die signierte `ResolutionEndorsement` enthält.
+/// A `Result` containing the signed `ResolutionEndorsement`.
 pub fn create_and_sign_resolution_endorsement(
     proof_id: &str,
     victim_identity: &UserIdentity,
@@ -407,10 +408,10 @@ pub fn import_foreign_fingerprints(
 /// conflicting transactions can decrypt the timestamp.
 ///
 /// # Arguments
-/// * `transaction` - Die Transaktion, deren Zeitstempel verschlüsselt werden soll.
+/// * `transaction` - The transaction whose timestamp is to be encrypted.
 ///
 /// # Returns
-/// Ein `u128` Wert, der den verschlüsselten Zeitstempel in Nanosekunden darstellt.
+/// A `u128` value representing the encrypted timestamp in nanoseconds.
 pub fn encrypt_transaction_timestamp(transaction: &Transaction) -> Result<u128, VoucherCoreError> {
     // a. Parse timestamp and convert to nanoseconds (u128).
     let nanos = DateTime::parse_from_rfc3339(&transaction.t_time)
@@ -449,11 +450,11 @@ pub fn encrypt_transaction_timestamp(transaction: &Transaction) -> Result<u128, 
 /// Since encryption is based on XOR, the decryption function is identical.
 ///
 /// # Arguments
-/// * `transaction` - Die Transaktion, zu der der Zeitstempel gehört.
-/// * `encrypted_nanos` - Der verschlüsselte Zeitstempel in Nanosekunden (`u128`).
+/// * `transaction` - The transaction to which the timestamp belongs.
+/// * `encrypted_nanos` - The encrypted timestamp in nanoseconds (`u128`).
 ///
 /// # Returns
-/// Der ursprüngliche, entschlüsselte Zeitstempel in Nanosekunden.
+/// The original decrypted timestamp in nanoseconds.
 pub fn decrypt_transaction_timestamp(
     transaction: &Transaction,
     encrypted_nanos: u128,

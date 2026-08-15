@@ -1,7 +1,7 @@
 //! # src/services/signature_manager.rs
 //!
-//! Enthält die zustandslose Geschäftslogik für die Erstellung und kryptographische
-//! Validierung von losgelösten Signaturen (`DetachedSignature`).
+//! Contains stateless business logic for creating and cryptographically
+//! validating detached signatures (`DetachedSignature`).
 use crate::error::ValidationError;
 
 use crate::error::VoucherCoreError;
@@ -16,30 +16,31 @@ use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::services::voucher_validation::get_failing_custom_rules;
 use serde::{Deserialize, Serialize};
 
-/// Vervollständigt und signiert eine `DetachedSignature`.
+/// Completes and signs a `DetachedSignature`.
 ///
-/// Diese Funktion nimmt ein teilweise ausgefülltes `DetachedSignature`-Objekt,
-/// füllt die kryptographischen Felder (`signature_id`, `signature`, `signature_time`),
-/// und gibt das vollständige, signierte Objekt zurück.
+/// This function takes a partially populated `DetachedSignature` object,
+/// fills the cryptographic fields (`signature_id`, `signature`, `signature_time`),
+/// and returns the complete, signed object.
 /// # Arguments
-/// * `signature_data` - Das `DetachedSignature`-Enum mit den Metadaten des Unterzeichners.
-/// * `signer_identity` - Die Identität des Unterzeichners.
-/// * `details` - Das optionale `PublicProfile` des Unterzeichners.
-/// * `voucher_id` - Die ID des Gutscheins, auf den sich die Signatur bezieht.
+/// * `signature_data` - The `DetachedSignature` enum with the signer's metadata.
+/// * `signer_identity` - The identity of the signer.
+/// * `details` - The optional `PublicProfile` of the signer.
+/// * `voucher_id` - The voucher ID to which the signature relates.
+/// * `init_t_id` - The transaction ID of the genesis (init) transaction.
 ///
 /// # Returns
-/// Eine `Result` mit der vervollständigten `DetachedSignature`.
+/// A `Result` containing the completed `DetachedSignature`.
 pub fn complete_and_sign_detached_signature(
     mut signature_data: DetachedSignature,
     signer_identity: &UserIdentity,
     details: Option<PublicProfile>,
     voucher_id: &str,
-    init_t_id: &str, // <-- NEUER PARAMETER
+    init_t_id: &str,
 ) -> Result<DetachedSignature, VoucherCoreError> {
     let signer_id = match &mut signature_data {
         DetachedSignature::Signature(sig) => {
             sig.signer_id = signer_identity.user_id.clone();
-            sig.voucher_id = voucher_id.to_string(); // <-- HINZUFÜGEN
+            sig.voucher_id = voucher_id.to_string();
 
             // If details parameter is Some, use it to complete the signature by merging
             // with existing details, giving priority to values in the details parameter.
@@ -108,15 +109,15 @@ pub fn complete_and_sign_detached_signature(
         ));
     }
 
-    // Setze kryptographische Felder zurück und bestimme den Zeitstempel einheitlich
-    let signature_time = get_current_timestamp(); // Einmaligen Zeitstempel ermitteln
+    // Reset cryptographic fields and determine timestamp uniformly
+    let signature_time = get_current_timestamp(); // Determine single timestamp
     let signature_json_for_id = match &mut signature_data {
         DetachedSignature::Signature(sig) => {
-            // Klonen und Modifizieren für den Hash
+            // Clone and modify for hash
             let mut sig_clone = sig.clone();
             sig_clone.signature_id = "".to_string();
             sig_clone.signature = "".to_string();
-            sig_clone.signature_time = signature_time.clone(); // Verwende denselben Zeitstempel
+            sig_clone.signature_time = signature_time.clone(); // Use same timestamp
 
             to_canonical_json(&sig_clone)?.into_bytes()
         }
@@ -131,34 +132,35 @@ pub fn complete_and_sign_detached_signature(
         DetachedSignature::Signature(sig) => {
             sig.signature_id = signature_id;
             sig.signature = signature_str;
-            sig.signature_time = signature_time; // Verwende denselben Zeitstempel
+            sig.signature_time = signature_time; // Use same timestamp
         }
     }
 
     Ok(signature_data)
 }
 
-/// Validiert die kryptographische Integrität einer `DetachedSignature`.
+/// Validates the cryptographic integrity of a `DetachedSignature`.
 ///
-/// Überprüft, ob die `signature_id` mit den Metadaten übereinstimmt und ob die
-/// digitale `signature` gültig ist.
+/// Checks whether `signature_id` matches metadata and whether
+/// the digital `signature` is valid.
 ///
 /// # Arguments
-/// * `signature_data` - Die zu validierende Signatur.
+/// * `signature_data` - The signature to validate.
+/// * `init_t_id` - The transaction ID of the genesis (init) transaction.
 ///
 /// # Returns
-/// Ein leeres `Result`, wenn die Validierung erfolgreich ist.
+/// An empty `Result` if validation succeeds.
 pub fn validate_detached_signature(
     signature_data: &DetachedSignature,
-    init_t_id: &str, // <-- NEUER PARAMETER
+    init_t_id: &str,
 ) -> Result<(), VoucherCoreError> {
     // --- BYPASS CHECK START ---
     #[cfg(feature = "test-utils")]
     {
         if crate::is_signature_bypass_active() {
-            // Warnung ausgeben (nur sichtbar mit --nocapture oder bei Fehler),
-            // damit man beim Debuggen weiß, was passiert.
-            // eprintln!("[TEST-MODE] WARNUNG: Signaturprüfung übersprungen.");
+            // Output warning (only visible with --nocapture or on error)
+            // so that one knows what is happening during debugging.
+            // eprintln!("[TEST-MODE] WARNING: Signature check skipped.");
             return Ok(());
         }
     }
@@ -173,12 +175,12 @@ pub fn validate_detached_signature(
         ),
     };
 
-    // Entferne die kryptographischen Felder, um den Hash der Metadaten neu zu berechnen
+    // Remove cryptographic fields to recalculate metadata hash
     let obj = sig_obj_to_verify.as_object_mut().unwrap();
     obj.insert("signature_id".to_string(), "".into());
     obj.insert("signature".to_string(), "".into());
 
-    // voucher_id ist nun Teil des Hashings und wird nicht entfernt
+    // voucher_id is now part of hashing and is not removed
 
     let calculated_sig_id = get_hash_from_slices(&[
         to_canonical_json(&sig_obj_to_verify)?.as_bytes(),
@@ -194,7 +196,7 @@ pub fn validate_detached_signature(
     let public_key = get_pubkey_from_user_id(&signer_id)?;
     let signature_bytes: Vec<u8> = bs58::decode(signature_b58).into_vec()?;
 
-    // Konvertiere den Vec<u8> in ein [u8; 64] Array, wie es von `from_bytes` erwartet wird.
+    // Convert Vec<u8> into [u8; 64] array as expected by `from_bytes`
     let signature_array: [u8; 64] = signature_bytes.try_into().map_err(|_| {
         VoucherCoreError::Validation(ValidationError::SignatureDecodeError(
             "Invalid signature length: must be 64 bytes".to_string(),
@@ -205,7 +207,7 @@ pub fn validate_detached_signature(
     if !verify_ed25519(&public_key, expected_sig_id.as_bytes(), &signature) {
         return Err(VoucherCoreError::Validation(
             ValidationError::InvalidSignature {
-                signer_id: signer_id.to_string(), // KORREKTUR E0308
+                signer_id: signer_id.to_string(),
             },
         ));
     }

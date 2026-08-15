@@ -1,7 +1,7 @@
 //! # src/app_service/app_signature_handler.rs
 //!
-//! Enthält alle `AppService`-Funktionen, die sich auf den Signatur-Workflow beziehen,
-//! wie das Anfordern, Erstellen und Anhängen von losgelösten Signaturen.
+//! Contains all `AppService` functions related to the signature workflow,
+//! such as requesting, creating, and attaching detached signatures.
 
 use super::{AppService, AppState, AppFacadeError};
 use crate::models::secure_container::ContainerConfig;
@@ -12,15 +12,15 @@ use crate::wallet::instance::VoucherStatus;
 use crate::{ValidationFailureReason, VoucherCoreError};
 
 impl AppService {
-    /// Erstellt ein Bundle, um einen Gutschein zur Unterzeichnung an einen weiteren Teilnehmer (z. B. Bürge, Notar) zu senden.
+    /// Creates a bundle to send a voucher for signing to another participant (e.g. guarantor, notary).
     ///
-    /// Diese Operation verändert den Wallet-Zustand nicht und erfordert kein Speichern.
+    /// This operation does not modify wallet state and requires no saving.
     ///
     /// # Returns
-    /// Die serialisierten Bytes des `SecureContainer`, bereit zum Versand an den Unterzeichner.
+    /// Serialized bytes of the `SecureContainer`, ready for transmission to the signer.
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Wallet gesperrt ist oder der angeforderte Gutschein nicht existiert.
+    /// Fails if the wallet is locked or the requested voucher does not exist.
     pub fn create_signing_request_bundle(
         &self,
         local_instance_id: &str,
@@ -36,13 +36,13 @@ impl AppService {
             .map_err(AppFacadeError::from)
     }
 
-    /// Öffnet einen empfangenen `SecureContainer`, der eine Signaturanfrage enthält,
-    /// und gibt den Gutschein zur Überprüfung (Preview) zurück.
+    /// Opens a received `SecureContainer` containing a signing request,
+    /// and returns the voucher for review (preview).
     ///
-    /// Diese Operation verändert den Wallet-Zustand nicht.
+    /// This operation does not modify wallet state.
     ///
     /// # Returns
-    /// Das `Voucher`-Objekt, das unterzeichnet werden soll.
+    /// The `Voucher` object to be signed.
     pub fn open_voucher_signing_request(
         &self,
         container_bytes: &[u8],
@@ -72,16 +72,16 @@ impl AppService {
         Ok(voucher)
     }
 
-    /// Erstellt eine losgelöste Signatur als Antwort auf eine Signaturanfrage.
+    /// Creates a detached signature in response to a signing request.
     ///
-    /// Diese Operation wird vom Unterzeichner aufgerufen und speichert den bezeugten Gutschein
-    /// im lokalen Wallet unter dem Status `Endorsed` als rechtssicheres Logbuch.
+    /// This operation is called by the signer and stores the witnessed voucher
+    /// in the local wallet under `Endorsed` status as an audit log.
     ///
     /// # Returns
-    /// Die serialisierten Bytes des `SecureContainer` mit der Signatur, bereit für den Rückversand.
+    /// Serialized bytes of the `SecureContainer` with the signature, ready for return transmission.
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Wallet des Unterzeichners gesperrt ist oder das Speichern fehlschlägt.
+    /// Fails if the signer's wallet is locked or saving fails.
     pub fn create_detached_signature_response_bundle(
         &mut self,
         voucher_to_sign: &Voucher,
@@ -90,7 +90,7 @@ impl AppService {
         config: ContainerConfig,
         password: Option<&str>,
     ) -> Result<Vec<u8>, AppFacadeError> {
-        // --- FORK-LOCK PRÜFUNG ---
+        // --- FORK-LOCK CHECK ---
         self.check_fork_lock(password).map_err(AppFacadeError::from)?;
 
         // BUG-FIX: Determine AuthMethod BEFORE state replacement
@@ -111,13 +111,13 @@ impl AppService {
                 identity,
                 session_cache,
             } => {
-                // Erstelle das Wrapper-Objekt mit den Metadaten
+                // Create wrapper object with metadata
                 let signature_data = DetachedSignature::Signature(VoucherSignature {
                     role: role.to_string(),
                     ..Default::default()
                 });
 
-                // Erstelle die Signatur
+                // Create signature
                 let bundle_bytes = wallet
                     .create_detached_signature_response(
                         &identity,
@@ -130,11 +130,11 @@ impl AppService {
 
                 match bundle_bytes {
                     Ok(bytes) => {
-                        // Speichere den bezeugten Gutschein im lokalen Wallet
+                        // Store witnessed voucher in local wallet
                         let mut temp_wallet = wallet.clone();
-                        // Für Endorsed-Gutscheine verwenden wir eine andere ID-Generierung,
-                        // da der Unterzeichner keine Ownership-History für den Gutschein hat.
-                        // Wir verwenden voucher_id + signer_id + role als deterministische ID.
+                        // For Endorsed vouchers we use different ID generation,
+                        // since signer has no ownership history for voucher.
+                        // We use voucher_id + signer_id + role as deterministic ID.
                         use crate::services::crypto_utils::get_hash_from_slices;
                         let voucher_id_bytes = voucher_to_sign.voucher_id.as_bytes();
                         let signer_id_bytes = temp_wallet.profile.user_id.as_bytes();
@@ -148,7 +148,7 @@ impl AppService {
                             },
                         );
 
-                        // Speichere den Wallet-Zustand
+                        // Save wallet state
                         match temp_wallet.save(&mut storage, &identity, &auth_method) {
                             Ok(_) => (
                                 Ok(bytes),
@@ -185,24 +185,24 @@ impl AppService {
         };
 
         self.state = new_state;
-        // Siegel aktualisieren, wenn die Aktion erfolgreich war
+        // Update seal if action succeeded
         if result.is_ok() {
             let _ = self.update_seal_after_state_change(password);
         }
         result
     }
 
-    /// Verarbeitet eine empfangene losgelöste Signatur, fügt sie dem lokalen Gutschein hinzu und speichert den Zustand.
+    /// Processes a received detached signature, attaches it to the local voucher, and saves state.
     ///
     /// # Arguments
-    /// * `container_bytes` - Die rohen Bytes des `SecureContainer`, der die Signatur enthält.
-    /// * `standard_toml_content` - Der Inhalt des Standards für die Validierung.
-    /// * `container_password` - Optionales Passwort zum Öffnen des Containers (für symmetrische Verschlüsselung).
-    /// * `wallet_password` - Das Passwort, um den aktualisierten Wallet-Zustand zu speichern.
+    /// * `container_bytes` - Raw bytes of the `SecureContainer` containing the signature.
+    /// * `standard_toml_content` - Standard content for validation.
+    /// * `container_password` - Optional password to open container (for symmetric encryption).
+    /// * `wallet_password` - Password to save updated wallet state.
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Wallet gesperrt ist, die Signatur ungültig ist, der zugehörige Gutschein nicht gefunden
-    /// wird oder der Speicherzugriff misslingt.
+    /// Fails if the wallet is locked, signature is invalid, associated voucher is not found,
+    /// or storage access fails.
     pub fn process_and_attach_signature(
         &mut self,
         container_bytes: &[u8],
@@ -210,7 +210,7 @@ impl AppService {
         container_password: Option<&str>,
         wallet_password: Option<&str>,
     ) -> Result<String, AppFacadeError> {
-        // --- FORK-LOCK PRÜFUNG ---
+        // --- FORK-LOCK CHECK ---
         self.check_fork_lock(wallet_password).map_err(AppFacadeError::from)?;
 
         // BUG-FIX: Determine AuthMethod BEFORE state replacement
@@ -244,10 +244,10 @@ impl AppService {
                         },
                     ),
                     Ok((verified_standard, _)) => {
-                        // --- BEGINN DER TRANSAKTION ---
+                        // --- BEGIN TRANSACTION ---
                         let mut temp_wallet = wallet.clone();
 
-                        // 1. Signatur an die temporäre Wallet-Instanz anhängen.
+                        // 1. Attach signature to temporary wallet instance.
                         match temp_wallet.process_and_attach_signature(&identity, container_bytes, container_password) {
                             Err(e) => (
                                 Err(AppFacadeError::from(e)),
@@ -259,16 +259,16 @@ impl AppService {
                                 },
                             ),
                             Ok(updated_instance_id) => {
-                                // 2. Neuen Status basierend auf dem Ergebnis bestimmen.
+                                // 2. Determine new status based on result.
                                 let instance = temp_wallet
                                     .get_voucher_instance(&updated_instance_id)
                                     .cloned()
-                                    .unwrap(); // Muss existieren
+                                    .unwrap(); // Must exist
 
                                 // --- START REPLACED LOGIC ---
-                                // Die alte Logik rief `self.determine_voucher_status` auf, was
-                                // fälschlicherweise Unvollständigkeit als fatalen Fehler behandelte.
-                                // Wir rufen nun die Validierung direkt auf und interpretieren das Ergebnis korrekt.
+                                // The old logic called `self.determine_voucher_status`, which
+                                // incorrectly treated incompleteness as a fatal error.
+                                // We now call validation directly and interpret result correctly.
 
                                 let validation_result =
                                     voucher_validation::validate_voucher_against_standard(
@@ -278,14 +278,14 @@ impl AppService {
 
                                 let (operation_result, new_status) = match validation_result {
                                     Ok(_) => {
-                                        // Validierung erfolgreich! Der Gutschein ist jetzt Active.
+                                        // Validation successful! The voucher is now Active.
                                         (Ok(updated_instance_id.clone()), VoucherStatus::Active)
                                     }
                                     Err(VoucherCoreError::Validation(validation_err)) => {
-                                        // Das ist KEIN fataler Fehler. Die Operation war erfolgreich,
-                                        // der Gutschein ist nur weiterhin unvollständig.
-                                        // Wir wandeln den ValidationError manuell in einen ValidationFailureReason um,
-                                        // da keine `From`-Implementierung existiert.
+                                        // This is NOT a fatal error. Operation succeeded,
+                                        // voucher simply remains incomplete.
+                                        // Convert ValidationError manually to ValidationFailureReason,
+                                        // since no `From` implementation exists.
                                         let reasons = vec![
                                             ValidationFailureReason::RequiredSignatureMissing {
                                                 role_description: validation_err.to_string(),
@@ -294,7 +294,7 @@ impl AppService {
                                         (Ok(updated_instance_id.clone()), VoucherStatus::Incomplete { reasons })
                                     }
                                     Err(fatal_error) => {
-                                        // DAS ist ein fataler Fehler (z.B. Standard-Mismatch, Crypto-Fehler).
+                                        // THIS is a fatal error (e.g. standard mismatch, crypto error).
                                         temp_wallet.update_voucher_status(
                                             &updated_instance_id,
                                             VoucherStatus::Quarantined {
@@ -302,7 +302,7 @@ impl AppService {
                                             },
                                         );
                                         (
-                                            Err(AppFacadeError::ValidationError(format!(
+                                             Err(AppFacadeError::ValidationError(format!(
                                                 "Voucher quarantined due to fatal validation error: {}",
                                                 fatal_error
                                             ))),
@@ -314,10 +314,10 @@ impl AppService {
                                 };
 
                                 temp_wallet.update_voucher_status(&updated_instance_id, new_status);
-                                // 3. Versuchen, die Änderungen zu speichern ("Commit").
+                                // 3. Attempt to save changes ("Commit").
                                 match temp_wallet.save(&mut storage, &identity, &auth_method) {
                                     Ok(_) => (
-                                        // Erfolg: Gib das Ergebnis der Operation zurück und setze die neue Wallet-Instanz.
+                                        // Success: Return operation result and set new wallet instance.
                                         operation_result,
                                         AppState::Unlocked {
                                             storage,
@@ -327,7 +327,7 @@ impl AppService {
                                         },
                                     ),
                                     Err(e) => (
-                                        // Fehler: Verwirf die Änderungen und gib den Speicherfehler zurück.
+                                        // Error: Discard changes and return storage error.
                                         Err(AppFacadeError::from(e)),
                                         AppState::Unlocked {
                                             storage,
@@ -346,7 +346,7 @@ impl AppService {
         };
 
         self.state = new_state;
-        // Siegel aktualisieren, wenn die Aktion erfolgreich war
+        // Update seal if action succeeded
         if result.is_ok() {
             let _ = self.update_seal_after_state_change(wallet_password);
         }
@@ -379,30 +379,30 @@ impl AppService {
         .map_err(AppFacadeError::from)
     }
 
-    /// Entfernt eine Zusatzsignatur (z. B. von Bürgen oder Zeugen) von einem Gutschein.
+    /// Removes an additional signature (e.g. from guarantors or witnesses) from a voucher.
     ///
-    /// Dieser Vorgang darf nur vom Ersteller des Gutscheins ausgeführt werden und nur,
-    /// solange der Gutschein noch nicht in Umlauf ist (nur eine init-Transaktion vorhanden).
+    /// This operation may only be performed by the voucher creator and only
+    /// while the voucher is not yet in circulation (only one init transaction present).
     ///
     /// # Arguments
-    /// * `local_instance_id` - Die ID des Gutscheins im lokalen Wallet.
-    /// * `signature_id` - Die ID der zu entfernenden Signatur.
-    /// * `wallet_password` - Das Passwort, um den aktualisierten Wallet-Zustand zu speichern.
+    /// * `local_instance_id` - ID of the voucher in the local wallet.
+    /// * `signature_id` - ID of the signature to remove.
+    /// * `wallet_password` - Password to save updated wallet state.
     ///
     /// # Returns
-    /// Ein `Result`, das bei Erfolg `Ok(())` zurückgibt.
+    /// A `Result` returning `Ok(())` on success.
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Wallet gesperrt ist, die Signatur nicht entfernt werden kann
-    /// (z. B. weil der Gutschein bereits im Umlauf ist oder die anfragende Identität nicht der Ersteller ist),
-    /// oder der Speicherzugriff misslingt.
+    /// Fails if the wallet is locked, signature cannot be removed
+    /// (e.g. because voucher is already in circulation or requesting identity is not the creator),
+    /// or storage access fails.
     pub fn remove_voucher_signature(
         &mut self,
         local_instance_id: &str,
         signature_id: &str,
         wallet_password: Option<&str>,
     ) -> Result<(), AppFacadeError> {
-        // --- FORK-LOCK PRÜFUNG ---
+        // --- FORK-LOCK CHECK ---
         self.check_fork_lock(wallet_password).map_err(AppFacadeError::from)?;
 
         // Determine AuthMethod BEFORE state replacement
@@ -436,7 +436,7 @@ impl AppService {
                         },
                     ),
                     Ok(_) => {
-                        // Versuchen, die Änderungen zu speichern
+                        // Attempt to save changes
                         match temp_wallet.save(&mut storage, &identity, &auth_method) {
                             Ok(_) => (
                                 Ok(()),
@@ -464,12 +464,10 @@ impl AppService {
         };
 
         self.state = new_state;
-        // Siegel aktualisieren, wenn die Aktion erfolgreich war
+        // Update seal if action succeeded
         if result.is_ok() {
             let _ = self.update_seal_after_state_change(wallet_password);
         }
         result
     }
 }
-
-

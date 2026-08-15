@@ -1,7 +1,7 @@
 //! # src/wallet/maintenance.rs
 //!
-//! Sammelt alle Methoden für die interne Verwaltung, Wartung, Bereinigung
-//! und Hilfsfunktionen des Wallets.
+//! Collects all methods for internal management, maintenance, cleanup,
+//! and helper functions of the wallet.
 
 use super::types::CleanupReport;
 use crate::archive::VoucherArchive;
@@ -17,53 +17,28 @@ use crate::wallet::instance::{VoucherInstance, VoucherStatus};
 use chrono::{DateTime, Duration, Utc};
 
 impl Wallet {
-    /// Führt die Speicherbereinigung für Fingerprints und deren Metadaten durch.
+    /// Performs complete storage cleanup for fingerprints, metadata, and archive data.
     ///
-    /// Diese Funktion implementiert eine Zwei-Phasen-Bereinigung, um die Gesamtanzahl
-    /// der gespeicherten Fingerprints zu verwalten und die Systemleistung zu gewährleisten.
+    /// This function implements a multi-stage cleanup process:
     ///
-    /// **Phase 1: Ablage abgelaufener Einträge**
-    /// Zuerst werden alle Fingerprints aus `own_fingerprints`, `known_fingerprints` und
-    /// die zugehörigen Metadaten aus `fingerprint_metadata` entfernt, deren `valid_until`
-    /// Datum in der Vergangenheit liegt. Dies ist die primäre Wartungsroutine.
+    /// **Phase 1: Deletion of expired entries**
+    /// First, all fingerprints from histories and their associated metadata whose
+    /// `valid_until` date lies in the past are removed.
     ///
-    /// **Phase 2: Selektive, limitbasierte Bereinigung**
-    /// Wenn nach Phase 1 die Gesamtzahl der Fingerprints immer noch ein hartes Limit
-    /// (`MAX_FINGERPRINTS`) überschreitet, wird eine prozentuale Reduzierung
-    /// (`CLEANUP_PERCENTAGE`) durchgeführt. Die zu löschenden Fingerprints werden
-    /// nach folgender Heuristik ausgewählt:
-    /// 1.  **Höchste `depth` zuerst:** Fingerprints, die am weitesten im Netzwerk
-    ///     verbreitet sind (höchster `depth`), werden als am wenigsten kritisch angesehen.
-    /// 2.  **Älteste `t_time` als Tie-Breaker:** Innerhalb einer `depth`-Ebene werden
-    ///     die ältesten Transaktionen zuerst entfernt.
+    /// **Phase 2: Selective, limit-based cleanup**
+    /// If the total number of fingerprints exceeds a hard limit (`MAX_FINGERPRINTS`),
+    /// a percentage-based reduction (`CLEANUP_PERCENTAGE`) is performed (based on depth and age).
+    ///
+    /// **Phase 3: Archive cleanup**
+    /// Removes outdated voucher instances and double-spend proofs from the archive
+    /// once they have exceeded a configurable grace period (`archive_grace_period_years`).
     ///
     /// # Arguments
-    /// * `max_fingerprints_override` - Ein optionaler Wert, um die `MAX_FINGERPRINTS`-Konstante
-    ///                                 speziell für Test-Szenarien zu überschreiben.
-    /// # Returns
-    /// Ein `CleanupReport`, der die Anzahl der in beiden Phasen entfernten Einträge zusammenfasst.
-    /// Führt die vollständige Speicherbereinigung für Fingerprints, Metadaten und Archiv-Daten durch.
-    ///
-    /// Diese Funktion implementiert einen mehrstufigen Bereinigungsprozess:
-    ///
-    /// **Phase 1: Ablage abgelaufener Einträge**
-    /// Zuerst werden alle Fingerprints aus den Historien und die zugehörigen Metadaten
-    /// entfernt, deren `valid_until` Datum in der Vergangenheit liegt.
-    ///
-    /// **Phase 2: Selektive, limitbasierte Bereinigung**
-    /// Wenn die Gesamtzahl der Fingerprints ein hartes Limit überschreitet, wird eine
-    /// prozentuale Reduzierung durchgeführt (basierend auf Tiefe und Alter).
-    ///
-    /// **Phase 3: Archiv-Bereinigung**
-    /// Entfernt veraltete Gutschein-Instanzen und Double-Spend-Beweise aus dem Archiv,
-    /// wenn diese eine konfigurierbare Schonfrist (`archive_grace_period_years`) überschritten haben.
-    ///
-    /// # Arguments
-    /// * `max_fingerprints_override` - Optionaler Wert für das Fingerprint-Limit (für Tests).
-    /// * `archive_grace_period_years` - Aufbewahrungsfrist für Archivdaten in Jahren.
+    /// * `max_fingerprints_override` - Optional value to override the fingerprint limit (for tests).
+    /// * `archive_grace_period_years` - Retention period for archive data in years.
     ///
     /// # Returns
-    /// Ein `CleanupReport`, der die Anzahl der entfernten Einträge zusammenfasst.
+    /// A `CleanupReport` summarizing the number of removed entries across all phases.
     pub fn run_storage_cleanup(
         &mut self,
         max_fingerprints_override: Option<usize>,
@@ -75,10 +50,10 @@ impl Wallet {
         let mut report = CleanupReport::default();
         let now = Utc::now();
 
-        // --- Phase 1: Löschen abgelaufener Einträge ---
+        // --- Phase 1: Deletion of expired entries ---
         let mut expired_keys = std::collections::HashSet::new();
 
-        // Sammle alle abgelaufenen Schlüssel aus allen relevanten Stores
+        // Collect all expired keys from all relevant stores
         for fp in self
             .own_fingerprints
             .history
@@ -102,7 +77,7 @@ impl Wallet {
         if !expired_keys.is_empty() {
             report.expired_fingerprints_removed = expired_keys.len();
 
-            // Entferne die abgelaufenen Einträge aus allen Stores
+            // Remove expired entries from all stores
             self.own_fingerprints
                 .history
                 .retain(|k, _| !expired_keys.contains(k));
@@ -116,7 +91,7 @@ impl Wallet {
                 .retain(|k, _| !expired_keys.contains(k));
         }
 
-        // --- Phase 2: Selektive Löschung nach Tiefe und Rezenz ---
+        // --- Phase 2: Selective deletion by depth and recency ---
         let current_total_count = self.own_fingerprints.history.len()
             + self.known_fingerprints.local_history.len()
             + self.known_fingerprints.foreign_fingerprints.len();
@@ -126,7 +101,7 @@ impl Wallet {
             let target_removal_count =
                 (current_total_count as f32 * CLEANUP_PERCENTAGE).ceil() as usize;
 
-            // Sammle alle Fingerprints mit Metadaten zur Sortierung
+            // Collect all fingerprints with metadata for sorting
             let mut candidates_for_removal = Vec::new();
             let all_fingerprints = self
                 .own_fingerprints
@@ -147,7 +122,7 @@ impl Wallet {
                 }
             }
 
-            // Sortiere: Höchste 'depth' zuerst, dann älteste 't_id' zuerst
+            // Sort: Highest 'depth' first, then oldest 't_id' first
             candidates_for_removal.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
 
             let keys_to_remove: std::collections::HashSet<String> = candidates_for_removal
@@ -158,7 +133,7 @@ impl Wallet {
 
             report.limit_based_fingerprints_removed = keys_to_remove.len();
 
-            // Entferne die ausgewählten Einträge aus allen Stores
+            // Remove selected entries from all stores
             self.own_fingerprints
                 .history
                 .retain(|k, _| !keys_to_remove.contains(k));
@@ -172,11 +147,11 @@ impl Wallet {
                 .retain(|k, _| !keys_to_remove.contains(k));
         }
 
-        // --- Phase 3: Archiv-Bereinigung ---
+        // --- Phase 3: Archive cleanup ---
         let grace_period = Duration::days(archive_grace_period_years * 365);
         let mut archived_removed = 0;
 
-        // 1. Bereinige flüchtige Speicher via ConflictManager (nutzt interne Grace Period)
+        // 1. Clean up volatile stores via ConflictManager (uses internal grace period)
         archived_removed += conflict_manager::cleanup_known_fingerprints(&mut self.known_fingerprints);
         archived_removed += conflict_manager::cleanup_expired_histories(
             &mut self.own_fingerprints,
@@ -185,7 +160,7 @@ impl Wallet {
             &grace_period,
         );
 
-        // 2. Bereinige Gutschein-Instanzen im Archiv
+        // 2. Clean up voucher instances in archive
         let before_vouchers = self.voucher_store.vouchers.len();
         self.voucher_store.vouchers.retain(|_, instance| {
             if !matches!(instance.status, VoucherStatus::Archived) {
@@ -199,7 +174,7 @@ impl Wallet {
         });
         archived_removed += before_vouchers - self.voucher_store.vouchers.len();
 
-        // 3. Bereinige alte Double-Spend-Beweise
+        // 3. Clean up old double-spend proofs
         let before_proofs = self.proof_store.proofs.len();
         self.proof_store.proofs.retain(|_, entry| {
             if let Ok(valid_until) = DateTime::parse_from_rfc3339(&entry.proof.deletable_at) {
@@ -215,30 +190,30 @@ impl Wallet {
         Ok(report)
     }
 
-    /// Baut alle abgeleiteten Speicher (`fingerprints`, `metadata`) aus dem `VoucherStore` neu auf.
+    /// Rebuilds all derived stores (`fingerprints`, `metadata`) from the `VoucherStore`.
     ///
-    /// Diese Methode dient als Kern der Wiederherstellungslogik. Sie stellt sicher, dass der
-    /// Zustand der Fingerprints und ihrer Metadaten immer konsistent mit der "Source of Truth"
-    /// (den im Wallet gespeicherten Gutscheinen) ist.
+    /// This method serves as the core of the recovery logic. It ensures that the
+    /// state of fingerprints and their metadata is always consistent with the "source of truth"
+    /// (the vouchers stored in the wallet).
     ///
-    /// # Prozess
-    /// 1. Leert die existierenden `own_fingerprints`, `known_fingerprints` und `fingerprint_metadata` Stores.
-    /// 2. Iteriert über jeden Gutschein und jede Transaktion im `voucher_store`.
-    /// 3. Generiert für jede Transaktion einen Fingerprint.
-    /// 4. Kategorisiert den Fingerprint als "eigen" oder "bekannt" und speichert ihn.
-    /// 5. Initialisiert die Metadaten (`depth`, `known_by_peers`) für jeden Fingerprint neu.
+    /// # Process
+    /// 1. Clears existing `own_fingerprints`, `known_fingerprints`, and `fingerprint_metadata` stores.
+    /// 2. Iterates over every voucher and every transaction in `voucher_store`.
+    /// 3. Generates a fingerprint for each transaction.
+    /// 4. Categorizes the fingerprint as "own" or "known" and stores it.
+    /// 5. Reinitializes metadata (`depth`, `known_by_peers`) for each fingerprint.
     pub fn rebuild_derived_stores(&mut self) -> Result<(), VoucherCoreError> {
-        // Schritt 1: Bestehende abgeleitete Stores leeren
+        // Step 1: Clear existing derived stores
         self.own_fingerprints = OwnFingerprints::default();
         self.known_fingerprints = KnownFingerprints::default();
         self.fingerprint_metadata = CanonicalMetadataStore::default();
 
-        // Schritt 2: Iteriere über ALLE Instanzen, um keine Fingerprints zu verlieren.
-        // Die korrekte Depth wird durch die "min(depth) gewinnt"-Regel ermittelt.
+        // Step 2: Iterate over ALL instances so no fingerprints are lost.
+        // The correct depth is determined by the "min(depth) wins" rule.
         for instance in self.voucher_store.vouchers.values() {
             let tx_count = instance.voucher.transactions.len();
             for (i, tx) in instance.voucher.transactions.iter().enumerate() {
-                // Schritt 3 & 4: Fingerprint generieren und kategorisieren
+                // Step 3 & 4: Generate and categorize fingerprint
                 let fingerprint =
                     conflict_manager::create_fingerprint_for_transaction(tx, &instance.voucher)?;
 
@@ -262,21 +237,21 @@ impl Wallet {
                     }
                 }
 
-                // Schritt 5: Metadaten initialisieren oder mit "min gewinnt"-Regel aktualisieren
+                // Step 5: Initialize metadata or update with "min wins" rule
                 let depth_in_chain = (tx_count - 1 - i) as i8;
                 let meta = self
                     .fingerprint_metadata
                     .entry(fingerprint.ds_tag)
                     .or_insert_with(FingerprintMetadata::default);
 
-                // Wende die "geringste depth gewinnt"-Regel an. Ein kleinerer Wert bedeutet
-                // einen kürzeren, relevanteren Pfad im Netzwerk. Der Wert 0 ist der
-                // initiale Default und wird immer überschrieben.
-                // ACHTUNG: VIP-Fingerprints (negativ) gewinnen immer gegen positive.
+                // Apply "lowest depth wins" rule. A smaller value means
+                // a shorter, more relevant path in the network. The value 0 is the
+                // initial default and is always overwritten.
+                // NOTE: VIP fingerprints (negative) always win over positive ones.
                 if meta.depth == 0 || depth_in_chain < meta.depth {
                     meta.depth = depth_in_chain;
                 }
-                meta.known_by_peers = std::collections::HashSet::new(); // `known_by_peers` wird zurückgesetzt
+                meta.known_by_peers = std::collections::HashSet::new(); // Reset `known_by_peers`
             }
         }
         Ok(())
@@ -304,13 +279,13 @@ impl Wallet {
         let event_info = if let Some(instance) = self.voucher_store.vouchers.get_mut(local_instance_id) {
             let old_status = std::mem::replace(&mut instance.status, new_status.clone());
 
-            // Event-Logging bei wichtigen Statusänderungen
+            // Event logging on important status changes
             let event_type = match (&old_status, &new_status) {
-                // Von Unvollständig zu Aktiv
+                // From Incomplete to Active
                 (VoucherStatus::Incomplete { .. }, VoucherStatus::Active) => {
                     Some(crate::models::wallet_event::WalletEventType::VoucherActivated)
                 }
-                // Neu in Quarantäne (sofern nicht schon vorher)
+                // Freshly quarantined (unless already quarantined before)
                 (_, VoucherStatus::Quarantined { .. })
                     if !matches!(old_status, VoucherStatus::Quarantined { .. }) =>
                 {
@@ -349,19 +324,18 @@ impl Wallet {
         }
     }
 
-    /// Berechnet eine deterministische, lokale ID für eine Gutschein-Instanz.
+    /// Computes a deterministic, local ID for a voucher instance.
     pub fn calculate_local_instance_id(
         voucher: &Voucher,
         profile_owner_id: &str,
     ) -> Result<String, VoucherCoreError> {
         let mut defining_transaction_id: Option<String> = None;
 
-        // Die definierende Transaktion ist einfach die letzte, in der der Benutzer
-        // als Sender oder Empfänger auftaucht.
-        // HINWEIS: Im Privacy Mode ist recipient_id="anonymous". Wir akzeptieren dies
-        // als Treffer für den aktuellen Profil-Besitzer (profile_owner_id), da die
-        // faktische Empfangsberechtigung bereits bei der Entschlüsselung des Bundles
-        // geprüft wurde.
+        // The defining transaction is simply the last one in which the user
+        // appears as sender or recipient.
+        // NOTE: In Privacy Mode, recipient_id="anonymous". We accept this
+        // as a match for the current profile owner (profile_owner_id), since
+        // actual receipt authorization was already verified during bundle decryption.
         for tx in voucher.transactions.iter().rev() {
             if tx.recipient_id == profile_owner_id
                 || tx.recipient_id == crate::models::voucher::ANONYMOUS_ID
@@ -385,14 +359,14 @@ impl Wallet {
         }
     }
 
-    /// Sucht eine Transaktion anhand ihrer ID (`t_id`) zuerst im aktiven
-    /// `voucher_store` und dann im `VoucherArchive`.
+    /// Searches for a transaction by its ID (`t_id`), first in the active
+    /// `voucher_store` and then in the `VoucherArchive`.
     pub(super) fn find_transaction_in_stores(
         &self,
         t_id: &str,
         archive: &dyn VoucherArchive,
     ) -> Result<Option<Transaction>, VoucherCoreError> {
-        // Zuerst im aktiven Store suchen
+        // Search active store first
         for instance in self.voucher_store.vouchers.values() {
             if let Some(tx) = instance
                 .voucher
@@ -404,30 +378,30 @@ impl Wallet {
             }
         }
 
-        // Danach im Archiv suchen
+        // Then search archive
         let result = archive.find_transaction_by_id(t_id)?;
         Ok(result.map(|(_, tx)| tx))
     }
 
-    /// Sucht einen Gutschein anhand einer enthaltenen Transaktions-ID (`t_id`).
-    /// Durchsucht zuerst den aktiven `voucher_store` und dann das `VoucherArchive`.
+    /// Searches for a voucher by a contained transaction ID (`t_id`).
+    /// Searches first the active `voucher_store` and then the `VoucherArchive`.
     pub(super) fn find_voucher_for_transaction(
         &self,
         t_id: &str,
         archive: &dyn VoucherArchive,
     ) -> Result<Option<Voucher>, VoucherCoreError> {
-        // Zuerst im aktiven Store suchen
+        // Search active store first
         for instance in self.voucher_store.vouchers.values() {
             if instance.voucher.transactions.iter().any(|t| t.t_id == t_id) {
                 return Ok(Some(instance.voucher.clone()));
             }
         }
 
-        // Danach im Archiv suchen
+        // Then search archive
         Ok(archive.find_voucher_by_tx_id(t_id)?)
     }
 
-    /// Findet die lokale ID und den Status eines Gutscheins anhand einer enthaltenen Transaktions-ID.
+    /// Finds the local ID and status of a voucher by a contained transaction ID.
     pub(super) fn find_local_voucher_by_tx_id(&self, tx_id: &str) -> Option<&VoucherInstance> {
         self.voucher_store.vouchers.values().find(|instance| {
             instance
@@ -438,3 +412,4 @@ impl Wallet {
         })
     }
 }
+

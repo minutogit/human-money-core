@@ -261,7 +261,7 @@ fn detect_whitespace_obfuscation_in_public_mode() {
 }
 
 // -------------------------------------------------------------------------
-// NEUE TEST-SZENARIEN (2026-02-08)
+// NEW TEST SCENARIOS (2026-02-08)
 // -------------------------------------------------------------------------
 
 // 5. Test: prevent_trap_data_replay

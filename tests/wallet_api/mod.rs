@@ -1,15 +1,15 @@
 // tests/wallet_api/mod.rs
 // cargo test --test wallet_api_tests
 //!
-//! Deklariert die Sub-Module für die API-Integrationstests.
+//! Declares the submodules for API integration tests.
 
 pub mod general_workflows;
 pub mod signature_workflows;
 mod endorsed_vouchers;
 
-// Deklariert das neue Modul für komplexe Zustands- und Konflikttests.
+// Declares the module for complex state and conflict tests.
 mod state_management;
-// Deklariert das neue Modul für Tests zur atomaren Zustandsverwaltung (Transaktionalität).
+// Declares the module for atomic state management tests (transactionality).
 mod hostile_bundles;
 mod hostile_standards;
 mod lifecycle_and_data;
@@ -28,4 +28,3 @@ mod privacy_balance_checks;
 mod future_dates;
 mod event_sourcing;
 mod wallet_queries;
-

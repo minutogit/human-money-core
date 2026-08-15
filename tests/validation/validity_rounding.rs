@@ -36,7 +36,7 @@ fn test_validation_accepts_valid_voucher_with_rounded_max_duration_yearly() {
         ..Default::default()
     };
 
-    // 1. Erstelle den Gutschein mit 5 Jahren Basislaufzeit
+    // 1. Create the voucher with 5-year base duration
     let mut voucher = human_money_core::create_voucher(
         voucher_data,
         &custom_standard,
@@ -45,7 +45,7 @@ fn test_validation_accepts_valid_voucher_with_rounded_max_duration_yearly() {
     )
     .expect("Voucher creation should succeed");
 
-    // Füge die benötigten Bürgensignaturen hinzu, damit alle sonstigen Regeln erfüllt sind
+    // Add the required guarantor signatures so that all other rules are satisfied
     voucher
         .signatures
         .push(create_male_guarantor_signature(&voucher));
@@ -53,9 +53,9 @@ fn test_validation_accepts_valid_voucher_with_rounded_max_duration_yearly() {
         .signatures
         .push(create_female_guarantor_signature(&voucher));
 
-    // 2. Validiere den Gutschein gegen den Standard.
-    // Trotz Aufrundung auf das Jahresende (z.B. 5,4 Jahre) muss der Gutschein gültig sein,
-    // da er die maximale Basislaufzeit (5 Jahre) zzgl. Standard-Rundung nicht überschreitet.
+    // 2. Validate the voucher against the standard.
+    // Despite rounding up to the end of the year (e.g. 5.4 years), the voucher must be valid,
+    // because it does not exceed the maximum base duration (5 years) plus standard rounding.
     let validation_result = validate_voucher_against_standard(&voucher, &custom_standard);
     assert!(
         validation_result.is_ok(),
@@ -150,7 +150,7 @@ fn test_validation_rejects_voucher_exceeding_rounded_max_duration() {
         .signatures
         .push(create_female_guarantor_signature(&voucher));
 
-    // Manipuliere das valid_until auf 1 Jahr über das erlaubte gerundete Maximum hinaus
+    // Manipulate valid_until to 1 year beyond the allowed rounded maximum
     let original_valid_until_dt =
         chrono::DateTime::parse_from_rfc3339(&voucher.valid_until).unwrap();
     let exceeded_valid_until_dt =
@@ -158,7 +158,7 @@ fn test_validation_rejects_voucher_exceeding_rounded_max_duration() {
             .unwrap();
     voucher.valid_until = exceeded_valid_until_dt.to_rfc3339();
 
-    // Prüfe die Gültigkeitsdauer-Validierung direkt
+    // Check validity duration validation directly
     let validation_result = human_money_core::services::voucher_validation::verify_validity_duration(&voucher, &custom_standard);
     assert!(
         validation_result.is_err(),
@@ -172,3 +172,4 @@ fn test_validation_rejects_voucher_exceeding_rounded_max_duration() {
         other => panic!("Expected ValidityDurationTooLong, got: {:?}", other),
     }
 }
+

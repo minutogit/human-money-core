@@ -1,188 +1,187 @@
 //! # src/models/conflict.rs
 //!
-//! Definiert die Datenstrukturen für die Erkennung, den Beweis und die
-//! Lösung von Double-Spending-Konflikten.
+//! Defines the data structures for detecting, proving, and
+//! resolving double-spending conflicts.
 
 use crate::models::voucher::Transaction;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 //==============================================================================
-// TEIL 1: STRUKTUREN ZUR KONFLIKTERKENNUNG (aus fingerprint.rs)
+// PART 1: CONFLICT DETECTION STRUCTURES (from fingerprint.rs)
 //==============================================================================
 
-/// Repräsentiert einen einzelnen, anonymisierten Fingerprint einer Transaktion.
-/// Diese Struktur enthält alle notwendigen Informationen, um einen Double Spend
-/// nachzuweisen und abgelaufene Fingerprints zu verwalten.
+/// Represents an individual, anonymized fingerprint of a transaction.
+/// This structure contains all necessary information to prove a double spend
+/// and manage expired fingerprints.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct TransactionFingerprint {
-    /// Der Double-Spend-Tag (DS-Tag).
-    /// Dies ist der primäre Schlüssel, um potenzielle Konflikte zu gruppieren.
-    /// Er MUSS deterministisch und konstant für denselben Input sein.
+    /// The double-spend tag (DS tag).
+    /// This is the primary key used to group potential conflicts.
+    /// It MUST be deterministic and constant for the same input.
     pub ds_tag: String,
 
-    /// Der variierende Challenge-Punkt (U) der mathematischen Falle.
-    /// Er hängt von der Transaktions-ID ab und ermöglicht (zusammen mit v)
-    /// die Berechnung der Identität bei einem Double Spend.
+    /// The varying challenge point (U) of the mathematical trap.
+    /// It depends on the transaction ID and (together with v) enables
+    /// calculating the identity in the event of a double spend.
     pub u: String,
 
-    /// Die maskierte Identität (V = m*U + ID).
+    /// The blinded identity (V = m*U + ID).
     pub blinded_id: String,
 
-    /// Die eindeutige ID der Transaktion (`t_id`). Ein abweichender Wert hier bei
-    /// identischem `ds_tag` signalisiert einen Double Spend.
+    /// The unique ID of the transaction (`t_id`). A diverging value here with an
+    /// identical `ds_tag` signals a double spend.
     pub t_id: String,
 
-    /// Der verschlüsselte Zeitstempel der Transaktion in Nanosekunden.
+    /// The encrypted timestamp of the transaction in nanoseconds.
     /// `encrypted_nanos = original_nanos ^ hash(prev_hash + t_id)`
     pub encrypted_timestamp: u128,
 
-    /// Die technische Signatur (Layer 2) des Senders. Dient als kryptographischer Beweis,
-    /// um den Betrugsversuch dem Verursacher (Inhaber des ephemeralen Schlüssels)
-    /// zweifelsfrei zuordnen zu können.
+    /// The technical signature (Layer 2) of the sender. Serves as cryptographic proof
+    /// to unambiguously attribute the fraud attempt to the perpetrator (holder of the ephemeral key).
     pub layer2_signature: String,
 
-    /// Das Datum, ab dem der Fingerprint sicher aus dem Speicher entfernt werden kann
-    /// (entspricht `deletable_at` der 'init' Transaktion).
+    /// The date after which the fingerprint can be safely deleted from storage
+    /// (corresponds to `deletable_at` of the 'init' transaction).
     pub deletable_at: String,
 }
 
-/// Dient als Speichercontainer für alle bekannten Transaktions-Fingerprints, die
-/// nicht kritisch für die Verhinderung eines eigenen Double-Spends sind.
+/// Serves as a storage container for all known transaction fingerprints that
+/// are not critical for preventing one's own double spends.
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct KnownFingerprints {
-    /// **Historie (persistent):** Eine vollständige Historie aller Fingerprints von
-    /// Transaktionen, die jemals auf Gutscheinen im Besitz des Nutzers stattfanden.
-    /// Dies ist die umfassende Datenbasis zur Erkennung von Betrugsversuchen im Netzwerk.
+    /// **History (persistent):** A complete history of all fingerprints of
+    /// transactions that ever took place on vouchers held by the user.
+    /// This is the comprehensive database for detecting fraud attempts in the network.
     #[serde(default)]
     pub local_history: HashMap<String, Vec<TransactionFingerprint>>,
 
-    /// **Fremddaten (flüchtig):** Eine Sammlung von Fingerprints, die von anderen
-    /// Teilnehmern im Netzwerk empfangen wurden. Dient als "Sperrliste" und
-    /// zur Erkennung von Double Spends, an denen man nicht direkt beteiligt war.
+    /// **Foreign data (ephemeral):** A collection of fingerprints received from other
+    /// participants in the network. Serves as a "blocklist" and
+    /// for detecting double spends in which one was not directly involved.
     #[serde(default)]
     pub foreign_fingerprints: HashMap<String, Vec<TransactionFingerprint>>,
 }
 
-/// Dient als kritischer, persistenter Speicher für alle Fingerprints von Transaktionen,
-/// bei denen der Wallet-Besitzer der **Sender** war. Diese kleine, separate Datei ist
-/// essenziell, um versehentliches Double-Spending sicher zu verhindern.
+/// Serves as critical, persistent storage for all fingerprints of transactions
+/// where the wallet owner was the **sender**. This small, separate file is
+/// essential for reliably preventing accidental double-spending.
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct OwnFingerprints {
-    /// **Aktiv (flüchtig):** Fingerprints von ausgebbareren Transaktionen. Dient der
-    /// schnellen In-Memory-Prüfung vor dem Erstellen einer neuen Transaktion.
+    /// **Active (ephemeral):** Fingerprints of spendable transactions. Used for
+    /// fast in-memory checks before creating a new transaction.
     #[serde(default)]
     pub active_fingerprints: HashMap<String, Vec<TransactionFingerprint>>,
-    /// **Historie (persistent):** Eine vollständige und unveränderliche Historie
-    /// aller Fingerprints von Transaktionen, bei denen der Nutzer der Sender war.
-    /// Dies ist die kritische Komponente für Backups und zur Konfliktverifizierung.
+    /// **History (persistent):** A complete and immutable history
+    /// of all fingerprints of transactions where the user was the sender.
+    /// This is the critical component for backups and conflict verification.
     #[serde(default)]
     pub history: HashMap<String, Vec<TransactionFingerprint>>,
 }
 
 //==============================================================================
-// TEIL 2: KANONISCHE METADATEN-SCHICHT (NEU)
+// PART 2: CANONICAL METADATA LAYER (NEW)
 //==============================================================================
 
-/// Speichert die dynamischen, veränderlichen Metadaten für einen einzelnen
-/// `TransactionFingerprint`. Diese Struktur wird von der kryptographischen
-/// Fingerprint-Struktur entkoppelt, um Redundanz zu vermeiden.
+/// Stores dynamic, mutable metadata for a single
+/// `TransactionFingerprint`. This structure is decoupled from the cryptographic
+/// fingerprint structure to avoid redundancy.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct FingerprintMetadata {
-    /// Die Verbreitungstiefe des Fingerprints im Netzwerk (Anzahl der Hops).
-    /// Ein niedrigerer Wert bedeutet eine aktuellere, relevantere Information.
+    /// The propagation depth of the fingerprint in the network (number of hops).
+    /// A lower value indicates more recent, more relevant information.
     ///
-    /// # MVP-VIP-Mechanik:
-    /// - Positive Werte (0 bis 127): Normale Verbreitung.
-    /// - Negative Werte (-1 bis -128): "VIP"-Verbreitung für toxische Fingerprints (Betrugserkennung).
-    ///   Werden bei der Sortierung/Verdrängung bevorzugt behandelt.
+    /// # MVP VIP Mechanics:
+    /// - Positive values (0 to 127): Normal propagation.
+    /// - Negative values (-1 to -128): "VIP" propagation for toxic fingerprints (fraud detection).
+    ///   These receive priority during sorting/eviction.
     pub depth: i8,
 
-    /// Ein Set von Hash-Suffixen der Peer-IDs, die diesen Fingerprint bereits
-    /// kennen. Dient als effizienter Redundanzfilter beim Senden von Bundles.
+    /// A set of hash suffixes of peer IDs that already
+    /// know this fingerprint. Serves as an efficient redundancy filter when sending bundles.
     #[serde(default)]
     pub known_by_peers: HashSet<[u8; 4]>,
 }
 
-/// Der zentrale, kanonische Speicher für alle dynamischen Fingerprint-Metadaten.
-/// Der Schlüssel ist die eindeutige ID des `TransactionFingerprint`
-/// (`ds_tag`), um eine 1:1-Beziehung sicherzustellen.
+/// The central canonical store for all dynamic fingerprint metadata.
+/// The key is the unique ID of the `TransactionFingerprint`
+/// (`ds_tag`) to ensure a 1:1 relationship.
 pub type CanonicalMetadataStore = HashMap<String, FingerprintMetadata>;
 
 //==============================================================================
-// TEIL 3: STRUKTUREN ZUM BEWEIS UND ZUR LÖSUNG VON KONFLIKTEN
+// PART 3: STRUCTURES FOR PROVING AND RESOLVING CONFLICTS
 //==============================================================================
 
-/// Repräsentiert einen kryptographisch verifizierbaren Beweis für einen
-/// Double-Spend-Versuch. Dieses Objekt ist portabel und dient als Grundlage
-/// für soziale oder technische (Layer 2) Konfliktlösungen.
+/// Represents a cryptographically verifiable proof of a
+/// double-spend attempt. This object is portable and serves as the basis
+/// for social or technical (Layer 2) conflict resolutions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofOfDoubleSpend {
-    /// Die eindeutige, deterministische ID dieses Konflikts.
-    /// Sie wird aus dem Hash der Kerndaten des Konflikts gebildet:
+    /// The unique, deterministic ID of this conflict.
+    /// It is formed from the hash of the core conflict data:
     /// `proof_id = hash(offender_id + fork_point_prev_hash)`.
-    /// Dadurch erzeugt jeder, der denselben Konflikt entdeckt, dieselbe ID.
+    /// Thus, anyone discovering the same conflict generates the same ID.
     pub proof_id: String,
 
-    /// Die ID des Senders (Verursacher), der den Double Spend durchgeführt hat.
+    /// The ID of the sender (offender) who performed the double spend.
     pub offender_id: String,
 
-    /// Der `prev_hash`, von dem die betrügerischen Transaktionen abzweigen.
+    /// The `prev_hash` from which the fraudulent transactions fork.
     pub fork_point_prev_hash: String,
 
-    /// Die vollständigen, widersprüchlichen Transaktionen, die den Betrug beweisen.
+    /// The complete, conflicting transactions that prove the fraud.
     pub conflicting_transactions: Vec<Transaction>,
 
-    /// Das Datum, ab dem dieser Beweis gelöscht werden kann.
+    /// The date after which this proof can be deleted.
     pub deletable_at: String,
 
-    // Metadaten zum spezifischen Report dieses Beweises
+    // Metadata for the specific report of this proof
     pub reporter_id: String,
     pub report_timestamp: String,
 
-    /// Die Signatur des Erstellers (Reporters) über der `proof_id`, um die
-    /// Authentizität dieses Reports zu bestätigen.
+    /// The signature of the creator (reporter) over the `proof_id` to confirm
+    /// the authenticity of this report.
     pub reporter_signature: String,
 
-    /// Der Name des betroffenen Gutscheins (optional, zur besseren UI-Darstellung).
+    /// The name of the affected voucher (optional, for better UI display).
     #[serde(default)]
     pub affected_voucher_name: Option<String>,
 
-    /// Die Standard-UUID des betroffenen Gutscheins (optional).
+    /// The standard UUID of the affected voucher (optional).
     #[serde(default)]
     pub voucher_standard_uuid: Option<String>,
 
-    /// Eine Liste von Bestätigungen, die belegen, dass der Konflikt
-    /// mit den Opfern beigelegt wurde. Kann `None` sein, wenn ungelöst.
+    /// A list of endorsements confirming that the conflict
+    /// was settled with the victims. Can be `None` if unresolved.
     pub resolutions: Option<Vec<ResolutionEndorsement>>,
 
-    /// Das optionale, signierte Urteil eines Layer-2-Dienstes.
-    /// Wenn `Some`, überschreibt dieses Urteil die lokale "maximale Vorsicht"-Regel.
+    /// The optional signed verdict of a Layer 2 service.
+    /// If `Some`, this verdict overrides the local "maximum caution" rule.
     #[serde(default)]
     pub layer2_verdict: Option<Layer2Verdict>,
-    /// Gibt an, ob es sich um einen Konflikt mit Testgutscheinen handelt.
+    /// Indicates whether this is a conflict involving test vouchers.
     #[serde(default)]
     pub non_redeemable_test_voucher: bool,
 }
 
-/// Die Rolle der lokalen Wallet in Bezug auf einen Konflikt.
+/// The role of the local wallet with respect to a conflict.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum ConflictRole {
-    /// Einer der kollidierenden Pfade betrifft einen Gutschein, der lokal aktiv war.
+    /// One of the colliding paths affects a voucher that was active locally.
     Victim,
-    /// Die Kollision wurde passiv erkannt (z.B. über Gossip).
+    /// The collision was detected passively (e.g. via gossip).
     #[default]
     Witness,
 }
 
-/// Der Status der Vertrauenswürdigkeit eines Partners.
+/// The trustworthiness status of a partner.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TrustStatus {
-    /// Keine negativen Einträge vorhanden.
+    /// No negative entries present.
     Clean,
-    /// Ungelöster Betrugsbeweis liegt vor. Warnung anzeigen.
+    /// Unresolved proof of fraud exists. Display warning.
     KnownOffender(String),
-    /// Vorfall gilt als offiziell oder lokal geklärt.
+    /// Incident is considered officially or locally resolved.
     Resolved {
         proof_id: String,
         is_local: bool,
@@ -190,71 +189,71 @@ pub enum TrustStatus {
     },
 }
 
-/// Lokaler Wrapper für einen Double-Spend-Beweis, der private Nutzerentscheidungen speichert.
+/// Local wrapper for a double-spend proof that stores private user decisions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofStoreEntry {
-    /// Der kryptographische Kernbeweis.
+    /// The cryptographic core proof.
     pub proof: ProofOfDoubleSpend,
-    /// Hat der Nutzer manuell auf "vertrauen" geklickt?
+    /// Did the user manually click "trust"?
     pub local_override: bool,
-    /// Optionale Notiz des Nutzers zur manuellen Klärung.
+    /// Optional user note for manual resolution.
     #[serde(default)]
     pub local_note: Option<String>,
-    /// War der Nutzer Opfer oder nur Zeuge?
+    /// Was the user a victim or only a witness?
     pub conflict_role: ConflictRole,
 }
 
-/// Bestätigung durch ein Opfer, dass ein durch eine `proof_id` identifizierter
-/// Konflikt beigelegt wurde.
+/// Endorsement by a victim that a conflict identified by a `proof_id`
+/// has been settled.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolutionEndorsement {
-    /// Die eindeutige ID dieser Bestätigung.
-    /// Wird erzeugt durch Hashing der eigenen Metadaten (alles außer id/signatur),
-    /// inklusive der `proof_id`, um eine kryptographische Kette zu bilden.
+    /// The unique ID of this endorsement.
+    /// Generated by hashing its own metadata (everything except id/signature),
+    /// including the `proof_id`, to form a cryptographic chain.
     pub endorsement_id: String,
 
-    /// Die ID des Beweises, auf den sich diese Lösung bezieht. Stellt die
-    /// kryptographische Verbindung zum Konflikt her.
+    /// The ID of the proof to which this resolution relates. Establishes the
+    /// cryptographic link to the conflict.
     pub proof_id: String,
 
-    /// Die ID des Opfers, das die Lösung bestätigt. Muss mit einem der
-    /// `recipient_id`s aus den `conflicting_transactions` übereinstimmen.
+    /// The ID of the victim confirming the resolution. Must match one of the
+    /// `recipient_id`s from the `conflicting_transactions`.
     pub victim_id: String,
 
-    /// Zeitstempel der Bestätigung.
+    /// Timestamp of the endorsement.
     pub resolution_timestamp: String,
 
-    /// Optionale Notiz, z.B. "Schaden wurde vollständig beglichen".
+    /// Optional note, e.g. "Damage was fully reimbursed".
     pub notes: Option<String>,
 
-    /// Die Signatur des Opfers über der `endorsement_id`. Bestätigt, dass
-    /// das Opfer der Beilegung des durch `proof_id` bezeichneten Konflikts zustimmt.
+    /// The signature of the victim over the `endorsement_id`. Confirms that
+    /// the victim agrees to the settlement of the conflict identified by `proof_id`.
     pub victim_signature: String,
 }
 
 //==============================================================================
-// TEIL 4: SPEICHER-CONTAINER FÜR KONFLIKTBEWEISE
+// PART 4: STORAGE CONTAINER FOR CONFLICT PROOFS
 //==============================================================================
 
-/// Dient als Speichercontainer für alle kryptographisch bewiesenen Double-Spend-Konflikte.
+/// Serves as a storage container for all cryptographically proven double-spend conflicts.
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ProofStore {
-    /// Eine Sammlung aller `ProofStoreEntry`-Objekte.
-    /// Der Key ist die deterministische `proof_id` des jeweiligen Konflikts.
+    /// A collection of all `ProofStoreEntry` objects.
+    /// The key is the deterministic `proof_id` of the respective conflict.
     #[serde(default)]
     pub proofs: HashMap<String, ProofStoreEntry>,
 }
 
-/// Repräsentiert das fälschungssichere Urteil eines Layer-2-Servers über einen Konflikt.
+/// Represents the tamper-proof verdict of a Layer 2 server regarding a conflict.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Layer2Verdict {
-    /// Die ID des Servers oder Gremiums, das das Urteil gefällt hat.
+    /// The ID of the server or committee that reached the verdict.
     pub server_id: String,
-    /// Der Zeitstempel des Urteils.
+    /// The timestamp of the verdict.
     pub verdict_timestamp: String,
-    /// Die `t_id` der Transaktion, die vom Server als "gültig" (weil zuerst gesehen) eingestuft wurde.
+    /// The `t_id` of the transaction classified as "valid" (because first seen) by the server.
     pub valid_transaction_id: String,
-    /// Die Signatur des Servers über dem Hash dieses Verdict-Objekts, um es fälschungssicher zu machen.
+    /// The signature of the server over the hash of this verdict object to make it tamper-proof.
     pub server_signature: String,
 }
 

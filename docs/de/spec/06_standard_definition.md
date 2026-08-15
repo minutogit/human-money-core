@@ -87,7 +87,7 @@ Diese Variablen werden vom `human_money_core` direkt in performante Rust-Structs
 | Feld | Typ | Beschreibung |
 |---|---|---|
 | `allow_partial_transfers` | Boolean | Wenn `true`, darf die Wallet die `split`-Funktion des Cores aufrufen (z.B. 50 von 100 Min versenden). Wenn `false`, kann der Gutschein nur als Ganzes weitergegeben werden (wie ein physischer Geldschein). |
-| `balances_are_summable` | Boolean | UI-Hinweis. Wenn `true`, darf die Wallet dem Nutzer eine große Zahl (z.B. "Saldo: 500 MIN") anzeigen. Wenn `false` (z.B. bei stark heterogenen Gutscheinen), müssen diese als separate Items (wie NFTs) gelistet werden. |
+| `balances_are_summable` | Boolean | **Fungibilitäts- und Aggregationsregel.** Wenn `true`, ist der Standard als fungible Währung definiert und Beträge werden in Wallets und im Core (`TransferSummary`) zu einem Gesamtsaldo aufsummiert. Wenn `false` (z.B. bei heterogenen Einzelgutscheinen oder Dienstleistungsnachweisen), werden Gutscheine als diskrete Einzelzertifikate (wie NFTs) geführt. |
 | `amount_decimal_places` | Integer | Definiert die Teilbarkeit. `0` für Ganzzahlen (z.B. Minuten). `2` für Währungen (z.B. Cents). |
 | `privacy_mode` | String | `"public"`, `"stealth"`, oder `"flexible"`. Erzwingt oder erlaubt Zero-Knowledge-Proofs für Transaktionen auf Layer 2. |
 | `allowed_t_types` | Array[String] | Erlaubte Transaktions-Typen für Gutscheine dieses Standards (z.B. `["init", "transfer", "split"]`). |

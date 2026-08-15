@@ -7,11 +7,11 @@ mod tests {
     #[test]
     fn test_chained_privacy_splits() {
         // ========================================================================
-        // WORKFLOW: Verkettete Split-Transaktionen im Privacy Mode
-        // Alice -> Bob (Split, Alice behält Wechselgeld)
-        // Alice -> Charlie (Weiterer Split vom Wechselgeld)
-        // Dieser Test verifiziert, dass die kryptographische Schüsselableitung 
-        // für Wechselgeld-Guthaben über mehrere Stufen hinweg korrekt funktioniert.
+        // WORKFLOW: Chained split transactions in Privacy Mode
+        // Alice -> Bob (Split, Alice keeps change)
+        // Alice -> Charlie (Further split from change)
+        // This test verifies that cryptographic key derivation
+        // for change balances works correctly across multiple stages.
         // ========================================================================
 
         let alice = &ACTORS.alice;
@@ -23,10 +23,10 @@ mod tests {
         let mut standards = HashMap::new();
         standards.insert(MINUTO_STANDARD.0.immutable.identity.uuid.clone(), MINUTO_STANDARD.0.clone());
 
-        // 1. Alice hat einen initialen Gutschein (100)
+        // 1. Alice has an initial voucher (100)
         let alice_local_id = add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", &MINUTO_STANDARD.0, true).unwrap();
 
-        // 2. ERSTER SPLIT: Alice -> Bob (40), Alice behält 60 (Wechselgeld)
+        // 2. FIRST SPLIT: Alice -> Bob (40), Alice keeps 60 (change)
         println!("--- Erster Privacy Split: Alice -> Bob (40) ---");
         let request1 = MultiTransferRequest {
             recipient_id: bob.identity.user_id.clone(),
@@ -46,14 +46,14 @@ mod tests {
             None
         ).expect("Erster Split sollte erfolgreich sein");
 
-        // Wir prüfen, ob Alice das Wechselgeld (60) korrekt in ihrem Wallet hat
+        // Check if Alice has the change (60) correctly in her wallet
         let alice_vouchers = alice_wallet.list_vouchers(Some(&alice.identity), None, None, None);
         let remainder_local_id = alice_vouchers.iter()
             .find(|v| v.current_amount == "60")
             .map(|v| v.local_instance_id.clone())
             .expect("Alice sollte das Wechselgeld von 60 besitzen");
 
-        // 3. ZWEITER SPLIT: Alice -> Charlie (20) vom Wechselgeld der ersten Transaktion
+        // 3. SECOND SPLIT: Alice -> Charlie (20) from change of the first transaction
         println!("--- Zweiter Privacy Split: Alice -> Charlie (20) ---");
         let request2 = MultiTransferRequest {
             recipient_id: charlie.identity.user_id.clone(),
@@ -73,7 +73,7 @@ mod tests {
             None
         );
 
-        // Verifikation
+        // Verification
         assert!(result2.is_ok(), "Der zweite Split vom Wechselgeld muss kryptographisch valide sein: {:?}", result2.err());
         
         let final_vouchers = alice_wallet.list_vouchers(Some(&alice.identity), None, None, None);

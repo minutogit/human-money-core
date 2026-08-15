@@ -1,11 +1,10 @@
 // tests/wallet_api/general_workflows.rs
 // cargo test --test wallet_api_tests
 //!
-//! Enthält Integrationstests für die primären, nicht-signaturbezogenen
-//! End-to-End-Workflows, die über die `AppService`- und `Wallet`-Fassaden
-//! abgewickelt werden.
+//! Contains integration tests for the primary, non-signature-related
+//! end-to-end workflows handled through the `AppService` and `Wallet` facades.
 
-// Binde das `test_utils` Modul explizit über seinen Dateipfad ein.
+// Explicitly include the `test_utils` module via its file path.
 
 use human_money_core::test_utils::{
     ACTORS, MINUTO_STANDARD, FREETALER_STANDARD, add_voucher_to_wallet,
@@ -29,18 +28,18 @@ use tempfile::tempdir;
 
 // --- 1. AppService Workflows ---
 
-/// Simuliert den gesamten Lebenszyklus eines Benutzers über den `AppService`.
+/// Simulates the entire lifecycle of a user via `AppService`.
 ///
-/// ### Szenario:
-/// 1.  Zwei temporäre Verzeichnisse für Alice und Bob werden erstellt.
-/// 2.  Zwei `AppService`-Instanzen werden initialisiert.
-/// 3.  Alice und Bob erstellen ihre Profile mit Mnemonic und Passwort.
-/// 4.  Alice loggt sich aus und wieder ein, um die Authentifizierung zu testen.
-/// 5.  Alice erstellt einen neuen Gutschein in ihrem Wallet.
-/// 6.  Alice transferiert den gesamten Gutschein an Bob.
-/// 7.  Der alte Gutschein-Zustand bei Alice wird als archiviert verifiziert.
-/// 8.  Bob empfängt das Bundle und verifiziert seinen neuen Kontostand.
-/// Testet den vollständigen Lebenszyklus von Gutscheinen über AppService.
+/// ### Scenario:
+/// 1.  Two temporary directories for Alice and Bob are created.
+/// 2.  Two `AppService` instances are initialized.
+/// 3.  Alice and Bob create their profiles with mnemonic and password.
+/// 4.  Alice logs out and logs in again to test authentication.
+/// 5.  Alice creates a new voucher in her wallet.
+/// 6.  Alice transfers the entire voucher to Bob.
+/// 7.  Alice's old voucher state is verified as archived.
+/// 8.  Bob receives the bundle and verifies his new balance.
+/// Tests the complete voucher lifecycle via AppService.
 #[test]
 fn api_app_service_full_lifecycle() {
     // --- 1. Setup ---
@@ -53,7 +52,7 @@ fn api_app_service_full_lifecycle() {
     let actor_bob = &ACTORS.bob;
     let password = "password";
 
-    // --- 2. Profile erstellen ---
+    // --- 2. Create profiles ---
     let (mut service_alice, profile_info_alice) =
         setup_service_with_profile(dir_alice.path(), actor_alice, "Alice", "password");
     let (mut service_bob, _) =
@@ -62,7 +61,7 @@ fn api_app_service_full_lifecycle() {
     let id_alice = service_alice.get_user_id().unwrap();
     let id_bob = service_bob.get_user_id().unwrap();
 
-    // --- 3. Logout und Login für Alice ---
+    // --- 3. Logout and login for Alice ---
     service_alice.logout();
     assert!(
         service_alice.get_user_id().is_err(),
@@ -73,7 +72,7 @@ fn api_app_service_full_lifecycle() {
         .expect("Login with correct password should succeed");
     assert_eq!(service_alice.get_user_id().unwrap(), id_alice);
 
-    // --- 4. Alice erstellt einen Gutschein ---
+    // --- 4. Alice creates a voucher ---
     service_alice.unlock_session("password", 60).unwrap();
     service_alice
         .create_new_voucher(
@@ -95,7 +94,7 @@ fn api_app_service_full_lifecycle() {
     let summaries_alice = service_alice.get_voucher_summaries(None, None, None).unwrap();
     let local_id_alice = summaries_alice[0].local_instance_id.clone();
 
-    // --- 5. Alice sendet den Gutschein an Bob ---
+    // --- 5. Alice sends the voucher to Bob ---
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: id_bob.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
@@ -120,7 +119,7 @@ fn api_app_service_full_lifecycle() {
         .expect("Fuzzy search should resolve the old ID to the archived voucher");
     assert_eq!(summary.status, VoucherStatus::Archived, "The voucher should be archived after a full transfer");
 
-    // --- 6. Bob empfängt den Gutschein ---
+    // --- 6. Bob receives the voucher ---
     service_bob.unlock_session(password, 60).unwrap();
     let mut standards = std::collections::HashMap::new();
     standards.insert(standard.immutable.identity.uuid.clone(), freetaler_standard_toml);
@@ -128,8 +127,8 @@ fn api_app_service_full_lifecycle() {
         .receive_bundle(&transfer_bundle, &standards, None, Some("password"), false)
         .unwrap();
     let balance_bob = service_bob.get_total_balance_by_currency().unwrap();
-    // KORREKTUR: Die Bilanz wird jetzt nach der Abkürzung der Währung gruppiert, nicht nach der Einheit.
-    let silver_abbreviation = "Taler"; // Korrigierte, statische Abkürzung für den FreeTaler-Standard.
+    // CORRECTION: The balance is now grouped by currency abbreviation, not by unit.
+    let silver_abbreviation = "Taler"; // Corrected, static abbreviation for the FreeTaler standard.
     let bob_silver_balance = balance_bob
         .iter()
         .find(|b| &b.unit == silver_abbreviation)
@@ -138,31 +137,31 @@ fn api_app_service_full_lifecycle() {
     assert_eq!(bob_silver_balance, "100.00");
 }
 
-/// Testet den `AppService` Lebenszyklus, wenn eine BIP39-Passphrase verwendet wird.
+/// Tests the `AppService` lifecycle when a BIP39 passphrase is used.
 ///
-/// ### Szenario:
-/// 1.  Ein Profil wird mit Mnemonic UND Passphrase erstellt.
-/// 2.  Die resultierende User-ID wird gespeichert.
-/// 3.  Ein Wiederherstellungsversuch NUR mit der Mnemonic (ohne Passphrase) schlägt fehl,
-///     da die abgeleiteten Schlüssel nicht übereinstimmen.
+/// ### Scenario:
+/// 1.  A profile is created with mnemonic AND passphrase.
+/// 2.  The resulting user ID is saved.
+/// 3.  A recovery attempt with ONLY the mnemonic (without passphrase) fails,
+///     because derived keys do not match.
 #[test]
 fn api_app_service_lifecycle_with_passphrase() {
     // --- 1. Setup ---
-    let actor_with_passphrase = &ACTORS.test_user; // Dieser Aktor ist mit einer Passphrase konfiguriert.
+    let actor_with_passphrase = &ACTORS.test_user; // This actor is configured with a passphrase.
     let dir = tempdir().expect("Failed to create temp dir");
 
-    // --- 2. Profil mit Passphrase erstellen und Service entsperren ---
+    // --- 2. Create profile with passphrase and unlock service ---
     let (mut service, profile_info) =
         setup_service_with_profile(dir.path(), actor_with_passphrase, "Test User", "password");
     let original_user_id = service.get_user_id().unwrap();
     assert!(original_user_id.starts_with(actor_with_passphrase.prefix.unwrap()));
     service.logout();
 
-    // --- 3. Wiederherstellung ohne Passphrase (muss fehlschlagen) ---
+    // --- 3. Recovery without passphrase (must fail) ---
     let recovery_result = service.recover_wallet_and_set_new_password(
         &profile_info.folder_name,
         &actor_with_passphrase.mnemonic,
-        None, // <- Fehlende Passphrase
+        None, // <- Missing passphrase
         "any-new-password",
         MnemonicLanguage::English,
         "test-id".to_string(),
@@ -186,13 +185,13 @@ fn api_app_service_lifecycle_with_passphrase() {
     );
 }
 
-/// Testet die statischen Mnemonic-Hilfsfunktionen des `AppService`.
+/// Tests static mnemonic helper functions of `AppService`.
 ///
-/// ### Szenario:
-/// 1.  Generiert eine gültige 12-Wort-Phrase und prüft deren Korrektheit.
-/// 2.  Versucht, eine Phrase mit ungültiger Wortanzahl zu generieren (soll fehlschlagen).
-/// 3.  Validiert eine frisch generierte Phrase (soll erfolgreich sein).
-/// 4.  Validiert Phrasen mit ungültigen Wörtern oder schlechter Prüfsumme (sollen fehlschlagen).
+/// ### Scenario:
+/// 1.  Generates a valid 12-word phrase and checks correctness.
+/// 2.  Attempts to generate a phrase with invalid word count (should fail).
+/// 3.  Validates a freshly generated phrase (should succeed).
+/// 4.  Validates phrases with invalid words or bad checksums (should fail).
 #[test]
 fn api_app_service_mnemonic_helpers() {
     let mnemonic = AppService::generate_mnemonic(12, MnemonicLanguage::English).unwrap();
@@ -221,30 +220,30 @@ fn api_app_service_mnemonic_helpers() {
     );
 }
 
-/// Testet die Passwort-Wiederherstellungsfunktion des `AppService`.
+/// Tests the password recovery function of `AppService`.
 ///
-/// ### Szenario:
-/// 1.  Ein Profil wird erstellt und sofort wieder gesperrt.
-/// 2.  Ein Wiederherstellungsversuch mit einer falschen Mnemonic schlägt fehl.
-/// 3.  Ein Wiederherstellungsversuch mit der korrekten Mnemonic ist erfolgreich.
-/// 4.  Das Wallet ist nach der Wiederherstellung entsperrt.
-/// 5.  Nach erneutem Sperren schlägt der Login mit dem alten Passwort fehl,
-///     während der Login mit dem neuen Passwort funktioniert.
+/// ### Scenario:
+/// 1.  A profile is created and immediately locked again.
+/// 2.  A recovery attempt with a wrong mnemonic fails.
+/// 3.  A recovery attempt with the correct mnemonic succeeds.
+/// 4.  The wallet is unlocked after recovery.
+/// 5.  After locking again, login with the old password fails,
+///     while login with the new password works.
 #[test]
 fn api_app_service_password_recovery() {
     // --- 1. Setup ---
     let dir = tempdir().expect("Failed to create temp dir");
-    let actor = &ACTORS.alice; // Alice hat keine Passphrase.
+    let actor = &ACTORS.alice; // Alice has no passphrase.
     let initial_password = "password-123";
     let new_password = "password-ABC";
 
-    // --- 2. Profil erstellen und wieder sperren ---
+    // --- 2. Create profile and lock again ---
     let (mut service, profile_info) =
         setup_service_with_profile(dir.path(), actor, "Alice Recovery", initial_password);
     service.logout();
 
-    // --- 3. Wiederherstellung mit falscher Mnemonic (muss fehlschlagen) ---
-    let wrong_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon"; // Schlechte Prüfsumme
+    // --- 3. Recovery with wrong mnemonic (must fail) ---
+    let wrong_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon"; // Bad checksum
     assert!(
         service
             .recover_wallet_and_set_new_password(
@@ -262,7 +261,7 @@ fn api_app_service_password_recovery() {
         "Service should remain locked after failed recovery"
     );
 
-    // --- 4. Wiederherstellung mit korrekter Mnemonic (muss erfolgreich sein) ---
+    // --- 4. Recovery with correct mnemonic (must succeed) ---
     service
         .recover_wallet_and_set_new_password(
             &profile_info.folder_name,
@@ -293,26 +292,26 @@ fn api_app_service_password_recovery() {
     );
 }
 
-/// Testet die Passwort-Wiederherstellung explizit für ein Wallet, das mit einer Passphrase erstellt wurde.
+/// Tests password recovery explicitly for a wallet created with a passphrase.
 ///
-/// ### Szenario:
-/// 1.  Ein Profil wird mit Mnemonic, Passphrase und Passwort erstellt.
-/// 2.  Ein Wiederherstellungsversuch mit der korrekten Mnemonic, aber OHNE Passphrase, schlägt fehl.
-/// 3.  Ein Wiederherstellungsversuch mit der korrekten Mnemonic UND der korrekten Passphrase ist erfolgreich.
-/// 4.  Der Login mit dem neu gesetzten Passwort funktioniert.
+/// ### Scenario:
+/// 1.  A profile is created with mnemonic, passphrase, and password.
+/// 2.  A recovery attempt with correct mnemonic but WITHOUT passphrase fails.
+/// 3.  A recovery attempt with correct mnemonic AND correct passphrase succeeds.
+/// 4.  Login with the newly set password works.
 #[test]
 fn api_app_service_password_recovery_with_passphrase() {
     let dir = tempdir().expect("Failed to create temp dir");
-    let actor = &ACTORS.test_user; // Dieser Aktor verwendet eine Passphrase.
+    let actor = &ACTORS.test_user; // This actor uses a passphrase.
     let initial_password = "password-123";
     let new_password = "password-ABC";
 
-    // 1. Profil mit Passphrase erstellen
+    // 1. Create profile with passphrase
     let (mut service, profile_info) =
         setup_service_with_profile(dir.path(), actor, "Passphrase User", initial_password);
     service.logout();
 
-    // 2. Wiederherstellung OHNE Passphrase (muss fehlschlagen)
+    // 2. Recovery WITHOUT passphrase (must fail)
     let recovery_fail = service.recover_wallet_and_set_new_password(
         &profile_info.folder_name,
         &actor.mnemonic,
@@ -326,7 +325,7 @@ fn api_app_service_password_recovery_with_passphrase() {
         "Recovery without the correct passphrase should fail"
     );
 
-    // 3. Wiederherstellung MIT korrekter Passphrase (muss erfolgreich sein)
+    // 3. Recovery WITH correct passphrase (must succeed)
     service
         .recover_wallet_and_set_new_password(
             &profile_info.folder_name,
@@ -338,9 +337,9 @@ fn api_app_service_password_recovery_with_passphrase() {
         )
         .expect("Recovery with correct passphrase should succeed");
 
-    // 4. Verifizierung
+    // 4. Verification
     service.logout();
-    // Erneutes Login nach der Wiederherstellung, false für cleanup
+    // Re-login after recovery, false for cleanup
     let login_result = service.login(&profile_info.folder_name, new_password, false, "test-id".to_string());
     assert!(
         login_result.is_ok(),
@@ -351,17 +350,17 @@ fn api_app_service_password_recovery_with_passphrase() {
 
 // --- 2. Wallet Workflows ---
 
-/// Testet den grundlegenden Lebenszyklus des Wallets: Erstellen, Speichern, Laden.
+/// Tests basic wallet lifecycle: create, save, load.
 ///
-/// ### Szenario:
-/// 1.  Ein neues Wallet wird aus einer Mnemonic-Phrase erstellt.
-/// 2.  Der Zustand des Wallets wird mit einem Passwort verschlüsselt gespeichert.
-/// 3.  Das Wallet wird aus dem Speicher geladen.
-/// 4.  Es wird verifiziert, dass die geladene User ID mit der ursprünglichen übereinstimmt.
+/// ### Scenario:
+/// 1.  A new wallet is created from a mnemonic phrase.
+/// 2.  The wallet state is saved encrypted with a password.
+/// 3.  The wallet is loaded from storage.
+/// 4.  Verifies loaded user ID matches the original.
 #[test]
 fn api_wallet_lifecycle() {
     let dir = tempdir().unwrap();
-    let test_user = &ACTORS.alice; // Nehmen wir Alice als Testperson
+    let test_user = &ACTORS.alice; // Use Alice as test person
     let (mut wallet_a, identity_a) =
         Wallet::new_from_mnemonic(&test_user.mnemonic, test_user.passphrase, test_user.prefix, MnemonicLanguage::English, "test-id".to_string())
             .expect("Wallet creation failed");
@@ -395,13 +394,13 @@ fn api_wallet_lifecycle() {
     );
 }
 
-/// Testet eine vollständige Überweisung des gesamten Gutscheinbetrags.
+/// Tests a full transfer of the entire voucher amount.
 ///
-/// ### Szenario:
-/// 1.  Alice hat einen Gutschein über 100m.
-/// 2.  Sie erstellt einen Transfer von 100m an Bob.
-/// 3.  Ihr ursprünglicher Gutschein wird archiviert.
-/// 4.  Bob empfängt das Bundle und hat danach einen aktiven Gutschein über 100m.
+/// ### Scenario:
+/// 1.  Alice has a voucher of 100m.
+/// 2.  She creates a transfer of 100m to Bob.
+/// 3.  Her original voucher is archived.
+/// 4.  Bob receives the bundle and afterwards has an active voucher of 100m.
 #[test]
 fn api_wallet_transfer_full_amount() {
     let alice = &ACTORS.alice;
@@ -446,7 +445,7 @@ fn api_wallet_transfer_full_amount() {
         .unwrap();
     assert_eq!(summary.status, VoucherStatus::Archived);
 
-    // KORREKTUR: Die Map muss den Minuto-Standard enthalten.
+    // CORRECTION: The map must contain the Minuto standard.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
         minuto_standard.immutable.identity.uuid.clone(),
@@ -466,14 +465,14 @@ fn api_wallet_transfer_full_amount() {
     assert_eq!(summary.status, VoucherStatus::Active);
 }
 
-/// Testet eine Teilüberweisung, bei der der Restbetrag beim Sender verbleibt.
+/// Tests a partial transfer where the remainder stays with the sender.
 ///
-/// ### Szenario:
-/// 1.  Alice hat einen Gutschein über 100m.
-/// 2.  Sie sendet 30m an Bob.
-/// 3.  Ihr alter Gutschein wird archiviert und ein neuer, aktiver Gutschein
-///     über 70m wird für sie erstellt.
-/// 4.  Bob empfängt das Bundle und hat danach einen aktiven Gutschein über 30m.
+/// ### Scenario:
+/// 1.  Alice has a voucher of 100m.
+/// 2.  She sends 30m to Bob.
+/// 3.  Her old voucher is archived and a new active voucher
+///     of 70m is created for her.
+/// 4.  Bob receives the bundle and afterwards has an active voucher of 30m.
 #[test]
 fn api_wallet_transfer_split_amount() {
     let alice = &ACTORS.alice;
@@ -518,7 +517,7 @@ fn api_wallet_transfer_split_amount() {
         .unwrap();
     assert_eq!(active_summary.current_amount, "70");
 
-    // KORREKTUR: Die Map muss den Minuto-Standard enthalten.
+    // CORRECTION: The map must contain the Minuto standard.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
         minuto_standard.immutable.identity.uuid.clone(),
@@ -536,12 +535,12 @@ fn api_wallet_transfer_split_amount() {
     assert_eq!(bob_summary.current_amount, "30");
 }
 
-/// Stellt sicher, dass Transfers mit ungültigen Beträgen fehlschlagen.
+/// Ensures that transfers with invalid amounts fail.
 ///
-/// ### Szenario:
-/// 1.  Ein Transfer mit einem negativen Betrag wird versucht und schlägt fehl.
-/// 2.  Ein Transfer mit für den Standard unzulässiger Genauigkeit (Dezimalstellen)
-///     wird versucht und schlägt fehl.
+/// ### Scenario:
+/// 1.  A transfer with a negative amount is attempted and fails.
+/// 2.  A transfer with decimal precision disallowed by the standard
+///     is attempted and fails.
 #[test]
 fn api_wallet_transfer_invalid_amount() {
     let alice = &ACTORS.alice;
@@ -600,12 +599,12 @@ fn api_wallet_transfer_invalid_amount() {
     assert!(matches!(result_decimal, Err(VoucherCoreError::Manager(_))));
 }
 
-/// Stellt sicher, dass Transfers nur mit `Active` Gutscheinen möglich sind.
+/// Ensures that transfers are only possible with `Active` vouchers.
 ///
-/// ### Szenario:
-/// 1.  Ein Gutschein wird manuell auf den Status `Quarantined` gesetzt.
-/// 2.  Ein Transferversuch mit diesem Gutschein schlägt mit einem `VoucherNotActive`
-///     Fehler fehl.
+/// ### Scenario:
+/// 1.  A voucher is manually set to status `Quarantined`.
+/// 2.  A transfer attempt with this voucher fails with a `VoucherNotActive`
+///     error.
 #[test]
 fn api_wallet_transfer_inactive_voucher() {
     let alice = &ACTORS.alice;
@@ -657,15 +656,14 @@ fn api_wallet_transfer_inactive_voucher() {
     ));
 }
 
-/// Testet die proaktive Double-Spend-Verhinderung im `Wallet`.
+/// Tests proactive double-spend prevention in `Wallet`.
 ///
-/// ### Szenario:
-/// 1.  Alice transferiert einen Gutschein an Bob. Der `create_transfer` Aufruf
-///     ist erfolgreich und entfernt den alten Gutschein-Zustand aus dem aktiven Speicher.
-/// 2.  Alice versucht, denselben alten Gutschein-Zustand ein zweites Mal an Charlie
-///     zu senden.
-/// 3.  Der Aufruf schlägt mit `VoucherNotFound` fehl, da der Zustand bereits
-///     verbraucht und archiviert wurde. Dies ist der eingebaute Schutz.
+/// ### Scenario:
+/// 1.  Alice transfers a voucher to Bob. The `create_transfer` call
+///     is successful and removes the old voucher state from active storage.
+/// 2.  Alice attempts to send the same old voucher state a second time to Charlie.
+/// 3.  The call fails with `VoucherNotFound` because the state was already
+///     spent and archived. This is the built-in protection.
 #[test]
 fn api_wallet_proactive_double_spend_prevention() {
     let alice = &ACTORS.alice;
@@ -724,14 +722,14 @@ fn api_wallet_proactive_double_spend_prevention() {
     assert!(matches!(result, Err(VoucherCoreError::VoucherNotFound(_))));
 }
 
-/// Testet das Erstellen eines neuen Gutscheins direkt im Wallet.
+/// Tests creating a new voucher directly in the wallet.
 ///
-/// ### Szenario:
-/// 1.  Ein neues Wallet wird für einen Aussteller (`issuer`) erstellt.
-/// 2.  Die Methode `get_user_id` gibt die korrekte ID zurück.
-/// 3.  Ein neuer Gutschein wird mit `create_new_voucher` erstellt.
-/// 4.  Der Gutschein ist danach im Wallet vorhanden, hat den Status `Active`
-///     und den korrekten Betrag.
+/// ### Scenario:
+/// 1.  A new wallet is created for an issuer (`issuer`).
+/// 2.  The `get_user_id` method returns the correct ID.
+/// 3.  A new voucher is created with `create_new_voucher`.
+/// 4.  The voucher is then present in the wallet, with status `Active`
+///     and the correct amount.
 #[test]
 fn api_wallet_create_voucher_and_get_id() {
     let issuer = &ACTORS.issuer;
@@ -769,14 +767,14 @@ fn api_wallet_create_voucher_and_get_id() {
     assert_eq!(summary.status, VoucherStatus::Active);
 }
 
-/// Testet die korrekte Saldoberechnung über mehrere Währungen hinweg.
+/// Tests correct balance calculation across multiple currencies.
 ///
-/// ### Szenario:
-/// 1.  Ein Wallet wird mit mehreren aktiven Gutscheinen für "Minuto" und "Taler"
-///     sowie einem nicht-aktiven Gutschein gefüllt.
-/// 2.  Die Methode `get_total_balance_by_currency` wird aufgerufen.
-/// 3.  Das Ergebnis enthält korrekte, summierte Salden für die beiden Währungen,
-///     wobei nur die aktiven Gutscheine berücksichtigt wurden.
+/// ### Scenario:
+/// 1.  A wallet is populated with multiple active vouchers for "Minuto" and "Taler"
+///     as well as one non-active voucher.
+/// 2.  The `get_total_balance_by_currency` method is called.
+/// 3.  The result contains correct, aggregated balances for both currencies,
+///     taking only active vouchers into account.
 #[test]
 fn api_wallet_query_total_balance() {
     let issuer = &ACTORS.issuer;
@@ -828,8 +826,8 @@ fn api_wallet_query_total_balance() {
     let balances = wallet.get_total_balance_by_currency(Some(&issuer.identity));
 
     assert_eq!(balances.len(), 2, "Two currencies should be present");
-    // KORREKTUR: Die Tests müssen die korrekten Währungs-Abkürzungen aus den Standards verwenden.
-    let minuto_abbreviation = "Minuto"; // Korrigierte, statische Abkürzung für den Minuto-Standard.
+    // CORRECTION: Tests must use the correct currency abbreviations from standards.
+    let minuto_abbreviation = "Minuto"; // Corrected, static abbreviation for the Minuto standard.
     let expected_minuto_balance = Decimal::from_str("150").unwrap();
     let actual_minuto_balance = Decimal::from_str(
         balances
@@ -841,7 +839,7 @@ fn api_wallet_query_total_balance() {
     .unwrap();
     assert_eq!(actual_minuto_balance, expected_minuto_balance);
 
-    let silver_abbreviation = "Taler"; // Korrigierte, statische Abkürzung für den FreeTaler-Standard.
+    let silver_abbreviation = "Taler"; // Corrected, static abbreviation for the FreeTaler standard.
     let expected_silver_balance = Decimal::from_str("2.00").unwrap();
     let actual_silver_balance = Decimal::from_str(
         balances
@@ -854,15 +852,15 @@ fn api_wallet_query_total_balance() {
     assert_eq!(actual_silver_balance, expected_silver_balance);
 }
 
-/// Stellt sicher, dass das Wallet ein Bundle mit einem ungültigen Gutschein abweist.
+/// Ensures that the wallet rejects a bundle with an invalid voucher.
 ///
-/// ### Szenario:
-/// 1.  Alice erstellt einen Gutschein, der gegen eine Inhaltsregel seines Standards verstößt.
-/// 2.  Sie verpackt diesen ungültigen Gutschein in ein Bundle für Bob.
-/// 3.  Eine externe Logik (die den Client simuliert) öffnet das Bundle,
-///     validiert den Gutschein und stellt fest, dass er ungültig ist.
-/// 4.  Da die Validierung fehlschlägt, wird der Gutschein **nicht** an Bobs Wallet
-///     übergeben. Bobs Wallet bleibt leer.
+/// ### Scenario:
+/// 1.  Alice creates a voucher violating a content rule of its standard.
+/// 2.  She packages this invalid voucher into a bundle for Bob.
+/// 3.  External logic (simulating the client) opens the bundle,
+///     validates the voucher, and detects it is invalid.
+/// 4.  Since validation fails, the voucher is **not** handed over
+///     to Bob's wallet. Bob's wallet remains empty.
 #[test]
 fn api_wallet_rejects_invalid_bundle() {
     let alice = &ACTORS.alice;
@@ -900,9 +898,9 @@ fn api_wallet_rejects_invalid_bundle() {
     )
     .unwrap();
 
-    voucher.creator_profile.first_name = Some("123-bad-name".to_string()); // Verstößt gegen Regex
+    voucher.creator_profile.first_name = Some("123-bad-name".to_string()); // Violates regex
     
-    // UPDATE VOUCHER HASH (verhindert vorzeitigen Abbruch durch InvalidVoucherHash-Check)
+    // UPDATE VOUCHER HASH (prevents premature abort by InvalidVoucherHash check)
     let voucher_nonce = voucher.voucher_nonce.clone();
     let mut voucher_to_hash = voucher.clone();
     voucher_to_hash.voucher_id = "".to_string();
@@ -915,7 +913,7 @@ fn api_wallet_rejects_invalid_bundle() {
         let v_id_bytes = bs58::decode(&voucher.voucher_id).into_vec().unwrap();
         let v_nonce_bytes = bs58::decode(&voucher_nonce).into_vec().unwrap();
         voucher.transactions[0].prev_hash = human_money_core::services::crypto_utils::get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes]);
-        // Aktualisiere auch die Tx Hash, sodass sie valide ist
+        // Also update tx hash so it is valid
         let mut tx_to_hash = voucher.transactions[0].clone();
         tx_to_hash.t_id = "".to_string();
         tx_to_hash.sender_identity_signature = None;
@@ -964,18 +962,18 @@ fn api_wallet_rejects_invalid_bundle() {
     );
 }
 
-/// Testet, dass get_voucher_details die korrekten Details eines Gutscheins zurückgibt.
+/// Tests that get_voucher_details returns correct voucher details.
 ///
-/// ### Szenario:
-/// 1.  Es wird ein AppService erstellt und ein Profil angelegt.
-/// 2.  Ein Gutschein wird erstellt.
-/// 3.  Die lokale ID des Gutscheins wird über get_voucher_summaries ermittelt.
-/// 4.  get_voucher_details wird aufgerufen, um die vollständigen Details zu erhalten.
-/// 5.  Es wird verifiziert, dass die zurückgegebenen Details korrekt sind:
-///     - Der Status ist 'Active'
-///     - Der Gutscheininhalt stimmt mit den Erwartungen überein
-///     - Der Nominalwert ist korrekt
-///     - Die Transaktionen sind vorhanden
+/// ### Scenario:
+/// 1.  An AppService is created and a profile is added.
+/// 2.  A voucher is created.
+/// 3.  The local ID of the voucher is determined via get_voucher_summaries.
+/// 4.  get_voucher_details is called to retrieve complete details.
+/// 5.  Verifies returned details are correct:
+///     - Status is 'Active'
+///     - Voucher content matches expectations
+///     - Nominal value is correct
+///     - Transactions are present
 #[test]
 fn api_app_service_get_voucher_details_returns_correct_data() {
     let freetaler_standard_toml =
@@ -986,14 +984,14 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
         AppService::new(dir_alice.path()).expect("Failed to create service for Alice");
     let mnemonic = generate_valid_mnemonic();
 
-    // 1. Profile erstellen
+    // 1. Create profile
     service_alice
         .create_profile("Alice Details", &mnemonic, None, Some("alice"), "password", MnemonicLanguage::English, "test-id".to_string())
         .expect("Alice profile creation failed");
 
     let id_alice = service_alice.get_user_id().unwrap();
 
-    // 2. Alice erstellt einen Gutschein
+    // 2. Alice creates a voucher
     service_alice.unlock_session("password", 60).unwrap();
     let created_voucher = service_alice
         .create_new_voucher(
@@ -1013,17 +1011,17 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
         )
         .expect("Voucher creation failed");
 
-    // 3. Die lokale ID des Gutscheins ermitteln
+    // 3. Determine local ID of voucher
     let summaries_alice = service_alice.get_voucher_summaries(None, None, None).unwrap();
     assert_eq!(summaries_alice.len(), 1, "Should have one voucher");
     let local_id = &summaries_alice[0].local_instance_id;
 
-    // 4. Details des Gutscheins abrufen
+    // 4. Retrieve voucher details
     let details = service_alice
         .get_voucher_details(local_id)
         .expect("Should be able to get voucher details");
 
-    // 5. Überprüfen, dass die Details korrekt sind
+    // 5. Verify details are correct
     assert_eq!(
         details.status,
         VoucherStatus::Active,
@@ -1052,15 +1050,15 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
     );
 }
 
-/// Testet einen Multi-Transfer, bei dem Guthaben von mehreren Quellen gebündelt wird.
+/// Tests a multi-transfer where funds from multiple sources are bundled.
 ///
-/// ### Szenario:
-/// 1.  Alice hat zwei Gutscheine (100m und 50m).
-/// 2.  Sie sendet 20m vom ersten und 30m vom zweiten Gutschein in einer einzigen Transaktion an Bob.
-/// 3.  Ihre alten Gutscheine werden archiviert und zwei neue, aktive Gutscheine
-///     mit den Restbeträgen (80m und 20m) werden für sie erstellt.
-/// 4.  Bob empfängt das Bundle und hat danach zwei neue, aktive Gutscheine (20m und 30m),
-///     was einem Gesamtguthaben von 50m entspricht.
+/// ### Scenario:
+/// 1.  Alice has two vouchers (100m and 50m).
+/// 2.  She sends 20m from the first and 30m from the second voucher in a single transaction to Bob.
+/// 3.  Her old vouchers are archived and two new active vouchers
+///     with remaining amounts (80m and 20m) are created for her.
+/// 4.  Bob receives the bundle and afterwards has two new active vouchers (20m and 30m),
+///     corresponding to a total balance of 50m.
 #[test]
 fn api_wallet_transfer_multi_source() {
     // 1. SETUP
@@ -1068,7 +1066,7 @@ fn api_wallet_transfer_multi_source() {
     let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
     let (minuto_standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
-    // Füge zwei Gutscheine zu Alices Wallet hinzu
+    // Add two vouchers to Alice's wallet
     let voucher_id_1 = add_voucher_to_wallet(
         &mut alice_wallet,
         &alice.identity,
@@ -1089,7 +1087,7 @@ fn api_wallet_transfer_multi_source() {
     let bob = &ACTORS.bob;
     let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
 
-    // 2. AKTION: Erstelle eine Anfrage, die 20 vom ersten und 30 vom zweiten Gutschein sendet.
+    // 2. ACTION: Create a request sending 20 from the first and 30 from the second voucher.
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob.identity.user_id.clone(),
         sources: vec![
@@ -1102,7 +1100,7 @@ fn api_wallet_transfer_multi_source() {
                 amount_to_send: "30".to_string(),
             },
         ],
-        notes: Some("Zahlung aus zwei Quellen".to_string()),
+        notes: Some("Payment from two sources".to_string()),
         sender_profile_name: None,
         use_privacy_mode: None,
     };
@@ -1117,27 +1115,27 @@ fn api_wallet_transfer_multi_source() {
         .execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None)
         .unwrap();
 
-    // 3. VERIFIZIERUNG (Alice)
+    // 3. VERIFICATION (Alice)
     let alice_summaries = alice_wallet.list_vouchers(Some(&alice.identity), None, None, None);
     let mut remaining_amounts_alice: Vec<_> = alice_summaries
         .iter()
         .filter(|s| s.status == VoucherStatus::Active)
         .map(|s| Decimal::from_str(&s.current_amount).unwrap())
         .collect();
-    remaining_amounts_alice.sort(); // Sortieren für deterministischen Vergleich
+    remaining_amounts_alice.sort(); // Sort for deterministic comparison
 
     assert_eq!(
         remaining_amounts_alice.len(),
         2,
-        "Alice sollte zwei aktive Rest-Gutscheine haben"
+        "Alice should have two active remainder vouchers"
     );
     assert_eq!(
         remaining_amounts_alice,
         vec![Decimal::from(20), Decimal::from(80)]
     );
 
-    // 4. VERIFIZIERUNG (Bob)
-    // KORREKTUR: Die Map muss den Minuto-Standard enthalten.
+    // 4. VERIFICATION (Bob)
+    // CORRECTION: The map must contain the Minuto standard.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
         minuto_standard.immutable.identity.uuid.clone(),
@@ -1155,11 +1153,12 @@ fn api_wallet_transfer_multi_source() {
     let minuto_balance = balances.iter().find(|b| b.unit == "Minuto").unwrap();
     assert_eq!(
         minuto_balance.total_amount, "50",
-        "Bobs Gesamtguthaben sollte 50 sein"
+        "Bob's total balance should be 50"
     );
     assert_eq!(
         bob_wallet.list_vouchers(Some(&bob.identity), None, None, None).len(),
         2,
-        "Bob sollte zwei neue Gutscheine erhalten haben"
+        "Bob should have received two new vouchers"
     );
 }
+

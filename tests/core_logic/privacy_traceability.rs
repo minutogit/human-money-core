@@ -199,8 +199,8 @@ mod tests {
         let bob_new_local_id = bob_vouchers.iter().find(|v| v.current_amount == "60").unwrap().local_instance_id.clone();
 
         // Bob verifies sender -> Alice
-        // Hier sollte die Outbound-Regel greifen: Bob kann den Split-Guard (für Charlie) nicht lesen, 
-        // überspringt ihn aber, weil Bob NICHT der recipient_id des Splits ist.
+        // The outbound rule should apply here: Bob cannot read the split guard (for Charlie), 
+        // but skips it because Bob is NOT the recipient_id of the split.
         let revealed_sender = bob_wallet.get_voucher_source_sender(&bob_new_local_id, &bob.identity).unwrap();
         assert_eq!(revealed_sender, Some(alice.identity.user_id.clone()));
     }
@@ -249,17 +249,17 @@ mod tests {
         let charlie_receive = charlie_wallet.process_encrypted_transaction_bundle(&charlie.identity, &bundle.bundle_bytes, None, &standards).unwrap();
         let charlie_local_id = charlie_receive.involved_vouchers[0].clone();
 
-        // Manipulation: Charlies letzter Transaktion-Guard ist korrupt
+        // Manipulation: Charlie's last transaction guard is corrupt
         {
             let instance = charlie_wallet.voucher_store.vouchers.get_mut(&charlie_local_id).unwrap();
             let last_tx = instance.voucher.transactions.last_mut().unwrap();
-            // Korrumpiere den Guard (ungültiges Base64 simuliert fehlgeschlagene Entschlüsselung)
+            // Corrupt the guard (invalid Base64 simulates failed decryption)
             last_tx.privacy_guard = Some("invalid_garbage".to_string());
         }
 
-        // Charlie prüft Quelle -> None
-        // Hier greift die Inbound-Regel: Da Charlie recipient_id ist, aber nicht lesen kann, 
-        // wird abgebrochen. Es darf NICHT Alice zurückgegeben werden.
+        // Charlie checks source -> None
+        // The inbound rule applies here: Since Charlie is recipient_id but cannot read it, 
+        // the operation aborts. Alice must NOT be returned.
         let revealed_sender = charlie_wallet.get_voucher_source_sender(&charlie_local_id, &charlie.identity).unwrap();
         assert_eq!(revealed_sender, None);
     }
@@ -275,7 +275,7 @@ mod tests {
         let mut standards = HashMap::new();
         standards.insert(MINUTO_STANDARD.0.immutable.identity.uuid.clone(), MINUTO_STANDARD.0.clone());
 
-        // 1. Minuto ist Flexible. Alice sendet PRIVAT (obwohl Standard Public erlaubt)
+        // 1. Minuto is Flexible. Alice sends PRIVATELY (even though standard allows Public)
         let alice_local_id = add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", &MINUTO_STANDARD.0, true).unwrap();
         
         let request = human_money_core::wallet::types::MultiTransferRequest {
@@ -291,17 +291,17 @@ mod tests {
 
         let bundle = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None).unwrap();
         
-        // Bob empfängt
+        // Bob receives
         let bob_receive = bob_wallet.process_encrypted_transaction_bundle(&bob.identity, &bundle.bundle_bytes, None, &standards).unwrap();
         let bob_local_id = bob_receive.involved_vouchers[0].clone();
 
-        // Check A: Im Ledger (Klartext) steht kein Sender
+        // Check A: No sender in ledger (plaintext)
         let instance = bob_wallet.voucher_store.vouchers.get(&bob_local_id).unwrap();
         let last_tx = instance.voucher.transactions.last().unwrap();
         assert!(last_tx.sender_id.is_none());
         assert!(last_tx.sender_identity_signature.is_none());
 
-        // Check B: Rückverfolgbarkeit funktioniert trotzdem (via Guard)
+        // Check B: Traceability still works (via guard)
         let revealed_sender = bob_wallet.get_voucher_source_sender(&bob_local_id, &bob.identity).unwrap();
         assert_eq!(revealed_sender, Some(alice.identity.user_id.clone()));
     }

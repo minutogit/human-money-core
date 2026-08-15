@@ -1,10 +1,10 @@
 //! # src/wallet/tests.rs
-//! Enthält die Modul-Tests für die `Wallet`-Struktur. Diese Datei ist
-//! bewusst von `mod.rs` getrennt, um die Lesbarkeit zu verbessern.
+//! Contains unit tests for the `Wallet` struct. This file is
+//! deliberately separated from `mod.rs` to improve readability.
 //!
-//! ACHTUNG: Die meisten High-Level-Integrationstests wurden in das Verzeichnis
-//! `tests/wallet_api/` verschoben. Hier verbleiben nur Tests für interne
-//! oder pfadabhängige Logik (pub(super)).
+//! ATTENTION: Most high-level integration tests have been moved to the
+//! `tests/wallet_api/` directory. Only tests for internal or
+//! path-dependent logic (pub(super)) remain here.
 
 use bs58;
 use crate::{
@@ -13,11 +13,11 @@ use crate::{
     },
 };
 
-/// Bündelt interne Logik-Tests (z.B. für private oder pub(super) Methoden).
+/// Bundles internal logic tests (e.g. for private or pub(super) methods).
 mod internal_logic {
     use super::*;
 
-    /// **Test: rederive_secret_seed Logik-Pfad (&& vs || Mutant-Abwehr)**
+    /// **Test: rederive_secret_seed logic path (&& vs || mutant defense)**
     #[test]
     fn test_rederive_secret_seed_logic() {
         let identity = &ACTORS.alice;
@@ -27,16 +27,16 @@ mod internal_logic {
         dummy_voucher.voucher_nonce = bs58::encode(vec![0u8; 32]).into_string(); 
         
         let mut tx = crate::models::voucher::Transaction::default();
-        tx.t_type = "transfer".to_string(); // Wichtig: NICHT "init"
-        tx.sender_id = Some(identity.user_id.clone()); // Wichtig: == identity.user_id
-        tx.sender_remaining_amount = None; // Damit der Split-Zweig ignoriert wird
+        tx.t_type = "transfer".to_string(); // Important: NOT "init"
+        tx.sender_id = Some(identity.user_id.clone()); // Important: == identity.user_id
+        tx.sender_remaining_amount = None; // So the split branch is ignored
         
         dummy_voucher.transactions.push(tx);
         
-        // rederive_secret_seed ist pub(super)
+        // rederive_secret_seed is pub(super)
         let result = wallet.rederive_secret_seed(&dummy_voucher, identity);
         
-        // Muss fehlschlagen, da weder init noch split.
+        // Must fail since neither init nor split.
         assert!(result.is_err(), "rederive_secret_seed should fail for a non-init, non-split transfer if logic is &&");
         assert!(result.unwrap_err().to_string().contains("No valid ownership strategy found"));
     }
@@ -96,10 +96,11 @@ mod internal_logic {
             deletable_at: "2099-01-01T00:00:00Z".to_string(),
         };
         
-        // resolve_conflict_offline ist pub(super), daher hier direkt testbar.
+        // resolve_conflict_offline is pub(super), hence directly testable here.
         crate::wallet::conflict_handler::resolve_conflict_offline(&mut store, &[fp_early, fp_late]);
         
         assert!(matches!(store.vouchers["local_early"].status, VoucherStatus::Active), "early must win");
         assert!(matches!(store.vouchers["local_late"].status, VoucherStatus::Quarantined { .. }), "late must lose");
     }
 }
+

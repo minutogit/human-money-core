@@ -27,10 +27,10 @@ use serde_json::Value;
 use std::str::FromStr;
 
 // ===================================================================================
-// HILFSFUNKTIONEN & SETUP (Adaptiert aus bestehenden Tests)
+// HELPER FUNCTIONS & SETUP (Adapted from existing tests)
 // ===================================================================================
 
-/// Helper: Erzeugt einen gültigen Privacy Guard für Tests, damit das Bundle-Ingest passt.
+/// Helper: Creates a valid Privacy Guard for tests so bundle ingest succeeds.
 fn attach_test_privacy_guard(tx: &mut Transaction, _v_id: &str, recipient_id: &str, sender_id: &str) {
     let payload = human_money_core::models::voucher::RecipientPayload {
         sender_permanent_did: sender_id.to_string(),
@@ -49,7 +49,7 @@ fn attach_test_privacy_guard(tx: &mut Transaction, _v_id: &str, recipient_id: &s
     ).unwrap());
 }
 
-/// Wählt eine zufällige Transaktion (außer `init`) und macht ihren Betrag negativ.
+/// Chooses a random transaction (except `init`) and makes its amount negative.
 fn mutate_to_negative_amount(voucher: &mut Voucher) -> String {
     if voucher.transactions.len() < 2 {
         return "No non-init transaction to mutate".to_string();
@@ -69,10 +69,10 @@ fn mutate_to_negative_amount(voucher: &mut Voucher) -> String {
     "Failed to apply negative amount mutation".to_string()
 }
 
-/// Wählt eine zufällige Split-Transaktion und macht ihren Restbetrag negativ.
+/// Chooses a random split transaction and makes its remainder negative.
 fn mutate_to_negative_remainder(voucher: &mut Voucher) -> String {
     let mut rng = thread_rng();
-    // Finde alle Indizes von Transaktionen, die einen Restbetrag haben
+    // Find all indices of transactions that have a remainder
     let splittable_indices: Vec<usize> = voucher
         .transactions
         .iter()
@@ -100,7 +100,7 @@ fn mutate_to_negative_remainder(voucher: &mut Voucher) -> String {
     "No suitable split transaction found to mutate".to_string()
 }
 
-/// Verschiebt den `t_type` "init" auf eine zufällige, ungültige Position.
+/// Moves `t_type` "init" to a random invalid position.
 fn mutate_init_to_wrong_position(voucher: &mut Voucher) -> String {
     if voucher.transactions.len() < 2 {
         return "Not enough transactions to move 'init' type".to_string();
@@ -115,7 +115,7 @@ fn mutate_init_to_wrong_position(voucher: &mut Voucher) -> String {
     "Failed to move 'init' t_type".to_string()
 }
 
-/// Nimmt eine `AdditionalSignature` und macht sie ungültig, indem die Signaturdaten manipuliert werden.
+/// Takes a `VoucherSignature` and invalidates it by manipulating signature data.
 fn mutate_invalidate_signature(voucher: &mut Voucher) -> String {
     if let Some(sig) = voucher.signatures.get_mut(0) {
         sig.signature = "invalid_signature_data".to_string();
@@ -124,30 +124,30 @@ fn mutate_invalidate_signature(voucher: &mut Voucher) -> String {
     "No VoucherSignature found to invalidate".to_string()
 }
 
-/// Definiert die verschiedenen Angriffsstrategien für den Fuzzer.
+/// Defines various attack strategies for the fuzzer.
 #[derive(Debug, Clone, Copy)]
 enum FuzzingStrategy {
-    /// Manipuliert eine `VoucherSignature`, um die Validierung zu testen.
+    /// Manipulates a `VoucherSignature` to test validation.
     InvalidateSignature,
-    /// Setzt einen Transaktionsbetrag auf einen negativen Wert.
+    /// Sets a transaction amount to a negative value.
     SetNegativeTransactionAmount,
-    /// Setzt den Restbetrag eines Splits auf einen negativen Wert.
+    /// Sets the remainder of a split to a negative value.
     SetNegativeRemainderAmount,
-    /// Verschiebt eine `init`-Transaktion an eine ungültige Position.
+    /// Moves an `init` transaction to an invalid position.
     SetInitTransactionInWrongPosition,
-    /// Führt eine zufällige, strukturelle Mutation durch (der alte Ansatz).
+    /// Performs a random structural mutation (the old approach).
     GenericRandomMutation,
 }
 
-/// Erstellt ein frisches, leeres In-Memory-Wallet für einen Akteur.
+/// Creates a fresh, empty in-memory wallet for an actor.
 fn setup_test_wallet(identity: &UserIdentity) -> Wallet {
     setup_in_memory_wallet(identity)
 }
 
-/// Erstellt leere `NewVoucherData` für Testzwecke.
+/// Creates empty `NewVoucherData` for testing purposes.
 fn new_test_voucher_data(creator_id: String) -> NewVoucherData {
     NewVoucherData {
-        validity_duration: Some("P5Y".to_string()), // Erhöht auf 5 Jahre, um die Mindestgültigkeit zu erfüllen
+        validity_duration: Some("P5Y".to_string()), // Increased to 5 years to meet minimum validity
         non_redeemable_test_voucher: false,
         nominal_value: ValueDefinition {
             amount: "100".to_string(),
@@ -161,7 +161,7 @@ fn new_test_voucher_data(creator_id: String) -> NewVoucherData {
     }
 }
 
-/// Erstellt eine gültige Bürgschaft für einen gegebenen Gutschein.
+/// Creates a valid personal guarantee for a given voucher.
 fn create_guarantor_signature(
     _voucher: &Voucher,
     guarantor_identity: &UserIdentity,
@@ -200,7 +200,7 @@ fn create_guarantor_signature(
     sig_obj
 }
 
-/// Simuliert die Aktion eines Hackers: Verpackt einen (manipulierten) Gutschein in einen Container.
+/// Simulates a hacker action: Wraps a (manipulated) voucher into a container.
 fn create_hacked_bundle_and_container(
     hacker_identity: &UserIdentity,
     victim_id: &str,
@@ -233,7 +233,7 @@ fn create_hacked_bundle_and_container(
     serde_json::to_vec(&secure_container).unwrap()
 }
 
-/// Erstellt und signiert eine (potenziell manipulierte) Transaktion.
+/// Creates and signs a (potentially manipulated) transaction.
 fn create_hacked_tx(
     signer_key: &ed25519_dalek::SigningKey,
     identity_key: Option<&ed25519_dalek::SigningKey>,
@@ -308,7 +308,7 @@ fn create_hacked_tx(
     hacked_tx
 }
 
-/// **NEUER STUB:** Erstellt Test-Voucher-Daten für die neuen Tests.
+/// **NEW STUB:** Creates test voucher data for the new tests.
 fn create_test_voucher_data_with_amount(
     creator_profile: human_money_core::models::profile::PublicProfile,
     amount: &str,
@@ -325,7 +325,7 @@ fn create_test_voucher_data_with_amount(
     }
 }
 
-/// Fügt P2PKH-Felder (Anchor Reveal, Next Anchor, L2 Signature) zu einer manuellen Transaktion hinzu.
+/// Adds P2PKH fields (Anchor Reveal, Next Anchor, L2 Signature) to a manual transaction.
 
 fn generate_valid_trap_for_test(
     tx: &Transaction,
@@ -378,13 +378,13 @@ fn add_p2pkh_layer(tx: &mut Transaction, holder_secret: &ed25519_dalek::SigningK
 
     tx.sender_ephemeral_pub = Some(holder_pub_str.clone());
     tx.receiver_ephemeral_pub_hash = Some(next_hash);
-    tx.change_ephemeral_pub_hash = None; // Standard: kein Change
+    tx.change_ephemeral_pub_hash = None; // Default: no change
     tx.layer2_signature = None;
     tx.t_id = "".to_string();
 }
 
 // ===================================================================================
-// ANGRIFFSKLASSE 1 & 4: MANIPULATION VON STAMMDATEN & BÜRGSCHAFTEN
+// ATTACK CLASS 1 & 4: TAMPERING WITH MASTER DATA & GUARANTEES
 // ===================================================================================
 #[test]
 fn test_attack_tamper_core_data_and_guarantors() {
@@ -418,7 +418,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
         .vouchers
         .insert(local_id.clone(), instance);
 
-    // Issuer sendet den Gutschein an den Hacker, der ihn nun für Angriffe besitzt.
+    // Issuer sends the voucher to the hacker, who now owns it for attacks.
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: ACTORS.hacker.user_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
@@ -439,7 +439,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     } = issuer_wallet
         .execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None)
         .unwrap();
-    // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+    // CORRECTION: The map must contain the standard being processed.
     let mut standards_for_hacker = std::collections::HashMap::new();
     standards_for_hacker.insert(
         FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
@@ -471,8 +471,8 @@ fn test_attack_tamper_core_data_and_guarantors() {
     let mut inflated_voucher = voucher_in_hacker_wallet.clone();
     inflated_voucher.nominal_value.amount = "9999".to_string();
 
-    // Der Hacker muss die sichere `create_transaction`-Funktion umgehen.
-    // Er erstellt die finale Transaktion zum Opfer manuell und hängt sie an den manipulierten Gutschein an.
+    // The hacker must bypass the secure `create_transaction` function.
+    // He manually creates the final transaction to the victim and appends it to the manipulated voucher.
     let mut final_tx = Transaction {
         prev_hash: get_hash(
             to_canonical_json(inflated_voucher.transactions.last().unwrap()).unwrap(),
@@ -480,12 +480,12 @@ fn test_attack_tamper_core_data_and_guarantors() {
         t_time: get_current_timestamp(),
         sender_id: Some(ACTORS.hacker.user_id.clone()),
         recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
-        amount: "100".to_string(), // Hacker gibt seinen ursprünglichen Betrag aus
+        amount: "100".to_string(), // Hacker spends his original amount
         t_type: "transfer".to_string(),
         trap_data: None,
         ..Default::default()
     };
-    // Diese Transaktion selbst ist valide und wird vom Hacker signiert. Der Betrug liegt im manipulierten Creator-Block.
+    // This transaction itself is valid and signed by the hacker. The fraud lies in the manipulated creator block.
     add_p2pkh_layer(&mut final_tx, &hacker_holder_secret);
     final_tx.trap_data = Some(generate_valid_trap_for_test(
         &final_tx,
@@ -510,7 +510,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
         &ACTORS.victim.user_id,
         inflated_voucher,
     );
-    // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+    // CORRECTION: The map must contain the standard being processed.
     let mut standards_for_victim = std::collections::HashMap::new();
     standards_for_victim.insert(
         FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
@@ -535,12 +535,12 @@ fn test_attack_tamper_core_data_and_guarantors() {
     );
     victim_wallet.voucher_store.vouchers.clear(); // Reset for next test
 
-    // ### SZENARIO 4a: BÜRGEN-METADATEN MANIPULIEREN ###
+    // ### SCENARIO 4a: TAMPER WITH GUARANTOR METADATA ###
     human_money_core::set_signature_bypass(false);
-    // println!("--- Angriff 4a: Bürgen-Metadaten manipulieren ---"); // Removed debug print
+    // println!("--- Attack 4a: Tamper with guarantor metadata ---"); // Removed debug print
     let mut tampered_guarantor_voucher = voucher_in_hacker_wallet.clone();
-    // KORREKTUR: signatures[0] ist jetzt der Ersteller (role: "creator").
-    // Der Bürge (role: "guarantor") ist an Index 1.
+    // CORRECTION: signatures[0] is now the creator (role: "creator").
+    // The guarantor (role: "guarantor") is at index 1.
     let guarantor_sig_to_tamper = tampered_guarantor_voucher
         .signatures
         .get_mut(1)
@@ -593,7 +593,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
         &ACTORS.victim.user_id,
         tampered_guarantor_voucher,
     );
-    // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+    // CORRECTION: The map must contain the standard being processed.
     let mut standards_for_victim = std::collections::HashMap::new();
     standards_for_victim.insert(
         FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
@@ -623,7 +623,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
 }
 
 // ===================================================================================
-// ANGRIFFSKLASSE 2: FÄLSCHUNG DER TRANSAKTIONSHISTORIE
+// ATTACK CLASS 2: FORGERY OF TRANSACTION HISTORY
 // ===================================================================================
 #[test]
 fn test_attack_tamper_transaction_history() {
@@ -673,7 +673,7 @@ fn test_attack_tamper_transaction_history() {
     } = alice_wallet
         .execute_multi_transfer_and_bundle(&ACTORS.alice, &standards, request, None)
         .unwrap();
-    // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+    // CORRECTION: The map must contain the standard being processed.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
         FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
@@ -696,15 +696,15 @@ fn test_attack_tamper_transaction_history() {
         .1
         .voucher;
 
-    // ### ANGRIFF ###
+    // ### ATTACK ###
     println!("--- Angriff 2a: Transaktionshistorie fälschen ---");
     let mut voucher_with_tampered_history = voucher_in_bob_wallet.clone();
-    // Manipuliere eine Signatur in der Kette, um sie ungültig zu machen.
+    // Manipulate a signature in the chain to make it invalid.
     voucher_with_tampered_history.transactions[0].layer2_signature =
         Some("invalid_signature".to_string());
 
-    // DANK DES SICHERHEITSPATCHES in `voucher_manager` schlägt dieser Aufruf nun fehl,
-    // da `create_transaction` den Gutschein vorab validiert.
+    // THANKS TO THE SECURITY PATCH in `voucher_manager` this call now fails,
+    // since `create_transaction` validates the voucher beforehand.
     let bob_key = bob_wallet_hacker
         .rederive_secret_seed(&voucher_with_tampered_history, &ACTORS.bob)
         .unwrap();
@@ -726,7 +726,7 @@ fn test_attack_tamper_transaction_history() {
 }
 
 // ===================================================================================
-// ANGRIFFSKLASSE 3: ERSTELLUNG EINER LOGISCH INKONSISTENTEN TRANSAKTION
+// ATTACK CLASS 3: CREATION OF A LOGICALLY INCONSISTENT TRANSACTION
 // ===================================================================================
 #[test]
 fn test_attack_create_inconsistent_transaction() {
@@ -780,7 +780,7 @@ fn test_attack_create_inconsistent_transaction() {
     } = issuer_wallet
         .execute_multi_transfer_and_bundle(&ACTORS.issuer, &standards, request, None)
         .unwrap();
-    // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+    // CORRECTION: The map must contain the standard being processed.
     let mut standards_for_hacker = std::collections::HashMap::new();
     standards_for_hacker.insert(
         FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
@@ -846,7 +846,7 @@ fn test_attack_create_inconsistent_transaction() {
         &ACTORS.victim.user_id,
         overspend_voucher,
     );
-    // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+    // CORRECTION: The map must contain the standard being processed.
     let mut standards_for_victim = std::collections::HashMap::new();
     standards_for_victim.insert(
         FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
@@ -876,7 +876,7 @@ fn test_attack_create_inconsistent_transaction() {
 fn test_attack_inconsistent_split_transaction() {
     human_money_core::set_signature_bypass(false); // Testing balance integrity
     // ### SETUP ###
-    // Ein Hacker besitzt einen gültigen Gutschein über 100 Einheiten.
+    // A hacker owns a valid voucher of 100 units.
     let hacker_identity = &ACTORS.hacker;
     let _victim_identity = &ACTORS.victim;
     let data = new_test_voucher_data(hacker_identity.user_id.clone());
@@ -888,12 +888,12 @@ fn test_attack_inconsistent_split_transaction() {
         &hacker_identity.signing_key)
     .unwrap();
 
-    // ### ANGRIFF ###
+    // ### ATTACK ###
     println!("--- Angriff 3b: Inkonsistente Split-Transaktion (Gelderschaffung) ---");
     let mut inconsistent_split_voucher = voucher.clone();
     let holder_key = derive_holder_key(&voucher, &hacker_identity.signing_key);
 
-    // Hacker erstellt eine Split-Transaktion, bei der die Summe nicht stimmt (100 -> 30 + 80)
+    // Hacker creates a split transaction with incorrect sum (100 -> 30 + 80)
     let mut inconsistent_tx_unsigned = Transaction {
         prev_hash: get_hash(
             to_canonical_json(inconsistent_split_voucher.transactions.last().unwrap()).unwrap(),
@@ -902,7 +902,7 @@ fn test_attack_inconsistent_split_transaction() {
         sender_id: Some(hacker_identity.user_id.clone()),
         recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         amount: "30".to_string(),
-        sender_remaining_amount: Some("80".to_string()), // Falscher Restbetrag
+        sender_remaining_amount: Some("80".to_string()), // Incorrect remainder
         t_type: "split".to_string(),
         trap_data: None,
         ..Default::default()
@@ -915,7 +915,7 @@ fn test_attack_inconsistent_split_transaction() {
         &ACTORS.hacker.user_id,
     ));
     let v_id = human_money_core::services::l2_gateway::extract_layer2_voucher_id(&voucher).unwrap();
-    // NEU: Hänge einen gültigen Privacy Guard an, damit die Ingest-Prüfung passiert
+    // NEW: Attach a valid Privacy Guard so ingest check passes
     let payload = human_money_core::models::voucher::RecipientPayload {
         sender_permanent_did: hacker_identity.user_id.clone(),
         target_prefix: "victim".to_string(),
@@ -934,13 +934,13 @@ fn test_attack_inconsistent_split_transaction() {
         .transactions
         .push(inconsistent_tx);
 
-    // ### VALIDIERUNG ###
+    // ### VALIDATION ###
     let result = voucher_validation::validate_voucher_against_standard(
         &inconsistent_split_voucher,
         standard,
     );
 
-    // Die Validierung SOLLTE fehlschlagen. Aktuell tut sie das nicht.
+    // Validation SHOULD fail.
     assert!(
         result.is_err(),
         "Validation must fail on inconsistent split transaction."
@@ -951,7 +951,7 @@ fn test_attack_inconsistent_split_transaction() {
 fn test_attack_init_amount_mismatch() {
     human_money_core::set_signature_bypass(true);
     // ### SETUP ###
-    // Ein Hacker erstellt einen scheinbar gültigen Gutschein mit Nennwert 100.
+    // A hacker creates a seemingly valid voucher with nominal value 100.
     let hacker_identity = &ACTORS.hacker;
     let data = new_test_voucher_data(hacker_identity.user_id.clone());
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
@@ -962,21 +962,21 @@ fn test_attack_init_amount_mismatch() {
         &hacker_identity.signing_key)
     .unwrap();
 
-    // ### ANGRIFF ###
+    // ### ATTACK ###
     println!("--- Angriff: Inkonsistenter Betrag in 'init'-Transaktion ---");
-    // Der Nennwert des Gutscheins ist 100, aber der Hacker manipuliert die 'init'-Transaktion,
-    // sodass sie nur einen Betrag von 101 ausweist.
+    // The nominal value of the voucher is 100, but the hacker manipulates the 'init' transaction
+    // so that it reflects an amount of 101.
     let mut malicious_init_tx = voucher.transactions[0].clone();
     malicious_init_tx.amount = "101.00".to_string();
 
-    // DANK SIGNATURE BYPASS: Keine Notwendigkeit mehr, die Transaktion neu zu signieren!
-    // Die Validierung ignoriert die nun ungültige Signatur und prüft direkt den Betrag.
+    // THANKS TO SIGNATURE BYPASS: No need to re-sign the transaction!
+    // Validation ignores the now invalid signature and checks the amount directly.
     voucher.transactions[0] = malicious_init_tx;
 
-    // ### VALIDIERUNG ###
+    // ### VALIDATION ###
     let result = voucher_validation::validate_voucher_against_standard(&voucher, standard);
 
-    // Der Betrug muss mit dem spezifischen Fehler `InitAmountMismatch` erkannt werden.
+    // The fraud must be detected with the specific error `InitAmountMismatch`.
     assert!(matches!(
         result.unwrap_err(),
         VoucherCoreError::Validation(ValidationError::InitAmountMismatch { .. })
@@ -998,10 +998,10 @@ fn test_attack_negative_or_zero_amount_transaction() {
         &hacker_identity.signing_key)
     .unwrap();
 
-    // ### ANGRIFF 1: Negativer Betrag ###
+    // ### ATTACK 1: Negative Amount ###
     let negative_tx_unsigned = Transaction {
         amount: "-10.00".to_string(),
-        // Restliche Felder sind für diesen Test nicht primär relevant
+        // Remaining fields are not primarily relevant for this test
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_time: get_current_timestamp(),
         sender_id: Some(hacker_identity.user_id.clone()),
@@ -1010,7 +1010,7 @@ fn test_attack_negative_or_zero_amount_transaction() {
         ..Default::default()
     };
 
-    // Die `create_hacked_tx` ist hier nicht nötig, da die Validierung VOR der Signaturprüfung fehlschlagen sollte.
+    // `create_hacked_tx` is not needed here as validation should fail BEFORE signature verification.
     let mut voucher_with_negative_tx = voucher.clone();
     voucher_with_negative_tx
         .transactions
@@ -1023,7 +1023,7 @@ fn test_attack_negative_or_zero_amount_transaction() {
         VoucherCoreError::Validation(ValidationError::NegativeOrZeroAmount { .. })
     ));
 
-    // ### ANGRIFF 2: Betrag von Null ###
+    // ### ATTACK 2: Zero Amount ###
     let zero_tx_unsigned = Transaction {
         amount: "0.00".to_string(),
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
@@ -1048,15 +1048,15 @@ fn test_attack_negative_or_zero_amount_transaction() {
 fn test_attack_invalid_precision_in_nominal_value() {
     human_money_core::set_signature_bypass(true);
     // ### SETUP ###
-    // Erstelle Testdaten mit einem Nennwert, der zu viele Nachkommastellen hat.
+    // Create test data with a nominal value having too many decimal places.
     let creator_identity = &ACTORS.issuer;
     let mut voucher_data = new_test_voucher_data(creator_identity.user_id.clone());
-    voucher_data.nominal_value.amount = "100.12345".to_string(); // 5 statt der erlaubten 4
+    voucher_data.nominal_value.amount = "100.12345".to_string(); // 5 instead of allowed 4
 
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
-    // ### ANGRIFF ###
-    // Die `create_voucher` Funktion selbst validiert dies noch nicht, der Zustand wird also erstellt.
+    // ### ATTACK ###
+    // The `create_voucher` function itself does not validate this yet, so the state is created.
     let malicious_voucher = voucher_manager::create_voucher(
         voucher_data,
         standard,
@@ -1064,8 +1064,8 @@ fn test_attack_invalid_precision_in_nominal_value() {
         &creator_identity.signing_key)
     .unwrap();
 
-    // ### VALIDIERUNG ###
-    // Die `validate_voucher_against_standard` muss diesen Fehler jedoch erkennen.
+    // ### VALIDATION ###
+    // However, `validate_voucher_against_standard` must detect this error.
     let result =
         voucher_validation::validate_voucher_against_standard(&malicious_voucher, standard);
     println!(
@@ -1101,27 +1101,27 @@ fn test_attack_full_transfer_amount_mismatch() {
         &creator_identity.signing_key)
     .unwrap();
 
-    // ### ANGRIFF ###
-    // Erstelle eine 'transfer' Transaktion, die aber nicht den vollen Betrag von 100 sendet.
-    // Wir erstellen die Transaktion explizit, anstatt die `init`-Transaktion zu klonen,
-    // um Nebeneffekte zu vermeiden und den Test robuster zu machen.
+    // ### ATTACK ###
+    // Create a 'transfer' transaction that does not send the full amount of 100.
+    // We create the transaction explicitly instead of cloning the `init` transaction
+    // to avoid side effects and make the test more robust.
     let malicious_tx = Transaction {
-        t_id: String::new(), // Wird später gesetzt
+        t_id: String::new(), // Set later
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_type: "transfer".to_string(),
-        amount: "99.00".to_string(), // Inkorrekt für einen 'transfer' bei einem Guthaben von 100
+        amount: "99.00".to_string(), // Incorrect for a 'transfer' with balance of 100
         sender_id: Some(creator.id.clone().expect("Creator ID should exist")),
         recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         t_time: get_current_timestamp(),
         sender_remaining_amount: None,
         ..Default::default()
     };
-    // DANK SIGNATURE BYPASS: Wir können die Transaktion direkt anhängen, ohne aufwendiges Re-Signing.
-    // Die Signatur ist hier ungültig (fehlt oder passt nicht), aber der Bypass ignoriert das.
-    // Der Test prüft, ob die LOGIK (Balance Check) greift.
+    // THANKS TO SIGNATURE BYPASS: We can append the transaction directly without complex re-signing.
+    // The signature here is invalid (missing or mismatched), but the bypass ignores that.
+    // The test verifies that LOGIC (balance check) applies.
     voucher.transactions.push(malicious_tx);
 
-    // ### VALIDIERUNG ###
+    // ### VALIDATION ###
     let result = voucher_validation::validate_voucher_against_standard(&voucher, standard);
     if let Err(e) = &result {
         println!("DEBUG: Got error: {:?}", e);
@@ -1159,24 +1159,24 @@ fn test_attack_remainder_in_full_transfer() {
         &creator_identity.signing_key)
     .unwrap();
 
-    // ### ANGRIFF ###
-    // Erstelle eine 'transfer' Transaktion, die den vollen Betrag sendet,
-    // aber fälschlicherweise auch einen Restbetrag enthält.
+    // ### ATTACK ###
+    // Create a 'transfer' transaction that sends the full amount,
+    // but erroneously also contains a remainder.
     let malicious_tx = Transaction {
-        t_id: String::new(), // Wird später gesetzt
+        t_id: String::new(), // Set later
         prev_hash: get_hash(to_canonical_json(voucher.transactions.last().unwrap()).unwrap()),
         t_type: "transfer".to_string(),
         amount: "100.00".to_string(),
-        sender_remaining_amount: Some("0.01".to_string()), // Darf nicht vorhanden sein
+        sender_remaining_amount: Some("0.01".to_string()), // Must not be present
         sender_id: Some(creator.id.clone().expect("Creator ID should exist")),
         recipient_id: ACTORS.bob.user_id.clone(),
         t_time: get_current_timestamp(),
         ..Default::default()
     };
-    // DANK SIGNATURE BYPASS: Wir sparen uns wieder das Re-Signing.
+    // THANKS TO SIGNATURE BYPASS: We save re-signing again.
     voucher.transactions.push(malicious_tx);
 
-    // ### VALIDIERUNG ###
+    // ### VALIDATION ###
     let result = voucher_validation::validate_voucher_against_standard(&voucher, standard);
     assert!(
         result.is_err(),
@@ -1185,11 +1185,11 @@ fn test_attack_remainder_in_full_transfer() {
 }
 
 // ===================================================================================
-// ANGRIFFSKLASSE 5: STRUKTURELLE INTEGRITÄTSPRÜFUNG DURCH FUZZING
+// ATTACK CLASS 5: STRUCTURAL INTEGRITY VERIFICATION VIA FUZZING
 // ===================================================================================
-/// Hilfsfunktion für den Fuzzing-Test.
-/// Versucht, eine einzelne, zufällige Mutation durchzuführen und gibt bei Erfolg
-/// eine Beschreibung der Änderung zurück.
+/// Helper function for fuzzing test.
+/// Attempts to perform a single random mutation and returns a description
+/// of the change upon success.
 fn mutate_value(val: &mut Value, rng: &mut impl Rng, current_path: &str) -> Option<String> {
     match val {
         Value::Object(map) => {
@@ -1197,7 +1197,7 @@ fn mutate_value(val: &mut Value, rng: &mut impl Rng, current_path: &str) -> Opti
                 return None;
             }
             let keys: Vec<String> = map.keys().cloned().collect();
-            // Mische die Schlüssel, um bei jedem Durchlauf eine andere Reihenfolge zu haben
+            // Shuffle keys to have a different order on each run
             let mut shuffled_keys = keys;
             shuffled_keys.shuffle(rng);
 
@@ -1212,7 +1212,7 @@ fn mutate_value(val: &mut Value, rng: &mut impl Rng, current_path: &str) -> Opti
             if arr.is_empty() {
                 return None;
             }
-            // Wähle einen zufälligen Index zum Mutieren
+            // Choose a random index to mutate
             let idx_to_mutate = rng.gen_range(0..arr.len());
             let new_path = format!("{}[{}]", current_path, idx_to_mutate);
             if let Some(desc) = mutate_value(&mut arr[idx_to_mutate], rng, &new_path) {
@@ -1234,7 +1234,7 @@ fn mutate_value(val: &mut Value, rng: &mut impl Rng, current_path: &str) -> Opti
             loop {
                 new_val_num = old_val_i64 + rng.gen_range(-10..10);
                 if new_val_num != old_val_i64 {
-                    break; // Stelle sicher, dass der Wert sich tatsächlich ändert
+                    break; // Ensure that the value actually changes
                 }
             }
             *val = Value::Number(new_val_num.into());
@@ -1259,14 +1259,14 @@ fn mutate_value(val: &mut Value, rng: &mut impl Rng, current_path: &str) -> Opti
             ));
         }
     }
-    None // Keine Mutation in diesem Zweig durchgeführt
+    None // No mutation performed in this branch
 }
 
 #[test]
 fn test_attack_fuzzing_random_mutations() {
     human_money_core::set_signature_bypass(false); // Fuzzer needs to test everything
     // ### SETUP ###
-    // Erstelle einen "Master"-Gutschein, der alle für die Angriffe relevanten Features enthält.
+    // Create a "master" voucher containing all features relevant for attacks.
     let mut data = new_test_voucher_data(ACTORS.issuer.user_id.clone());
     data.nominal_value.amount = "1000".to_string();
 
@@ -1279,7 +1279,7 @@ fn test_attack_fuzzing_random_mutations() {
         &ACTORS.issuer.signing_key)
     .unwrap();
 
-    // Füge Bürgen hinzu.
+    // Add guarantors.
     master_voucher.signatures.push(create_guarantor_signature(
         &master_voucher,
         &ACTORS.guarantor1,
@@ -1293,7 +1293,7 @@ fn test_attack_fuzzing_random_mutations() {
         "0",
     ));
 
-    // WICHTIG: Füge eine `AdditionalSignature` hinzu, damit der Fuzzer sie angreifen kann.
+    // IMPORTANT: Add a `VoucherSignature` so the fuzzer can attack it.
     let mut additional_sig = VoucherSignature {
         voucher_id: master_voucher.voucher_id.clone(),
         signer_id: ACTORS.victim.user_id.clone(),
@@ -1316,7 +1316,7 @@ fn test_attack_fuzzing_random_mutations() {
     additional_sig.signature = bs58::encode(signature.to_bytes()).into_string();
     master_voucher.signatures.push(additional_sig);
 
-    // Erstelle eine Transaktionskette, die auch einen Split enthält.
+    // Create a transaction chain that also contains a split.
     let holder_key = human_money_core::test_utils::derive_holder_key(
         &master_voucher,
         &ACTORS.issuer.signing_key,
@@ -1358,14 +1358,14 @@ fn test_attack_fuzzing_random_mutations() {
     println!("--- Starte intelligenten Fuzzing-Test mit 2000 Iterationen ---");
     let iterations = 100;
 
-    // Definiere die intelligenten und zufälligen Angriffsstrategien.
+    // Define smart and random attack strategies.
     let strategies = [
         FuzzingStrategy::InvalidateSignature,
         FuzzingStrategy::SetNegativeTransactionAmount,
         FuzzingStrategy::SetNegativeRemainderAmount,
         FuzzingStrategy::SetInitTransactionInWrongPosition,
-        FuzzingStrategy::GenericRandomMutation, // Behalte die alte Methode für allgemeine Zufälligkeit bei.
-        FuzzingStrategy::GenericRandomMutation, // Erhöhe die Wahrscheinlichkeit für zufällige Mutationen.
+        FuzzingStrategy::GenericRandomMutation, // Keep the old method for general randomness.
+        FuzzingStrategy::GenericRandomMutation, // Increase the probability for random mutations.
     ];
 
     for i in 0..iterations {
@@ -1373,7 +1373,7 @@ fn test_attack_fuzzing_random_mutations() {
         let strategy = strategies.choose(&mut rng).unwrap();
         let change_description: String;
 
-        // Führe die gewählte Angriffsstrategie aus
+        // Execute chosen attack strategy
         match strategy {
             FuzzingStrategy::InvalidateSignature => {
                 change_description = mutate_invalidate_signature(&mut mutated_voucher);
@@ -1388,7 +1388,7 @@ fn test_attack_fuzzing_random_mutations() {
                 change_description = mutate_init_to_wrong_position(&mut mutated_voucher);
             }
             FuzzingStrategy::GenericRandomMutation => {
-                // Konvertiere zu JSON, mutiere zufällig und konvertiere zurück
+                // Convert to JSON, mutate randomly and convert back
                 let mut as_value = serde_json::to_value(&mutated_voucher).unwrap();
                 change_description = mutate_value(&mut as_value, &mut rng, "voucher")
                     .unwrap_or_else(|| "Generic mutation did not change anything".to_string());
@@ -1396,9 +1396,9 @@ fn test_attack_fuzzing_random_mutations() {
                 if let Ok(v) = serde_json::from_value(as_value) {
                     mutated_voucher = v;
                 } else {
-                    // Wenn die zufällige Mutation die Struktur so zerstört hat, dass sie nicht mehr
-                    // als Voucher geparst werden kann, ist das ein "erfolgreicher" Fund.
-                    // Wir können zur nächsten Iteration übergehen.
+                    // If random mutation destroyed the structure such that it can no longer
+                    // be parsed as Voucher, that is a "successful" find.
+                    // We can proceed to the next iteration.
                     println!(
                         "Iter {}: Generic mutation created invalid structure. OK.",
                         i

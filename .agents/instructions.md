@@ -26,6 +26,7 @@ When working on specific areas, load the relevant skill for deep context:
 
 ## Coding Standards
 
+- **Language:** All code comments, doc-comments (`///`), and inline annotations in the codebase must strictly be written in English.
 - **Documentation:** Comprehensive doc-comments (`///`) for all public functions and structs
 - **Error Handling:** Use `Result<T, E>` with the project's `VoucherCoreError` type
 - **Testing:** Write thorough tests. Use `proptest` for security-critical modules. To test efficiently and save tokens, run tests using: `cargo nextest run --status-level fail`

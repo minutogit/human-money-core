@@ -1,46 +1,46 @@
 //! # src/models/secure_container.rs
 //!
-//! Definiert die Datenstruktur für einen anonymisierten, signierten und für
-//! mehrere Empfänger verschlüsselten Daten-Container. Dieser Container dient als
-//! universelles und sicheres Transportmittel für beliebige Daten zwischen Nutzern.
+//! Defines the data structure for an anonymized, signed, and multi-recipient
+//! encrypted data container. This container serves as a universal and secure
+//! transport medium for arbitrary data between users.
 
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
-/// Definiert die Art des Inhalts, der im `SecureContainer` transportiert wird.
+/// Defines the type of content transported in the `SecureContainer`.
 ///
-/// Die Verwendung eines Enums anstelle eines reinen Strings erhöht die Typsicherheit
-/// und macht die Absicht des Senders im Code explizit.
+/// Using an enum instead of a plain string increases type safety
+/// and makes the sender's intent explicit in the code.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum PayloadType {
-    /// Der Payload ist ein `TransactionBundle` für eine Gutschein-Transaktion.
+    /// The payload is a `TransactionBundle` for a voucher transaction.
     TransactionBundle,
-    /// Der Payload ist ein `Voucher`, der einem Bürgen zur Signierung vorgelegt wird.
+    /// The payload is a `Voucher` submitted to a guarantor for signing.
     VoucherForSigning,
-    /// Der Payload ist eine `DetachedSignature`-Antwort im Signatur-Workflow.
+    /// The payload is a `DetachedSignature` response in the signing workflow.
     DetachedSignature,
-    /// Der Payload ist eine `TrustAssertion` für das Web-of-Trust.
+    /// The payload is a `TrustAssertion` for the Web-of-Trust.
     TrustAssertion,
-    /// Der Payload ist ein `ProofOfDoubleSpend` (Betrugsbeweis).
+    /// The payload is a `ProofOfDoubleSpend` (fraud proof).
     ProofOfDoubleSpend,
-    /// Der Payload ist eine `VoucherStandardDefinition` (.standard TOML-Datei).
+    /// The payload is a `VoucherStandardDefinition` (.standard TOML file).
     VoucherStandardDefinition,
-    /// Ein generischer Typ für zukünftige, noch nicht definierte Anwendungsfälle.
+    /// A generic type for future, not yet defined use cases.
     Generic(String),
 }
 
 impl Default for PayloadType {
-    /// Der Standard-Payload ist ein `TransactionBundle`, da dies der häufigste Anwendungsfall ist.
+    /// The default payload is a `TransactionBundle`, as this is the most common use case.
     fn default() -> Self {
         PayloadType::TransactionBundle
     }
 }
 
 impl PayloadType {
-    /// Mappt den internen Payload-Typen auf eine standardisierte DIDComm-URI.
+    /// Maps the internal payload type to a standardized DIDComm URI.
     ///
-    /// Diese URIs werden im JWE-Header als `typ`-Feld verwendet, um die Art des
-    /// Inhalts standardkonform zu kennzeichnen (DIDComm V2-Kompatibilität).
+    /// These URIs are used in the JWE header as the `typ` field to indicate the type
+    /// of content in a standard-compliant manner (DIDComm V2 compatibility).
     pub fn to_didcomm_uri(&self) -> String {
         let base_url = "https://github.com/minutogit/human-money-core/tree/main/protocols";
         match self {
@@ -55,130 +55,130 @@ impl PayloadType {
     }
 }
 
-/// Definiert die Art der Verschlüsselung für den Container.
+/// Defines the type of encryption for the container.
 ///
-/// Durch das `Default` Trait wird Abwärtskompatibilität gewährleistet:
-/// Alte Container ohne das `et` Feld werden automatisch als `Asymmetric` geparst.
+/// Backward compatibility is ensured via the `Default` trait:
+/// Legacy containers without the `et` field are automatically parsed as `Asymmetric`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum EncryptionType {
-    /// Standard: Verschlüsselt mit ephemeral key und DID(s) des Empfängers (asymmetrisch).
+    /// Default: Encrypted with ephemeral key and recipient DID(s) (asymmetric).
     Asymmetric,
-    /// Verschlüsselt mit einem Einweg-Passwort/PIN via PBKDF2 (symmetrisch).
+    /// Encrypted with a one-time password/PIN via PBKDF2 (symmetric).
     Symmetric,
-    /// Unverschlüsselt (Klartext, nur für Signaturanfragen und andere nicht-finanzielle Payloads!).
+    /// Unencrypted (cleartext, only for signing requests and other non-financial payloads!).
     None,
 }
 
 impl Default for EncryptionType {
-    /// Der Standard ist `Asymmetric`, um Abwärtskompatibilität zu gewährleisten.
+    /// The default is `Asymmetric` to ensure backward compatibility.
     fn default() -> Self {
         EncryptionType::Asymmetric
     }
 }
 
-/// Definiert den Privatsphäre-Modus für die asymmetrische Verschlüsselung.
+/// Defines the privacy mode for asymmetric encryption.
 ///
-/// Dieser Modus bestimmt, ob und wie die Empfänger-ID im JWE-Header
-/// (kid-Feld) hinterlegt wird.
+/// This mode determines whether and how the recipient ID is stored in the JWE header
+/// (kid field).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub enum PrivacyMode {
-    /// Maximale Privatsphäre: JWE-Header bleibt leer. Empfänger nutzen Trial Decryption.
+    /// Maximum privacy: JWE header remains empty. Recipients use trial decryption.
     #[default]
     TrialDecryption,
-    /// Verdecktes Routing: Die ID wird gehasht im `kid`-Feld hinterlegt (erlaubt schnelles Finden ohne ID-Klartext).
+    /// Obfuscated routing: The ID is stored hashed in the `kid` field (allows fast lookup without cleartext ID).
     HashedRouting,
-    /// Offenes Routing: Die did:key wird im Klartext im `kid`-Feld hinterlegt (maximale Transparenz/für einfaches Offline-Routing).
+    /// Cleartext routing: The did:key is stored in cleartext in the `kid` field (maximum transparency / for simple offline routing).
     CleartextRouting,
 }
 
-/// Konfiguration für die Container-Verschlüsselung.
+/// Configuration for container encryption.
 ///
-/// Dieses Enum wird verwendet, um die Art der Verschlüsselung beim Erstellen
-/// eines SecureContainer zu konfigurieren. Es wird direkt durch die API-Schichten
-/// bis in die Wallet-Ebene durchgereicht.
+/// This enum is used to configure the type of encryption when creating
+/// a SecureContainer. It is passed directly through the API layers
+/// down to the wallet level.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum ContainerConfig {
-    /// Asymmetrische Verschlüsselung mit einer einzelnen DID und PrivacyMode.
+    /// Asymmetric encryption with a single DID and PrivacyMode.
     TargetDid(String, PrivacyMode),
-    /// Asymmetrische Verschlüsselung mit mehreren DIDs und PrivacyMode.
+    /// Asymmetric encryption with multiple DIDs and PrivacyMode.
     TargetDids(Vec<String>, PrivacyMode),
-    /// Symmetrische Verschlüsselung mit einem Passwort/PIN.
+    /// Symmetric encryption with a password/PIN.
     Password(String),
-    /// Keine Verschlüsselung (Klartext, nur für nicht-finanzielle Payloads!).
+    /// No encryption (cleartext, only for non-financial payloads!).
     Cleartext,
 }
 
-/// JWE-Empfänger-Struktur (RFC 7516).
+/// JWE recipient structure (RFC 7516).
 ///
-/// Enthält die für einen spezifischen Empfänger verschlüsselten Daten.
+/// Contains the data encrypted for a specific recipient.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct JweRecipient {
-    /// Optionale Header pro Empfänger (z.B. 'kid' = did:key des Empfängers).
+    /// Optional headers per recipient (e.g. 'kid' = recipient's did:key).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<serde_json::Value>,
 
-    /// Base64url-encodierter, verschlüsselter Payload-Key.
+    /// Base64url-encoded encrypted payload key.
     pub encrypted_key: String,
 }
 
 /// RFC 7516 JSON Web Encryption (JWE) General Serialization.
 ///
-/// Diese Struktur implementiert den JWE-Standard für verschlüsselte Container.
-/// Sie ersetzt das proprietäre Format und ist DIDComm V2-kompatibel.
+/// This structure implements the JWE standard for encrypted containers.
+/// It replaces the proprietary format and is DIDComm V2-compatible.
 ///
-/// Die Struktur implementiert Forward Secrecy durch ephemere Schlüssel im
-/// Protected Header und unterstützt mehrere Empfänger über das recipients-Array.
+/// The structure implements Forward Secrecy through ephemeral keys in the
+/// Protected Header and supports multiple recipients via the recipients array.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SecureContainer {
-    /// Base64url-encodierter Protected Header als String.
-    /// Muss mindestens 'alg', 'enc', 'typ' und 'epk' (Ephemeral Public Key) enthalten.
+    /// Base64url-encoded Protected Header as string.
+    /// Must contain at least 'alg', 'enc', 'typ' and 'epk' (Ephemeral Public Key).
     pub protected: String,
 
-    /// Unprotected Header (optional). Kann z.B. für Sender-IDs genutzt werden,
-    /// falls diese nicht verschlüsselt oder signiert sein müssen.
+    /// Unprotected Header (optional). Can be used e.g. for sender IDs
+    /// if these do not need to be encrypted or signed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unprotected: Option<serde_json::Value>,
 
-    /// Array der Empfänger mit ihren spezifisch verschlüsselten Payload-Keys.
+    /// Array of recipients with their specific encrypted payload keys.
     pub recipients: Vec<JweRecipient>,
 
-    /// Base64url-encodierter Initialization Vector (Nonce für ChaCha20-Poly1305).
+    /// Base64url-encoded Initialization Vector (nonce for ChaCha20-Poly1305).
     pub iv: String,
 
-    /// Base64url-encodierter Ciphertext (die verschlüsselten Nutzdaten).
+    /// Base64url-encoded ciphertext (the encrypted payload).
     pub ciphertext: String,
 
-    /// Base64url-encodiertes Authentication Tag (von ChaCha20-Poly1305).
+    /// Base64url-encoded authentication tag (from ChaCha20-Poly1305).
     pub tag: String,
 
-    /// Die digitale Signatur des Senders (Ed25519), die den Container-Hash unterzeichnet
-    /// und somit die Authentizität und Integrität des gesamten Containers sicherstellt.
-    /// Dieses Feld ist NICHT Teil des JWE-Standards, wird aber für die Container-Signatur verwendet.
+    /// Sender's digital signature (Ed25519) signing the container hash,
+    /// thereby ensuring authenticity and integrity of the entire container.
+    /// This field is NOT part of the JWE standard, but is used for container signature.
     pub signature: String,
 
-    /// `encryption_type`: Konfiguration der Verschlüsselung (Asymmetric, Symmetric, None).
-    /// Für JWE ist dies implizit durch das Vorhandensein von recipients festgelegt,
-    /// wird aber für interne Logik beibehalten.
+    /// `encryption_type`: Configuration of encryption (Asymmetric, Symmetric, None).
+    /// For JWE this is implicitly determined by the presence of recipients,
+    /// but is retained for internal logic.
     #[serde(default)]
     pub et: EncryptionType,
 
-    /// `salt`: Salt für die PBKDF2 Ableitung (nur bei Symmetric gesetzt).
+    /// `salt`: Salt for PBKDF2 derivation (only set for Symmetric).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub salt: Option<String>,
 
-    /// `id`: Eine eindeutige ID für diesen Container, generiert aus dem Hash seines Inhalts.
-    /// Dieses Feld ist NICHT Teil des JWE-Standards, wird aber für Container-Identifikation verwendet.
+    /// `id`: A unique ID for this container, generated from the hash of its contents.
+    /// This field is NOT part of the JWE standard, but is used for container identification.
     pub i: String,
 
-    /// `content_type`: Gibt an, welche Art von Daten im Payload enthalten ist.
-    /// Dieses Feld ist NICHT Teil des JWE-Standards (steht im protected Header als 'typ'),
-    /// wird aber für interne Logik beibehalten.
+    /// `content_type`: Indicates what type of data is contained in the payload.
+    /// This field is NOT part of the JWE standard (located in protected header as 'typ'),
+    /// but is retained for internal logic.
     pub c: PayloadType,
 }
 
-/// Implementiert `Drop`, um sensible Felder im `SecureContainer` sicher zu löschen.
+/// Implements `Drop` to securely zeroize sensitive fields in `SecureContainer`.
 impl Drop for SecureContainer {
     fn drop(&mut self) {
         self.protected.zeroize();
@@ -254,21 +254,21 @@ mod tests {
 
     #[test]
     fn test_container_config_serialization() {
-        // Dieser Test stellt sicher, dass die JSON-Struktur von ContainerConfig
-        // (insbesondere TargetDid) stabil bleibt und mit den Erwartungen des
-        // Frontends (Arrays für Tupel-Variants) übereinstimmt.
+        // This test ensures that the JSON structure of ContainerConfig
+        // (especially TargetDid) remains stable and matches the expectations
+        // of the frontend (arrays for tuple variants).
         
         let did = "did:key:z6MkiaMJCkd36qJ3FMgfqj9PFDsAqVF3aY8mEaa4t46Yr9Px";
         let config = ContainerConfig::TargetDid(did.to_string(), PrivacyMode::TrialDecryption);
         
         let json = serde_json::to_string(&config).unwrap();
         
-        // Erwartetes Format bei #[serde(tag = "type", content = "value")] und Tupel-Variant:
-        // value muss ein Array sein.
+        // Expected format with #[serde(tag = "type", content = "value")] and tuple variant:
+        // value must be an array.
         assert!(json.contains("\"type\":\"TargetDid\""));
         assert!(json.contains(&format!("\"value\":[\"{}\",\"TrialDecryption\"]", did)));
         
-        // Gegenprobe: Deserialisierung von manuellem JSON (wie es vom TS kommt)
+        // Cross-check: Deserialization of manual JSON (as received from TS)
         let ts_json = format!(r#"{{"type": "TargetDid", "value": ["{}", "TrialDecryption"]}}"#, did);
         let deserialized: ContainerConfig = serde_json::from_str(&ts_json).expect("TS JSON should be valid");
         

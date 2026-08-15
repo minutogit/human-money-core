@@ -1,7 +1,7 @@
 //! # src/wallet/signature_handler.rs
 //!
-//! Enthält die Implementierung der `Wallet`-Methoden, die für den
-//! Signatur-Workflow zuständig sind (Anfragen, Erstellen, Verarbeiten).
+//! Contains the implementation of `Wallet` methods responsible for the
+//! signature workflow (requesting, creating, processing).
 
 use super::Wallet;
 use crate::models::profile::UserIdentity;
@@ -12,20 +12,19 @@ use crate::services::utils::to_canonical_json;
 use crate::wallet::instance::VoucherStatus;
 use crate::{error::VoucherCoreError, models::profile::PublicProfile};
 
-/// Methoden für den Signatur-Workflow.
+/// Methods for the signature workflow.
 impl Wallet {
-    /// Erstellt einen `SecureContainer`, um einen Gutschein zur Unterzeichnung zu versenden.
+    /// Creates a `SecureContainer` to send a voucher for signing.
     ///
-    /// Diese Funktion verändert den Wallet-Zustand nicht. Sie dient nur dazu, eine
-    /// Anfrage zu verpacken.
+    /// This function does not modify wallet state. It only serves to package a request.
     ///
     /// # Arguments
-    /// * `identity` - Die Identität des anfragenden Gutschein-Besitzers.
-    /// * `local_instance_id` - Die ID des Gutscheins im lokalen `voucher_store`.
-    /// * `config` - Die Verschlüsselungskonfiguration (TargetDid, Password, oder Cleartext).
+    /// * `identity` - The identity of the requesting voucher owner.
+    /// * `local_instance_id` - The ID of the voucher in the local `voucher_store`.
+    /// * `config` - The encryption configuration (TargetDid, Password, or Cleartext).
     ///
     /// # Returns
-    /// Die serialisierten Bytes des `SecureContainer`.
+    /// The serialized bytes of the `SecureContainer`.
     pub fn create_signing_request(
         &self,
         identity: &UserIdentity,
@@ -36,8 +35,8 @@ impl Wallet {
             VoucherCoreError::VoucherNotFound(local_instance_id.to_string()),
         )?;
 
-        // BUGFIX: Füge die fehlende Status-Prüfung hinzu. Eine Signaturanfrage ist
-        // nur für aktive oder unvollständige Gutscheine sinnvoll.
+        // BUGFIX: Add missing status check. A signature request is
+        // only meaningful for active or incomplete vouchers.
         if !matches!(
             instance.status,
             VoucherStatus::Active | VoucherStatus::Incomplete { .. }
@@ -56,18 +55,18 @@ impl Wallet {
         Ok(serde_json::to_vec(&container)?)
     }
 
-    /// Erstellt eine `DetachedSignature` für einen Gutschein und verpackt sie in einem
-    /// `SecureContainer` für den Rückversand.
+    /// Creates a `DetachedSignature` for a voucher and packages it in a
+    /// `SecureContainer` for return transmission.
     ///
     /// # Arguments
-    /// * `identity` - Die Identität des Unterzeichners.
-    /// * `voucher_to_sign` - Der Gutschein, der unterzeichnet werden soll (vom Client validiert).
-    /// * `signature_data` - Die vom Client vorbereiteten Metadaten der Signatur.
-    /// * `include_details` - Ob die `PublicProfile`-Daten des Unterzeichners eingebettet werden sollen.
-    /// * `config` - Die Verschlüsselungskonfiguration (TargetDid, Password, oder Cleartext).
+    /// * `identity` - The identity of the signer.
+    /// * `voucher_to_sign` - The voucher to be signed (validated by client).
+    /// * `signature_data` - Signature metadata prepared by the client.
+    /// * `include_details` - Whether the signer's `PublicProfile` data should be embedded.
+    /// * `config` - The encryption configuration (TargetDid, Password, or Cleartext).
     ///
     /// # Returns
-    /// Die serialisierten Bytes des `SecureContainer` mit der Signatur.
+    /// The serialized bytes of the `SecureContainer` containing the signature.
     pub fn create_detached_signature_response(
         &self,
         identity: &UserIdentity,
@@ -76,11 +75,11 @@ impl Wallet {
         include_details: bool,
         config: ContainerConfig,
     ) -> Result<Vec<u8>, VoucherCoreError> {
-        // Stelle die optionalen Profil-Details zusammen
+        // Assemble optional profile details
         let details = if include_details {
             Some(PublicProfile {
                 protocol_version: Some("v1".to_string()),
-                id: None, // `signer_id` ist bereits auf der Hauptebene vorhanden
+                id: None, // `signer_id` is already present at the top level
                 first_name: self.profile.first_name.clone(),
                 last_name: self.profile.last_name.clone(),
                 organization: self.profile.organization.clone(),
@@ -107,7 +106,7 @@ impl Wallet {
                 identity,
                 details,
                 &voucher_to_sign.voucher_id,
-                init_t_id, // <-- HINZUFÜGEN
+                init_t_id, // <-- ADD
             )?;
 
         let payload = to_canonical_json(&signed_signature)?;
@@ -122,16 +121,16 @@ impl Wallet {
         Ok(serde_json::to_vec(&container)?)
     }
 
-    /// Verarbeitet einen `SecureContainer`, der eine `DetachedSignature` enthält,
-    /// und fügt diese dem entsprechenden lokalen Gutschein hinzu.
+    /// Processes a `SecureContainer` containing a `DetachedSignature`
+    /// and attaches it to the corresponding local voucher.
     ///
     /// # Arguments
-    /// * `identity` - Die Identität des Empfängers.
-    /// * `container_bytes` - Die empfangenen Container-Daten.
-    /// * `password` - Optionales Passwort für symmetrische Verschlüsselung.
+    /// * `identity` - The identity of the recipient.
+    /// * `container_bytes` - The received container data.
+    /// * `password` - Optional password for symmetric encryption.
     ///
     /// # Returns
-    /// Ein `Result`, das bei Erfolg die aktualisierte Instance ID enthält.
+    /// A `Result` containing the updated instance ID on success.
     pub fn process_and_attach_signature(
         &mut self,
         identity: &UserIdentity,
@@ -152,7 +151,7 @@ impl Wallet {
             DetachedSignature::Signature(s) => s,
         };
 
-        // Wir müssen den Gutschein finden, um die init_t_id für die Validierung zu erhalten
+        // We must find the voucher to obtain init_t_id for validation
         let target_instance_for_val = self
             .voucher_store
             .vouchers
@@ -190,14 +189,14 @@ impl Wallet {
                 ))
             })?;
 
-        // (Optional, aber empfohlen) Prüfen, ob die Signatur bereits vorhanden ist
+        // (Optional, but recommended) Check if signature is already present
         if target_instance
             .voucher
             .signatures
             .iter()
             .any(|sig| sig.signature_id == signature_obj.signature_id)
         {
-            // Stillschweigend ignorieren oder Fehler zurückgeben
+            // Silently ignore or return error
             return Err(VoucherCoreError::MismatchedSignatureData(
                 format!(
                     "Signature {} already attached to voucher {} [LOCAL_ID:{}]",
@@ -211,25 +210,25 @@ impl Wallet {
         Ok(target_instance.local_instance_id.clone())
     }
 
-    /// Entfernt eine Zusatzsignatur (z. B. von Bürgen oder Zeugen) von einem Gutschein.
+    /// Removes an additional signature (e.g. from guarantors or witnesses) from a voucher.
     ///
-    /// Dieser Vorgang darf nur vom Ersteller des Gutscheins ausgeführt werden und nur,
-    /// solange der Gutschein noch nicht in Umlauf ist (nur eine init-Transaktion vorhanden).
+    /// This operation may only be performed by the voucher creator and only
+    /// while the voucher is not yet in circulation (only one init transaction present).
     ///
     /// # Arguments
-    /// * `identity` - Die Identität des anfragenden Nutzers (muss der Ersteller sein).
-    /// * `local_instance_id` - Die ID des Gutscheins im lokalen `voucher_store`.
-    /// * `signature_id` - Die ID der zu entfernenden Signatur.
+    /// * `identity` - The identity of the requesting user (must be the creator).
+    /// * `local_instance_id` - The ID of the voucher in the local `voucher_store`.
+    /// * `signature_id` - The ID of the signature to be removed.
     ///
     /// # Returns
-    /// Ein `Result`, das bei Erfolg `Ok(())` zurückgibt.
+    /// A `Result` returning `Ok(())` on success.
     ///
     /// # Errors
-    /// * `VoucherNotFound` - Der Gutschein wurde nicht gefunden.
-    /// * `SignatureRemovalRequiresIncomplete` - Entfernen nur im Status 'Incomplete' erlaubt.
-    /// * `NotTheCreator` - Die anfragende Identität ist nicht der Ersteller des Gutscheins.
-    /// * `VoucherAlreadyInCirculation` - Der Gutschein hat bereits mehr als eine Transaktion (ist im Umlauf).
-    /// * `CannotRemoveCreatorSignature` - Es wurde versucht, die Kern-Signatur des Erstellers zu entfernen.
+    /// * `VoucherNotFound` - The voucher was not found.
+    /// * `SignatureRemovalRequiresIncomplete` - Removal only allowed in 'Incomplete' status.
+    /// * `NotTheCreator` - The requesting identity is not the voucher creator.
+    /// * `VoucherAlreadyInCirculation` - The voucher already has more than one transaction (is in circulation).
+    /// * `CannotRemoveCreatorSignature` - An attempt was made to remove the creator's core signature.
     pub fn remove_signature(
         &mut self,
         identity: &UserIdentity,
@@ -242,14 +241,14 @@ impl Wallet {
             .get_mut(local_instance_id)
             .ok_or_else(|| VoucherCoreError::VoucherNotFound(local_instance_id.to_string()))?;
 
-        // 1. Status-Prüfung: Nur Incomplete erlaubt
+        // 1. Status check: Only Incomplete allowed
         if !matches!(instance.status, VoucherStatus::Incomplete { .. }) {
             return Err(VoucherCoreError::SignatureRemovalRequiresIncomplete(
                 instance.status.clone(),
             ));
         }
 
-        // 2. History-Prüfung: Nur eine init-Transaktion erlaubt
+        // 2. History check: Only one init transaction allowed
         if instance.voucher.transactions.len() != 1 {
             return Err(VoucherCoreError::VoucherAlreadyInCirculation);
         }
@@ -258,7 +257,7 @@ impl Wallet {
             return Err(VoucherCoreError::VoucherAlreadyInCirculation);
         }
 
-        // 3. Identity-Prüfung: Nur der Ersteller darf Signaturen entfernen
+        // 3. Identity check: Only the creator may remove signatures
         let creator_id = instance
             .voucher
             .creator_profile
@@ -269,7 +268,7 @@ impl Wallet {
             return Err(VoucherCoreError::NotTheCreator);
         }
 
-        // 4. Rollen-Prüfung: Finde die Signatur und prüfe, ob sie entfernt werden darf
+        // 4. Role check: Find signature and check if it is allowed to be removed
         let signature_to_remove = instance
             .voucher
             .signatures
@@ -286,16 +285,16 @@ impl Wallet {
             return Err(VoucherCoreError::CannotRemoveCreatorSignature);
         }
 
-        // 5. Signatur entfernen
+        // 5. Remove signature
         instance
             .voucher
             .signatures
             .retain(|sig| sig.signature_id != signature_id);
 
-        // 6. Status-Reevaluierung: Wenn Signaturen fehlen, setze auf Incomplete
-        // Hinweis: Eine vollständige Validierung gegen den Standard erfordert Zugriff auf den Standard,
-        // was auf dieser Ebene nicht verfügbar ist. Wir setzen konservativ auf Incomplete,
-        // wenn Signaturen entfernt wurden. Die App-Service-Schicht kann bei Bedarf neu validieren.
+        // 6. Status re-evaluation: If required signatures are missing, set to Incomplete
+        // Note: Full validation against standard requires access to the standard,
+        // which is not available at this layer. We conservatively set to Incomplete
+        // when signatures are removed. The AppService layer can revalidate as needed.
         if !matches!(instance.status, VoucherStatus::Incomplete { .. }) {
             instance.status = VoucherStatus::Incomplete {
                 reasons: vec![crate::ValidationFailureReason::RequiredSignatureMissing {
@@ -307,3 +306,4 @@ impl Wallet {
         Ok(())
     }
 }
+

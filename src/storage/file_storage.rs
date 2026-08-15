@@ -45,7 +45,7 @@ mod base64_serde {
     use super::*;
     use serde::{Deserializer, Serializer};
 
-    /// Serialisiert einen `&[u8]`-Slice als Base64-String.
+    /// Serializes a `&[u8]` slice as a Base64 string.
     pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -53,7 +53,7 @@ mod base64_serde {
         serializer.serialize_str(&general_purpose::STANDARD.encode(bytes))
     }
 
-    /// Deserialisiert einen Base64-String in einen `Vec<u8>`.
+    /// Deserializes a Base64 string into a `Vec<u8>`.
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
     where
         D: Deserializer<'de>,
@@ -71,7 +71,7 @@ mod base64_array_serde {
     use serde::{Deserializer, Serializer};
     use std::convert::TryInto;
 
-    /// Serialisiert ein `&[u8; N]`-Array als Base64-String.
+    /// Serializes a `&[u8; N]` array as a Base64 string.
     pub fn serialize<S, const N: usize>(array: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -79,7 +79,7 @@ mod base64_array_serde {
         serializer.serialize_str(&general_purpose::STANDARD.encode(array))
     }
 
-    /// Deserialisiert einen Base64-String in ein `[u8; N]`-Array.
+    /// Deserializes a Base64 string into a `[u8; N]` array.
     pub fn deserialize<'de, D, const N: usize>(deserializer: D) -> Result<[u8; N], D::Error>
     where
         D: Deserializer<'de>,
@@ -210,9 +210,7 @@ impl FileStorage {
             .map_err(|e| StorageError::InvalidFormat(e.to_string()))
     }
 
-    /// Holt den Master-Dateischlüssel unter Verwendung eines Passworts.
-
-    /// Holt den Master-Dateischlüssel unter Verwendung einer beliebigen `AuthMethod`.
+    /// Fetches the master file key using any `AuthMethod`.
     /// This logic is required by all `load_*` methods.
     fn get_master_key_from_auth(&self, auth: &AuthMethod) -> Result<[u8; KEY_SIZE], StorageError> {
         let profile_container = self.load_profile_container()?;
@@ -790,7 +788,7 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    /// Speichert einen beliebigen, benannten Datenblock verschlüsselt.
+    /// Stores an arbitrary, named data block encrypted.
     fn save_arbitrary_data(
         &mut self,
         _user_id: &str,

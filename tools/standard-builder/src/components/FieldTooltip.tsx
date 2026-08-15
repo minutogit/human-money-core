@@ -210,7 +210,7 @@ export const FieldTooltip: React.FC<FieldTooltipProps> = ({
         </div>
 
         <div className="tooltip-body-scrollable">
-          {/* 1. Was ist das? */}
+          {/* 1. What is this? */}
           {explanation.tooltipWhat && (
             <div className="tooltip-section">
               <div className="tooltip-section-header">
@@ -221,7 +221,7 @@ export const FieldTooltip: React.FC<FieldTooltipProps> = ({
             </div>
           )}
 
-          {/* 2. Wozu & Warum? */}
+          {/* 2. Purpose & Why? */}
           {explanation.tooltipWhy && (
             <div className="tooltip-section">
               <div className="tooltip-section-header">
@@ -232,7 +232,7 @@ export const FieldTooltip: React.FC<FieldTooltipProps> = ({
             </div>
           )}
 
-          {/* 3. Auswirkung */}
+          {/* 3. Impact */}
           {explanation.tooltipImpact && (
             <div className="tooltip-section">
               <div className="tooltip-section-header">

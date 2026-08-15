@@ -1,11 +1,11 @@
 //! # src/models/profile.rs
 //!
-//! Definiert die Datenstrukturen für ein vollständiges Nutzerprofil,
-//! inklusive Identität, Gutschein-Bestand und einer Historie von Transaktionsbündeln.
-//! Diese Strukturen sind für die Verwaltung der "Wallet" eines Nutzers zuständig.
+//! Defines the data structures for a complete user profile,
+//! including identity, voucher holdings, and a history of transaction bundles.
+//! These structures are responsible for managing a user's "wallet".
 
 use crate::models::conflict::TransactionFingerprint;
-use crate::models::voucher::Address; // Importiert die Address-Struktur
+use crate::models::voucher::Address; // Imports the Address structure
 use crate::models::voucher::Voucher;
 use crate::wallet::instance::VoucherInstance;
 use ed25519_dalek::{SigningKey, VerifyingKey as EdPublicKey};
@@ -13,18 +13,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use zeroize::ZeroizeOnDrop;
 
-/// Repräsentiert die kryptographische Identität eines Nutzers.
-/// Der private Schlüssel wird sicher im Speicher gehalten und beim Verlassen des Gültigkeitsbereichs genullt.
+/// Represents the cryptographic identity of a user.
+/// The private key is kept securely in memory and zeroized on drop.
 #[derive(ZeroizeOnDrop, Clone)]
 pub struct UserIdentity {
-    /// Der private Ed25519-Schlüssel des Nutzers.
-    /// **Wichtig:** Dieser Schlüssel wird nicht serialisiert und verlässt niemals das Profil.
-    /// `ed25519_dalek::SigningKey` implementiert `ZeroizeOnDrop` bereits von Haus aus.
+    /// The user's private Ed25519 key.
+    /// **Important:** This key is not serialized and never leaves the profile.
+    /// `ed25519_dalek::SigningKey` already implements `ZeroizeOnDrop` natively.
     pub signing_key: SigningKey,
-    /// Der öffentliche Ed25519-Schlüssel, abgeleitet vom privaten Schlüssel.
+    /// The public Ed25519 key, derived from the private key.
     #[zeroize(skip)]
     pub public_key: EdPublicKey,
-    /// Die öffentliche, teilbare User-ID, generiert aus dem Public Key.
+    /// The public, shareable user ID, generated from the public key.
     #[zeroize(skip)]
     pub user_id: String,
 }
@@ -41,7 +41,7 @@ impl Default for UserIdentity {
     }
 }
 
-/// Ein Enum, das die Richtung einer Transaktion aus der Perspektive des Profilinhabers angibt.
+/// An enum indicating the direction of a transaction from the profile holder's perspective.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum TransactionDirection {
     Sent,
@@ -54,67 +54,67 @@ impl Default for TransactionDirection {
     }
 }
 
-/// Eine leichtgewichtige Zusammenfassung eines `TransactionBundle` für die Anzeige in einer Historie.
-/// Enthält alle Metadaten, aber anstelle der vollständigen Gutscheine nur deren IDs.
+/// A lightweight summary of a `TransactionBundle` for display in a history.
+/// Contains all metadata, but instead of the full vouchers, only their IDs.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct TransactionBundleHeader {
-    /// Die eindeutige ID des zugehörigen Bündels.
+    /// The unique ID of the associated bundle.
     pub bundle_id: String,
-    /// Die User-ID des Senders.
+    /// The user ID of the sender.
     pub sender_id: String,
-    /// Die User-ID des Empfängers.
+    /// The user ID of the recipient.
     pub recipient_id: String,
-    /// Eine Liste der IDs der in diesem Bündel übertragenen Gutscheine.
+    /// A list of IDs of the vouchers transferred in this bundle.
     pub voucher_ids: Vec<String>,
-    /// Der Zeitstempel der Bündel-Erstellung im ISO 8601-Format.
+    /// The timestamp of bundle creation in ISO 8601 format.
     pub timestamp: String,
-    /// Eine optionale, vom Sender hinzugefügte Notiz.
+    /// An optional note added by the sender.
     pub notes: Option<String>,
-    /// Die digitale Signatur des Senders, die die Authentizität des Bündels bestätigt.
+    /// The digital signature of the sender confirming the authenticity of the bundle.
     pub sender_signature: String,
-    /// Gibt an, ob das Bündel gesendet oder empfangen wurde.
+    /// Indicates whether the bundle was sent or received.
     pub direction: TransactionDirection,
-    /// Optionaler Profilname des Senders.
+    /// Optional profile name of the sender.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_profile_name: Option<String>,
 }
 
-/// Repräsentiert ein vollständiges, signiertes Bündel für einen Austausch von Gutscheinen.
-/// Dies ist die atomare Einheit, die zwischen Nutzern ausgetauscht wird.
+/// Represents a complete, signed bundle for an exchange of vouchers.
+/// This is the atomic unit exchanged between users.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct TransactionBundle {
-    /// Eine eindeutige ID für dieses Bündel, generiert aus dem Hash seines Inhalts (ohne Signatur).
+    /// A unique ID for this bundle, generated from the hash of its content (excluding signature).
     pub bundle_id: String,
-    /// Die User-ID des Senders.
+    /// The user ID of the sender.
     pub sender_id: String,
-    /// Die User-ID des Empfängers.
+    /// The user ID of the recipient.
     pub recipient_id: String,
-    /// Eine Liste der vollständigen `Voucher`-Objekte, die übertragen werden.
+    /// A list of the full `Voucher` objects being transferred.
     pub vouchers: Vec<Voucher>,
-    /// Der Zeitstempel der Bündel-Erstellung im ISO 8601-Format.
+    /// The timestamp of bundle creation in ISO 8601 format.
     pub timestamp: String,
-    /// Eine optionale, für den Empfänger sichtbare Notiz.
+    /// An optional note visible to the recipient.
     pub notes: Option<String>,
-    /// Die digitale Signatur des Senders, die die `bundle_id` unterzeichnet und somit das
-    /// gesamte Bündel fälschungssicher macht.
+    /// The digital signature of the sender signing the `bundle_id`, thus making the
+    /// entire bundle tamper-proof.
     pub sender_signature: String,
 
-    /// Die Liste der weitergeleiteten Fingerprints zur Unterstützung der Double-Spend-Erkennung.
+    /// The list of forwarded fingerprints supporting double-spend detection.
     #[serde(default)]
     pub forwarded_fingerprints: Vec<TransactionFingerprint>,
 
-    /// Die zugehörigen 'depth'-Werte für die weitergeleiteten Fingerprints.
-    /// Key: ds_tag des Fingerprints.
+    /// The associated 'depth' values for the forwarded fingerprints.
+    /// Key: ds_tag of the fingerprint.
     #[serde(default)]
     pub fingerprint_depths: HashMap<String, i8>,
 
-    /// Optionaler Profilname des Senders.
+    /// Optional profile name of the sender.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_profile_name: Option<String>,
 }
 
 impl TransactionBundle {
-    /// Erstellt einen `TransactionBundleHeader` aus einem `TransactionBundle`.
+    /// Creates a `TransactionBundleHeader` from a `TransactionBundle`.
     pub fn to_header(&self, direction: TransactionDirection) -> TransactionBundleHeader {
         TransactionBundleHeader {
             bundle_id: self.bundle_id.clone(),
@@ -130,34 +130,34 @@ impl TransactionBundle {
     }
 }
 
-/// Repräsentiert den persistenten Speicher für alle Gutscheine eines Nutzers.
-/// Diese Struktur wird separat vom `UserProfile` gehalten, um die Metadaten
-/// leichtgewichtig zu halten und die Gutscheinsammlung effizient zu verwalten.
+/// Represents the persistent storage for all vouchers of a user.
+/// This structure is kept separate from `UserProfile` to keep metadata
+/// lightweight and efficiently manage the voucher collection.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct VoucherStore {
-    /// Der Bestand an Gutscheinen, indiziert nach ihrer lokalen Instanz-ID (`local_voucher_instance_id`).
+    /// The inventory of vouchers, indexed by their local instance ID (`local_voucher_instance_id`).
     pub vouchers: HashMap<String, VoucherInstance>,
 }
 
-/// Repräsentiert den persistenten Speicher für die Metadaten von Transaktionsbündeln.
-/// Diese Struktur wird separat vom `UserProfile` in einer eigenen verschlüsselten Datei gehalten.
+/// Represents the persistent storage for the metadata of transaction bundles.
+/// This structure is kept separate from `UserProfile` in its own encrypted file.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct BundleMetadataStore {
-    /// Eine Historie aller gesendeten und empfangenen Transaktionsbündel,
-    /// indiziert nach der `bundle_id`.
+    /// A history of all sent and received transaction bundles,
+    /// indexed by `bundle_id`.
     pub history: HashMap<String, TransactionBundleHeader>,
 }
 
-/// Ein standardisiertes öffentliches Profil, das in Signaturen und
-/// im Creator-Feld wiederverwendet werden kann.
+/// A standardized public profile that can be reused in signatures and
+/// in the creator field.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct PublicProfile {
-    /// Protokoll-Versionsnummer (z.B. "v1")
+    /// Protocol version string (e.g. "v1")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol_version: Option<String>,
 
-    /// Die User-ID (did:key) des Profilinhabers.
-    /// Optional, da es oft redundant zur übergeordneten ID (z.B. signer_id) ist.
+    /// The user ID (did:key) of the profile holder.
+    /// Optional, as it is often redundant with the parent ID (e.g. signer_id).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
 
@@ -176,7 +176,7 @@ pub struct PublicProfile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address: Option<Address>,
 
-    /// Geschlecht des Erstellers ISO 5218 (1 = male, 2 = female, 0 = not known, 9 = Not applicable).
+    /// Gender of creator ISO 5218 (1 = male, 2 = female, 0 = not known, 9 = Not applicable).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gender: Option<String>,
 
@@ -186,34 +186,34 @@ pub struct PublicProfile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phone: Option<String>,
 
-    /// Geografische Koordinaten (z.B. "Breitengrad, Längengrad").
+    /// Geographical coordinates (e.g. "latitude, longitude").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coordinates: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
 
-    /// Eine textuelle Beschreibung der angebotenen Dienstleistungen oder Waren.
+    /// A textual description of the services or goods offered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_offer: Option<String>,
 
-    /// Eine textuelle Beschreibung der gesuchten Dienstleistungen oder Waren.
+    /// A textual description of the needed services or goods.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub needs: Option<String>,
 
-    /// URL zu einem Profilbild (optional).
+    /// URL to a profile picture (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub picture_url: Option<String>,
 }
 
-/// Die Hauptstruktur, die den gesamten Zustand eines Nutzer-Wallets repräsentiert.
-/// Sie enthält die Identität, den Bestand an Gutscheinen und die Transaktionshistorie.
-/// Diese Struktur wird serialisiert und verschlüsselt auf der Festplatte gespeichert.
+/// The main structure representing the entire state of a user wallet.
+/// It contains identity, voucher inventory, and transaction history.
+/// This structure is serialized and stored encrypted on disk.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct UserProfile {
-    /// Die öffentliche User-ID. Wird aus `identity` abgeleitet und hier für einfachen Zugriff dupliziert.
+    /// The public user ID. Derived from `identity` and duplicated here for easy access.
     pub user_id: String,
-    // HINZUFÜGEN: Felder für die Profil-Details
+    // Fields for profile details
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -240,13 +240,13 @@ pub struct UserProfile {
     pub needs: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub picture_url: Option<String>,
-    /// Der öffentliche Schlüssel des L2-Servers, dem dieses Wallet vertraut.
+    /// The public key of the L2 server trusted by this wallet.
     #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
     pub l2_server_pubkey: Option<[u8; 32]>,
 }
 
-// Implementiere `Default` für UserProfile, um eine leere Instanz zu erzeugen, die dann gefüllt wird.
-// Die `identity` wird nach der Erstellung separat hinzugefügt.
+// Implement `Default` for UserProfile to create an empty instance that is then populated.
+// The `identity` is added separately after creation.
 impl Default for UserProfile {
     fn default() -> Self {
         Self {
