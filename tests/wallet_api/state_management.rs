@@ -179,7 +179,6 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     let voucher_v1 = service_alice
         .create_new_voucher(
             &freetaler_standard_toml,
-            "en",
             NewVoucherData {
                 nominal_value: ValueDefinition {
                     amount: "100".to_string(),
@@ -339,7 +338,6 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     let voucher_v1 = service_alice
         .create_new_voucher(
             &freetaler_standard_toml,
-            "en",
             NewVoucherData {
                 nominal_value: ValueDefinition {
                     amount: "100".to_string(),
@@ -476,7 +474,6 @@ fn api_wallet_save_and_load_fidelity() {
         service_a
             .create_new_voucher(
                 &freetaler_toml,
-                "en",
                 NewVoucherData {
                     creator_profile: PublicProfile {
                         id: Some(id_a.clone()),
@@ -530,7 +527,6 @@ fn api_wallet_save_and_load_fidelity() {
             service_bob
                 .create_new_voucher(
                     &freetaler_toml,
-                    "en",
                     NewVoucherData {
                         creator_profile: PublicProfile {
                             id: Some(id_bob),
@@ -677,7 +673,7 @@ fn test_create_voucher_adds_exactly_one_instance() {
 
     // 2. ACT
     let created_voucher = app_service
-        .create_new_voucher(&standard_toml, "de", voucher_data.clone(), None)
+        .create_new_voucher(&standard_toml, voucher_data.clone(), None)
         .expect("Voucher creation failed");
 
     // 3. ASSERT
@@ -691,12 +687,7 @@ fn test_create_voucher_adds_exactly_one_instance() {
 
     let summary = &final_summaries[0];
     assert_eq!(summary.current_amount, "100.00");
-
-    let expected_description = "Ein universeller, teilbarer Gutschein für den Tausch von Waren und Dienstleistungen. Der FreeTaler dient als generisches Beispiel für selbstgeschöpfte Verrechnungseinheiten.";
-    assert_eq!(
-        created_voucher.voucher_standard.template.description, expected_description,
-        "The description from the silver standard template was not applied correctly."
-    );
+    assert_eq!(created_voucher.voucher_standard.name, "FreeTaler");
 }
 
 /// Test 6.2: Stellt sicher, dass `create_new_voucher` transaktional ist.
@@ -732,7 +723,6 @@ fn test_create_voucher_is_transactional_on_save_failure() {
     // 2. ACT 1: Versuche, mit falschem Passwort zu erstellen
     let creation_result_fail = app_service.create_new_voucher(
         &standard_toml,
-        "de",
         voucher_data.clone(),
         Some("WRONG_PASSWORD"),
     );
@@ -753,7 +743,6 @@ fn test_create_voucher_is_transactional_on_save_failure() {
     app_service
         .create_new_voucher(
             &standard_toml,
-            "de",
             voucher_data.clone(),
             Some(correct_password),
         )
@@ -798,7 +787,6 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
     service_initial
         .create_new_voucher(
             &freetaler_toml,
-            "en",
             NewVoucherData {
                 nominal_value: ValueDefinition {
                     amount: "100".to_string(),

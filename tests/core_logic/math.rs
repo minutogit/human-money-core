@@ -73,9 +73,7 @@ fn test_chained_transaction_math_and_scaling() {
         voucher_data,
         standard,
         standard_hash,
-        &alice.signing_key,
-        "en",
-    )
+        &alice.signing_key)
     .unwrap();
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
@@ -363,9 +361,7 @@ fn test_transaction_fails_on_excess_precision() {
         voucher_data,
         standard,
         standard_hash,
-        &alice.signing_key,
-        "en",
-    )
+        &alice.signing_key)
     .unwrap();
 
     // --- AKTION & PRÜFUNG ---

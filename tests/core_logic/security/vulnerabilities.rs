@@ -401,9 +401,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
         voucher_data,
         standard,
         standard_hash,
-        &ACTORS.issuer.signing_key,
-        "en",
-    )
+        &ACTORS.issuer.signing_key)
     .unwrap();
     let guarantor_sig = create_guarantor_signature(&valid_voucher, &ACTORS.guarantor1, None, "0");
     valid_voucher.signatures.push(guarantor_sig);
@@ -641,9 +639,7 @@ fn test_attack_tamper_transaction_history() {
         data,
         standard,
         standard_hash,
-        &ACTORS.alice.signing_key,
-        "en",
-    )
+        &ACTORS.alice.signing_key)
     .unwrap();
     let local_id_a =
         Wallet::calculate_local_instance_id(&voucher_a, &ACTORS.alice.user_id).unwrap();
@@ -747,9 +743,7 @@ fn test_attack_create_inconsistent_transaction() {
         data,
         standard,
         standard_hash,
-        &ACTORS.issuer.signing_key,
-        "en",
-    )
+        &ACTORS.issuer.signing_key)
     .unwrap();
     let local_id_issuer =
         Wallet::calculate_local_instance_id(&initial_voucher, &ACTORS.issuer.user_id).unwrap();
@@ -891,9 +885,7 @@ fn test_attack_inconsistent_split_transaction() {
         data,
         standard,
         standard_hash,
-        &hacker_identity.signing_key,
-        "en",
-    )
+        &hacker_identity.signing_key)
     .unwrap();
 
     // ### ANGRIFF ###
@@ -967,9 +959,7 @@ fn test_attack_init_amount_mismatch() {
         data,
         standard,
         standard_hash,
-        &hacker_identity.signing_key,
-        "en",
-    )
+        &hacker_identity.signing_key)
     .unwrap();
 
     // ### ANGRIFF ###
@@ -1005,9 +995,7 @@ fn test_attack_negative_or_zero_amount_transaction() {
         data,
         standard,
         standard_hash,
-        &hacker_identity.signing_key,
-        "en",
-    )
+        &hacker_identity.signing_key)
     .unwrap();
 
     // ### ANGRIFF 1: Negativer Betrag ###
@@ -1073,9 +1061,7 @@ fn test_attack_invalid_precision_in_nominal_value() {
         voucher_data,
         standard,
         standard_hash,
-        &creator_identity.signing_key,
-        "en",
-    )
+        &creator_identity.signing_key)
     .unwrap();
 
     // ### VALIDIERUNG ###
@@ -1112,9 +1098,7 @@ fn test_attack_full_transfer_amount_mismatch() {
         voucher_data,
         standard,
         &FREETALER_STANDARD.1,
-        &creator_identity.signing_key,
-        "en",
-    )
+        &creator_identity.signing_key)
     .unwrap();
 
     // ### ANGRIFF ###
@@ -1172,9 +1156,7 @@ fn test_attack_remainder_in_full_transfer() {
         voucher_data,
         standard,
         &FREETALER_STANDARD.1,
-        &creator_identity.signing_key,
-        "en",
-    )
+        &creator_identity.signing_key)
     .unwrap();
 
     // ### ANGRIFF ###
@@ -1294,9 +1276,7 @@ fn test_attack_fuzzing_random_mutations() {
         data,
         standard,
         standard_hash,
-        &ACTORS.issuer.signing_key,
-        "en",
-    )
+        &ACTORS.issuer.signing_key)
     .unwrap();
 
     // Füge Bürgen hinzu.

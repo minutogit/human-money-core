@@ -28,8 +28,6 @@ fn test_valid_until_matches_creation_date() {
         human_money_core::to_canonical_json(&modified_std.immutable).unwrap()
     );
     
-    // Wir müssen auch das Template im Gutschein anpassen, damit verify_validity_duration nicht wegen Mismatch abbricht
-    voucher.voucher_standard.template.issuance_minimum_validity_duration = "".to_string();
     voucher.voucher_standard.standard_definition_hash = mod_std_hash;
 
     // Re-hash voucher_id to pass verify_voucher_hash

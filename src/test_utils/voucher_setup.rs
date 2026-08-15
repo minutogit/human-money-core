@@ -43,7 +43,6 @@ pub fn setup_voucher_with_one_tx() -> (
         standard,
         standard_hash,
         &creator.signing_key,
-        "en",
     )
     .unwrap();
 
@@ -180,7 +179,6 @@ pub fn create_voucher_for_manipulation(
     standard: &VoucherStandardDefinition,
     standard_hash: &str,
     signing_key: &SigningKey,
-    lang_preference: &str,
 ) -> Voucher {
     let creation_date_str = crate::services::utils::get_current_timestamp();
     let creation_dt = chrono::DateTime::parse_from_rfc3339(&creation_date_str).unwrap();
@@ -209,13 +207,6 @@ pub fn create_voucher_for_manipulation(
     let mut nonce_bytes = [0u8; 16];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
     let voucher_nonce = bs58::encode(nonce_bytes).into_string();
-
-    let description_template = crate::services::standard_manager::get_localized_text(
-        &standard.mutable.i18n.descriptions,
-        lang_preference,
-    )
-    .unwrap_or("");
-    let final_description = description_template.replace("{{amount}}", &data.nominal_value.amount);
 
     let mut final_nominal_value = data.nominal_value;
     final_nominal_value.unit = standard.immutable.blueprint.unit.clone();
@@ -251,16 +242,6 @@ pub fn create_voucher_for_manipulation(
             name: standard.immutable.identity.name.clone(),
             uuid: standard.immutable.identity.uuid.clone(),
             standard_definition_hash: standard_hash.to_string(),
-            template: crate::models::voucher::VoucherTemplateData {
-                description: final_description,
-                primary_redemption_type: serde_json::to_value(&standard.immutable.blueprint.primary_redemption_type)
-                    .ok()
-                    .and_then(|v| v.as_str().map(|s| s.to_string()))
-                    .unwrap_or_default(),
-                allow_partial_transfers: standard.immutable.features.allow_partial_transfers,
-                issuance_minimum_validity_duration: standard.immutable.issuance.issuance_minimum_validity_duration.clone(),
-                footnote: crate::services::standard_manager::get_localized_text(&standard.mutable.i18n.footnotes, lang_preference).unwrap_or("").to_string(),
-            },
         },
         voucher_id: "".to_string(),
         voucher_nonce,

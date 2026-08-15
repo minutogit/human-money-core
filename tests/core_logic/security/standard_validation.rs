@@ -66,9 +66,7 @@ mod required_signatures_validation {
             voucher_data,
             standard,
             standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        )
+            &creator_identity.signing_key)
     }
 
     fn create_valid_approval_signature(voucher: &Voucher) -> VoucherSignature {
@@ -226,9 +224,7 @@ mod required_signatures_validation {
             voucher_data,
             standard,
             standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        );
+            &creator_identity.signing_key);
 
         // Angriff: Der Ersteller (Alice) versucht, für sich selbst zu bürgen.
         let self_guarantor_sig = create_guarantor_signature_with_time(

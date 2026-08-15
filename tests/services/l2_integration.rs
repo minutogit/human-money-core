@@ -190,7 +190,6 @@ fn test_l2_double_spend_quarantine() {
     // Create new voucher (Genesis)
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id.clone()),
@@ -358,7 +357,6 @@ fn test_l2_signature_payload_manipulation() {
     // Create new voucher (Genesis)
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id.clone()),
@@ -481,7 +479,6 @@ fn test_l2_fake_double_spend_protection() {
     // Create new voucher (Genesis)
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id.clone()),
@@ -666,7 +663,6 @@ fn test_l2_voucher_id_mixup_protection() {
     // Create new voucher (Genesis)
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id.clone()),

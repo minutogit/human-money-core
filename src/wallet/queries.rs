@@ -129,7 +129,6 @@ impl Wallet {
                     status: instance.status.clone(),
                     creator_id: voucher.creator_profile.id.clone().unwrap_or_default(),
                     valid_until: voucher.valid_until.clone(),
-                    description: voucher.voucher_standard.template.description.clone(),
                     current_amount,
                     unit: voucher
                         .nominal_value
@@ -171,10 +170,6 @@ impl Wallet {
                         &voucher.voucher_standard.name,
                         voucher.non_redeemable_test_voucher,
                     ),
-                    allow_partial_transfers: voucher
-                        .voucher_standard
-                        .template
-                        .allow_partial_transfers,
                 }
             })
             .collect()

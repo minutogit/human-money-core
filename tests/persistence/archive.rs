@@ -57,9 +57,7 @@ fn test_voucher_archiving_on_full_spend() {
             voucher_data,
             standard,
             standard_hash,
-            &alice_identity.signing_key,
-            "en",
-        )
+            &alice_identity.signing_key)
         .unwrap()
     };
 

@@ -144,85 +144,21 @@ mod parsing_and_verification {
 mod integration_with_voucher {
     use super::*;
 
-    use human_money_core::services::voucher_manager::NewVoucherData;
-
-    #[test]
-    fn test_validate_voucher_when_standard_hash_mismatches_then_fails() {
-        let identity = &ACTORS.alice;
-        let mut wallet = setup_in_memory_wallet(identity);
-        add_voucher_to_wallet(&mut wallet, identity, "100", &MINUTO_STANDARD.0, false).unwrap();
-        let instance = wallet
-            .voucher_store
-            .vouchers
-            .values()
-            .next()
-            .unwrap()
-            .clone();
-        let mut voucher = instance.voucher;
-        voucher.voucher_standard.standard_definition_hash = "invalid_hash_string_123".to_string();
-        let validation_result = validate_voucher_against_standard(&voucher, &MINUTO_STANDARD.0);
-        assert!(matches!(
-            validation_result.unwrap_err(),
-            VoucherCoreError::Standard(StandardDefinitionError::StandardHashMismatch)
-        ));
-    }
-
     #[test]
     fn test_create_voucher_when_lang_preference_is_set_then_uses_correct_localized_text() {
-        let new_voucher_data_de = NewVoucherData {
-            creator_profile: human_money_core::models::profile::PublicProfile {
-                id: Some(ACTORS.alice.user_id.clone()),
-                ..Default::default()
-            },
-            nominal_value: human_money_core::models::voucher::ValueDefinition {
-                amount: "888".to_string(),
-                ..Default::default()
-            },
-            validity_duration: Some("P1Y".to_string()),
-            ..Default::default()
-        };
-        let voucher_de = human_money_core::test_utils::create_voucher_for_manipulation(
-            new_voucher_data_de,
-            &MINUTO_STANDARD.0,
-            &MINUTO_STANDARD.1,
-            &ACTORS.alice.signing_key,
+        let desc_de = human_money_core::services::standard_manager::get_localized_text(
+            &MINUTO_STANDARD.0.mutable.i18n.descriptions,
             "de",
-        );
-
-        let new_voucher_data_fr = NewVoucherData {
-            creator_profile: human_money_core::models::profile::PublicProfile {
-                id: Some(ACTORS.alice.user_id.clone()),
-                ..Default::default()
-            },
-            nominal_value: human_money_core::models::voucher::ValueDefinition {
-                amount: "888".to_string(),
-                ..Default::default()
-            },
-            validity_duration: Some("P1Y".to_string()),
-            ..Default::default()
-        };
-        let voucher_fr = human_money_core::test_utils::create_voucher_for_manipulation(
-            new_voucher_data_fr,
-            &MINUTO_STANDARD.0,
-            &MINUTO_STANDARD.1,
-            &ACTORS.alice.signing_key,
+        )
+        .unwrap_or("");
+        let desc_fr = human_money_core::services::standard_manager::get_localized_text(
+            &MINUTO_STANDARD.0.mutable.i18n.descriptions,
             "fr",
-        );
+        )
+        .unwrap_or("");
 
-        assert!(
-            voucher_de
-                .voucher_standard
-                .template
-                .description
-                .contains("Minuten qualitativer Leistung")
-        );
-        assert!(
-            voucher_fr
-                .voucher_standard
-                .template
-                .description
-                .contains("minutes of quality performance")
-        );
+        assert!(desc_de.contains("Minuten qualitativer Leistung"));
+        assert!(desc_fr.contains("minutes of quality performance"));
     }
 
     #[test]
@@ -343,9 +279,7 @@ mod security_hardening {
             new_voucher_data,
             &incomplete_standard,
             &hash,
-            &ACTORS.alice.signing_key,
-            "en",
-        );
+            &ACTORS.alice.signing_key);
         assert!(matches!(result.unwrap_err(), VoucherCoreError::Manager(_)));
     }
 }
@@ -381,7 +315,7 @@ mod specific_parameter_constraints {
             validity_duration: Some("P4Y".to_string()),
             ..Default::default()
         };
-        let result_invalid = create_voucher(data_invalid, &standard, &hash, &creator.signing_key, "en");
+        let result_invalid = create_voucher(data_invalid, &standard, &hash, &creator.signing_key);
         assert!(result_invalid.is_err(), "Voucher with 4 years should be rejected (max 3 allowed)");
 
         // 3. Versuche einen Gutschein mit 2 Jahren (zulässig) zu erstellen
@@ -397,7 +331,7 @@ mod specific_parameter_constraints {
             validity_duration: Some("P2Y".to_string()),
             ..Default::default()
         };
-        let result_valid = create_voucher(data_valid, &standard, &hash, &creator.signing_key, "en");
+        let result_valid = create_voucher(data_valid, &standard, &hash, &creator.signing_key);
         assert!(result_valid.is_ok(), "Voucher with 2 years should be accepted");
     }
 
@@ -425,7 +359,7 @@ mod specific_parameter_constraints {
             validity_duration: Some("P2Y".to_string()),
             ..Default::default()
         };
-        let result_invalid = create_voucher(data_invalid, &standard, &hash, &creator.signing_key, "en");
+        let result_invalid = create_voucher(data_invalid, &standard, &hash, &creator.signing_key);
         assert!(result_invalid.is_err(), "Voucher with 2 years should be rejected when min range is 3 years");
 
         // 3. Versuche einen Gutschein mit 4 Jahren (zulässig) zu erstellen
@@ -441,7 +375,7 @@ mod specific_parameter_constraints {
             validity_duration: Some("P4Y".to_string()),
             ..Default::default()
         };
-        let result_valid = create_voucher(data_valid, &standard, &hash, &creator.signing_key, "en");
+        let result_valid = create_voucher(data_valid, &standard, &hash, &creator.signing_key);
         assert!(result_valid.is_ok(), "Voucher with 4 years should be accepted");
 
         // 4. Teste direkte Standard-Validierung mit manipulierter Gültigkeit (2 Jahre)

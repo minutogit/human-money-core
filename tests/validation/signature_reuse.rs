@@ -27,9 +27,7 @@ fn test_prevent_signature_reuse_in_init() {
         voucher_data1,
         &standard,
         &standard_hash,
-        &identity.signing_key,
-        "en",
-    )
+        &identity.signing_key)
     .unwrap();
 
     let g1 = &ACTORS.guarantor1;
@@ -143,9 +141,7 @@ fn test_reject_same_key_different_prefix() {
         voucher_data,
         &standard,
         &standard_hash,
-        &identity.signing_key,
-        "en",
-    )
+        &identity.signing_key)
     .unwrap();
 
     let g1 = &ACTORS.guarantor1;
@@ -198,9 +194,7 @@ fn test_reject_two_guarantors_same_key() {
         voucher_data,
         &standard,
         &standard_hash,
-        &identity.signing_key,
-        "en",
-    )
+        &identity.signing_key)
     .unwrap();
 
     // Use guarantor1

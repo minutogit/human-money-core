@@ -41,9 +41,7 @@ mod compatibility_scenarios {
             voucher_data,
             freetaler_standard,
             standard_hash,
-            &identity.signing_key,
-            "en",
-        );
+            &identity.signing_key);
 
         // The validation might fail due to signature requirements, let's check what the actual error is and handle it
         let first_validation_result =
@@ -101,9 +99,7 @@ mod compatibility_scenarios {
             },
             freetaler_standard,
             standard_hash,
-            &identity.signing_key,
-            "en",
-        );
+            &identity.signing_key);
 
         // First check that the original voucher with signatures validates correctly
         let initial_validation = validate_voucher_against_standard(&voucher, freetaler_standard);

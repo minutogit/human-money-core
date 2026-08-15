@@ -95,9 +95,7 @@ fn test_fingerprint_generation() {
         voucher_data,
         standard,
         standard_hash,
-        &identity.signing_key,
-        "en",
-    )
+        &identity.signing_key)
     .unwrap();
     let holder_key =
         human_money_core::test_utils::derive_holder_key(&voucher, &identity.signing_key);
@@ -421,7 +419,6 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
     let initial_voucher = app_service
         .create_new_voucher(
             freetaler_toml_str, // KORREKTUR (Panic-Fix): Übergebe den TOML-Inhalt, nicht den Hash
-            "en",
             voucher_data,
             Some("password123"),
         )
@@ -606,9 +603,7 @@ fn test_local_double_spend_detection_lifecycle() {
         voucher_data,
         standard,
         standard_hash,
-        &alice_identity.signing_key,
-        "en",
-    )
+        &alice_identity.signing_key)
     .unwrap();
     let local_id =
         Wallet::calculate_local_instance_id(&initial_voucher, &alice_identity.user_id).unwrap();

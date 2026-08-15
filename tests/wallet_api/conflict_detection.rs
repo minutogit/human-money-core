@@ -99,7 +99,7 @@ fn test_fingerprint_valid_until_is_rounded_to_end_of_month() {
         ..Default::default()
     };
 
-    let mut voucher = create_voucher_for_manipulation(data, std, &standard_hash, &creator.signing_key, "en");
+    let mut voucher = create_voucher_for_manipulation(data, std, &standard_hash, &creator.signing_key);
 
     // Manuell midmonth setzen → muss auf Monatsende gerundet werden
     voucher.valid_until = "2025-06-15T12:00:00.000000Z".to_string();
@@ -147,8 +147,7 @@ fn test_fingerprint_ds_tag_is_non_empty() {
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
         },
-        std, &standard_hash, &creator.signing_key, "en"
-    );
+        std, &standard_hash, &creator.signing_key);
     voucher.valid_until = "2026-03-15T00:00:00.000000Z".to_string();
 
     let fp = create_fingerprint_for_transaction(&voucher.transactions[0], &voucher).unwrap();

@@ -472,7 +472,6 @@ signature = "5aomSjj76rEb4VVjhAd6p6qvmU79wkkTpj84AnY3D9p8xRDNfxBqKL4EbEHTKfPevgg
             &def,
             &def_hash,
             &identity.signing_key,
-            "en",
         );
 
         {
@@ -518,7 +517,6 @@ signature = "5aomSjj76rEb4VVjhAd6p6qvmU79wkkTpj84AnY3D9p8xRDNfxBqKL4EbEHTKfPevgg
             &def,
             &def_hash,
             &identity.signing_key,
-            "en",
         );
 
         {

@@ -81,23 +81,6 @@ pub fn verify_validity_duration(
 ) -> Result<(), VoucherCoreError> {
     let standard_min_duration = standard.immutable.issuance.issuance_minimum_validity_duration.clone();
 
-    if voucher
-        .voucher_standard
-        .template
-        .issuance_minimum_validity_duration
-        != standard_min_duration
-    {
-        return Err(ValidationError::MismatchedMinimumValidity {
-            expected: standard_min_duration,
-            found: voucher
-                .voucher_standard
-                .template
-                .issuance_minimum_validity_duration
-                .clone(),
-        }
-        .into());
-    }
-
     if !standard_min_duration.is_empty() {
         let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date)
             .map_err(|_| ValidationError::InvalidDateLogic {
@@ -229,7 +212,6 @@ mod tests {
         voucher.creation_date = "2026-01-01T00:00:00Z".to_string();
         // 2 years validity
         voucher.valid_until = "2028-01-01T00:00:00Z".to_string();
-        voucher.voucher_standard.template.issuance_minimum_validity_duration = "P1Y".to_string();
 
         let mut standard = VoucherStandardDefinition::default();
         standard.immutable.issuance.issuance_minimum_validity_duration = "P1Y".to_string();

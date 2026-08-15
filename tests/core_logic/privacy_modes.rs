@@ -47,9 +47,7 @@ fn create_privacy_test_voucher(
         data,
         &standard,
         &new_std_hash,
-        &ACTORS.issuer.signing_key,
-        "en",
-    )
+        &ACTORS.issuer.signing_key)
     .unwrap();
 
     (voucher, standard)

@@ -193,7 +193,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\x1b[1;33m[1/3] Genesis: Gutschein erstellen (100 FreeTaler)\x1b[0m");
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id.clone()),

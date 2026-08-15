@@ -291,12 +291,6 @@ pub enum ValidationError {
     )]
     ValidityDurationTooShort,
 
-    /// The minimum validity rule stored in the voucher does not match the standard.
-    #[error(
-        "The minimum validity duration rule stored in the voucher does not match the standard. Expected: {expected}, Found: {found}"
-    )]
-    MismatchedMinimumValidity { expected: String, found: String },
-
     /// The nominal value unit in the voucher does not match the standard definition.
     #[error("Nominal unit mismatch. Expected: '{expected}', Found: '{found}'.")]
     NominalUnitMismatch { expected: String, found: String },

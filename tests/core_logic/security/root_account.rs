@@ -125,9 +125,7 @@ fn test_genesis_with_root_account() {
         voucher_data,
         &custom_standard,
         &standard_hash,
-        &identity.signing_key,
-        "en",
-    );
+        &identity.signing_key);
     
     // Überprüfung: Der Gutschein sollte erfolgreich erstellt worden sein
     assert!(voucher.is_ok());
@@ -203,8 +201,7 @@ fn test_balance_lifecycle_root_to_root() {
     };
     
     let mut voucher = create_voucher(
-        voucher_data, standard, &standard_hash, &alice.signing_key, "en"
-    ).unwrap();
+        voucher_data, standard, &standard_hash, &alice.signing_key).unwrap();
     
     // 3. Check Balance Alice (100)
     assert_eq!(get_spendable_balance(&voucher, &alice_id, standard, None).unwrap(), dec!(100));
@@ -260,8 +257,7 @@ fn test_balance_lifecycle_mixed_identities() {
     };
     
     let mut voucher = create_voucher(
-        voucher_data, standard, &standard_hash, &alice.signing_key, "en"
-    ).unwrap();
+        voucher_data, standard, &standard_hash, &alice.signing_key).unwrap();
     
     // Alice (Root) -> Charlie (Prefix)
     let alice_holder_key = test_utils::derive_holder_key(&voucher, &alice.signing_key);
@@ -299,8 +295,7 @@ fn test_stealth_balance_root_account() {
     };
     
     let mut voucher = create_voucher(
-        voucher_data, standard, &standard_hash, &alice.signing_key, "en"
-    ).unwrap();
+        voucher_data, standard, &standard_hash, &alice.signing_key).unwrap();
     
     // Wir nutzen Stealth-Matching (via Hash)
     // 1. Alice Holder Hash

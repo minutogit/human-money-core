@@ -98,9 +98,7 @@ fn test_wallet_state_management_on_split() {
         voucher_data,
         standard,
         standard_hash,
-        &a_identity.signing_key,
-        "en",
-    )
+        &a_identity.signing_key)
     .unwrap();
 
     let local_id =
@@ -228,9 +226,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
         voucher_data,
         standard,
         standard_hash,
-        &eve_identity.signing_key,
-        "en",
-    )
+        &eve_identity.signing_key)
     .unwrap();
 
     let holder_key =
@@ -379,7 +375,7 @@ fn test_serialization_roundtrip_with_special_chars() {
     let standard_hash = &standard_hash_val;
 
     let mut original_voucher =
-        create_voucher(voucher_data, standard, standard_hash, &signing_key, "en").unwrap();
+        create_voucher(voucher_data, standard, standard_hash, &signing_key).unwrap();
 
     // Mache den Gutschein komplexer
     let g1_identity = &ACTORS.guarantor1;

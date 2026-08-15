@@ -232,7 +232,6 @@ mod tests {
         service
             .create_new_voucher(
                 &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
-                "de",
                 new_voucher_data,
                 Some(PASSWORD),
             )
@@ -297,7 +296,6 @@ mod tests {
         service
             .create_new_voucher(
                 &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
-                "de",
                 new_voucher_data,
                 Some(PASSWORD),
             )
@@ -359,7 +357,6 @@ mod tests {
         let _voucher_id = alice_service
             .create_new_voucher(
                 &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
-                "de",
                 new_voucher_data,
                 Some(PASSWORD),
             )
@@ -728,7 +725,6 @@ mod tests {
         alice_service
             .create_new_voucher(
                 &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
-                "de",
                 new_voucher_data,
                 Some(PASSWORD),
             )

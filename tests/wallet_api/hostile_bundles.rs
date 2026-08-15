@@ -84,7 +84,6 @@ fn test_rejection_of_broken_transaction_chain() {
     let mut voucher = service_sender
         .create_new_voucher(
             &freetaler_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(service_sender.get_user_id().unwrap()),
@@ -176,8 +175,7 @@ fn test_rejection_of_inconsistent_split_math() {
     // Erstelle einen Gutschein mit 100 (über die öffentliche API)
     let mut voucher = service_sender
         .create_new_voucher(
-            &freetaler_toml,
-            "en", // Erstelle einen Gutschein mit 100
+            &freetaler_toml, // Erstelle einen Gutschein mit 100
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(service_sender.get_user_id().unwrap()),
@@ -267,7 +265,6 @@ fn test_rejection_of_self_received_bundle() {
     let _ = service_sender // Das zurückgegebene Voucher-Objekt wird nicht direkt benötigt
         .create_new_voucher(
             &freetaler_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(service_sender.get_user_id().unwrap()),
@@ -360,7 +357,6 @@ fn test_rejection_of_identical_bundle_replay() {
     let _ = service_sender
         .create_new_voucher(
             &freetaler_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(service_sender.get_user_id().unwrap()),
@@ -450,7 +446,6 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
     let voucher_a = service_sender
         .create_new_voucher(
             &freetaler_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(service_sender.get_user_id().unwrap()),
@@ -597,7 +592,6 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
     let _ = service_sender
         .create_new_voucher(
             &freetaler_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(service_sender.get_user_id().unwrap()),

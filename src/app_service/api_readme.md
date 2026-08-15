@@ -91,7 +91,7 @@ These methods control the "Remember Password" feature (Mode B).
 
 These methods modify the wallet state and require authentication.
 
-#### `pub fn create_new_voucher(standard_toml_content: &str, lang_preference: &str, data: NewVoucherData, password: Option<&str>) -> Result<Voucher, String>`
+#### `pub fn create_new_voucher(standard_toml_content: &str, data: NewVoucherData, password: Option<&str>) -> Result<Voucher, String>`
 * **Description:** Creates a new voucher (e.g., "Minuto") based on a standard definition.
 * **Status Behavior:** If the standard requires additional signatures (e.g., guarantors, notaries) that are not yet present, the voucher is created with `VoucherStatus::Incomplete`. If all required signatures are present (rare during initial creation), it becomes `VoucherStatus::Active`.
 * **Auth:** Requires `password: Option<&str>`.

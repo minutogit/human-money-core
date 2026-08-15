@@ -238,7 +238,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     service_creator.unlock_session(password, 60).unwrap();
     let created_voucher =
-        service_creator.create_new_voucher(&standard_toml, "de", voucher_data, None)?;
+        service_creator.create_new_voucher(&standard_toml, voucher_data, None)?;
 
     let summary = service_creator
         .get_voucher_summaries(None, None, None)?

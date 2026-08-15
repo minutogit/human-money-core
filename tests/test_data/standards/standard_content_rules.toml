@@ -23,7 +23,7 @@ allowed_signature_roles = ["guarantor"]
 
 
 [immutable.custom_rules.fixed_fields]
-expression = "Voucher.voucher_standard.template.allow_partial_transfers == false && Voucher.nominal_value.unit == 'EUR'"
+expression = "Voucher.nominal_value.unit == 'EUR'"
 message = "Invalid core fields"
 
 [immutable.custom_rules.allowed_values]
@@ -31,9 +31,9 @@ expression = "Voucher.nominal_value.amount in ['50.00', '100.00']"
 message = "Invalid amount value"
 
 [immutable.custom_rules.regex_patterns]
-# Muss mit "INV-" anfangen, gefolgt von 6 Ziffern
-expression = "Voucher.voucher_standard.template.description.matches('^INV-[0-9]{6}$')"
-message = "Description matching failed"
+# First name must start with uppercase letter
+expression = "Voucher.creator.first_name.matches('^[A-Z][a-z]+$')"
+message = "First name matching failed"
 
 [mutable.metadata]
 issuer_name = "Human-Money-Core Test Suite"

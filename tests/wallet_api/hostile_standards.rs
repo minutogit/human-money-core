@@ -34,7 +34,6 @@ fn test_disallowed_transaction_type() {
     let voucher = service
         .create_new_voucher(
             &hostile_standard_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(user_id),
@@ -110,7 +109,6 @@ fn test_violation_of_max_creation_validity() {
     // 2. ACT: Versuche, einen Gutschein mit einer Gültigkeit von 2 Jahren zu erstellen
     let result = service.create_new_voucher(
         &hostile_standard_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id),

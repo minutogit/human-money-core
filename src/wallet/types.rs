@@ -189,8 +189,6 @@ pub struct VoucherSummary {
     pub creator_id: String,
     /// Validity date of the voucher in ISO 8601 format.
     pub valid_until: String,
-    /// General human-readable description of the voucher.
-    pub description: String,
     /// Current available amount of the voucher as a string.
     pub current_amount: String,
     /// Unit of the voucher value (e.g., "m" for minutes).
@@ -216,8 +214,6 @@ pub struct VoucherSummary {
     pub display_currency: String,
     /// Formatted standard name for display.
     pub display_standard_name: String,
-    /// Indicates if the voucher is divisible.
-    pub allow_partial_transfers: bool,
 }
 
 /// A summary view of a double-spend proof for list representations.

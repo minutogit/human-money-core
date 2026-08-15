@@ -131,7 +131,6 @@ fn test_scenario_1_happy_path() {
     let user_id = app.get_user_id().unwrap();
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id),
@@ -189,7 +188,6 @@ fn test_scenario_2_offline_sync() {
     let user_id = app.get_user_id().unwrap();
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id),
@@ -320,7 +318,6 @@ fn test_scenario_3_double_spend_detection() {
     let user_id = app.get_user_id().unwrap();
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id),
@@ -426,7 +423,6 @@ fn test_scenario_4_initial_registration() {
     let user_id = app.get_user_id().unwrap();
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id),

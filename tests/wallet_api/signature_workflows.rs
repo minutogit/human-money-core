@@ -55,9 +55,7 @@ fn setup_voucher_for_alice(
         voucher_data,
         standard,
         standard_hash,
-        &alice_identity.signing_key,
-        "en",
-    );
+        &alice_identity.signing_key);
     let local_id = Wallet::calculate_local_instance_id(&voucher, &alice_identity.user_id).unwrap();
     alice_wallet.voucher_store.vouchers.insert(
         local_id.clone(),
@@ -268,9 +266,7 @@ fn api_wallet_signature_fail_mismatched_voucher_id() {
         voucher_data_b,
         minuto_standard,
         minuto_standard_hash,
-        &alice.identity.signing_key,
-        "en",
-    );
+        &alice.identity.signing_key);
 
     let guarantor_metadata = VoucherSignature {
         role: "guarantor".to_string(),
@@ -357,7 +353,6 @@ fn api_app_service_full_signature_workflow() {
     let _voucher = service_creator
         .create_new_voucher(
             &freetaler_standard_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(service_creator.get_user_id().unwrap()),
@@ -575,7 +570,7 @@ fn test_full_guarantor_workflow_via_app_service() {
     // Diese Funktion sollte dank des Patches in `command_handler.rs` jetzt
     // einen `Incomplete` Gutschein korrekt erstellen, anstatt zu paniken.
     let _created_voucher = service_creator
-        .create_new_voucher(&minuto_standard_toml, "en", voucher_data, Some(password))
+        .create_new_voucher(&minuto_standard_toml, voucher_data, Some(password))
         .expect("create_new_voucher should now succeed for incomplete vouchers");
 
     let summary = service_creator
@@ -796,7 +791,6 @@ fn api_app_service_symmetric_signature_workflow() {
     let _voucher = service_creator
         .create_new_voucher(
             &freetaler_standard_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(service_creator.get_user_id().unwrap()),

@@ -81,7 +81,7 @@ pub fn create_transaction(
     }
 
     let (t_type, sender_remaining_amount) = if amount_to_send < spendable_balance {
-        if !voucher.voucher_standard.template.allow_partial_transfers {
+        if !standard.immutable.features.allow_partial_transfers {
             return Err(VoucherManagerError::VoucherPartialTransferNotAllowed.into());
         }
         let remaining = spendable_balance - amount_to_send;
