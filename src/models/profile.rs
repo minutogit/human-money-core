@@ -29,6 +29,18 @@ pub struct UserIdentity {
     pub user_id: String,
 }
 
+impl Default for UserIdentity {
+    fn default() -> Self {
+        let signing_key = SigningKey::from_bytes(&[0u8; 32]);
+        let public_key = signing_key.verifying_key();
+        Self {
+            signing_key,
+            public_key,
+            user_id: String::new(),
+        }
+    }
+}
+
 /// Ein Enum, das die Richtung einer Transaktion aus der Perspektive des Profilinhabers angibt.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum TransactionDirection {
