@@ -1,21 +1,21 @@
 // tests/core_logic/security/double_spend.rs
 // cargo test --test core_logic_tests
 
-// HINWEIS: Dieser `use` importiert das Modul, das im `mod.rs` bereitgestellt wird.
+// NOTE: This `use` imports the module provided in `mod.rs`.
 
 // ===================================================================================
-// --- BEGINN: LOCAL DOUBLE SPEND DETECTION TESTS ---
-// (Ursprünglich in `test_local_double_spend_detection.rs`)
+// --- BEGIN: LOCAL DOUBLE SPEND DETECTION TESTS ---
+// (Originally in `test_local_double_spend_detection.rs`)
 // ===================================================================================
 
 use human_money_core::archive::file_archive::FileVoucherArchive;
 use human_money_core::storage::AuthMethod;
-// NEU: AppService und Storage importieren
+// NEW: Import AppService and Storage
 use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat};
-use human_money_core::app_service::AppService; // KORREKTUR: Falscher Import E0432
+use human_money_core::app_service::AppService; // CORRECTION: Incorrect import E0432
 use std::collections::HashMap;
 use std::path::Path;
-// HINWEIS: Dieser `use` wurde auf `super::` umgestellt.
+// NOTE: This `use` was switched to `super::`.
 use super::test_utils::{ACTORS, FREETALER_STANDARD, setup_in_memory_wallet};
 use human_money_core::models::conflict::TransactionFingerprint;
 use human_money_core::models::voucher::{Address, Collateral, ValueDefinition};
@@ -24,16 +24,16 @@ use human_money_core::wallet::Wallet;
 use human_money_core::{UserIdentity, VoucherStatus, services::crypto_utils, MnemonicLanguage};
 
 // ===================================================================================
-// HILFSFUNKTIONEN
+// HELPER FUNCTIONS
 // ===================================================================================
 
-/// Erstellt für einen Test ein frisches, leeres Wallet für eine vordefinierte Identität.
-/// Stellt die Test-Isolation durch separates Speichern sicher.
+/// Creates a fresh, empty wallet for a predefined identity for a test.
+/// Ensures test isolation via separate storage.
 fn setup_test_wallet(identity: &UserIdentity, _name: &str, _storage_dir: &Path) -> Wallet {
     setup_in_memory_wallet(identity)
 }
 
-/// Erstellt einen leeren Fingerprint für Testzwecke.
+/// Creates an empty fingerprint for testing purposes.
 fn new_dummy_fingerprint(t_id: &str) -> TransactionFingerprint {
     TransactionFingerprint {
         ds_tag: "".to_string(),
@@ -46,7 +46,7 @@ fn new_dummy_fingerprint(t_id: &str) -> TransactionFingerprint {
     }
 }
 
-/// Erstellt leere `NewVoucherData` für Testzwecke.
+/// Creates empty `NewVoucherData` for testing purposes.
 fn new_test_voucher_data(creator_id: String) -> NewVoucherData {
     NewVoucherData {
         validity_duration: Some("P5Y".to_string()),
@@ -76,7 +76,7 @@ fn new_test_voucher_data(creator_id: String) -> NewVoucherData {
 }
 
 // ===================================================================================
-// UNIT-TESTS ("VORTESTS")
+// UNIT TESTS ("PRE-TESTS")
 // ===================================================================================
 
 #[test]
@@ -86,18 +86,16 @@ fn test_fingerprint_generation() {
     let identity = &ACTORS.test_user;
     let mut wallet = setup_in_memory_wallet(identity);
 
-    // Erstelle einen Gutschein mit 2 Transaktionen (init + transfer)
+    // Create a voucher with 2 transactions (init + transfer)
     let voucher_data = new_test_voucher_data(identity.user_id.clone());
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
-    // create_voucher erwartet den &SigningKey, nicht die ganze Identity.
+    // create_voucher expects &SigningKey, not the entire Identity.
     let voucher = voucher_manager::create_voucher(
         voucher_data,
         standard,
         standard_hash,
-        &identity.signing_key,
-        "en",
-    )
+        &identity.signing_key)
     .unwrap();
     let holder_key =
         human_money_core::test_utils::derive_holder_key(&voucher, &identity.signing_key);
@@ -123,7 +121,7 @@ fn test_fingerprint_generation() {
         .vouchers
         .insert(instance.local_instance_id.clone(), instance);
 
-    // Aktion
+    // Action
     wallet.scan_and_rebuild_fingerprints().unwrap();
 
     // Assertions
@@ -153,7 +151,7 @@ fn test_fingerprint_generation() {
         "Fingerprint für die init-Transaktion fehlt."
     );
 
-    // Berechne den erwarteten, auf das Monatsende gerundeten `valid_until`-Wert.
+    // Calculate the expected `valid_until` value rounded to end of month.
     let expected_rounded_valid_until = {
         let parsed_date = DateTime::parse_from_rfc3339(&voucher.valid_until).unwrap();
         let year = parsed_date.year();
@@ -189,7 +187,7 @@ fn test_fingerprint_exchange() {
     let mut sender_wallet = setup_in_memory_wallet(&ACTORS.sender);
     let mut receiver_wallet = setup_in_memory_wallet(&ACTORS.recipient1);
 
-    // Setup: Erzeuge Fingerprints im Sender-Wallet
+    // Setup: Generate fingerprints in sender wallet
     let mut fp1 = new_dummy_fingerprint("t1");
     fp1.ds_tag = "hash1".to_string();
     sender_wallet
@@ -197,7 +195,7 @@ fn test_fingerprint_exchange() {
         .history
         .insert("hash1".to_string(), vec![fp1]);
 
-    // Aktion
+    // Action
     let exported_data = sender_wallet.export_own_fingerprints().unwrap();
     let import_count1 = receiver_wallet
         .import_foreign_fingerprints(&exported_data)
@@ -238,10 +236,9 @@ fn test_conflict_classification() {
     let fp1 = new_dummy_fingerprint("t_id_1");
     let fp2 = new_dummy_fingerprint("t_id_2");
 
-    // Fall A: Verifizierbarer Konflikt
-    // Um einen Konflikt als verifizierbar zu klassifizieren, muss der Hash in der
-    // `local_history` vorhanden sein. Dies simuliert, dass der Nutzer den Gutschein
-    // besitzt oder besessen hat.
+    // Case A: Verifiable conflict
+    // To classify a conflict as verifiable, the hash must be present in
+    // `local_history`. This simulates that the user owns or owned the voucher.
     wallet
         .known_fingerprints
         .local_history
@@ -262,10 +259,10 @@ fn test_conflict_classification() {
         "Fall A: Es sollte keine unverifizierbaren Warnungen geben."
     );
 
-    // Fall B: Verifizierbarer Konflikt ausschließlich via Gossip (foreign_fingerprints)
-    // Auch wenn der Nutzer den Gutschein nie direkt besessen hat, tragen die
-    // via Gossip empfangenen Fingerprints die kryptographischen Daten (u, blinded_id)
-    // für die DID-Key-Extraktion. Daher muss auch dieser Fall als verifizierbar gelten.
+    // Case B: Verifiable conflict exclusively via gossip (foreign_fingerprints)
+    // Even if the user never directly owned the voucher, the fingerprints
+    // received via gossip carry cryptographic data (u, blinded_id)
+    // for DID key extraction. Therefore this case must also be considered verifiable.
     wallet.known_fingerprints.local_history.clear();
     wallet
         .known_fingerprints
@@ -283,9 +280,9 @@ fn test_conflict_classification() {
         "Fall B: Es sollte keine unverifizierbaren Warnungen geben."
     );
 
-    // Fall C: Nicht verifizierbarer Konflikt
-    // Ein Konflikt, der nur in own_fingerprints.history auftaucht (ohne Gegenstück
-    // in local_history oder foreign_fingerprints), ist nicht extern verifizierbar.
+    // Case C: Unverifiable conflict
+    // A conflict that only appears in own_fingerprints.history (without counterpart
+    // in local_history or foreign_fingerprints) is not externally verifiable.
     wallet.known_fingerprints.local_history.clear();
     wallet.known_fingerprints.foreign_fingerprints.clear();
     wallet
@@ -318,7 +315,7 @@ fn test_cleanup_expired_fingerprints() {
     expired_fp_foreign.deletable_at = "2020-01-01T00:00:00Z".to_string();
     let valid_fp_foreign = new_dummy_fingerprint("t_foreign_valid");
 
-    // Füge Fingerprints zu beiden Speichern hinzu
+    // Add fingerprints to both stores
     wallet
         .own_fingerprints
         .history
@@ -336,11 +333,11 @@ fn test_cleanup_expired_fingerprints() {
         .foreign_fingerprints
         .insert("foreign_valid".to_string(), vec![valid_fp_foreign]);
 
-    // Aktion: Rufe die zentrale Aufräumfunktion mit einer Frist von 0 Jahren auf,
-    // was eine sofortige Bereinigung aller abgelaufenen Einträge auslösen sollte.
+    // Action: Call central cleanup function with a 0-year period,
+    // which should trigger immediate cleanup of all expired entries.
     wallet.run_storage_cleanup(None, 0).unwrap();
 
-    // Assertions für den flüchtigen Speicher (sollte bereinigt werden)
+    // Assertions for volatile store (should be cleaned up)
     assert!(
         !wallet
             .known_fingerprints
@@ -356,7 +353,7 @@ fn test_cleanup_expired_fingerprints() {
         "Gültiger fremder Fingerprint sollte erhalten bleiben."
     );
 
-    // Assertions für den History-Speicher (sollte jetzt auch bereinigt werden)
+    // Assertions for history store (should now also be cleaned up)
     assert!(
         !wallet.own_fingerprints.history.contains_key("hist_expired"),
         "Abgelaufener History-Fingerprint sollte mit 0 Jahren Frist entfernt werden."
@@ -375,17 +372,17 @@ fn test_cleanup_expired_fingerprints() {
 fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
     human_money_core::set_signature_bypass(true);
     // ### Setup ###
-    // Erstellt einen Sender und zwei potenzielle Empfänger.
+    // Creates a sender and two potential recipients.
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_path = temp_dir.path();
 
     let recipient1_identity = &ACTORS.recipient1;
     let recipient2_identity = &ACTORS.recipient2;
 
-    // 1. AppService für Sender erstellen und entsperren
+    // 1. Create and unlock AppService for sender
     let mut app_service = AppService::new(storage_path).unwrap();
-    // KORREKTUR: Verwende den korrekten Pfad zur Mnemonic des Senders aus test_utils.rs
-    // KORREKTUR (Panic-Fix): Übergebe das in ACTORS definierte Präfix ('Some("se")') an create_profile.
+    // CORRECTION: Use the correct path to sender mnemonic from test_utils.rs
+    // CORRECTION (Panic-Fix): Pass the prefix defined in ACTORS ('Some("se")') to create_profile.
     app_service
         .create_profile(
             "sender",
@@ -398,8 +395,8 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         )
         .unwrap();
 
-    // KORREKTUR (Panic-Fix): Wir müssen den anonymen 'folder_name' abrufen,
-    // da 'login' diesen anstelle des 'profile_name' erwartet.
+    // CORRECTION (Panic-Fix): We need to retrieve the anonymous 'folder_name',
+    // as 'login' expects it instead of 'profile_name'.
     let profile_info = app_service
         .list_profiles()
         .unwrap()
@@ -409,32 +406,31 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
     let sender_folder_name = profile_info.folder_name;
 
     let (standard, _standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
-    // KORREKTUR: Lade den rohen TOML-String. Der Service erwartet TOML-Inhalt, nicht den Hash.
+    // CORRECTION: Load raw TOML string. The service expects TOML content, not the hash.
     let freetaler_toml_str = include_str!("../../../voucher_standards/freetaler_v1/standard.toml");
 
     let mut standards_map = HashMap::new();
-    // KORREKTUR: Die Map muss UUID -> TOML-Inhalt enthalten (für spätere Transfer-Aufrufe).
+    // CORRECTION: The map must contain UUID -> TOML content (for later transfer calls).
     standards_map.insert(standard.immutable.identity.uuid.clone(), freetaler_toml_str.to_string());
 
-    // 2. Sender erhält einen initialen Gutschein.
+    // 2. Sender receives an initial voucher.
     let voucher_data = new_test_voucher_data(app_service.get_user_id().unwrap());
     let initial_voucher = app_service
         .create_new_voucher(
-            freetaler_toml_str, // KORREKTUR (Panic-Fix): Übergebe den TOML-Inhalt, nicht den Hash
-            "en",
+            freetaler_toml_str, // CORRECTION (Panic-Fix): Pass TOML content, not the hash
             voucher_data,
             Some("password123"),
         )
         .unwrap();
 
-    // Merke dir die lokale ID des Gutscheins
+    // Remember the local ID of the voucher
     let initial_local_id = app_service.get_voucher_summaries(None, None, None).unwrap()[0]
         .local_instance_id
         .clone();
-    let original_voucher_state_for_attack = initial_voucher.clone(); // Klonen für späteren Angriff
+    let original_voucher_state_for_attack = initial_voucher.clone(); // Clone for later attack
 
-    // ### Akt 1: Legitime Transaktion ###
-    // Sender sendet den Gutschein an Empfänger 1.
+    // ### Act 1: Legitimate Transaction ###
+    // Sender sends voucher to recipient 1.
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: recipient1_identity.user_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
@@ -453,12 +449,12 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         "Die erste Transaktion sollte erfolgreich sein."
     );
 
-    // Status-Prüfung: Der Gutschein sollte jetzt 'Archived' sein
+    // Status check: The voucher should now be 'Archived'
     let summary_after_send = app_service.get_voucher_summaries(None, None, None).unwrap();
 
-    // KORREKTUR: Die 'initial_local_id' existiert nicht mehr. Die Wallet-Logik
-    // hat die alte Instanz entfernt und eine NEUE Instanz mit einer NEUEN local_id
-    // und dem Status 'Archived' erstellt.
+    // CORRECTION: 'initial_local_id' no longer exists. Wallet logic
+    // removed the old instance and created a NEW instance with a NEW local_id
+    // and status 'Archived'.
     assert_eq!(
         summary_after_send.len(),
         1,
@@ -472,7 +468,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         instance_status
     );
 
-    // Stelle sicher, dass die alte ID wirklich weg ist.
+    // Ensure that the old ID is truly gone.
     let old_instance_exists = summary_after_send
         .iter()
         .any(|s| s.local_instance_id == initial_local_id);
@@ -481,23 +477,23 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         "Die alte Gutschein-Instanz MUSS entfernt worden sein."
     );
 
-    // ### Akt 2: Manuelle Manipulation für einen Betrugsversuch ###
-    // Wir simulieren, dass der Sender versucht, denselben ursprünglichen Gutschein-Zustand erneut auszugeben.
-    // Wir müssen den AppService austricksen, indem wir das Wallet manuell laden,
-    // manipulieren und den AppService neu initialisieren (ein "Restore" simulieren).
+    // ### Act 2: Manual Manipulation for a Fraud Attempt ###
+    // We simulate the sender attempting to re-spend the same original voucher state.
+    // We need to trick AppService by manually loading the wallet,
+    // manipulating it, and reinitializing AppService (simulating a "restore").
     app_service.logout();
 
-    // HIER IST DER FIX: Wir müssen die `FileStorage`-Instanz mit dem exakten
-    // Pfad zum Profil-Ordner (den wir aus Akt 1 kennen) initialisieren,
-    // nicht nur mit dem Basis-Speicherpfad.
+    // HERE IS THE FIX: We must initialize the `FileStorage` instance with the exact
+    // path to the profile folder (which we know from Act 1),
+    // not just with the base storage path.
     let profile_storage_path = storage_path.join(&sender_folder_name);
     let mut storage =
         human_money_core::storage::file_storage::FileStorage::new(&profile_storage_path);
-    // KORREKTUR: E0609 Verwende die korrekte AuthMethod
+    // CORRECTION: E0609 Use correct AuthMethod
     let auth = human_money_core::storage::AuthMethod::Password("password123");
     let (mut wallet, identity) = Wallet::load(&storage, &auth, "test-id".to_string()).unwrap();
 
-    // HIER IST DER ANGRIFF: Füge den alten, ausgegebenen Gutschein wieder als 'Active' hinzu.
+    // HERE IS THE ATTACK: Add old spent voucher back as 'Active'.
     let user_id = identity.user_id.clone();
     let local_id_2 =
         Wallet::calculate_local_instance_id(&original_voucher_state_for_attack, &user_id).unwrap();
@@ -514,9 +510,9 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         )
         .unwrap();
 
-    // AppService neu laden (simuliert App-Neustart nach "Restore")
+    // Reload AppService (simulates app restart after "restore")
     let mut app_service = AppService::new(storage_path).unwrap();
-    // KORREKTUR (Panic-Fix): Verwende den 'sender_folder_name' anstelle von "sender".
+    // CORRECTION (Panic-Fix): Use 'sender_folder_name' instead of "sender".
     app_service
         .login(&sender_folder_name, "password123", false, "test-id".to_string())
         .unwrap();
@@ -529,9 +525,9 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         "Wallet sollte jetzt einen inkonsistenten 'Active' Gutschein haben."
     );
 
-    // ### Akt 3: Der blockierte Double-Spend-Versuch ###
-    // Sender versucht, den wiederhergestellten, ursprünglichen Gutschein an Empfänger 2 zu senden.
-    // Dies MUSS fehlschlagen UND die Selbstheilung auslösen.
+    // ### Act 3: Blocked Double-Spend Attempt ###
+    // Sender attempts to send the restored original voucher to recipient 2.
+    // This MUST fail AND trigger self-healing.
     let request_2 = human_money_core::wallet::MultiTransferRequest {
         recipient_id: recipient2_identity.user_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
@@ -543,10 +539,10 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         use_privacy_mode: None,
     };
 
-    // KORREKTUR: E0425 Ersetze alte sender_wallet Logik
+    // CORRECTION: E0425 Replace old sender_wallet logic
     let transfer2_result = app_service.create_transfer_bundle(
         request_2,
-        &standards_map, // standards_map existiert bereits von oben
+        &standards_map, // standards_map already exists from above
         None,
         Some("password123"),
     );
@@ -563,8 +559,8 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
             .contains("Double spend attempt blocked")
     );
 
-    // ### Akt 4: Verifizierung der Selbstheilung ###
-    // Überprüfe, ob der AppService den inkonsistenten Gutschein auf 'Quarantined' gesetzt hat.
+    // ### Act 4: Verification of Self-Healing ###
+    // Verify whether AppService set the inconsistent voucher to 'Quarantined'.
     let summary_after_fail = app_service.get_voucher_summaries(None, None, None).unwrap();
     let instance = summary_after_fail
         .iter()
@@ -581,7 +577,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
 }
 
 // ===================================================================================
-// INTEGRATIONSTEST
+// INTEGRATION TEST
 // ===================================================================================
 
 #[test]
@@ -591,7 +587,7 @@ fn test_local_double_spend_detection_lifecycle() {
     let storage_path = temp_dir.path();
     let archive = FileVoucherArchive::new(storage_path.join("archive"));
 
-    // ### Akt 1: Initialisierung & Erster Transfer ###
+    // ### Act 1: Initialization & First Transfer ###
     println!("--- Akt 1: Alice erstellt einen Gutschein und sendet ihn an Bob ---");
 
     let alice_identity = &ACTORS.alice;
@@ -606,9 +602,7 @@ fn test_local_double_spend_detection_lifecycle() {
         voucher_data,
         standard,
         standard_hash,
-        &alice_identity.signing_key,
-        "en",
-    )
+        &alice_identity.signing_key)
     .unwrap();
     let local_id =
         Wallet::calculate_local_instance_id(&initial_voucher, &alice_identity.user_id).unwrap();
@@ -623,8 +617,8 @@ fn test_local_double_spend_detection_lifecycle() {
         .vouchers
         .insert(local_id, instance);
 
-    // Alice verwendet die neue, korrekte Methode, um den Gutschein an Bob zu senden.
-    // Wir klonen die ID, um den immutable borrow auf alice_wallet sofort zu beenden.
+    // Alice uses the new, correct method to send the voucher to Bob.
+    // We clone the ID to immediately end the immutable borrow on alice_wallet.
     let alice_initial_local_id = alice_wallet
         .voucher_store
         .vouchers
@@ -653,7 +647,7 @@ fn test_local_double_spend_detection_lifecycle() {
     } = alice_wallet
         .execute_multi_transfer_and_bundle(alice_identity, &standards, request, Some(&archive))
         .unwrap();
-    // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+    // CORRECTION: The map must contain the standard being processed.
     let mut standards_for_bob = std::collections::HashMap::new();
     standards_for_bob.insert(
         FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
@@ -689,7 +683,7 @@ fn test_local_double_spend_detection_lifecycle() {
         VoucherStatus::Active
     ));
 
-    // ### Akt 2: Der Double Spend ###
+    // ### Act 2: The Double Spend ###
     println!("--- Akt 2: Bob begeht einen Double Spend an Charlie und David ---");
 
     let charlie_identity = &ACTORS.charlie;
@@ -697,8 +691,8 @@ fn test_local_double_spend_detection_lifecycle() {
     let mut charlie_wallet = setup_test_wallet(charlie_identity, "charlie", storage_path);
     let mut david_wallet = setup_test_wallet(david_identity, "david", storage_path);
 
-    // Hole den Seed aus Bobs Wallet, um den Double Spend zu autorisieren.
-    // get_voucher_from_wallet returned nur den Voucher, wir brauchen die Instanz.
+    // Retrieve seed from Bob's wallet to authorize the double spend.
+    // get_voucher_from_wallet returns only the voucher, we need the instance.
     let bob_instance = bob_wallet.voucher_store.vouchers.values().next().unwrap();
     let bob_ephemeral_key = bob_wallet
         .rederive_secret_seed(&bob_instance.voucher, bob_identity)
@@ -706,10 +700,10 @@ fn test_local_double_spend_detection_lifecycle() {
 
     let voucher_from_bob = bob_instance.voucher.clone(); // use instance.voucher instead of helper
 
-    // Bob agiert böswillig. Er umgeht die Schutzmechanismen seines Wallets (create_transfer würde das blockieren)
-    // und erstellt manuell zwei widersprüchliche Transaktionen aus demselben Zustand.
-    // Wichtig: Wir fügen eine kleine Verzögerung ein, um sicherzustellen, dass die Zeitstempel
-    // der betrügerischen Transaktionen deterministisch unterscheidbar sind.
+    // Bob acts maliciously. He bypasses the protection mechanisms of his wallet (create_transfer would block this)
+    // and manually creates two conflicting transactions from the same state.
+    // Important: We insert a small delay to ensure that the timestamps
+    // of the fraudulent transactions are deterministically distinguishable.
     let (voucher_for_charlie, _) = voucher_manager::create_transaction(
         &voucher_from_bob,
         standard,
@@ -734,7 +728,7 @@ fn test_local_double_spend_detection_lifecycle() {
     )
     .unwrap();
 
-    // Wir merken uns die IDs der beiden widersprüchlichen Transaktionen.
+    // We remember the IDs of the two conflicting transactions.
     let winning_tx_id = voucher_for_charlie
         .transactions
         .last()
@@ -743,7 +737,7 @@ fn test_local_double_spend_detection_lifecycle() {
         .clone();
     let losing_tx_id = voucher_for_david.transactions.last().unwrap().t_id.clone();
 
-    // Er verpackt und sendet die erste betrügerische Version an Charlie. Hierfür nutzt er die alte Methode.
+    // He bundles and sends the first fraudulent version to Charlie using the old method.
     let (bundle_to_charlie, _header) = bob_wallet
         .create_and_encrypt_transaction_bundle(
             bob_identity,
@@ -755,7 +749,7 @@ fn test_local_double_spend_detection_lifecycle() {
             None,
         )
         .unwrap();
-    // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+    // CORRECTION: The map must contain the standard being processed.
     let mut standards_for_charlie = std::collections::HashMap::new();
     standards_for_charlie.insert(
         FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
@@ -770,7 +764,7 @@ fn test_local_double_spend_detection_lifecycle() {
         )
         .unwrap();
 
-    // Um den zweiten Betrug zu ermöglichen, setzt er den Zustand seines Wallets künstlich zurück.
+    // To enable the second fraud, he artificially resets the state of his wallet.
     let local_id_bob =
         Wallet::calculate_local_instance_id(&voucher_from_bob, &bob_identity.user_id).unwrap();
     bob_wallet.add_voucher_instance(local_id_bob, voucher_from_bob, VoucherStatus::Active);
@@ -785,7 +779,7 @@ fn test_local_double_spend_detection_lifecycle() {
             None,
         )
         .unwrap();
-    // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+    // CORRECTION: The map must contain the standard being processed.
     let mut standards_for_david = std::collections::HashMap::new();
     standards_for_david.insert(
         FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
@@ -803,11 +797,11 @@ fn test_local_double_spend_detection_lifecycle() {
     assert_eq!(charlie_wallet.voucher_store.vouchers.len(), 1);
     assert_eq!(david_wallet.voucher_store.vouchers.len(), 1);
 
-    // ### Akt 3: Die Rückkehr (Teil 1) ###
+    // ### Act 3: The Return (Part 1) ###
     println!("--- Akt 3: Charlie sendet seine Version zurück an Alice ---");
 
-    // Charlie handelt legitim und verwendet die korrekte `create_transfer` Methode.
-    // Wir klonen die ID, um den immutable borrow auf charlie_wallet sofort zu beenden.
+    // Charlie acts legitimately and uses the correct `create_transfer` method.
+    // We clone the ID to immediately end the immutable borrow on charlie_wallet.
     let charlie_local_id = charlie_wallet
         .voucher_store
         .vouchers
@@ -848,7 +842,7 @@ fn test_local_double_spend_detection_lifecycle() {
     }
     println!("[Debug Test] Verarbeite jetzt Bündel von Charlie...");
 
-    // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+    // CORRECTION: The map must contain the standard being processed.
     let mut standards_for_alice = std::collections::HashMap::new();
     standards_for_alice.insert(
         FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
@@ -872,13 +866,13 @@ fn test_local_double_spend_detection_lifecycle() {
         "Nach dem ersten zurückerhaltenen Gutschein darf es noch keinen Konflikt geben."
     );
 
-    // ### Akt 4: Die Aufdeckung ###
+    // ### Act 4: The Revelation ###
     println!(
         "--- Akt 4: David sendet seine widersprüchliche Version an Alice. Der Betrug wird aufgedeckt. ---"
     );
 
-    // David handelt ebenfalls legitim (aus seiner Sicht) und verwendet `create_transfer`.
-    // Wir klonen die ID, um den immutable borrow auf david_wallet sofort zu beenden.
+    // David also acts legitimately (from his perspective) and uses `create_transfer`.
+    // We clone the ID to immediately end the immutable borrow on david_wallet.
     let david_local_id = david_wallet
         .voucher_store
         .vouchers
@@ -908,7 +902,7 @@ fn test_local_double_spend_detection_lifecycle() {
         .execute_multi_transfer_and_bundle(david_identity, &standards, request, Some(&archive))
         .unwrap();
 
-    // KORREKTUR: Die Map muss den Standard enthalten, der verarbeitet wird.
+    // CORRECTION: The map must contain the standard being processed.
     let mut standards_for_alice_2 = std::collections::HashMap::new();
     standards_for_alice_2.insert(
         FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
@@ -935,17 +929,17 @@ fn test_local_double_spend_detection_lifecycle() {
         "Alices Wallet sollte am Ende drei Instanzen des Gutscheins enthalten."
     );
 
-    // ### Akt 5: Überprüfung der intelligenten Konfliktlösung ###
+    // ### Act 5: Verification of Intelligent Conflict Resolution ###
     println!("--- Akt 5: Überprüfe, ob die korrekte Gutschein-Instanz aktiv geblieben ist ---");
 
     let mut winner_status: Option<VoucherStatus> = None;
     let mut loser_status: Option<VoucherStatus> = None;
     let mut loser_local_id: Option<String> = None;
 
-    // Finde die beiden konkurrierenden Gutschein-Instanzen in Alices Wallet und prüfe ihren Status.
-    // Wir müssen die gesamte Transaktionskette durchsuchen, nicht nur die letzte Transaktion.
+    // Find both competing voucher instances in Alice's wallet and check their status.
+    // We must search the entire transaction chain, not just the last transaction.
     for (local_id, instance) in &alice_wallet.voucher_store.vouchers {
-        // Prüfe, ob die Gewinner-Transaktion Teil der Historie dieses Gutscheins ist.
+        // Check if the winning transaction is part of this voucher's history.
         if instance
             .voucher
             .transactions
@@ -954,7 +948,7 @@ fn test_local_double_spend_detection_lifecycle() {
         {
             winner_status = Some(instance.status.clone());
         }
-        // Prüfe, ob die Verlierer-Transaktion Teil der Historie dieses Gutscheins ist.
+        // Check if the losing transaction is part of this voucher's history.
         if instance
             .voucher
             .transactions
@@ -977,7 +971,7 @@ fn test_local_double_spend_detection_lifecycle() {
         loser_status
     );
 
-    // Der Versuch, den unter Quarantäne stehenden Gutschein (die 'Verlierer'-Instanz) auszugeben, muss fehlschlagen.
+    // Attempting to spend the quarantined voucher (the 'loser' instance) must fail.
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_identity.user_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {

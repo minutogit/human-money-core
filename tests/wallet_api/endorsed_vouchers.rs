@@ -1,9 +1,9 @@
 // tests/wallet_api/endorsed_vouchers.rs
 // cargo test --test wallet_api_tests endorsed
 //!
-//! Integrationstests für die Endorsed-Funktionalität (Dritt-Signaturen).
-//! Überprüft, dass bezeugte Gutscheine korrekt archiviert werden und
-//! nicht in die Balance-Berechnung oder Double-Spend-Erkennung eingehen.
+//! Integration tests for endorsed functionality (third-party signatures).
+//! Verifies that witnessed vouchers are archived properly and
+//! are not included in balance calculations or double-spend detection.
 
 #[cfg(test)]
 mod tests {
@@ -17,7 +17,7 @@ mod tests {
 
     const PASSWORD: &str = "correct-password-123";
 
-    /// Hilfsfunktion zum Erstellen eines Services mit einem Gutschein.
+    /// Helper function to create a service with a voucher.
     fn setup_service_with_voucher(
         password: &str,
         actor: &TestUser,
@@ -47,19 +47,19 @@ mod tests {
             generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
 
         let _voucher = service
-            .create_new_voucher(&signed_standard, "de", voucher_data, Some(password))
+            .create_new_voucher(&signed_standard, voucher_data, Some(password))
             .expect("Voucher creation failed");
 
         (service, dir)
     }
 
-    /// **Test 1: Balance-Test - Endorsed-Gutscheine beeinflussen nicht die Balance**
+    /// **Test 1: Balance test - Endorsed vouchers do not affect balance**
     ///
-    /// Simuliert, dass User B für User A bürgt und prüft, dass das Guthaben
-    /// von User B bei 0 bleibt.
+    /// Simulates User B guaranteeing for User A and verifies that User B's
+    /// balance remains at 0.
     #[test]
     fn test_endorsed_voucher_does_not_affect_balance() {
-        // User A erstellt einen Gutschein
+        // User A creates a voucher
         let (service_a, _dir_a) = setup_service_with_voucher(PASSWORD, &ACTORS.alice, "Alice");
         let voucher_summary = service_a
             .get_voucher_summaries(None, None, None)
@@ -67,11 +67,11 @@ mod tests {
             .pop()
             .expect("Alice should have a voucher");
 
-        // Prüfe, dass Alice eine Balance hat
+        // Verify that Alice has a balance
         let balance_a = service_a.get_total_balance_by_currency().unwrap();
         assert!(!balance_a.is_empty(), "Alice should have a balance");
 
-        // User B erstellt ein Wallet (ohne Gutscheine)
+        // User B creates a wallet (without vouchers)
         let dir_b = tempdir().unwrap();
         let (mut service_b, _) = test_utils::setup_service_with_profile(
             dir_b.path(),
@@ -80,19 +80,19 @@ mod tests {
             PASSWORD,
         );
 
-        // Bob sollte keine Balance haben
+        // Bob should have no balance
         let balance_b_before = service_b.get_total_balance_by_currency().unwrap();
         assert!(balance_b_before.is_empty(), "Bob should have no balance initially");
 
-        // Bob holt den Gutschein direkt von Alice (simuliert den Empfang außerhalb des Signatur-Workflows)
+        // Bob retrieves the voucher directly from Alice (simulating reception outside signature workflow)
         let voucher_details = service_a
             .get_voucher_details(&voucher_summary.local_instance_id)
             .unwrap();
         let voucher_to_sign = voucher_details.voucher;
 
-        // Bob unterzeichnet den Gutschein (dies speichert ihn als Endorsed)
-        // Hinweis: In der Praxis würde dies über den Signaturanfrage-Workflow erfolgen,
-        // aber für diesen Test simulieren wir den direkten Aufruf.
+        // Bob signs the voucher (this stores it as Endorsed)
+        // Note: In practice, this would occur via the signing request workflow,
+        // but for this test we simulate direct invocation.
         let _signature_bundle = service_b
             .create_detached_signature_response_bundle(
                 &voucher_to_sign,
@@ -103,27 +103,27 @@ mod tests {
             )
             .expect("Signature creation should succeed");
 
-        // Prüfe, dass Bobs Balance immer noch 0 ist
+        // Verify that Bob's balance is still 0
         let balance_b_after = service_b.get_total_balance_by_currency().unwrap();
         assert!(
             balance_b_after.is_empty(),
             "Bob's balance should still be 0 after endorsing"
         );
 
-        // Prüfe, dass der Gutschein in Bobs Wallet mit Status Endorsed gespeichert wurde
+        // Verify that the voucher was stored in Bob's wallet with Endorsed status
         let vouchers_b = service_b.get_voucher_summaries(None, None, None).unwrap();
         let endorsed_voucher = vouchers_b
             .iter()
             .find(|v| matches!(v.status, VoucherStatus::Endorsed { .. }))
             .expect("Bob should have an endorsed voucher");
 
-        // Prüfe, dass der current_amount 0 ist
+        // Verify that current_amount is 0
         assert_eq!(
             endorsed_voucher.current_amount, "0",
             "Endorsed voucher should show current_amount as 0"
         );
 
-        // Prüfe, dass die Rolle korrekt gespeichert wurde
+        // Verify that the role was stored correctly
         if let VoucherStatus::Endorsed { role } = &endorsed_voucher.status {
             assert_eq!(role, "guarantor", "Role should be 'guarantor'");
         } else {
@@ -131,14 +131,14 @@ mod tests {
         }
     }
 
-    /// **Test 2: Double-Spend-Test - Endorsed-Gutscheine werden ignoriert**
+    /// **Test 2: Double-spend test - Endorsed vouchers are ignored**
     ///
-    /// Prüft, dass die Ablage des bezeugten Gutscheins im Wallet des Bürgen
-    /// nicht den eigenen Fingerprint-Speicher blockiert oder Fremd-Gutscheine
-    /// als eigene Fingerprints ausliest.
+    /// Verifies that storing the witnessed voucher in the guarantor's wallet
+    /// does not block their own fingerprint storage or read foreign vouchers
+    /// as own fingerprints.
     #[test]
     fn test_endorsed_voucher_ignored_in_fingerprint_scan() {
-        // User A erstellt einen Gutschein
+        // User A creates a voucher
         let (service_a, _dir_a) = setup_service_with_voucher(PASSWORD, &ACTORS.alice, "Alice");
         let voucher_summary = service_a
             .get_voucher_summaries(None, None, None)
@@ -146,7 +146,7 @@ mod tests {
             .pop()
             .expect("Alice should have a voucher");
 
-        // User B erstellt ein Wallet
+        // User B creates a wallet
         let dir_b = tempdir().unwrap();
         let (mut service_b, _) = test_utils::setup_service_with_profile(
             dir_b.path(),
@@ -155,7 +155,7 @@ mod tests {
             PASSWORD,
         );
 
-        // Bob unterzeichnet Alices Gutschein
+        // Bob signs Alice's voucher
         let voucher_details = service_a
             .get_voucher_details(&voucher_summary.local_instance_id)
             .unwrap();
@@ -171,7 +171,7 @@ mod tests {
             )
             .expect("Signature creation should succeed");
 
-        // Prüfe, dass keine Double-Spend-Konflikte gemeldet werden
+        // Verify that no double-spend conflicts are reported
         let conflicts = service_b.list_conflicts().unwrap();
         assert!(
             conflicts.is_empty(),
@@ -179,14 +179,14 @@ mod tests {
         );
     }
 
-    /// **Test 3: Persistenz-Test - Endorsed-Gutschein überlebt Neustart**
+    /// **Test 3: Persistence test - Endorsed voucher survives restart**
     ///
-    /// Prüft, ob nach einem Logout/Login der Endorsed-Gutschein im Wallet verbleibt.
+    /// Verifies that the endorsed voucher remains in the wallet after logout/login.
     #[test]
     fn test_endorsed_voucher_persists_after_restart() {
         let dir = tempdir().unwrap();
 
-        // User A erstellt einen Gutschein
+        // User A creates a voucher
         let (service_a, _dir_a) = setup_service_with_voucher(PASSWORD, &ACTORS.alice, "Alice");
         let voucher_summary = service_a
             .get_voucher_summaries(None, None, None)
@@ -194,7 +194,7 @@ mod tests {
             .pop()
             .expect("Alice should have a voucher");
 
-        // User B erstellt ein Wallet
+        // User B creates a wallet
         let (mut service_b, profile_b) = test_utils::setup_service_with_profile(
             dir.path(),
             &ACTORS.bob,
@@ -202,13 +202,13 @@ mod tests {
             PASSWORD,
         );
 
-        // Bob holt den Gutschein direkt von Alice (simuliert den Empfang außerhalb des Signatur-Workflows)
+        // Bob retrieves the voucher directly from Alice (simulating reception outside signature workflow)
         let voucher_details = service_a
             .get_voucher_details(&voucher_summary.local_instance_id)
             .unwrap();
         let voucher_to_sign = voucher_details.voucher;
 
-        // Bob unterzeichnet Alices Gutschein
+        // Bob signs Alice's voucher
         let _signature_bundle = service_b
             .create_detached_signature_response_bundle(
                 &voucher_to_sign,
@@ -219,7 +219,7 @@ mod tests {
             )
             .expect("Signature creation should succeed");
 
-        // Prüfe, dass der Endorsed-Gutschein vorhanden ist
+        // Verify that the endorsed voucher is present
         let vouchers_before = service_b.get_voucher_summaries(None, None, None).unwrap();
         let endorsed_count_before = vouchers_before
             .iter()
@@ -233,12 +233,12 @@ mod tests {
         // Logout
         service_b.logout();
 
-        // Login erneut
+        // Login again
         service_b
             .login(&profile_b.folder_name, PASSWORD, false, "test-id".to_string())
             .expect("Login should succeed");
 
-        // Prüfe, dass der Endorsed-Gutschein immer noch vorhanden ist
+        // Verify that the endorsed voucher is still present
         let vouchers_after = service_b.get_voucher_summaries(None, None, None).unwrap();
         let endorsed_count_after = vouchers_after
             .iter()
@@ -249,7 +249,7 @@ mod tests {
             "Bob should still have exactly one endorsed voucher after restart"
         );
 
-        // Prüfe, dass die Rolle korrekt erhalten blieb
+        // Verify that the role was preserved correctly
         let endorsed_voucher = vouchers_after
             .iter()
             .find(|v| matches!(v.status, VoucherStatus::Endorsed { .. }))

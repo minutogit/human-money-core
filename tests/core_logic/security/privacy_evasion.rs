@@ -45,9 +45,7 @@ fn create_valid_voucher(standard: &VoucherStandardDefinition, standard_hash: &st
         voucher_data,
         standard,
         standard_hash,
-        &identity.signing_key,
-        "en",
-    )
+        &identity.signing_key)
     .unwrap();
 
     // Add required guarantors so the base voucher is valid
@@ -263,7 +261,7 @@ fn detect_whitespace_obfuscation_in_public_mode() {
 }
 
 // -------------------------------------------------------------------------
-// NEUE TEST-SZENARIEN (2026-02-08)
+// NEW TEST SCENARIOS (2026-02-08)
 // -------------------------------------------------------------------------
 
 // 5. Test: prevent_trap_data_replay
@@ -306,7 +304,7 @@ fn prevent_trap_data_replay() {
         validity_duration: Some("P4Y".to_string()),
         ..Default::default()
     };
-    let mut voucher = create_voucher(voucher_data, &standard, &standard_hash, &sk, "en")
+    let mut voucher = create_voucher(voucher_data, &standard, &standard_hash, &sk)
         .expect("Voucher creation failed");
 
     // Add Guarantors

@@ -1,6 +1,6 @@
 // tests/flexible_encryption.rs
 //!
-//! Tests für die flexible Container-Verschlüsselung (Asymmetric, Symmetric, Cleartext).
+//! Tests for flexible container encryption (Asymmetric, Symmetric, Cleartext).
 
 use human_money_core::{
     models::{
@@ -15,8 +15,8 @@ use human_money_core::{
 };
 use serde_json;
 
-/// Testet, dass alte Container ohne das `et` Feld korrekt als Asymmetric geparst werden.
-/// DEAKTIVIERT: Nach JWE-Refactoring ist dieses Format nicht mehr unterstützt.
+/// Tests that old containers without the `et` field are correctly parsed as Asymmetric.
+/// DEACTIVATED: Following JWE refactoring this format is no longer supported.
 #[test]
 #[ignore]
 fn test_backward_compatibility_old_containers() {
@@ -34,7 +34,7 @@ fn test_backward_compatibility_old_containers() {
     assert_eq!(container.i, "test123");
 }
 
-/// Testet, dass Plaintext-Container für finanzielle Payloads blockiert werden.
+/// Tests that plaintext containers are blocked for financial payloads.
 #[test]
 #[cfg(feature = "test-utils")]
 fn test_plaintext_blocked_for_financial_payloads() {
@@ -63,7 +63,7 @@ fn test_plaintext_blocked_for_financial_payloads() {
     assert!(result.is_err());
 }
 
-/// Testet, dass Plaintext für nicht-finanzielle Payloads erlaubt ist.
+/// Tests that plaintext is allowed for non-financial payloads.
 #[test]
 #[cfg(feature = "test-utils")]
 fn test_plaintext_allowed_for_non_financial_payloads() {
@@ -95,7 +95,7 @@ fn test_plaintext_allowed_for_non_financial_payloads() {
     assert!(container.salt.is_none());
 }
 
-/// Testet symmetrische Verschlüsselung mit Passwort.
+/// Tests symmetric encryption with password.
 #[test]
 #[cfg(feature = "test-utils")]
 fn test_symmetric_encryption() {
@@ -135,7 +135,7 @@ fn test_symmetric_encryption() {
     assert_eq!(decrypted, payload);
 }
 
-/// Testet die PBKDF2 Schlüsselableitungsfunktionen.
+/// Tests PBKDF2 key derivation functions.
 #[test]
 fn test_pbkdf2_key_derivation() {
     let payload = b"test payload";
@@ -148,3 +148,4 @@ fn test_pbkdf2_key_derivation() {
     let result = crypto_utils::decrypt_symmetric_password(&ciphertext, "wrong", &salt);
     assert!(result.is_err());
 }
+

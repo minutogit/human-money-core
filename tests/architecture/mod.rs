@@ -1,9 +1,9 @@
 // tests/architecture/mod.rs
 // cargo test --test architecture_tests
 //!
-//! Deklariert die einzelnen Test-Dateien innerhalb des `architecture`-Moduls.
+//! Declares individual test files within the `architecture` module.
 
-// Macht die in der Datei implementierten Tests für den Runner sichtbar.
+// Makes tests implemented in the files visible to the test runner.
 pub mod hardening;
 pub mod resilience_and_gossip;
 mod security_hardening;

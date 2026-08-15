@@ -1,7 +1,7 @@
 // tests/persistence/mod.rs
 // cargo test --test persistence_tests
 //!
-//! Deklariert die einzelnen Test-Module innerhalb der Persistenz-Test-Suite.
+//! Declares the individual test modules within the persistence test suite.
 
 pub mod archive;
 pub mod file_storage;

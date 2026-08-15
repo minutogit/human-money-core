@@ -1,8 +1,8 @@
 // tests/wallet_api/maintenance.rs
 // cargo test --test wallet_api_tests wallet_api::maintenance
 //!
-//! Testet Wartungsfunktionen des Wallets, wie die automatische Bereinigung
-//! von abgelaufenen Gutschein-Instanzen.
+//! Tests maintenance functions of the wallet, such as automatic cleanup
+//! of expired voucher instances.
 
 use human_money_core::test_utils::{ACTORS, MINUTO_STANDARD, setup_in_memory_wallet, create_voucher_for_manipulation};
 use human_money_core::Wallet;
@@ -24,24 +24,22 @@ fn test_cleanup_of_expired_archived_instances() {
         ..Default::default()
     };
 
-    // Gutschein A (abgelaufen)
+    // Voucher A (expired)
     let mut voucher_a = create_voucher_for_manipulation(
         voucher_data.clone(),
-        standard, hash, &user.signing_key, "en",
-    );
+        standard, hash, &user.signing_key);
     voucher_a.valid_until = (Utc::now() - Duration::days(365 * 3)).to_rfc3339();
     let id_a = Wallet::calculate_local_instance_id(&voucher_a, &user.user_id).unwrap();
     wallet.add_voucher_instance(id_a.clone(), voucher_a, VoucherStatus::Archived);
 
-    // Gutschein B (noch in Gnadenfrist)
+    // Voucher B (still within grace period)
     let mut voucher_b = create_voucher_for_manipulation(
-        voucher_data, standard, hash, &user.signing_key, "en"
-    );
+        voucher_data, standard, hash, &user.signing_key);
     voucher_b.valid_until = (Utc::now() - Duration::days(180)).to_rfc3339();
     let id_b = Wallet::calculate_local_instance_id(&voucher_b, &user.user_id).unwrap();
     wallet.add_voucher_instance(id_b.clone(), voucher_b, VoucherStatus::Archived);
 
-    // Aktion: Bereinigung mit 1 Jahr Gnadenfrist
+    // Action: Cleanup with 1 year grace period
     wallet.run_storage_cleanup(None, 1).unwrap();
 
     assert!(!wallet.voucher_store.vouchers.contains_key(&id_a), "Expired voucher A should have been removed");

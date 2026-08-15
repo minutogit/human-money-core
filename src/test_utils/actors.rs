@@ -3,8 +3,8 @@ use crate::services::crypto_utils::{self, create_user_id};
 use crate::UserIdentity;
 use std::ops::Deref;
 
-/// Bündelt alle Informationen eines Test-Benutzers.
-/// Enthält die Mnemonic, die für `FileStorage::new` und `login` benötigt wird.
+/// Bundles all information of a test user.
+/// Contains the mnemonic needed for `FileStorage::new` and `login`.
 #[derive(Clone)]
 pub struct TestUser {
     pub identity: UserIdentity,
@@ -21,8 +21,8 @@ impl Deref for TestUser {
     }
 }
 
-/// Erstellt eine `TestUser`-Instanz mit der langsamen, produktionssicheren Schlüsselableitung.
-/// Notwendig für Tests, die Passphrasen oder die Recovery-Logik verifizieren.
+/// Creates a `TestUser` instance using the slow, production-grade key derivation.
+/// Necessary for tests verifying passphrases or recovery logic.
 pub fn user_from_mnemonic_slow(
     mnemonic: &str,
     passphrase: Option<&'static str>,
@@ -47,8 +47,8 @@ pub fn user_from_mnemonic_slow(
     }
 }
 
-/// Erstellt eine `TestUser`-Instanz mit der schnellen, nur für Tests gedachten Schlüsselableitung.
-/// Hält die meisten Tests performant. Ignoriert Passphrasen.
+/// Creates a `TestUser` instance using fast key derivation intended only for tests.
+/// Keeps most tests performant. Ignores passphrases.
 pub fn user_from_mnemonic_fast(mnemonic: &str, prefix: Option<&'static str>) -> TestUser {
     let (public_key, signing_key) =
         crypto_utils::generate_ed25519_keypair_for_tests(Some(mnemonic));
@@ -69,7 +69,7 @@ pub fn user_from_mnemonic_fast(mnemonic: &str, prefix: Option<&'static str>) -> 
     }
 }
 
-/// Feste, deterministische Mnemonics für reproduzierbare Tests.
+/// Fixed, deterministic mnemonics for reproducible tests.
 pub mod mnemonics {
     pub const ALICE: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
     pub const BOB: &str =
@@ -84,7 +84,7 @@ pub mod mnemonics {
         "travel shell spy arctic clarify velvet wrist cigar jewel vintage life head";
 }
 
-/// Eine Struktur, die alle für Tests benötigten, einmalig erstellten Identitäten enthält.
+/// A structure containing all uniquely created identities required for tests.
 #[allow(dead_code)]
 pub struct TestActors {
     pub alice: TestUser,

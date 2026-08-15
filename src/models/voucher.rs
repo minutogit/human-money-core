@@ -1,30 +1,28 @@
 //! # voucher.rs
 //!
-//! Definiert die Kern-Datenstrukturen für das universelle Gutschein-Container-Format.
-//! Diese Strukturen bilden das im `llm-context.md` definierte JSON-Schema exakt ab
-//! und verwenden `serde` für die Serialisierung und Deserialisierung.
+//! Defines the core data structures for the universal voucher container format.
+//! These structures exactly map the JSON schema defined in `llm-context.md`
+//! and use `serde` for serialization and deserialization.
 
 use crate::models::profile::PublicProfile;
 use serde::{Deserialize, Serialize};
 
-/// Die ID, die für anonyme Teilnehmer in Transaktionen verwendet wird.
+/// The ID used for anonymous participants in transactions.
 pub const ANONYMOUS_ID: &str = "anonymous";
 
-/// Definiert den Standard, zu dem ein Gutschein gehört.
+/// Defines the standard to which a voucher belongs.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct VoucherStandard {
-    /// Der Name des Standards (z.B. "Minuto-Gutschein").
+    /// The name of the standard (e.g. "Minuto-Gutschein").
     pub name: String,
-    /// Die eindeutige Kennung (UUID) des Standards.
+    /// The unique identifier (UUID) of the standard.
     pub uuid: String,
-    /// Der Hash der kanonisierten Standard-Definition, der diesen Gutschein an eine spezifische Version bindet.
+    /// The hash of the canonicalized standard definition binding this voucher to a specific version.
     pub standard_definition_hash: String,
-    /// Die Template-Daten, die aus dem Standard-TOML kopiert wurden.
-    pub template: VoucherTemplateData,
 }
 
-/// Definiert einen Wert (Betrag und Einheit),
-/// der für Nennwerte oder Besicherungen verwendet wird.
+/// Defines a value (amount and unit),
+/// used for nominal values or collateral.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct ValueDefinition {
     pub unit: String,
@@ -37,11 +35,16 @@ pub struct ValueDefinition {
     pub description: Option<String>,
 }
 
-/// Definiert die (optionale) Besicherung eines Gutscheins.
+/// Defines the (optional) collateral/backing of a voucher (extension point for physical assets or fiat).
+///
+/// Design note:
+/// For standards using `collateral_type = "personal_guarantee"` (e.g. Minuto), this object remains
+/// `None` by default, as the backing is natively represented via the cryptographic signatures
+/// of guarantors (`signatures`).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct Collateral {
-    /// Die Felder 'unit', 'amount', 'abbreviation', 'description'
-    /// werden direkt von ValueDefinition hier eingebettet.
+    /// The fields 'unit', 'amount', 'abbreviation', 'description'
+    /// are embedded directly from ValueDefinition.
     #[serde(flatten)]
     pub value: ValueDefinition,
 
@@ -52,24 +55,24 @@ pub struct Collateral {
     pub redeem_condition: Option<String>,
 }
 
-/// Detaillierte Adressinformationen.
+/// Detailed address information.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct Address {
-    /// Straße.
+    /// Street.
     pub street: String,
-    /// Hausnummer.
+    /// House number.
     pub house_number: String,
-    /// Postleitzahl.
+    /// Postal code.
     pub zip_code: String,
-    /// Stadt.
+    /// City.
     pub city: String,
-    /// Land.
+    /// Country.
     pub country: String,
-    /// Vollständige, formatierte Adresse.
+    /// Full, formatted address.
     pub full_address: String,
 }
 
-/// Daten für die Identity-Trap (Betrugserkennung).
+/// Data for the identity trap (fraud detection).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct TrapData {
     pub ds_tag: String,
@@ -79,16 +82,16 @@ pub struct TrapData {
     pub proof: String,
 }
 
-/// Der entschlüsselte Payload des Privacy-Guards.
+/// The decrypted payload of the privacy guard.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct RecipientPayload {
-    /// Die vollständige Composite-DID des Absenders.
+    /// The sender's full composite DID.
     pub sender_permanent_did: String,
-    /// Das Ziel-Präfix (z.B. "creator:fY7") zur Validierung.
+    /// The target prefix (e.g. "creator:fY7") for validation.
     pub target_prefix: String,
-    /// Zeitstempel der Erstellung.
+    /// Timestamp of creation.
     pub timestamp: u64,
-    /// Der Seed für den nächsten ephemeren Schlüssel.
+    /// The seed for the next ephemeral key.
     pub next_key_seed: String,
     /// The public point K of the identity trap derived from sender_permanent_key.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -101,55 +104,55 @@ pub struct RecipientPayload {
     pub dleq_s: Option<String>,
 }
 
-/// Repräsentiert eine einzelne Transaktion in der Transaktionskette des Gutscheins.
+/// Represents a single transaction in the voucher's transaction chain.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct Transaction {
-    /// Eindeutige ID der Transaktion.
+    /// Unique ID of the transaction.
     pub t_id: String,
-    /// Art der Transaktion. Leer für einen vollen Transfer, "init" für die Erstellung, "split" für Teilbeträge.
+    /// Type of transaction. Empty for a full transfer, "init" for creation, "split" for partial amounts.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub t_type: String,
-    /// Zeitpunkt der Transaktion im ISO 8601-Format.
+    /// Timestamp of the transaction in ISO 8601 format.
     pub t_time: String,
 
-    // --- TECHNISCHER LAYER (Layer 2 - Immer vorhanden) ---
-    /// Der Hash des vorherigen Private-Public-Keys oder Transaktions-Hash.
+    // --- TECHNICAL LAYER (Layer 2 - Always present) ---
+    /// The hash of the previous private-public key or transaction hash.
     pub prev_hash: String,
 
-    /// Der Hash des ephemeren Public Keys des Empfängers (Private Key).
-    /// Existiert IMMER, auch wenn recipient_id öffentlich ist.
-    /// Option nur für Abwärtskompatibilität bzw. Init-Sonderfälle,
-    /// aber im Standard-Flow nun Pflicht.
+    /// The hash of the recipient's ephemeral public key (private key).
+    /// ALWAYS exists, even if recipient_id is public.
+    /// Option only for backward compatibility or init special cases,
+    /// but now mandatory in the standard flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receiver_ephemeral_pub_hash: Option<String>,
 
-    // --- SOZIALER LAYER (Layer 1 - Abhängig vom Privacy Mode) ---
-    /// ID des Senders der Transaktion.
-    /// Optional, abhängig vom Privacy Mode.
+    // --- SOCIAL LAYER (Layer 1 - Dependent on Privacy Mode) ---
+    /// ID of the transaction sender.
+    /// Optional, dependent on Privacy Mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_id: Option<String>,
 
-    /// Die Signatur ausgeführt durch den Identity-Key (sender_id).
-    /// Muss vorhanden sein, wenn sender_id gesetzt ist.
+    /// The signature executed by the identity key (sender_id).
+    /// Must be present if sender_id is set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_identity_signature: Option<String>,
 
-    /// ID des Empfängers der Transaktion.
-    /// Kann public (did:key) oder anonymisiert sein.
+    /// ID of the transaction recipient.
+    /// Can be public (did:key) or anonymized.
     pub recipient_id: String,
 
-    /// Der Betrag, der bei dieser Transaktion bewegt wurde.
+    /// The amount moved in this transaction.
     pub amount: String,
-    /// Der Restbetrag beim Sender nach einer Teilung. Nur bei `t_type: "split"` vorhanden.
+    /// The remaining amount with the sender after a split. Only present for `t_type: "split"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_remaining_amount: Option<String>,
 
     // --- Layer 2 & Privacy Fields ---
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sender_ephemeral_pub: Option<String>, // Der enthüllte Key (Preimage) für L2-Signatur
+    pub sender_ephemeral_pub: Option<String>, // The revealed key (preimage) for L2 signature
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub change_ephemeral_pub_hash: Option<String>, // Der Anker-Hash für das Restgeld
+    pub change_ephemeral_pub_hash: Option<String>, // The anchor hash for change amount
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub privacy_guard: Option<String>,
@@ -164,71 +167,56 @@ pub struct Transaction {
     pub deletable_at: Option<String>,
 }
 
-/// Repräsentiert eine universelle Signatur (ehemals AdditionalSignature),
-/// die an den Gutschein angehängt wird. Sie kann durch das Feld `role` semantisch
-/// unterschieden werden (z.B. "guarantor").
+/// Represents a universal signature (formerly AdditionalSignature)
+/// attached to the voucher. It can be semantically distinguished
+/// via the `role` field (e.g. "guarantor").
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct VoucherSignature {
-    /// Die eindeutige ID des Gutscheins, auf den sich diese Signatur bezieht.
+    /// The unique ID of the voucher to which this signature refers.
     pub voucher_id: String,
-    /// Die eindeutige ID dieser Signatur.
+    /// The unique ID of this signature.
     pub signature_id: String,
-    /// Eindeutige ID des zusätzlichen Unterzeichners.
+    /// Unique ID of the additional signer.
     pub signer_id: String,
 
-    /// Die digitale Signatur.
+    /// The digital signature.
     pub signature: String,
-    /// Zeitpunkt der Signatur im ISO 8601-Format.
+    /// Timestamp of the signature in ISO 8601 format.
     pub signature_time: String,
-    /// Definiert die Rolle oder den Zweck dieser Signatur (z.B. "guarantor", "notary").
+    /// Defines the role or purpose of this signature (e.g. "guarantor", "notary").
     pub role: String,
 
-    /// Optionale, detaillierte Profil-Informationen über den Unterzeichner.
+    /// Optional detailed profile information about the signer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<PublicProfile>,
 }
 
-/// Definiert die Template-Daten, die aus dem Standard-TOML kopiert wurden.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-pub struct VoucherTemplateData {
-    /// Eine allgemeine, menschenlesbare Beschreibung des spezifischen Gutscheins.
-    pub description: String,
-    /// Der primäre Einlösezweck, übernommen vom Standard (z.B. "goods_or_services").
-    pub primary_redemption_type: String,
-    /// Gibt an, ob der Gutschein in kleinere Einheiten aufgeteilt werden kann.
-    pub allow_partial_transfers: bool,
-    /// Die bei der Erstellung gültige Mindestgültigkeitsdauer aus dem Standard (ISO 8601 Duration).
-    pub issuance_minimum_validity_duration: String,
-    /// Ein optionaler Fußnotentext, der vom Standard vorgegeben wird.
-    pub footnote: String,
-}
-
-/// Das Haupt-Struct, das den universellen Gutschein-Container repräsentiert.
-/// Es fasst alle anderen Strukturen und Felder gemäß dem allgemeinen JSON-Schema zusammen.
+/// The main struct representing the universal voucher container.
+/// It combines all other structures and fields according to the general JSON schema.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct Voucher {
-    /// Definiert den Standard, dem dieser Gutschein folgt.
+    /// Defines the standard followed by this voucher.
     pub voucher_standard: VoucherStandard,
-    /// Die eindeutige ID dieses spezifischen Gutscheins.
+    /// The unique ID of this specific voucher.
     pub voucher_id: String,
-    /// Ein zufälliges Nonce, um den ersten `prev_hash` unvorhersehbar zu machen.
+    /// A random nonce to make the first `prev_hash` unpredictable.
     pub voucher_nonce: String,
-    /// Das Erstellungsdatum des Gutscheins im ISO 8601-Format.
+    /// The creation date of the voucher in ISO 8601 format.
     pub creation_date: String,
-    /// Das Gültigkeitsdatum des Gutscheins im ISO 8601-Format.
+    /// The expiration date of the voucher in ISO 8601 format.
     pub valid_until: String,
-    /// Eine Markierung, ob es sich um einen nicht einlösbaren Testgutschein handelt.
+    /// A flag indicating whether this is a non-redeemable test voucher.
     pub non_redeemable_test_voucher: bool,
-    /// Definiert den Nennwert des Gutscheins.
+    /// Defines the nominal value of the voucher.
     pub nominal_value: ValueDefinition,
-    /// Informationen zur Besicherung des Gutscheins.
+    /// Optional collateral/backing information for the voucher (typically `None` for personal_guarantee).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub collateral: Option<Collateral>,
-    /// Detaillierte Informationen zum Ersteller des Gutscheins.
+    /// Detailed information about the creator of the voucher.
     #[serde(rename = "creator")]
     pub creator_profile: PublicProfile,
-    /// Eine chronologische Liste aller Transaktionen dieses Gutscheins.
+    /// A chronological list of all transactions of this voucher.
     pub transactions: Vec<Transaction>,
-    /// Ein Array für alle Signaturen (inkl. Bürgen).
+    /// An array for all signatures (incl. guarantors).
     pub signatures: Vec<VoucherSignature>,
 }

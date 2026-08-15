@@ -141,24 +141,24 @@ pub mod base58_64_opt {
     }
 }
 
-/// Vorbereitung für die spätere Anti-Spam/Sybil Zugangskontrolle.
+/// Preparation for future anti-spam / Sybil access control.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct L2AuthPayload {
     #[serde(with = "crate::models::layer2_api::base58_32")]
-    pub ephemeral_pubkey: [u8; 32], // Der temporäre Sender-Key
+    pub ephemeral_pubkey: [u8; 32], // The temporary sender key
     #[serde(with = "crate::models::layer2_api::base58_64_opt")]
-    pub auth_signature: Option<[u8; 64]>, // Platzhalter für die spätere Challenge-Signatur
+    pub auth_signature: Option<[u8; 64]>, // Placeholder for future challenge signature
 }
 
-/// Request: Verankern eines Gutscheins (Genesis) oder einer Transaktion
+/// Request: Anchor a voucher (genesis) or a transaction
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct L2LockRequest {
     pub auth: L2AuthPayload,
-    pub layer2_voucher_id: String, // Hex string (64 chars), Pflichtfeld
-    pub ds_tag: Option<String>,    // Hex string (64 chars), None bei 'init'
+    pub layer2_voucher_id: String, // Hex string (64 chars), mandatory field
+    pub ds_tag: Option<String>,    // Hex string (64 chars), None for 'init'
 
     #[serde(with = "crate::models::layer2_api::base58_32")]
-    pub transaction_hash: [u8; 32], // Der Hash der neuen Transaktion (t_id)
+    pub transaction_hash: [u8; 32], // The hash of the new transaction (t_id)
     pub is_genesis: bool,
     #[serde(with = "crate::models::layer2_api::base58_32")]
     pub sender_ephemeral_pub: [u8; 32],
@@ -176,8 +176,8 @@ pub struct L2LockRequest {
     pub deletable_at: Option<String>, // Only required when is_genesis = true
 }
 
-/// Datenstruktur für einen einzelnen Lock-Eintrag auf dem Layer 2.
-/// Dient als kryptografischer Beweis für den Zustand eines Tags.
+/// Data structure for a single lock entry on Layer 2.
+/// Serves as cryptographic proof for the state of a tag.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct L2LockEntry {
     pub layer2_voucher_id: String,
@@ -195,18 +195,18 @@ pub struct L2LockEntry {
     pub deletable_at: Option<String>,
 }
 
-/// Request: Abfragen des Zustands eines Gutscheins und Abgleich der Transaktionshistorie.
+/// Request: Query the state of a voucher and reconcile transaction history.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct L2StatusQuery {
     pub auth: L2AuthPayload,
     pub layer2_voucher_id: String,
-    /// Der vollständige Base58-String des zu prüfenden Tags (Herausforderung).
+    /// The full Base58 string of the tag to check (challenge).
     pub challenge_ds_tag: String,
-    /// Exponentiell ausgedünnte Liste von Vorgänger-Präfixen (10 Zeichen Base58) zur LCA-Suche.
+    /// Exponentially thinned list of ancestor prefixes (10 characters Base58) for LCA search.
     pub locator_prefixes: Vec<String>,
 }
 
-/// Request: Batch-Upload von mehreren Transaktionen zur Synchronisation.
+/// Request: Batch upload of multiple transactions for synchronization.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct L2BatchLockRequest {
     pub auth: L2AuthPayload,
@@ -214,31 +214,31 @@ pub struct L2BatchLockRequest {
     pub locks: Vec<L2LockRequest>,
 }
 
-/// Response: Das Urteil des L2-Servers über den Zustand eines Tags oder der Kette.
+/// Response: The verdict of the L2 server regarding the state of a tag or the chain.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub enum L2Verdict {
-    /// Der Tag ist vergeben. Beinhaltet den vollständigen Beweis (LockEntry).
+    /// The tag is occupied. Contains the complete proof (LockEntry).
     Verified { lock_entry: L2LockEntry },
-    /// Der Server kennt diesen Tag noch nicht, hat aber einen gemeinsamen Ahnen gefunden.
+    /// The server does not yet know this tag, but found a common ancestor.
     MissingLocks {
-        /// Das 10-Zeichen Präfix der letzten gemeinsamen Transaktion.
+        /// The 10-character prefix of the last common transaction.
         sync_point: String,
     },
-    /// Der Gutschein (Voucher ID) ist dem Layer 2 System gänzlich unbekannt.
+    /// The voucher (Voucher ID) is completely unknown to the Layer 2 system.
     UnknownVoucher,
-    /// Veraltet/Fallback: Allgemeine Bestätigung (sollte durch Verified ersetzt werden).
+    /// Deprecated/Fallback: General confirmation (should be replaced by Verified).
     #[serde(rename = "Ok")]
     Ok {
         #[serde(with = "crate::models::layer2_api::base58_64")]
         signature: [u8; 64],
     },
-    /// Die Anfrage wurde vom Server abgelehnt (z.B. ungültige Signatur).
+    /// The request was rejected by the server (e.g. invalid signature).
     Rejected { reason: String },
 }
 
-/// Umschlag für alle L2-Server-Antworten.
-/// Garantiert die Authentizität des Servers durch eine Ed25519-Signatur.
+/// Envelope for all L2 server responses.
+/// Guarantees the authenticity of the server via an Ed25519 signature.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct L2ResponseEnvelope {
     pub verdict: L2Verdict,

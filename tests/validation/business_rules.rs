@@ -1,10 +1,10 @@
 // tests/validation/business_rules.rs
 // cargo test --test validation_tests
 //!
-//! Integrationstests, die die korrekte Anwendung von komplexen Geschäftsregeln
-//! und die logische Konsistenz eines `Voucher`-Objekts verifizieren.
+//! Integration tests verifying the correct application of complex business rules
+//! and the logical consistency of a `Voucher` object.
 
-// Wir importieren die oeffentlichen Typen, die in lib.rs re-exportiert wurden.
+// We import public types re-exported in lib.rs.
 use human_money_core::crypto_utils::get_hash;
 use human_money_core::error::ValidationError;
 use human_money_core::test_utils;
@@ -19,7 +19,7 @@ use human_money_core::test_utils::{
     create_male_guarantor_signature, create_voucher_for_manipulation, derive_holder_key,
 };
 
-/// Prüft grundlegende strukturelle und logische Regeln.
+/// Verifies fundamental structural and logical rules.
 #[cfg(test)]
 mod structural_integrity {
     use super::*;
@@ -47,9 +47,7 @@ mod structural_integrity {
             voucher_data,
             minuto_standard,
             minuto_hash,
-            &creator_identity.signing_key,
-            "en",
-        );
+            &creator_identity.signing_key);
         voucher
             .signatures
             .push(create_male_guarantor_signature(&voucher));
@@ -86,9 +84,7 @@ mod structural_integrity {
             voucher_data,
             standard,
             standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        );
+            &creator_identity.signing_key);
         voucher
             .signatures
             .push(create_male_guarantor_signature(&voucher));
@@ -98,9 +94,9 @@ mod structural_integrity {
 
         voucher.valid_until = "2020-01-01T00:00:00Z".to_string();
 
-        // Dank Signature-Bypass müssen wir nicht mehr mühsam re-signieren.
-        // Wir müssen lediglich die voucher_id und prev_hash aktualisieren,
-        // da diese strukturell auf Konsistenz geprüft werden.
+        // Thanks to signature bypass, we no longer need to tediously re-sign.
+        // We only need to update voucher_id and prev_hash,
+        // as these are structurally checked for consistency.
 
         let mut voucher_to_hash = voucher.clone();
         voucher_to_hash.voucher_id = "".to_string();
@@ -118,7 +114,7 @@ mod structural_integrity {
         human_money_core::set_signature_bypass(true);
         let _validation_result = validate_voucher_against_standard(&voucher, standard);
         human_money_core::set_signature_bypass(false);
-        // --- ENDE KORREKTUR ---
+        // --- END OF FIX ---
 
         let validation_result = validate_voucher_against_standard(&voucher, standard);
 
@@ -150,9 +146,7 @@ mod structural_integrity {
             voucher_data,
             standard,
             standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        )
+            &creator_identity.signing_key)
         .unwrap();
         voucher.transactions[0].amount = "not-a-number".to_string();
 
@@ -191,9 +185,7 @@ mod structural_integrity {
             voucher_data,
             standard,
             standard_hash,
-            &sender.signing_key,
-            "en",
-        );
+            &sender.signing_key);
         let (mut voucher_after_split, _) = create_transaction(
             &initial_voucher,
             standard,
@@ -212,15 +204,15 @@ mod structural_integrity {
         human_money_core::set_signature_bypass(true);
         let validation_result = validate_voucher_against_standard(&voucher_after_split, standard);
         human_money_core::set_signature_bypass(false);
-        // KORREKTUR: P2PKH-Validierung kann vor der Time-Order-Validierung fehlschlagen.
-        // Wir akzeptieren jeden Validierungsfehler als Erfolg.
+        // CORRECTION: P2PKH validation may fail before time-order validation.
+        // We accept any validation error as success.
         let err = validation_result.unwrap_err();
         assert!(matches!(err, VoucherCoreError::Validation(_)));
     }
 }
 
 
-/// Prüft verhaltensbasierte Geschäftsregeln aus dem Standard.
+/// Checks behavior-based business rules from the standard.
 #[cfg(test)]
 mod behavioral_rules {
     use super::*;
@@ -235,12 +227,11 @@ mod behavioral_rules {
 
     #[test]
     fn test_validate_voucher_when_validity_is_too_short_then_fails() {
-        // TEST ENTFERNT (OBSOLET):
-        // Diese statische Prüfung (ValidityDurationTooShort) wurde aus `validate_voucher_against_standard`
-        // entfernt und durch den "Gatekeeper" (in `create_voucher`) und die "Firewall" (in `create_transaction`)
-        // ersetzt.
-        // Der Test `core_logic::lifecycle::test_validity_duration_rules` (Testfall 1)
-        // deckt den "Gatekeeper"-Teil bereits ab.
+        // TEST REMOVED (OBSOLETE):
+        // This static check (ValidityDurationTooShort) was removed from `validate_voucher_against_standard`
+        // and replaced by the "gatekeeper" (in `create_voucher`) and "firewall" (in `create_transaction`).
+        // The test `core_logic::lifecycle::test_validity_duration_rules` (test case 1)
+        // already covers the "gatekeeper" part.
     }
 
     #[test]
@@ -264,9 +255,7 @@ mod behavioral_rules {
             voucher_data,
             &standard,
             &standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        );
+            &creator_identity.signing_key);
         let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date).unwrap();
         let long_validity_dt = creation_dt + chrono::Duration::days(365 * 6);
         voucher.valid_until = long_validity_dt.to_rfc3339();
@@ -316,9 +305,7 @@ mod behavioral_rules {
             voucher_data,
             &standard,
             &standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        );
+            &creator_identity.signing_key);
         let result1 = validate_voucher_against_standard(&voucher_bad_nominal, &standard);
         assert!(matches!(
             result1.unwrap_err(),
@@ -340,9 +327,7 @@ mod behavioral_rules {
             },
             &standard,
             &standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        )
+            &creator_identity.signing_key)
         .unwrap();
         voucher.transactions[0].amount = "100.123".to_string();
 
@@ -357,7 +342,7 @@ mod behavioral_rules {
 
     #[test]
     fn test_validate_voucher_when_full_transfer_amount_mismatches_then_fails() {
-        // KORREKTUR: Wir brauchen die Secrets, um einen validen P2PKH-Spend zu konstruieren
+        // CORRECTION: We need the secrets to construct a valid P2PKH spend
         let (standard, _, _, recipient, mut voucher, recipient_secrets) =
             test_utils::setup_voucher_with_one_tx();
 
@@ -397,7 +382,7 @@ mod behavioral_rules {
         let dummy_anchor = Some("DummyHash".to_string());
         invalid_transfer_tx.receiver_ephemeral_pub_hash = dummy_anchor.clone();
 
-        // 2. Generate L2 Signature (Neu: direkt auf t_id)
+        // 2. Generate L2 Signature (New: directly on t_id)
         invalid_transfer_tx.t_id = "".to_string();
         invalid_transfer_tx.layer2_signature = None;
         invalid_transfer_tx.sender_identity_signature = None;
@@ -409,14 +394,14 @@ mod behavioral_rules {
         let l2_sig = crypto_utils::sign_ed25519(&sender_ephem_key, &t_id_raw);
         invalid_transfer_tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 
-        let signed_tx = invalid_transfer_tx; // Keine Re-Signierung nötig
+        let signed_tx = invalid_transfer_tx; // No re-signing required
         voucher.transactions.push(signed_tx);
 
         human_money_core::set_signature_bypass(true);
         let result = validate_voucher_against_standard(&voucher, &standard);
         human_money_core::set_signature_bypass(false);
 
-        // KORREKTUR: P2PKH kann vor Business-Rules fehlschlagen. Jeder Validierungsfehler ist akzeptabel.
+        // CORRECTION: P2PKH may fail before business rules. Any validation error is acceptable.
         assert!(matches!(
             result.unwrap_err(),
             VoucherCoreError::Validation(_)
@@ -445,9 +430,7 @@ mod behavioral_rules {
             },
             &non_allow_partial_transfers_standard,
             &hash,
-            &identity.signing_key,
-            "en",
-        )
+            &identity.signing_key)
         .unwrap();
 
         let result = create_transaction(
@@ -470,18 +453,18 @@ mod behavioral_rules {
     fn test_create_transaction_when_type_is_not_allowed_then_fails() {
         let (restricted_standard, hash) =
             test_utils::create_custom_standard(&MINUTO_STANDARD.0, |s| {
-                // KORREKTUR: Verwende `get_or_insert_with` statt `unwrap()`, um robust
-                // gegen `None`-Werte in der Standard-Definition zu sein.
+                // CORRECTION: Use `get_or_insert_with` instead of `unwrap()` to be robust
+                // against `None` values in standard definition.
                 
 
-                // 1. Setze die Regel, die wir testen wollen (nur 'init' erlaubt)
+                // 1. Set the rule we want to test (only 'init' allowed)
                 s.immutable.features.allowed_t_types = vec!["init".to_string()];
                 
                 s.immutable.features.allow_partial_transfers = false;
-                // 3. (FIX) Deaktiviere die Issuance-Firewall, damit der Test nicht daran scheitert.
+                // 3. (FIX) Disable issuance firewall so the test doesn't fail on it.
                 s.immutable.issuance.issuance_minimum_validity_duration = "".to_string();
 
-                // 2. Entschärfe die 'max=1' Transaktions-Regel des Minuto-Standards
+                // 2. Relax the 'max=1' transaction rule of the Minuto standard
                 s.immutable.custom_rules.insert(
                     "max_tx".to_string(),
                     human_money_core::models::voucher_standard_definition::DynamicRule {
@@ -492,7 +475,7 @@ mod behavioral_rules {
             });
         let identity = &ACTORS.alice;
 
-        // Erstelle einen Basis-Gutschein, der manipuliert werden kann.
+        // Create a base voucher that can be manipulated.
         let mut voucher = create_voucher_for_manipulation(
             NewVoucherData {
                 creator_profile: PublicProfile {
@@ -508,11 +491,9 @@ mod behavioral_rules {
             },
             &restricted_standard,
             &hash,
-            &identity.signing_key,
-            "en",
-        );
+            &identity.signing_key);
 
-        // Füge die zwei für den Standard erforderlichen Bürgen hinzu, damit das Setup valide ist.
+        // Add the two guarantors required by the standard so the setup is valid.
         voucher
             .signatures
             .push(create_male_guarantor_signature(&voucher));
@@ -531,33 +512,30 @@ mod behavioral_rules {
             None,
         );
 
-        // KORREKTUR: Verwende `matches!` für eine robuste Fehlerprüfung statt String-Vergleich.
+        // CORRECTION: Use `matches!` for robust error checking instead of string comparison.
         assert!(matches!(
             result.unwrap_err(),
             VoucherCoreError::Validation(ValidationError::TransactionTypeNotAllowed { t_type, .. }) if t_type == "transfer"
         ));
     }
 
-    /// Testet die "Issuance Firewall" (issuance_minimum_validity_duration).
-    /// Diese Tests validieren die "Gatekeeper"-Funktion (bei Erstellung) und
-    // die "Firewall"-Funktion (bei Transaktion).
+    /// Tests the "issuance firewall" (issuance_minimum_validity_duration).
+    /// These tests validate the "gatekeeper" function (during creation) and
+    // the "firewall" function (during transaction).
     #[cfg(test)]
     mod issuance_firewall {
         use super::*;
         use human_money_core::services::voucher_manager::VoucherManagerError;
         use human_money_core::test_utils::{FREETALER_STANDARD, create_custom_standard};
 
-        /// Erstellt eine Testumgebung mit den benötigten Akteuren und Standards.
+        /// Sets up a test environment with the required actors and standards.
         struct TestSetup {
             creator_pc: &'static test_utils::TestUser,
             creator_mobil: test_utils::TestUser,
             user_b: &'static test_utils::TestUser,
             user_c: &'static test_utils::TestUser,
             standard_a: (human_money_core::VoucherStandardDefinition, String), // P1Y Firewall
-            standard_b: (
-                &'static human_money_core::VoucherStandardDefinition,
-                &'static String,
-            ), // Keine Firewall
+            standard_b: (human_money_core::VoucherStandardDefinition, String), // No Firewall
         }
 
         fn setup() -> TestSetup {
@@ -565,17 +543,23 @@ mod behavioral_rules {
             let user_b = &ACTORS.bob;
             let user_c = &ACTORS.charlie;
 
-            // Erstellt einen "Mobil"-Akteur mit derselben Mnemonic (gleiche PK), aber anderem Präfix.
+            // Creates a "mobile" actor with the same mnemonic (same PK), but different prefix.
             let creator_mobil = test_utils::user_from_mnemonic_slow(
                 &creator_pc.mnemonic,
                 creator_pc.passphrase,
                 Some("am"), // "alice mobile"
             );
 
-            // Standard A: Mit 1-Jahres-Firewall
+            // Standard A: With 1-year firewall
             let (standard_a, hash_a) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
                 s.immutable.issuance.issuance_minimum_validity_duration = "P1Y".to_string();
                 s.immutable.issuance.validity_duration_range = vec!["P1Y".to_string(), "P2Y".to_string()];
+            });
+
+            // Standard B: Without firewall / with P0M min range
+            let (standard_b, hash_b) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
+                s.immutable.issuance.issuance_minimum_validity_duration = "".to_string();
+                s.immutable.issuance.validity_duration_range = vec!["P0M".to_string(), "P10Y".to_string()];
             });
 
             TestSetup {
@@ -584,11 +568,11 @@ mod behavioral_rules {
                 user_b,
                 user_c,
                 standard_a: (standard_a, hash_a),
-                standard_b: (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1),
+                standard_b: (standard_b, hash_b),
             }
         }
 
-        /// Hilfsfunktion zum Erstellen von Test-Voucher-Daten.
+        /// Helper function to create test voucher data.
         fn create_voucher_data(creator: &test_utils::TestUser, duration: &str) -> NewVoucherData {
             NewVoucherData {
                 creator_profile: PublicProfile {
@@ -604,8 +588,8 @@ mod behavioral_rules {
             }
         }
 
-        /// Hilfsfunktion, um einen Gutschein nach Manipulation strukturell valide zu machen (IDs und Hashes).
-        /// Signaturen werden NICHT aktualisiert, da wir mit Signature-Bypass arbeiten.
+        /// Helper function to make a voucher structurally valid after manipulation (IDs and hashes).
+        /// Signatures are NOT updated because we work with signature bypass.
         fn update_voucher_hashes_for_test(
             mut voucher: human_money_core::Voucher,
         ) -> human_money_core::Voucher {
@@ -615,7 +599,7 @@ mod behavioral_rules {
             voucher_to_hash.transactions.clear();
             voucher_to_hash.signatures.clear();
 
-            // 1. Berechne den neuen Hash der Stammdaten (die neue voucher_id)
+            // 1. Compute new hash of master data (new voucher_id)
             let hash = crypto_utils::get_hash(to_canonical_json(&voucher_to_hash).unwrap());
             voucher.voucher_id = hash;
 
@@ -627,7 +611,7 @@ mod behavioral_rules {
                 };
                 voucher.transactions[0].prev_hash = new_init_prev_hash;
 
-                // Wir aktualisieren die t_id, damit die Kette strukturell passt
+                // Update t_id so the chain fits structurally
                 for i in 0..voucher.transactions.len() {
                     if i > 0 {
                         let prev_hash = crypto_utils::get_hash(
@@ -645,23 +629,21 @@ mod behavioral_rules {
         }
 
         #[test]
-        /// Testet Fall 1 (Gatekeeper): Erstellung schlägt fehl, wenn Gültigkeit < Regel.
+        /// Tests Case 1 (Gatekeeper): Creation fails if validity < rule.
         fn test_gatekeeper_blocks_creation_of_too_short_voucher() {
             let setup = setup();
             let (standard_a, hash_a) = (&setup.standard_a.0, &setup.standard_a.1);
 
-            // Szenario: Erstelle Gutschein mit P6M Gültigkeit (Regel = P1Y)
+            // Scenario: Create voucher with P6M validity (rule = P1Y)
             let voucher_data = create_voucher_data(setup.creator_pc, "P6M");
 
             let result = create_voucher(
                 voucher_data,
                 standard_a,
                 hash_a,
-                &setup.creator_pc.signing_key,
-                "en",
-            );
+                &setup.creator_pc.signing_key);
 
-            // Erwartung: Die Erstellung (Gatekeeper) schlägt fehl.
+            // Expectation: Creation (gatekeeper) fails.
             assert!(matches!(
                 result.unwrap_err(),
                 VoucherCoreError::Manager(VoucherManagerError::InvalidValidityDuration(_))
@@ -669,23 +651,21 @@ mod behavioral_rules {
         }
 
         #[test]
-        /// Testet Fall 1 (Firewall): Transaktion schlägt fehl, wenn Restgültigkeit < Regel.
+        /// Tests Case 1 (Firewall): Transaction fails if remaining validity < rule.
         fn test_firewall_blocks_expired_issuance_to_third_party() {
             let setup = setup();
             let (standard_a, hash_a) = (&setup.standard_a.0, &setup.standard_a.1);
 
-            // 1. Erstelle GÜLTIGEN Gutschein (P2Y > P1Y)
+            // 1. Create VALID voucher (P2Y > P1Y)
             let voucher_data = create_voucher_data(setup.creator_pc, "P2Y");
             let mut voucher = create_voucher(
                 voucher_data,
                 standard_a,
                 hash_a,
-                &setup.creator_pc.signing_key,
-                "en",
-            )
+                &setup.creator_pc.signing_key)
             .unwrap();
 
-            // 2. Simuliere Zeitablauf: Manipuliere valid_until auf 6 Monate in der Zukunft
+            // 2. Simulate passage of time: Manipulate valid_until to 6 months in the future
             let now = chrono::Utc::now();
             let six_months_from_now =
                 human_money_core::services::voucher_manager::add_iso8601_duration(now, "P6M")
@@ -697,7 +677,7 @@ mod behavioral_rules {
                 six_months_from_now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
             voucher = update_voucher_hashes_for_test(voucher);
 
-            // 3. Aktion: Versuche zu senden (Creator -> Dritter)
+            // 3. Action: Attempt to send (creator -> third party)
             human_money_core::set_signature_bypass(true);
             let result = create_transaction(
                 &voucher,
@@ -711,7 +691,7 @@ mod behavioral_rules {
             );
             human_money_core::set_signature_bypass(false);
 
-            // 4. Erwartung: Firewall schlägt fehl
+            // 4. Expectation: Firewall fails
             assert!(matches!(
                 result.unwrap_err(),
                 VoucherCoreError::Manager(VoucherManagerError::InvalidValidityDuration(msg))
@@ -720,7 +700,7 @@ mod behavioral_rules {
         }
 
         #[test]
-        /// Testet Fall 2: Transaktion (Creator -> Creator) ist trotz abgelaufener Frist erfolgreich (SAI-Ausnahme).
+        /// Tests Case 2: Transaction (creator -> creator) succeeds despite expired deadline (SAI exception).
         fn test_firewall_allows_internal_creator_transfer_when_expired() {
             let setup = setup();
             let (standard_a, hash_a) = (&setup.standard_a.0, &setup.standard_a.1);
@@ -729,12 +709,10 @@ mod behavioral_rules {
                 voucher_data,
                 standard_a,
                 hash_a,
-                &setup.creator_pc.signing_key,
-                "en",
-            )
+                &setup.creator_pc.signing_key)
             .unwrap();
 
-            // Simuliere Zeitablauf
+            // Simulate passage of time
             let now = chrono::Utc::now();
             let six_months_from_now =
                 human_money_core::services::voucher_manager::add_iso8601_duration(now, "P6M")
@@ -746,7 +724,7 @@ mod behavioral_rules {
                 six_months_from_now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
             voucher = update_voucher_hashes_for_test(voucher);
 
-            // Aktion: Sende an Creator_Mobil (gleiche PK, anderer Prefix)
+            // Action: Send to Creator_Mobil (same PK, different prefix)
             human_money_core::set_signature_bypass(true);
             let result = create_transaction(
                 &voucher,
@@ -763,7 +741,7 @@ mod behavioral_rules {
         }
 
         #[test]
-        /// Testet Fall 3: Transaktion (Nicht-Ersteller -> Dritter) ist trotz abgelaufener Frist erfolgreich.
+        /// Tests Case 3: Transaction (non-creator -> third party) succeeds despite expired deadline.
         fn test_firewall_allows_non_creator_transfer_when_expired() {
             let setup = setup();
             let (standard_a, hash_a) = (&setup.standard_a.0, &setup.standard_a.1);
@@ -772,12 +750,10 @@ mod behavioral_rules {
                 voucher_data,
                 standard_a,
                 hash_a,
-                &setup.creator_pc.signing_key,
-                "en",
-            )
+                &setup.creator_pc.signing_key)
             .unwrap();
 
-            // Sende an User_B (erfolgreich)
+            // Send to User_B (successful)
             let (voucher_at_b, secrets_b) = create_transaction(
                 &voucher,
                 standard_a,
@@ -790,8 +766,8 @@ mod behavioral_rules {
             )
             .unwrap();
 
-            // Simuliere Zeitablauf mittels Mock-Time: Wir springen 1.5 Jahre in die Zukunft (18 Monate)
-            // Gutschein valid: 24 Monate. Rest: 6 Monate (< 1 Jahr limit).
+            // Simulate passage of time via mock time: Jump 1.5 years into the future (18 months)
+            // Voucher valid: 24 months. Remaining: 6 months (< 1 year limit).
             let now = chrono::Utc::now();
             let future_time =
                 human_money_core::services::voucher_manager::add_iso8601_duration(now, "P18M")
@@ -800,12 +776,12 @@ mod behavioral_rules {
 
             human_money_core::services::utils::set_mock_time(Some(future_time_str));
 
-            // Aktion: User_B (Nicht-Ersteller) sendet an User_C
+            // Action: User_B (non-creator) sends to User_C
             let user_b_seed = bs58::decode(secrets_b.recipient_seed).into_vec().unwrap();
             let user_b_ephemeral_key =
                 ed25519_dalek::SigningKey::from_bytes(&user_b_seed.try_into().unwrap());
 
-            // Aktion: User_B (Nicht-Ersteller) sendet an User_C
+            // Action: User_B (non-creator) sends to User_C
             let result = create_transaction(
                 &voucher_at_b,
                 standard_a,
@@ -824,7 +800,7 @@ mod behavioral_rules {
         }
 
         #[test]
-        /// Testet Fall 4: Transaktion (Creator -> Dritter) ist erfolgreich, wenn Gültigkeit ausreicht.
+        /// Tests Case 4: Transaction (creator -> third party) succeeds if validity is sufficient.
         fn test_firewall_allows_valid_issuance_to_third_party() {
             let setup = setup();
             let (standard_a, hash_a) = (&setup.standard_a.0, &setup.standard_a.1);
@@ -833,9 +809,7 @@ mod behavioral_rules {
                 voucher_data,
                 standard_a,
                 hash_a,
-                &setup.creator_pc.signing_key,
-                "en",
-            )
+                &setup.creator_pc.signing_key)
             .unwrap();
 
             let result = create_transaction(
@@ -852,23 +826,21 @@ mod behavioral_rules {
         }
 
         #[test]
-        /// Testet Fall 5: Transaktion (Creator -> Dritter) ist erfolgreich, wenn Regel nicht definiert ist.
+        /// Tests Case 5: Transaction (creator -> third party) succeeds if rule is undefined.
         fn test_firewall_allows_transfer_if_rule_is_undefined() {
             let setup = setup();
-            let (standard_b, hash_b) = (setup.standard_b.0, setup.standard_b.1); // Standard B (keine Regel)
+            let (standard_b, hash_b) = (&setup.standard_b.0, &setup.standard_b.1); // Standard B (no rule)
 
-            // Erstelle Gutschein mit P6M (wäre bei Standard A ungültig)
+            // Create voucher with P6M (would be invalid for Standard A)
             let voucher_data = create_voucher_data(setup.creator_pc, "P6M");
             let voucher = create_voucher(
                 voucher_data,
                 standard_b,
                 hash_b,
-                &setup.creator_pc.signing_key,
-                "en",
-            )
+                &setup.creator_pc.signing_key)
             .unwrap();
 
-            // Aktion: Sende an User_B
+            // Action: Send to User_B
             let result = create_transaction(
                 &voucher,
                 standard_b,
@@ -883,7 +855,7 @@ mod behavioral_rules {
         }
     }
 
-    /// Prüft die neuen Sicherheitsmerkmale (Layer 2 Anchor).
+    /// Checks the new security features (Layer 2 Anchor).
     #[cfg(test)]
     mod layer2_security {
         use super::*;
@@ -911,9 +883,7 @@ mod behavioral_rules {
                 voucher_data,
                 standard,
                 standard_hash,
-                &creator.signing_key,
-                "en",
-            )
+                &creator.signing_key)
             .expect("Voucher creation should succeed");
 
             let init_tx = &voucher.transactions[0];
@@ -987,3 +957,4 @@ mod behavioral_rules {
         }
     }
 }
+

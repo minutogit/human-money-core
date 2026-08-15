@@ -55,10 +55,10 @@ impl AppService {
         }
     }
 
-    /// Setzt den lokalen Override für einen spezifischen Konflikt.
+    /// Sets the local override for a specific conflict.
     ///
     /// # Errors
-    /// Schlägt fehl, wenn das Wallet gesperrt ist oder der Beweis nicht existiert.
+    /// Fails if the wallet is locked or the proof does not exist.
     pub fn set_conflict_local_override(
         &mut self,
         proof_id: &str,
@@ -115,7 +115,7 @@ impl AppService {
         }
     }
 
-    /// Importiert einen Beweis direkt als Objekt.
+    /// Imports a proof directly as an object.
     pub fn import_proof(&mut self, proof: ProofOfDoubleSpend, password: Option<&str>) -> Result<(), AppFacadeError> {
         // --- FORK-LOCK CHECK ---
         self.check_fork_lock(password).map_err(AppFacadeError::from)?;

@@ -90,7 +90,7 @@ mod tests {
             ..Default::default()
         };
         let voucher = service
-            .create_new_voucher(&freetaler_toml(), "en", data, Some(pw))
+            .create_new_voucher(&freetaler_toml(), data, Some(pw))
             .expect("Voucher creation failed");
         voucher.voucher_id
     }

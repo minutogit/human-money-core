@@ -10,7 +10,7 @@ fn test_wallet_cloning_protection_and_handover() {
     let instance_a = "device-a".to_string();
     let instance_b = "device-b".to_string();
 
-    // 1. Erstelle Wallet auf Gerät A
+    // 1. Create wallet on device A
     let mut service_a = AppService::new(dir.path()).unwrap();
     service_a.create_profile(
         "Alice",
@@ -24,27 +24,27 @@ fn test_wallet_cloning_protection_and_handover() {
 
     let folder_name = service_a.list_profiles().unwrap()[0].folder_name.clone();
 
-    // Login auf Gerät A erfolgreich
+    // Login on device A succeeds
     service_a.login(&folder_name, password, false, instance_a.clone()).unwrap();
     service_a.logout();
 
-    // 2. Simuliere Klonen: Login auf Gerät B mit demselben Verzeichnis
+    // 2. Simulate cloning: Login on device B using the same directory
     let mut service_b = AppService::new(dir.path()).unwrap();
     let login_result = service_b.login(&folder_name, password, false, instance_b.clone());
     
     assert!(login_result.is_err(), "Login on device B should fail due to device mismatch");
     assert!(login_result.unwrap_err().to_string().contains("Device Mismatch"), "Error message should mention device mismatch");
 
-    // 3. Handover auf Gerät B erzwingen
+    // 3. Force handover to device B
     service_b.handover_to_this_device(&folder_name, password, instance_b.clone())
         .expect("Handover to device B should succeed");
 
-    // Wallet auf Gerät B nun einsatzbereit
+    // Wallet on device B is now ready to use
     assert!(service_b.is_wallet_unlocked());
     let id_b = service_b.get_user_id().unwrap();
     assert_eq!(id_b, alice.user_id);
 
-    // 4. Zurück zu Gerät A: Nun sollte Gerät A gesperrt sein (da Epoche auf B erhöht wurde)
+    // 4. Back to device A: Device A should now be locked (since epoch was incremented on B)
     let mut service_a_again = AppService::new(dir.path()).unwrap();
     let login_a_result = service_a_again.login(&folder_name, password, false, instance_a.clone());
     
@@ -59,8 +59,8 @@ fn test_legacy_wallet_migration() {
     let password = "correct-password-123";
     let instance_new = "device-new".to_string();
 
-    // 1. Erstelle ein "Legacy" Wallet (simuliert durch leere instance_id im Siegel)
-    // Wir nutzen den AppService, um erst eins zu erstellen und dann das Siegel zu manipulieren.
+    // 1. Create a "Legacy" wallet (simulated by empty instance_id in the seal)
+    // We use AppService to create one first and then manipulate the seal.
     {
         let mut service = AppService::new(dir.path()).unwrap();
         service.create_profile(
@@ -70,17 +70,17 @@ fn test_legacy_wallet_migration() {
             alice.prefix,
             password,
             human_money_core::services::mnemonic::MnemonicLanguage::English,
-            "".to_string(), // Leere ID = Legacy
+            "".to_string(), // Empty ID = Legacy
         ).unwrap();
     }
 
     let mut service_new = AppService::new(dir.path()).unwrap();
     let folder_name = service_new.list_profiles().unwrap()[0].folder_name.clone();
 
-    // 2. Login mit neuer ID auf Legacy Wallet sollte klappen (Migration)
+    // 2. Login with new ID on legacy wallet should succeed (migration)
     service_new.login(&folder_name, password, false, instance_new.clone()).unwrap();
     
-    // Prüfe ob die Nonce erhöht wurde (Migration nutzt nun update_seal)
+    // Check if the nonce was incremented (migration now uses update_seal)
     {
         use human_money_core::storage::Storage;
         let unlocked = service_new.get_unlocked_mut_for_test();
@@ -89,14 +89,14 @@ fn test_legacy_wallet_migration() {
         let storage = human_money_core::storage::file_storage::FileStorage::new(dir.path().join(&folder_name));
         let seal_record = storage.load_seal(&identity.user_id, &auth).unwrap().unwrap();
         
-        // Initialer Seal in create_profile (Legacy) hatte Nonce 1 (Initial 0 + Update nach Profil-Erstellung).
-        // Migration via update_seal sollte nun Nonce 2 haben.
+        // Initial seal in create_profile (Legacy) had nonce 1 (Initial 0 + update after profile creation).
+        // Migration via update_seal should now have nonce 2.
         assert_eq!(seal_record.seal.payload.tx_nonce, 2, "Nonce should be 2 after migration (prev 1 + 1)");
     }
     
     service_new.logout();
 
-    // 3. Nun ist es gebunden. Login mit anderer ID sollte fehlschlagen.
+    // 3. Now it is bound. Login with a different ID should fail.
     let login_fail = service_new.login(&folder_name, password, false, "wrong-device".to_string());
     assert!(login_fail.is_err());
     assert!(login_fail.unwrap_err().to_string().contains("Device Mismatch"));

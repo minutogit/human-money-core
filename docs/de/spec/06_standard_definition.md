@@ -81,23 +81,24 @@ Diese Variablen werden vom `human_money_core` direkt in performante Rust-Structs
 |---|---|---|
 | `unit` | String | Beschreibt die zählbare Einheit (z.B. "Minuten", "Kilogramm", "Punkte"). |
 | `primary_redemption_type` | String | Enum. Werte: `"goods_or_services"`, `"time"`, `"physical_asset"`. Relevant für steuerliche oder juristische Klassifizierung auf App-Ebene. |
-| `collateral_type` | String | Enum. Werte: `"personal_guarantee"` (Bürgen), `"fiat_backed"`, `"crypto_backed"`. |
+| `collateral_type` | String | Enum. Werte: `"personal_guarantee"` (Bürgen), `"fiat_backed"`, `"crypto_backed"`, `"physical_asset"`. |
 
 #### 5.1.3 Features (Wallet-Verhaltenssteuerung)
 | Feld | Typ | Beschreibung |
 |---|---|---|
 | `allow_partial_transfers` | Boolean | Wenn `true`, darf die Wallet die `split`-Funktion des Cores aufrufen (z.B. 50 von 100 Min versenden). Wenn `false`, kann der Gutschein nur als Ganzes weitergegeben werden (wie ein physischer Geldschein). |
-| `balances_are_summable` | Boolean | UI-Hinweis. Wenn `true`, darf die Wallet dem Nutzer eine große Zahl (z.B. "Saldo: 500 MIN") anzeigen. Wenn `false` (z.B. bei stark heterogenen Gutscheinen), müssen diese als separate Items (wie NFTs) gelistet werden. |
+| `balances_are_summable` | Boolean | **Fungibilitäts- und Aggregationsregel.** Wenn `true`, ist der Standard als fungible Währung definiert und Beträge werden in Wallets und im Core (`TransferSummary`) zu einem Gesamtsaldo aufsummiert. Wenn `false` (z.B. bei heterogenen Einzelgutscheinen oder Dienstleistungsnachweisen), werden Gutscheine als diskrete Einzelzertifikate (wie NFTs) geführt. |
 | `amount_decimal_places` | Integer | Definiert die Teilbarkeit. `0` für Ganzzahlen (z.B. Minuten). `2` für Währungen (z.B. Cents). |
-| `privacy_mode` | String | `"public"`, `"private"`, oder `"flexible"`. Erzwingt oder erlaubt Zero-Knowledge-Proofs für Transaktionen auf Layer 2. |
+| `privacy_mode` | String | `"public"`, `"stealth"`, oder `"flexible"`. Erzwingt oder erlaubt Zero-Knowledge-Proofs für Transaktionen auf Layer 2. |
+| `allowed_t_types` | Array[String] | Erlaubte Transaktions-Typen für Gutscheine dieses Standards (z.B. `["init", "transfer", "split"]`). |
 
 #### 5.1.4 Issuance (Regeln zur Gutschein-Entstehung)
 | Feld | Typ | Beschreibung                                                                                                                                                                                                                                    |
 |---|---|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `validity_duration_range` | Array[String] | ISO 8601 Zeiträume. Definiert den Rahmen, wie lange ein Gutschein maximal gültig sein darf. Bsp: `["P1Y", "P5Y"]` (1 bis 5 Jahre).                                                                                                              |
 | `issuance_minimum_validity_duration` | String | **Zirkulations-Firewall:** Der Erstller darf einen  Gutschein nur dann "in Umlauf" bringen, wenn zu diesem Zeitpunkt noch mindestens dieser Zeitraum als Restgültigkeit übrig ist (Bsp: `"P1Y"`). Verhindert zu schnell ablaufender Gutscheine. |
-| `additional_signatures_range` | Array[Integer] | Anzahl benötigter Mitunterzeichner bei der Erstellung. Bsp: `[2, 3]` (2 bis 3 Bürgen). `[0, 0]` für keine.                                                                                                                                      |
-| `allowed_signature_roles` | Array[String] | Welche Rollen dürfen mitunterzeichnen? (Meist `"guarantor"`, optional `"auditor"` etc.).                                                                                                                                                        |
+| `additional_signatures_range` | Array[Integer] | Anzahl benötigter Mitunterzeichner / Zusatzsignaturen bei der Erstellung. Bsp: `[2, 2]` (2 Zusatzsignaturen wie Bürgen/Revisoren) oder `[0, 0]` für keine. |
+| `allowed_signature_roles` | Array[String] | Welche Rollen dürfen mitunterzeichnen? (z. B. `"guarantor"`, `"auditor"`, `"witness"`, `"trustee"` etc.).                                        |
 
 
 #### 5.1.6 Custom Rules (Deep-Inspection via CEL)
@@ -120,7 +121,7 @@ Hier wird die Common Expression Language (CEL) für Sonderregeln eingebettet. De
 | Feld | Typ | Beschreibung |
 |---|---|---|
 | `default_validity_duration` | String | Welcher Wert soll im "Erstellen"-Formular der Wallet vorausgewählt sein? |
-| `round_up_validity_to` | String | UI-Hinweis: Sollen Ablaufdaten z.B. immer auf das Jahresende (`"P1Y"`) gerundet werden? |
+| `round_up_validity_to` | String | Stichtagsanker für Gutscheinablauf: `"P1D"` (Tagesende), `"P1M"` (Monatsende), `"P3M"` (Quartalsende), `"P6M"` (Halbjahresende) oder `"P1Y"` (Jahresende). Das maximal erlaubte Gültigkeitsdatum bei der Validierung entspricht `round_up(creation_date + max_duration, round_up_validity_to)`. |
 | `server_history_retention` | String | Anweisung an L2-Nodes: Wie lange nach dem Ablaufdatum eines Gutscheins (`expires_at`) müssen die kryptographischen Beweise (Transaktionshistorie) noch gespeichert werden, bevor sie sicher gelöscht (Garbage Collection) werden dürfen? Bsp: `"P6M"` (6 Monate). |
 
 #### 5.2.3 i18n (Übersetzungs-Maps)
@@ -159,6 +160,7 @@ allow_partial_transfers = true
 balances_are_summable = true
 amount_decimal_places = 0
 privacy_mode = "flexible" # Nutzer können L2-Verschleierung pro Transaktion wählen
+allowed_t_types = ["init", "transfer", "split"]
 
 [immutable.issuance]
 # Gutscheine dürfen maximal für 1 bis 5 Jahre ausgestellt werden

@@ -22,7 +22,6 @@ fn test_event_generation_on_create() {
         identity,
         standard,
         standard_hash,
-        "en",
         human_money_core::services::voucher_manager::NewVoucherData {
             nominal_value: human_money_core::models::voucher::ValueDefinition {
                 amount: "100".to_string(),

@@ -276,7 +276,7 @@ impl AppService {
 
     // --- C) Remote Sync Check & Hard Lock ---
 
-    /// Vergleicht ein vom Server heruntergeladenes Siegel mit dem lokalen Siegel.
+    /// Compares a seal downloaded from the server with the local seal.
     pub fn compare_remote_seal(
         &mut self,
         remote_seal_bytes: &[u8],

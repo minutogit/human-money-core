@@ -104,7 +104,6 @@ pub fn add_voucher_to_wallet(
         standard,
         &standard_hash,
         &identity.signing_key,
-        "en",
     );
 
     if with_valid_guarantors {

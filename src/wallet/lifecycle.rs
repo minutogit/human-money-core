@@ -1,7 +1,7 @@
 //! # src/wallet/lifecycle.rs
 //!
-//! Enthält alle Methoden, die sich mit dem "Lebenszyklus" des Wallets
-//! (Erstellung, Laden, Speichern) und der Erstellung neuer Gutscheine befassen.
+//! Contains all methods dealing with the wallet "lifecycle"
+//! (creation, loading, saving) and the creation of new vouchers.
 
 use crate::error::{ValidationError, VoucherCoreError};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
@@ -18,7 +18,7 @@ use crate::wallet::Wallet;
 use crate::wallet::instance::{ValidationFailureReason, VoucherStatus};
 
 impl Wallet {
-    /// Hilfsmethode zum Erzeugen eines neuen Events und Hinzufügen zum RAM-Puffer.
+    /// Helper method to create a new event and add it to the RAM buffer.
     pub fn emit_event(
         &mut self,
         event_type: crate::models::wallet_event::WalletEventType,
@@ -35,7 +35,7 @@ impl Wallet {
         self.pending_events.push(event);
     }
 
-    /// Erstellt ein brandneues, leeres Wallet aus einer Mnemonic-Phrase.
+    /// Creates a brand-new, empty wallet from a mnemonic phrase.
     ///
     /// # ⚠️ CRITICAL SECURITY REQUIREMENT: `local_instance_id`
     /// The `local_instance_id` prevents users from accidentally cloning their wallet 
@@ -107,8 +107,8 @@ impl Wallet {
         Ok((wallet, identity))
     }
 
-    /// Lädt ein existierendes Wallet aus einem `Storage`-Backend.
-    /// Gibt das Wallet und die entschlüsselte UserIdentity zurück.
+    /// Loads an existing wallet from a `Storage` backend.
+    /// Returns the wallet and the decrypted UserIdentity.
     pub fn load<S: Storage>(
         storage: &S,
         auth: &AuthMethod,
@@ -199,13 +199,13 @@ impl Wallet {
         Ok((wallet, identity))
     }
 
-    /// Speichert den aktuellen Zustand des Wallets in einem `Storage`-Backend.
+    /// Saves the current wallet state in a `Storage` backend.
     ///
-    /// **Wichtig:** Die Reihenfolge ist kritisch für die Datensicherheit.
-    /// Zuerst werden UserProfile, VoucherStore, BundleMetadataStore und alle
-    /// Fingerprint-Stores gespeichert. Zuletzt werden die `pending_events`
-    /// an das Event-Log angehängt. Nur wenn ALLE Operationen erfolgreich sind,
-    /// wird `self.pending_events.clear()` aufgerufen.
+    /// **Important:** Order is critical for data safety.
+    /// First UserProfile, VoucherStore, BundleMetadataStore, and all
+    /// fingerprint stores are saved. Finally `pending_events`
+    /// are appended to the event log. Only if ALL operations succeed
+    /// is `self.pending_events.clear()` called.
     pub fn save<S: Storage>(
         &mut self,
         storage: &mut S,
@@ -238,7 +238,7 @@ impl Wallet {
         Ok(())
     }
 
-    /// Setzt das Passwort für ein Wallet in einem `Storage`-Backend zurück.
+    /// Resets the password for a wallet in a `Storage` backend.
     pub fn reset_password<S: Storage>(
         storage: &mut S,
         identity: &UserIdentity,
@@ -247,26 +247,26 @@ impl Wallet {
         storage.reset_password(identity, new_password)
     }
 
-    /// Erstellt einen brandneuen Gutschein und fügt ihn direkt zum Wallet hinzu.
+    /// Creates a brand-new voucher and adds it directly to the wallet.
     ///
-    /// Diese Methode orchestriert die Erstellung eines neuen Gutscheins basierend auf
-    /// einem Standard, signiert ihn mit der Identität des Erstellers und speichert
-    /// ihn sofort im `VoucherStore` mit dem Status `Active`.
+    /// This method orchestrates the creation of a new voucher based on
+    /// a standard, signs it with the creator's identity, and stores
+    /// it immediately in the `VoucherStore` with `Active` status.
     ///
     /// # Arguments
-    /// * `identity` - Die Identität des Erstellers, enthält den Signierschlüssel.
-    /// * `standard_definition` - Die Regeln und Vorlagen des Gutschein-Standards.
-    /// * `data` - Die spezifischen Daten für den neuen Gutschein (z.B. Betrag).
+    /// * `identity` - The identity of the creator, containing the signing key.
+    /// * `verified_standard` - The rules and templates of the voucher standard.
+    /// * `standard_hash` - The hash of the standard.
+    /// * `data` - Specific data for the new voucher (e.g. amount).
     ///
     /// # Returns
-    /// Ein `Result` mit dem vollständig erstellten `Voucher` bei Erfolg.
+    /// A `Result` containing the fully created `Voucher` on success.
     pub fn create_new_voucher(
         &mut self,
         identity: &UserIdentity,
         // The signature is expanded to preserve the verified data
         verified_standard: &VoucherStandardDefinition,
         standard_hash: &str,
-        lang_preference: &str,
         data: NewVoucherData,
     ) -> Result<crate::models::voucher::Voucher, VoucherCoreError> {
         let new_voucher = voucher_manager::create_voucher(
@@ -274,7 +274,6 @@ impl Wallet {
             verified_standard,
             standard_hash,
             &identity.signing_key,
-            lang_preference,
         )?;
 
         // CORRECT STATE MANAGEMENT LOGIC:
@@ -288,7 +287,7 @@ impl Wallet {
         ) {
             Ok(_) => VoucherStatus::Active,
             
-            // Fall 1: Fehlende Signaturen (Incomplete)
+            // Case 1: Missing signatures (Incomplete)
             Err(VoucherCoreError::Validation(ref validation_err @ ValidationError::FieldValueCountOutOfBounds { ref path, ref field, .. }))
             if path == "signatures" && (field == "role" || field == "details.gender") =>
             {
@@ -307,7 +306,7 @@ impl Wallet {
                 }
             },
             
-            // Fall 2: Geschäftsregeln verletzt (Incomplete)
+            // Case 2: Business rules violated (Incomplete)
             Err(VoucherCoreError::Validation(ValidationError::BusinessRuleViolated(msg))) => {
                 VoucherStatus::Incomplete {
                     reasons: vec![ValidationFailureReason::BusinessRule {
@@ -346,8 +345,8 @@ impl Wallet {
         Ok(new_voucher)
     }
 
-    /// Erzwingt die Bindung des Wallets an das aktuelle Gerät (Handover).
-    /// Erhöht die Epoche und setzt die neue instance_id im Siegel.
+    /// Forces binding of the wallet to the current device (handover).
+    /// Increments the epoch and sets the new instance_id in the seal.
     pub fn force_device_handover<S: Storage>(
         &mut self,
         storage: &mut S,
@@ -387,3 +386,4 @@ impl Wallet {
         Ok(new_seal)
     }
 }
+

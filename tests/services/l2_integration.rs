@@ -16,14 +16,14 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use std::collections::HashSet;
 
 pub struct MockL2Node {
-    // Simuliert den RAM-Bloom-Filter (Voucher IDs)
+    // Simulates the RAM bloom filter (voucher IDs)
     vouchers: HashSet<String>,
-    // Simuliert die L2-Datenbank (Key-Value)
+    // Simulates the L2 database (Key-Value)
     // Key: ds_tag (Base58), Value: L2LockEntry
     locks: HashMap<String, HashMap<String, human_money_core::models::layer2_api::L2LockEntry>>,
-    // Simuliert das UTXO Modell für P2PKH Anker
+    // Simulates the UTXO model for P2PKH anchors
     spendable_outputs: HashSet<[u8; 32]>,
-    // Der private Schlüssel des L2-Servers zur Signatur der Urteile
+    // Private key of the L2 server for signing verdicts
     server_key: SigningKey,
 }
 
@@ -61,7 +61,7 @@ impl MockL2Node {
     pub fn handle_lock_request(&mut self, req_bytes: &[u8]) -> Vec<u8> {
         let req: L2LockRequest = serde_json::from_slice(req_bytes).unwrap();
 
-        // --- 1. Autorität Prüfen (layer2_signature) ---
+        // --- 1. Check authority (layer2_signature) ---
         let ephem_key = VerifyingKey::from_bytes(&req.sender_ephemeral_pub)
             .expect("Invalid sender_ephemeral_pub key format");
         let signature = Signature::from_bytes(&req.layer2_signature);
@@ -81,7 +81,7 @@ impl MockL2Node {
         self.vouchers.insert(req.layer2_voucher_id.clone());
 
         let ds_tag = if req.is_genesis {
-            // Bei Genesis nutzen wir die t_id als Key (da kein ds_tag vorhanden)
+            // For genesis we use t_id as key (since no ds_tag is present)
             bs58::encode(req.transaction_hash).into_string()
         } else {
             match &req.ds_tag {
@@ -98,7 +98,7 @@ impl MockL2Node {
         // --- 2. Double Spend Check via ds_tag ---
         let voucher_locks = self.locks.entry(req.layer2_voucher_id.clone()).or_default();
         if let Some(entry) = voucher_locks.get(&ds_tag) {
-            // Wir geben den Beweis zurück
+            // Return the proof
             let verdict = L2Verdict::Verified {
                 lock_entry: entry.clone(),
             };
@@ -150,7 +150,7 @@ impl MockL2Node {
         }
 
         // 3. Logarithmic Locators (LCA Search)
-        // Wir suchen das erste Präfix, das wir kennen
+        // We search for the first prefix we know
         for prefix in &req.locator_prefixes {
             for (ds_tag, _entry) in voucher_locks {
                 if ds_tag.starts_with(prefix) {
@@ -162,7 +162,7 @@ impl MockL2Node {
             }
         }
 
-        // Nichts gefunden -> Synchronisation ab Genesis
+        // Nothing found -> Synchronization from genesis
         let verdict = L2Verdict::MissingLocks {
             sync_point: "genesis".to_string(),
         };
@@ -190,7 +190,6 @@ fn test_l2_double_spend_quarantine() {
     // Create new voucher (Genesis)
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id.clone()),
@@ -212,7 +211,7 @@ fn test_l2_double_spend_quarantine() {
 
     let mut mock_l2 = MockL2Node::new();
 
-    // Server-Identität im Client konfigurieren
+    // Configure server identity in client
     app.get_wallet_mut().unwrap().profile.l2_server_pubkey = Some(mock_l2.get_server_pubkey());
 
     // 1. Genesis Lock
@@ -251,8 +250,8 @@ fn test_l2_double_spend_quarantine() {
     app.create_transfer_bundle(request_tx1, &standards_toml, None, Some(correct_password))
         .unwrap();
 
-    // Hole neue voucher_id (das Wallet erstellt für Split oft neue instances)
-    // Einfachheitshalber nehmen wir die zuletzt modifizierte Instanz die noch Aktive ist
+    // Fetch new voucher_id (wallet often creates new instances for split)
+    // For simplicity, take the last modified instance that is still active
     let summaries_after_tx1 = app
         .get_voucher_summaries(
             None,
@@ -266,7 +265,7 @@ fn test_l2_double_spend_quarantine() {
         .local_instance_id
         .clone();
 
-    // L2 Lock für die neue Transaktion
+    // L2 Lock for the new transaction
     let req_tx1 = app.generate_l2_lock_request(&voucher_id_tx1).unwrap();
     let resp_tx1 = mock_l2.handle_lock_request(&req_tx1);
     let envelope_tx1: L2ResponseEnvelope = serde_json::from_slice(&resp_tx1).unwrap();
@@ -310,19 +309,19 @@ fn test_l2_double_spend_quarantine() {
         .local_instance_id
         .clone();
 
-    // Generiere den L2LockRequest req_valid
+    // Generate L2LockRequest req_valid
     let req_valid_bytes = app.generate_l2_lock_request(&voucher_id_tx2).unwrap();
 
-    // 5. Double Spend Provokation (Hacker ist schneller)
+    // 5. Double spend provocation (hacker is faster)
     let mut req_malicious: L2LockRequest = serde_json::from_slice(&req_valid_bytes).unwrap();
-    req_malicious.transaction_hash[0] = !req_malicious.transaction_hash[0]; // Hacker hat anderen tx Hash
+    req_malicious.transaction_hash[0] = !req_malicious.transaction_hash[0]; // Hacker has different tx hash
 
     let req_malicious_bytes = serde_json::to_vec(&req_malicious).unwrap();
     let resp_malicious = mock_l2.handle_lock_request(&req_malicious_bytes);
     let envelope_malicious: L2ResponseEnvelope = serde_json::from_slice(&resp_malicious).unwrap();
-    assert!(matches!(envelope_malicious.verdict, L2Verdict::Ok { .. })); // L2 Server akzeptiert den Hacker
+    assert!(matches!(envelope_malicious.verdict, L2Verdict::Ok { .. })); // L2 server accepts hacker
 
-    // 6. Legitime Einlösung (wir kommen zu spät)
+    // 6. Legitimate redemption (we arrive too late)
     let resp_tx2 = mock_l2.handle_lock_request(&req_valid_bytes);
     let envelope_tx2: L2ResponseEnvelope = serde_json::from_slice(&resp_tx2).unwrap();
     assert!(matches!(envelope_tx2.verdict, L2Verdict::Verified { .. }));
@@ -330,7 +329,7 @@ fn test_l2_double_spend_quarantine() {
     app.process_l2_response(&voucher_id_tx2, &resp_tx2, Some(correct_password))
         .unwrap();
 
-    // 7. Finale Prüfung
+    // 7. Final check
     let final_details = app.get_voucher_details(&voucher_id_tx2).unwrap();
     assert!(matches!(
         final_details.status,
@@ -358,7 +357,6 @@ fn test_l2_signature_payload_manipulation() {
     // Create new voucher (Genesis)
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id.clone()),
@@ -380,7 +378,7 @@ fn test_l2_signature_payload_manipulation() {
 
     let mut mock_l2 = MockL2Node::new();
 
-    // Server-Identität im Client konfigurieren
+    // Configure server identity in client
     app.get_wallet_mut().unwrap().profile.l2_server_pubkey = Some(mock_l2.get_server_pubkey());
 
     // 1. Genesis Lock
@@ -426,7 +424,7 @@ fn test_l2_signature_payload_manipulation() {
         .local_instance_id
         .clone();
 
-    // 3. Generiere validen L2LockRequest
+    // 3. Generate valid L2LockRequest
     let req_valid_bytes = app.generate_l2_lock_request(&voucher_id_tx1).unwrap();
     let mut req_manipulated: L2LockRequest = serde_json::from_slice(&req_valid_bytes).unwrap();
 
@@ -481,7 +479,6 @@ fn test_l2_fake_double_spend_protection() {
     // Create new voucher (Genesis)
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id.clone()),
@@ -503,7 +500,7 @@ fn test_l2_fake_double_spend_protection() {
 
     let mut mock_l2 = MockL2Node::new();
 
-    // Server-Identität im Client konfigurieren
+    // Configure server identity in client
     app.get_wallet_mut().unwrap().profile.l2_server_pubkey = Some(mock_l2.get_server_pubkey());
 
     // 1. Genesis Lock
@@ -547,7 +544,7 @@ fn test_l2_fake_double_spend_protection() {
         .local_instance_id
         .clone();
 
-    // Legitime Parameter aus der Historie extrahieren
+    // Extract legitimate parameters from history
     let (challenge_ds_tag, l2_voucher_id, expected_ephem_pub) = {
         let wallet = app.get_wallet_for_test().unwrap();
         let instance = wallet.get_voucher_instance(&voucher_id_tx1).unwrap();
@@ -568,9 +565,9 @@ fn test_l2_fake_double_spend_protection() {
         (ds_tag, vid, ephem_bytes)
     };
 
-    // --- Scenario A: Gebrochene Signatur ---
-    // Der Server behauptet einen Double-Spend mit t_id "FAKE", nutzt aber unseren echten Key.
-    // Die Signatur ist aber ungültig (oder einfach Nullen).
+    // --- Scenario A: Broken signature ---
+    // Server claims a double-spend with t_id "FAKE", but uses our real key.
+    // However, signature is invalid (or just zeroes).
     let mut fake_t_id = [0u8; 32];
     fake_t_id[0] = 0xEE;
 
@@ -580,7 +577,7 @@ fn test_l2_fake_double_spend_protection() {
         sender_ephemeral_pub: expected_ephem_pub,
         receiver_ephemeral_pub_hash: None,
         change_ephemeral_pub_hash: None,
-        layer2_signature: [0u8; 64], // Ungültig
+        layer2_signature: [0u8; 64], // Invalid
         deletable_at: None,
     };
 
@@ -595,15 +592,15 @@ fn test_l2_fake_double_spend_protection() {
     );
     assert!(result_a.unwrap_err().to_string().contains("ungültig"));
 
-    // Status prüfen -> muss Active bleiben
+    // Check status -> must remain Active
     assert!(matches!(
         app.get_voucher_details(&voucher_id_tx1).unwrap().status,
         VoucherStatus::Active
     ));
 
-    // --- Scenario B: Fremder Key / Gefälschter Lock ---
-    // Der Server generiert einen eigenen Key, erstellt einen mathematisch korrekten Lock für t_id "FAKE",
-    // aber dieser Key gehört nicht zu unserer Transaktion.
+    // --- Scenario B: Foreign key / forged lock ---
+    // Server generates its own key, creates a mathematically correct lock for t_id "FAKE",
+    // but this key does not belong to our transaction.
     let malicious_key = SigningKey::generate(&mut rand::thread_rng());
     let malicious_pub = malicious_key.verifying_key().to_bytes();
 
@@ -639,7 +636,7 @@ fn test_l2_fake_double_spend_protection() {
     );
     assert!(result_b.unwrap_err().to_string().contains("fremden Key"));
 
-    // Status prüfen -> muss Active bleiben
+    // Check status -> must remain Active
     assert!(matches!(
         app.get_voucher_details(&voucher_id_tx1).unwrap().status,
         VoucherStatus::Active
@@ -666,7 +663,6 @@ fn test_l2_voucher_id_mixup_protection() {
     // Create new voucher (Genesis)
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id.clone()),
@@ -694,7 +690,7 @@ fn test_l2_voucher_id_mixup_protection() {
     app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password))
         .unwrap();
 
-    // Legitime Parameter aus der Historie extrahieren
+    // Extract legitimate parameters from history
     let (_challenge_ds_tag, l2_voucher_id, expected_ephem_pub, t_id) = {
         let wallet = app.get_wallet_for_test().unwrap();
         let instance = wallet.get_voucher_instance(&voucher_id).unwrap();
@@ -721,8 +717,8 @@ fn test_l2_voucher_id_mixup_protection() {
     };
 
     // --- Scenario C: Voucher ID Mix-up ---
-    // Der Server behauptet einen Double-Spend für einen ANDEREN Voucher, nutzt aber dort
-    // unsere echten Daten (Challenge, Key, Signatur).
+    // Server claims a double-spend for ANOTHER voucher, but uses
+    // our real data (challenge, key, signature) there.
     let mut fake_voucher_id = l2_voucher_id.clone();
     if fake_voucher_id.starts_with("0") {
         fake_voucher_id.replace_range(0..1, "1");
@@ -731,10 +727,10 @@ fn test_l2_voucher_id_mixup_protection() {
     }
 
     let mut fake_t_id = t_id;
-    fake_t_id[0] = !fake_t_id[0]; // Andere t_id für Double-Spend Simulation
+    fake_t_id[0] = !fake_t_id[0]; // Different t_id for double-spend simulation
 
-    // Signiere den gefälschten Lock-Eintrag (damit Math-Check PASSES)
-    // Aber wir nutzen die FALSCHE Voucher ID
+    // Sign forged lock entry (so math check PASSES)
+    // But we use the WRONG voucher ID
     let _signing_key = SigningKey::from_bytes(&[1u8; 32]); // Dummy key won't work, we need the real ephemeral or bypass
     // We use signature bypass for simplicity in forging the math-correct lock,
     // but the ID check should still fail.
@@ -761,9 +757,10 @@ fn test_l2_voucher_id_mixup_protection() {
     );
     assert!(result_c.unwrap_err().to_string().contains("Mix-up"));
 
-    // Status prüfen -> muss Active bleiben
+    // Check status -> must remain Active
     assert!(matches!(
         app.get_voucher_details(&voucher_id).unwrap().status,
         VoucherStatus::Active
     ));
 }
+

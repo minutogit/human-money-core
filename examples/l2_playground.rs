@@ -18,15 +18,15 @@ use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD, create_cust
 use std::collections::{HashMap, HashSet};
 use tempfile::tempdir;
 
-/// Eine verbesserte Simulation eines L2-Nodes, die den aktuellen UTXO-basierten Stand widerspiegelt.
+/// An improved simulation of an L2 node reflecting current UTXO-based state.
 pub struct MockL2Node {
-    /// Simuliert den RAM-Bloom-Filter (Voucher IDs)
+    /// Simulates RAM Bloom filter (Voucher IDs)
     pub vouchers: HashSet<String>,
-    /// Simuliert die L2-Datenbank. Key: layer2_voucher_id, Value: Map von ds_tag -> L2LockEntry
+    /// Simulates L2 database. Key: layer2_voucher_id, Value: Map of ds_tag -> L2LockEntry
     pub locks: HashMap<String, HashMap<String, human_money_core::models::layer2_api::L2LockEntry>>,
-    /// Simuliert das UTXO Modell für P2PKH Anker
+    /// Simulates UTXO model for P2PKH anchors
     pub spendable_outputs: HashSet<[u8; 32]>,
-    /// Server Keypair für Signaturen
+    /// Server keypair for signatures
     pub signing_key: SigningKey,
 }
 
@@ -68,18 +68,18 @@ impl MockL2Node {
         let req: L2LockRequest =
             serde_json::from_slice(req_bytes).expect("Failed to parse request");
 
-        // --- 1. Autorität Prüfen (layer2_signature) ---
+        // --- 1. Check authority (layer2_signature) ---
         let ephem_key = VerifyingKey::from_bytes(&req.sender_ephemeral_pub).expect("Invalid key");
         let signature = Signature::from_bytes(&req.layer2_signature);
 
         let payload_hash = human_money_core::services::l2_gateway::calculate_l2_payload_hash(&req);
 
         if ephem_key.verify(&payload_hash, &signature).is_err() {
-            // Im Beispiel erlauben wir ungültige signaturen für schnelleres prototyping,
-            // aber ein echter Node würde hier ablehnen.
+            // In the example we allow invalid signatures for faster prototyping,
+            // but a real node would reject here.
         }
 
-        // Voucher im "Bloom Filter" registrieren
+        // Register voucher in "Bloom filter"
         self.vouchers.insert(req.layer2_voucher_id.clone());
 
         let ds_tag = if req.is_genesis {
@@ -97,7 +97,7 @@ impl MockL2Node {
             return self.wrap_and_sign(verdict);
         }
 
-        // Erfolg: Verankern
+        // Success: Anchor
         let entry = human_money_core::models::layer2_api::L2LockEntry {
             layer2_voucher_id: req.layer2_voucher_id.clone(),
             t_id: req.transaction_hash,
@@ -109,7 +109,7 @@ impl MockL2Node {
         };
         voucher_locks.insert(ds_tag, entry);
 
-        // Neue UTXOs registrieren (Empfänger und Wechselgeld)
+        // Register new UTXOs (recipient and change)
         if let Some(r) = req.receiver_ephemeral_pub_hash {
             self.spendable_outputs.insert(r);
         }
@@ -171,7 +171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let user_id = app.get_user_id()?;
     let bob_id = test_utils::ACTORS.david.identity.user_id.clone();
 
-    // Standard laden
+    // Load standard
     let (flexible_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
         s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Flexible;
     });
@@ -184,16 +184,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut server = MockL2Node::new();
 
-    // L2 Server Public Key in Alice's Wallet konfigurieren
+    // Configure L2 server public key in Alice's wallet
     if let Some(wallet) = app.get_wallet_mut() {
         wallet.profile.l2_server_pubkey = Some(server.get_public_key());
     }
 
-    // --- SCHRITT 1: Genesis ---
+    // --- STEP 1: Genesis ---
     println!("\x1b[1;33m[1/3] Genesis: Gutschein erstellen (100 FreeTaler)\x1b[0m");
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id.clone()),
@@ -221,7 +220,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         parsed_genesis.layer2_voucher_id
     );
 
-    // --- SCHRITT 2: Transaktion 1 ---
+    // --- STEP 2: Transaction 1 ---
     println!("\x1b[1;33m[2/3] Transaktion 1: 10 FreeTaler an Bob senden\x1b[0m");
     let request1 = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_id.clone(),
@@ -235,7 +234,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     app.create_transfer_bundle(request1, &standards_toml, None, Some(password))?;
 
-    // Die neue Instanz finden (Wechselgeld)
+    // Find the new instance (change)
     let v_id_1 = app
         .get_voucher_summaries(
             None,
@@ -257,7 +256,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         parsed_tx1.ds_tag.clone().unwrap_or_default()
     );
 
-    // --- SCHRITT 3: Transaktion 2 ---
+    // --- STEP 3: Transaction 2 ---
     println!("\x1b[1;33m[3/3] Transaktion 2: 5 FreeTaler an Bob senden\x1b[0m");
     let request2 = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_id,
@@ -292,14 +291,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         parsed_tx2.ds_tag.clone().unwrap_or_default()
     );
 
-    // Alle Requests zur späteren Analyse bündeln
+    // Bundle all requests for subsequent analysis
     let all_requests: Vec<(&str, &[u8], &L2LockRequest)> = vec![
         ("Genesis", req_genesis.as_slice(), &parsed_genesis),
         ("TX 1 (Split -10)", req_tx1.as_slice(), &parsed_tx1),
         ("TX 2 (Split -5)", req_tx2.as_slice(), &parsed_tx2),
     ];
 
-    // --- ANALYSE & VISUALISIERUNG ---
+    // --- ANALYSIS & VISUALIZATION ---
     println!("\x1b[1;36m======================================================\x1b[0m");
     println!("\x1b[1;36m               CHAIN OF AUTHORITY ANALYSIS            \x1b[0m");
     println!("\x1b[1;36m======================================================\x1b[0m");
@@ -317,7 +316,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("\x1b[1;34m[Step {}] {}\x1b[0m", i, type_label);
         println!("  ├─ TX_ID (t_id):  {}", tx.t_id);
 
-        // --- 1. Autorität / Input ---
+        // --- 1. Authority / Input ---
         if is_genesis {
             println!("  ├─ Autorität:     \x1b[1;32mInitialer Gutschein (Kein Vorbesitzer)\x1b[0m");
         } else if let Some(sep) = &tx.sender_ephemeral_pub {
@@ -335,7 +334,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  ├─ CoA Link:      {}", status_indicator);
         }
 
-        // --- 2. L2 Verankerung ---
+        // --- 2. L2 Anchoring ---
         let current_v_id = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(
             &voucher.transactions[0],
         )
@@ -344,7 +343,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  ├─ DS_TAG (Trap): {}", td.ds_tag);
 
             if let Some(voucher_locks) = server.locks.get(&current_v_id) {
-                // Bei Genesis nutzen wir t_id als Key, sonst ds_tag
+                // For Genesis we use t_id as key, otherwise ds_tag
                 let lookup_key = if is_genesis {
                     tx.t_id.clone()
                 } else {
@@ -377,7 +376,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // --- 3. Neue Outputs (Die Anker für die Zukunft) ---
+        // --- 3. New outputs (anchors for future) ---
         active_anchors.clear();
         println!("  └─ Neue Anker (Outputs):");
         if let Some(rh) = &tx.receiver_ephemeral_pub_hash {
@@ -424,7 +423,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // =========================================================================
-    // SEKTION 2: L2 LOCK REQUEST FELDER (Was wird gesendet?)
+    // SECTION 2: L2 LOCK REQUEST FIELDS (What is sent?)
     // =========================================================================
     println!("\n\x1b[1;36m======================================================\x1b[0m");
     println!("\x1b[1;36m         L2 LOCK REQUEST – ALLE FELDER PRO TX         \x1b[0m");
@@ -470,7 +469,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // =========================================================================
-    // SEKTION 3: L2 LOCK ENTRIES (Was speichert der Server?)
+    // SECTION 3: L2 LOCK ENTRIES (What does the server store?)
     // =========================================================================
     println!("\x1b[1;36m======================================================\x1b[0m");
     println!("\x1b[1;36m      L2 GESPEICHERTE LOCK ENTRIES (Server-RAM)       \x1b[0m");
@@ -490,7 +489,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let entry_bytes = entry_json.len();
             total_lock_bytes += entry_bytes;
 
-            // Größen der einzelnen Felder berechnen
+            // Calculate size of individual fields
             let f_voucher_id   = entry.layer2_voucher_id.len();
             let f_t_id         = 32usize;
             let f_sender_pub   = 32usize;
@@ -536,7 +535,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // =========================================================================
-    // SEKTION 4: SPEICHERVERBRAUCH GESAMT-ÜBERSICHT
+    // SECTION 4: MEMORY CONSUMPTION OVERVIEW
     // =========================================================================
     println!("\x1b[1;36m======================================================\x1b[0m");
     println!("\x1b[1;36m           SPEICHERVERBRAUCH – GESAMTÜBERSICHT        \x1b[0m");
@@ -544,8 +543,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let avg_bytes = if entry_count > 0 { total_lock_bytes / entry_count } else { 0 };
 
-    // Bloom-Filter (vereinfacht: 1 Bit pro Element mit k=7 Hash-Funktionen bei 1% Fehlerrate)
-    // m = -n * ln(p) / (ln(2))^2 → bei p=0.01, n=entry_count
+    // Bloom filter (simplified: 1 bit per element with k=7 hash functions at 1% error rate)
+    // m = -n * ln(p) / (ln(2))^2 → for p=0.01, n=entry_count
     let bloom_bits = if entry_count > 0 {
         let n = entry_count as f64;
         let p = 0.01_f64;

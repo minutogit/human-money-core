@@ -1,7 +1,7 @@
 // tests/core_logic/security/standard_validation.rs
 // cargo test --test core_logic_tests
 
-//! Tests für die Einhaltung und Umgehung der im Standard definierten Validierungsregeln.
+//! Tests for compliance and bypass of validation rules defined in the standard.
 
 use self::test_utils::{ACTORS, MINUTO_STANDARD, create_voucher_for_manipulation};
 use super::test_utils;
@@ -18,7 +18,7 @@ mod required_signatures_validation {
     use super::*;
 
     fn load_required_sig_standard() -> (human_money_core::VoucherStandardDefinition, String) {
-        // Verwende die neue, robuste lazy_static-Variable und füge die CEL-Regel hinzu
+        // Use the robust lazy_static variable and add the CEL rule
         let (mut standard, _hash) = (
             test_utils::REQUIRED_SIG_STANDARD.0.clone(),
             test_utils::REQUIRED_SIG_STANDARD.1.clone(),
@@ -32,7 +32,7 @@ mod required_signatures_validation {
             }
         );
 
-        // Berechne neuen Hash
+        // Calculate new hash
         let mut standard_to_hash = standard.clone();
         standard_to_hash.signature = None;
         let new_hash = human_money_core::services::crypto_utils::get_hash(
@@ -52,39 +52,37 @@ mod required_signatures_validation {
                 id: Some(creator_identity.user_id.clone()),
                 ..Default::default()
             },
-            validity_duration: Some("P1Y".to_string()), // HINZUGEFÜGT: Gültigkeit explizit setzen
-            // HINZUGEFÜGT: Nennwert explizit setzen, um "Invalid decimal: empty" zu vermeiden
+            validity_duration: Some("P1Y".to_string()), // ADDED: Explicitly set validity
+            // ADDED: Explicitly set nominal value to avoid "Invalid decimal: empty"
             nominal_value: ValueDefinition {
                 amount: "100".to_string(),
                 ..Default::default()
             },
-            ..Default::default() // Füllt den Rest mit Standardwerten
+            ..Default::default() // Fills the rest with default values
         };
-        // Verwende die "manipulation"-Hilfsfunktion, die die finale Validierung überspringt.
-        // Das ist notwendig, da der Standard eine Signatur erfordert, die wir in den Tests erst hinzufügen wollen.
+        // Use the "manipulation" helper function which skips final validation.
+        // This is necessary because the standard requires a signature that we want to add in the tests.
         create_voucher_for_manipulation(
             voucher_data,
             standard,
             standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        )
+            &creator_identity.signing_key)
     }
 
     fn create_valid_approval_signature(voucher: &Voucher) -> VoucherSignature {
-        // KORREKTUR: Wir verwenden ACTORS.charlie, da die ID von ACTORS.issuer
-        // im Test-Setup nicht mit der in standard_required_signatures.toml übereinstimmt.
+        // CORRECTION: We use ACTORS.charlie, as ACTORS.issuer ID
+        // in the test setup does not match the one in standard_required_signatures.toml.
         let signer = &ACTORS.charlie;
         let mut sig = VoucherSignature {
-            voucher_id: voucher.voucher_id.clone(), // KORREKTUR: Setze die voucher_id vom Gutschein
+            voucher_id: voucher.voucher_id.clone(), // CORRECTION: Set voucher_id from the voucher
             signer_id: signer.user_id.clone(),
-            role: "Official Approver".to_string(), // KORREKTUR: Semantisch bessere Rolle (muss mit TOML übereinstimmen)
+            role: "Official Approver".to_string(), // CORRECTION: Semantically better role (must match TOML)
             signature_time: get_current_timestamp(),
             ..Default::default()
         };
-        // KORREKTUR: Die signature_id muss aus dem Hash der Metadaten *ohne* die Felder
-        // 'signature_id' und 'signature' selbst berechnet werden. Die Verifizierungslogik
-        // tut genau das. Wir müssen es hier exakt nachbilden.
+        // CORRECTION: signature_id must be calculated from the hash of metadata *without*
+        // the fields 'signature_id' and 'signature' itself. The verification logic
+        // does exactly that. We need to replicate it precisely here.
         let mut data_for_id_hash = sig.clone();
         println!("\n[DEBUG TEST CREATE SIG] --- START CREATION ---");
         data_for_id_hash.signature_id = "".to_string();
@@ -114,20 +112,20 @@ mod required_signatures_validation {
 
         let result = validate_voucher_against_standard(&voucher, &standard);
         if let Err(e) = &result {
-            // Hinzufügen von Debug-Ausgabe, um den genauen Fehler zu sehen
+            // Add debug output to see the exact error
             panic!(
                 "Validation failed unexpectedly in test_required_signature_ok: {:?}",
                 e
             );
         }
-        // Die ursprüngliche Assertion bleibt bestehen, um den Test im Erfolgsfall grün zu halten.
+        // The original assertion remains to keep the test passing on success.
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_fails_on_missing_mandatory_signature() {
         let (standard, standard_hash) = load_required_sig_standard();
-        let voucher = create_base_voucher_for_sig_test(&standard, &standard_hash); // Ohne Signatur
+        let voucher = create_base_voucher_for_sig_test(&standard, &standard_hash); // Without signature
 
         let result = validate_voucher_against_standard(&voucher, &standard);
 
@@ -148,8 +146,8 @@ mod required_signatures_validation {
         let mut voucher = create_base_voucher_for_sig_test(&standard, &standard_hash);
         let mut wrong_sig = create_valid_approval_signature(&voucher);
         let hacker_identity = &ACTORS.hacker;
-        wrong_sig.signer_id = hacker_identity.user_id.clone(); // Nicht in allowed_signer_ids
-        // Muss neu signiert werden, da sich die Daten geändert haben
+        wrong_sig.signer_id = hacker_identity.user_id.clone(); // Not in allowed_signer_ids
+        // Must be resigned because data changed
         let mut obj_to_hash = wrong_sig.clone();
         obj_to_hash.signature_id = "".to_string();
         obj_to_hash.signature = "".to_string();
@@ -180,8 +178,8 @@ mod required_signatures_validation {
         let mut voucher = create_base_voucher_for_sig_test(&standard, &standard_hash);
         let mut wrong_desc_sig = create_valid_approval_signature(&voucher);
         wrong_desc_sig.role = "Some other description".to_string();
-        // Muss neu signiert werden
-        let signer = &ACTORS.charlie; // Muss derselbe korrekte Signer sein
+        // Must be resigned
+        let signer = &ACTORS.charlie; // Must be the same correct signer
         let mut obj_to_hash = wrong_desc_sig.clone();
         obj_to_hash.signature_id = "".to_string();
         obj_to_hash.signature = "".to_string();
@@ -216,9 +214,9 @@ mod required_signatures_validation {
                 amount: "60".to_string(),
                 ..Default::default()
             },
-            // KORREKTUR: Der Minuto-Standard erfordert eine Mindestgültigkeit (z.B. P3Y).
-            // P1Y war zu kurz und löste `ValidityDurationTooShort` aus, bevor die eigentliche
-            // Angriffslogik (`CreatorAsGuarantor`) geprüft werden konnte.
+            // CORRECTION: The Minuto standard requires a minimum validity (e.g. P3Y).
+            // P1Y was too short and triggered `ValidityDurationTooShort` before the actual
+            // attack logic (`CreatorAsGuarantor`) could be checked.
             validity_duration: Some("P4Y".to_string()),
             ..Default::default()
         };
@@ -226,14 +224,12 @@ mod required_signatures_validation {
             voucher_data,
             standard,
             standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        );
+            &creator_identity.signing_key);
 
-        // Angriff: Der Ersteller (Alice) versucht, für sich selbst zu bürgen.
+        // Attack: The creator (Alice) attempts to act as guarantor for herself.
         let self_guarantor_sig = create_guarantor_signature_with_time(
             &voucher,
-            creator_identity, // Alice bürgt
+            creator_identity, // Alice guarantees
             "Alice",
             "guarantor",
             "2",
@@ -241,26 +237,26 @@ mod required_signatures_validation {
         );
 
         voucher.signatures.push(self_guarantor_sig);
-        // Füge einen zweiten, validen Bürgen hinzu, um die `CountOutOfBounds`-Regel zu umgehen
+        // Add a second valid guarantor to satisfy the `CountOutOfBounds` rule
         voucher
             .signatures
             .push(create_male_guarantor_signature(&voucher));
 
         let validation_result = validate_voucher_against_standard(&voucher, standard);
 
-        // --- DEBUG-Ausgabe hinzugefügt ---
+        // --- DEBUG output added ---
         if let Err(e) = &validation_result {
             println!("[DEBUG] Validation failed as expected. The actual error was:");
             println!("[DEBUG] {:?}", e);
         } else {
-            // Wenn die Validierung unerwartet erfolgreich ist, lassen wir den Test fehlschlagen.
+            // If validation unexpectedly succeeds, fail the test.
             panic!("[DEBUG] Validation unexpectedly succeeded, but should have failed!");
         }
-        // --- Ende DEBUG-Ausgabe ---
+        // --- End DEBUG output ---
 
-        // HINWEIS: Mit der Implementierung der "Anti-Signature-Reuse-Firewall"
-        // in `voucher_validation.rs` prüfen wir nun auf den kryptographischen 
-        // Schlüssel, der den Fehler `DuplicateIdentityDetected` auslöst.
+        // NOTE: With the implementation of the "Anti-Signature-Reuse-Firewall"
+        // in `voucher_validation.rs` we now check the cryptographic 
+        // key, which triggers the `DuplicateIdentityDetected` error.
         assert!(matches!(
             validation_result.unwrap_err(),
             VoucherCoreError::Validation(ValidationError::DuplicateIdentityDetected { .. })

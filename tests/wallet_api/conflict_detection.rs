@@ -1,17 +1,17 @@
 // tests/wallet_api/conflict_detection.rs
 // cargo test --test wallet_api_tests conflict_detection
 //!
-//! Eigenschafts- und Grenztests für die Double-Spend-Erkennungs-Engine.
+//! Property and boundary tests for the double-spend detection engine.
 //!
-//! Diese Tests sichern die Kerninvarianten in `conflict_manager.rs` und
-//! `conflict_handler.rs` ab:
-//! - Korrekte Partitionierung von OwnFingerprints vs. KnownFingerprints
-//! - Zuverlässige Erkennung von Konflikten (> 1 t_id für denselben ds_tag)
-//! - Unterscheidung von Replay-Angriffen vs. Double-Spend
-//! - Korrekte "Earliest Wins"-Heuristik bei Offline-Konflikten
-//! - Bereinigung abgelaufener Fingerprints (Zeitgrenzwerte)
-//! - Import/Export-Symmetrie von Fingerprints
-//! - Timestamp-Verschlüsselung (XOR-Roundtrip, Determinismus)
+//! These tests secure the core invariants in `conflict_manager.rs` and
+//! `conflict_handler.rs`:
+//! - Correct partitioning of OwnFingerprints vs. KnownFingerprints
+//! - Reliable detection of conflicts (> 1 t_id for the same ds_tag)
+//! - Differentiation of replay attacks vs. double-spend
+//! - Correct "Earliest Wins" heuristic in offline conflicts
+//! - Cleanup of expired fingerprints (time limits)
+//! - Import/export symmetry of fingerprints
+//! - Timestamp encryption (XOR roundtrip, determinism)
 
 use human_money_core::{
     models::{
@@ -27,11 +27,11 @@ use human_money_core::{
 use human_money_core::test_utils::{ACTORS, MINUTO_STANDARD};
 
 // =============================================================================
-// Hilfsfunktionen
+// Helper Functions
 // =============================================================================
 
-/// Erstellt eine minimale, valide Transaktion mit einem deterministischen prev_hash,
-/// t_id und t_time. Wird für Fingerprint-Tests verwendet ohne Wallet-Kontext.
+/// Creates a minimal, valid transaction with a deterministic prev_hash,
+/// t_id, and t_time. Used for fingerprint tests without wallet context.
 fn make_test_transaction(suffix: &str, t_time: &str) -> Transaction {
     let prev_hash = bs58::encode(format!("prev-hash-{suffix}").as_bytes()).into_string();
     let t_id = bs58::encode(format!("tid-{suffix}").as_bytes()).into_string();
@@ -51,7 +51,7 @@ fn make_test_transaction(suffix: &str, t_time: &str) -> Transaction {
     }
 }
 
-/// Erstellt einen TransactionFingerprint direkt (ohne Voucher-Kontext).
+/// Creates a TransactionFingerprint directly (without voucher context).
 fn make_fingerprint(ds_tag: &str, t_id: &str, deletable_at: &str) -> TransactionFingerprint {
     TransactionFingerprint {
         ds_tag: ds_tag.to_string(),
@@ -68,8 +68,8 @@ fn make_fingerprint(ds_tag: &str, t_id: &str, deletable_at: &str) -> Transaction
 // create_fingerprint_for_transaction
 // =============================================================================
 
-/// Der `valid_until`-Zeitstempel eines Vouchers wird auf den letzten Tag des Monats
-/// gerundet (Anonymisierung). Dezember-Rollover muss auf 31.01 des Folgejahres zeigen.
+/// The `valid_until` timestamp of a voucher is rounded to the last day of the month
+/// (anonymization). December rollover must point to Dec 31 (or end of month).
 #[test]
 fn test_fingerprint_valid_until_is_rounded_to_end_of_month() {
     use human_money_core::test_utils::create_voucher_for_manipulation;
@@ -79,7 +79,7 @@ fn test_fingerprint_valid_until_is_rounded_to_end_of_month() {
     use human_money_core::services::crypto_utils::get_hash;
     use human_money_core::services::utils::to_canonical_json;
 
-    // Verwende den Minuto-Standard, aber setze valid_until manuell
+    // Use the Minuto standard, but set valid_until manually
     let (std, _std_hash) = &*MINUTO_STANDARD;
     let creator = &ACTORS.alice.identity;
     let _recipient_id = ACTORS.bob.user_id.clone();
@@ -99,22 +99,22 @@ fn test_fingerprint_valid_until_is_rounded_to_end_of_month() {
         ..Default::default()
     };
 
-    let mut voucher = create_voucher_for_manipulation(data, std, &standard_hash, &creator.signing_key, "en");
+    let mut voucher = create_voucher_for_manipulation(data, std, &standard_hash, &creator.signing_key);
 
-    // Manuell midmonth setzen → muss auf Monatsende gerundet werden
+    // Manually set midmonth -> must be rounded to end of month
     voucher.valid_until = "2025-06-15T12:00:00.000000Z".to_string();
 
     let tx = voucher.transactions[0].clone();
     let fp = create_fingerprint_for_transaction(&tx, &voucher).unwrap();
 
-    // 15. Juni → gerundet auf 30. Juni 23:59:59.999999Z
+    // June 15 -> rounded to June 30 23:59:59.999999Z
     assert!(
         fp.deletable_at.starts_with("2025-06-30"),
         "June valid_until must round to June 30, got: {}",
         fp.deletable_at
     );
 
-    // Dezember-Rollover: 15. Dez → 31. Dez
+    // December rollover: Dec 15 -> Dec 31
     voucher.valid_until = "2025-12-15T12:00:00.000000Z".to_string();
     let fp_dec = create_fingerprint_for_transaction(&tx, &voucher).unwrap();
     assert!(
@@ -124,9 +124,9 @@ fn test_fingerprint_valid_until_is_rounded_to_end_of_month() {
     );
 }
 
-/// Fingerprints für Transaktionen mit TrapData verwenden `ds_tag` aus der Trap.
-/// Ohne Trap wird der Tag aus prev_hash + sender_ephemeral_pub berechnet.
-/// In beiden Fällen darf der `ds_tag` nicht leer sein.
+/// Fingerprints for transactions with TrapData use `ds_tag` from the trap.
+/// Without trap, the tag is computed from prev_hash + sender_ephemeral_pub.
+/// In both cases, `ds_tag` must not be empty.
 #[test]
 fn test_fingerprint_ds_tag_is_non_empty() {
     use human_money_core::test_utils::create_voucher_for_manipulation;
@@ -147,8 +147,7 @@ fn test_fingerprint_ds_tag_is_non_empty() {
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
         },
-        std, &standard_hash, &creator.signing_key, "en"
-    );
+        std, &standard_hash, &creator.signing_key);
     voucher.valid_until = "2026-03-15T00:00:00.000000Z".to_string();
 
     let fp = create_fingerprint_for_transaction(&voucher.transactions[0], &voucher).unwrap();
@@ -160,9 +159,9 @@ fn test_fingerprint_ds_tag_is_non_empty() {
 // scan_and_rebuild_fingerprints — delete ! (line 142)
 // =============================================================================
 
-/// Beim Aufbau der Fingerprints müssen Duplikate in `known_fingerprints.local_history`
-/// verhindert werden. Derselbe Fingerprint darf nicht mehrfach für denselben ds_tag eingetragen werden.
-/// Mutant: `delete !` vor `known_entry.contains(&fingerprint)` — würde alle Einträge doppeln.
+/// When building fingerprints, duplicates in `known_fingerprints.local_history`
+/// must be prevented. The same fingerprint must not be inserted multiple times for the same ds_tag.
+/// Mutant: `delete !` before `known_entry.contains(&fingerprint)` — would duplicate all entries.
 #[test]
 fn test_scan_rebuild_does_not_duplicate_fingerprints_in_known_history() {
     use human_money_core::services::conflict_manager::scan_and_rebuild_fingerprints;
@@ -176,7 +175,7 @@ fn test_scan_rebuild_does_not_duplicate_fingerprints_in_known_history() {
 
     let (_own, known) = scan_and_rebuild_fingerprints(&wallet.voucher_store, &alice.user_id).unwrap();
 
-    // Jeder ds_tag darf nur einmal in known.local_history vorkommen
+    // Each ds_tag may only occur once in known.local_history
     for (tag, fps) in &known.local_history {
         let unique_t_ids: std::collections::HashSet<_> = fps.iter().map(|fp| &fp.t_id).collect();
         assert_eq!(
@@ -187,19 +186,19 @@ fn test_scan_rebuild_does_not_duplicate_fingerprints_in_known_history() {
 }
 
 // =============================================================================
-// check_for_double_spend — Konfikte erkennen
+// check_for_double_spend — Detecting conflicts
 // =============================================================================
 
-/// Zwei verschiedene t_ids mit demselben ds_tag müssen als Konflikt erkannt werden.
-/// Der Konflikt muss in `verifiable_conflicts` landen, wenn der ds_tag in `local_history` ist.
-/// Wenn nicht → `unverifiable_warnings`.
+/// Two different t_ids with the same ds_tag must be recognized as a conflict.
+/// The conflict must end up in `verifiable_conflicts` if the ds_tag is in `local_history`.
+/// If not -> `unverifiable_warnings`.
 #[test]
 fn test_double_spend_detection_classifies_conflicts_correctly() {
     let tag = "test-ds-tag-abc123";
     let fp_a = make_fingerprint(tag, "tid-alice-spend", "2030-12-31T23:59:59.999999Z");
     let fp_b = make_fingerprint(tag, "tid-bob-spend",   "2030-12-31T23:59:59.999999Z");
 
-    // Szenario 1: Hash in local_history → verifiable
+    // Scenario 1: Hash in local_history -> verifiable
     let mut own = OwnFingerprints::default();
     own.history.insert(tag.to_string(), vec![fp_a.clone()]);
 
@@ -214,9 +213,9 @@ fn test_double_spend_detection_classifies_conflicts_correctly() {
     );
     assert!(!result.unverifiable_warnings.contains_key(tag));
 
-    // Szenario 2: Hash nur in foreign_fingerprints (Gossip) → verifiable
-    // Die Fingerprints tragen die kryptographischen Daten (u, blinded_id)
-    // für die DID-Key-Extraktion, unabhängig davon ob sie lokal oder via Gossip stammen.
+    // Scenario 2: Hash only in foreign_fingerprints (gossip) -> verifiable
+    // The fingerprints carry the cryptographic data (u, blinded_id)
+    // for DID key extraction, regardless of whether they originate locally or via gossip.
     let own2 = OwnFingerprints::default();
     let mut known2 = KnownFingerprints::default();
     known2.foreign_fingerprints.insert(tag.to_string(), vec![fp_a.clone(), fp_b.clone()]);
@@ -228,7 +227,7 @@ fn test_double_spend_detection_classifies_conflicts_correctly() {
     );
     assert!(!result2.unverifiable_warnings.contains_key(tag));
 
-    // Szenario 3: Hash nur in own.history (ohne local_history/foreign_fingerprints) → unverifiable
+    // Scenario 3: Hash only in own.history (without local_history/foreign_fingerprints) -> unverifiable
     let mut own3 = OwnFingerprints::default();
     own3.history.insert(tag.to_string(), vec![fp_a, fp_b]);
     let known3 = KnownFingerprints::default();
@@ -241,8 +240,8 @@ fn test_double_spend_detection_classifies_conflicts_correctly() {
     assert!(!result3.verifiable_conflicts.contains_key(tag));
 }
 
-/// Keine false-positives: Wenn es nur eine t_id gibt (kein Konflikt),
-/// darf weder verifiable_conflicts noch unverifiable_warnings befüllt sein.
+/// No false positives: When there is only one t_id (no conflict),
+/// neither verifiable_conflicts nor unverifiable_warnings may be populated.
 #[test]
 fn test_double_spend_detection_no_false_positives() {
     let tag = "single-tag-no-conflict";
@@ -259,13 +258,13 @@ fn test_double_spend_detection_no_false_positives() {
     assert!(result.unverifiable_warnings.is_empty(), "No warnings for single t_id");
 }
 
-/// Alle drei Quellen (own.history, known.local_history, known.foreign_fingerprints)
-/// werden korrekt zusammengeführt. Ein Konflikt der nur über Quellen-Merge sichtbar ist,
-/// muss erkannt werden.
+/// All three sources (own.history, known.local_history, known.foreign_fingerprints)
+/// are merged correctly. A conflict visible only via source merge
+/// must be detected.
 #[test]
 fn test_double_spend_detection_merges_all_three_sources() {
     let tag = "cross-source-tag";
-    // fp_a nur in own.history, fp_b nur in foreign_fingerprints
+    // fp_a only in own.history, fp_b only in foreign_fingerprints
     let fp_a = make_fingerprint(tag, "tid-own",     "2030-12-31T23:59:59.999999Z");
     let fp_b = make_fingerprint(tag, "tid-foreign", "2030-12-31T23:59:59.999999Z");
 
@@ -278,9 +277,9 @@ fn test_double_spend_detection_merges_all_three_sources() {
 
     let result = check_for_double_spend(&own, &known);
 
-    // Konflikt muss aus Merge von own.history + foreign_fingerprints entstehen
-    // local_history hat den Tag → verifiable
-    // (leerer local_history Eintrag reicht: contains_key ist true)
+    // Conflict must arise from merge of own.history + foreign_fingerprints
+    // local_history has the tag -> verifiable
+    // (empty local_history entry suffices: contains_key is true)
     assert!(
         result.verifiable_conflicts.contains_key(tag) || result.unverifiable_warnings.contains_key(tag),
         "Cross-source conflict must be detected"
@@ -293,11 +292,11 @@ fn test_double_spend_detection_merges_all_three_sources() {
 }
 
 // =============================================================================
-// create_proof_of_double_spend — Zeilen 255
+// create_proof_of_double_spend — Line 255
 // =============================================================================
 
-/// Der `proof_id` wird aus dem Offender-Key und dem fork_point_prev_hash abgeleitet.
-/// Er muss deterministisch und nicht-trivial sein (kein Leerstring / Konstante).
+/// The `proof_id` is derived from the offender key and fork_point_prev_hash.
+/// It must be deterministic and non-trivial (no empty string / constant).
 /// Mutant: `replace + with - in create_proof_of_double_spend`
 #[test]
 fn test_proof_id_is_deterministic_and_derived_from_input() {
@@ -307,8 +306,8 @@ fn test_proof_id_is_deterministic_and_derived_from_input() {
         if ACTORS.alice.user_id.contains("@did:key:z") { "" } else { "@did:key:z6MkAliceTestOnly" }
     );
 
-    // Wir brauchen eine valide did-key-Struktur (offender_id)
-    // Nutze alice.user_id welches das korrekte Format hat
+    // We need a valid did-key structure (offender_id)
+    // Use alice.user_id which has the correct format
     let offender_id = ACTORS.alice.user_id.clone();
     let fork_hash = bs58::encode(b"fork-point-hash").into_string();
     let fork_hash2 = bs58::encode(b"different-hash").into_string();
@@ -331,14 +330,14 @@ fn test_proof_id_is_deterministic_and_derived_from_input() {
         false,
     ).unwrap();
 
-    // Deterministisch (gleiche Inputs → gleiche proof_id)
+    // Deterministic (identical inputs -> identical proof_id)
     assert_eq!(proof1.proof_id, proof2.proof_id, "Proof ID must be deterministic");
 
-    // Nicht trivial
+    // Non-trivial
     assert!(!proof1.proof_id.is_empty(), "Proof ID must not be empty");
 
-    // Ändert sich bei unterschiedlichem fork_hash
-    // (Mutant `+ → -` in der Slice-Konkatenation würde hier denselben Hash liefern)
+    // Changes with different fork_hash
+    // (Mutant `+ -> -` in slice concatenation would produce the same hash here)
     let proof_other_hash = create_proof_of_double_spend(
         offender_id,
         fork_hash2,
@@ -353,8 +352,8 @@ fn test_proof_id_is_deterministic_and_derived_from_input() {
     );
 }
 
-/// Ein `offender_id` ohne DID-Format wird als anonymer "Gossip Soft Proof" behandelt.
-/// Die proof_id wird dennoch deterministisch aus den Eingabe-Bytes berechnet.
+/// An `offender_id` without DID format is treated as an anonymous "Gossip Soft Proof".
+/// The proof_id is still computed deterministically from the input bytes.
 #[test]
 fn test_proof_creation_fallback_for_anonymous_offender_id() {
     let reporter = &ACTORS.reporter.identity;
@@ -373,19 +372,19 @@ fn test_proof_creation_fallback_for_anonymous_offender_id() {
 }
 
 // =============================================================================
-// cleanup_known_fingerprints — Zeile 336 (> vs >=)
+// cleanup_known_fingerprints — Line 336 (> vs >=)
 // =============================================================================
 
-/// Fingerprints mit `deletable_at` in der Vergangenheit müssen entfernt werden.
-/// Fingerprints mit `deletable_at` in der Zukunft müssen erhalten bleiben.
-/// Mutant: `replace > with >=` → würde Fingerprints mit `deletable_at == now` entfernen.
+/// Fingerprints with `deletable_at` in the past must be removed.
+/// Fingerprints with `deletable_at` in the future must be retained.
+/// Mutant: `replace > with >=` -> would remove fingerprints with `deletable_at == now`.
 #[test]
 fn test_cleanup_known_fingerprints_removes_expired_only() {
     let mut known = KnownFingerprints::default();
 
-    // Abgelaufen: liegt weit in der Vergangenheit
+    // Expired: lies far in the past
     let fp_expired = make_fingerprint("tag-expired", "tid-old", "2000-01-01T00:00:00.000000Z");
-    // Aktiv: liegt weit in der Zukunft
+    // Active: lies far in the future
     let fp_active  = make_fingerprint("tag-active",  "tid-new", "2099-01-01T00:00:00.000000Z");
 
     known.foreign_fingerprints.insert("tag-expired".to_string(), vec![fp_expired]);
@@ -403,9 +402,9 @@ fn test_cleanup_known_fingerprints_removes_expired_only() {
     );
 }
 
-/// Wenn alle Fingerprints eines ds_tag abgelaufen sind, muss der gesamte Eintrag
-/// aus der Map entfernt werden (nicht nur die Fingerprints).
-/// Mutant: `delete !` before `fps.is_empty()` → würde leere Einträge behalten.
+/// When all fingerprints of a ds_tag are expired, the entire entry
+/// must be removed from the map (not just the fingerprints).
+/// Mutant: `delete !` before `fps.is_empty()` -> would retain empty entries.
 #[test]
 fn test_cleanup_removes_empty_entries_from_map() {
     let mut known = KnownFingerprints::default();
@@ -421,13 +420,13 @@ fn test_cleanup_removes_empty_entries_from_map() {
 }
 
 // =============================================================================
-// cleanup_expired_histories — Zeilen 353-370
+// cleanup_expired_histories — Lines 353-370
 // =============================================================================
 
-/// `cleanup_expired_histories` muss für own und known gleichermaßen funktionieren.
-/// Fingerprints, die innerhalb der Grace-Period liegen, bleiben erhalten.
-/// Fingerprints, die die Grace-Period überschritten haben, werden entfernt.
-/// Mutanten: `replace + with -`, `replace < with <=` etc.
+/// `cleanup_expired_histories` must work equally for own and known.
+/// Fingerprints within the grace period are retained.
+/// Fingerprints that have exceeded the grace period are removed.
+/// Mutants: `replace + with -`, `replace < with <=` etc.
 #[test]
 fn test_cleanup_expired_histories_respects_grace_period() {
     use chrono::{Duration, Utc};
@@ -435,9 +434,9 @@ fn test_cleanup_expired_histories_respects_grace_period() {
     let mut own = OwnFingerprints::default();
     let mut known = KnownFingerprints::default();
 
-    // deletable_at liegt 2 Jahre in der Vergangenheit
+    // deletable_at is 2 years in the past
     let far_past = "2020-01-01T00:00:00.000000Z";
-    // deletable_at liegt 2 Jahre in der Zukunft
+    // deletable_at is 2 years in the future
     let far_future = "2099-01-01T00:00:00.000000Z";
 
     let fp_expired_own   = make_fingerprint("own-old",   "tid-own-old",   far_past);
@@ -451,7 +450,7 @@ fn test_cleanup_expired_histories_respects_grace_period() {
     known.local_history.insert("known-new".to_string(), vec![fp_active_known]);
 
     let now = Utc::now();
-    // Grace Period: 1 Tag — weit abgelaufene Fingerprints werden entfernt
+    // Grace Period: 1 day — far expired fingerprints are removed
     let grace = Duration::days(1);
 
     cleanup_expired_histories(&mut own, &mut known, &now, &grace);
@@ -462,9 +461,9 @@ fn test_cleanup_expired_histories_respects_grace_period() {
     assert!(known.local_history.contains_key("known-new"),  "Active known fingerprint must be retained");
 }
 
-/// Mit einer sehr langen Grace-Period (z.B. 100 Jahre) bleiben alle Fingerprints erhalten.
-/// Dies prüft, dass `+` in `let purge_date = valid_until + *grace_period` korrekt ist
-/// (Mutant: `+ → -` würde die Purge-Date in die Vergangenheit legen).
+/// With a very long grace period (e.g. 100 years), all fingerprints are retained.
+/// This verifies that `+` in `let purge_date = valid_until + *grace_period` is correct
+/// (Mutant: `+ -> -` would place the purge date in the past).
 #[test]
 fn test_cleanup_long_grace_period_retains_all() {
     use chrono::{Duration, Utc};
@@ -472,13 +471,13 @@ fn test_cleanup_long_grace_period_retains_all() {
     let mut own = OwnFingerprints::default();
     let mut known = KnownFingerprints::default();
 
-    // Liegt 5 Jahre in der Vergangenheit
+    // 5 years in the past
     let past = "2020-01-01T00:00:00.000000Z";
     own.history.insert("old-but-grace".to_string(), vec![make_fingerprint("old-but-grace", "tid", past)]);
     known.local_history.insert("old-known-grace".to_string(), vec![make_fingerprint("old-known-grace", "tid2", past)]);
 
     let now = Utc::now();
-    let grace = Duration::days(365 * 100); // 100 Jahre Grace
+    let grace = Duration::days(365 * 100); // 100 years grace
 
     cleanup_expired_histories(&mut own, &mut known, &now, &grace);
 
@@ -490,8 +489,8 @@ fn test_cleanup_long_grace_period_retains_all() {
 // export_own_fingerprints / import_foreign_fingerprints
 // =============================================================================
 
-/// Export und Import von Fingerprints ist symmetrisch.
-/// Nach Export→Import sind dieselben Fingerprints vorhanden.
+/// Export and import of fingerprints is symmetric.
+/// After export->import the same fingerprints are present.
 #[test]
 fn test_export_import_fingerprints_roundtrip() {
     let tag = "export-import-tag";
@@ -510,8 +509,8 @@ fn test_export_import_fingerprints_roundtrip() {
     assert!(known.foreign_fingerprints.contains_key(tag), "Imported fingerprint must be findable by ds_tag");
 }
 
-/// Doppelter Import desselben Fingerprints darf nicht zu Duplikaten führen.
-/// Mutant: `delete !` vor `entry.contains(fp)` → würde doppelt eingetragen.
+/// Double import of the same fingerprint must not produce duplicates.
+/// Mutant: `delete !` before `entry.contains(fp)` -> would be inserted twice.
 #[test]
 fn test_import_foreign_fingerprints_deduplication() {
     let tag = "dedup-tag";
@@ -525,7 +524,7 @@ fn test_import_foreign_fingerprints_deduplication() {
     import_foreign_fingerprints(&mut known, &exported).unwrap();
     let count2 = import_foreign_fingerprints(&mut known, &exported).unwrap();
 
-    // Zweiter Import → 0 neue Fingerprints (alle schon bekannt)
+    // Second import -> 0 new fingerprints (all already known)
     assert_eq!(count2, 0, "Re-importing known fingerprints must not increase count");
     let fps = known.foreign_fingerprints.get(tag).unwrap();
     assert_eq!(fps.len(), 1, "No duplicates after double import");
@@ -535,9 +534,9 @@ fn test_import_foreign_fingerprints_deduplication() {
 // encrypt_transaction_timestamp / decrypt_transaction_timestamp
 // =============================================================================
 
-/// Die XOR-Verschlüsselung des Timestamps muss ein deterministisches Roundtrip liefern:
+/// XOR encryption of the timestamp must yield a deterministic roundtrip:
 /// decrypt(encrypt(t)) == t.
-/// Außerdem muss encrypt(t) != t sein (kein triviales Passthrough).
+/// In addition, encrypt(t) != t must hold (no trivial passthrough).
 #[test]
 fn test_timestamp_encryption_is_deterministic_and_non_trivial() {
     let tx = make_test_transaction("ts-roundtrip", "2025-06-15T10:00:00.000000Z");
@@ -545,8 +544,8 @@ fn test_timestamp_encryption_is_deterministic_and_non_trivial() {
     let encrypted = encrypt_transaction_timestamp(&tx).unwrap();
     let decrypted = decrypt_transaction_timestamp(&tx, encrypted).unwrap();
 
-    // Roundtrip muss den ursprünglichen Timestamp wiederherstellen
-    // Der ursprüngliche Wert ist der nanos-Wert des t_time
+    // Roundtrip must recover original timestamp
+    // The original value is the nanos value of t_time
     let expected_nanos = chrono::DateTime::parse_from_rfc3339(&tx.t_time)
         .unwrap()
         .timestamp_nanos_opt()
@@ -554,14 +553,14 @@ fn test_timestamp_encryption_is_deterministic_and_non_trivial() {
 
     assert_eq!(decrypted, expected_nanos, "Decrypted value must match original timestamp nanos");
 
-    // Verschlüpselung darf nicht trivial sein (kein Passthrough bei key == 0)
+    // Encryption must not be trivial (no passthrough when key == 0)
     assert_ne!(encrypted, expected_nanos, "Encrypted value must differ from plaintext nanos");
 }
 
-/// Zwei verschiedene Transaktionen (verschiedene prev_hash + t_id) müssen verschiedene
-/// Verschlüsselungsschlüssel erzeugen, was zu verschiedenen encrypted Werten führt
-/// (obwohl der Timestamp gleich ist).
-/// Mutant: `replace ^ with | / &` würde den XOR-Schlüssel nicht korrekt anwenden.
+/// Two different transactions (different prev_hash + t_id) must produce different
+/// encryption keys, leading to different encrypted values
+/// (even though the timestamp is identical).
+/// Mutant: `replace ^ with | / &` would not correctly apply the XOR key.
 #[test]
 fn test_timestamp_encryption_is_key_specific() {
     let tx_a = make_test_transaction("key-specific-a", "2025-06-15T10:00:00.000000Z");
@@ -570,32 +569,32 @@ fn test_timestamp_encryption_is_key_specific() {
     let enc_a = encrypt_transaction_timestamp(&tx_a).unwrap();
     let enc_b = encrypt_transaction_timestamp(&tx_b).unwrap();
 
-    // Obwohl der t_time gleich ist, müssen die verschlüsselten Werte verschieden sein
-    // (da prev_hash und t_id unterschiedlich sind → anderer XOR-Schlüssel)
+    // Although t_time is identical, encrypted values must differ
+    // (since prev_hash and t_id differ -> different XOR key)
     assert_ne!(enc_a, enc_b, "Different transactions must produce different encrypted timestamps");
 
-    // Und der eigene Roundtrip muss auch hier funktionieren
+    // And its own roundtrip must also work here
     assert_eq!(decrypt_transaction_timestamp(&tx_b, enc_b).unwrap(),
                decrypt_transaction_timestamp(&tx_a, enc_a).unwrap(),
                "Both roundtrips must recover the same original timestamp");
 }
 
 // =============================================================================
-// resolve_conflict_offline — Earliest Wins (Zeile 498)
+// resolve_conflict_offline — Earliest Wins (Line 498)
 // =============================================================================
 
-/// Beim Offline-Konflikt gewinnt die Transaktion mit dem frühesten (kleinsten) Timestamp.
-/// Mutant: `replace < with <=` in resolve_conflict_offline → kein Unterschied bei echten Daten,
-/// aber `replace < with ==` oder `replace < with >` würden den Gewinner falsch bestimmen.
+/// In offline conflicts, the transaction with the earliest (smallest) timestamp wins.
+/// Mutant: `replace < with <=` in resolve_conflict_offline -> no difference on real data,
+/// but `replace < with ==` or `replace < with >` would determine the winner incorrectly.
 ///
-/// Diese Tests testen über die Wallet-Fassade, da resolve_conflict_offline pub(super) ist.
-/// Wir nutzen die Wallet::check_for_double_spend-Kette.
+/// These tests test via the wallet facade since resolve_conflict_offline is pub(super).
+/// We use the Wallet::check_for_double_spend chain.
 ///
-/// Da resolve_conflict_offline über den Wallet-Zustand getestet werden muss (pub(super)),
-/// verwenden wir einen direkten Fingerprint-Vergleich via decrypt_transaction_timestamp.
+/// Since resolve_conflict_offline must be tested via wallet state (pub(super)),
+/// we use a direct fingerprint comparison via decrypt_transaction_timestamp.
 #[test]
 fn test_earliest_wins_selects_minimum_encrypted_timestamp() {
-    // tx_early hat kleinere Nanos als tx_late
+    // tx_early has smaller nanos than tx_late
     let tx_early = make_test_transaction("early-winner", "2025-01-01T00:00:00.000000Z");
     let tx_late  = make_test_transaction("late-loser",   "2025-12-31T23:59:59.000000Z");
 
@@ -605,7 +604,7 @@ fn test_earliest_wins_selects_minimum_encrypted_timestamp() {
     let dec_early = decrypt_transaction_timestamp(&tx_early, enc_early).unwrap();
     let dec_late  = decrypt_transaction_timestamp(&tx_late,  enc_late).unwrap();
 
-    // Früherer Timestamp (Jan) muss kleineren nanos-Wert haben als später (Dez)
+    // Earlier timestamp (Jan) must have smaller nanos value than later (Dec)
     assert!(
         dec_early < dec_late,
         "Earlier timestamp (Jan) must produce smaller nanos than later (Dec): {} vs {}",
@@ -617,18 +616,18 @@ fn test_earliest_wins_selects_minimum_encrypted_timestamp() {
 // check_bundle_fingerprints_against_history (Replay vs Double-Spend)
 // =============================================================================
 
-/// Im Replay-Szenario: Wenn das Wallet denselben Fingerprint bereits in `own_fingerprints`
-/// (als Sender) hat und derselbe Fingerprint erneut ankommt, muss `check_for_double_spend`
-/// diesen als Konflikt erkennen — aber nur, wenn tatsächlich zwei verschiedene t_ids existieren.
+/// In the replay scenario: When the wallet already has the same fingerprint in `own_fingerprints`
+/// (as sender) and the same fingerprint arrives again, `check_for_double_spend`
+/// must recognize this as a conflict — but only if two different t_ids actually exist.
 ///
-/// Dieser Test prüft direkt die `check_for_double_spend`-Logik mit einem konstruierten
-/// Szenario wo own + foreign denselben tag haben aber GLEICHE t_id → kein Konflikt (Deduplication).
+/// This test directly verifies the `check_for_double_spend` logic with a constructed
+/// scenario where own + foreign have the same tag but IDENTICAL t_id -> no conflict (deduplication).
 #[test]
 fn test_replay_deduplication_across_sources() {
     let tag = "replay-dedup-tag";
     let fp = make_fingerprint(tag, "tid-same", "2030-12-31T23:59:59.999999Z");
 
-    // Gleicher Fingerprint in allen drei Quellen → nach Merge nur eine t_id → kein Konflikt
+    // Same fingerprint in all three sources -> after merge only one t_id -> no conflict
     let mut own = OwnFingerprints::default();
     own.history.insert(tag.to_string(), vec![fp.clone()]);
 
@@ -638,8 +637,8 @@ fn test_replay_deduplication_across_sources() {
 
     let result = check_for_double_spend(&own, &known);
 
-    // Obwohl der Tag in allen drei Quellen vorkommt, ist es immer dieselbe t_id
-    // → nach HashSet-Deduplication bleibt nur 1 unique t_id → kein Konflikt
+    // Even though the tag exists in all three sources, it is always the same t_id
+    // -> after HashSet deduplication only 1 unique t_id remains -> no conflict
     assert!(
         result.verifiable_conflicts.is_empty() && result.unverifiable_warnings.is_empty(),
         "Same t_id across all sources must NOT trigger a conflict (deduplication must work)"

@@ -1,8 +1,8 @@
 // tests/wallet_api/hostile_standards.rs
 // cargo test --test wallet_api_tests
 //!
-//! Enthält Tests, die das System gegen feindselige oder logisch inkonsistente
-//! Gutschein-Standard-Definitionen härten.
+//! Contains tests that harden the system against hostile or logically inconsistent
+//! voucher standard definitions.
 
 use human_money_core::{
     models::{profile::PublicProfile, voucher::ValueDefinition},
@@ -11,11 +11,11 @@ use human_money_core::{
 };
 use tempfile::tempdir;
 
-/// Test 1.1: Stellt sicher, dass ein Transfer fehlschlägt, wenn der Transaktionstyp
-/// (`split`) laut Standard nicht erlaubt ist.
+/// Test 1.1: Ensures that a transfer fails when the transaction type
+/// (`split`) is not allowed according to the standard.
 #[test]
 fn test_disallowed_transaction_type() {
-    // 1. ARRANGE: Standard erstellen, der "split" verbietet
+    // 1. ARRANGE: Create standard that prohibits "split"
     let (hostile_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
         if true {
             if true {
@@ -34,7 +34,6 @@ fn test_disallowed_transaction_type() {
     let voucher = service
         .create_new_voucher(
             &hostile_standard_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(user_id),
@@ -57,12 +56,12 @@ fn test_disallowed_transaction_type() {
         hostile_standard.immutable.identity.uuid
     );
 
-    // 2. ACT: Versuche einen Split-Transfer
+    // 2. ACT: Attempt a split transfer
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: ACTORS.recipient1.identity.user_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_id.clone(),
-            amount_to_send: "40".to_string(), // Teilbetrag -> "split"
+            amount_to_send: "40".to_string(), // Partial amount -> "split"
         }],
         notes: None,
         sender_profile_name: None,
@@ -77,7 +76,7 @@ fn test_disallowed_transaction_type() {
 
     let result = service.create_transfer_bundle(request, &standards_toml, None, Some(password));
 
-    // 3. ASSERT: Operation muss fehlschlagen
+    // 3. ASSERT: Operation must fail
     assert!(result.is_err());
     let error_string = result.unwrap_err().to_string();
     assert!(
@@ -87,11 +86,11 @@ fn test_disallowed_transaction_type() {
     );
 }
 
-/// Test 1.2: Stellt sicher, dass die Erstellung eines Gutscheins fehlschlägt, wenn die
-/// angegebene Gültigkeitsdauer die im Standard definierte maximale Dauer überschreitet.
+/// Test 1.2: Ensures that creating a voucher fails when the
+/// specified validity duration exceeds the maximum duration defined in the standard.
 #[test]
 fn test_violation_of_max_creation_validity() {
-    // 1. ARRANGE: Standard mit maximaler Gültigkeit von 1 Jahr erstellen
+    // 1. ARRANGE: Create standard with maximum validity of 1 year
     let (hostile_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
         if true {
             if true {
@@ -107,10 +106,9 @@ fn test_violation_of_max_creation_validity() {
         test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Test User", password);
     let user_id = service.get_user_id().unwrap();
 
-    // 2. ACT: Versuche, einen Gutschein mit einer Gültigkeit von 2 Jahren zu erstellen
+    // 2. ACT: Attempt to create a voucher with validity of 2 years
     let result = service.create_new_voucher(
         &hostile_standard_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id),
@@ -120,13 +118,13 @@ fn test_violation_of_max_creation_validity() {
                 amount: "100".to_string(),
                 ..Default::default()
             },
-            validity_duration: Some("P2Y".to_string()), // Länger als erlaubt
+            validity_duration: Some("P2Y".to_string()), // Longer than allowed
             ..Default::default()
         },
         Some(password),
     );
 
-    // 3. ASSERT: Operation muss fehlschlagen
+    // 3. ASSERT: Operation must fail
     assert!(result.is_err());
     let error_string = result.unwrap_err().to_string();
     assert!(

@@ -1,82 +1,82 @@
 //! # src/models/wallet_event.rs
 //!
-//! Definiert die Datenstrukturen für das Lightweight Event Sourcing-System des Wallets.
-//! Jede relevante Zustandsänderung (Gutschein-Erstellung, Transfer, Ablauf, etc.)
-//! wird als immutables `WalletEvent` erfasst, um der UI eine sofortige, chronologische
-//! Historie zu liefern, ohne den kompletten VoucherStore parsen zu müssen.
+//! Defines the data structures for the wallet's lightweight event sourcing system.
+//! Every relevant state change (voucher creation, transfer, expiration, etc.)
+//! is recorded as an immutable `WalletEvent` to provide the UI with an instant, chronological
+//! history without needing to parse the entire VoucherStore.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Die Typisierung eines Wallet-Events.
+/// The typing of a wallet event.
 ///
-/// `#[non_exhaustive]` stellt sicher, dass externe Crates bei zukünftigen
-/// Erweiterungen des Enums nicht brechen. Die `Unknown`-Variante ermöglicht
-/// eine fehlerresiliente Deserialisierung älterer Clients.
+/// `#[non_exhaustive]` ensures external crates do not break upon future
+/// additions to the enum. The `Unknown` variant allows
+/// error-resilient deserialization for older clients.
 #[non_exhaustive]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum WalletEventType {
-    /// Ein neuer Gutschein wurde vom Wallet-Besitzer erstellt.
+    /// A new voucher was created by the wallet owner.
     VoucherCreated,
-    /// Ein Gutschein (oder Teile davon) wurde an einen Counterparty transferiert.
+    /// A voucher (or parts thereof) was transferred to a counterparty.
     TransferSent,
-    /// Ein Gutschein wurde vom Wallet empfangen (eingehender Transfer).
+    /// A voucher was received by the wallet (incoming transfer).
     TransferReceived,
-    /// Ein Gutschein wurde aufgrund eines verifizierten Double-Spend-Konflikts
-    /// oder eines fatalen Validierungsfehlers in Quarantäne versetzt.
+    /// A voucher was placed in quarantine due to a verified double-spend conflict
+    /// or a fatal validation error.
     VoucherQuarantined,
-    /// Ein Gutschein hat den Status von `Incomplete` auf `Active` gewechselt
-    /// (z.B. durch Hinzufügen einer fehlenden Unterschrift).
+    /// A voucher transitioned from `Incomplete` to `Active`
+    /// (e.g. by adding a missing signature).
     VoucherActivated,
-    /// Ein Gutschein wurde vom Nutzer oder durch Systemlogik explizit ungültig gemacht.
+    /// A voucher was explicitly voided by the user or through system logic.
     VoucherVoided,
-    /// Die Gültigkeitsdauer (`valid_until`) eines Gutscheins ist abgelaufen.
+    /// The validity duration (`valid_until`) of a voucher has expired.
     VoucherExpired,
-    /// Fallback-Variante für eine fehlerresiliente Deserialisierung älterer Clients.
+    /// Fallback variant for error-resilient deserialization for older clients.
     Unknown(String),
 }
 
-/// UI-optimierte Daten ("BFF-Daten"), die direkt in der Event-Historie angezeigt
-/// werden können, ohne dass die UI den Gutschein-Store parsen muss.
+/// UI-optimized data ("BFF data") that can be displayed directly in the event history
+/// without requiring the UI to parse the voucher store.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct EventBffData {
-    /// Die formatierte Währungseinheit für die Anzeige (z.B. "TEST-Minuto").
+    /// The formatted currency unit for display (e.g. "TEST-Minuto").
     pub display_currency: String,
-    /// Der Betrag, der mit diesem Event assoziiert ist, als String für
-    /// präzise Dezimaldarstellung (z.B. "10.50").
+    /// The amount associated with this event, as a string for
+    /// precise decimal representation (e.g. "10.50").
     pub amount: String,
-    /// Gibt an, ob es sich um einen Test-Gutschein handelt.
+    /// Indicates whether this is a test voucher.
     pub is_test_voucher: bool,
-    /// Die User-ID des Counterpartys (Sender oder Empfänger), sofern bekannt.
-    /// Ermöglicht der UI direkte Anzeigen wie "Gesendet an Bob".
+    /// The user ID of the counterparty (sender or recipient), if known.
+    /// Enables direct UI displays like "Sent to Bob".
     pub counterparty_id: Option<String>,
-    /// Der Anzeigename des Counterpartys, sofern verfügbar.
+    /// The display name of the counterparty, if available.
     pub counterparty_name: Option<String>,
 }
 
-/// Ein einzelnes, immutables Event im Wallet-Event-Log.
+/// A single, immutable event in the wallet event log.
 ///
-/// Jedes Event hat eine globale UUID (`event_id`), einen globalen Anker
-/// (`voucher_id`) und eine lokale Instanz-ID (`local_instance_id`) für
-/// direkte UI-Navigation.
+/// Each event has a global UUID (`event_id`), a global anchor
+/// (`voucher_id`), and a local instance ID (`local_instance_id`) for
+/// direct UI navigation.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct WalletEvent {
-    /// Eine eindeutige, globale Event-ID (UUID v4).
+    /// A unique, global event ID (UUID v4).
     pub event_id: String,
-    /// Die lokale Instanz-ID des betroffenen Gutscheins für UI-Navigation.
+    /// The local instance ID of the affected voucher for UI navigation.
     pub local_instance_id: String,
-    /// Die globale, unveränderliche ID des betroffenen Gutscheins.
+    /// The global, immutable ID of the affected voucher.
     pub voucher_id: String,
-    /// Der Zeitstempel der Ereignis-Erkennung (nicht unbedingt der Persistierung).
+    /// The timestamp of event detection (not necessarily persistence).
     pub timestamp: DateTime<Utc>,
-    /// Der Typ des Ereignisses.
+    /// The type of the event.
     pub event_type: WalletEventType,
-    /// UI-optimierte Anzeigedaten für dieses Event.
+    /// UI-optimized display data for this event.
     pub bff_data: EventBffData,
 }
 
 impl WalletEvent {
-    /// Erstellt ein neues WalletEvent mit einer frisch generierten UUID.
+    /// Creates a new WalletEvent with a freshly generated UUID.
     pub fn new(
         local_instance_id: String,
         voucher_id: String,

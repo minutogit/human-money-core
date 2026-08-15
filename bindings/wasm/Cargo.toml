@@ -1,0 +1,26 @@
+[package]
+name = "human_money_wasm"
+version = "0.2.22"
+edition = "2024"
+description = "WebAssembly bindings for human_money_core library"
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+human_money_core = { path = "../../" }
+wasm-bindgen = "0.2"
+serde = { version = "1.0.219", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+serde_json = "1.0.140"
+toml = "0.8.14"
+bs58 = "0.5"
+ed25519-dalek = "2.1.1"
+cel-interpreter = "0.10.0"
+getrandom = { version = "0.2", features = ["js"] }
+uuid = { version = "1.8.0", features = ["v4", "serde", "js"] }
+
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

@@ -21,7 +21,6 @@ impl AppService {
     pub fn create_new_voucher(
         &mut self,
         standard_toml_content: &str,
-        lang_preference: &str,
         data: NewVoucherData,
         password: Option<&str>,
     ) -> Result<Voucher, AppFacadeError> {
@@ -35,7 +34,6 @@ impl AppService {
                 identity,
                 &verified_standard,
                 &standard_hash,
-                lang_preference,
                 data,
             ) {
                 Ok(new_voucher) => TransactionOutcome::Commit(new_voucher),

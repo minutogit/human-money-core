@@ -18,7 +18,7 @@ use human_money_core::models::layer2_api::{
 use human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw;
 
 // =============================================================================
-// CLI Struktur
+// CLI Structure
 // =============================================================================
 
 #[derive(Parser, Debug)]
@@ -104,22 +104,22 @@ enum ManualCmd {
 
 const STATE_FILE: &str = "l2_simulator_state.json";
 
-/// Ein einzelnes "Blatt" (UTXO) im L2-Graph. Enthält alle Daten,
-/// um die nächste Transaktion korrekt zu signieren.
+/// A single "leaf" (UTXO) in the L2 graph. Contains all data
+/// needed to sign the next transaction correctly.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Leaf {
-    /// Der aktuelle Transaction-Hash (Base58), der als ds_tag für den Nachfolger gilt.
+    /// The current transaction hash (Base58), serving as ds_tag for the successor.
     t_id_bs58: String,
-    /// Der rohe Signing-Key (32 Bytes), um den nächsten Lock zu signieren.
+    /// The raw signing key (32 bytes) to sign the next lock.
     signing_key_bytes: Vec<u8>,
-    /// Label für den Architekten (z.B. "genesis", "transfer:1", "split:0")
+    /// Label for debugging/architecture (e.g. "genesis", "transfer:1", "split:0")
     label: String,
-    /// Historische t_id_bs58 Werte dieses Pfades (älteste zuerst).
-    /// Werden als Grundlage für locator_prefixes beim Sync genutzt.
+    /// Historical t_id_bs58 values along this path (oldest first).
+    /// Used as base for locator_prefixes during sync.
     #[serde(default)]
     history: Vec<String>,
-    /// Locks, die lokal generiert, aber noch nicht an den Server gesendet wurden.
-    /// Werden durch 'offline-transfer' befüllt und durch 'sync' geleert.
+    /// Locks generated locally but not yet sent to the server.
+    /// Populated by 'offline-transfer' and cleared by 'sync'.
     #[serde(default)]
     offline_locks: Vec<L2LockRequest>,
 }
@@ -127,7 +127,7 @@ struct Leaf {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct VoucherState {
     layer2_voucher_id: String,
-    /// Die aktiven, ausgabefähigen Blätter dieses Gutscheins.
+    /// The active, spendable leaves of this voucher.
     leaves: Vec<Leaf>,
 }
 
@@ -151,7 +151,7 @@ impl SimulatorState {
 }
 
 // =============================================================================
-// Haupt-Dispatcher
+// Main Dispatcher
 // =============================================================================
 
 #[tokio::main]
@@ -199,23 +199,23 @@ async fn cmd_genesis(url: &str) {
     let client = Client::new();
     let mut rng = OsRng;
 
-    // Neuen Ephemeral Signing Key erzeugen
+    // Generate new ephemeral signing key
     let sender_key = SigningKey::generate(&mut rng);
     let sender_pub = sender_key.verifying_key().to_bytes();
 
-    // Zufällige t_id generieren
+    // Generate random t_id
     let mut t_id_bytes = [0u8; 32];
     rng.fill_bytes(&mut t_id_bytes);
     let t_id_bs58 = bs58::encode(&t_id_bytes).into_string();
 
-    // layer2_voucher_id = SHA256(t_id || sender_pub) – spiegelt calculate_layer2_voucher_id wider
+    // layer2_voucher_id = SHA256(t_id || sender_pub) – mirrors calculate_layer2_voucher_id
     let mut hasher = Sha256::new();
     hasher.update(t_id_bytes);
     hasher.update(sender_pub);
     let vid_hash = hasher.finalize();
     let layer2_voucher_id = hex::encode(vid_hash);
 
-    // Signatur berechnen: challenge_ds_tag bei Genesis = bs58(t_id)
+    // Compute signature: challenge_ds_tag for Genesis = bs58(t_id)
     let challenge_ds_tag = t_id_bs58.clone();
     let payload_hash = calculate_l2_payload_hash_raw(
         &challenge_ds_tag,
@@ -272,7 +272,7 @@ async fn cmd_genesis(url: &str) {
         return;
     }
 
-    // Blatt im State speichern
+    // Save leaf in state
     let leaf = Leaf {
         t_id_bs58: t_id_bs58.clone(),
         signing_key_bytes: sender_key.to_bytes().to_vec(),
@@ -312,7 +312,7 @@ async fn cmd_transfer(url: &str, voucher_id: &str) {
         return;
     }
 
-    // Erstes Blatt entnehmen
+    // Take first leaf
     let leaf = voucher.leaves.remove(0);
     let old_t_id_bs58 = leaf.t_id_bs58.clone();
     let old_key_bytes: [u8; 32] = leaf
@@ -324,16 +324,16 @@ async fn cmd_transfer(url: &str, voucher_id: &str) {
 
     let mut rng = OsRng;
 
-    // Neuen Ephemeral Key für den Nachfolger
+    // New ephemeral key for successor
     let new_key = SigningKey::generate(&mut rng);
     let new_pub = new_key.verifying_key().to_bytes();
 
-    // Neue t_id generieren
+    // Generate new t_id
     let mut new_t_id = [0u8; 32];
     rng.fill_bytes(&mut new_t_id);
     let new_t_id_bs58 = bs58::encode(&new_t_id).into_string();
 
-    // ds_tag = bs58(vorherige t_id) – so wie die Core-Logik es verlangt
+    // ds_tag = bs58(previous t_id) – as required by core logic
     let ds_tag = old_t_id_bs58.clone();
 
     let payload_hash = calculate_l2_payload_hash_raw(
@@ -387,7 +387,7 @@ async fn cmd_transfer(url: &str, voucher_id: &str) {
             }
             L2Verdict::Rejected { reason } => {
                 println!("  Server       : [REJECTED] {}", reason);
-                // Blatt zurücklegen, da nicht verbraucht
+                // Put leaf back since not spent
                 voucher.leaves.insert(0, leaf);
                 state.save();
                 return;
@@ -401,8 +401,8 @@ async fn cmd_transfer(url: &str, voucher_id: &str) {
         return;
     }
 
-    // Neues Blatt speichern, altes wurde bereits entfernt
-    // History: Vorgänger-Geschichte kopieren und verbrauchten ds_tag anhängen
+    // Save new leaf, old was already removed
+    // History: copy predecessor history and append spent ds_tag
     let mut new_history = leaf.history.clone();
     new_history.push(old_t_id_bs58.clone());
 
@@ -435,14 +435,14 @@ async fn cmd_split(url: &str, voucher_id: &str) {
         return;
     }
 
-    // Erstes Blatt entnehmen (wird durch die Split-Transaktion verbraucht)
+    // Take first leaf (consumed by split transaction)
     let consumed_leaf = voucher.leaves.remove(0);
     let ds_tag = consumed_leaf.t_id_bs58.clone();
 
     let mut rng = OsRng;
 
-    // Einen zentralen Split-Lock senden, der den Vorgänger verbraucht.
-    // Der Split selbst ist eine normale Transaktion mit einer neuen t_id.
+    // Send a central split lock that consumes predecessor.
+    // The split itself is a normal transaction with a new t_id.
     let split_key = SigningKey::generate(&mut rng);
     let split_pub = split_key.verifying_key().to_bytes();
     let mut split_t_id = [0u8; 32];
@@ -499,7 +499,7 @@ async fn cmd_split(url: &str, voucher_id: &str) {
             }
             L2Verdict::Rejected { reason } => {
                 println!("  Server            : [REJECTED] {}", reason);
-                // Blatt zurücklegen, da nicht verbraucht
+                // Put leaf back since not spent
                 voucher.leaves.insert(0, consumed_leaf);
                 state.save();
                 return;
@@ -513,21 +513,21 @@ async fn cmd_split(url: &str, voucher_id: &str) {
         return;
     }
 
-    // Erzeuge exakt 2 neue, unabhängige Blätter: Zahlbetrag (payment) + Wechselgeld (change).
-    // In einem echten System würden diese Locks separat übermittelt;
-    // hier legen wir sie als "pending children" im State an, die jederzeit
-    // via `transfer` einzeln ausgegeben werden können.
+    // Create exactly 2 new, independent leaves: payment amount (payment) + change.
+    // In a real system these locks would be transmitted separately;
+    // here we create them as "pending children" in state that can be
+    // spent individually via `transfer` at any time.
     println!("  Creating 2 successor leaves in state (payment + change)...");
     let labels = ["payment", "change"];
     let mut new_leaves = Vec::with_capacity(2);
-    // History: Vorgänger-Geschichte + verbrauchter ds_tag
+    // History: predecessor history + spent ds_tag
     let mut child_history = consumed_leaf.history.clone();
     child_history.push(ds_tag.clone());
     for i in 0..2usize {
         let child_key = SigningKey::generate(&mut rng);
         let mut child_t_id_bytes = [0u8; 32];
         rng.fill_bytes(&mut child_t_id_bytes);
-        // Index einmischen, um garantiert unterschiedliche Hashes zu erzeugen
+        // Mix in index to guarantee distinct hashes
         child_t_id_bytes[0] ^= i as u8;
         let child_t_id_bs58 = bs58::encode(&child_t_id_bytes).into_string();
 
@@ -576,13 +576,13 @@ async fn cmd_double_spend(url: &str, voucher_id: &str) {
     println!("  Leaf       : {} ({})", ds_tag, leaf.label);
     println!("  Generating two conflicting locks for the SAME ds_tag...");
 
-    // Beide Locks nutzen denselben ds_tag, aber unterschiedliche t_ids und Keys
+    // Both locks use the same ds_tag, but different t_ids and keys
     for attempt in 1..=2u8 {
         let spend_key = SigningKey::generate(&mut rng);
         let spend_pub = spend_key.verifying_key().to_bytes();
         let mut attempt_t_id = [0u8; 32];
         rng.fill_bytes(&mut attempt_t_id);
-        // Unterschiedliche t_ids sicherstellen
+        // Ensure distinct t_ids
         attempt_t_id[31] = attempt;
         let attempt_t_id_bs58 = bs58::encode(&attempt_t_id).into_string();
 
@@ -674,14 +674,14 @@ async fn cmd_query(url: &str, voucher_id: &str) {
     }
 
     let leaf = &voucher.leaves[0];
-    // challenge_ds_tag = der Key, unter dem der letzte Lock am Server gespeichert ist.
+    // challenge_ds_tag = key under which the last lock is stored on the server.
     // Original: derive_challenge_tag(last_tx)
-    //   Genesis    → t_id_genesis (= leaf.t_id_bs58, history ist leer)
-    //   Non-Genesis → trap_data.ds_tag = t_id des Vorgänger-Blattes (= history.last())
+    //   Genesis    → t_id_genesis (= leaf.t_id_bs58, history is empty)
+    //   Non-Genesis → trap_data.ds_tag = t_id of predecessor leaf (= history.last())
     let challenge_ds_tag = if leaf.history.is_empty() {
         leaf.t_id_bs58.clone() // Genesis
     } else {
-        leaf.history.last().unwrap().clone() // Non-Genesis: letzter ds_tag
+        leaf.history.last().unwrap().clone() // Non-Genesis: last ds_tag
     };
 
     let key_bytes: [u8; 32] = leaf
@@ -971,7 +971,7 @@ async fn run_compliance_test(url: &str, _server_pubkey: Option<&str>) {
     // 5. Invalid Signature
     println!("-> Sending Invalid Signature (tampered layer2_signature)...");
     let (mut bad_req, _) = generate_mock_lock_request(true, None, None, None);
-    // Flippe das erste Byte der Signatur – mathematisch garantiert ungültig
+    // Flip the first byte of the signature – mathematically guaranteed invalid
     bad_req.layer2_signature[0] ^= 0xFF;
 
     let res = client
@@ -1012,9 +1012,9 @@ async fn run_stress_test(url: &str, rate: u32, connections: u32) {
     let client = Client::new();
     let counter = Arc::new(AtomicUsize::new(0));
     let errors = Arc::new(AtomicUsize::new(0));
-    // Summe der Latenzen (ms) aller erfolgreichen Requests im aktuellen 3s-Fenster
+    // Sum of latencies (ms) of all successful requests in current 3s window
     let latency_sum_ms = Arc::new(AtomicU64::new(0));
-    // Anzahl erfolgreicher Requests im aktuellen 3s-Fenster (für den Durchschnitt)
+    // Number of successful requests in current 3s window (for average)
     let latency_count = Arc::new(AtomicUsize::new(0));
 
     let c = counter.clone();
@@ -1031,7 +1031,7 @@ async fn run_stress_test(url: &str, rate: u32, connections: u32) {
             let diff = current_cnt - last_cnt;
             last_cnt = current_cnt;
 
-            // Durchschnittslatenz aus dem vergangenen 3s-Fenster berechnen und zurücksetzen
+            // Calculate average latency from past 3s window and reset
             let sum_ms = ls.swap(0, Ordering::Relaxed);
             let count = lc.swap(0, Ordering::Relaxed);
             let avg_latency = if count > 0 { sum_ms / count as u64 } else { 0 };
@@ -1106,7 +1106,7 @@ async fn run_stress_test(url: &str, rate: u32, connections: u32) {
             c.fetch_add(1, Ordering::Relaxed);
             match res {
                 Ok(resp) if !resp.status().is_server_error() => {
-                    // Latenz nur für erfolgreiche Requests aufsummieren
+                    // Accumulate latency only for successful requests
                     ls.fetch_add(elapsed_ms, Ordering::Relaxed);
                     lc.fetch_add(1, Ordering::Relaxed);
                 }
@@ -1162,23 +1162,23 @@ fn cmd_offline_transfer(voucher_id: &str, count: u32) {
     println!("  Starting from leaf: {} ({})", leaf.t_id_bs58, leaf.label);
     println!("  Generating {} offline lock(s)...", count);
 
-    // Aktuellen Zustand des Blatts als Ausgangspunkt
+    // Current state of leaf as starting point
     let mut current_t_id_bs58 = leaf.t_id_bs58.clone();
     let mut current_key_bytes = leaf.signing_key_bytes.clone();
     let mut new_history = leaf.history.clone();
     let mut new_offline_locks: Vec<L2LockRequest> = leaf.offline_locks.clone();
 
     for i in 0..count {
-        // Neuen Ephemeral Key für diesen Schritt
+        // New ephemeral key for this step
         let new_key = SigningKey::generate(&mut rng);
         let new_pub = new_key.verifying_key().to_bytes();
 
-        // Neue t_id generieren
+        // Generate new t_id
         let mut new_t_id = [0u8; 32];
         rng.fill_bytes(&mut new_t_id);
         let new_t_id_bs58 = bs58::encode(&new_t_id).into_string();
 
-        // ds_tag = aktuelle t_id des Vorgängers
+        // ds_tag = current t_id of predecessor
         let ds_tag = current_t_id_bs58.clone();
 
         let payload_hash = calculate_l2_payload_hash_raw(
@@ -1215,16 +1215,16 @@ fn cmd_offline_transfer(voucher_id: &str, count: u32) {
             &new_t_id_bs58[..10]
         );
 
-        // ds_tag des verbrauchten Blattes in History aufnehmen
+        // Record spent leaf's ds_tag in history
         new_history.push(ds_tag);
         new_offline_locks.push(lock);
 
-        // Nächste Iteration: neuer Ausgangspunkt
+        // Next iteration: new starting point
         current_t_id_bs58 = new_t_id_bs58;
         current_key_bytes = new_key.to_bytes().to_vec();
     }
 
-    // Blatt mit dem finalen Zustand aktualisieren
+    // Update leaf with final state
     leaf.history = new_history;
     leaf.offline_locks = new_offline_locks;
     leaf.t_id_bs58 = current_t_id_bs58.clone();
@@ -1263,36 +1263,36 @@ async fn cmd_sync(url: &str, voucher_id: &str) {
         return;
     }
 
-    // challenge_ds_tag = der Key, unter dem der letzte (bekannte) Lock am Server gespeichert ist.
-    // Da offline_locks noch nicht gesendet wurden, ist der letzte serverseitig bekannte Lock
-    // derjenige BEFORE den offline_locks – also history.last() des Genesis/Transfer-Blatts.
+    // challenge_ds_tag = key under which the last (known) lock is stored on the server.
+    // Since offline_locks were not sent yet, the last server-known lock
+    // is the one BEFORE the offline_locks – so history.last() of Genesis/Transfer leaf.
     // Original: derive_challenge_tag(last_known_tx)
-    //   Genesis    → t_id_genesis (history leer)
-    //   Non-Genesis → letzter in history gespeicherter ds_tag (= letzter übermittelter Lock)
+    //   Genesis    → t_id_genesis (empty history)
+    //   Non-Genesis → last ds_tag saved in history (= last transmitted lock)
     //
-    // WICHTIG: leere history bedeutet, dass das Blatt noch kein transfer vor offline-transfer hatte.
-    // In diesem Fall zeigt leaf.t_id_bs58 auf die Genesis-t_id – der korrekte challenge.
+    // IMPORTANT: empty history means the leaf had no transfer before offline-transfer.
+    // In this case leaf.t_id_bs58 points to the Genesis t_id – the correct challenge.
     let challenge_ds_tag = if leaf.history.is_empty() {
-        leaf.t_id_bs58.clone() // Genesis-Blatt: noch keine online Transfers davor
+        leaf.t_id_bs58.clone() // Genesis leaf: no online transfers before
     } else {
-        // history enthält alle ds_tags der bisherigen (online!) Locks.
-        // Der letzte Eintrag ist der ds_tag des letzten online gesendeten Locks.
+        // history contains all ds_tags of previous (online!) locks.
+        // The last entry is the ds_tag of the last online transmitted lock.
         leaf.history.last().unwrap().clone()
     };
     let n_locks = leaf.offline_locks.len();
 
-    // Locator-Prefixes nach dem originalen exponentiellen Algorithmus aus
+    // Locator prefixes using the original exponential algorithm from
     // generate_locator_prefixes (src/services/l2_gateway.rs):
-    // Wir gehen von der letzten History-Position rückwärts mit Schritten 1, 2, 4, 8, 16...
-    // Die History enthält die verbrauchten ds_tags (älteste zuerst).
-    // Zusätzlich wird das Genesis-Präfix immer am Ende angehängt.
+    // We walk backwards from the last history position with steps 1, 2, 4, 8, 16...
+    // History contains consumed ds_tags (oldest first).
+    // In addition, the genesis prefix is always appended at the end.
     let locator_prefixes: Vec<String> = {
         let history = &leaf.history;
         let n = history.len();
         let mut prefixes: Vec<String> = Vec::new();
 
         if n > 0 {
-            // Rückwärts mit exponentiellen Schritten: Index n-1, n-2, n-4, n-8, ...
+            // Backwards with exponential steps: index n-1, n-2, n-4, n-8, ...
             let mut step: usize = 1;
             let mut i = n - 1;
 
@@ -1303,11 +1303,11 @@ async fn cmd_sync(url: &str, voucher_id: &str) {
                     break;
                 }
                 i -= step;
-                step *= 2; // Exponentielle Abstände: 1, 2, 4, 8, 16...
+                step *= 2; // Exponential steps: 1, 2, 4, 8, 16...
             }
 
-            // Genesis-Präfix (history[0] = ältester ds_tag) immer anhängen,
-            // falls nicht bereits enthalten.
+            // Always append genesis prefix (history[0] = oldest ds_tag)
+            // if not already contained.
             let genesis_prefix: String = history[0].chars().take(10).collect();
             if !prefixes.contains(&genesis_prefix) {
                 prefixes.push(genesis_prefix);
@@ -1358,15 +1358,15 @@ async fn cmd_sync(url: &str, voucher_id: &str) {
 
     let envelope: L2ResponseEnvelope = res.json().await.expect("Failed to parse response");
 
-    // Wir brauchen die Locks für das Senden – clone vor dem borrow
+    // We need locks for sending – clone before borrow
     let offline_locks = voucher.leaves[0].offline_locks.clone();
 
     match envelope.verdict {
         L2Verdict::MissingLocks { sync_point } => {
             println!("  Server: [MISSING LOCKS] sync_point = '{}'", sync_point);
 
-            // Startindex bestimmen: erstes Lock, dessen ds_tag mit sync_point beginnt
-            // (oder "genesis" = alle Locks senden)
+            // Determine start index: first lock whose ds_tag starts with sync_point
+            // (or "genesis" = send all locks)
             let start_idx = if sync_point == "genesis" {
                 0
             } else {
@@ -1443,7 +1443,7 @@ async fn cmd_sync(url: &str, voucher_id: &str) {
             }
 
             if all_ok {
-                // offline_locks leeren, history beibehalten
+                // Clear offline_locks, keep history
                 voucher.leaves[0].offline_locks.clear();
                 state.save();
                 println!();
@@ -1505,7 +1505,7 @@ mod tests {
     #[test]
     fn test_state_save_and_load() {
         use std::collections::HashMap;
-        // Temporäre State-Datei in /tmp, um den echten State nicht zu überschreiben
+        // Temporary state file in /tmp to avoid overwriting real state
         let leaf = Leaf {
             t_id_bs58: "testLeafHash123".to_string(),
             signing_key_bytes: vec![0u8; 32],
@@ -1533,7 +1533,7 @@ mod tests {
 
     #[test]
     fn test_manual_genesis_voucher_id_derivation() {
-        // Prüft, dass die lokale VID-Berechnung reproduzierbar ist
+        // Checks that local VID calculation is reproducible
         let t_id = [42u8; 32];
         let sender_pub = [7u8; 32];
         let mut hasher = Sha256::new();
@@ -1550,3 +1550,4 @@ mod tests {
         assert_eq!(result1.len(), 64, "VID must be a 64-char hex string");
     }
 }
+

@@ -1,8 +1,8 @@
 // tests/architecture/hardening.rs
 // cargo test --test architecture_tests
 //!
-//! Enthält "Härtungstests", die die Robustheit der Architektur in
-//! Randfällen und bei Konsistenzprüfungen verifizieren.
+//! Contains "hardening tests" that verify the robustness of the architecture in
+//! edge cases and consistency checks.
 
 #[cfg(test)]
 mod tests {
@@ -16,7 +16,7 @@ mod tests {
 
     #[test]
     fn test_cleanup_synchronizes_stores() {
-        // GIVEN: Ein Wallet mit einem abgelaufenen Fingerprint, der in beiden Stores vorhanden ist.
+        // GIVEN: A wallet with an expired fingerprint present in both stores.
         let dir = tempdir().unwrap();
         let (mut service, profile) = test_utils::setup_service_with_profile(
             dir.path(),
@@ -48,7 +48,7 @@ mod tests {
             layer2_signature: String::new(),
         };
 
-        // Füge den Fingerprint beiden relevanten Stores hinzu
+        // Add the fingerprint to both relevant stores
         wallet
             .known_fingerprints
             .local_history
@@ -64,10 +64,10 @@ mod tests {
             "Pre-condition: Metadata must exist for fingerprint"
         );
 
-        // WHEN: Die Speicherbereinigung wird ausgeführt.
+        // WHEN: Storage cleanup is executed.
         service.run_storage_cleanup().unwrap();
 
-        // THEN: Der Fingerprint wurde aus BEIDEN Stores synchron entfernt.
+        // THEN: The fingerprint was removed synchronously from BOTH stores.
         let final_wallet = service.get_unlocked_mut_for_test().0;
         assert!(
             !final_wallet
@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn test_recovery_handles_split_transaction_chain() {
-        // GIVEN: Ein Wallet mit einem Gutschein, der geteilt (split) wurde.
+        // GIVEN: A wallet with a voucher that was split.
         let dir = tempdir().unwrap();
         let (mut alice_service, alice_profile) = test_utils::setup_service_with_profile(
             dir.path(),
@@ -104,7 +104,7 @@ mod tests {
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
-        // Erstelle einen Gutschein mit 100 Einheiten
+        // Create a voucher with 100 units
         let new_voucher_data = NewVoucherData {
             nominal_value: human_money_core::models::voucher::ValueDefinition {
                 amount: "100".to_string(),
@@ -119,7 +119,6 @@ mod tests {
         let voucher = alice_service
             .create_new_voucher(
                 &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
-                "de",
                 new_voucher_data,
                 Some(PASSWORD),
             )
@@ -129,14 +128,14 @@ mod tests {
             .clone();
 
         let wallet_path = dir.path().join(&alice_profile.folder_name);
-        alice_service.logout(); // Speichert den Zustand
+        alice_service.logout(); // Saves the state
         // Manually remove lock file
         let lock_file = wallet_path.join(".wallet.lock");
         if lock_file.exists() {
             std::fs::remove_file(&lock_file).unwrap();
         }
 
-        // Führe einen Split durch ( sende 40 an Bob, behalte 60)
+        // Perform a split (send 40 to Bob, keep 60)
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
@@ -159,16 +158,16 @@ mod tests {
             .create_transfer_bundle(request, &standards_toml, None, Some(PASSWORD))
             .unwrap();
 
-        alice_service.logout(); // Speichert den Zustand mit 2 Transaktionen
+        alice_service.logout(); // Saves state with 2 transactions
         // Manually remove lock file
         if lock_file.exists() {
             std::fs::remove_file(&lock_file).unwrap();
         }
 
-        // WHEN: Die Metadaten werden gelöscht und das Wallet wiederhergestellt.
+        // WHEN: Metadata is deleted and the wallet is restored.
         let metadata_path = wallet_path.join("fingerprint_metadata.enc");
         std::fs::remove_file(metadata_path).unwrap();
-        // Auch das Siegel entfernen, da es den alten state_hash enthält.
+        // Also remove the seal as it contains the old state_hash.
         let seal_path = wallet_path.join("seal.enc");
         if seal_path.exists() {
             std::fs::remove_file(seal_path).unwrap();
@@ -177,7 +176,7 @@ mod tests {
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
-        // THEN: Die `depth`-Werte der Kette sind korrekt initialisiert.
+        // THEN: The `depth` values of the chain are correctly initialized.
         let wallet = alice_service.get_unlocked_mut_for_test().0;
         let voucher_instance = wallet
             .voucher_store
@@ -191,14 +190,14 @@ mod tests {
             "Voucher should have two transactions"
         );
 
-        // Finde die Fingerprints für beide Transaktionen
-        let init_tx_fp_key = voucher_instance.voucher.transactions[0].t_id.clone(); // Dies ist nicht der Key, wir müssen ihn finden
+        // Find fingerprints for both transactions
+        let init_tx_fp_key = voucher_instance.voucher.transactions[0].t_id.clone(); // This is not the key, we need to find it
         let split_tx_fp_key = voucher_instance.voucher.transactions[1].t_id.clone();
 
         let mut init_depth = None;
         let mut split_depth = None;
 
-        // Finde die Metadaten, indem wir die t_id vergleichen, da wir den Key nicht direkt haben
+        // Find metadata by comparing t_id, since we don't have the key directly
         for (key, meta) in &wallet.fingerprint_metadata {
             if let Some(fp_vec) = wallet.own_fingerprints.history.get(key) {
                 if fp_vec.iter().any(|fp| fp.t_id == init_tx_fp_key) {
@@ -223,7 +222,7 @@ mod tests {
 
     #[test]
     fn test_operations_on_empty_wallet_do_not_panic() {
-        // GIVEN: Ein brandneues, leeres Wallet.
+        // GIVEN: A brand new, empty wallet.
         let dir = tempdir().unwrap();
         let (mut service, profile) = test_utils::setup_service_with_profile(
             dir.path(),
@@ -251,23 +250,23 @@ mod tests {
             "Pre-condition: Wallet must be empty"
         );
 
-        // WHEN: Wartungsoperationen werden ausgeführt.
-        // THEN: Die Operationen laufen ohne Fehler oder Panics durch.
+        // WHEN: Maintenance operations are executed.
+        // THEN: The operations run without errors or panics.
         let cleanup_report = service
             .run_storage_cleanup()
             .expect("Cleanup on empty wallet should not fail");
         assert_eq!(cleanup_report.expired_fingerprints_removed, 0);
         assert_eq!(cleanup_report.limit_based_fingerprints_removed, 0);
 
-        // Der Aufruf von rebuild_derived_stores ist Teil von `login` und wurde bereits implizit getestet.
-        // Ein expliziter Aufruf bestätigt, dass es auch im laufenden Betrieb sicher ist.
+        // Calling rebuild_derived_stores is part of `login` and was already tested implicitly.
+        // An explicit call confirms that it is also safe during ongoing operation.
         service
             .get_unlocked_mut_for_test()
             .0
             .rebuild_derived_stores()
             .expect("Rebuild on empty wallet should not fail");
 
-        // Prüfe den Zustand danach
+        // Check state afterwards
         let final_wallet = service.get_unlocked_mut_for_test().0;
         assert!(final_wallet.fingerprint_metadata.is_empty());
         assert!(final_wallet.own_fingerprints.history.is_empty());
@@ -283,15 +282,15 @@ mod tests {
         let dir = tempdir().unwrap();
         let tauri_app_dir = dir.path(); 
         
-        // Wir simulieren, dass die Core in einem Unterordner "wallets" arbeitet
+        // We simulate that the Core works in a "wallets" subfolder
         let base_storage_path = tauri_app_dir.join("wallets");
         
-        // Der unvorsichtige App-Entwickler schreibt die Datei in den Tauri-App-Ordner (eine Ebene drüber)
+        // The careless app developer writes the file to the Tauri app folder (one level above)
         std::fs::write(tauri_app_dir.join("instance_id"), "dummy-device-123").unwrap();
         
         let mut service = AppService::new(&base_storage_path).unwrap();
         
-        // Versuch ein Profil zu erstellen, sollte sofort in die Falle laufen!
+        // Attempting to create a profile should immediately trigger the trap!
         let result = service.create_profile(
             "Trap Test", 
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", 

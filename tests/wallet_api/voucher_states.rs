@@ -1,8 +1,8 @@
 // tests/wallet_api/voucher_states.rs
 // cargo test --test wallet_api_tests wallet_api::voucher_states
 //!
-//! Testet das Verhalten von Gutscheinen in verschiedenen Status-Zuständen,
-//! insbesondere die Einschränkungen für Quarantäne.
+//! Tests the behavior of vouchers in various states,
+//! especially restrictions for Quarantine.
 
 use human_money_core::models::secure_container::{ContainerConfig, PrivacyMode};
 use human_money_core::test_utils::{ACTORS, MINUTO_STANDARD, setup_in_memory_wallet, add_voucher_to_wallet};
@@ -15,7 +15,7 @@ fn test_quarantined_voucher_behavior() {
     let (standard, _) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
     let local_id = add_voucher_to_wallet(&mut wallet, alice, "100", standard, true).unwrap();
 
-    // Instanz manuell auf Quarantined setzen
+    // Manually set instance to Quarantined
     let instance = wallet.voucher_store.vouchers.get_mut(&local_id).unwrap();
     instance.status = VoucherStatus::Quarantined {
         reason: "Test".to_string(),

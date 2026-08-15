@@ -14,7 +14,7 @@ use human_money_core::services::crypto_utils;
 use human_money_core::wallet::Wallet;
 use human_money_core::{NewVoucherData, VoucherStatus, verify_and_parse_standard};
 
-/// Hilfsfunktion, um eine deterministische UserIdentity für Tests zu erstellen.
+/// Helper function to create a deterministic UserIdentity for tests.
 fn create_test_identity(seed: &str, prefix: &str) -> UserIdentity {
     let (public_key, signing_key) = crypto_utils::generate_ed25519_keypair_for_tests(Some(seed));
     let user_id = crypto_utils::create_user_id(&public_key, Some(prefix)).unwrap();
@@ -28,10 +28,10 @@ fn create_test_identity(seed: &str, prefix: &str) -> UserIdentity {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- WALLET TRANSACTION PLAYGROUND ---");
 
-    // --- SCHRITT 1: Setup ---
+    // --- STEP 1: Setup ---
     println!("\n--- SCHRITT 1: Erstelle Identitäten, Wallet und einen initialen Gutschein ---");
 
-    // Erstelle Identitäten für Alice (Senderin) und Bob (Empfänger)
+    // Create identities for Alice (sender) and Bob (recipient)
     let alice_identity = create_test_identity("alice", "al");
     let bob_identity = create_test_identity("bob", "bo");
     println!(
@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         alice_identity.user_id, bob_identity.user_id
     );
 
-    // Lade den für den Gutschein gültigen Standard
+    // Load valid standard for the voucher
     let standard_toml = std::fs::read_to_string("voucher_standards/freetaler_v1/standard.toml")?;
     let (standard, standard_hash) = verify_and_parse_standard(&standard_toml)?;
     println!(
@@ -47,12 +47,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         standard.immutable.identity.name
     );
 
-    // Erstelle eine neue, leere Wallet für Alice
+    // Create a new empty wallet for Alice
     let mut alice_wallet = human_money_core::test_utils::setup_in_memory_wallet(&alice_identity);
 
-    // Erstelle einen neuen Gutschein und füge ihn Alices Wallet hinzu
+    // Create a new voucher and add it to Alice's wallet
     let voucher_data = NewVoucherData {
-        validity_duration: Some("P5Y".to_string()), // 5 Jahre, entspricht dem Standard-Default
+        validity_duration: Some("P5Y".to_string()), // 5 years, corresponds to standard default
         non_redeemable_test_voucher: false,
         nominal_value: ValueDefinition {
             amount: "1.5".to_string(),
@@ -72,17 +72,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         voucher_data,
         &standard,
         &standard_hash,
-        &alice_identity.signing_key,
-        "en",
-    )?;
+        &alice_identity.signing_key)?;
     let local_id = Wallet::calculate_local_instance_id(&initial_voucher, &alice_identity.user_id)?;
     alice_wallet.add_voucher_instance(local_id, initial_voucher, VoucherStatus::Active);
     println!("✅ Initialen Gutschein erstellt und zu Alices Wallet hinzugefügt.");
 
-    // --- SCHRITT 2: Transaktion durchführen ---
+    // --- STEP 2: Execute transaction ---
     println!("\n--- SCHRITT 2: Alice sendet 0.5 Taler an Bob ---");
 
-    // Die lokale ID des Gutscheins in Alices Wallet holen
+    // Get local ID of voucher in Alice's wallet
     let local_instance_id = alice_wallet
         .voucher_store
         .vouchers
@@ -91,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap()
         .clone();
 
-    // Erstelle eine MultiTransferRequest und rufe die neue Methode auf
+    // Create a MultiTransferRequest and invoke method
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_identity.user_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
@@ -112,33 +110,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &alice_identity,
         &standards_map,
         request,
-        None::<&dyn human_money_core::archive::VoucherArchive>, // Kein Archiv
+        None::<&dyn human_money_core::archive::VoucherArchive>, // No archive
     )?;
 
     println!("✅ Transaktion erfolgreich durchgeführt. Wallet-Zustand wurde aktualisiert.");
 
-    // --- AUSGABE 1: Hinweis auf den Transfer-Erfolg ---
+    // --- OUTPUT 1: Transfer success notice ---
     println!("\n--- AUSGABE 1: Transfer erfolgreich durchgeführt ---");
     println!(
         "Der Transfer-Bundle wurde erfolgreich erstellt und kann an den Empfänger gesendet werden."
     );
 
-    // --- AUSGABE 2: Anonymer Fingerprint der Transaktion (Rohdaten) ---
+    // --- OUTPUT 2: Anonymous transaction fingerprint (raw data) ---
     println!("\n--- AUSGABE 2: Anonymer Fingerprint der Transaktion (Rohdaten) ---");
     println!(
         "Dieser Fingerprint wurde automatisch von `execute_multi_transfer_and_bundle` erzeugt und in Alices Wallet gespeichert, um Double-Spending proaktiv zu verhindern."
     );
 
-    // Den erzeugten Fingerprint aus dem Store des Wallets auslesen
+    // Read generated fingerprint from wallet store
     let fingerprint = alice_wallet
         .own_fingerprints
         .history
         .values()
-        .next() // Nimm den ersten (und einzigen) Vektor von Fingerprints
-        .and_then(|fps| fps.first()) // Nimm den ersten (und einzigen) Fingerprint aus dem Vektor
+        .next() // Take first (and only) vector of fingerprints
+        .and_then(|fps| fps.first()) // Take first (and only) fingerprint from vector
         .expect("Fingerprint sollte im Wallet-Store vorhanden sein.");
 
-    // Gib die "Rohdaten" des Fingerprints aus
+    // Print raw data of fingerprint
     println!("{:#?}", fingerprint);
 
     println!("\n--- PLAYGROUND BEENDET ---");

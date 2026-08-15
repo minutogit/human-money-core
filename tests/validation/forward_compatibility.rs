@@ -1,8 +1,8 @@
 // tests/validation/forward_compatibility.rs
 // cargo test --test validation_tests
 //!
-//! Stellt sicher, dass die Bibliothek robust gegenüber zukünftigen Änderungen
-//! an den Datenstrukturen ist (Vorwärtskompatibilität).
+//! Ensures that the library is robust against future changes
+//! to data structures (forward compatibility).
 
 use human_money_core::error::StandardDefinitionError;
 use human_money_core::error::ValidationError;
@@ -15,7 +15,7 @@ use human_money_core::{
 };
 use serde_json::json;
 
-/// Prüft Szenarien zur Vorwärtskompatibilität.
+/// Tests forward compatibility scenarios.
 #[cfg(test)]
 mod compatibility_scenarios {
     use super::*;
@@ -25,11 +25,11 @@ mod compatibility_scenarios {
         human_money_core::set_signature_bypass(true);
         let identity = &ACTORS.issuer;
         let voucher_data = NewVoucherData {
-            validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu FreeTaler)
+            validity_duration: Some("P4Y".to_string()), // Use P4Y (matching FreeTaler)
             nominal_value: ValueDefinition {
                 amount: "1.00".to_string(),
                 ..Default::default()
-            }, // Verwende 1.00 (passend zu FreeTaler)
+            }, // Use 1.00 (matching FreeTaler)
             creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(identity.user_id.clone()),
                 ..Default::default()
@@ -41,9 +41,7 @@ mod compatibility_scenarios {
             voucher_data,
             freetaler_standard,
             standard_hash,
-            &identity.signing_key,
-            "en",
-        );
+            &identity.signing_key);
 
         // The validation might fail due to signature requirements, let's check what the actual error is and handle it
         let first_validation_result =
@@ -92,18 +90,16 @@ mod compatibility_scenarios {
                     id: Some(identity.user_id.clone()),
                     ..Default::default()
                 },
-                validity_duration: Some("P4Y".to_string()), // Verwende P4Y (passend zu FreeTaler)
+                validity_duration: Some("P4Y".to_string()), // Use P4Y (matching FreeTaler)
                 nominal_value: ValueDefinition {
                     amount: "1.00".to_string(),
                     ..Default::default()
-                }, // Verwende 1.00 (passend zu FreeTaler)
+                }, // Use 1.00 (matching FreeTaler)
                 ..Default::default()
             },
             freetaler_standard,
             standard_hash,
-            &identity.signing_key,
-            "en",
-        );
+            &identity.signing_key);
 
         // First check that the original voucher with signatures validates correctly
         let initial_validation = validate_voucher_against_standard(&voucher, freetaler_standard);
@@ -181,20 +177,20 @@ mod compatibility_scenarios {
     #[test]
     fn test_parse_standard_with_unknown_fields_in_toml_then_succeeds() {
         human_money_core::set_signature_bypass(false);
-        // 1. Nimm einen zur Laufzeit gültig signierten Standard.
-        let (mut standard_struct, _) = FREETALER_STANDARD.clone(); // Verwende FreeTaler zur Konsistenz
+        // 1. Take a standard that is validly signed at runtime.
+        let (mut standard_struct, _) = FREETALER_STANDARD.clone(); // Use FreeTaler for consistency
 
-        // 2. Modifiziere ein EXISTIERENDES Feld. Dies ändert den Hash-Wert der Struktur,
-        // aber die Signatur bleibt die alte. Dadurch wird die Signatur ungültig.
+        // 2. Modify an EXISTING field. This changes the hash of the struct,
+        // but the signature remains the old one, making the signature invalid.
         standard_struct
             .immutable.identity
             .name
             .push_str("modified-for-test");
 
-        // 3. Serialisiere die modifizierte Struktur mit der nun veralteten Signatur in einen String.
+        // 3. Serialize modified struct with outdated signature to string.
         let toml_str_with_invalid_sig = toml::to_string(&standard_struct).unwrap();
 
-        // 4. Die Verifizierung muss jetzt wegen der ungültigen Signatur fehlschlagen.
+        // 4. Verification must fail now due to invalid signature.
         let result = standard_manager::verify_and_parse_standard(&toml_str_with_invalid_sig);
         assert!(matches!(
             result.unwrap_err(),
@@ -202,8 +198,8 @@ mod compatibility_scenarios {
         ));
 
         human_money_core::set_signature_bypass(true);
-        // 5. Um die Vorwärtskompatibilität des Parsers selbst zu testen, fügen wir jetzt
-        //    unbekannte Felder hinzu und parsen ohne Signaturprüfung.
+        // 5. To test forward compatibility of the parser itself, we now add
+        //    unknown fields and parse without signature check.
         let mut toml_with_unknown_fields = toml_str_with_invalid_sig;
         toml_with_unknown_fields.push_str("\n[metadata.new_future_field]\ninfo = 'some data'\n");
         let parse_only_result: Result<
@@ -216,3 +212,4 @@ mod compatibility_scenarios {
         );
     }
 }
+

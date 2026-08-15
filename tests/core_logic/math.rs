@@ -1,23 +1,23 @@
 // tests/core_logic/math.rs
 // cargo test --test core_logic_tests
 
-//! # Integrationstest für die numerische Robustheit von Transaktionen
+//! # Integration test for numerical robustness of transactions
 //!
-//! Diese Test-Suite verifiziert die korrekte arithmetische Verarbeitung
-//! von `Decimal`-Werten in der `create_transaction`-Funktion.
+//! This test suite verifies the correct arithmetic processing
+//! of `Decimal` values in the `create_transaction` function.
 //!
-//! ## Abgedeckte Szenarien:
+//! ## Covered scenarios:
 //!
-//! - **Ganzzahl-Transaktionen:** Korrekte Subtraktion und Skalierung.
-//! - **Dezimal-Transaktionen:** Verarbeitung mit maximaler und geringerer Präzision.
-//! - **Gemischte Transaktionen:** Korrekte Arithmetik bei Interaktionen zwischen
-//!   ganzzahligen und dezimalen Guthaben.
-//! - **Regelkonformität:** Sicherstellung, dass die `amount_decimal_places`-Regel
-//!   des Standards korrekt angewendet wird (Skalierung und Validierung).
-//! - **Fehlerfall:** Ablehnung von Transaktionen, deren Betrag die vom Standard
-//!   erlaubte Präzision überschreitet.
-//! - **Vollständiger Transfer:** Korrekte Erstellung einer Transaktion ohne Restbetrag,
-//!   wenn das gesamte Guthaben überwiesen wird.
+//! - **Integer transactions:** Correct subtraction and scaling.
+//! - **Decimal transactions:** Processing with maximum and lower precision.
+//! - **Mixed transactions:** Correct arithmetic during interactions between
+//!   integer and decimal balances.
+//! - **Rule compliance:** Ensuring that the `amount_decimal_places` rule
+//!   of the standard is applied correctly (scaling and validation).
+//! - **Error case:** Rejection of transactions whose amount exceeds precision
+//!   allowed by the standard.
+//! - **Full transfer:** Correct creation of a transaction without remaining amount
+//!   when the entire balance is transferred.
 
 use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD};
 use human_money_core::{
@@ -33,7 +33,7 @@ use human_money_core::{
 };
 use rust_decimal_macros::dec;
 
-// --- TESTFÄLLE ---
+// --- TEST CASES ---
 
 #[test]
 fn test_chained_transaction_math_and_scaling() {
@@ -51,11 +51,11 @@ fn test_chained_transaction_math_and_scaling() {
     let standard_hash = &standard_hash;
 
 
-    // Erstelle Alice (Sender) und Bob (Empfänger)
+    // Create Alice (sender) and Bob (recipient)
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
 
-    // Erstelle einen initialen Gutschein für Alice mit dem Wert 100
+    // Create an initial voucher for Alice with value 100
     let alice_creator_info = human_money_core::models::profile::PublicProfile {
         id: Some(alice.user_id.clone()),
         ..Default::default()
@@ -73,9 +73,7 @@ fn test_chained_transaction_math_and_scaling() {
         voucher_data,
         standard,
         standard_hash,
-        &alice.signing_key,
-        "en",
-    )
+        &alice.signing_key)
     .unwrap();
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
@@ -87,8 +85,8 @@ fn test_chained_transaction_math_and_scaling() {
         dec!(0)
     );
 
-    // --- 2. FALL: GANZZAHL-SPLIT VON GANZZAHL-GUTHABEN ---
-    // Alice (100) sendet "40" an Bob.
+    // --- 2. CASE: INTEGER SPLIT FROM INTEGER BALANCE ---
+    // Alice (100) sends "40" to Bob.
     let holder_key =
         human_money_core::test_utils::derive_holder_key(&current_voucher, &alice.signing_key);
     let (v, secrets_1) = create_transaction(
@@ -114,11 +112,11 @@ fn test_chained_transaction_math_and_scaling() {
         dec!(40)
     );
     let tx1 = current_voucher.transactions.last().unwrap();
-    assert_eq!(tx1.amount, "40.0000"); // Korrekt skaliert
+    assert_eq!(tx1.amount, "40.0000"); // Correctly scaled
     assert_eq!(tx1.sender_remaining_amount, Some("60.0000".to_string()));
 
-    // --- 3. FALL: DEZIMAL-SPLIT (MAX. PRÄZISION) VON GANZZAHL-GUTHABEN ---
-    // Alice (60) sendet "10.1234" an Bob.
+    // --- 3. CASE: DECIMAL SPLIT (MAX PRECISION) FROM INTEGER BALANCE ---
+    // Alice (60) sends "10.1234" to Bob.
     // Use change seed from Tx1 for Tx2
     let change_seed_1 = secrets_1.change_seed.expect("Tx1 should have change");
     let change_key_1 = ed25519_dalek::SigningKey::from_bytes(
@@ -148,11 +146,11 @@ fn test_chained_transaction_math_and_scaling() {
     );
     assert_eq!(
         get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
-        dec!(10.1234) // Guthaben ist nur der Betrag der letzten Transaktion
+        dec!(10.1234) // Balance is only the amount of the last transaction
     );
 
-    // --- 4. FALL: GANZZAHL-SPLIT VON DEZIMAL-GUTHABEN ---
-    // Alice (49.8766) sendet "9" an Bob.
+    // --- 4. CASE: INTEGER SPLIT FROM DECIMAL BALANCE ---
+    // Alice (49.8766) sends "9" to Bob.
     // Use change seed from Tx2 for Tx3
     let change_seed_2 = secrets_2.change_seed.expect("Tx2 should have change");
     let change_key_2 = ed25519_dalek::SigningKey::from_bytes(
@@ -182,13 +180,13 @@ fn test_chained_transaction_math_and_scaling() {
     );
     assert_eq!(
         get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
-        dec!(9.0000) // Guthaben ist nur der Betrag der letzten Transaktion
+        dec!(9.0000) // Balance is only the amount of the last transaction
     );
     let tx3 = current_voucher.transactions.last().unwrap();
-    assert_eq!(tx3.amount, "9.0000"); // Korrekt skaliert
+    assert_eq!(tx3.amount, "9.0000"); // Correctly scaled
 
-    // --- 5. FALL: SPLIT MIT WENIGER NACHKOMMASTELLEN ALS ERLAUBT ---
-    // Alice (40.8766) sendet "0.87" (2 statt 4 Stellen) an Bob.
+    // --- 5. CASE: SPLIT WITH FEWER DECIMAL PLACES THAN ALLOWED ---
+    // Alice (40.8766) sends "0.87" (2 instead of 4 decimal places) to Bob.
     let change_seed_3 = secrets_3.change_seed.expect("Tx3 should have change");
     let change_key_3 = ed25519_dalek::SigningKey::from_bytes(
         &bs58::decode(&change_seed_3)
@@ -217,13 +215,13 @@ fn test_chained_transaction_math_and_scaling() {
     );
     assert_eq!(
         get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
-        dec!(0.8700) // Guthaben ist nur der Betrag der letzten Transaktion
+        dec!(0.8700) // Balance is only the amount of the last transaction
     );
     let tx4 = current_voucher.transactions.last().unwrap();
-    assert_eq!(tx4.amount, "0.8700"); // Korrekt skaliert
+    assert_eq!(tx4.amount, "0.8700"); // Correctly scaled
 
-    // --- 6. FALL: VOLLER TRANSFER DES RESTGUTHABENS ---
-    // Alice (40.0066) sendet ihr komplettes Restguthaben "40.0066" an Bob.
+    // --- 6. CASE: FULL TRANSFER OF REMAINING BALANCE ---
+    // Alice (40.0066) sends her complete remaining balance "40.0066" to Bob.
     let change_seed_4 = secrets_4.change_seed.expect("Tx4 should have change");
     let change_key_4 = ed25519_dalek::SigningKey::from_bytes(
         &bs58::decode(&change_seed_4)
@@ -252,15 +250,15 @@ fn test_chained_transaction_math_and_scaling() {
     );
     assert_eq!(
         get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
-        dec!(40.0066) // Guthaben ist nur der Betrag der letzten Transaktion
+        dec!(40.0066) // Balance is only the amount of the last transaction
     );
     let tx5 = current_voucher.transactions.last().unwrap();
-    assert_eq!(tx5.t_type, "transfer"); // Korrigiert: Ein voller Transfer hat jetzt den Typ "transfer".
+    assert_eq!(tx5.t_type, "transfer"); // Corrected: A full transfer now has type "transfer".
     assert!(tx5.sender_remaining_amount.is_none());
     assert_eq!(tx5.amount, "40.0066");
 
-    // --- 7. FALL: RÜCKTRANSAKTIONEN VON BOB AN ALICE ---
-    // Bob (Guthaben: 40.0066) sendet "10" (Ganzzahl) zurück an Alice.
+    // --- 7. CASE: RETURN TRANSACTIONS FROM BOB TO ALICE ---
+    // Bob (balance: 40.0066) sends "10" (integer) back to Alice.
     // Bob spends the "received" amount from Tx6. He needs recipient_seed from secrets_5.
     let bob_seed = secrets_5.recipient_seed;
     let bob_key = ed25519_dalek::SigningKey::from_bytes(
@@ -285,17 +283,17 @@ fn test_chained_transaction_math_and_scaling() {
     current_voucher = v;
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
 
-    // Prüfe die Guthaben nach der ersten Rücktransaktion
+    // Check balances after the first return transaction
     assert_eq!(
         get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
-        dec!(30.0066) // Bobs Restguthaben
+        dec!(30.0066) // Bob's remaining balance
     );
     assert_eq!(
         get_spendable_balance(&current_voucher, &alice.user_id, standard, None).unwrap(),
-        dec!(10.0000) // Alice' neues Guthaben
+        dec!(10.0000) // Alice's new balance
     );
 
-    // Bob (Guthaben: 30.0066) sendet "0.0066" (Dezimal) zurück an Alice.
+    // Bob (balance: 30.0066) sends "0.0066" (decimal) back to Alice.
     let bob_change_seed = secrets_6.change_seed.expect("Tx7 should have change");
     let bob_change_key = ed25519_dalek::SigningKey::from_bytes(
         &bs58::decode(&bob_change_seed)
@@ -319,14 +317,14 @@ fn test_chained_transaction_math_and_scaling() {
     current_voucher = v;
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
 
-    // Prüfe die Guthaben nach der zweiten Rücktransaktion
+    // Check balances after the second return transaction
     assert_eq!(
         get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
-        dec!(30.0000) // Bobs Restguthaben
+        dec!(30.0000) // Bob's remaining balance
     );
     assert_eq!(
         get_spendable_balance(&current_voucher, &alice.user_id, &standard, None).unwrap(),
-        dec!(0.0066) // Alice' neues Guthaben
+        dec!(0.0066) // Alice's new balance
     );
 }
 
@@ -363,13 +361,11 @@ fn test_transaction_fails_on_excess_precision() {
         voucher_data,
         standard,
         standard_hash,
-        &alice.signing_key,
-        "en",
-    )
+        &alice.signing_key)
     .unwrap();
 
-    // --- AKTION & PRÜFUNG ---
-    // Alice versucht, "0.12345" (5 Nachkommastellen) zu senden, erlaubt sind aber nur 4.
+    // --- ACTION & VERIFICATION ---
+    // Alice attempts to send "0.12345" (5 decimal places), but only 4 are allowed.
     let result = create_transaction(
         &voucher,
         standard,

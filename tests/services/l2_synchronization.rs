@@ -53,7 +53,7 @@ impl MockL2Node {
         self.vouchers.insert(req.layer2_voucher_id.clone());
 
         let ds_tag = if req.is_genesis {
-            // Bei Genesis nutzen wir die t_id als Key (da kein ds_tag vorhanden)
+            // For genesis we use t_id as key (since no ds_tag is present)
             bs58::encode(req.transaction_hash).into_string()
         } else {
             req.ds_tag.clone().expect("Non-genesis must have ds_tag")
@@ -131,7 +131,6 @@ fn test_scenario_1_happy_path() {
     let user_id = app.get_user_id().unwrap();
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id),
@@ -189,7 +188,6 @@ fn test_scenario_2_offline_sync() {
     let user_id = app.get_user_id().unwrap();
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id),
@@ -320,7 +318,6 @@ fn test_scenario_3_double_spend_detection() {
     let user_id = app.get_user_id().unwrap();
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id),
@@ -426,7 +423,6 @@ fn test_scenario_4_initial_registration() {
     let user_id = app.get_user_id().unwrap();
     app.create_new_voucher(
         &flexible_toml,
-        "en",
         NewVoucherData {
             creator_profile: PublicProfile {
                 id: Some(user_id),

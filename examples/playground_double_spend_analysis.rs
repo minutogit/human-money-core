@@ -138,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let voucher =
-            service_creator.create_new_voucher(&standard_toml, "de", voucher_data, None)?;
+            service_creator.create_new_voucher(&standard_toml, voucher_data, None)?;
         voucher_id = voucher.voucher_id.clone();
 
         let summaries = service_creator.get_voucher_summaries(None, None, None)?;

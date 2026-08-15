@@ -1,7 +1,7 @@
 //! # src/services/integrity_manager.rs
 //!
-//! Service zur Prüfung der Speicher-Integrität und Erstellung von
-//! Integritätsberichten auf Basis der Storage Integrity.
+//! Service for verifying storage integrity and generating
+//! integrity reports based on Storage Integrity.
 
 use crate::error::VoucherCoreError;
 use crate::models::storage_integrity::{IntegrityReport, LocalIntegrityRecord, IntegrityPayload, INTEGRITY_FILE_NAME};
@@ -15,7 +15,7 @@ use std::collections::HashMap;
 pub struct IntegrityManager;
 
 impl IntegrityManager {
-    /// Erstellt einen neuen signierten Storage Integrity Record basierend auf dem aktuellen Zustand.
+    /// Creates a new signed Storage Integrity Record based on the current state.
     pub fn create_integrity_record(
         identity: &UserIdentity,
         current_seal: &WalletSeal,
@@ -41,14 +41,14 @@ impl IntegrityManager {
         })
     }
 
-    /// Verifiziert einen Integrity Record und erstellt einen Integritätsbericht.
+    /// Verifies an Integrity Record and creates an integrity report.
     pub fn verify_integrity(
         integrity_record: &LocalIntegrityRecord,
         current_seal: &WalletSeal,
         actual_item_hashes: HashMap<String, String>,
         expected_pubkey_user_id: &str,
     ) -> Result<IntegrityReport, VoucherCoreError> {
-        // 1. Signatur des Integrity Records prüfen
+        // 1. Verify signature of Integrity Record
         let pubkey = crate::services::crypto_utils::get_pubkey_from_user_id(expected_pubkey_user_id)?;
         let payload_canonical = to_canonical_json(&integrity_record.payload)?;
         let payload_hash = get_hash(payload_canonical.as_bytes());
@@ -64,7 +64,7 @@ impl IntegrityManager {
             return Ok(IntegrityReport::InvalidSignature);
         }
 
-        // 2. Epochen-Check (Rollback-Schutz)
+        // 2. Epoch check (Rollback Protection)
         let current_seal_hash = SealManager::compute_seal_hash(current_seal)?;
         if integrity_record.payload.seal_hash != current_seal_hash {
             return Ok(IntegrityReport::IntegrityOutdated);
@@ -74,7 +74,7 @@ impl IntegrityManager {
         let mut manipulated = Vec::new();
         let mut unknown = Vec::new();
 
-        // 3. Items aus dem Integrity Record prüfen
+        // 3. Check items from Integrity Record
         for (name, expected_hash) in &integrity_record.payload.item_hashes {
             match actual_item_hashes.get(name) {
                 Some(actual_hash) => {
@@ -88,10 +88,10 @@ impl IntegrityManager {
             }
         }
 
-        // 4. Unbekannte Items im Speicher
+        // 4. Unknown items in storage
         for name in actual_item_hashes.keys() {
             if !integrity_record.payload.item_hashes.contains_key(name) {
-                // Manche Dateien ignorieren wir (z.B. den Integrity Record selbst oder hidden files)
+                // Some files are ignored (e.g. the Integrity Record itself or hidden files)
                 if name != INTEGRITY_FILE_NAME && !name.starts_with('.') {
                     unknown.push(name.clone());
                 }

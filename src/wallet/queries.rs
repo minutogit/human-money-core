@@ -1,7 +1,7 @@
 //! # src/wallet/queries.rs
 //!
-//! Enthält die Implementierung der `Wallet`-Methoden, die als "View-Models"
-//! dienen. Sie bereiten Daten für die Anzeige in Client-Anwendungen auf.
+//! Contains the implementation of `Wallet` methods that serve as "view-models".
+//! They prepare data for display in client applications.
 
 use super::{AggregatedBalance, AssetClass, VoucherDetails, VoucherSummary, Wallet};
 use crate::error::VoucherCoreError;
@@ -13,8 +13,8 @@ use rust_decimal::prelude::Zero;
 use std::collections::HashMap;
 use std::str::FromStr;
 
-/// Hilfsfunktion zur Formatierung von Namen für die Benutzeroberfläche (BFF-Pattern).
-/// Stellt sicher, dass Testgutscheine ein einheitliches "TEST-" Präfix erhalten.
+/// Helper function for formatting names for the user interface (BFF pattern).
+/// Ensures that test vouchers receive a consistent "TEST-" prefix.
 pub(crate) fn format_bff_name(raw_name: &str, is_test: bool) -> String {
     if is_test && !raw_name.starts_with("TEST-") {
         format!("TEST-{}", raw_name)
@@ -30,14 +30,14 @@ pub(crate) fn format_bff_name(raw_name: &str, is_test: bool) -> String {
     }
 }
 
-/// View-Model / Komfort-Funktionen für Client-Anwendungen.
+/// View-model / convenience functions for client applications.
 impl Wallet {
-    /// Gibt eine Liste von Zusammenfassungen aller Gutscheine im Wallet zurück.
+    /// Returns a list of summaries of all vouchers in the wallet.
     ///
-    /// Diese Methode ist ideal, um eine Übersicht aller Guthaben in einer UI anzuzeigen.
+    /// This method is ideal for displaying an overview of all balances in a UI.
     ///
     /// # Returns
-    /// Ein `Vec<VoucherSummary>` mit den wichtigsten Daten jedes Gutscheins.
+    /// A `Vec<VoucherSummary>` containing the key data of each voucher.
     pub fn list_vouchers(
         &self,
         identity: Option<&crate::models::profile::UserIdentity>,
@@ -50,16 +50,16 @@ impl Wallet {
             .iter()
             .filter(|(_, instance)| {
                 let uuid_match = match voucher_standard_uuid_filter {
-                    // Wenn eine Liste von UUIDs vorhanden und nicht leer ist, prüfen, ob die des Gutscheins enthalten ist.
+                    // If a list of UUIDs is present and not empty, check if the voucher's UUID is contained.
                     Some(uuids) if !uuids.is_empty() => {
                         uuids.contains(&instance.voucher.voucher_standard.uuid)
                     }
-                    // Wenn keine Liste oder eine leere Liste übergeben wird, gilt der Filter als erfüllt.
+                    // If no list or an empty list is passed, the filter is considered satisfied.
                     _ => true,
                 };
 
                 let status_match = match status_filter {
-                    // Gleiche Logik für den Status-Filter.
+                    // Same logic for the status filter.
                     Some(statuses) if !statuses.is_empty() => statuses.contains(&instance.status),
                     _ => true,
                 };
@@ -74,37 +74,37 @@ impl Wallet {
             .map(|(local_id, instance)| {
                 let voucher = &instance.voucher;
 
-                // --- Guthaben-Berechnung ---
+                // --- Balance calculation ---
                 let current_amount = if matches!(instance.status, VoucherStatus::Archived)
                     || matches!(instance.status, VoucherStatus::Endorsed { .. })
                     || matches!(instance.status, VoucherStatus::Expired)
                 {
                     "0".to_string()
                 } else {
-                    // Versuche den Holder-Hash zu berechnen (Stateless Re-Derivation)
+                    // Try to calculate holder hash (Stateless Re-Derivation)
                     let holder_pub_hash = identity.and_then(|id| {
                          self.rederive_secret_seed(voucher, id).ok()
                     }).map(|key| {
                         crate::services::crypto_utils::get_hash(key.verifying_key().to_bytes())
                     });
 
-                    // Nutze den Core-Service zur präzisen Berechnung
-                    // Fallback: Wenn keine Identity da ist, nutzt get_spendable_balance die Public-Mode Logik.
-                    let _standard = crate::models::voucher_standard_definition::VoucherStandardDefinition::default(); // Dummy für Decimal-Places (wird in SM geladen eigentlich)
-                    // HINWEIS: In einer echten Umgebung müsste hier der echte Standard geladen sein.
-                    // Da get_spendable_balance aber Decimal::from_str nutzt, reicht es hier oft für die Anzeige.
+                    // Use core service for precise calculation
+                    // Fallback: If no identity is available, get_spendable_balance uses public-mode logic.
+                    let _standard = crate::models::voucher_standard_definition::VoucherStandardDefinition::default(); // Dummy for decimal places (actually loaded in SM)
+                    // NOTE: In a real environment, the actual standard would need to be loaded here.
+                    // Since get_spendable_balance uses Decimal::from_str, this is often sufficient for display.
                     
-                    // TODO: In einer idealen Welt laden wir hier den echten Standard. 
-                    // Für die Summary-Liste nutzen wir eine vereinfachte Logik oder das last_tx Feld direkt.
+                    // TODO: In an ideal world we load the real standard here.
+                    // For the summary list we use simplified logic or the last_tx field directly.
                     
                     voucher.transactions.last().map(|tx| {
                          let is_own_sender = if let Some(id) = identity {
                              tx.sender_id.as_ref() == Some(&id.user_id)
                          } else {
-                             tx.sender_id.is_some() // Public Mode Heuristik
+                             tx.sender_id.is_some() // Public mode heuristic
                          };
 
-                         // Krypto-Prüfung bevorzugen
+                         // Prefer cryptographic check
                          if let Some(hash) = &holder_pub_hash {
                              if Some(hash) == tx.receiver_ephemeral_pub_hash.as_ref() {
                                  tx.amount.clone()
@@ -114,7 +114,7 @@ impl Wallet {
                                  "0".to_string()
                              }
                          } else {
-                             // Klassische Heuristik für Abwärtskompatibilität / Public Mode
+                             // Classic heuristic for backwards compatibility / public mode
                              if is_own_sender && tx.sender_remaining_amount.is_some() {
                                  tx.sender_remaining_amount.clone().unwrap_or_else(|| "0".to_string())
                              } else {
@@ -129,7 +129,6 @@ impl Wallet {
                     status: instance.status.clone(),
                     creator_id: voucher.creator_profile.id.clone().unwrap_or_default(),
                     valid_until: voucher.valid_until.clone(),
-                    description: voucher.voucher_standard.template.description.clone(),
                     current_amount,
                     unit: voucher
                         .nominal_value
@@ -138,10 +137,10 @@ impl Wallet {
                         .unwrap_or_default(),
                     raw_standard_name: voucher.voucher_standard.name.clone(),
                     voucher_standard_uuid: voucher.voucher_standard.uuid.clone(),
-                    // Zähle Transaktionen exkl. der initialen "init" Transaktion.
+                    // Count transactions excluding initial "init" transaction.
                     transaction_count: (voucher.transactions.len() as u32).saturating_sub(1),
                     signatures_count: voucher.signatures.len() as u32,
-                    // Ein Gutschein gilt als besichert, wenn das `collateral`-Objekt existiert und eine `collateral_type` hat.
+                    // A voucher is considered collateralized if the `collateral` object exists and has a `collateral_type`.
                     has_collateral: voucher.collateral.is_some(),
                     creator_first_name: voucher
                         .creator_profile
@@ -171,43 +170,39 @@ impl Wallet {
                         &voucher.voucher_standard.name,
                         voucher.non_redeemable_test_voucher,
                     ),
-                    allow_partial_transfers: voucher
-                        .voucher_standard
-                        .template
-                        .allow_partial_transfers,
                 }
             })
             .collect()
     }
 
-    /// Ruft eine detaillierte Ansicht für einen einzelnen Gutschein anhand seiner lokalen ID ab.
+    /// Retrieves a detailed view for a single voucher by its local ID.
     ///
     /// # Arguments
-    /// * `local_instance_id` - Die lokale ID des Gutscheins im Wallet.
+    /// * `local_instance_id` - The local ID of the voucher in the wallet.
     ///
     /// # Returns
-    /// Ein `Result` mit `VoucherDetails` bei Erfolg oder `VoucherCoreError`, wenn
-    /// der Gutschein nicht gefunden wird.
+    /// A `Result` with `VoucherDetails` on success, or `VoucherCoreError` if
+    /// the voucher is not found.
     pub fn get_voucher_details(
         &self,
         local_instance_id: &str,
     ) -> Result<VoucherDetails, VoucherCoreError> {
-        // 1. Direkter Lookup (Performance-Pfad)
+        // 1. Direct lookup (performance path)
         let instance = if let Some(inst) = self.voucher_store.vouchers.get(local_instance_id) {
             inst
         } else {
-            // 2. Fuzzy-Search (Fallback für historische IDs aus Logs)
-            // Wir iterieren über alle vorhandenen Gutscheine und prüfen, ob die gesuchte ID 
-            // eine historische 'local_instance_id' dieses Gutscheins sein könnte.
+            // 2. Fuzzy search (fallback for historical IDs from logs)
+            // Iterate over all existing vouchers and check whether the searched ID
+            // could be a historical 'local_instance_id' of this voucher.
             self.voucher_store.vouchers.values().find(|inst| {
                 inst.voucher.transactions.iter().any(|tx| {
-                    // Prüfe, ob der Nutzer an dieser Transaktion beteiligt war
+                    // Check whether the user participated in this transaction
                     if tx.recipient_id == self.profile.user_id
                         || tx.recipient_id == crate::models::voucher::ANONYMOUS_ID
                         || tx.sender_id.as_deref() == Some(&self.profile.user_id)
                     {
-                        // Berechne die historische ID, die dieser Transaktion entsprochen hätte.
-                        // Die ID basiert auf voucher_id + transaction_id + user_id.
+                        // Calculate the historical ID that would have corresponded to this transaction.
+                        // The ID is based on voucher_id + transaction_id + user_id.
                         let historical_id = crate::services::crypto_utils::get_hash(format!(
                             "{}{}{}",
                             inst.voucher.voucher_id, tx.t_id, self.profile.user_id
@@ -241,9 +236,9 @@ impl Wallet {
         })
     }
 
-    /// Ermittelt die Identität des Absenders, von dem wir diesen Gutschein erhalten haben.
-    /// Iteriert rückwärts über alle Transaktionen und findet die erste Transaktion,
-    /// deren tatsächlicher Sender nicht der aktuelle Nutzer ist.
+    /// Determines the identity of the sender from whom we received this voucher.
+    /// Iterates backward through all transactions and finds the first transaction
+    /// whose actual sender is not the current user.
     pub fn get_voucher_source_sender(
         &self,
         local_instance_id: &str,
@@ -255,13 +250,13 @@ impl Wallet {
             .get(local_instance_id)
             .ok_or_else(|| VoucherCoreError::VoucherNotFound(local_instance_id.to_string()))?;
 
-        // Iteriere rückwärts über alle Transaktionen des Gutscheins
+        // Iterate backward through all transactions of the voucher
         for tx in instance.voucher.transactions.iter().rev() {
-            // Bestimme den tatsächlichen Sender dieser Transaktion
+            // Determine the actual sender of this transaction
             let actual_sender = if let Some(guard_base64) = &tx.privacy_guard {
-                // Fall A: privacy_guard vorhanden
-                // Versuche zu entschlüsseln. Wenn erfolgreich, nutze payload.sender_permanent_did.
-                // Wenn die Entschlüsselung fehlschlägt (z.B. Key nicht verfügbar), brich ab und gib Ok(None) zurück!
+                // Case A: privacy_guard present
+                // Attempt to decrypt. If successful, use payload.sender_permanent_did.
+                // If decryption fails (e.g. key unavailable), abort and return Ok(None)!
                 match crate::services::crypto_utils::decrypt_recipient_payload(
                     guard_base64,
                     &identity.signing_key,
@@ -273,59 +268,59 @@ impl Wallet {
                         ) {
                             Ok(payload) => payload.sender_permanent_did,
                             Err(_) => {
-                                // JSON-Parsing fehlgeschlagen - unsicherer Zustand
+                                // JSON parsing failed - insecure state
                                 return Ok(None);
                             }
                         }
                     }
                     Err(_) => {
-                        // SICHERHEITS-CHECK: Unterscheidung zw. Outbound und Inbound.
-                        // Wenn wir der SENDER sind (z.B. wir haben einen Split gesendet),
-                        // ist es normal, dass wir den Guard (für den anderen Empfänger) nicht lesen können.
+                        // SECURITY CHECK: Distinguish between outbound and inbound.
+                        // If we are the SENDER (e.g. we sent a split),
+                        // it is expected that we cannot read the guard (for the other recipient).
                         let is_sender = tx.sender_id.as_deref() == Some(&identity.user_id);
                         
-                        // Wenn wir der EMPFÄNGER sind (explizit oder anonym), aber nicht entschlüsseln können,
-                        // liegt ein Daten/Key-Problem bei einer an uns gerichteten Transaktion vor. 
+                        // If we are the RECIPIENT (explicit or anonymous) but cannot decrypt,
+                        // there is a data/key issue with a transaction addressed to us.
                         let is_recipient = tx.recipient_id == identity.user_id || tx.recipient_id == crate::models::voucher::ANONYMOUS_ID;
 
                         if is_sender {
-                            continue; // Outbound -> Weitersuchen
+                            continue; // Outbound -> Continue search
                         } else if is_recipient {
-                            // Inbound, aber unlesbar -> Abbrechen (Spoofing Schutz)
+                            // Inbound, but unreadable -> Abort (spoofing protection)
                             return Ok(None);
                         } else {
-                            // Weder noch (z.B. eine historische Transaktion dazwischen) -> Weitersuchen
+                            // Neither (e.g. a historical intermediate transaction) -> Continue search
                             continue;
                         }
                     }
                 }
             } else {
-                // Fall B: Kein Guard vorhanden (Public Mode)
-                // Nutze den Klartext tx.sender_id
+                // Case B: No guard present (Public Mode)
+                // Use plaintext tx.sender_id
                 match &tx.sender_id {
                     Some(sender) => sender.clone(),
-                    None => continue, // Keine sender_id, überspringe diese Transaktion
+                    None => continue, // No sender_id, skip this transaction
                 }
             };
 
-            // Wenn der tatsächliche Sender nicht der aktuelle Nutzer ist, haben wir unsere Quelle gefunden
+            // If the actual sender is not the current user, we have found our source
             if actual_sender != identity.user_id {
                 return Ok(Some(actual_sender));
             }
         }
 
-        // Keine passende Transaktion gefunden
+        // No matching transaction found
         Ok(None)
     }
 
-    /// Aggregiert die Guthaben aller aktiven Gutscheine, gruppiert nach Währung/Einheit.
+    /// Aggregates the balances of all active vouchers, grouped by currency/unit.
     ///
-    /// Diese Funktion summiert die Werte aller Gutscheine mit dem Status `Active` auf
-    /// und gibt eine Map zurück, die von der Währungseinheit (z.B. "Minuten", "EUR")
-    /// auf den Gesamtbetrag abbildet.
+    /// This function sums up the values of all vouchers with status `Active`
+    /// and returns a list mapping currency units (e.g. "Minutes", "EUR")
+    /// to the total amount.
     ///
     /// # Returns
-    /// Ein `Vec<AggregatedBalance>`, der die Gesamtsummen pro Gutschein-Standard und Währung enthält.
+    /// A `Vec<AggregatedBalance>` containing total amounts per voucher standard and currency.
     pub fn get_total_balance_by_currency(
         &self,
         identity: Option<&crate::models::profile::UserIdentity>,
@@ -342,7 +337,7 @@ impl Wallet {
                     .transactions
                     .last()
                     .map(|tx| {
-                        // Krypto-Prüfung bevorzugen
+                        // Prefer cryptographic check
                         if let Some(id) = identity {
                             if let Ok(key) = self.rederive_secret_seed(voucher, id) {
                                 let hash = crate::services::crypto_utils::get_hash(key.verifying_key().to_bytes());
@@ -354,7 +349,7 @@ impl Wallet {
                             }
                         }
 
-                        // Fallback: Heuristik
+                        // Fallback: Heuristic
                         if tx.sender_id.as_ref() == Some(&self.profile.user_id)
                             && tx.sender_remaining_amount.is_some()
                         {
@@ -362,14 +357,14 @@ impl Wallet {
                                 .clone()
                                 .unwrap_or_else(|| "0".to_string())
                         } else {
-                            // Ansonsten ist es der volle Transaktionsbetrag.
+                            // Otherwise it is the full transaction amount.
                             tx.amount.clone()
                         }
                     })
                     .unwrap_or_else(|| "0".to_string());
 
                 if let Ok(amount) = Decimal::from_str(&amount_str) {
-                    // Überspringe Gutscheine mit einem Guthaben von Null.
+                    // Skip vouchers with zero balance.
                     if amount.is_zero() {
                         continue;
                     }
@@ -390,7 +385,7 @@ impl Wallet {
                             voucher.voucher_standard.name.clone(),
                         )
                     });
-                    // Addiere den Betrag zum ersten Element des Tupels (dem Decimal-Wert).
+                    // Add amount to the first element of the tuple (the Decimal value).
                     entry.0 += amount;
                 }
             }
@@ -415,8 +410,8 @@ impl Wallet {
             .collect()
     }
 
-    /// Ermittelt alle im Wallet aktiven Asset-Klassen (Standard + Test-Status).
-    /// Dies dient der UI zum sauberen Befüllen von Filter-Dropdowns.
+    /// Determines all active asset classes in the wallet (standard + test status).
+    /// Serves the UI for properly populating filter dropdowns.
     pub fn get_active_asset_classes(&self) -> Vec<super::types::AssetClassSummary> {
         let mut classes = std::collections::HashSet::new();
 
@@ -443,18 +438,18 @@ impl Wallet {
         classes.into_iter().collect()
     }
 
-    /// Gibt die User-ID des Wallet-Inhabers zurück.
+    /// Returns the user ID of the wallet owner.
     ///
     /// # Returns
-    /// Eine Referenz auf die User-ID-Zeichenkette.
+    /// A reference to the user ID string.
     pub fn get_user_id(&self) -> &str {
         &self.profile.user_id
     }
 
-    /// Prüft den Ruf einer User-ID basierend auf den lokal gespeicherten Beweisen.
+    /// Checks the reputation of a user ID based on locally stored proofs.
     ///
-    /// Diese Funktion implementiert das implizite Web-of-Trust. Sie durchsucht den
-    /// `proof_store` nach ungelösten Konflikten, die von der `user_id` verursacht wurden.
+    /// This function implements the implicit Web-of-Trust. It searches the
+    /// `proof_store` for unresolved conflicts caused by `user_id`.
     pub fn check_reputation(&self, offender_id: &str) -> crate::models::conflict::TrustStatus {
         use crate::models::conflict::TrustStatus;
 
@@ -466,14 +461,14 @@ impl Wallet {
                     || entry.proof.layer2_verdict.is_some();
                 
                 if is_officially_resolved || entry.local_override {
-                    // Merke uns das letzte gelöste, falls kein ungelöstes gefunden wird.
+                    // Remember the latest resolved one in case no unresolved proof is found.
                     latest_resolved = Some(TrustStatus::Resolved {
                         proof_id: entry.proof.proof_id.clone(),
                         is_local: entry.local_override,
                         note: entry.local_note.clone(),
                     });
                 } else {
-                    // Sobald EIN ungelöster Beweis gefunden wird, ist der Status "KnownOffender".
+                    // As soon as ONE unresolved proof is found, status is "KnownOffender".
                     return TrustStatus::KnownOffender(entry.proof.proof_id.clone());
                 }
             }
@@ -482,21 +477,21 @@ impl Wallet {
         latest_resolved.unwrap_or(TrustStatus::Clean)
     }
 
-    /// Exportiert das eigene Profil als JWS Compact Serialization String.
+    /// Exports own profile as a JWS Compact Serialization string.
     ///
-    /// Dies folgt RFC 7515 und erzeugt einen String im Format:
+    /// This follows RFC 7515 and produces a string in the format:
     /// base64url(header).base64url(payload).base64url(signature)
     ///
     /// # Arguments
-    /// * `identity` - Die UserIdentity mit dem privaten Signaturschlüssel.
+    /// * `identity` - The UserIdentity containing the private signing key.
     ///
     /// # Returns
-    /// Ein JWS Compact String oder einen Fehler.
+    /// A JWS compact string or an error.
     pub fn export_profile_jws(
         &self,
         identity: &crate::models::profile::UserIdentity,
     ) -> Result<String, VoucherCoreError> {
-        // Erstelle ein PublicProfile aus dem Wallet-Profil
+        // Create a PublicProfile from the wallet profile
         let public_profile = PublicProfile {
             protocol_version: Some("v1".to_string()),
             id: Some(self.profile.user_id.clone()),
@@ -518,16 +513,16 @@ impl Wallet {
         export_profile_as_jws(&identity.signing_key, &public_profile)
     }
 
-    /// Lädt die Event-Historie des Wallets, kombiniert aus persistenten und RAM-basierten Events.
+    /// Loads the event history of the wallet, combining persistent and RAM-based events.
     ///
     /// # Arguments
-    /// * `storage` - Das Storage-Backend.
-    /// * `auth` - Die Authentifizierungsmethode.
-    /// * `offset` - Der Offset für die Pagination.
-    /// * `limit` - Die maximale Anzahl der zurückzugebenden Events.
+    /// * `storage` - The storage backend.
+    /// * `auth` - The authentication method.
+    /// * `offset` - The offset for pagination.
+    /// * `limit` - The maximum number of events to return.
     ///
     /// # Returns
-    /// Eine chronologisch absteigend sortierte Liste von `WalletEvent` Objekten.
+    /// A chronologically descending sorted list of `WalletEvent` objects.
     pub fn get_event_history<S: crate::storage::Storage>(
         &self,
         storage: &S,
@@ -538,31 +533,31 @@ impl Wallet {
         let pending_len = self.pending_events.len();
         let mut result = Vec::with_capacity(limit);
 
-        // 1. Hole neueste Events zuerst aus dem RAM (pending_events sind aufsteigend, also rev())
+        // 1. Fetch newest events first from RAM (pending_events are ascending, so rev())
         if offset < pending_len {
             let to_take = std::cmp::min(limit, pending_len - offset);
             let pending_page = self.pending_events.iter()
-                .rev() // Macht aus aufsteigend -> absteigend (neueste zuerst)
+                .rev() // Converts ascending -> descending (newest first)
                 .skip(offset)
                 .take(to_take)
                 .cloned();
             result.extend(pending_page);
         }
 
-        // 2. Falls wir das Limit noch nicht erreicht haben, füllen wir mit Storage-Events auf
+        // 2. If we haven't reached the limit, populate with storage events
         if result.len() < limit {
             let remaining_limit = limit - result.len();
             
-            // Berechne den korrekten Offset für den Storage.
-            // Wenn der User-Offset größer ist als das was wir im RAM haben, 
-            // müssen wir die RAM-Größe vom Offset abziehen.
+            // Calculate the correct offset for storage.
+            // If user offset is larger than what we have in RAM,
+            // subtract the RAM size from the offset.
             let storage_offset = if offset > pending_len {
                 offset - pending_len
             } else {
                 0
             };
 
-            // Hier übergeben wir nun das ECHTE Limit und Offset! Chunking wird optimal genutzt.
+            // Here we pass the ACTUAL limit and offset! Chunking is optimally utilized.
             let persisted_page = storage
                 .load_events(&self.profile.user_id, auth, storage_offset, remaining_limit)
                 .map_err(VoucherCoreError::Storage)?;
@@ -573,3 +568,4 @@ impl Wallet {
         Ok(result)
     }
 }
+

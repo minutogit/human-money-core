@@ -1,8 +1,8 @@
 // tests/wallet_api/state_management.rs
 // cargo test --test wallet_api_tests
 //!
-//! Enthält Integrationstests für komplexes State-Management und die
-//! Handhabung von Konflikten wie Double-Spending.
+//! Contains integration tests for complex state management and
+//! handling of conflicts such as double-spending.
 
 use human_money_core::{
     VoucherStatus,
@@ -23,7 +23,7 @@ use human_money_core::{models::voucher::Transaction, services::utils};
 use std::collections::HashMap;
 use tempfile::tempdir;
 
-/// Lokale Test-Hilfsfunktion, um einen mock `ProofOfDoubleSpend` zu erzeugen.
+/// Local test helper function to generate a mock `ProofOfDoubleSpend`.
 fn create_mock_proof_of_double_spend(
     offender_id: &str,
     victim_id: &str,
@@ -31,7 +31,7 @@ fn create_mock_proof_of_double_spend(
     verdict: Option<human_money_core::models::conflict::Layer2Verdict>,
 ) -> ProofOfDoubleSpend {
     ProofOfDoubleSpend {
-        proof_id: crypto_utils::get_hash(offender_id), // Dummy-ID für den Test
+        proof_id: crypto_utils::get_hash(offender_id), // Dummy ID for test
         offender_id: offender_id.to_string(),
         conflicting_transactions: vec![Transaction::default(), Transaction::default()],
         reporter_id: victim_id.to_string(),
@@ -47,7 +47,7 @@ fn create_mock_proof_of_double_spend(
     }
 }
 
-/// Test 5.1: Testet den vollständigen "Happy Path" der Konfliktlösung über den AppService.
+/// Test 5.1: Tests the complete "Happy Path" of conflict resolution via AppService.
 #[test]
 fn api_app_service_full_conflict_resolution_workflow() {
     // --- 1. Setup ---
@@ -65,11 +65,11 @@ fn api_app_service_full_conflict_resolution_workflow() {
     service_victim.unlock_session(password, 60).unwrap();
     let id_victim = service_victim.get_user_id().unwrap();
 
-    // --- 2. Beweis im Reporter-Wallet anlegen ---
+    // --- 2. Create proof in Reporter wallet ---
     let proof = create_mock_proof_of_double_spend("offender-xyz", &id_victim, None, None);
     let proof_id = proof.proof_id.clone();
 
-    // Test-interne Hilfsfunktion, um den Beweis direkt in den Store zu legen.
+    // Internal test helper function to place the proof directly into the store.
     let (wallet, _identity) = service_reporter.get_unlocked_mut_for_test();
     use human_money_core::models::conflict::{ProofStoreEntry, ConflictRole};
     wallet
@@ -79,12 +79,12 @@ fn api_app_service_full_conflict_resolution_workflow() {
             proof: proof.clone(), local_override: false, local_note: None, conflict_role: ConflictRole::Witness 
         });
 
-    // --- 3. Aktion 1 (Reporter): Konflikt als ungelöst listen ---
+    // --- 3. Action 1 (Reporter): List conflict as unresolved ---
     let conflicts_before = service_reporter.list_conflicts().unwrap();
     assert_eq!(conflicts_before.len(), 1);
     assert_eq!(conflicts_before[0].is_resolved, false);
 
-    // --- 4. Aktion 2 (Opfer): Beilegung erstellen ---
+    // --- 4. Action 2 (Victim): Create resolution endorsement ---
     let (wallet_victim, _identity_victim) = service_victim.get_unlocked_mut_for_test();
     let proof_for_victim =
         create_mock_proof_of_double_spend("offender-xyz", &id_victim, None, None);
@@ -99,12 +99,12 @@ fn api_app_service_full_conflict_resolution_workflow() {
         .create_resolution_endorsement(&proof_id, Some("We settled this.".to_string()))
         .unwrap();
 
-    // --- 5. Aktion 3 (Reporter): Beilegung importieren ---
+    // --- 5. Action 3 (Reporter): Import resolution endorsement ---
     service_reporter
         .import_resolution_endorsement(endorsement, Some(password))
         .unwrap();
 
-    // --- 6. Aktion 4 (Finale Prüfung): Persistenz verifizieren ---
+    // --- 6. Action 4 (Final check): Verify persistence ---
     let mut service_checker = AppService::new(dir_reporter.path()).unwrap();
     service_checker
         .login(&profile_reporter.folder_name, password, false, "test-id".to_string())
@@ -118,8 +118,8 @@ fn api_app_service_full_conflict_resolution_workflow() {
     );
 }
 
-/// Test 5.2: Stellt sicher, dass alle Konflikt-API-Methoden fehlschlagen,
-/// wenn das Wallet gesperrt ist.
+/// Test 5.2: Ensures that all conflict API methods fail
+/// when the wallet is locked.
 #[test]
 fn api_app_service_conflict_api_fails_when_locked() {
     let dir = tempdir().unwrap();
@@ -152,7 +152,7 @@ fn api_app_service_conflict_api_fails_when_locked() {
     assert!(res_import.unwrap_err().to_string().contains("Wallet is locked"));
 }
 
-/// Test 1.1: Testet die reaktive Double-Spend-Erkennung via "Earliest Wins"-Heuristik.
+/// Test 1.1: Tests reactive double-spend detection via "Earliest Wins" heuristic.
 #[test]
 fn api_wallet_reactive_double_spend_earliest_wins() {
     // --- 1. Setup ---
@@ -175,11 +175,10 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     let mut standards_map = HashMap::new();
     standards_map.insert(standard.immutable.identity.uuid.clone(), freetaler_standard_toml.clone());
 
-    // --- 2. Alice erstellt einen Gutschein (V1) ---
+    // --- 2. Alice creates a voucher (V1) ---
     let voucher_v1 = service_alice
         .create_new_voucher(
             &freetaler_standard_toml,
-            "en",
             NewVoucherData {
                 nominal_value: ValueDefinition {
                     amount: "100".to_string(),
@@ -195,9 +194,9 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
         )
         .unwrap();
 
-    // --- 3. Alice erzeugt zwei konkurrierende Transaktionen ---
+    // --- 3. Alice creates two conflicting transactions ---
     let prev_tx = voucher_v1.transactions.last().unwrap();
-    // TX_A -> Bob (früher)
+    // TX_A -> Bob (earlier)
     let prev_tx_time = DateTime::parse_from_rfc3339(&prev_tx.t_time)
         .unwrap()
         .with_timezone(&Utc);
@@ -207,7 +206,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     let alice_holder_key = test_utils::derive_holder_key(&voucher_v1, &identity_alice.signing_key);
     let alice_holder_pub = bs58::encode(alice_holder_key.verifying_key().to_bytes()).into_string();
 
-    // TX_A -> Bob (früher)
+    // TX_A -> Bob (earlier)
     let tx_a_raw = Transaction {
         prev_hash: prev_tx_hash.clone(),
         t_type: "transfer".to_string(),
@@ -231,7 +230,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     let mut voucher_v2_bob = voucher_v1.clone();
     voucher_v2_bob.transactions.push(tx_a);
 
-    // TX_B -> Charlie (später)
+    // TX_B -> Charlie (later)
     let tx_b_raw = Transaction {
         prev_hash: prev_tx_hash,
         t_type: "transfer".to_string(),
@@ -263,7 +262,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     )
     .unwrap();
 
-    // --- 4. David empfängt zuerst das spätere Bundle (Charlie) ---
+    // --- 4. David receives the later bundle first (Charlie) ---
     human_money_core::set_signature_bypass(true);
     service_david
         .receive_bundle(&bundle_charlie, &standards_map, None, Some("pwd"), false)
@@ -274,7 +273,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     assert_eq!(summaries_before[0].status, VoucherStatus::Active);
     let charlie_instance_id = summaries_before[0].local_instance_id.clone();
 
-    // --- 5. David empfängt das frühere Bundle (Bob), was den Konflikt auslöst ---
+    // --- 5. David receives the earlier bundle (Bob), which triggers the conflict ---
     human_money_core::set_signature_bypass(true);
     service_david
         .receive_bundle(&bundle_bob, &standards_map, None, Some("pwd"), false)
@@ -312,7 +311,7 @@ fn api_wallet_reactive_double_spend_earliest_wins() {
     );
 }
 
-/// Test 1.2: Testet die Konflikterkennung bei exakt identischen Zeitstempeln.
+/// Test 1.2: Tests conflict detection with exactly identical timestamps.
 #[test]
 fn api_wallet_reactive_double_spend_identical_timestamps() {
     // --- 1. Setup ---
@@ -339,7 +338,6 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     let voucher_v1 = service_alice
         .create_new_voucher(
             &freetaler_standard_toml,
-            "en",
             NewVoucherData {
                 nominal_value: ValueDefinition {
                     amount: "100".to_string(),
@@ -355,7 +353,7 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
         )
         .unwrap();
 
-    // --- 2. Erzeuge konkurrierende Transaktionen mit IDENTISCHEM Zeitstempel ---
+    // --- 2. Create conflicting transactions with IDENTICAL timestamp ---
     let prev_tx = voucher_v1.transactions.last().unwrap();
     let prev_tx_time = DateTime::parse_from_rfc3339(&prev_tx.t_time)
         .unwrap()
@@ -366,7 +364,7 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     let alice_holder_key = test_utils::derive_holder_key(&voucher_v1, &identity_alice.signing_key);
     let alice_holder_pub = bs58::encode(alice_holder_key.verifying_key().to_bytes()).into_string();
 
-    // Pfad A: Split-Transfer 99
+    // Path A: Split transfer 99
     let tx_a_raw = Transaction {
         prev_hash: prev_tx_hash.clone(),
         t_type: "split".to_string(),
@@ -389,7 +387,7 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     let mut voucher_a = voucher_v1.clone();
     voucher_a.transactions.push(tx_a.clone());
 
-    // Pfad B: Full-Transfer 100
+    // Path B: Full transfer 100
     let tx_b_raw = Transaction {
         prev_hash: prev_tx_hash,
         t_type: "transfer".to_string(),
@@ -419,7 +417,7 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
         "Conflicting transactions must have different t_ids"
     );
 
-    // --- 3. David empfängt beide Bundles ---
+    // --- 3. David receives both bundles ---
     human_money_core::set_signature_bypass(true);
     service_david
         .receive_bundle(&bundle_a, &standards_map, None, Some("pwd"), false)
@@ -454,8 +452,8 @@ fn api_wallet_reactive_double_spend_identical_timestamps() {
     );
 }
 
-/// Test 2.1: Stellt sicher, dass der gesamte Zustand eines Wallets verlustfrei
-/// gespeichert und wiederhergestellt werden kann.
+/// Test 2.1: Ensures that the entire state of a wallet can be saved
+/// and restored without loss of fidelity.
 #[test]
 fn api_wallet_save_and_load_fidelity() {
     // --- 1. Setup ---
@@ -467,7 +465,7 @@ fn api_wallet_save_and_load_fidelity() {
     let mut standards_map = HashMap::new();
     standards_map.insert(freetaler_standard.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
-    // --- 2. Wallet A in komplexen Zustand versetzen ---
+    // --- 2. Put Wallet A into a complex state ---
     {
         let (mut service_a, _) =
             test_utils::setup_service_with_profile(dir.path(), test_user, "Test User A", password);
@@ -476,7 +474,6 @@ fn api_wallet_save_and_load_fidelity() {
         service_a
             .create_new_voucher(
                 &freetaler_toml,
-                "en",
                 NewVoucherData {
                     creator_profile: PublicProfile {
                         id: Some(id_a.clone()),
@@ -494,7 +491,7 @@ fn api_wallet_save_and_load_fidelity() {
             )
             .unwrap();
 
-        // --- Schritt A: Teiltransfer (Split) ---
+        // --- Step A: Partial transfer (Split) ---
         let summary = service_a.get_voucher_summaries(None, None, None).unwrap();
         let silver_voucher_id_10oz = summary
             .iter()
@@ -519,7 +516,7 @@ fn api_wallet_save_and_load_fidelity() {
             .create_transfer_bundle(request, &standards_toml, None, Some(password))
             .unwrap();
 
-        // Bundle-Metadaten durch Empfang erzeugen
+        // Generate bundle metadata via receive
         let transfer_back_bundle = {
             let dir_bob = tempdir().unwrap();
             let bob = &ACTORS.bob;
@@ -530,7 +527,6 @@ fn api_wallet_save_and_load_fidelity() {
             service_bob
                 .create_new_voucher(
                     &freetaler_toml,
-                    "en",
                     NewVoucherData {
                         creator_profile: PublicProfile {
                             id: Some(id_bob),
@@ -572,7 +568,7 @@ fn api_wallet_save_and_load_fidelity() {
             .receive_bundle(&transfer_back_bundle, &standards_map, None, Some(password), false)
             .unwrap();
 
-        // --- Schritt B: Vollständiger Transfer ---
+        // --- Step B: Full transfer ---
         let summary_before_full_transfer = service_a.get_voucher_summaries(None, None, None).unwrap();
         let silver_voucher_id_7oz = summary_before_full_transfer
             .iter()
@@ -595,9 +591,9 @@ fn api_wallet_save_and_load_fidelity() {
         service_a
             .create_transfer_bundle(request, &standards_toml, None, Some(password))
             .unwrap();
-    } // service_a geht out of scope
+    } // service_a goes out of scope
 
-    // --- 3. Wallet B aus demselben Verzeichnis laden ---
+    // --- 3. Load Wallet B from the same directory ---
     let mut service_b = AppService::new(dir.path()).unwrap();
     let profile_b = service_b.list_profiles().unwrap().pop().unwrap();
     service_b
@@ -641,7 +637,7 @@ fn api_wallet_save_and_load_fidelity() {
     );
 }
 
-/// Test 6.1: Verifiziert, dass `create_new_voucher` exakt eine Instanz hinzufügt.
+/// Test 6.1: Verifies that `create_new_voucher` adds exactly one instance.
 #[test]
 fn test_create_voucher_adds_exactly_one_instance() {
     // 1. ARRANGE
@@ -677,7 +673,7 @@ fn test_create_voucher_adds_exactly_one_instance() {
 
     // 2. ACT
     let created_voucher = app_service
-        .create_new_voucher(&standard_toml, "de", voucher_data.clone(), None)
+        .create_new_voucher(&standard_toml, voucher_data.clone(), None)
         .expect("Voucher creation failed");
 
     // 3. ASSERT
@@ -691,15 +687,10 @@ fn test_create_voucher_adds_exactly_one_instance() {
 
     let summary = &final_summaries[0];
     assert_eq!(summary.current_amount, "100.00");
-
-    let expected_description = "Ein universeller, teilbarer Gutschein für den Tausch von Waren und Dienstleistungen. Der FreeTaler dient als generisches Beispiel für selbstgeschöpfte Verrechnungseinheiten.";
-    assert_eq!(
-        created_voucher.voucher_standard.template.description, expected_description,
-        "The description from the silver standard template was not applied correctly."
-    );
+    assert_eq!(created_voucher.voucher_standard.name, "FreeTaler");
 }
 
-/// Test 6.2: Stellt sicher, dass `create_new_voucher` transaktional ist.
+/// Test 6.2: Ensures that `create_new_voucher` is transactional.
 #[test]
 fn test_create_voucher_is_transactional_on_save_failure() {
     // 1. ARRANGE
@@ -729,10 +720,9 @@ fn test_create_voucher_is_transactional_on_save_failure() {
         ..Default::default()
     };
 
-    // 2. ACT 1: Versuche, mit falschem Passwort zu erstellen
+    // 2. ACT 1: Attempt to create with wrong password
     let creation_result_fail = app_service.create_new_voucher(
         &standard_toml,
-        "de",
         voucher_data.clone(),
         Some("WRONG_PASSWORD"),
     );
@@ -749,11 +739,10 @@ fn test_create_voucher_is_transactional_on_save_failure() {
         "Wallet should still be empty after a failed save"
     );
 
-    // 4. ACT 2: Erstelle einen Gutschein mit dem korrekten Passwort
+    // 4. ACT 2: Create a voucher with the correct password
     app_service
         .create_new_voucher(
             &standard_toml,
-            "de",
             voucher_data.clone(),
             Some(correct_password),
         )
@@ -768,20 +757,20 @@ fn test_create_voucher_is_transactional_on_save_failure() {
     );
 }
 
-/// Test 7.1: Verifiziert die "Stale State"-Sicherheitslücke bei konkurrierendem Zugriff.
+/// Test 7.1: Verifies the "Stale State" vulnerability under concurrent access.
 ///
-/// HINWEIS ZUM TEST-DESIGN:
-/// In einer Single-Process-Testumgebung teilen sich `app_stale` und `app_actor` dieselbe
-/// Prozess-ID (PID). Die `FileStorage`-Locking-Implementierung verwendet die PID, um den
-/// Besitzer des Locks zu identifizieren. Da die PIDs identisch sind, würde `app_stale`
-/// den Lock erhalten, obwohl `app_actor` (aus logischer Sicht) ein konkurrierender Prozess ist.
+/// NOTE ON TEST DESIGN:
+/// In a single-process test environment, `app_stale` and `app_actor` share the same
+/// process ID (PID). The `FileStorage` locking implementation uses the PID to identify
+/// the lock owner. Because the PIDs are identical, `app_stale` would obtain the lock
+/// even though `app_actor` is (from a logical perspective) a concurrent process.
 ///
-/// Um die Schutzwirkung des Wallets gegen *externe* Konkurrenz (File Locking) korrekt zu testen,
-/// simulieren wir einen externen Lock durch das Injizieren einer `.wallet.lock`-Datei mit einer
-/// fremden PID (PID 1). Dies zwingt das Wallet in den Fehlerzustand "Locked", was wir erwarten.
+/// To correctly test wallet protection against *external* concurrency (file locking),
+/// we simulate an external lock by injecting a `.wallet.lock` file with a foreign PID (PID 1).
+/// This forces the wallet into the "Locked" error state, which we expect.
 #[test]
 fn test_concurrent_app_service_causes_stale_state_double_spend() {
-    // --- 1. Setup: Gemeinsames Verzeichnis und initialer Zustand ---
+    // --- 1. Setup: Shared directory and initial state ---
     let dir = tempdir().unwrap();
     let alice = &ACTORS.alice;
     let password = "super-secret-password";
@@ -794,11 +783,10 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
         test_utils::setup_service_with_profile(dir.path(), alice, "Alice Concurrent", password);
     let id_alice = service_initial.get_user_id().unwrap();
 
-    // Erstelle den Gutschein
+    // Create the voucher
     service_initial
         .create_new_voucher(
             &freetaler_toml,
-            "en",
             NewVoucherData {
                 nominal_value: ValueDefinition {
                     amount: "100".to_string(),
@@ -821,21 +809,21 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
     service_initial.logout();
     drop(service_initial);
 
-    // --- 2. Simuliere konkurrierenden Zugriff ---
+    // --- 2. Simulate concurrent access ---
 
-    // Instanz 1 (Stale)
+    // Instance 1 (Stale)
     let mut app_stale = AppService::new(dir.path()).unwrap();
     app_stale
         .login(&profile_info.folder_name, password, false, "test-id".to_string())
         .unwrap();
 
-    // Instanz 2 (Actor)
+    // Instance 2 (Actor)
     let mut app_actor = AppService::new(dir.path()).unwrap();
     app_actor
         .login(&profile_info.folder_name, password, false, "test-id".to_string())
         .unwrap();
 
-    // --- 3. Race Condition: Actor handelt zuerst ---
+    // --- 3. Race Condition: Actor acts first ---
     let request_bob = human_money_core::wallet::MultiTransferRequest {
         recipient_id: ACTORS.bob.identity.user_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
@@ -851,19 +839,19 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
         app_actor.create_transfer_bundle(request_bob, &standards_map, None, Some(password));
     assert!(
         result_actor.is_ok(),
-        "Der erste Transfer (Actor) sollte erfolgreich sein"
+        "First transfer (Actor) should be successful"
     );
 
-    // --- 3b. SIMULIERE EXTERNEN LOCK ---
-    // Da wir uns im selben Prozess befinden, würde app_stale den Lock sonst erhalten.
-    // Wir schreiben PID 1 (init/systemd), was fast immer existiert und als "alive" gilt.
+    // --- 3b. SIMULATE EXTERNAL LOCK ---
+    // Because we are in the same process, app_stale would otherwise acquire the lock.
+    // We write PID 1 (init/systemd), which almost always exists and is considered "alive".
     let lock_path = dir
         .path()
         .join(&profile_info.folder_name)
         .join(".wallet.lock");
     std::fs::write(&lock_path, "1").expect("Failed to create fake lock file");
 
-    // --- 4. Stale Instanz handelt (basierend auf altem Speicherstand) ---
+    // --- 4. Stale instance acts (based on old in-memory state) ---
     let request_charlie = human_money_core::wallet::MultiTransferRequest {
         recipient_id: ACTORS.charlie.identity.user_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
@@ -878,13 +866,13 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
     let result_stale =
         app_stale.create_transfer_bundle(request_charlie, &standards_map, None, Some(password));
 
-    // Cleanup des Fake-Locks
+    // Clean up fake lock
     let _ = std::fs::remove_file(lock_path);
 
-    // --- 5. Verifizierung der Sicherheitslücke ---
-    // Dies sollte nun fehlschlagen mit "Wallet is locked" oder einem ähnlichen IO Fehler.
+    // --- 5. Verify vulnerability mitigation ---
+    // This should now fail with "Wallet is locked" or a similar IO error.
     assert!(
         result_stale.is_err(),
-        "REGRESSION TEST FAILED: Die 'stale' Instanz konnte fälschlicherweise einen Transfer (Double Spend) erstellen. Das Wallet MUSS dies durch einen Fehler (z.B. File Lock, Stale State Error) verhindern."
+        "REGRESSION TEST FAILED: The 'stale' instance was incorrectly able to create a transfer (double spend). The wallet MUST prevent this with an error (e.g. file lock, stale state error)."
     );
 }

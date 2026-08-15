@@ -23,9 +23,7 @@ fn test_init_transfer_split_chain() {
         voucher_data,
         standard,
         standard_hash,
-        &alice.signing_key,
-        "en",
-    )
+        &alice.signing_key)
     .expect("Voucher creation failed");
 
     // Verify Prev Hash of first transaction (Genesis)
@@ -138,7 +136,7 @@ fn test_init_transfer_split_chain() {
     // `Transaction` struct has `outputs: Vec<TransactionOutput>`? Or flat fields?
     // If flat fields, `split` might rely on `next_vouchers` (DAG)?
     // OR `human-money-core` uses a linear chain where a split forks the voucher into two VOUCHERS?
-    // "Split: Bob an Charlie (10) und Bob_Rest (40)." -> "Charlie erhält einen eigenen Anker. Bob erhält... einen neuen".
+    // "Split: Bob to Charlie (10) and Bob_Remainder (40)." -> "Charlie receives his own anchor. Bob receives... a new one".
     // If the Voucher is split, we usually get TWO Voucher instances (DAG fork).
     // The return type of `create_transaction` is `(Voucher, ...)` - singular.
     // Does it return the voucher *that Alice holds*? Or the *original* updated?
@@ -149,7 +147,7 @@ fn test_init_transfer_split_chain() {
     // Charlie gets a copy of `voucher_2` + proof he owns 10.
     // Bob gets a copy of `voucher_2` + proof he owns 40.
 
-    // The Expectation "Charlie erhält einen eigenen Anker" means the `Transaction` struct contains data for both.
+    // The expectation "Charlie receives his own anchor" means the `Transaction` struct contains data for both.
     // Let's check `Transaction` fields in `tx_2`.
     // If `Transaction` supports split, it might have a list of outputs/hashes.
     // Or `recipient_payloads` is a map/list.

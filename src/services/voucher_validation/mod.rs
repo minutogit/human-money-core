@@ -12,13 +12,14 @@ pub use rules::*;
 pub use chain::*;
 pub use signatures::*;
 
-/// Hauptfunktion zur Validierung eines Gutscheins gegen seinen Standard.
-/// Dies ist der zentrale Orchestrator, der alle untergeordneten Validierungsschritte aufruft.
+/// Main function for validating a voucher against its standard.
+/// This is the central orchestrator that invokes all subordinate validation steps.
 pub fn validate_voucher_against_standard(
     voucher: &Voucher,
     standard: &VoucherStandardDefinition,
 ) -> Result<(), VoucherCoreError> {
     identity::verify_standard_identity(voucher, standard)?;
+    identity::verify_nominal_value(voucher, standard)?;
     identity::verify_voucher_hash(voucher)?;
     identity::verify_anti_spoofing(voucher)?;
 

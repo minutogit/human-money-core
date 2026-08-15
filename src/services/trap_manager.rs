@@ -1,12 +1,12 @@
 //! # src/services/trap_manager.rs
 //!
-//! Implementiert die kryptographischen Primitive für die "Mathematische Falle" (Trap)
-//! und Zero-Knowledge-Proofs (ZKP) gemäß Spezifikation v4.4.
+//! Implements cryptographic primitives for the "Mathematical Trap"
+//! and Zero-Knowledge-Proofs (ZKP) according to specification v4.4.
 //!
-//! # Konzepte
-//! - **Hash-to-Curve:** Deterministische Abbildung von Daten auf einen validen Kurvenpunkt U.
-//! - **Trap:** Die Gleichung $V = m \cdot U + ID$, wobei $m$ geheim ist, aber $V$ und $U$ öffentlich.
-//! - **ZKP:** Ein Schnorr-Beweis, dass der Ersteller $m$ kennt, ohne es zu verraten.
+//! # Concepts
+//! - **Hash-to-Curve:** Deterministic mapping of data to a valid curve point U.
+//! - **Trap:** The equation $V = m \cdot U + ID$, where $m$ is secret, but $V$ and $U$ are public.
+//! - **ZKP:** A Schnorr proof that the creator knows $m$ without revealing it.
 
 use crate::error::VoucherCoreError;
 use crate::models::voucher::TrapData;
@@ -17,30 +17,28 @@ use sha2::{Digest, Sha512};
 use crate::services::crypto_utils::{get_secret_scalar, generate_dleq_proof};
 use std::convert::TryInto;
 
-/// Generiert einen deterministischen EdwardsPoint aus beliebigen Eingabedaten.
-/// Verwendet SHA-512 und die Elligator2-Variante von curve25519-dalek (`hash_from_bytes`).
+/// Generates a deterministic Scalar from arbitrary input data.
+/// Uses SHA-512.
 ///
 /// # Arguments
-/// * `input` - Die Eingabedaten (z.B. Transaktions-Details).
+/// * `input` - The input data (e.g. transaction details).
 ///
 /// # Returns
-/// Returns Ein valider `EdwardsPoint` auf der Kurve.
-/// Generiert einen deterministischen Scalar aus beliebigen Eingabedaten.
-/// Verwendet SHA-512.
+/// A valid `Scalar`.
 pub fn hash_to_scalar(input: &[u8]) -> Scalar {
     let mut hasher = Sha512::default();
     hasher.update(input);
     Scalar::from_hash(hasher)
 }
 
-/// Generiert einen deterministischen EdwardsPoint aus beliebigen Eingabedaten.
-/// Verwendet SHA-512 und die Elligator2-Variante von curve25519-dalek (`hash_from_bytes`).
+/// Generates a deterministic EdwardsPoint from arbitrary input data.
+/// Uses SHA-512 and curve25519-dalek mapping to curve.
 ///
 /// # Arguments
-/// * `input` - Die Eingabedaten (z.B. Transaktions-Details).
+/// * `input` - The input data (e.g. transaction details).
 ///
 /// # Returns
-/// Returns Ein valider `EdwardsPoint` auf der Kurve.
+/// A valid `EdwardsPoint` on the curve.
 #[allow(deprecated)]
 pub fn hash_to_curve(input: &[u8]) -> EdwardsPoint {
     // curve25519-dalek's hash_from_bytes uses SHA-512 internally and maps to a point.
@@ -48,15 +46,15 @@ pub fn hash_to_curve(input: &[u8]) -> EdwardsPoint {
     EdwardsPoint::nonspec_map_to_curve::<Sha512>(input)
 }
 
-/// Leitet den Slope `m` deterministisch ab.
+/// Derives the slope `m` deterministically.
 ///
 /// # Arguments
-/// * `prev_hash` - Der Hash der vorherigen Transaktion.
-/// * `secret_key_bytes` - Der private Schlüssel des Senders.
+/// * `prev_hash` - The hash of the previous transaction.
+/// * `secret_key_bytes` - The private key of the sender.
 /// * `_prefix` - Ignored, kept for backward compatibility.
 ///
 /// # Returns
-/// Ein `Scalar`, der als `m` in der Trap-Gleichung verwendet wird.
+/// A `Scalar` used as `m` in the trap equation.
 pub fn derive_m(
     prev_hash: &str,
     secret_key_bytes: &[u8],
@@ -85,19 +83,19 @@ pub struct DleqProof {
     pub dleq_s: [u8; 32],
 }
 
-/// Generiert die Trap-Daten und den ZKP.
+/// Generates trap data and the ZKP.
 ///
 /// # Arguments
-/// * `ds_tag` - Der konstante Index-String.
-/// * `u_scalar` - Der variierende Challenge-Scalar (berechnet via hash_to_scalar).
-/// * `m` - Der geheime Slope (Scalar).
-/// * `my_id_point` - Der öffentliche Identitätspunkt des Senders (ID).
-/// * `prefix` - Das optionale Präfix. None für Root-Accounts.
+/// * `ds_tag` - The constant index string.
+/// * `u_scalar` - The varying challenge scalar (computed via hash_to_scalar).
+/// * `m` - The secret slope (Scalar).
+/// * `my_id_point` - The public identity point of the sender (ID).
+/// * `prefix` - The optional prefix. None for root accounts.
 /// * `sk_sender` - Optional sender secret scalar (for DLEQ proof).
 /// * `p_point` - Optional generator point P (for DLEQ proof).
 ///
 /// # Returns
-/// Ein `TrapData`-Struct und optional `DleqProof`.
+/// A `TrapData` struct and optional `DleqProof`.
 pub fn generate_trap(
     ds_tag: String,
     u_scalar: &Scalar,
@@ -107,21 +105,21 @@ pub fn generate_trap(
     sk_sender: Option<&Scalar>,
     p_point: Option<&EdwardsPoint>,
 ) -> Result<(TrapData, Option<DleqProof>), VoucherCoreError> {
-    // 1. Berechne V = u * (m * G) + ID
+    // 1. Calculate V = u * (m * G) + ID
     //    V = (u * m) * G + ID
-    //    Wir definieren M = m * G (Slope Point)
+    //    We define M = m * G (Slope Point)
     let slope_term = (u_scalar * m) * ED25519_BASEPOINT_POINT;
     let v = slope_term + my_id_point;
 
     // 2. ZKP (Schnorr Proof)
-    // Wir beweisen Wissen von 'm' bezüglich der Basis X = u * G.
+    // We prove knowledge of 'm' with respect to base X = u * G.
     // Y = V - ID = m * X.
     // X = u * G
     // Y = m * X
     let x_base = u_scalar * ED25519_BASEPOINT_POINT;
-    let y_public = v - my_id_point; // Dies ist (u*m)*G
+    let y_public = v - my_id_point; // This is (u*m)*G
 
-    // Prover wählt zufälliges Nonce r
+    // Prover chooses random nonce r
     let mut rng = rand::thread_rng();
     let r = Scalar::random(&mut rng);
 
@@ -134,14 +132,14 @@ pub fn generate_trap(
     // Response s = r + c * m
     let s = r + (c * m);
 
-    // Serialisierung für Transport (Base58)
-    // ds_tag ist bereits ein String (der konstante Index)
+    // Serialization for transport (Base58)
+    // ds_tag is already a string (the constant index)
 
-    // u ist der variierende Scalar
+    // u is the varying scalar
     let u_str = bs58::encode(u_scalar.as_bytes()).into_string();
     let blinded_id_str = bs58::encode(v.compress().as_bytes()).into_string();
 
-    // Proof als Tupel (R, s) serialisiert
+    // Proof serialized as tuple (R, s)
     // Format: [32 bytes R compressed] || [32 bytes s]
     let mut proof_bytes = Vec::with_capacity(64);
     proof_bytes.extend_from_slice(commitment_r.compress().as_bytes());
@@ -170,17 +168,17 @@ pub fn generate_trap(
     Ok((trap_data, dleq_proof))
 }
 
-/// Verifiziert die Trap-Daten und den ZKP.
+/// Verifies trap data and the ZKP.
 ///
 /// # Arguments
-/// * `trap_data` - Die empfangenen Trap-Daten.
-/// * `expected_ds_tag` - Der erwartete konstante Index.
-/// * `expected_u_input` - Die rohen Daten, die zu U führen sollten (zur Prüfung von U).
-/// * `signer_id_point` - Der öffentliche Identitätspunkt (ID) des Senders.
-/// * `prefix` - Das optionale Nutzer-Präfix. None für Root-Accounts.
+/// * `trap_data` - The received trap data.
+/// * `expected_ds_tag` - The expected constant index.
+/// * `expected_u_input` - The raw data expected to produce U (for checking U).
+/// * `signer_id_point` - The public identity point (ID) of the sender.
+/// * `prefix` - The optional user prefix. None for root accounts.
 ///
 /// # Returns
-/// Ok(()), wenn der Proof gültig ist.
+/// Ok(()) if the proof is valid.
 pub fn verify_trap(
     trap_data: &TrapData,
     expected_ds_tag: &str,
@@ -276,11 +274,11 @@ fn calculate_challenge(
     Scalar::from_hash(hasher)
 }
 
-/// Extrahiert die Identität (ID-Punkt) mathematisch aus zwei kollidierenden Trap-Daten.
-/// Dies ist der Kern der Entlarvungs-Logik bei Double-Spends.
+/// Extracts the identity (ID point) mathematically from two colliding trap data entries.
+/// This is the core unmasking logic for double-spends.
 ///
-/// Die Identität wird über die Gleichung ID = V1 - u1 * (V1 - V2) * (u1 - u2)^-1
-/// zurückgewonnen, wobei V der blinded_id-Punkt und u der Challenge-Scalar ist.
+/// Identity is recovered via equation ID = V1 - u1 * (V1 - V2) * (u1 - u2)^-1,
+/// where V is the blinded_id point and u is the challenge scalar.
 pub fn extract_id_point_from_raw_data(
     ds_tag1: &str,
     u1_str: &str,
@@ -300,7 +298,7 @@ pub fn extract_id_point_from_raw_data(
         ));
     }
 
-    // 1. Dekodiere Base58-Daten
+    // 1. Decode Base58 data
     let u1_bytes = bs58::decode(u1_str)
         .into_vec()
         .map_err(|e| VoucherCoreError::Crypto(format!("Invalid U1: {}", e)))?;
@@ -314,7 +312,7 @@ pub fn extract_id_point_from_raw_data(
         .into_vec()
         .map_err(|e| VoucherCoreError::Crypto(format!("Invalid V2: {}", e)))?;
 
-    // 2. Konvertiere in kryptographische Typen
+    // 2. Convert to cryptographic types
     let u1 = Scalar::from_bytes_mod_order(
         u1_bytes
             .try_into()
@@ -335,15 +333,15 @@ pub fn extract_id_point_from_raw_data(
         .decompress()
         .ok_or_else(|| VoucherCoreError::Crypto("Decompress V2 failed".to_string()))?;
 
-    // 3. Berechne Deltas
+    // 3. Calculate deltas
     let delta_v = v1 - v2;
     let delta_u = u1 - u2;
 
-    // 4. Berechne Slope Point M = Delta V * (Delta U)^-1
+    // 4. Calculate slope point M = Delta V * (Delta U)^-1
     let delta_u_inv = delta_u.invert();
     let m_point = delta_v * delta_u_inv;
 
-    // 5. Berechne Identity ID = V1 - u1 * M
+    // 5. Calculate identity ID = V1 - u1 * M
     let recovered_id_point = v1 - (m_point * u1);
 
     Ok(recovered_id_point)

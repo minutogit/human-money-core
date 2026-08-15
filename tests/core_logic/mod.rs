@@ -1,17 +1,17 @@
 // tests/core_logic/mod.rs
 // cargo test --test core_logic_tests
 
-//! # Test-Modul für die Kernlogik
+//! # Test module for core logic
 //!
-//! Dieses Modul bündelt alle Tests, die sich auf die zentrale Geschäftslogik,
-//! die mathematische Korrektheit von Transaktionen und die grundlegenden
-//! Sicherheitsmechanismen konzentrieren.
+//! This module groups all tests focusing on central business logic,
+//! mathematical correctness of transactions, and fundamental
+//! security mechanisms.
 //!
-//! ## Enthaltene Module:
+//! ## Contained Modules:
 //!
-//! - **`lifecycle`**: Tests den gesamten Lebenszyklus eines Gutscheins.
-//! - **`math`**: Stellt die numerische Robustheit von Transaktionen sicher.
-//! - **`security`**: Prüft auf Sicherheitslücken und die Double-Spend-Erkennung.
+//! - **`lifecycle`**: Tests the entire lifecycle of a voucher.
+//! - **`math`**: Ensures numerical robustness of transactions.
+//! - **`security`**: Tests for security vulnerabilities and double-spend detection.
 
 pub mod flow_integrity;
 pub mod lifecycle;

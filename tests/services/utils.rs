@@ -1,10 +1,10 @@
 // tests/services/utils.rs
 // cargo test --test services_tests
 //!
-//! Bündelt Tests für verschiedene Hilfsfunktionen und Low-Level-Services,
-//! wie Datumsberechnungen und die Generierung von lokalen Instanz-IDs.
+//! Bundles tests for various utility functions and low-level services,
+//! such as date calculations and local instance ID generation.
 
-// Explizite Pfadangabe für das `test_utils`-Modul, um Unklarheiten zu vermeiden.
+// Explicit path specification for the `test_utils` module to avoid ambiguities.
 
 // --- Tests from test_date_utils.rs ---
 
@@ -23,23 +23,23 @@ use human_money_core::{
 
 #[test]
 fn test_iso8601_duration_date_math_correctness() {
-    // Diese Testfälle wurden speziell entwickelt, um die Schwächen
-    // der alten, vereinfachten Datumsberechnung aufzudecken.
+    // These test cases were specifically developed to expose the weaknesses
+    // of the old, simplified date calculation.
 
     let test_cases = vec![
-        // 1. Kritischer Fall: Monats-Überlauf
-        // 31. Januar + 1 Monat sollte der 28. Februar sein, nicht der 2. März.
+        // 1. Critical case: Month overflow
+        // Jan 31 + 1 month should be Feb 28, not Mar 2.
         ("2025-01-31T10:00:00Z", "P1M", "2025-02-28T10:00:00Z"),
-        // 2. Kritischer Fall: Schaltjahr-Logik
-        // 15. Feb 2024 (Schaltjahr) + 1 Jahr sollte der 15. Feb 2025 sein.
-        // Die alte Logik (+365 Tage) würde auf den 14. Feb 2025 kommen.
+        // 2. Critical case: Leap year logic
+        // Feb 15, 2024 (leap year) + 1 year should be Feb 15, 2025.
+        // The old logic (+365 days) would arrive at Feb 14, 2025.
         ("2024-02-15T10:00:00Z", "P1Y", "2025-02-15T10:00:00Z"),
-        // 3. Kritischer Fall: Start am Schalttag
-        // 29. Feb 2024 + 1 Jahr sollte auf den 28. Feb 2025 ausweichen.
+        // 3. Critical case: Start on leap day
+        // Feb 29, 2024 + 1 year should fall back to Feb 28, 2025.
         ("2024-02-29T10:00:00Z", "P1Y", "2025-02-28T10:00:00Z"),
-        // 4. Standardfall Monat (zur Absicherung)
+        // 4. Standard case month (for verification)
         ("2025-04-15T10:00:00Z", "P2M", "2025-06-15T10:00:00Z"),
-        // 5. Standardfall Tag (zur Absicherung)
+        // 5. Standard case day (for verification)
         ("2025-01-01T10:00:00Z", "P10D", "2025-01-11T10:00:00Z"),
     ];
 
@@ -52,12 +52,12 @@ fn test_iso8601_duration_date_math_correctness() {
             .unwrap()
             .with_timezone(&Utc);
 
-        // Annahme: `add_iso8601_duration` ist für den Test aufrufbar.
+        // Assumption: `add_iso8601_duration` is callable for testing.
         let result_date = voucher_manager::add_iso8601_duration(start_date, duration_str)
             .expect("Date calculation should not fail");
 
-        // Wir vergleichen nur die Datums- und Zeit-Komponenten bis zur Sekunde,
-        // um mögliche minimale Abweichungen in Nanosekunden zu ignorieren.
+        // We only compare the date and time components up to the second
+        // to ignore possible minimal differences in nanoseconds.
         assert_eq!(
             result_date.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             expected_date.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
@@ -71,37 +71,37 @@ fn test_iso8601_duration_date_math_correctness() {
 #[test]
 fn test_round_up_date_logic() {
     let test_cases = vec![
-        // 1. Aufrunden auf das Ende des Tages
+        // 1. Round up to the end of the day
         (
             "2025-08-26T10:20:30Z",
             "P1D",
             "2025-08-26T23:59:59.999999999Z",
         ),
-        // 2. Aufrunden auf das Ende des Monats (31 Tage)
+        // 2. Round up to the end of the month (31 days)
         (
             "2025-01-15T12:00:00Z",
             "P1M",
             "2025-01-31T23:59:59.999999999Z",
         ),
-        // 3. Aufrunden auf das Ende des Monats (Februar, kein Schaltjahr)
+        // 3. Round up to the end of the month (February, non-leap year)
         (
             "2025-02-10T00:00:00Z",
             "P1M",
             "2025-02-28T23:59:59.999999999Z",
         ),
-        // 4. Randfall: Aufrunden am letzten Tag des Monats (Schaltjahr)
+        // 4. Edge case: Round up on the last day of the month (leap year)
         (
             "2024-02-29T18:00:00Z",
             "P1M",
             "2024-02-29T23:59:59.999999999Z",
         ),
-        // 5. Aufrunden auf das Ende des Jahres
+        // 5. Round up to the end of the year
         (
             "2025-03-01T01:00:00Z",
             "P1Y",
             "2025-12-31T23:59:59.999999999Z",
         ),
-        // 6. Randfall: Aufrunden am letzten Tag des Jahres
+        // 6. Edge case: Round up on the last day of the year
         (
             "2025-12-31T23:00:00Z",
             "P1Y",
@@ -117,7 +117,7 @@ fn test_round_up_date_logic() {
             .unwrap()
             .with_timezone(&Utc);
 
-        // Annahme: `round_up_date` ist für den Test aufrufbar.
+        // Assumption: `round_up_date` is callable for testing.
         let result_date = voucher_manager::round_up_date(start_date, rounding_str)
             .expect("Rounding calculation should not fail");
 
@@ -148,47 +148,45 @@ fn test_chronological_validation_with_timezones() {
         ..Default::default()
     };
 
-    // KORREKTUR: Übergebe den korrekten `signing_key` vom Typ &SigningKey.
+    // CORRECTION: Pass the correct `signing_key` of type &SigningKey.
     let mut voucher = create_voucher(
         voucher_data,
         standard,
         standard_hash,
-        &test_user.signing_key,
-        "en",
-    )
+        &test_user.signing_key)
     .unwrap();
 
-    // 2. Manipuliere den Zeitstempel der `init`-Transaktion so, dass er VOR dem Erstellungsdatum des Gutscheins liegt.
-    // Die Validierung sollte dies als Fehler erkennen.
-    voucher.transactions[0].t_time = "2020-01-01T00:00:00Z".to_string(); // Eindeutig in der Vergangenheit
+    // 2. Manipulate the timestamp of the `init` transaction so that it lies BEFORE the creation date of the voucher.
+    // Validation should recognize this as an error.
+    voucher.transactions[0].t_time = "2020-01-01T00:00:00Z".to_string(); // Clearly in the past
 
-    // Damit der Fehler isoliert wird, müssen wir die Transaktion neu hashen und signieren.
+    // To isolate the error, we need to re-hash and re-sign the transaction.
     let mut tx = voucher.transactions[0].clone();
-    tx.t_id = "".to_string(); // Hash-relevante Felder zurücksetzen
+    tx.t_id = "".to_string(); // Reset hash-relevant fields
     tx.layer2_signature = None;
     tx.sender_identity_signature = None;
     tx.t_id = crypto_utils::get_hash(to_canonical_json(&tx).unwrap());
 
-    // KORREKTUR: Signiere t_id raw für L2 (technisch)
+    // CORRECTION: Sign t_id raw for L2 (technical)
     let t_id_raw = bs58::decode(&tx.t_id).into_vec().unwrap();
     let l2_sig = crypto_utils::sign_ed25519(&test_user.signing_key, &t_id_raw);
     tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 
-    // KORREKTUR: Signiere t_id raw für Identität (sozial)
+    // CORRECTION: Sign t_id raw for identity (social)
     let identity_sig = crypto_utils::sign_ed25519(&test_user.signing_key, &t_id_raw);
     tx.sender_identity_signature = Some(bs58::encode(identity_sig.to_bytes()).into_string());
 
     voucher.transactions[0] = tx;
 
-    // 3. Validierung: Die Transaktionszeit (`2020`) liegt nun vor dem Erstellungsdatum (`~2025`).
-    // Die Validierung muss dies als `InvalidTimeOrder` erkennen.
+    // 3. Validation: The transaction time (`2020`) now lies before the creation date (`~2025`).
+    // Validation must recognize this as `InvalidTimeOrder`.
     let result = validate_voucher_against_standard(&voucher, standard);
 
-    // Verbessere die Fehlerausgabe wie gewünscht.
+    // Improve error output as desired.
     let err = result.expect_err("Validation should have failed but returned Ok");
     assert!(
         matches!(
-            err, // Der Compiler schlägt die korrekte Syntax für ein struct variant vor.
+            err, // Compiler suggests correct syntax for a struct variant.
             VoucherCoreError::Validation(ValidationError::InvalidTimeOrder { .. })
         ),
         "Expected InvalidTimeOrder, but got a different error: {:?}",
@@ -200,7 +198,6 @@ fn test_chronological_validation_with_timezones() {
 
 use human_money_core::models::voucher::{
     Address, Collateral, Transaction, ValueDefinition, Voucher, VoucherStandard,
-    VoucherTemplateData,
 };
 
 // -------------------------------------------------------------------------
@@ -349,9 +346,7 @@ fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
         voucher_data_allowed,
         &standard_with_p1y,
         &standard_hash,
-        &creator.signing_key,
-        "en",
-    )
+        &creator.signing_key)
     .expect("create_voucher with P2Y should succeed");
 
     let holder_key_allowed =
@@ -379,6 +374,7 @@ fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
     let (standard_no_min, hash_no_min) =
         human_money_core::test_utils::create_custom_standard(base_standard, |s| {
             s.immutable.issuance.issuance_minimum_validity_duration = "P0Y".to_string();
+            s.immutable.issuance.validity_duration_range = vec!["P0D".to_string(), "P10Y".to_string()];
         });
 
     let voucher_data_short = NewVoucherData {
@@ -398,9 +394,7 @@ fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
         voucher_data_short,
         &standard_no_min,
         &hash_no_min,
-        &creator.signing_key,
-        "en",
-    )
+        &creator.signing_key)
     .expect("create_voucher with P1D on no-min standard should succeed");
 
     let holder_key_short =
@@ -427,21 +421,14 @@ use human_money_core::services::crypto_utils::get_hash;
 use human_money_core::services::utils::get_current_timestamp;
 use human_money_core::wallet::Wallet;
 
-/// Hilfsfunktion, um einen einfachen Test-Gutschein zu erstellen.
-/// Initialisiert alle Felder manuell, um die fehlende `Default`-Implementierung zu umgehen.
+/// Helper function to create a simple test voucher.
+/// Manually initializes all fields to work around the missing `Default` implementation.
 fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
     let voucher = Voucher {
         voucher_standard: VoucherStandard {
             name: "Test Standard".to_string(),
             uuid: "uuid-test".to_string(),
             standard_definition_hash: "dummy-hash-for-test".to_string(),
-            template: VoucherTemplateData {
-                description: "A test voucher".to_string(),
-                primary_redemption_type: "SERVICE".to_string(),
-                allow_partial_transfers: true,
-                issuance_minimum_validity_duration: "P1Y".to_string(),
-                footnote: "".to_string(),
-            },
         },
         voucher_id: "voucher-123".to_string(),
         voucher_nonce: "test-nonce".to_string(),
@@ -468,7 +455,7 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
             id: Some(creator_id.to_string()),
             first_name: Some("Test".to_string()),
             last_name: Some("Creator".to_string()),
-            address: Some(Address::default()), // Address leitet Default ab und kann so verwendet werden
+            address: Some(Address::default()), // Address derives Default and can be used this way
             organization: None,
             community: None,
             phone: None,
@@ -478,7 +465,7 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
             coordinates: Some("0,0".to_string()),
             ..Default::default()
         },
-        transactions: vec![], // Wird im nächsten Schritt gefüllt
+        transactions: vec![], // Filled in the next step
         signatures: vec![],
     };
 
@@ -505,8 +492,8 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
     voucher
 }
 
-/// Testet, ob die `local_instance_id` für den ursprünglichen Ersteller
-/// korrekt auf Basis der `init`-Transaktion berechnet wird.
+/// Tests whether the `local_instance_id` for the initial creator
+/// is correctly calculated based on the `init` transaction.
 #[test]
 fn test_local_id_for_initial_creator() {
     let creator = &ACTORS.alice;
@@ -523,8 +510,8 @@ fn test_local_id_for_initial_creator() {
     assert_eq!(local_id, expected_hash);
 }
 
-/// Testet, ob die `local_instance_id` für einen Empfänger nach einem
-/// vollständigen Transfer korrekt auf Basis der Transfer-Transaktion berechnet wird.
+/// Tests whether the `local_instance_id` for a recipient after a
+/// full transfer is correctly calculated based on the transfer transaction.
 #[test]
 fn test_local_id_after_full_transfer() {
     let creator = &ACTORS.alice;
@@ -535,12 +522,12 @@ fn test_local_id_after_full_transfer() {
         sender_identity_signature: None,
         t_id: "t-transfer-def".to_string(),
         prev_hash: get_hash("..."),
-        t_type: "".to_string(), // Voller Transfer
+        t_type: "".to_string(), // Full transfer
         t_time: get_current_timestamp(),
         sender_id: Some(creator.user_id.clone()),
         recipient_id: recipient.user_id.clone(),
         amount: "100".to_string(),
-        sender_remaining_amount: None, // Kein Restbetrag
+        sender_remaining_amount: None, // No remaining amount
         receiver_ephemeral_pub_hash: None,
         sender_ephemeral_pub: None,
         privacy_guard: None,
@@ -551,7 +538,7 @@ fn test_local_id_after_full_transfer() {
     };
     voucher.transactions.push(transfer_tx);
 
-    // ID für den neuen Besitzer (Empfänger)
+    // ID for the new owner (recipient)
     let result_recipient = Wallet::calculate_local_instance_id(&voucher, &recipient.user_id);
     assert!(result_recipient.is_ok());
     let local_id_recipient = result_recipient.unwrap();
@@ -564,8 +551,8 @@ fn test_local_id_after_full_transfer() {
 
     assert_eq!(local_id_recipient, expected_hash);
 
-    // ID für den ursprünglichen Besitzer (jetzt archiviert)
-    // NACH ÄNDERUNG: Die ID muss nun auf der Transfer-Transaktion basieren, da der Creator dort der Sender war.
+    // ID for the original owner (now archived)
+    // AFTER CHANGE: The ID must now be based on the transfer transaction since the creator was the sender there.
     let result_creator = Wallet::calculate_local_instance_id(&voucher, &creator.user_id);
     assert!(result_creator.is_ok());
     let creators_archived_id = result_creator.unwrap();
@@ -580,8 +567,8 @@ fn test_local_id_after_full_transfer() {
     );
 }
 
-/// Testet die `local_instance_id` für Sender und Empfänger nach einer Teilung (Split).
-/// Beide IDs müssen auf der Split-Transaktion basieren.
+/// Tests the `local_instance_id` for sender and recipient after a split.
+/// Both IDs must be based on the split transaction.
 #[test]
 fn test_local_id_after_split() {
     let sender = &ACTORS.sender;
@@ -608,7 +595,7 @@ fn test_local_id_after_split() {
     };
     voucher.transactions.push(split_tx);
 
-    // ID für den Sender (hat noch Restguthaben)
+    // ID for the sender (still has remaining balance)
     let result_sender = Wallet::calculate_local_instance_id(&voucher, &sender.user_id);
     assert!(result_sender.is_ok());
     let local_id_sender = result_sender.unwrap();
@@ -616,7 +603,7 @@ fn test_local_id_after_split() {
         format!("{}{}{}", voucher.voucher_id, "t-split-ghi", &sender.user_id);
     assert_eq!(local_id_sender, get_hash(expected_combined_sender));
 
-    // ID für den Empfänger des Teilbetrags
+    // ID for the recipient of the split amount
     let result_recipient = Wallet::calculate_local_instance_id(&voucher, &recipient.user_id);
     assert!(result_recipient.is_ok());
     let local_id_recipient = result_recipient.unwrap();
@@ -627,8 +614,8 @@ fn test_local_id_after_split() {
     assert_eq!(local_id_recipient, get_hash(expected_combined_recipient));
 }
 
-/// Testet, ob die Funktion korrekt einen Fehler zurückgibt, wenn der
-/// angegebene Nutzer den Gutschein nie besessen hat.
+/// Tests whether the function correctly returns an error when the
+/// specified user never owned the voucher.
 #[test]
 fn test_local_id_for_non_owner() {
     let creator = &ACTORS.alice;
@@ -643,20 +630,20 @@ fn test_local_id_for_non_owner() {
     ));
 }
 
-/// Stellt sicher, dass sich die `local_instance_id` ändert, wenn ein Gutschein
-/// erst weggeschickt und dann wieder zurückempfangen wird.
+/// Ensures that the `local_instance_id` changes when a voucher
+/// is first sent away and then received back.
 #[test]
 fn test_local_id_changes_on_round_trip() {
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
     let mut voucher = create_base_voucher(&alice.user_id, "100");
 
-    // 1. Alice's initialer Zustand
+    // 1. Alice's initial state
     let initial_alice_id = Wallet::calculate_local_instance_id(&voucher, &alice.user_id)
         .expect("Alice should own the voucher initially");
     assert!(!initial_alice_id.is_empty());
 
-    // 2. Alice sendet den Gutschein an Bob
+    // 2. Alice sends the voucher to Bob
     let tx_to_bob = Transaction {
         sender_identity_signature: None,
         t_id: "t-alice-to-bob".to_string(),
@@ -677,12 +664,12 @@ fn test_local_id_changes_on_round_trip() {
     };
     voucher.transactions.push(tx_to_bob);
 
-    // 3. Überprüfen: Bob besitzt ihn jetzt, Alice nicht mehr
+    // 3. Verify: Bob owns it now, Alice no longer does
     let _bobs_id = Wallet::calculate_local_instance_id(&voucher, &bob.user_id)
         .expect("Bob should now own the voucher");
     let alice_result_after_send = Wallet::calculate_local_instance_id(&voucher, &alice.user_id);
-    // NACH ÄNDERUNG: Alice's Aufruf muss erfolgreich sein und eine NEUE ID zurückgeben, die
-    // auf der Transaktion basiert, bei der sie die Senderin war.
+    // AFTER CHANGE: Alice's call must succeed and return a NEW ID that is
+    // based on the transaction where she was the sender.
     assert!(alice_result_after_send.is_ok());
     let alice_archived_id = alice_result_after_send.unwrap();
     assert_ne!(
@@ -699,7 +686,7 @@ fn test_local_id_changes_on_round_trip() {
         "Alice's archived ID should be based on the transaction to Bob."
     );
 
-    // 4. Bob sendet den Gutschein zurück an Alice
+    // 4. Bob sends the voucher back to Alice
     let tx_to_alice = Transaction {
         sender_identity_signature: None,
         t_id: "t-bob-to-alice".to_string(),
@@ -720,23 +707,24 @@ fn test_local_id_changes_on_round_trip() {
     };
     voucher.transactions.push(tx_to_alice);
 
-    // 5. Finale Überprüfung: Alice besitzt ihn wieder, aber mit einer NEUEN ID. Bob besitzt ihn nicht mehr.
+    // 5. Final verification: Alice owns it again, but with a NEW ID. Bob no longer owns it.
     let final_alice_id = Wallet::calculate_local_instance_id(&voucher, &alice.user_id)
         .expect("Alice should own the voucher again");
     let bob_result_after_send = Wallet::calculate_local_instance_id(&voucher, &bob.user_id);
-    // NACH ÄNDERUNG: Bob's Aufruf muss erfolgreich sein und seine ID aus der Transaktion zu ihm zurückgeben.
+    // AFTER CHANGE: Bob's call must succeed and return his ID from the transaction to him.
     assert!(bob_result_after_send.is_ok());
 
-    // Die wichtigste Prüfung: Die neue ID von Alice muss sich von ihrer ursprünglichen ID unterscheiden.
+    // The most important check: Alice's new ID must differ from her initial ID.
     assert_ne!(
         initial_alice_id, final_alice_id,
         "Alice's local instance ID should be different after receiving the voucher back."
     );
 
-    // Die neue ID muss auf der letzten Transaktion basieren.
+    // The new ID must be based on the latest transaction.
     let expected_final_string = format!(
         "{}{}{}",
         voucher.voucher_id, "t-bob-to-alice", &alice.user_id
     );
     assert_eq!(final_alice_id, get_hash(expected_final_string));
 }
+

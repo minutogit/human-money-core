@@ -12,7 +12,7 @@ use crate::services::crypto_utils::{
     derive_ephemeral_key_pair, get_hash, get_hash_from_slices, get_prefix_from_user_id, sign_ed25519,
 };
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
-use crate::services::{decimal_utils, standard_manager};
+use crate::services::decimal_utils;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
 use rand::Rng;
@@ -43,14 +43,13 @@ pub struct NewVoucherData {
     pub creator_profile: PublicProfile,
 }
 
-/// Creates a new, signed `Voucher` struct.
+/// Orchestrates the creation of a new, fully validated and initialized `Voucher`.
 ///
 /// # Arguments
-/// * `data` - The `NewVoucherData` structure with voucher-specific information.
+/// * `data` - Basic data for the new voucher.
 /// * `verified_standard` - The already verified `VoucherStandardDefinition`.
 /// * `standard_hash` - The consistency hash of the verified standard.
 /// * `creator_signing_key` - The creator's private Ed25519 key for signing.
-/// * `lang_preference` - Preferred language code (e.g., "de") for localized texts.
 ///
 /// # Returns
 /// A `Result` containing the fully created `Voucher` or a `VoucherCoreError`.
@@ -59,9 +58,8 @@ pub fn create_voucher(
     verified_standard: &VoucherStandardDefinition,
     standard_hash: &str,
     creator_signing_key: &SigningKey,
-    lang_preference: &str,
 ) -> Result<Voucher, VoucherCoreError> {
-    // SECURITY PATCH: Validate critical template values from standard.
+    // SECURITY PATCH: Validate critical blueprint values from standard.
     if verified_standard
         .immutable
         .blueprint
@@ -113,6 +111,20 @@ pub fn create_voucher(
         }
     }
 
+    // CHECK MIN RANGE
+    if let Some(min_duration_str) = verified_standard.immutable.issuance.validity_duration_range.get(0) {
+        if !min_duration_str.is_empty() {
+            let min_allowed_dt = add_iso8601_duration(creation_dt, min_duration_str)?;
+            if initial_valid_until_dt < min_allowed_dt {
+                return Err(VoucherManagerError::InvalidValidityDuration(format!(
+                    "Initial validity ({}) is less than the minimum allowed standard validity range ({}).",
+                    initial_valid_until_dt.to_rfc3339(),
+                    min_allowed_dt.to_rfc3339()
+                )).into());
+            }
+        }
+    }
+
     // CHECK MAX RANGE
     if let Some(max_duration_str) = verified_standard.immutable.issuance.validity_duration_range.get(1) {
         if !max_duration_str.is_empty() {
@@ -154,28 +166,10 @@ pub fn create_voucher(
         }
     });
 
-    let description_template = standard_manager::get_localized_text(
-        &verified_standard.mutable.i18n.descriptions,
-        lang_preference,
-    )
-    .unwrap_or("");
-
-    let final_description = description_template.replace("{{amount}}", &final_nominal_value.amount);
-
     let voucher_standard = VoucherStandard {
         name: verified_standard.immutable.identity.name.clone(),
         uuid: verified_standard.immutable.identity.uuid.clone(),
         standard_definition_hash: standard_hash.to_string(),
-        template: crate::models::voucher::VoucherTemplateData {
-            description: final_description.clone(),
-            primary_redemption_type: serde_json::to_value(&verified_standard.immutable.blueprint.primary_redemption_type)
-                .ok()
-                .and_then(|v| v.as_str().map(|s| s.to_string()))
-                .unwrap_or_default(),
-            allow_partial_transfers: verified_standard.immutable.features.allow_partial_transfers,
-            issuance_minimum_validity_duration: verified_standard.immutable.issuance.issuance_minimum_validity_duration.clone(),
-            footnote: standard_manager::get_localized_text(&verified_standard.mutable.i18n.footnotes, lang_preference).unwrap_or("").to_string(),
-        },
     };
 
     let mut temp_voucher = Voucher {

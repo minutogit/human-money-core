@@ -1,8 +1,8 @@
 // tests/persistence/archive.rs
 // cargo test --test persistence_tests
 //!
-//! Testet die Funktionalität des `VoucherArchive`-Traits und der `FileVoucherArchive`-Implementierung.
-//! Ursprünglich in `tests/test_archive.rs`.
+//! Tests the functionality of the `VoucherArchive` trait and the `FileVoucherArchive` implementation.
+//! Originally in `tests/test_archive.rs`.
 
 use human_money_core::{
     VoucherStatus,
@@ -14,31 +14,31 @@ use human_money_core::{
 use std::fs;
 use tempfile::tempdir;
 
-// Lade die Test-Hilfsfunktionen aus dem übergeordneten Verzeichnis.
+// Load test helper functions from the parent directory.
 
 use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD};
 
-// --- Haupttest ---
+// --- Main Test ---
 
 #[test]
 fn test_voucher_archiving_on_full_spend() {
     // 1. SETUP
-    // Verwende die vordefinierten Test-Akteure aus `test_utils`.
+    // Use the predefined test actors from `test_utils`.
     let alice_identity = &ACTORS.alice;
     let bob_identity = &ACTORS.bob;
 
     let mut alice_wallet = human_money_core::test_utils::setup_in_memory_wallet(&alice_identity.identity);
 
-    // Erstelle Alices Archiv im temporären Verzeichnis.
+    // Create Alice's archive in the temporary directory.
     let temp_dir = tempdir().unwrap();
     let archive = FileVoucherArchive::new(temp_dir.path());
-    // Verwende den vordefinierten, zur Laufzeit signierten Standard.
+    // Use the predefined standard signed at runtime.
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
-    // Alice erstellt einen Gutschein und fügt ihn ihrem Wallet hinzu.
+    // Alice creates a voucher and adds it to her wallet.
     let voucher = {
         let nominal_value = ValueDefinition {
-            amount: "100.00".to_string(), // KORREKTUR: Vier Dezimalstellen für den FreeTaler-Standard
+            amount: "100.00".to_string(), // Four decimal places for the FreeTaler standard
             unit: "".to_string(),
             abbreviation: Some("".to_string()),
             description: Some("".to_string()),
@@ -47,7 +47,7 @@ fn test_voucher_archiving_on_full_spend() {
             nominal_value,
             creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(alice_identity.user_id.clone()),
-                // Fülle nur die nötigsten Felder für diesen Test.
+                // Populate only the necessary fields for this test.
                 ..Default::default()
             },
             ..Default::default()
@@ -57,16 +57,14 @@ fn test_voucher_archiving_on_full_spend() {
             voucher_data,
             standard,
             standard_hash,
-            &alice_identity.signing_key,
-            "en",
-        )
+            &alice_identity.signing_key)
         .unwrap()
     };
 
     let voucher_id = voucher.voucher_id.clone();
     let local_id = Wallet::calculate_local_instance_id(&voucher, &alice_identity.user_id).unwrap();
 
-    // Füge Voucher direkt mit Seed ein (da add_voucher_instance kein Seed-Argument hat)
+    // Insert voucher directly with seed (since add_voucher_instance has no seed parameter)
     alice_wallet.voucher_store.vouchers.insert(
         local_id.clone(),
         human_money_core::VoucherInstance {
@@ -76,13 +74,13 @@ fn test_voucher_archiving_on_full_spend() {
         },
     );
 
-    // 2. AKTION
-    // Alice sendet ihr GESAMTES Guthaben ("100") an Bob und übergibt dabei ihr Archiv.
+    // 2. ACTION
+    // Alice sends her ENTIRE balance ("100") to Bob, passing her archive.
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob_identity.user_id.clone(),
         sources: vec![human_money_core::wallet::SourceTransfer {
             local_instance_id: local_id.clone(),
-            amount_to_send: "100.00".to_string(), // KORREKTUR: Betrag muss ebenfalls das korrekte Format haben.
+            amount_to_send: "100.00".to_string(), // Amount must also have the correct format.
         }],
         notes: None,
         sender_profile_name: None,
@@ -97,7 +95,7 @@ fn test_voucher_archiving_on_full_spend() {
             &alice_identity,
             &standards,
             request,
-            Some(&archive), // Das Archiv-Backend wird übergeben.
+            Some(&archive), // The archive backend is passed.
         )
         .expect("Transfer with archive should succeed.");
 
@@ -113,8 +111,8 @@ fn test_voucher_archiving_on_full_spend() {
         bundle_result.vouchers.into_iter().next().unwrap()
     };
 
-    // 3. VERIFIZIERUNG
-    // Prüfe, ob das Archiv-System die korrekte Datei im korrekten Unterverzeichnis angelegt hat.
+    // 3. VERIFICATION
+    // Check if the archive system created the correct file in the correct subdirectory.
     let last_tx = transferred_voucher_state.transactions.last().unwrap();
     let expected_file_path = temp_dir
         .path()
@@ -123,11 +121,11 @@ fn test_voucher_archiving_on_full_spend() {
 
     assert!(expected_file_path.exists(), "Archive file was not created.");
 
-    // Lade den Inhalt der archivierten Datei und vergleiche ihn.
+    // Load the contents of the archived file and compare.
     let archived_content = fs::read(expected_file_path).unwrap();
     let archived_voucher: human_money_core::models::voucher::Voucher =
         serde_json::from_slice(&archived_content).unwrap();
 
-    // Der archivierte Gutschein muss exakt dem Zustand entsprechen, den die `create_transfer`-Funktion zurückgegeben hat.
+    // The archived voucher must match exactly the state returned by the `create_transfer` function.
     assert_eq!(archived_voucher, transferred_voucher_state);
 }

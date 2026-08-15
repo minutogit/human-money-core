@@ -1,26 +1,25 @@
 //! # src/services/decimal_utils.rs
 //!
-//! Enthält zentrale Hilfsfunktionen zur konsistenten Validierung und Formatierung
-//! von `Decimal`-Werten. Die hier definierten Funktionen stellen sicher, dass
-//! alle Beträge im System einheitlich behandelt werden, um Rundungs- und
-//! Vergleichsfehler zu vermeiden.
+//! Contains central helper functions for consistent validation and formatting
+//! of `Decimal` values. The functions defined here ensure that
+//! all amounts in the system are treated uniformly to avoid rounding and
+//! comparison errors.
 
 use crate::error::VoucherCoreError;
 use crate::services::voucher_manager::VoucherManagerError;
 use rust_decimal::Decimal;
 
-/// **Prinzip: Strenge Validierung am Eingang.**
+/// **Principle: Strict validation on input.**
 ///
-/// Stellt sicher, dass ein `Decimal`-Wert die vom Standard erlaubte Anzahl
-/// an Nachkommastellen nicht überschreitet. Schlägt fehl, wenn die Präzision
-/// der Eingabe zu hoch ist.
+/// Ensures that a `Decimal` value does not exceed the number of decimal
+/// places allowed by the standard. Fails if the input precision is too high.
 ///
 /// # Arguments
-/// * `amount` - Der zu prüfende `Decimal`-Wert.
-/// * `allowed_places` - Die maximal erlaubte Anzahl an Nachkommastellen.
+/// * `amount` - The `Decimal` value to check.
+/// * `allowed_places` - The maximum allowed number of decimal places.
 ///
 /// # Returns
-/// Ein `Result`, das bei Erfolg leer ist oder einen `VoucherCoreError` enthält.
+/// A `Result` that is empty on success or contains a `VoucherCoreError`.
 pub fn validate_precision(amount: &Decimal, allowed_places: u32) -> Result<(), VoucherCoreError> {
     if amount.scale() > allowed_places {
         Err(VoucherManagerError::AmountPrecisionExceeded {
@@ -33,17 +32,17 @@ pub fn validate_precision(amount: &Decimal, allowed_places: u32) -> Result<(), V
     }
 }
 
-/// **Prinzip: Kanonisches Speicherformat.**
+/// **Principle: Canonical storage format.**
 ///
-/// Formatiert einen `Decimal`-Wert in den kanonischen String, der in der
-/// Transaktionskette gespeichert wird (z.B. 60 -> "60.0000").
+/// Formats a `Decimal` value into the canonical string stored in the
+/// transaction chain (e.g. 60 -> "60.0000").
 ///
 /// # Arguments
-/// * `amount` - Der zu formatierende `Decimal`-Wert.
-/// * `places` - Die Anzahl der Nachkommastellen im Ausgabe-String.
+/// * `amount` - The `Decimal` value to format.
+/// * `places` - The number of decimal places in the output string.
 ///
 /// # Returns
-/// Einen `String` mit der kanonischen Repräsentation des Betrags.
+/// A `String` with the canonical representation of the amount.
 pub fn format_for_storage(amount: &Decimal, places: u32) -> String {
     format!("{:.1$}", amount, places as usize)
 }

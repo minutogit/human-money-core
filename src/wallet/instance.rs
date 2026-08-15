@@ -1,67 +1,68 @@
 //! # src/wallet/instance.rs
 //!
-//! Definiert die zentralen Datenstrukturen für die Verwaltung von
-//! Gutschein-Instanzen innerhalb des Wallets.
+//! Defines the core data structures for managing
+//! voucher instances within the wallet.
 
 use crate::models::voucher::Voucher;
 use serde::{Deserialize, Serialize};
 
-/// Erfasst den genauen, für den Nutzer behebbaren Grund, warum ein Gutschein
-/// als unvollständig (`Incomplete`) eingestuft wird.
-/// Dies ermöglicht es der Benutzeroberfläche, eine präzise To-do-Liste anzuzeigen.
+/// Captures the exact, user-remediable reason why a voucher
+/// is classified as incomplete (`Incomplete`).
+/// This allows the user interface to display a precise to-do list.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ValidationFailureReason {
-    /// Eine Geschäftsregel aus dem Standard wurde noch nicht erfüllt.
+    /// A business rule from the standard has not yet been satisfied.
     BusinessRule {
         message: String,
     },
-    /// Die Anzahl der zusätzlichen Signaturen ist zu niedrig.
+    /// The number of additional signatures is too low.
     AdditionalSignatureCountLow { required: u32, current: u32 },
-    /// Eine spezifische, im Standard geforderte Signatur fehlt.
+    /// A specific signature required by the standard is missing.
     RequiredSignatureMissing { role_description: String },
-    // Zukünftig erweiterbar für andere behebbare Validierungsfehler.
+    // Extensible in the future for other fixable validation errors.
 }
 
-/// Repräsentiert den übergeordneten Lebenszyklus-Zustand eines Gutscheins im Wallet.
-/// Dieser Status wird nicht im Gutschein selbst gespeichert, sondern ist eine
-/// Metainformation, die das Wallet verwaltet.
+/// Represents the high-level lifecycle state of a voucher in the wallet.
+/// This status is not stored in the voucher itself, but is
+/// metadata managed by the wallet.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub enum VoucherStatus {
-    /// Der Gutschein ist strukturell korrekt, erfüllt aber noch nicht alle
-    /// Validierungsregeln des Standards (z.B. fehlende Signaturen).
+    /// The voucher is structurally valid, but does not yet satisfy all
+    /// validation rules of the standard (e.g. missing signatures).
     Incomplete {
         reasons: Vec<ValidationFailureReason>,
     },
-    /// Der Gutschein ist vollständig valide und kann für Transaktionen verwendet werden.
+    /// The voucher is fully valid and can be used for transactions.
     #[default]
     Active,
-    /// Der Gutschein wurde vollständig ausgegeben oder an einen anderen Nutzer transferiert.
-    /// Er wird nur noch zu historischen Zwecken aufbewahrt.
+    /// The voucher was completely spent or transferred to another user.
+    /// It is kept only for historical purposes.
     Archived,
-    /// Der Gutschein wurde aufgrund eines fatalen Validierungsfehlers oder eines
-    /// verifizierten Double-Spend-Konflikts gesperrt. Er kann nicht mehr verwendet werden.
+    /// The voucher was locked due to a fatal validation error or a
+    /// verified double-spend conflict. It can no longer be used.
     Quarantined { reason: String },
-    /// Der Gutschein wurde vom Nutzer als Dritter (z.B. als Bürge oder Notar) unterzeichnet.
-    /// Der Gutschein gehört dem Nutzer nicht, wird aber als rechtssicheres Logbuch für
-    /// eingegangene soziale Verpflichtungen archiviert.
+    /// The voucher was signed by the user as a third party (e.g. as guarantor or notary).
+    /// The voucher does not belong to the user, but is archived as an audit log for
+    /// social commitments entered into.
     Endorsed { role: String },
-    /// Die Gültigkeitsdauer (`valid_until`) des Gutscheins ist abgelaufen.
-    /// Er kann nicht mehr für Transaktionen verwendet werden.
+    /// The validity period (`valid_until`) of the voucher has expired.
+    /// It can no longer be used for transactions.
     Expired,
 }
 
-/// Dient als Wrapper im Wallet, der die rohen `Voucher`-Daten mit ihrem
-/// verwalteten Status und anderen wallet-internen Metadaten kombiniert.
+/// Serves as a wrapper in the wallet combining raw `Voucher` data with its
+/// managed status and other wallet-internal metadata.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct VoucherInstance {
-    /// Die vollständigen Daten des Gutscheins.
+    /// Full voucher data.
     pub voucher: Voucher,
-    /// Der aktuelle Lebenszyklus-Zustand dieses Gutscheins im Wallet.
+    /// Current lifecycle status of this voucher in the wallet.
     pub status: VoucherStatus,
-    /// Eine eindeutige, lokale ID für diese Instanz, die als Schlüssel im `VoucherStore` dient.
+    /// A unique local ID for this instance, serving as the key in `VoucherStore`.
     pub local_instance_id: String,
-    // VERALTET: `current_secret_seed` wurde entfernt, da wir nun statelessly arbeiten.
-    // Der Seed wird bei Bedarf aus dem Voucher + Identity re-derived.
+    // DEPRECATED: `current_secret_seed` was removed because we now operate statelessly.
+    // The seed is re-derived from Voucher + Identity on demand.
     // #[serde(default, skip_serializing_if = "Option::is_none")]
     // pub current_secret_seed: Option<String>,
 }
+

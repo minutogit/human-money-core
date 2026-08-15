@@ -17,6 +17,10 @@ Dieses Dokument hält die grundlegenden Design-Entscheidungen der `human_money_c
 - **Entscheidung:** Nutzung von TOML für die Definitionsdateien der Gutschein-Standards.
 - **Begründung:** TOML erlaubt Kommentare, was die Lesbarkeit und Dokumentation der Standards erheblich verbessert. JSON bietet diese Möglichkeit nicht.
 
+**Besicherungskonzept (Collateral vs. Bürgen):**
+- **Entscheidung:** Strikte Entkopplung von `Standard.blueprint.collateral_type` (Währungstyp-Klassifikation) und `Voucher.collateral` (optionaler Payload-Container). Bei `personal_guarantee` (z. B. Minuto) ist `voucher.collateral = None`, da Bürgschaften originär über kryptographische Signaturen (`signatures` mit Rolle `guarantor`) abgebildet werden. Für Sachwerte/Fiat bleibt `voucher.collateral` als offener Extension Point erhalten. Eine Verpflichtung zur Befüllung wird nicht im Core hardgecodet, sondern bei Bedarf dynamisch über CEL-Regeln (`custom_rules`) erzwungen.
+- **Begründung:** Verhindert vorzeitiges Over-Engineering und juristische Fehlannahmen im Core, hält Gutscheine schlank und ermöglicht spätere Sachwert-Erweiterungen ohne Breaking Changes.
+
 ## 2. Wallet-Architektur
 
 **local_voucher_instance_id:**
@@ -57,3 +61,11 @@ Dieses Dokument hält die grundlegenden Design-Entscheidungen der `human_money_c
 - **Entscheidung:** Fokus auf lokale Overrides und "Very Important Proofs" (VIP).
 - **Begründung:** Globaler Konsens wird vermieden, um Privatsphäre zu schützen und Sybil-Anfälligkeit zu reduzieren. Konflikte werden sozial oder via Layer 2 gelöst.
 - **VIP Gossip:** Betrugsbeweise werden mit negativer `depth` priorisiert verbreitet.
+
+## 6. WASM & Cross-Platform Kompilierung
+
+**Target-Gating für OS-abhängige Dependencies:**
+- **Entscheidung:** OS- und I/O-spezifische Abhängigkeiten (`sysinfo`, `tokio`, `reqwest`) sind in `Cargo.toml` strikt unter `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]` eingeordnet. Code-Abschnitte mit OS-Systemaufrufen (z. B. Prozess-Checks in `FileStorage`) sind mit `#[cfg(not(target_arch = "wasm32"))]` gekapselt.
+- **Begründung:** Garantiert, dass `human_money_core` als reine Rust-Bibliothek direkt für `wasm32-unknown-unknown` (und Web/Browser/WASM) kompilierbar bleibt, während native Desktop-Features (File Lock Checks, CLI-Simulatoren) uneingeschränkt funktionieren.
+- **WASM-Bridge Trennung:** Ein separates WASM-Bridge/Wrapper-Crate übernimmt ausschließlich die `wasm-bindgen`-JS-Schnittstellen und Browser-Storage-Adapter (`IndexedDBStorage` / `MemoryStorage`), um das Kern-Crate frei von JS-Binding-Ballast zu halten.
+
