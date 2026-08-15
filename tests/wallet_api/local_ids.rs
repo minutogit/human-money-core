@@ -133,7 +133,7 @@ fn test_error_when_user_has_no_balance_or_history() {
         nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
         ..Default::default()
     };
-    let voucher = human_money_core::services::voucher_manager::create_voucher(voucher_data, &public_standard, standard_hash, &creator.signing_key, "en").unwrap();
+    let voucher = human_money_core::services::voucher_manager::create_voucher(voucher_data, &public_standard, standard_hash, &creator.signing_key).unwrap();
 
     let charlie = &ACTORS.charlie;
 

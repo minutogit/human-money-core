@@ -40,7 +40,7 @@ fn test_integration_detects_victim_role() {
 
     // --- 2. Alice erhält einen Gutschein (V1) ---
     service_alice.create_new_voucher(
-        &freetaler_toml, "en",
+        &freetaler_toml,
         NewVoucherData {
             nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
             creator_profile: PublicProfile { id: Some(id_alice.clone()), ..Default::default() },
@@ -138,7 +138,7 @@ fn test_integration_detects_witness_role_on_split_win() {
 
     // --- 2. Bob erstellt einen Gutschein ---
     service_bob.create_new_voucher(
-        &freetaler_toml, "en",
+        &freetaler_toml,
         NewVoucherData {
             nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
             creator_profile: PublicProfile { id: Some(id_bob.clone()), ..Default::default() },
@@ -239,7 +239,7 @@ fn test_integration_detects_victim_role_on_loser_only() {
 
     // --- 2. Bob (Actor A) erstellt einen Gutschein ---
     service_bob.create_new_voucher(
-        &freetaler_toml, "en",
+        &freetaler_toml,
         NewVoucherData {
             nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
             creator_profile: PublicProfile { id: Some(id_bob.clone()), ..Default::default() },

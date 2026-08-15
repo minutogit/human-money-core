@@ -266,7 +266,6 @@ impl Wallet {
         // The signature is expanded to preserve the verified data
         verified_standard: &VoucherStandardDefinition,
         standard_hash: &str,
-        lang_preference: &str,
         data: NewVoucherData,
     ) -> Result<crate::models::voucher::Voucher, VoucherCoreError> {
         let new_voucher = voucher_manager::create_voucher(
@@ -274,7 +273,6 @@ impl Wallet {
             verified_standard,
             standard_hash,
             &identity.signing_key,
-            lang_preference,
         )?;
 
         // CORRECT STATE MANAGEMENT LOGIC:

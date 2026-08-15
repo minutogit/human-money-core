@@ -19,8 +19,6 @@ pub struct VoucherStandard {
     pub uuid: String,
     /// Der Hash der kanonisierten Standard-Definition, der diesen Gutschein an eine spezifische Version bindet.
     pub standard_definition_hash: String,
-    /// Die Template-Daten, die aus dem Standard-TOML kopiert wurden.
-    pub template: VoucherTemplateData,
 }
 
 /// Definiert einen Wert (Betrag und Einheit),
@@ -186,21 +184,6 @@ pub struct VoucherSignature {
     /// Optionale, detaillierte Profil-Informationen über den Unterzeichner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<PublicProfile>,
-}
-
-/// Definiert die Template-Daten, die aus dem Standard-TOML kopiert wurden.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-pub struct VoucherTemplateData {
-    /// Eine allgemeine, menschenlesbare Beschreibung des spezifischen Gutscheins.
-    pub description: String,
-    /// Der primäre Einlösezweck, übernommen vom Standard (z.B. "goods_or_services").
-    pub primary_redemption_type: String,
-    /// Gibt an, ob der Gutschein in kleinere Einheiten aufgeteilt werden kann.
-    pub allow_partial_transfers: bool,
-    /// Die bei der Erstellung gültige Mindestgültigkeitsdauer aus dem Standard (ISO 8601 Duration).
-    pub issuance_minimum_validity_duration: String,
-    /// Ein optionaler Fußnotentext, der vom Standard vorgegeben wird.
-    pub footnote: String,
 }
 
 /// Das Haupt-Struct, das den universellen Gutschein-Container repräsentiert.

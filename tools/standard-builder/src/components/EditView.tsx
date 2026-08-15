@@ -112,7 +112,7 @@ export const EditView: React.FC<EditViewProps> = ({
         {/* Sektion 2: Features & Issuance Rules */}
         <AccordionSection
           title={t.sec2Title}
-          subtitle={`Privacy: ${standard.immutable.features.privacy_mode} • ${standard.immutable.features.amount_decimal_places} Decimals • ${standard.immutable.issuance.additional_signatures_range[0]}-${standard.immutable.issuance.additional_signatures_range[1]} Guarantors`}
+          subtitle={`Privacy: ${standard.immutable.features.privacy_mode} • ${standard.immutable.features.amount_decimal_places} Decimals • ${standard.immutable.issuance.additional_signatures_range[0]}-${standard.immutable.issuance.additional_signatures_range[1]} Signatures`}
           icon={<Sliders size={20} color="var(--accent-blue)" />}
           defaultOpen={false}
         >

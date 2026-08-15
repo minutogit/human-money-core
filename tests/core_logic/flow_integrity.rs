@@ -23,9 +23,7 @@ fn test_init_transfer_split_chain() {
         voucher_data,
         standard,
         standard_hash,
-        &alice.signing_key,
-        "en",
-    )
+        &alice.signing_key)
     .expect("Voucher creation failed");
 
     // Verify Prev Hash of first transaction (Genesis)

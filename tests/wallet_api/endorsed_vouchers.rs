@@ -47,7 +47,7 @@ mod tests {
             generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
 
         let _voucher = service
-            .create_new_voucher(&signed_standard, "de", voucher_data, Some(password))
+            .create_new_voucher(&signed_standard, voucher_data, Some(password))
             .expect("Voucher creation failed");
 
         (service, dir)

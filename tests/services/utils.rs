@@ -153,9 +153,7 @@ fn test_chronological_validation_with_timezones() {
         voucher_data,
         standard,
         standard_hash,
-        &test_user.signing_key,
-        "en",
-    )
+        &test_user.signing_key)
     .unwrap();
 
     // 2. Manipuliere den Zeitstempel der `init`-Transaktion so, dass er VOR dem Erstellungsdatum des Gutscheins liegt.
@@ -200,7 +198,6 @@ fn test_chronological_validation_with_timezones() {
 
 use human_money_core::models::voucher::{
     Address, Collateral, Transaction, ValueDefinition, Voucher, VoucherStandard,
-    VoucherTemplateData,
 };
 
 // -------------------------------------------------------------------------
@@ -349,9 +346,7 @@ fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
         voucher_data_allowed,
         &standard_with_p1y,
         &standard_hash,
-        &creator.signing_key,
-        "en",
-    )
+        &creator.signing_key)
     .expect("create_voucher with P2Y should succeed");
 
     let holder_key_allowed =
@@ -379,6 +374,7 @@ fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
     let (standard_no_min, hash_no_min) =
         human_money_core::test_utils::create_custom_standard(base_standard, |s| {
             s.immutable.issuance.issuance_minimum_validity_duration = "P0Y".to_string();
+            s.immutable.issuance.validity_duration_range = vec!["P0D".to_string(), "P10Y".to_string()];
         });
 
     let voucher_data_short = NewVoucherData {
@@ -398,9 +394,7 @@ fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
         voucher_data_short,
         &standard_no_min,
         &hash_no_min,
-        &creator.signing_key,
-        "en",
-    )
+        &creator.signing_key)
     .expect("create_voucher with P1D on no-min standard should succeed");
 
     let holder_key_short =
@@ -435,13 +429,6 @@ fn create_base_voucher(creator_id: &str, amount: &str) -> Voucher {
             name: "Test Standard".to_string(),
             uuid: "uuid-test".to_string(),
             standard_definition_hash: "dummy-hash-for-test".to_string(),
-            template: VoucherTemplateData {
-                description: "A test voucher".to_string(),
-                primary_redemption_type: "SERVICE".to_string(),
-                allow_partial_transfers: true,
-                issuance_minimum_validity_duration: "P1Y".to_string(),
-                footnote: "".to_string(),
-            },
         },
         voucher_id: "voucher-123".to_string(),
         voucher_nonce: "test-nonce".to_string(),

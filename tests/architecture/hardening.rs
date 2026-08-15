@@ -119,7 +119,6 @@ mod tests {
         let voucher = alice_service
             .create_new_voucher(
                 &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
-                "de",
                 new_voucher_data,
                 Some(PASSWORD),
             )

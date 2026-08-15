@@ -21,24 +21,10 @@ fn test_public_mode_enforcement() {
     let new_hash = get_hash(to_canonical_json(&std_no_sig.immutable).unwrap());
     voucher.voucher_standard.standard_definition_hash = new_hash.clone();
 
-    let desc_str = human_money_core::services::standard_manager::get_localized_text(
-        &standard.mutable.i18n.descriptions,
-        "en",
-    )
-    .unwrap_or("")
-    .to_string();
-
     voucher.voucher_standard = human_money_core::models::voucher::VoucherStandard {
         name: standard.immutable.identity.name.clone(),
         uuid: standard.immutable.identity.uuid.clone(),
         standard_definition_hash: new_hash,
-        template: human_money_core::models::voucher::VoucherTemplateData {
-            description: desc_str,
-            primary_redemption_type: "goods_or_services".to_string(),
-            allow_partial_transfers: standard.immutable.features.allow_partial_transfers,
-            issuance_minimum_validity_duration: "P3Y".to_string(),
-            footnote: "".to_string(),
-        },
     };
 
     // Recalculate Voucher ID

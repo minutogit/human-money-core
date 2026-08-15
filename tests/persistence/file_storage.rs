@@ -52,9 +52,7 @@ fn create_test_voucher(identity: &UserIdentity) -> Voucher {
         new_voucher_data,
         standard,
         standard_hash,
-        &identity.signing_key,
-        "en",
-    )
+        &identity.signing_key)
     .expect("Voucher creation failed")
 }
 

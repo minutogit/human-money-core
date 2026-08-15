@@ -419,7 +419,7 @@ impl Wallet {
                 standard_name: standard.immutable.identity.name.clone(),
                 unit: voucher.nominal_value.unit.clone(),
                 amount: last_tx.amount.clone(),
-                allow_partial_transfers: voucher.voucher_standard.template.allow_partial_transfers,
+                allow_partial_transfers: standard.immutable.features.allow_partial_transfers,
                 is_test_voucher: voucher.non_redeemable_test_voucher,
                 display_currency: super::format_bff_name(
                     voucher.nominal_value.abbreviation.as_deref().unwrap_or(&voucher.nominal_value.unit),
@@ -895,7 +895,7 @@ impl Wallet {
                 standard_name: standard_definition.immutable.identity.name.clone(),
                 unit: instance.voucher.nominal_value.unit.clone(),
                 amount: source.amount_to_send.clone(),
-                allow_partial_transfers: instance.voucher.voucher_standard.template.allow_partial_transfers,
+                allow_partial_transfers: standard_definition.immutable.features.allow_partial_transfers,
                 is_test_voucher: instance.voucher.non_redeemable_test_voucher,
                 display_currency: super::format_bff_name(
                     instance.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&instance.voucher.nominal_value.unit),

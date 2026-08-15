@@ -72,9 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         voucher_data,
         &standard,
         &standard_hash,
-        &alice_identity.signing_key,
-        "en",
-    )?;
+        &alice_identity.signing_key)?;
     let local_id = Wallet::calculate_local_instance_id(&initial_voucher, &alice_identity.user_id)?;
     alice_wallet.add_voucher_instance(local_id, initial_voucher, VoucherStatus::Active);
     println!("✅ Initialen Gutschein erstellt und zu Alices Wallet hinzugefügt.");

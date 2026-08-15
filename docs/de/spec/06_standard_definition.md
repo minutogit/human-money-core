@@ -97,8 +97,8 @@ Diese Variablen werden vom `human_money_core` direkt in performante Rust-Structs
 |---|---|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `validity_duration_range` | Array[String] | ISO 8601 Zeiträume. Definiert den Rahmen, wie lange ein Gutschein maximal gültig sein darf. Bsp: `["P1Y", "P5Y"]` (1 bis 5 Jahre).                                                                                                              |
 | `issuance_minimum_validity_duration` | String | **Zirkulations-Firewall:** Der Erstller darf einen  Gutschein nur dann "in Umlauf" bringen, wenn zu diesem Zeitpunkt noch mindestens dieser Zeitraum als Restgültigkeit übrig ist (Bsp: `"P1Y"`). Verhindert zu schnell ablaufender Gutscheine. |
-| `additional_signatures_range` | Array[Integer] | Anzahl benötigter Mitunterzeichner bei der Erstellung. Bsp: `[2, 3]` (2 bis 3 Bürgen). `[0, 0]` für keine.                                                                                                                                      |
-| `allowed_signature_roles` | Array[String] | Welche Rollen dürfen mitunterzeichnen? (Meist `"guarantor"`, optional `"auditor"` etc.).                                                                                                                                                        |
+| `additional_signatures_range` | Array[Integer] | Anzahl benötigter Mitunterzeichner / Zusatzsignaturen bei der Erstellung. Bsp: `[2, 2]` (2 Zusatzsignaturen wie Bürgen/Revisoren) oder `[0, 0]` für keine. |
+| `allowed_signature_roles` | Array[String] | Welche Rollen dürfen mitunterzeichnen? (z. B. `"guarantor"`, `"auditor"`, `"witness"`, `"trustee"` etc.).                                        |
 
 
 #### 5.1.6 Custom Rules (Deep-Inspection via CEL)
@@ -121,7 +121,7 @@ Hier wird die Common Expression Language (CEL) für Sonderregeln eingebettet. De
 | Feld | Typ | Beschreibung |
 |---|---|---|
 | `default_validity_duration` | String | Welcher Wert soll im "Erstellen"-Formular der Wallet vorausgewählt sein? |
-| `round_up_validity_to` | String | UI-Hinweis: Sollen Ablaufdaten z.B. immer auf das Jahresende (`"P1Y"`) gerundet werden? |
+| `round_up_validity_to` | String | Stichtagsanker für Gutscheinablauf: `"P1D"` (Tagesende), `"P1M"` (Monatsende), `"P3M"` (Quartalsende), `"P6M"` (Halbjahresende) oder `"P1Y"` (Jahresende). Das maximal erlaubte Gültigkeitsdatum bei der Validierung entspricht `round_up(creation_date + max_duration, round_up_validity_to)`. |
 | `server_history_retention` | String | Anweisung an L2-Nodes: Wie lange nach dem Ablaufdatum eines Gutscheins (`expires_at`) müssen die kryptographischen Beweise (Transaktionshistorie) noch gespeichert werden, bevor sie sicher gelöscht (Garbage Collection) werden dürfen? Bsp: `"P6M"` (6 Monate). |
 
 #### 5.2.3 i18n (Übersetzungs-Maps)

@@ -25,11 +25,11 @@ fn test_cel_content_rules_fixed_fields() {
 #[test]
 fn test_cel_regex_patterns() {
     let voucher_json = json!({
-        "voucher_standard": { "template": { "description": "INV-999888" } }
+        "creator": { "first_name": "Alice" }
     });
     
-    // cel-interpreter native regex Evaluierung (entspricht der alten Regex-Regel)
-    let expr = "Voucher.voucher_standard.template.description.matches('^INV-[0-9]{6}$')";
+    // cel-interpreter native regex Evaluierung
+    let expr = "Voucher.creator.first_name.matches('^[A-Z][a-z]+$')";
     assert_eq!(DynamicPolicyEngine::evaluate_rule(expr, &voucher_json, None), Ok(true));
 }
 

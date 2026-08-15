@@ -47,9 +47,7 @@ mod structural_integrity {
             voucher_data,
             minuto_standard,
             minuto_hash,
-            &creator_identity.signing_key,
-            "en",
-        );
+            &creator_identity.signing_key);
         voucher
             .signatures
             .push(create_male_guarantor_signature(&voucher));
@@ -86,9 +84,7 @@ mod structural_integrity {
             voucher_data,
             standard,
             standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        );
+            &creator_identity.signing_key);
         voucher
             .signatures
             .push(create_male_guarantor_signature(&voucher));
@@ -150,9 +146,7 @@ mod structural_integrity {
             voucher_data,
             standard,
             standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        )
+            &creator_identity.signing_key)
         .unwrap();
         voucher.transactions[0].amount = "not-a-number".to_string();
 
@@ -191,9 +185,7 @@ mod structural_integrity {
             voucher_data,
             standard,
             standard_hash,
-            &sender.signing_key,
-            "en",
-        );
+            &sender.signing_key);
         let (mut voucher_after_split, _) = create_transaction(
             &initial_voucher,
             standard,
@@ -264,9 +256,7 @@ mod behavioral_rules {
             voucher_data,
             &standard,
             &standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        );
+            &creator_identity.signing_key);
         let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date).unwrap();
         let long_validity_dt = creation_dt + chrono::Duration::days(365 * 6);
         voucher.valid_until = long_validity_dt.to_rfc3339();
@@ -316,9 +306,7 @@ mod behavioral_rules {
             voucher_data,
             &standard,
             &standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        );
+            &creator_identity.signing_key);
         let result1 = validate_voucher_against_standard(&voucher_bad_nominal, &standard);
         assert!(matches!(
             result1.unwrap_err(),
@@ -340,9 +328,7 @@ mod behavioral_rules {
             },
             &standard,
             &standard_hash,
-            &creator_identity.signing_key,
-            "en",
-        )
+            &creator_identity.signing_key)
         .unwrap();
         voucher.transactions[0].amount = "100.123".to_string();
 
@@ -445,9 +431,7 @@ mod behavioral_rules {
             },
             &non_allow_partial_transfers_standard,
             &hash,
-            &identity.signing_key,
-            "en",
-        )
+            &identity.signing_key)
         .unwrap();
 
         let result = create_transaction(
@@ -508,9 +492,7 @@ mod behavioral_rules {
             },
             &restricted_standard,
             &hash,
-            &identity.signing_key,
-            "en",
-        );
+            &identity.signing_key);
 
         // Füge die zwei für den Standard erforderlichen Bürgen hinzu, damit das Setup valide ist.
         voucher
@@ -554,10 +536,7 @@ mod behavioral_rules {
             user_b: &'static test_utils::TestUser,
             user_c: &'static test_utils::TestUser,
             standard_a: (human_money_core::VoucherStandardDefinition, String), // P1Y Firewall
-            standard_b: (
-                &'static human_money_core::VoucherStandardDefinition,
-                &'static String,
-            ), // Keine Firewall
+            standard_b: (human_money_core::VoucherStandardDefinition, String), // Keine Firewall
         }
 
         fn setup() -> TestSetup {
@@ -578,13 +557,19 @@ mod behavioral_rules {
                 s.immutable.issuance.validity_duration_range = vec!["P1Y".to_string(), "P2Y".to_string()];
             });
 
+            // Standard B: Ohne Firewall / mit P0M Min-Range
+            let (standard_b, hash_b) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
+                s.immutable.issuance.issuance_minimum_validity_duration = "".to_string();
+                s.immutable.issuance.validity_duration_range = vec!["P0M".to_string(), "P10Y".to_string()];
+            });
+
             TestSetup {
                 creator_pc,
                 creator_mobil,
                 user_b,
                 user_c,
                 standard_a: (standard_a, hash_a),
-                standard_b: (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1),
+                standard_b: (standard_b, hash_b),
             }
         }
 
@@ -657,9 +642,7 @@ mod behavioral_rules {
                 voucher_data,
                 standard_a,
                 hash_a,
-                &setup.creator_pc.signing_key,
-                "en",
-            );
+                &setup.creator_pc.signing_key);
 
             // Erwartung: Die Erstellung (Gatekeeper) schlägt fehl.
             assert!(matches!(
@@ -680,9 +663,7 @@ mod behavioral_rules {
                 voucher_data,
                 standard_a,
                 hash_a,
-                &setup.creator_pc.signing_key,
-                "en",
-            )
+                &setup.creator_pc.signing_key)
             .unwrap();
 
             // 2. Simuliere Zeitablauf: Manipuliere valid_until auf 6 Monate in der Zukunft
@@ -729,9 +710,7 @@ mod behavioral_rules {
                 voucher_data,
                 standard_a,
                 hash_a,
-                &setup.creator_pc.signing_key,
-                "en",
-            )
+                &setup.creator_pc.signing_key)
             .unwrap();
 
             // Simuliere Zeitablauf
@@ -772,9 +751,7 @@ mod behavioral_rules {
                 voucher_data,
                 standard_a,
                 hash_a,
-                &setup.creator_pc.signing_key,
-                "en",
-            )
+                &setup.creator_pc.signing_key)
             .unwrap();
 
             // Sende an User_B (erfolgreich)
@@ -833,9 +810,7 @@ mod behavioral_rules {
                 voucher_data,
                 standard_a,
                 hash_a,
-                &setup.creator_pc.signing_key,
-                "en",
-            )
+                &setup.creator_pc.signing_key)
             .unwrap();
 
             let result = create_transaction(
@@ -855,7 +830,7 @@ mod behavioral_rules {
         /// Testet Fall 5: Transaktion (Creator -> Dritter) ist erfolgreich, wenn Regel nicht definiert ist.
         fn test_firewall_allows_transfer_if_rule_is_undefined() {
             let setup = setup();
-            let (standard_b, hash_b) = (setup.standard_b.0, setup.standard_b.1); // Standard B (keine Regel)
+            let (standard_b, hash_b) = (&setup.standard_b.0, &setup.standard_b.1); // Standard B (keine Regel)
 
             // Erstelle Gutschein mit P6M (wäre bei Standard A ungültig)
             let voucher_data = create_voucher_data(setup.creator_pc, "P6M");
@@ -863,9 +838,7 @@ mod behavioral_rules {
                 voucher_data,
                 standard_b,
                 hash_b,
-                &setup.creator_pc.signing_key,
-                "en",
-            )
+                &setup.creator_pc.signing_key)
             .unwrap();
 
             // Aktion: Sende an User_B
@@ -911,9 +884,7 @@ mod behavioral_rules {
                 voucher_data,
                 standard,
                 standard_hash,
-                &creator.signing_key,
-                "en",
-            )
+                &creator.signing_key)
             .expect("Voucher creation should succeed");
 
             let init_tx = &voucher.transactions[0];

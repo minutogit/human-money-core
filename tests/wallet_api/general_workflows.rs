@@ -78,7 +78,6 @@ fn api_app_service_full_lifecycle() {
     service_alice
         .create_new_voucher(
             &freetaler_standard_toml,
-            "en",
             NewVoucherData {
                 nominal_value: ValueDefinition {
                     amount: "100".to_string(),
@@ -758,7 +757,6 @@ fn api_wallet_create_voucher_and_get_id() {
             &issuer.identity,
             freetaler_standard,
             freetaler_standard_hash,
-            "en",
             new_voucher_data,
         )
         .unwrap();
@@ -809,9 +807,7 @@ fn api_wallet_query_total_balance() {
                 new_voucher_data,
                 standard,
                 &correct_hash,
-                &issuer.identity.signing_key,
-                "en",
-            );
+                &issuer.identity.signing_key);
             let local_id =
                 Wallet::calculate_local_instance_id(&voucher, &issuer.identity.user_id).unwrap();
             wallet.add_voucher_instance(local_id, voucher, status);
@@ -882,6 +878,7 @@ fn api_wallet_rejects_invalid_bundle() {
     let voucher_data = NewVoucherData {
         creator_profile: PublicProfile {
             id: Some(alice.identity.user_id.clone()),
+            first_name: Some("Alice".to_string()),
             ..Default::default()
         },
         nominal_value: ValueDefinition {
@@ -900,11 +897,10 @@ fn api_wallet_rejects_invalid_bundle() {
         &standard,
         &standard_hash,
         &alice.identity.signing_key,
-        "en",
     )
     .unwrap();
 
-    voucher.voucher_standard.template.description = "BAD-FORMAT".to_string(); // Verstößt gegen Regex
+    voucher.creator_profile.first_name = Some("123-bad-name".to_string()); // Verstößt gegen Regex
     
     // UPDATE VOUCHER HASH (verhindert vorzeitigen Abbruch durch InvalidVoucherHash-Check)
     let voucher_nonce = voucher.voucher_nonce.clone();
@@ -1002,7 +998,6 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
     let created_voucher = service_alice
         .create_new_voucher(
             &freetaler_standard_toml,
-            "en",
             NewVoucherData {
                 nominal_value: ValueDefinition {
                     amount: "100".to_string(),

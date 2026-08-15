@@ -76,7 +76,6 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
     service
         .create_new_voucher(
             &flexible_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(user_id.clone()),
@@ -197,7 +196,6 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
     service_sender
         .create_new_voucher(
             &flexible_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(id_sender),
@@ -300,7 +298,6 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     service_creator
         .create_new_voucher(
             &freetaler_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(id_creator.clone()),
@@ -553,7 +550,6 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
     let voucher_v1 = service_alice
         .create_new_voucher(
             &freetaler_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(id_alice.clone()),
@@ -743,7 +739,6 @@ fn test_balances_are_summable_behavior() {
     for _ in 0..2 {
         service_sender.create_new_voucher(
             &summable_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile { id: Some(sender_id.clone()), ..Default::default() },
                 nominal_value: ValueDefinition {
@@ -762,7 +757,6 @@ fn test_balances_are_summable_behavior() {
     for _ in 0..2 {
         service_sender.create_new_voucher(
             &non_summable_toml,
-            "en",
             NewVoucherData {
                 creator_profile: PublicProfile { id: Some(sender_id.clone()), ..Default::default() },
                 nominal_value: ValueDefinition {

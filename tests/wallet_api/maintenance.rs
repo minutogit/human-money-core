@@ -27,16 +27,14 @@ fn test_cleanup_of_expired_archived_instances() {
     // Gutschein A (abgelaufen)
     let mut voucher_a = create_voucher_for_manipulation(
         voucher_data.clone(),
-        standard, hash, &user.signing_key, "en",
-    );
+        standard, hash, &user.signing_key);
     voucher_a.valid_until = (Utc::now() - Duration::days(365 * 3)).to_rfc3339();
     let id_a = Wallet::calculate_local_instance_id(&voucher_a, &user.user_id).unwrap();
     wallet.add_voucher_instance(id_a.clone(), voucher_a, VoucherStatus::Archived);
 
     // Gutschein B (noch in Gnadenfrist)
     let mut voucher_b = create_voucher_for_manipulation(
-        voucher_data, standard, hash, &user.signing_key, "en"
-    );
+        voucher_data, standard, hash, &user.signing_key);
     voucher_b.valid_until = (Utc::now() - Duration::days(180)).to_rfc3339();
     let id_b = Wallet::calculate_local_instance_id(&voucher_b, &user.user_id).unwrap();
     wallet.add_voucher_instance(id_b.clone(), voucher_b, VoucherStatus::Archived);

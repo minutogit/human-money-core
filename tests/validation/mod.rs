@@ -12,3 +12,4 @@ pub mod standard_definition;
 pub mod unit_service;
 pub mod logic_integrity;
 pub mod voucher_naming;
+pub mod validity_rounding;

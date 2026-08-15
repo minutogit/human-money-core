@@ -209,7 +209,7 @@ export const FeaturesIssuanceForm: React.FC<FeaturesIssuanceFormProps> = ({
               <span className="help-text">{t.fieldIssuanceMinValidity.helpText}</span>
             </div>
 
-            {/* Required Guarantors Count */}
+            {/* Required Additional Signatures Count */}
             <div className="form-group">
               <label>
                 <span>{t.fieldAdditionalSignaturesRange.label}</span>

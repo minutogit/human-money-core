@@ -75,7 +75,7 @@ mod tests {
         // HINWEIS: Dieser Aufruf MUSS Some(password) (Modus A) verwenden, da setup_service_with_profile
         // (und der darin enthaltene Anker-Fix) KEINE Modus B-Session startet.
         let _voucher = service
-            .create_new_voucher(&signed_standard, "de", voucher_data, Some(password))
+            .create_new_voucher(&signed_standard, voucher_data, Some(password))
             .expect("Voucher creation in setup_service_with_voucher failed");
         let local_id = service
             .get_voucher_summaries(None, None, None)
@@ -284,7 +284,7 @@ mod tests {
         let created_voucher = service
             // KORREKTUR: Der Login (via setup_service_with_profile) startet keine Session.
             // Wir MÜSSEN Modus A (Some(PASSWORD)) verwenden.
-            .create_new_voucher(&signed_standard, "de", voucher_data, Some(PASSWORD))
+            .create_new_voucher(&signed_standard, voucher_data, Some(PASSWORD))
             .expect("Voucher creation should succeed");
 
         // 3. Prüfen, ob der Gutschein vorhanden ist
