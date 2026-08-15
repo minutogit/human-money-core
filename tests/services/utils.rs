@@ -379,6 +379,7 @@ fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
     let (standard_no_min, hash_no_min) =
         human_money_core::test_utils::create_custom_standard(base_standard, |s| {
             s.immutable.issuance.issuance_minimum_validity_duration = "P0Y".to_string();
+            s.immutable.issuance.validity_duration_range = vec!["P0D".to_string(), "P10Y".to_string()];
         });
 
     let voucher_data_short = NewVoucherData {

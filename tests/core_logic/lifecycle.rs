@@ -376,10 +376,9 @@ fn test_validation_fails_on_inconsistent_unit() {
     let validation_result = validate_voucher_against_standard(&voucher, &standard_with_rule);
     human_money_core::set_signature_bypass(false);
     assert!(validation_result.is_err());
-    // This is now covered by the generic CEL validation.
     assert!(matches!(
         validation_result.unwrap_err(),
-        VoucherCoreError::Validation(ValidationError::BusinessRuleViolated(msg)) if msg == "nominal_value.unit incorrect"
+        VoucherCoreError::Validation(ValidationError::NominalUnitMismatch { expected, found }) if expected == "Taler" && found == "EUR"
     ));
 }
 

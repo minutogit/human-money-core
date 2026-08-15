@@ -554,10 +554,7 @@ mod behavioral_rules {
             user_b: &'static test_utils::TestUser,
             user_c: &'static test_utils::TestUser,
             standard_a: (human_money_core::VoucherStandardDefinition, String), // P1Y Firewall
-            standard_b: (
-                &'static human_money_core::VoucherStandardDefinition,
-                &'static String,
-            ), // Keine Firewall
+            standard_b: (human_money_core::VoucherStandardDefinition, String), // Keine Firewall
         }
 
         fn setup() -> TestSetup {
@@ -578,13 +575,19 @@ mod behavioral_rules {
                 s.immutable.issuance.validity_duration_range = vec!["P1Y".to_string(), "P2Y".to_string()];
             });
 
+            // Standard B: Ohne Firewall / mit P0M Min-Range
+            let (standard_b, hash_b) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
+                s.immutable.issuance.issuance_minimum_validity_duration = "".to_string();
+                s.immutable.issuance.validity_duration_range = vec!["P0M".to_string(), "P10Y".to_string()];
+            });
+
             TestSetup {
                 creator_pc,
                 creator_mobil,
                 user_b,
                 user_c,
                 standard_a: (standard_a, hash_a),
-                standard_b: (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1),
+                standard_b: (standard_b, hash_b),
             }
         }
 
@@ -855,7 +858,7 @@ mod behavioral_rules {
         /// Testet Fall 5: Transaktion (Creator -> Dritter) ist erfolgreich, wenn Regel nicht definiert ist.
         fn test_firewall_allows_transfer_if_rule_is_undefined() {
             let setup = setup();
-            let (standard_b, hash_b) = (setup.standard_b.0, setup.standard_b.1); // Standard B (keine Regel)
+            let (standard_b, hash_b) = (&setup.standard_b.0, &setup.standard_b.1); // Standard B (keine Regel)
 
             // Erstelle Gutschein mit P6M (wäre bei Standard A ungültig)
             let voucher_data = create_voucher_data(setup.creator_pc, "P6M");

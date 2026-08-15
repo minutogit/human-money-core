@@ -297,6 +297,10 @@ pub enum ValidationError {
     )]
     MismatchedMinimumValidity { expected: String, found: String },
 
+    /// The nominal value unit in the voucher does not match the standard definition.
+    #[error("Nominal unit mismatch. Expected: '{expected}', Found: '{found}'.")]
+    NominalUnitMismatch { expected: String, found: String },
+
     /// The voucher's validity duration exceeds the maximum allowed by the standard.
     #[error("Voucher validity duration is too long. Maximum allowed is {max_allowed}.")]
     ValidityDurationTooLong { max_allowed: String },

@@ -402,6 +402,115 @@ mod specific_parameter_constraints {
     }
 
     #[test]
+    fn test_validity_duration_range_min_enforcement() {
+        // 1. Standard mit validity_duration_range: 3 Jahre bis 5 Jahre, issuance_minimum_validity_duration: 1 Jahr
+        let (standard, hash) =
+            human_money_core::test_utils::create_custom_standard(&FREETALER_STANDARD.0, |s| {
+                s.immutable.issuance.validity_duration_range = vec!["P3Y".to_string(), "P5Y".to_string()];
+                s.immutable.issuance.issuance_minimum_validity_duration = "P1Y".to_string();
+            });
+
+        let creator = &ACTORS.alice.identity;
+
+        // 2. Versuche einen Gutschein mit 2 Jahren zu erstellen (unzulässig, da < P3Y)
+        let data_invalid = NewVoucherData {
+            creator_profile: human_money_core::models::profile::PublicProfile {
+                id: Some(creator.user_id.clone()),
+                ..Default::default()
+            },
+            nominal_value: ValueDefinition {
+                amount: "100".to_string(),
+                ..Default::default()
+            },
+            validity_duration: Some("P2Y".to_string()),
+            ..Default::default()
+        };
+        let result_invalid = create_voucher(data_invalid, &standard, &hash, &creator.signing_key, "en");
+        assert!(result_invalid.is_err(), "Voucher with 2 years should be rejected when min range is 3 years");
+
+        // 3. Versuche einen Gutschein mit 4 Jahren (zulässig) zu erstellen
+        let data_valid = NewVoucherData {
+            creator_profile: human_money_core::models::profile::PublicProfile {
+                id: Some(creator.user_id.clone()),
+                ..Default::default()
+            },
+            nominal_value: ValueDefinition {
+                amount: "100".to_string(),
+                ..Default::default()
+            },
+            validity_duration: Some("P4Y".to_string()),
+            ..Default::default()
+        };
+        let result_valid = create_voucher(data_valid, &standard, &hash, &creator.signing_key, "en");
+        assert!(result_valid.is_ok(), "Voucher with 4 years should be accepted");
+
+        // 4. Teste direkte Standard-Validierung mit manipulierter Gültigkeit (2 Jahre)
+        let mut voucher = result_valid.unwrap();
+        let creation_dt = chrono::DateTime::parse_from_rfc3339(&voucher.creation_date)
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let two_years_later =
+            human_money_core::services::voucher_manager::add_iso8601_duration(creation_dt, "P2Y").unwrap();
+        voucher.valid_until = two_years_later.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+
+        // Re-hashe den Voucher
+        let mut voucher_to_hash = voucher.clone();
+        voucher_to_hash.voucher_id = "".to_string();
+        voucher_to_hash.transactions.clear();
+        voucher_to_hash.signatures.clear();
+        voucher.voucher_id = human_money_core::services::crypto_utils::get_hash(
+            human_money_core::services::utils::to_canonical_json(&voucher_to_hash).unwrap(),
+        );
+
+        let val_result = validate_voucher_against_standard(&voucher, &standard);
+        assert!(
+            val_result.is_err(),
+            "Voucher with 2 years validity must fail validation against standard requiring min 3 years"
+        );
+        match val_result {
+            Err(human_money_core::error::VoucherCoreError::Validation(
+                human_money_core::error::ValidationError::ValidityDurationTooShort,
+            )) => {}
+            other => panic!("Expected ValidityDurationTooShort, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_nominal_value_unit_mismatch_rejected() {
+        let standard = &FREETALER_STANDARD.0;
+        let identity = &ACTORS.alice;
+        let mut wallet = setup_in_memory_wallet(identity);
+        add_voucher_to_wallet(&mut wallet, identity, "100", standard, false).unwrap();
+
+        let mut voucher = wallet.voucher_store.vouchers.values().next().unwrap().voucher.clone();
+        assert_eq!(voucher.nominal_value.unit, standard.immutable.blueprint.unit);
+
+        // Manipuliere die Einheit des Gutscheins
+        voucher.nominal_value.unit = "Gramm Gold".to_string();
+
+        // Re-hashe den Voucher, damit verify_voucher_hash nicht fehlschlägt
+        let mut voucher_to_hash = voucher.clone();
+        voucher_to_hash.voucher_id = "".to_string();
+        voucher_to_hash.transactions.clear();
+        voucher_to_hash.signatures.clear();
+        voucher.voucher_id = human_money_core::services::crypto_utils::get_hash(
+            human_money_core::services::utils::to_canonical_json(&voucher_to_hash).unwrap(),
+        );
+
+        let result = validate_voucher_against_standard(&voucher, standard);
+        assert!(result.is_err(), "Voucher with tampered nominal unit must be rejected");
+        match result {
+            Err(human_money_core::error::VoucherCoreError::Validation(
+                human_money_core::error::ValidationError::NominalUnitMismatch { expected, found },
+            )) => {
+                assert_eq!(expected, standard.immutable.blueprint.unit);
+                assert_eq!(found, "Gramm Gold");
+            }
+            other => panic!("Expected NominalUnitMismatch, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_allowed_signature_roles_enforcement() {
         // 1. Erstelle einen Standard, der nur die Rolle "Official Approver" erlaubt
         let (standard, _hash) =

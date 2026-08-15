@@ -19,6 +19,7 @@ pub fn validate_voucher_against_standard(
     standard: &VoucherStandardDefinition,
 ) -> Result<(), VoucherCoreError> {
     identity::verify_standard_identity(voucher, standard)?;
+    identity::verify_nominal_value(voucher, standard)?;
     identity::verify_voucher_hash(voucher)?;
     identity::verify_anti_spoofing(voucher)?;
 

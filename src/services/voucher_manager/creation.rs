@@ -113,6 +113,20 @@ pub fn create_voucher(
         }
     }
 
+    // CHECK MIN RANGE
+    if let Some(min_duration_str) = verified_standard.immutable.issuance.validity_duration_range.get(0) {
+        if !min_duration_str.is_empty() {
+            let min_allowed_dt = add_iso8601_duration(creation_dt, min_duration_str)?;
+            if initial_valid_until_dt < min_allowed_dt {
+                return Err(VoucherManagerError::InvalidValidityDuration(format!(
+                    "Initial validity ({}) is less than the minimum allowed standard validity range ({}).",
+                    initial_valid_until_dt.to_rfc3339(),
+                    min_allowed_dt.to_rfc3339()
+                )).into());
+            }
+        }
+    }
+
     // CHECK MAX RANGE
     if let Some(max_duration_str) = verified_standard.immutable.issuance.validity_duration_range.get(1) {
         if !max_duration_str.is_empty() {
