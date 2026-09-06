@@ -1,17 +1,77 @@
 use crate::error::VoucherCoreError;
-use crate::models::layer2_api::{L2AuthPayload, L2LockRequest, L2ResponseEnvelope, L2Verdict};
+use crate::models::layer2_api::{L2AuthPayload, L2LockRequest, L2ResponseEnvelope, L2Verdict, QuorumCertificateDto};
 use crate::models::voucher::Transaction;
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
 /// Defines the action that AppService should perform after evaluating the verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerdictAction {
     /// The L2 network confirmed the transaction as valid.
     ConfirmLocal,
+    /// Confirmed with final quorum certificate (N >= 20, status == 1).
+    ConfirmFinal { certificate: QuorumCertificateDto },
+    /// Confirmed with provisional quorum certificate (N < 20 or provisional status).
+    ConfirmProvisional { certificate: Option<QuorumCertificateDto> },
     /// A double-spend was detected; the wallet/voucher must be placed in quarantine.
     TriggerQuarantine(String),
     /// Synchronization is required. Contains the sync_point (prefix).
     TriggerSync { sync_point: String },
+}
+
+/// Verifies the plausibility of a QuorumCertificate according to order-statistics quorum rules.
+/// Returns Ok((is_valid, is_final)).
+pub fn verify_quorum_plausibility(
+    cert: &QuorumCertificateDto,
+    expected_shard_id: u16,
+) -> Result<(bool, bool), VoucherCoreError> {
+    if cert.shard_id != expected_shard_id {
+        return Ok((false, false));
+    }
+
+    if cert.active_nodes_count == 0 || cert.signatures.is_empty() {
+        return Ok((false, false));
+    }
+
+    let (required_q, is_final) = if cert.active_nodes_count < 20 {
+        let q = (2 * cert.active_nodes_count) / 3 + 1;
+        (q, false)
+    } else {
+        (14, true)
+    };
+
+    if required_q == 0 {
+        return Ok((false, false));
+    }
+
+    // Derive signer node IDs (u16) and deduplicate
+    let mut unique_signers = std::collections::HashSet::new();
+    let mut scores = Vec::new();
+    for att in &cert.signatures {
+        if unique_signers.insert(att.node_id) {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&att.node_id.to_le_bytes());
+            hasher.update(&cert.shard_id.to_le_bytes());
+            let hash = hasher.finalize();
+            let val = u128::from_be_bytes(hash.as_bytes()[0..16].try_into().unwrap());
+            let score = val as f64 / u128::MAX as f64;
+            scores.push(score);
+        }
+    }
+
+    if scores.len() < required_q {
+        return Ok((false, false));
+    }
+
+    // Sort descending by HRW score
+    scores.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Threshold check at q-th best score (index required_q - 1)
+    let threshold = (1.0 - (20.0 / cert.active_nodes_count as f64)).max(0.0);
+    let q_th_score = scores[required_q - 1];
+
+    let is_valid = q_th_score >= threshold;
+    Ok((is_valid, is_final && is_valid))
 }
 
 /// Generates an L2LockRequest based on the given transaction.
@@ -423,11 +483,42 @@ pub fn process_l2_verdict(
             // 3. Compare t_id
             let server_t_id = bs58::encode(lock_entry.t_id).into_string();
             if server_t_id == local_t_id {
-                Ok(VerdictAction::ConfirmLocal)
+                if let Some(certificate) = envelope.quorum_certificate {
+                    let expected_shard_id = match hex::decode(expected_voucher_id) {
+                        Ok(b) if b.len() >= 2 => {
+                            let id_from_voucher = u16::from_be_bytes([b[0], b[1]]);
+                            let id_from_lock = u16::from_be_bytes([lock_entry.t_id[0], lock_entry.t_id[1]]);
+                            if certificate.shard_id == id_from_lock {
+                                id_from_lock
+                            } else {
+                                id_from_voucher
+                            }
+                        }
+                        _ => u16::from_be_bytes([lock_entry.t_id[0], lock_entry.t_id[1]]),
+                    };
+                    let (is_valid, is_final) = verify_quorum_plausibility(&certificate, expected_shard_id)?;
+                    if is_valid && is_final && certificate.status == 1 {
+                        Ok(VerdictAction::ConfirmFinal { certificate })
+                    } else if is_valid {
+                        Ok(VerdictAction::ConfirmProvisional {
+                            certificate: Some(certificate),
+                        })
+                    } else {
+                        Err(VoucherCoreError::Validation(
+                            crate::error::ValidationError::InvalidL2Proof,
+                        ))
+                    }
+                } else {
+                    Ok(VerdictAction::ConfirmLocal)
+                }
             } else {
                 // Double-spend detected!
                 Ok(VerdictAction::TriggerQuarantine(server_t_id))
             }
+        }
+        L2Verdict::Conflict { existing_lock } => {
+            let server_t_id = bs58::encode(existing_lock.t_id).into_string();
+            Ok(VerdictAction::TriggerQuarantine(server_t_id))
         }
         L2Verdict::MissingLocks { sync_point } => {
             // Signal that we need to synchronize
@@ -484,4 +575,284 @@ pub fn generate_locator_prefixes(voucher: &crate::models::voucher::Voucher) -> V
     }
 
     prefixes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::layer2_api::{AttestationDto, L2LockEntry, QuorumCertificateDto};
+    use ed25519_dalek::Signer;
+    use sha2::{Digest, Sha256};
+
+    fn make_dummy_attestation(node_id: u16, _shard_id: u16) -> AttestationDto {
+        AttestationDto {
+            lock_id: "test_lock_id".to_string(),
+            parent_lock: "test_parent_lock".to_string(),
+            node_id,
+            timestamp: 1_000_000,
+            signature: "dummy_sig_hex".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_quorum_certificate_dto_serde() {
+        let cert = QuorumCertificateDto {
+            lock_id: "lock_123".to_string(),
+            shard_id: 42,
+            status: 1,
+            active_nodes_count: 20,
+            signer_count: 14,
+            signatures: vec![make_dummy_attestation(1, 42), make_dummy_attestation(2, 42)],
+        };
+
+        let json = serde_json::to_string(&cert).expect("serialize cert");
+        let deserialized: QuorumCertificateDto = serde_json::from_str(&json).expect("deserialize cert");
+        assert_eq!(cert, deserialized);
+    }
+
+    #[test]
+    fn test_verify_quorum_plausibility_bootstrap_n2() {
+        let shard_id = 42u16;
+        // N=2 -> required_q = (2*2)/3 + 1 = 2
+        let cert_ok = QuorumCertificateDto {
+            lock_id: "lock_1".to_string(),
+            shard_id,
+            status: 0,
+            active_nodes_count: 2,
+            signer_count: 2,
+            signatures: vec![make_dummy_attestation(1, shard_id), make_dummy_attestation(2, shard_id)],
+        };
+        let (valid, is_final) = verify_quorum_plausibility(&cert_ok, shard_id).unwrap();
+        assert!(valid, "2 of 2 must be valid in bootstrap");
+        assert!(!is_final, "N=2 must be provisional");
+
+        // Only 1 signer -> must fail
+        let cert_under = QuorumCertificateDto {
+            lock_id: "lock_1".to_string(),
+            shard_id,
+            status: 0,
+            active_nodes_count: 2,
+            signer_count: 1,
+            signatures: vec![make_dummy_attestation(1, shard_id)],
+        };
+        let (valid_under, _) = verify_quorum_plausibility(&cert_under, shard_id).unwrap();
+        assert!(!valid_under, "1 of 2 must fail quorum");
+
+        // Duplicate signer -> deduplicated -> only 1 unique signer -> must fail
+        let cert_dup = QuorumCertificateDto {
+            lock_id: "lock_1".to_string(),
+            shard_id,
+            status: 0,
+            active_nodes_count: 2,
+            signer_count: 2,
+            signatures: vec![make_dummy_attestation(1, shard_id), make_dummy_attestation(1, shard_id)],
+        };
+        let (valid_dup, _) = verify_quorum_plausibility(&cert_dup, shard_id).unwrap();
+        assert!(!valid_dup, "Duplicate signers must not satisfy quorum");
+    }
+
+    #[test]
+    fn test_verify_quorum_plausibility_boundary_n20() {
+        let shard_id = 100u16;
+        // Collect 20 distinct node ids
+        let nodes: Vec<u16> = (1..=20).collect();
+
+        // 14 signers (exactly meeting required_q for N=20)
+        let sigs_14: Vec<AttestationDto> = nodes[0..14]
+            .iter()
+            .map(|&nid| make_dummy_attestation(nid, shard_id))
+            .collect();
+        let cert_14 = QuorumCertificateDto {
+            lock_id: "lock_20".to_string(),
+            shard_id,
+            status: 1,
+            active_nodes_count: 20,
+            signer_count: 14,
+            signatures: sigs_14,
+        };
+        let (valid, is_final) = verify_quorum_plausibility(&cert_14, shard_id).unwrap();
+        assert!(valid);
+        assert!(is_final, "N=20 with 14 signers must be final");
+
+        // 13 signers (under required_q of 14) -> must fail
+        let sigs_13: Vec<AttestationDto> = nodes[0..13]
+            .iter()
+            .map(|&nid| make_dummy_attestation(nid, shard_id))
+            .collect();
+        let cert_13 = QuorumCertificateDto {
+            lock_id: "lock_20".to_string(),
+            shard_id,
+            status: 1,
+            active_nodes_count: 20,
+            signer_count: 13,
+            signatures: sigs_13,
+        };
+        let (valid_13, _) = verify_quorum_plausibility(&cert_13, shard_id).unwrap();
+        assert!(!valid_13, "13 of 20 must fail quorum");
+
+        // Shard mismatch
+        let (valid_mismatch, _) = verify_quorum_plausibility(&cert_14, 999).unwrap();
+        assert!(!valid_mismatch, "Shard mismatch must return (false, false)");
+    }
+
+    #[test]
+    fn test_l2_verdict_conflict_handling() {
+        let mut rng = rand::thread_rng();
+        let server_sk = ed25519_dalek::SigningKey::generate(&mut rng);
+        let server_pk = server_sk.verifying_key();
+
+        let existing_t_id = [0x42u8; 32];
+        let existing_lock = L2LockEntry {
+            layer2_voucher_id: "test_voucher_id".to_string(),
+            t_id: existing_t_id,
+            sender_ephemeral_pub: [1u8; 32],
+            receiver_ephemeral_pub_hash: None,
+            change_ephemeral_pub_hash: None,
+            layer2_signature: [0u8; 64],
+            trap_r: Some("none".to_string()),
+            trap_s: Some("none".to_string()),
+            encrypted_timestamp: 0,
+            deletable_at: None,
+            privacy_guard: None,
+        };
+
+        let verdict = L2Verdict::Conflict { existing_lock };
+        let verdict_bytes = serde_json::to_vec(&verdict).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(&verdict_bytes);
+        let sig = server_sk.sign(&hasher.finalize());
+
+        let envelope = L2ResponseEnvelope {
+            verdict,
+            server_signature: sig.to_bytes(),
+            quorum_certificate: None,
+        };
+        let env_bytes = serde_json::to_vec(&envelope).unwrap();
+
+        let action = process_l2_verdict(
+            &env_bytes,
+            server_pk.as_bytes(),
+            "local_t_id",
+            "challenge_tag",
+            None,
+            "test_voucher_id",
+        ).expect("process conflict verdict");
+
+        let expected_server_t_id = bs58::encode(existing_t_id).into_string();
+        assert_eq!(action, VerdictAction::TriggerQuarantine(expected_server_t_id));
+    }
+
+    #[test]
+    fn test_l2_verdict_verified_with_quorum_certificate() {
+        let mut rng = rand::thread_rng();
+        let server_sk = ed25519_dalek::SigningKey::generate(&mut rng);
+        let server_pk = server_sk.verifying_key();
+
+        let client_sk = ed25519_dalek::SigningKey::generate(&mut rng);
+        let client_pk = client_sk.verifying_key();
+
+        let voucher_bytes = [0x55u8; 32];
+        let voucher_id = hex::encode(voucher_bytes);
+        let shard_id = u16::from_be_bytes([voucher_bytes[0], voucher_bytes[1]]);
+
+        let t_id = [0x33u8; 32];
+        let challenge_ds_tag = bs58::encode(t_id).into_string();
+
+        let payload_hash = calculate_l2_payload_hash_raw(
+            TRAP_NONE_PLACEHOLDER,
+            &challenge_ds_tag,
+            &t_id,
+            client_pk.as_bytes(),
+            TRAP_NONE_PLACEHOLDER,
+            TRAP_NONE_PLACEHOLDER,
+            0,
+            None,
+            "",
+        );
+        let client_sig = client_sk.sign(&payload_hash);
+
+        let lock_entry = L2LockEntry {
+            layer2_voucher_id: voucher_id.clone(),
+            t_id,
+            sender_ephemeral_pub: *client_pk.as_bytes(),
+            receiver_ephemeral_pub_hash: None,
+            change_ephemeral_pub_hash: None,
+            layer2_signature: client_sig.to_bytes(),
+            trap_r: Some(TRAP_NONE_PLACEHOLDER.to_string()),
+            trap_s: Some(TRAP_NONE_PLACEHOLDER.to_string()),
+            encrypted_timestamp: 0,
+            deletable_at: None,
+            privacy_guard: None,
+        };
+
+        // 1. Without QuorumCertificate -> ConfirmLocal
+        let verdict1 = L2Verdict::Verified { lock_entry: lock_entry.clone() };
+        let v1_bytes = serde_json::to_vec(&verdict1).unwrap();
+        let mut h1 = Sha256::new();
+        h1.update(&v1_bytes);
+        let sig1 = server_sk.sign(&h1.finalize());
+
+        let env1 = L2ResponseEnvelope {
+            verdict: verdict1,
+            server_signature: sig1.to_bytes(),
+            quorum_certificate: None,
+        };
+        let action1 = process_l2_verdict(
+            &serde_json::to_vec(&env1).unwrap(),
+            server_pk.as_bytes(),
+            &bs58::encode(t_id).into_string(),
+            &challenge_ds_tag,
+            Some(&bs58::encode(client_pk.as_bytes()).into_string()),
+            &voucher_id,
+        ).unwrap();
+        assert_eq!(action1, VerdictAction::ConfirmLocal);
+
+        // 2. With FINAL QuorumCertificate -> ConfirmFinal
+        let cert_final = QuorumCertificateDto {
+            lock_id: hex::encode(t_id),
+            shard_id,
+            status: 1,
+            active_nodes_count: 20,
+            signer_count: 14,
+            signatures: (1..=14).map(|nid| make_dummy_attestation(nid, shard_id)).collect(),
+        };
+        let env2 = L2ResponseEnvelope {
+            verdict: L2Verdict::Verified { lock_entry: lock_entry.clone() },
+            server_signature: sig1.to_bytes(),
+            quorum_certificate: Some(cert_final.clone()),
+        };
+        let action2 = process_l2_verdict(
+            &serde_json::to_vec(&env2).unwrap(),
+            server_pk.as_bytes(),
+            &bs58::encode(t_id).into_string(),
+            &challenge_ds_tag,
+            Some(&bs58::encode(client_pk.as_bytes()).into_string()),
+            &voucher_id,
+        ).unwrap();
+        assert_eq!(action2, VerdictAction::ConfirmFinal { certificate: cert_final });
+
+        // 3. With PROVISIONAL QuorumCertificate -> ConfirmProvisional
+        let cert_prov = QuorumCertificateDto {
+            lock_id: hex::encode(t_id),
+            shard_id,
+            status: 0,
+            active_nodes_count: 2,
+            signer_count: 2,
+            signatures: vec![make_dummy_attestation(1, shard_id), make_dummy_attestation(2, shard_id)],
+        };
+        let env3 = L2ResponseEnvelope {
+            verdict: L2Verdict::Verified { lock_entry },
+            server_signature: sig1.to_bytes(),
+            quorum_certificate: Some(cert_prov.clone()),
+        };
+        let action3 = process_l2_verdict(
+            &serde_json::to_vec(&env3).unwrap(),
+            server_pk.as_bytes(),
+            &bs58::encode(t_id).into_string(),
+            &challenge_ds_tag,
+            Some(&bs58::encode(client_pk.as_bytes()).into_string()),
+            &voucher_id,
+        ).unwrap();
+        assert_eq!(action3, VerdictAction::ConfirmProvisional { certificate: Some(cert_prov) });
+    }
 }

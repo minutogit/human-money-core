@@ -24,6 +24,7 @@ argon2 = "0.5"
 bincode = "1.3"
 sha2 = "0.10"
 sha3 = "0.10"
+blake3 = "1.5"
 x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
 rand_core = "0.6.4"
 hex = "0.4.3"

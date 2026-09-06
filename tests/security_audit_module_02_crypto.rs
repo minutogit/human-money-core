@@ -1613,6 +1613,7 @@ mod security_audit_module_02 {
         let envelope = L2ResponseEnvelope {
             verdict,
             server_signature: server_sk.sign(&verdict_hasher.finalize()).to_bytes(),
+            quorum_certificate: None,
         };
         let envelope_bytes = serde_json::to_vec(&envelope).expect("envelope serialization");
 
@@ -1634,6 +1635,8 @@ mod security_audit_module_02 {
             Ok(action) => {
                 let action_desc = match action {
                     VerdictAction::ConfirmLocal => "ConfirmLocal".to_string(),
+                    VerdictAction::ConfirmFinal { .. } => "ConfirmFinal".to_string(),
+                    VerdictAction::ConfirmProvisional { .. } => "ConfirmProvisional".to_string(),
                     VerdictAction::TriggerQuarantine(t) => format!("TriggerQuarantine({})", t),
                     VerdictAction::TriggerSync { sync_point } => {
                         format!("TriggerSync({})", sync_point)

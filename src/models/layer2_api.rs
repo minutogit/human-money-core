@@ -287,6 +287,29 @@ pub struct L2BatchLockRequest {
 }
 
 /// Response: The verdict of the L2 server regarding the state of a tag or the chain.
+/// Signed attestation from a consensus or ingress node.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttestationDto {
+    pub lock_id: String,
+    pub parent_lock: String,
+    pub node_id: u16,
+    pub timestamp: u64,
+    pub signature: String,
+}
+
+/// Assembled quorum certificate with partial signatures from shard nodes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QuorumCertificateDto {
+    pub lock_id: String,
+    pub shard_id: u16,
+    /// 0 = PROVISIONAL, 1 = FINAL
+    pub status: u8,
+    pub active_nodes_count: usize,
+    pub signer_count: usize,
+    pub signatures: Vec<AttestationDto>,
+}
+
+/// Response: The verdict of the L2 server regarding the state of a tag or the chain.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 // The Verified variant legitimately carries a full lock entry; boxing it
 // would only add indirection to a deserialized-once wire object.
@@ -295,6 +318,8 @@ pub struct L2BatchLockRequest {
 pub enum L2Verdict {
     /// The tag is occupied. Contains the complete proof (LockEntry).
     Verified { lock_entry: L2LockEntry },
+    /// Conflict detected (e.g. 409 double-spend attempt). Contains the existing lock entry.
+    Conflict { existing_lock: L2LockEntry },
     /// The server does not yet know this tag, but found a common ancestor.
     MissingLocks {
         /// The 10-character prefix of the last common transaction.
@@ -319,4 +344,16 @@ pub struct L2ResponseEnvelope {
     pub verdict: L2Verdict,
     #[serde(with = "crate::models::layer2_api::base58_64")]
     pub server_signature: [u8; 64],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quorum_certificate: Option<QuorumCertificateDto>,
+}
+
+impl L2ResponseEnvelope {
+    pub fn new(verdict: L2Verdict, server_signature: [u8; 64]) -> Self {
+        Self {
+            verdict,
+            server_signature,
+            quorum_certificate: None,
+        }
+    }
 }

@@ -66,6 +66,7 @@ impl MockL2Node {
         let envelope = L2ResponseEnvelope {
             verdict,
             server_signature: signature.to_bytes(),
+            quorum_certificate: None,
         };
         serde_json::to_vec(&envelope).unwrap()
     }

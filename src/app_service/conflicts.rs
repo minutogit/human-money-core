@@ -253,7 +253,9 @@ impl AppService {
                     Err(e) => return TransactionOutcome::Rollback(e),
                 };
                 match action {
-                    VerdictAction::ConfirmLocal => TransactionOutcome::Commit(()),
+                    VerdictAction::ConfirmLocal
+                    | VerdictAction::ConfirmFinal { .. }
+                    | VerdictAction::ConfirmProvisional { .. } => TransactionOutcome::Commit(()),
                     VerdictAction::TriggerSync { sync_point } => {
                         println!("Sync needed from: {}", sync_point);
                         TransactionOutcome::Commit(())

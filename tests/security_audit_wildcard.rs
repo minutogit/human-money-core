@@ -1228,6 +1228,7 @@ fn wildcard_08_l2_quarantine_session_arithmetic_must_be_panic_free() {
     let envelope = L2ResponseEnvelope {
         verdict: L2Verdict::Verified { lock_entry },
         server_signature: [0u8; 64],
+        quorum_certificate: None,
     };
     let response_bytes = serde_json::to_vec(&envelope).unwrap();
 
@@ -1430,6 +1431,7 @@ fn wildcard_09_l2_quarantine_write_must_respect_rollback_discipline() {
     let envelope = L2ResponseEnvelope {
         verdict: L2Verdict::Verified { lock_entry },
         server_signature: [0u8; 64],
+        quorum_certificate: None,
     };
     let response_bytes = serde_json::to_vec(&envelope).unwrap();
 
