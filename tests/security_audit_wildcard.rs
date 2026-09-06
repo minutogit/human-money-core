@@ -1493,7 +1493,6 @@ fn wildcard_10_balance_aggregation_must_be_panic_free() {
     use human_money_core::models::voucher::{Voucher, VoucherStandard, ValueDefinition};
     use human_money_core::models::profile::PublicProfile;
     use human_money_core::wallet::instance::{VoucherInstance, VoucherStatus};
-    use human_money_core::wallet::Wallet;
     use rust_decimal::Decimal;
     use std::str::FromStr;
 
@@ -1644,7 +1643,7 @@ fn wildcard_11_serialization_must_be_fail_closed() {
 ///
 #[test]
 fn wildcard_13_malformed_amount_must_not_be_masked_as_zero() {
-    use human_money_core::models::voucher::{Voucher, VoucherStandard, ValueDefinition, Transaction, TrapData};
+    use human_money_core::models::voucher::{Voucher, VoucherStandard, ValueDefinition, Transaction};
     use human_money_core::models::profile::PublicProfile;
     use rust_decimal::Decimal;
     // Build a minimal voucher whose last amount is malformed

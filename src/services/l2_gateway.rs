@@ -46,16 +46,7 @@ pub fn generate_lock_request(
         }
     };
 
-    let mut t_id = [0u8; 32];
-    let decoded_t_id = bs58::decode(&transaction.t_id)
-        .into_vec()
-        .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid base58 for t_id".to_string()))?;
-    if decoded_t_id.len() != 32 {
-        return Err(VoucherCoreError::InvalidHashFormat(
-            "t_id must be 32 bytes".to_string(),
-        ));
-    }
-    t_id.copy_from_slice(&decoded_t_id);
+    let t_id = crate::services::crypto::decode_bs58_fixed::<32>(&transaction.t_id, "t_id")?;
 
     // Dummy auth data for now (as required)
     let auth = L2AuthPayload {
@@ -68,16 +59,8 @@ pub fn generate_lock_request(
     let sender_ephemeral_pub_str = transaction.sender_ephemeral_pub.as_deref().ok_or_else(|| {
         crate::Error::Wallet(crate::error::WalletError::MissingSenderEphemeralPub)
     })?;
-    let decoded_sep = bs58::decode(sender_ephemeral_pub_str).into_vec().map_err(|_| {
-        VoucherCoreError::InvalidHashFormat("Invalid base58 for sender_ephemeral_pub".to_string())
-    })?;
-    let mut sender_ephemeral_pub = [0u8; 32];
-    if decoded_sep.len() != 32 {
-        return Err(VoucherCoreError::InvalidHashFormat(
-            "sender_ephemeral_pub must be 32 bytes".to_string(),
-        ));
-    }
-    sender_ephemeral_pub.copy_from_slice(&decoded_sep);
+    let sender_ephemeral_pub =
+        crate::services::crypto::decode_bs58_fixed::<32>(sender_ephemeral_pub_str, "sender_ephemeral_pub")?;
 
     // SECURITY (HMSEC-SA06-14): Metadata minimization on the L2 wire.
     // The receiver-/change-anchor hashes of both output branches are NOT
@@ -94,16 +77,8 @@ pub fn generate_lock_request(
     let layer2_sig_str = transaction.layer2_signature.as_deref().ok_or_else(|| {
         crate::Error::Wallet(crate::error::WalletError::MissingLayer2Signature)
     })?;
-    let decoded_sig = bs58::decode(layer2_sig_str).into_vec().map_err(|_| {
-        VoucherCoreError::InvalidHashFormat("Invalid base58 for layer2_signature".to_string())
-    })?;
-    let mut layer2_signature = [0u8; 64];
-    if decoded_sig.len() != 64 {
-        return Err(VoucherCoreError::InvalidHashFormat(
-            "layer2_signature must be 64 bytes".to_string(),
-        ));
-    }
-    layer2_signature.copy_from_slice(&decoded_sig);
+    let layer2_signature =
+        crate::services::crypto::decode_bs58_fixed::<64>(layer2_sig_str, "layer2_signature")?;
 
     // V3 Protocol (SST): bind the trap shards and the encrypted timestamp into
     // the payload digest. Genesis transactions have no trap ("none"/"none").
@@ -164,39 +139,17 @@ pub fn calculate_layer2_voucher_id(transaction: &Transaction) -> Result<String, 
         return Err(crate::Error::Wallet(crate::error::WalletError::OnlyInitTransactionsAllowed));
     }
 
-    let mut t_id = [0u8; 32];
-    let decoded_t_id = bs58::decode(&transaction.t_id)
-        .into_vec()
-        .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid base58 for t_id".to_string()))?;
-    if decoded_t_id.len() != 32 {
-        return Err(VoucherCoreError::InvalidHashFormat(
-            "t_id must be 32 bytes".to_string(),
-        ));
-    }
-    t_id.copy_from_slice(&decoded_t_id);
+    let t_id = crate::services::crypto::decode_bs58_fixed::<32>(&transaction.t_id, "t_id")?;
 
-    let mut sender_pub = [0u8; 32];
-    let decoded_pub = bs58::decode(transaction.sender_ephemeral_pub.as_deref().unwrap_or(""))
-        .into_vec()
-        .unwrap_or_else(|_| vec![0; 32]);
-    if decoded_pub.len() == 32 {
-        sender_pub.copy_from_slice(&decoded_pub);
-    }
-
+    let sender_pub = transaction
+        .sender_ephemeral_pub
+        .as_deref()
+        .and_then(|s| crate::services::crypto::decode_bs58_fixed::<32>(s, "sender_pub").ok())
+        .unwrap_or([0u8; 32]);
     let receiver_hash = transaction
         .receiver_ephemeral_pub_hash
-        .as_ref()
-        .and_then(|h| {
-            bs58::decode(h).into_vec().ok().and_then(|v| {
-                if v.len() == 32 {
-                    let mut arr = [0u8; 32];
-                    arr.copy_from_slice(&v);
-                    Some(arr)
-                } else {
-                    None
-                }
-            })
-        });
+        .as_deref()
+        .and_then(|h| crate::services::crypto::decode_bs58_fixed::<32>(h, "receiver_hash").ok());
 
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();

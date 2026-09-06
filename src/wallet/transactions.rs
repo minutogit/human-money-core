@@ -30,9 +30,7 @@ use crate::wallet::Wallet;
 use crate::wallet::instance::VoucherStatus;
 use crate::wallet::conflicts::resolve_conflict_offline;
 use ed25519_dalek::SigningKey;
-use hkdf::Hkdf;
 use rust_decimal::Decimal;
-use sha2::Sha256;
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -79,26 +77,16 @@ fn sanitize_display_name(raw: Option<String>) -> Option<String> {
 /// Derives the deterministic change key via HKDF from the identity's IKM and the
 /// transaction's `prev_hash`.
 ///
-/// Consolidates the previously duplicated HKDF logic in `rederive_secret_seed`
-/// into a single canonical function.
+/// Delegates to the canonical implementation in `crate::services::crypto`.
 fn derive_deterministic_change_key(
     identity: &UserIdentity,
     prev_hash: &str,
 ) -> Result<SigningKey, VoucherCoreError> {
-    let sender_id_prefix = crate::services::crypto::get_prefix_from_user_id(&identity.user_id);
-    let ikm = identity.signing_key.to_bytes();
-    let (prk, _) = Hkdf::<Sha256>::extract(Some(prev_hash.as_bytes()), &ikm);
-    let hkdf = Hkdf::<Sha256>::from_prk(&prk)
-        .map_err(|_| VoucherCoreError::Crypto("Invalid PRK".to_string()))?;
-    let info = if let Some(p) = sender_id_prefix {
-        format!("{}change_seed", p)
-    } else {
-        "change_seed".to_string()
-    };
-    let mut change_seed = [0u8; 32];
-    hkdf.expand(info.as_bytes(), &mut change_seed)
-        .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
-    Ok(SigningKey::from_bytes(&change_seed))
+    crate::services::crypto::derive_deterministic_change_key(
+        &identity.signing_key,
+        &identity.user_id,
+        prev_hash,
+    )
 }
 
 impl Wallet {
@@ -663,18 +651,7 @@ impl Wallet {
         // We use the 'ds_tag', which is calculated identically in voucher_math
         // (now independent of prefix).
         // This makes proactive checking 100% consistent with the mathematical trap.
-        let ds_tag = {
-            let prev_hash_bytes = bs58::decode(&prev_hash)
-                .into_vec()
-                .map_err(|_| VoucherCoreError::Crypto("Invalid prev_hash format".to_string()))?;
-            let ephem_pub_bytes = bs58::decode(&ephem_pub_str).into_vec().map_err(|_| {
-                VoucherCoreError::Crypto("Invalid sender_ephemeral_pub format".to_string())
-            })?;
-            crate::services::crypto::get_hash_from_slices(&[
-                &prev_hash_bytes,
-                &ephem_pub_bytes,
-            ])
-        };
+        let ds_tag = crate::services::crypto::get_ds_tag(&prev_hash, &ephem_pub_str)?;
 
         if self
             .own_fingerprints
@@ -968,8 +945,7 @@ impl Wallet {
                 &identity.user_id,
             )
                 && let Ok(payload) = serde_json::from_slice::<crate::models::voucher::RecipientPayload>(&decrypted_payload_bytes)
-                    && let Ok(seed_bytes) = bs58::decode(&payload.next_key_seed).into_vec()
-                        && let Ok(seed_arr) = seed_bytes.try_into() {
+                    && let Ok(seed_arr) = crate::services::crypto::decode_bs58_fixed::<32>(&payload.next_key_seed, "next_key_seed") {
                             let candidate_key = SigningKey::from_bytes(&seed_arr);
                             let candidate_hash = crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
                             

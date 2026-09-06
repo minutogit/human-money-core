@@ -52,12 +52,12 @@ mod internal_logic {
         
         let mut store = VoucherStore::default();
         
-        let t_id_early = bs58::encode(b"early").into_string();
-        let t_id_late = bs58::encode(b"latee").into_string();
+        let t_id_early = crate::services::crypto::get_hash("early");
+        let t_id_late = crate::services::crypto::get_hash("latee");
 
         let tx_early = Transaction {
             t_id: t_id_early.clone(),
-            prev_hash: bs58::encode(b"prev").into_string(),
+            prev_hash: crate::services::crypto::get_hash("prev"),
             t_time: "2024-01-01T10:00:00.000000Z".to_string(),
             ..Default::default()
         };
@@ -65,7 +65,7 @@ mod internal_logic {
         
         let tx_late = Transaction {
             t_id: t_id_late.clone(),
-            prev_hash: bs58::encode(b"prev").into_string(),
+            prev_hash: crate::services::crypto::get_hash("prev"),
             t_time: "2024-01-01T11:00:00.000000Z".to_string(),
             ..Default::default()
         };
@@ -128,8 +128,8 @@ mod internal_logic {
 
         fn make_tx(t_id_bytes: &[u8], hour: u32) -> Transaction {
             Transaction {
-                t_id: bs58::encode(t_id_bytes).into_string(),
-                prev_hash: bs58::encode(b"prev").into_string(),
+                t_id: crate::services::crypto::get_hash(t_id_bytes),
+                prev_hash: crate::services::crypto::get_hash(b"prev"),
                 t_time: format!("2024-01-01T{:02}:00:00.000000Z", hour),
                 ..Default::default()
             }

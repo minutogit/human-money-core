@@ -14,13 +14,19 @@ pub use chain::*;
 pub use signatures::*;
 pub use pipeline::{StandardRegistry, ValidationPipeline};
 
-/// Main function for validating a voucher against its standard.
-/// This is the central orchestrator that invokes all subordinate validation steps.
-pub fn validate_voucher_against_standard(
+/// Validates the common structural and business-rule aspects of a voucher
+/// (Nominal, Hash, Anti-Spoofing, Date Logic, Validity Duration, Transaction
+/// Types, Rules, Signatures, Privacy Mode, Transactions).
+///
+/// This is the shared kernel extracted for deduplication between
+/// [`validate_voucher_against_standard`] and
+/// [`pipeline::ValidationPipeline::step1_standard_and_nominal`].
+/// It deliberately excludes standard-identity checks (UUID/hash binding),
+/// which are handled separately by the caller (different verification contexts).
+pub fn validate_voucher_structure(
     voucher: &Voucher,
     standard: &VoucherStandardDefinition,
 ) -> Result<(), VoucherCoreError> {
-    identity::verify_standard_identity(voucher, standard)?;
     identity::verify_nominal_value(voucher, standard)?;
     identity::verify_voucher_hash(voucher)?;
     identity::verify_anti_spoofing(voucher)?;
@@ -56,10 +62,19 @@ pub fn validate_voucher_against_standard(
 
     let privacy_mode = &standard.immutable.features.privacy_mode;
     chain::validate_privacy_mode(voucher, privacy_mode)?;
-
     chain::verify_transactions(voucher, standard)?;
     signatures::verify_signatures(voucher, standard)?;
     Ok(())
+}
+
+/// Main function for validating a voucher against its standard.
+/// This is the central orchestrator that invokes all subordinate validation steps.
+pub fn validate_voucher_against_standard(
+    voucher: &Voucher,
+    standard: &VoucherStandardDefinition,
+) -> Result<(), VoucherCoreError> {
+    identity::verify_standard_identity(voucher, standard)?;
+    validate_voucher_structure(voucher, standard)
 }
 
 #[cfg(test)]

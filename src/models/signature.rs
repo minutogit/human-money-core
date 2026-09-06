@@ -6,8 +6,8 @@
 use crate::error::{ValidationError, VoucherCoreError};
 use crate::models::profile::{PublicProfile, UserIdentity};
 use crate::models::voucher::VoucherSignature;
-use crate::services::crypto::{get_hash_from_slices, get_pubkey_from_user_id, sign_ed25519, verify_ed25519};
-use crate::services::utils::{get_current_timestamp, to_canonical_json};
+use crate::services::crypto::{get_pubkey_from_user_id, sign_ed25519, verify_ed25519};
+use crate::services::utils::get_current_timestamp;
 use serde::{Deserialize, Serialize};
 
 /// An enum encapsulating one of the possible detached signatures.
@@ -132,19 +132,14 @@ impl DetachedSignature {
 
         // Reset cryptographic fields and determine timestamp uniformly
         let signature_time = get_current_timestamp();
-        let signature_json_for_id = match &self {
+        match &mut self {
             DetachedSignature::Signature(sig) => {
-                let mut sig_clone = sig.clone();
-                sig_clone.signature_id = "".to_string();
-                sig_clone.signature = "".to_string();
-                sig_clone.signature_time = signature_time.clone();
-
-                to_canonical_json(&sig_clone)?.into_bytes()
+                sig.signature_time = signature_time.clone();
             }
+        }
+        let signature_id = match &self {
+            DetachedSignature::Signature(sig) => sig.calculate_signature_id(init_t_id)?,
         };
-
-        let signature_id =
-            get_hash_from_slices(&[signature_json_for_id.as_slice(), init_t_id.as_bytes()]);
         let digital_signature = sign_ed25519(&signer_identity.signing_key, signature_id.as_bytes());
         let signature_str = bs58::encode(digital_signature.to_bytes()).into_string();
 
@@ -152,7 +147,7 @@ impl DetachedSignature {
             DetachedSignature::Signature(sig) => {
                 sig.signature_id = signature_id;
                 sig.signature = signature_str;
-                sig.signature_time = signature_time;
+                // signature_time already set
             }
         }
 
@@ -179,24 +174,16 @@ impl DetachedSignature {
         }
         // --- BYPASS CHECK END ---
 
-        let (mut sig_obj_to_verify, signer_id, expected_sig_id, signature_b58) = match self {
+        let (sig, signer_id, expected_sig_id, signature_b58) = match self {
             DetachedSignature::Signature(sig) => (
-                serde_json::to_value(sig)?,
+                sig,
                 sig.signer_id.clone(),
                 sig.signature_id.clone(),
                 sig.signature.clone(),
             ),
         };
 
-        // Remove cryptographic fields to recalculate metadata hash
-        let obj = sig_obj_to_verify.as_object_mut().unwrap();
-        obj.insert("signature_id".to_string(), "".into());
-        obj.insert("signature".to_string(), "".into());
-
-        let calculated_sig_id = get_hash_from_slices(&[
-            to_canonical_json(&sig_obj_to_verify)?.as_bytes(),
-            init_t_id.as_bytes(),
-        ]);
+        let calculated_sig_id = sig.calculate_signature_id(init_t_id)?;
 
         if calculated_sig_id != expected_sig_id {
             return Err(VoucherCoreError::Validation(
@@ -205,13 +192,10 @@ impl DetachedSignature {
         }
 
         let public_key = get_pubkey_from_user_id(&signer_id)?;
-        let signature_bytes: Vec<u8> = bs58::decode(signature_b58).into_vec()?;
-
-        let signature_array: [u8; 64] = signature_bytes.try_into().map_err(|_| {
-            VoucherCoreError::Validation(ValidationError::SignatureDecodeError(
-                "Invalid signature length: must be 64 bytes".to_string(),
-            ))
-        })?;
+        let signature_array = crate::services::crypto::decode_bs58_fixed::<64>(&signature_b58, "signature")
+            .map_err(|e| {
+                VoucherCoreError::Validation(ValidationError::SignatureDecodeError(e.to_string()))
+            })?;
         let signature = ed25519_dalek::Signature::from_bytes(&signature_array);
 
         if !verify_ed25519(&public_key, expected_sig_id.as_bytes(), &signature) {

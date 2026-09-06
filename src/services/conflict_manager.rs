@@ -83,18 +83,10 @@ pub fn create_fingerprint_for_transaction(
         // Even if crafted trap_data was embedded, init fingerprints always bind
         // the canonical "none" placeholders and derive the fallback tag from
         // prev_hash and sender_ephemeral_pub.
-        let prev_hash_bytes = bs58::decode(&transaction.prev_hash)
-            .into_vec()
-            .map_err(|_| VoucherCoreError::Fingerprint("Invalid prev_hash format".to_string()))?;
-        let ephem_key_bytes = if let Some(s) = &transaction.sender_ephemeral_pub {
-            bs58::decode(s).into_vec().map_err(|_| {
-                VoucherCoreError::Fingerprint("Invalid sender_ephemeral_pub format".to_string())
-            })?
-        } else {
-            Vec::new()
-        };
-
-        let fallback_tag = get_hash_from_slices(&[&prev_hash_bytes, &ephem_key_bytes]);
+        let fallback_tag = crate::services::crypto::get_ds_tag(
+            &transaction.prev_hash,
+            transaction.sender_ephemeral_pub.as_deref().unwrap_or(""),
+        )?;
         (
             fallback_tag,
             crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER.to_string(),
@@ -127,20 +119,10 @@ pub fn create_fingerprint_for_transaction(
             )
         }
     } else {
-        // Pad with zeros if the hash is shorter.
-        // SECURITY FIX: Use raw bytes for concatenation
-        let prev_hash_bytes = bs58::decode(&transaction.prev_hash)
-            .into_vec()
-            .map_err(|_| VoucherCoreError::Fingerprint("Invalid prev_hash format".to_string()))?;
-        let ephem_key_bytes = if let Some(s) = &transaction.sender_ephemeral_pub {
-            bs58::decode(s).into_vec().map_err(|_| {
-                VoucherCoreError::Fingerprint("Invalid sender_ephemeral_pub format".to_string())
-            })?
-        } else {
-            Vec::new()
-        };
-
-        let fallback_tag = get_hash_from_slices(&[&prev_hash_bytes, &ephem_key_bytes]);
+        let fallback_tag = crate::services::crypto::get_ds_tag(
+            &transaction.prev_hash,
+            transaction.sender_ephemeral_pub.as_deref().unwrap_or(""),
+        )?;
         (
             fallback_tag,
             crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER.to_string(),
@@ -208,28 +190,31 @@ pub fn create_fingerprint_for_transaction(
 /// Returns `false` for malformed inputs (invalid base58, wrong lengths,
 /// missing key/signature) — fail-closed.
 pub fn verify_fingerprint_signature(fp: &TransactionFingerprint) -> bool {
-    let ephem_pub_bytes = match bs58::decode(&fp.sender_ephemeral_pub).into_vec() {
-        Ok(v) if v.len() == 32 => v,
-        _ => return false,
+    let ephem_pub_bytes = match crate::services::crypto::decode_bs58_fixed::<32>(
+        &fp.sender_ephemeral_pub,
+        "sender_ephemeral_pub",
+    ) {
+        Ok(v) => v,
+        Err(_) => return false,
     };
-    let t_id_bytes = match bs58::decode(&fp.t_id).into_vec() {
-        Ok(v) if v.len() == 32 => v,
-        _ => return false,
-    };
-    let sig_bytes = match bs58::decode(&fp.layer2_signature).into_vec() {
-        Ok(v) if v.len() == 64 => v,
-        _ => return false,
+    let t_id_bytes =
+        match crate::services::crypto::decode_bs58_fixed::<32>(&fp.t_id, "t_id") {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+    let sig_bytes = match crate::services::crypto::decode_bs58_fixed::<64>(
+        &fp.layer2_signature,
+        "layer2_signature",
+    ) {
+        Ok(v) => v,
+        Err(_) => return false,
     };
 
-    let verifying_key = match ed25519_dalek::VerifyingKey::from_bytes(
-        ephem_pub_bytes.as_slice().try_into().expect("len checked"),
-    ) {
+    let verifying_key = match ed25519_dalek::VerifyingKey::from_bytes(&ephem_pub_bytes) {
         Ok(k) => k,
         Err(_) => return false,
     };
-    let signature = ed25519_dalek::Signature::from_bytes(
-        sig_bytes.as_slice().try_into().expect("len checked"),
-    );
+    let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
 
     let (challenge_tag, deletable_at) = if is_init_fingerprint(fp) {
         (fp.t_id.clone(), Some(fp.deletable_at.as_str()))
@@ -250,8 +235,8 @@ pub fn verify_fingerprint_signature(fp: &TransactionFingerprint) -> bool {
     let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
         &effective_voucher_id,
         &challenge_tag,
-        t_id_bytes.as_slice().try_into().expect("len checked"),
-        ephem_pub_bytes.as_slice().try_into().expect("len checked"),
+        &t_id_bytes,
+        &ephem_pub_bytes,
         &fp.trap_r,
         &fp.trap_s,
         fp.encrypted_timestamp,
@@ -524,14 +509,14 @@ pub fn verify_reporter_signature(proof: &ProofOfDoubleSpend) -> Result<(), Vouch
                 proof.reporter_id
             ))
         })?;
-    let sig_bytes = bs58::decode(&proof.reporter_signature)
-        .into_vec()
-        .map_err(|e| {
-            VoucherCoreError::ProofImport(format!("Cannot import proof: invalid reporter_signature encoding: {}", e))
-        })?;
-    let signature = ed25519_dalek::Signature::from_bytes(sig_bytes.as_slice().try_into().map_err(|_| {
-        VoucherCoreError::ProofImport("Cannot import proof: invalid reporter_signature length.".to_string())
-    })?);
+    let sig_bytes = crate::services::crypto::decode_bs58_fixed::<64>(
+        &proof.reporter_signature,
+        "reporter_signature",
+    )
+    .map_err(|e| {
+        VoucherCoreError::ProofImport(format!("Cannot import proof: invalid reporter_signature: {}", e))
+    })?;
+    let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
 
     if !verify_ed25519(&reporter_pk, proof.proof_id.as_bytes(), &signature) {
         return Err(VoucherCoreError::ProofImport(
@@ -610,26 +595,18 @@ pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherC
             continue;
         }
 
-        let prev_hash_bytes = bs58::decode(&tx.prev_hash).into_vec().map_err(|_| {
-            VoucherCoreError::ProofImport("Cannot import proof: invalid prev_hash encoding.".to_string())
-        })?;
         let eph_pub_raw = tx.sender_ephemeral_pub.as_ref().ok_or_else(|| {
             VoucherCoreError::ProofImport(
                 "Cannot import proof: conflicting transaction missing sender_ephemeral_pub.".to_string(),
             )
         })?;
-        let eph_pub_bytes = bs58::decode(eph_pub_raw).into_vec().map_err(|_| {
-            VoucherCoreError::ProofImport(
-                "Cannot import proof: invalid sender_ephemeral_pub encoding.".to_string(),
-            )
-        })?;
-        if eph_pub_bytes.len() != 32 {
-            return Err(VoucherCoreError::ProofImport(
-                "Cannot import proof: sender_ephemeral_pub must be 32 bytes.".to_string(),
-            ));
-        }
+        // Validate 32-byte length before tag computation (preserves original ProofImport mapping).
+        let _ = crate::services::crypto::decode_bs58_fixed::<32>(
+            eph_pub_raw, "sender_ephemeral_pub",
+        ).map_err(|e| VoucherCoreError::ProofImport(e.to_string()))?;
 
-        let recomputed_ds_tag = get_hash_from_slices(&[&prev_hash_bytes, &eph_pub_bytes]);
+        let recomputed_ds_tag = crate::services::crypto::get_ds_tag(&tx.prev_hash, eph_pub_raw)
+            .map_err(|e| VoucherCoreError::ProofImport(e.to_string()))?;
         if let Some(trap) = &tx.trap_data
             && trap.ds_tag != recomputed_ds_tag {
                 return Err(VoucherCoreError::ProofImport(
@@ -940,6 +917,22 @@ pub fn import_foreign_fingerprints(
     Ok(new_count)
 }
 
+fn derive_timestamp_xor_key(transaction: &Transaction) -> Result<u128, VoucherCoreError> {
+    let prev_hash_bytes = crate::services::crypto::decode_bs58_fixed::<32>(
+        &transaction.prev_hash,
+        "prev_hash",
+    )
+    .map_err(|_| VoucherCoreError::Fingerprint("Invalid prev_hash format".to_string()))?;
+    let t_id_bytes =
+        crate::services::crypto::decode_bs58_fixed::<32>(&transaction.t_id, "t_id")?;
+
+    let key_hash = crate::services::crypto::get_raw_hash_from_slices(&[&prev_hash_bytes, &t_id_bytes]);
+    let key_bytes: [u8; 16] = key_hash[..16]
+        .try_into()
+        .expect("32-byte digest always contains at least 16 bytes");
+    Ok(u128::from_le_bytes(key_bytes))
+}
+
 /// Encrypts the timestamp of a transaction for use in an L2 context.
 ///
 /// Encryption is performed via XOR with a key that is deterministically derived from the
@@ -952,7 +945,6 @@ pub fn import_foreign_fingerprints(
 /// # Returns
 /// A `u128` value representing the encrypted timestamp in nanoseconds.
 pub fn encrypt_transaction_timestamp(transaction: &Transaction) -> Result<u128, VoucherCoreError> {
-    // a. Parse timestamp and convert to nanoseconds (u128).
     let nanos = DateTime::parse_from_rfc3339(&transaction.t_time)
         .map_err(|e| VoucherCoreError::InvalidTimestamp(format!("Failed to parse timestamp: {}", e)))?
         .timestamp_nanos_opt()
@@ -960,27 +952,8 @@ pub fn encrypt_transaction_timestamp(transaction: &Transaction) -> Result<u128, 
             VoucherCoreError::InvalidTimestamp("Invalid timestamp for nanosecond conversion".to_string())
         })? as u128;
 
-    // b. Derive key (u128) from the hash of prev_hash and t_id.
-    // SECURITY FIX: Use raw bytes for key derivation hash
-    let prev_hash_bytes = bs58::decode(&transaction.prev_hash)
-        .into_vec()
-        .map_err(|_| VoucherCoreError::Fingerprint("Invalid prev_hash format".to_string()))?;
-    let t_id_bytes = bs58::decode(&transaction.t_id)
-        .into_vec()
-        .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id format".to_string()))?;
+    let key = derive_timestamp_xor_key(transaction)?;
 
-    let key_hash_b58 = get_hash_from_slices(&[&prev_hash_bytes, &t_id_bytes]);
-    let key_hash_bytes = bs58::decode(key_hash_b58).into_vec().map_err(|_| {
-        VoucherCoreError::Fingerprint("Failed to decode base58 hash for key derivation".to_string())
-    })?;
-
-    // We take the first 16 bytes (128 bits) of the hash as the key.
-    let key_bytes: [u8; 16] = key_hash_bytes[..16]
-        .try_into()
-        .map_err(|_| VoucherCoreError::Fingerprint("Hash too short for key derivation".to_string()))?;
-    let key = u128::from_le_bytes(key_bytes);
-
-    // c. Encrypt timestamp via XOR and return it.
     Ok(nanos ^ key)
 }
 
@@ -998,23 +971,7 @@ pub fn decrypt_transaction_timestamp(
     transaction: &Transaction,
     encrypted_nanos: u128,
 ) -> Result<u128, VoucherCoreError> {
-    // SECURITY FIX: Use raw bytes for key derivation hash (identical to encryption)
-    let prev_hash_bytes = bs58::decode(&transaction.prev_hash)
-        .into_vec()
-        .map_err(|_| VoucherCoreError::Fingerprint("Invalid prev_hash format".to_string()))?;
-    let t_id_bytes = bs58::decode(&transaction.t_id)
-        .into_vec()
-        .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id format".to_string()))?;
-
-    let key_hash_b58 = get_hash_from_slices(&[&prev_hash_bytes, &t_id_bytes]);
-    let key_hash_bytes = bs58::decode(key_hash_b58).into_vec().map_err(|_| {
-        VoucherCoreError::Fingerprint("Failed to decode base58 hash for key derivation".to_string())
-    })?;
-
-    let key_bytes: [u8; 16] = key_hash_bytes[..16]
-        .try_into()
-        .map_err(|_| VoucherCoreError::Fingerprint("Hash too short for key derivation".to_string()))?;
-    let key = u128::from_le_bytes(key_bytes);
+    let key = derive_timestamp_xor_key(transaction)?;
 
     Ok(encrypted_nanos ^ key)
 }

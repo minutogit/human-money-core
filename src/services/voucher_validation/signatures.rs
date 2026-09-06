@@ -2,8 +2,7 @@ use crate::error::{ValidationError, VoucherCoreError};
 use crate::models::profile::PublicProfile;
 use crate::models::voucher::{Voucher, VoucherSignature};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
-use crate::services::crypto::{get_hash_from_slices, get_pubkey_from_user_id, validate_user_id, verify_ed25519};
-use crate::services::utils::to_canonical_json;
+use crate::services::crypto::{get_pubkey_from_user_id, validate_user_id, verify_ed25519};
 use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -139,16 +138,9 @@ fn is_signature_valid(
         return Ok(());
     }
 
-    let mut obj_to_verify = signature_obj.clone();
-    obj_to_verify.signature_id = "".to_string();
-    obj_to_verify.signature = "".to_string();
-
-    let calculated_id_hash = get_hash_from_slices(&[
-        to_canonical_json(&obj_to_verify)
-            .unwrap_or_default()
-            .as_bytes(),
-        init_t_id.as_bytes(),
-    ]);
+    let calculated_id_hash = signature_obj
+        .calculate_signature_id(init_t_id)
+        .unwrap_or_default();
 
     if calculated_id_hash != signature_obj.signature_id {
         return Err(ValidationError::InvalidSignatureId(
@@ -160,16 +152,11 @@ fn is_signature_valid(
         Ok(pk) => pk,
         Err(e) => return Err(ValidationError::InvalidCreatorId(e.to_string())),
     };
-    let signature_bytes = match bs58::decode(&signature_obj.signature).into_vec() {
-        Ok(bytes) => bytes,
-        Err(e) => return Err(ValidationError::SignatureDecodeError(e.to_string())),
-    };
-
-    let signature_array: [u8; 64] = signature_bytes.try_into().map_err(|_| {
-        ValidationError::SignatureDecodeError(
-            "Invalid signature length: must be 64 bytes".to_string(),
-        )
-    })?;
+    let signature_array = crate::services::crypto::decode_bs58_fixed::<64>(
+        &signature_obj.signature,
+        "signature",
+    )
+    .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
     let signature = Signature::from_bytes(&signature_array);
 
     if !verify_ed25519(

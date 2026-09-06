@@ -209,21 +209,16 @@ impl Wallet {
                 // transactions under that claim must carry valid V3 layer2_signatures
                 // under the claimed ephemeral public key. Unverified claims must never
                 // gain persistent offender linkage.
-                let eph_pub_bytes = bs58::decode(claimed_eph)
-                    .into_vec()
-                    .map_err(|_| {
-                        crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
+                let eph_pub_bytes = crate::services::crypto::decode_bs58_fixed::<32>(
+                    claimed_eph,
+                    "claimed_eph",
+                )
+                .map_err(|_| {
+                    crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                             "Cannot import proof: invalid ephemeral pubkey encoding in offender_id.".to_string(),
                          })
-                    })?;
-            if eph_pub_bytes.len() != 32 {
-                return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
-                    "Cannot import proof: ephemeral pubkey in offender_id must be 32 bytes.".to_string(),
-                 }));
-            }
-            let ephem_key = ed25519_dalek::VerifyingKey::from_bytes(
-                eph_pub_bytes.as_slice().try_into().unwrap(),
-            )
+                })?;
+            let ephem_key = ed25519_dalek::VerifyingKey::from_bytes(&eph_pub_bytes)
             .map_err(|_| {
                 crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                     "Cannot import proof: invalid ephemeral pubkey in offender_id.".to_string(),
@@ -239,29 +234,23 @@ impl Wallet {
                 let sig_str = tx.layer2_signature.as_ref().ok_or_else(|| {
                     crate::Error::Wallet(crate::error::WalletError::MissingLayer2Signature)
                 })?;
-                let sig_bytes = bs58::decode(sig_str).into_vec().map_err(|_| {
+                let sig_bytes = crate::services::crypto::decode_bs58_fixed::<64>(
+                    sig_str,
+                    "layer2_signature",
+                )
+                .map_err(|_| {
                     crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
-                        "Cannot import proof: invalid layer2_signature encoding.".to_string(),
-                     })
-                })?;
-                let signature = ed25519_dalek::Signature::from_bytes(
-                    sig_bytes.as_slice().try_into().map_err(|_| {
-                        crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
-                            "Cannot import proof: invalid layer2_signature length.".to_string(),
+                            "Cannot import proof: invalid layer2_signature encoding.".to_string(),
                          })
-                    })?,
-                );
-                let t_id_bytes = bs58::decode(&tx.t_id).into_vec().map_err(|_| {
-                    crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
-                        "Cannot import proof: invalid t_id encoding.".to_string(),
-                     })
                 })?;
-                let t_id_32: [u8; 32] = t_id_bytes.as_slice().try_into().map_err(|_| {
-                    crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
-                        "Cannot import proof: t_id must be 32 bytes.".to_string(),
-                     })
-                })?;
-                let ephem_pub_32: [u8; 32] = eph_pub_bytes.as_slice().try_into().unwrap();
+                let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+                let t_id_32 = crate::services::crypto::decode_bs58_fixed::<32>(&tx.t_id, "t_id")
+                    .map_err(|_| {
+                        crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
+                            "Cannot import proof: invalid t_id encoding.".to_string(),
+                         })
+                    })?;
+                let ephem_pub_32: [u8; 32] = eph_pub_bytes;
 
                 let challenge_ds_tag = if tx.t_type == "init" {
                     tx.t_id.clone()
@@ -695,14 +684,12 @@ impl Wallet {
                     // mu derives from fingerprint data alone (ds_tag binds
                     // prev_hash), enabling fully autonomous extraction from
                     // gossip without transaction chains.
-                    let Ok(eph_vec) = bs58::decode(&f1.sender_ephemeral_pub).into_vec() else {
+                    let Ok(eph) = crate::services::crypto::decode_bs58_fixed::<32>(
+                        &f1.sender_ephemeral_pub,
+                        "sender_ephemeral_pub",
+                    ) else {
                         continue;
                     };
-                    if eph_vec.len() != 32 {
-                        continue;
-                    }
-                    let mut eph = [0u8; 32];
-                    eph.copy_from_slice(&eph_vec);
                     if let Ok(point) = crate::services::trap_manager::extract_sst_identity(
                         &f1.ds_tag,
                         &eph,
@@ -1131,30 +1118,31 @@ pub(crate) fn resolve_conflict_offline(
         prev_hash: &str,
         conflicting_txs: &[&crate::models::voucher::Transaction],
     ) -> bool {
-        let prev_bytes = match bs58::decode(prev_hash).into_vec() {
-            Ok(v) if v.len() == 32 => v,
-            _ => return false,
-        };
-        let eph_bytes = match bs58::decode(&fp.sender_ephemeral_pub).into_vec() {
-            Ok(v) if v.len() == 32 => v,
-            _ => return false,
+        let prev_ok = crate::services::crypto::decode_bs58_fixed::<32>(prev_hash, "prev_hash").is_ok();
+        if !prev_ok {
+            return false;
+        }
+        let Ok(eph_bytes) =
+            crate::services::crypto::decode_bs58_fixed::<32>(&fp.sender_ephemeral_pub, "sender_ephemeral_pub")
+        else {
+            return false;
         };
         // The claimed input key must equal the locally revealed key of the
         // fork AND recompute the collision tag: ds_tag == H(prev || eph).
+        let expected_tag_ok = crate::services::crypto::get_ds_tag(prev_hash, &fp.sender_ephemeral_pub)
+            .is_ok_and(|t| t == fp.ds_tag);
+        if !expected_tag_ok {
+            return false;
+        }
         conflicting_txs.iter().any(|tx| {
             tx.prev_hash == prev_hash
                 && tx
                     .sender_ephemeral_pub
                     .as_deref()
-                    .and_then(|eph| bs58::decode(eph).into_vec().ok())
-                    .map(|p| {
-                        p.len() == 32
-                            && p.as_slice() == eph_bytes.as_slice()
-                            && crate::services::crypto::get_hash_from_slices(&[
-                                &prev_bytes, &eph_bytes,
-                            ]) == fp.ds_tag
+                    .and_then(|eph| {
+                        crate::services::crypto::decode_bs58_fixed::<32>(eph, "sender_ephemeral_pub").ok()
                     })
-                    .unwrap_or(false)
+                    .is_some_and(|p| p == eph_bytes)
         })
     }
 

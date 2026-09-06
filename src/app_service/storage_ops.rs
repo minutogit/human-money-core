@@ -159,7 +159,7 @@ impl AppService {
 
     /// Acknowledges the successful upload of a seal to the server.
     ///
-    /// Standardized via [`TransactionOrchestrator`] with [`MutationScope::SealMetadataOnly`]:
+    /// Standardized via [`TransactionOrchestrator`]:
     /// only `storage.save_seal` is performed without a wallet generation bump,
     /// under the same fork-lock, file-lock and seal-gate discipline as all
     /// other mutating commands.
@@ -190,7 +190,7 @@ impl AppService {
 
     /// Compares a seal downloaded from the server with the local seal.
     ///
-    /// Standardized via [`TransactionOrchestrator`] with [`MutationScope::SealMetadataOnly`]:
+    /// Standardized via [`TransactionOrchestrator`]:
     /// only `storage.save_seal` is performed when a fork is detected, without
     /// a wallet generation bump, under the same fork-lock and file-lock discipline.
     pub fn compare_remote_seal(
@@ -435,19 +435,6 @@ impl AppService {
         }
     }
 
-    /// Verifies that a freshly loaded wallet state is covered by the current
-    /// cryptographic seal before it may be operated on.
-    ///
-    /// Delegates to [`crate::storage::seal_service::SealService::verify_state_matches_seal`].
-    #[allow(dead_code)]
-    pub(crate) fn verify_state_matches_seal(
-        storage: &FileStorage,
-        auth: &crate::storage::AuthMethod<'_>,
-        wallet: &crate::wallet::Wallet,
-    ) -> Result<(), Error> {
-        crate::storage::seal_service::SealService::verify_state_matches_seal(storage, auth, wallet)
-    }
-
     pub(crate) fn update_seal_after_state_change(
         &mut self,
         password: Option<&str>,
@@ -467,22 +454,6 @@ impl AppService {
             }
             AppState::Locked => Err(Error::WalletLocked),
         }
-    }
-
-    /// Persists the WalletSeal and the Integrity Record for the given wallet
-    /// state without touching the AppService's in-memory state.
-    ///
-    /// Delegates to [`crate::storage::seal_service::SealService::persist_seal_for_wallet_state`].
-    #[allow(dead_code)]
-    pub(crate) fn persist_seal_for_wallet_state(
-        storage: &mut FileStorage,
-        identity: &crate::models::profile::UserIdentity,
-        auth: &crate::storage::AuthMethod<'_>,
-        wallet: &crate::wallet::Wallet,
-    ) -> Result<(), Error> {
-        crate::storage::seal_service::SealService::persist_seal_for_wallet_state(
-            storage, identity, auth, wallet,
-        )
     }
 
     // --- Standard Container Handler (from standard_container_handler) ---

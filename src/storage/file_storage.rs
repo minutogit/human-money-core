@@ -131,22 +131,8 @@ pub(crate) struct EncryptedStorageContainer {
     pub(crate) encrypted_store_payload: Vec<u8>,
 }
 
-// Type aliases for readability at call sites (all identical to the generic container).
+// Type alias for readability at call sites (all identical to the generic container).
 pub(crate) type VoucherStorageContainer = EncryptedStorageContainer;
-#[allow(dead_code)]
-pub(crate) type BundleMetadataContainer = EncryptedStorageContainer;
-#[allow(dead_code)]
-pub(crate) type KnownFingerprintsContainer = EncryptedStorageContainer;
-#[allow(dead_code)]
-pub(crate) type OwnFingerprintsContainer = EncryptedStorageContainer;
-#[allow(dead_code)]
-pub(crate) type ProofStorageContainer = EncryptedStorageContainer;
-#[allow(dead_code)]
-pub(crate) type FingerprintMetadataContainer = EncryptedStorageContainer;
-#[allow(dead_code)]
-pub(crate) type SealStorageContainer = EncryptedStorageContainer;
-#[allow(dead_code)]
-pub(crate) type EventsStorageContainer = EncryptedStorageContainer;
 
 // --- FileStorage Implementation ---
 
@@ -190,6 +176,9 @@ impl FileStorage {
     }
 
     /// Atomic write helper: writes `data` to `relative_path` via tmp-file + rename.
+    ///
+    /// Durability: on non-WASM targets the tmp file is `fsync`'d before rename
+    /// and the parent directory is `fsync`'d after rename (torn-write protection).
     pub(crate) fn write_atomic(
         &self,
         relative_path: impl AsRef<Path>,
@@ -201,7 +190,20 @@ impl FileStorage {
         }
         let tmp = PathBuf::from(format!("{}.tmp", dest.display()));
         fs::write(&tmp, data)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let file = fs::File::open(&tmp)?;
+            file.sync_all()?;
+        }
         fs::rename(&tmp, &dest)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(parent) = dest.parent() {
+                if let Ok(dir) = fs::File::open(parent) {
+                    let _ = dir.sync_all();
+                }
+            }
+        }
         Ok(())
     }
 
@@ -332,13 +334,13 @@ impl FileStorage {
         Ok((payload.profile, store, identity))
     }
 
-    pub fn save_wallet(
-        &mut self,
+    fn write_profile_and_voucher_store_containers(
+        &self,
         profile: &UserProfile,
         store: &VoucherStore,
         identity: &UserIdentity,
         auth: &AuthMethod,
-    ) -> Result<(), StorageError> {
+    ) -> Result<[u8; KEY_SIZE], StorageError> {
         fs::create_dir_all(&self.user_storage_path)?;
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
 
@@ -441,6 +443,17 @@ impl FileStorage {
         )?;
         self.write_atomic(VOUCHER_STORE_FILE_NAME, &store_container_bytes)?;
 
+        Ok(file_key)
+    }
+
+    pub fn save_wallet(
+        &mut self,
+        profile: &UserProfile,
+        store: &VoucherStore,
+        identity: &UserIdentity,
+        auth: &AuthMethod,
+    ) -> Result<(), StorageError> {
+        self.write_profile_and_voucher_store_containers(profile, store, identity, auth)?;
         Ok(())
     }
 
@@ -727,99 +740,14 @@ impl FileStorage {
         }
         let new_generation = current_generation + 1;
 
-        fs::create_dir_all(&self.user_storage_path)?;
-        let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
-
-        let file_key: [u8; KEY_SIZE];
-        let mut profile_container: ProfileStorageContainer;
-
-        let payload = ProfilePayload {
-            profile: wallet.profile.clone(),
-            signing_key_bytes: identity.signing_key.to_bytes().to_vec(),
-        };
-
-        if !profile_path.exists() {
-            // Initial save: generate fresh file key and salts (identical to save_wallet)
-            let mut new_file_key = [0u8; KEY_SIZE];
-            OsRng.fill_bytes(&mut new_file_key);
-            file_key = new_file_key;
-
-            let mut pw_salt = [0u8; SALT_SIZE];
-            OsRng.fill_bytes(&mut pw_salt);
-            let password_key = match auth {
-                AuthMethod::Password(p) => {
-                    if p.is_empty() {
-                        return Err(StorageError::EmptyPassword);
-                    }
-                    derive_key_from_password(p, &pw_salt)?
-                }
-                _ => {
-                    return Err(StorageError::InvalidAuthMethod {
-                        reason: "Only Password auth supported for initial save".to_string(),
-                    })
-                }
-            };
-            let pw_wrapped = crypto::encrypt_data(&password_key, &file_key)
-                .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
-
-            let mut mn_salt = [0u8; SALT_SIZE];
-            OsRng.fill_bytes(&mut mn_salt);
-            let mnemonic_key = derive_key_from_signing_key(&identity.signing_key, &mn_salt)?;
-            let mn_wrapped = crypto::encrypt_data(&mnemonic_key, &file_key)
-                .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
-
-            let profile_payload =
-                crypto::encrypt_data(&file_key, &serde_json::to_vec(&payload)
-                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?)
-                    .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
-
-            profile_container = ProfileStorageContainer {
-                password_kdf_salt: pw_salt,
-                password_wrapped_key_with_nonce: pw_wrapped,
-                mnemonic_kdf_salt: mn_salt,
-                mnemonic_wrapped_key_with_nonce: mn_wrapped,
-                encrypted_profile_payload: profile_payload,
-                store_binding_hash: None,
-            };
-        } else {
-            // Update existing wallet
-            let existing_bytes = fs::read(&profile_path)?;
-            let mut existing: ProfileStorageContainer = serde_json::from_slice(&existing_bytes)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-            let decrypted = get_file_key(auth, &existing)?;
-            file_key = decrypted
-                .try_into()
-                .map_err(|_| StorageError::InvalidFormat("Invalid file key".to_string()))?;
-            existing.encrypted_profile_payload =
-                crypto::encrypt_data(&file_key, &serde_json::to_vec(&payload)
-                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?)
-                    .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
-            profile_container = existing;
-        }
-
-        // --- 1. Kryptographische Bindung: vouchers.enc -> SHA3 HMAC -> profile.store_binding_hash
-        let store_payload =
-            crypto::encrypt_data(&file_key, &serde_json::to_vec(&wallet.voucher_store)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?)
-                .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
-        let store_container = VoucherStorageContainer {
-            encrypted_store_payload: store_payload,
-        };
-        let store_container_bytes = serde_json::to_vec(&store_container)
-            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-        // Byte-identical binding as in save_wallet
-        profile_container.store_binding_hash =
-            Some(derive_store_binding_hash(&file_key, &store_container_bytes));
-
-        // --- 2. Staging: write all containers atomically via tmp+rename ---
-
-        // Profile + vouchers (binding already computed)
-        self.write_atomic(
-            PROFILE_FILE_NAME,
-            &serde_json::to_vec(&profile_container)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?,
+        let file_key = self.write_profile_and_voucher_store_containers(
+            &wallet.profile,
+            &wallet.voucher_store,
+            identity,
+            auth,
         )?;
-        self.write_atomic(VOUCHER_STORE_FILE_NAME, &store_container_bytes)?;
+
+        // --- 2. Staging: write all remaining containers atomically via tmp+rename ---
 
         // Helper to stage an encrypted store with the same file_key
         let stage_store = |this: &Self, rel: &str, plain_bytes: Vec<u8>| -> Result<(), StorageError> {
@@ -901,6 +829,7 @@ impl FileStorage {
     }
 
     /// Alias for `commit_wallet_atomic` (spec names `save_wallet_transaction`).
+    #[deprecated(note = "Use `commit_wallet_atomic` instead. This alias will be removed in a future version.")]
     pub fn save_wallet_transaction(
         &mut self,
         wallet: &mut crate::wallet::Wallet,

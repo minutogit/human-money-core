@@ -33,8 +33,8 @@ use human_money_core::test_utils::{ACTORS, MINUTO_STANDARD};
 /// Creates a minimal, valid transaction with a deterministic prev_hash,
 /// t_id, and t_time. Used for fingerprint tests without wallet context.
 fn make_test_transaction(suffix: &str, t_time: &str) -> Transaction {
-    let prev_hash = bs58::encode(format!("prev-hash-{suffix}").as_bytes()).into_string();
-    let t_id = bs58::encode(format!("tid-{suffix}").as_bytes()).into_string();
+    let prev_hash = human_money_core::services::crypto::get_hash(format!("prev-hash-{suffix}"));
+    let t_id = human_money_core::services::crypto::get_hash(format!("tid-{suffix}"));
 
     Transaction {
         t_id,

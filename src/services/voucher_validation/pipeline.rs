@@ -184,58 +184,11 @@ impl ValidationPipeline {
                 ));
             }
 
-            // Nominal, hash, anti-spoofing, validity duration (+ date order)
-            crate::services::voucher_validation::identity::verify_nominal_value(
-                voucher, std,
-            )?;
-            crate::services::voucher_validation::identity::verify_voucher_hash(voucher)?;
-            crate::services::voucher_validation::identity::verify_anti_spoofing(voucher)?;
-
-            // Date order + validity duration (mirrors validate_voucher_against_standard)
-            let creation_dt =
-                chrono::DateTime::parse_from_rfc3339(&voucher.creation_date)
-                    .map_err(|_| ValidationError::InvalidDateLogic {
-                        creation: voucher.creation_date.clone(),
-                        valid_until: voucher.valid_until.clone(),
-                    })?
-                    .with_timezone(&chrono::Utc);
-            let valid_until_dt =
-                chrono::DateTime::parse_from_rfc3339(&voucher.valid_until)
-                    .map_err(|_| ValidationError::InvalidDateLogic {
-                        creation: voucher.creation_date.clone(),
-                        valid_until: voucher.valid_until.clone(),
-                    })?
-                    .with_timezone(&chrono::Utc);
-            if valid_until_dt < creation_dt {
-                return Err(ValidationError::InvalidDateLogic {
-                    creation: voucher.creation_date.clone(),
-                    valid_until: voucher.valid_until.clone(),
-                }
-                .into());
-            }
-            crate::services::voucher_validation::identity::verify_validity_duration(
-                voucher, std,
-            )?;
-
-            // Rules + signatures (no privacy, no full chain shard here)
-            crate::services::voucher_validation::rules::validate_transaction_types(
-                voucher, std,
-            )?;
-            let failing =
-                crate::services::voucher_validation::rules::get_failing_custom_rules(
-                    voucher, std,
-                )?;
-            if !failing.is_empty() {
-                return Err(
-                    ValidationError::BusinessRuleViolated(failing[0].clone()).into(),
-                );
-            }
-            crate::services::voucher_validation::signatures::verify_signatures(
-                voucher, std,
-            )?;
-            let privacy_mode = &std.immutable.features.privacy_mode;
-            crate::services::voucher_validation::chain::validate_privacy_mode(voucher, privacy_mode)?;
-            crate::services::voucher_validation::chain::verify_transactions(voucher, std)?;
+            // Deduplicated common structural checks (Nominal, Hash, Anti-Spoofing,
+            // Date Logic, Validity Duration, Transaction Types, Rules,
+            // Signatures, Privacy Mode, Transactions) — shared kernel with
+            // `validate_voucher_against_standard`.
+            crate::services::voucher_validation::validate_voucher_structure(voucher, std)?;
         }
         Ok(())
     }
@@ -550,15 +503,24 @@ impl ValidationPipeline {
                                 .clone()
                                 .ok_or_else(missing_witness)?,
                         };
-                        let eph_pub_bytes: [u8; 32] = bs58::decode(
+                        let eph_pub_bytes = match crate::services::crypto::decode_bs58_fixed::<32>(
                             last_tx.sender_ephemeral_pub.as_deref().ok_or_else(|| {
                                 ValidationError::MissingSenderEphemeralPubForSst
                             })?,
-                        )
-                        .into_vec()
-                        .map_err(|_| ValidationError::InvalidSenderEphemeralPubEncoding)?
-                        .try_into()
-                        .map_err(|_| ValidationError::SenderEphemeralPubWrongLength)?;
+                            "sender_ephemeral_pub",
+                        ) {
+                            Ok(arr) => arr,
+                            Err(e) => {
+                                let msg = e.to_string();
+                                if msg.contains("must be 32 bytes")
+                                    || msg.contains("exceeds maximum")
+                                {
+                                    return Err(ValidationError::SenderEphemeralPubWrongLength.into());
+                                } else {
+                                    return Err(ValidationError::InvalidSenderEphemeralPubEncoding.into());
+                                }
+                            }
+                        };
 
                         crate::services::trap_manager::verify_sst_witness(
                             &witness,

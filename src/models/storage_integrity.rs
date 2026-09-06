@@ -75,12 +75,13 @@ impl LocalIntegrityRecord {
         let payload_canonical = to_canonical_json(&self.payload)?;
         let payload_hash = get_hash(payload_canonical.as_bytes());
 
-        let signature_bytes = bs58::decode(&self.signature)
-            .into_vec()
-            .map_err(|e| VoucherCoreError::Bs58Decode(format!("Failed to decode integrity signature: {}", e)))?;
+        let signature_bytes = crate::services::crypto::decode_bs58_fixed::<64>(
+            &self.signature,
+            "integrity signature",
+        )
+        .map_err(|e| VoucherCoreError::Bs58Decode(format!("Failed to decode integrity signature: {}", e)))?;
 
-        let signature = ed25519_dalek::Signature::from_slice(&signature_bytes)
-            .map_err(|e| VoucherCoreError::Ed25519(format!("Invalid integrity signature format: {}", e)))?;
+        let signature = ed25519_dalek::Signature::from_bytes(&signature_bytes);
 
         if !verify_ed25519(&pubkey, payload_hash.as_bytes(), &signature) {
             return Ok(IntegrityReport::InvalidSignature);

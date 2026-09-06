@@ -96,6 +96,31 @@ pub fn derive_ephemeral_key_pair(
     Ok((signing_key, public_key))
 }
 
+/// Derives the deterministic change key via HKDF from a signing key, user_id and prev_hash.
+///
+/// This is the canonical central implementation consolidating previously duplicated
+/// HKDF logic in `wallet/transactions.rs` and `models/voucher.rs`.
+pub fn derive_deterministic_change_key(
+    signing_key: &SigningKey,
+    user_id: &str,
+    prev_hash: &str,
+) -> Result<SigningKey, VoucherCoreError> {
+    let sender_id_prefix = super::utils::get_prefix_from_user_id(user_id);
+    let ikm = signing_key.to_bytes();
+    let (prk, _) = Hkdf::<Sha256>::extract(Some(prev_hash.as_bytes()), &ikm);
+    let hkdf = Hkdf::<Sha256>::from_prk(&prk)
+        .map_err(|_| VoucherCoreError::Crypto("Invalid PRK".to_string()))?;
+    let info = if let Some(p) = sender_id_prefix {
+        format!("{}change_seed", p)
+    } else {
+        "change_seed".to_string()
+    };
+    let mut change_seed = [0u8; 32];
+    hkdf.expand(info.as_bytes(), &mut change_seed)
+        .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+    Ok(SigningKey::from_bytes(&change_seed))
+}
+
 /// Generates a random or deterministic Ed25519 keypair for test purposes.
 ///
 /// # Warning
@@ -195,5 +220,27 @@ mod tests {
         let result = mac.finalize().into_bytes();
         let il = hex::encode(&result[..32]);
         assert_eq!(il, "2b4be7f19ee27bbf30c667b642d5f4aa69fd169872f8fc3059c08ebae2eb19e7");
+    }
+
+    #[test]
+    fn test_derive_deterministic_change_key() {
+        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let (_, signing_key) = derive_ed25519_keypair(mnemonic, None, MnemonicLanguage::English).unwrap();
+        let user_id = "test:abcd@did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwA8PhDU";
+        let prev_hash = "5HueCGU8rMjxEXxiPuD5BDu4V9a2a3P8F6Z7xW9Y2qN3m";
+
+        // Determinism: same inputs yield same key
+        let key1 = derive_deterministic_change_key(&signing_key, user_id, prev_hash).unwrap();
+        let key2 = derive_deterministic_change_key(&signing_key, user_id, prev_hash).unwrap();
+        assert_eq!(key1.to_bytes(), key2.to_bytes());
+
+        // Different prev_hash yields different key
+        let key3 = derive_deterministic_change_key(&signing_key, user_id, "different_prev_hash").unwrap();
+        assert_ne!(key1.to_bytes(), key3.to_bytes());
+
+        // Different prefix yields different key (context binding)
+        let root_user_id = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwA8PhDU";
+        let key_root = derive_deterministic_change_key(&signing_key, root_user_id, prev_hash).unwrap();
+        assert_ne!(key1.to_bytes(), key_root.to_bytes());
     }
 }

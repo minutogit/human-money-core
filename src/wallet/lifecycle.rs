@@ -404,29 +404,5 @@ impl Wallet {
         )
     }
 
-    /// Legacy wrapper preserving the old `(&mut FileStorage, ..)` signature for
-    /// backward compatibility. Delegates to the pure `force_device_handover`
-    /// overload and performs I/O via `FileStorage`.
-    pub fn force_device_handover_with_storage(
-        &self,
-        storage: &mut FileStorage,
-        identity: &UserIdentity,
-        auth: &AuthMethod,
-    ) -> Result<crate::models::seal::WalletSeal, VoucherCoreError> {
-        let record = storage
-            .load_seal(auth)
-            .map_err(VoucherCoreError::Storage)?
-            .ok_or(VoucherCoreError::RequiresSealRecovery)?;
-        let new_seal = self.force_device_handover(identity, Some(&record.seal))?;
-        let new_record = crate::models::seal::LocalSealRecord {
-            seal: new_seal.clone(),
-            sync_status: crate::models::seal::SyncStatus::PendingUpload,
-            is_locked_due_to_fork: false,
-        };
-        storage
-            .save_seal(auth, &new_record)
-            .map_err(VoucherCoreError::Storage)?;
-        Ok(new_seal)
-    }
 }
 

@@ -247,6 +247,24 @@ pub struct VoucherSignature {
     pub details: Option<PublicProfile>,
 }
 
+impl VoucherSignature {
+    /// Calculates the deterministic `signature_id` for this signature.
+    ///
+    /// The ID is the length-prefixed SHA3-256 hash of the canonical JSON
+    /// representation (with `signature_id` and `signature` cleared) concatenated
+    /// with the genesis transaction ID `init_t_id`.
+    pub fn calculate_signature_id(&self, init_t_id: &str) -> Result<String, VoucherCoreError> {
+        let mut sig_clone = self.clone();
+        sig_clone.signature_id.clear();
+        sig_clone.signature.clear();
+        let json_str = crate::services::utils::to_canonical_json(&sig_clone)?;
+        Ok(crate::services::crypto::get_hash_from_slices(&[
+            json_str.as_bytes(),
+            init_t_id.as_bytes(),
+        ]))
+    }
+}
+
 /// The main struct representing the universal voucher container.
 /// It combines all other structures and fields according to the general JSON schema.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
@@ -453,14 +471,12 @@ impl Voucher {
         let mut init_transaction = Transaction {
             t_id: "".to_string(),
             prev_hash: {
-                let voucher_id_bytes = bs58::decode(&temp_voucher.voucher_id)
-                    .into_vec()
-                    .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid voucher_id format".to_string()))?;
-                let nonce_bytes = bs58::decode(&temp_voucher.voucher_nonce)
-                    .into_vec()
-                    .map_err(|_| {
-                        VoucherCoreError::InvalidHashFormat("Invalid voucher_nonce format".to_string())
-                    })?;
+                let voucher_id_bytes = crate::services::crypto::decode_bs58_fixed::<32>(
+                    &temp_voucher.voucher_id, "voucher_id",
+                )?;
+                let nonce_bytes = crate::services::crypto::decode_bs58_fixed::<16>(
+                    &temp_voucher.voucher_nonce, "voucher_nonce",
+                )?;
                 crate::services::crypto::get_hash_from_slices(&[&voucher_id_bytes, &nonce_bytes])
             },
             t_type: "init".to_string(),
@@ -527,28 +543,17 @@ impl Voucher {
             details: None,
         };
 
-        creator_sig_obj.signature_id = crate::services::crypto::get_hash_from_slices(&[
-            crate::services::utils::to_canonical_json(&creator_sig_obj)?.as_bytes(),
-            init_t_id.as_bytes(),
-        ]);
+        creator_sig_obj.signature_id = creator_sig_obj.calculate_signature_id(&init_t_id)?;
         let creator_signature =
             crate::services::crypto::sign_ed25519(creator_signing_key, creator_sig_obj.signature_id.as_bytes());
         creator_sig_obj.signature = bs58::encode(creator_signature.to_bytes()).into_string();
 
-        let t_id_raw = bs58::decode(&init_transaction.t_id)
-            .into_vec()
-            .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id hash".to_string()))?;
+        let t_id_32 = crate::services::crypto::decode_bs58_fixed::<32>(&init_transaction.t_id, "t_id")?;
 
-        let sender_pub_raw = bs58::decode(&genesis_pub_str).into_vec().map_err(|_| {
-            VoucherCoreError::InvalidHashFormat("Invalid genesis_pub format".to_string())
-        })?;
+        let sender_pub_32 =
+            crate::services::crypto::decode_bs58_fixed::<32>(&genesis_pub_str, "sender_pub")?;
 
         let challenge_ds_tag = init_transaction.t_id.clone();
-
-        let to_32_bytes = |vec: Vec<u8>, name: &str| -> Result<[u8; 32], VoucherCoreError> {
-            vec.try_into()
-                .map_err(|_| VoucherCoreError::InvalidHashFormat(format!("{} must be 32 bytes", name)))
-        };
 
         let encrypted_timestamp =
             crate::services::conflict_manager::encrypt_transaction_timestamp(&init_transaction)?;
@@ -556,8 +561,8 @@ impl Voucher {
         let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
             crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
             &challenge_ds_tag,
-            &to_32_bytes(t_id_raw.clone(), "t_id")?,
-            &to_32_bytes(sender_pub_raw.clone(), "sender_pub")?,
+            &t_id_32,
+            &sender_pub_32,
             crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
             crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
             encrypted_timestamp,
@@ -568,7 +573,7 @@ impl Voucher {
         let l2_sig_bytes = crate::services::crypto::sign_ed25519(&genesis_secret, &payload_hash);
         init_transaction.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
 
-        let identity_sig_bytes = crate::services::crypto::sign_ed25519(creator_signing_key, &t_id_raw);
+        let identity_sig_bytes = crate::services::crypto::sign_ed25519(creator_signing_key, &t_id_32);
         init_transaction.sender_identity_signature =
             Some(bs58::encode(identity_sig_bytes.to_bytes()).into_string());
 
@@ -691,28 +696,10 @@ impl Voucher {
         let receiver_ephemeral_pub_hash = Some(crate::services::crypto::get_hash(recipient_ephemeral_pub.to_bytes()));
 
         let (change_ephemeral_pub_hash, change_key_seed_opt) = if t_type == "split" {
-            let sender_id_prefix = crate::services::crypto::get_prefix_from_user_id(sender_id);
-
-            let salt = prev_hash.as_bytes();
-            let ikm = sender_permanent_key.to_bytes();
-            let (prk, _) = hkdf::Hkdf::<sha2::Sha256>::extract(Some(salt), &ikm);
-            let hkdf = hkdf::Hkdf::<sha2::Sha256>::from_prk(&prk)
-                .map_err(|_| VoucherCoreError::Crypto("Invalid PRK length".to_string()))?;
-
-            let info = if let Some(p) = sender_id_prefix {
-                format!("{}change_seed", p)
-            } else {
-                "change_seed".to_string()
-            };
-            let mut change_seed = [0u8; 32];
-            hkdf.expand(info.as_bytes(), &mut change_seed)
-                .map_err(|_| {
-                    VoucherCoreError::Crypto("HKDF expand failed for change seed".to_string())
-                })?;
-
-            let change_signing_key = SigningKey::from_bytes(&change_seed);
+            let change_signing_key = crate::services::crypto::derive_deterministic_change_key(sender_permanent_key, sender_id, &prev_hash)?;
             let change_pub = change_signing_key.verifying_key();
             let change_hash = crate::services::crypto::get_hash(change_pub.to_bytes());
+            let change_seed = change_signing_key.to_bytes();
             (
                 Some(change_hash),
                 Some(bs58::encode(change_seed).into_string()),
@@ -721,20 +708,13 @@ impl Voucher {
             (None, None)
         };
 
-        let prev_hash_bytes = bs58::decode(&prev_hash)
-            .into_vec()
-            .map_err(|_| VoucherCoreError::Crypto("Invalid prev_hash format".to_string()))?;
-        let sender_ephem_pub_bytes = bs58::decode(&sender_ephemeral_pub)
-            .into_vec()
-            .map_err(|_| VoucherCoreError::Crypto("Invalid sender_ephemeral_pub format".to_string()))?;
-
-        let ds_tag = crate::services::crypto::get_hash_from_slices(&[&prev_hash_bytes, &sender_ephem_pub_bytes]);
+        let ds_tag = crate::services::crypto::get_ds_tag(&prev_hash, &sender_ephemeral_pub)?;
         let amount_str = format!("{:.1$}", amount_to_send, decimal_places as usize);
 
-        let to_32_bytes = |vec: Vec<u8>, name: &str| -> Result<[u8; 32], VoucherCoreError> {
-            vec.try_into()
-                .map_err(|_| VoucherCoreError::InvalidHashFormat(format!("{} must be 32 bytes", name)))
-        };
+        let eph_pub_32 = crate::services::crypto::decode_bs58_fixed::<32>(
+            &sender_ephemeral_pub,
+            "sender_ephemeral_pub",
+        )?;
 
         let mut new_transaction = Transaction {
             t_id: "".to_string(),
@@ -758,7 +738,6 @@ impl Voucher {
         let tx_json_for_id = crate::services::utils::to_canonical_json(&new_transaction)?;
         new_transaction.t_id = crate::services::crypto::get_hash(tx_json_for_id);
 
-        let eph_pub_32 = to_32_bytes(sender_ephem_pub_bytes, "sender_ephemeral_pub")?;
         let (sst_trap, sst_witness) =
             crate::services::trap_manager::generate_sst_trap(
                 sender_permanent_key,
@@ -807,14 +786,9 @@ impl Voucher {
         };
         new_transaction.privacy_guard = privacy_guard;
 
-        let t_id_raw = bs58::decode(&new_transaction.t_id)
-            .into_vec()
-            .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id hash".to_string()))?;
-        let sender_pub_raw = bs58::decode(&sender_ephemeral_pub)
-            .into_vec()
-            .map_err(|_| {
-                VoucherCoreError::InvalidHashFormat("Invalid sender_ephemeral_pub format".to_string())
-            })?;
+        let t_id_32 = crate::services::crypto::decode_bs58_fixed::<32>(&new_transaction.t_id, "t_id")?;
+        let sender_pub_32 =
+            crate::services::crypto::decode_bs58_fixed::<32>(&sender_ephemeral_pub, "sender_pub")?;
 
         let challenge_ds_tag = ds_tag.clone();
 
@@ -826,8 +800,8 @@ impl Voucher {
         let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
             &l2_voucher_id,
             &challenge_ds_tag,
-            &to_32_bytes(t_id_raw.clone(), "t_id")?,
-            &to_32_bytes(sender_pub_raw.clone(), "sender_pub")?,
+            &t_id_32,
+            &sender_pub_32,
             &trap.trap_r,
             &trap.trap_s,
             encrypted_timestamp,
@@ -842,7 +816,7 @@ impl Voucher {
         new_transaction.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
 
         if new_transaction.sender_id.is_some() {
-            let identity_sig_bytes = crate::services::crypto::sign_ed25519(sender_permanent_key, &t_id_raw);
+            let identity_sig_bytes = crate::services::crypto::sign_ed25519(sender_permanent_key, &t_id_32);
             new_transaction.sender_identity_signature =
                 Some(bs58::encode(identity_sig_bytes.to_bytes()).into_string());
         }
@@ -947,8 +921,10 @@ impl Voucher {
                     &id.user_id,
                 )
                     && let Ok(payload) = serde_json::from_slice::<RecipientPayload>(&decrypted_payload_bytes)
-                        && let Ok(seed_bytes) = bs58::decode(&payload.next_key_seed).into_vec()
-                            && let Ok(seed_arr) = seed_bytes.try_into() {
+                        && let Ok(seed_arr) = crate::services::crypto::decode_bs58_fixed::<32>(
+                            &payload.next_key_seed,
+                            "next_key_seed",
+                        ) {
                                 let candidate_key = SigningKey::from_bytes(&seed_arr);
                                 let candidate_hash = crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
                                 if Some(&candidate_hash) == last_tx.receiver_ephemeral_pub_hash.as_ref() {
@@ -957,22 +933,10 @@ impl Voucher {
                             }
 
             // B) Check change key via HKDF (Change mode)
-            let sender_id_prefix = crate::services::crypto::get_prefix_from_user_id(&id.user_id);
-            let ikm = id.signing_key.to_bytes();
-            let (prk, _) = hkdf::Hkdf::<sha2::Sha256>::extract(Some(last_tx.prev_hash.as_bytes()), &ikm);
-            if let Ok(hkdf) = hkdf::Hkdf::<sha2::Sha256>::from_prk(&prk) {
-                let info = if let Some(p) = sender_id_prefix {
-                    format!("{}change_seed", p)
-                } else {
-                    "change_seed".to_string()
-                };
-                let mut change_seed = [0u8; 32];
-                if hkdf.expand(info.as_bytes(), &mut change_seed).is_ok() {
-                    let candidate_key = SigningKey::from_bytes(&change_seed);
-                    let candidate_hash = crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
-                    if Some(&candidate_hash) == last_tx.change_ephemeral_pub_hash.as_ref() {
-                        change_match = true;
-                    }
+            if let Ok(candidate_key) = crate::services::crypto::derive_deterministic_change_key(&id.signing_key, &id.user_id, &last_tx.prev_hash) {
+                let candidate_hash = crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
+                if Some(&candidate_hash) == last_tx.change_ephemeral_pub_hash.as_ref() {
+                    change_match = true;
                 }
             }
 

@@ -187,11 +187,12 @@ fn verify_container_signature(
 /// Verifies the digital signature of a `TransactionBundle`.
 fn verify_bundle_signature(bundle: &TransactionBundle) -> Result<(), VoucherCoreError> {
     let sender_pubkey_ed = get_pubkey_from_user_id(&bundle.sender_id)?;
-    let signature_bytes = bs58::decode(&bundle.sender_signature)
-        .into_vec()
-        .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
-    let signature = Signature::from_slice(&signature_bytes)
-        .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
+    let signature_bytes = crate::services::crypto::decode_bs58_fixed::<64>(
+        &bundle.sender_signature,
+        "sender_signature",
+    )
+    .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
+    let signature = Signature::from_bytes(&signature_bytes);
 
     if !verify_ed25519(&sender_pubkey_ed, bundle.bundle_id.as_bytes(), &signature) {
         return Err(ValidationError::InvalidBundleSignature.into());

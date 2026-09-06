@@ -17,6 +17,9 @@ use base64::{Engine as _, engine::general_purpose};
 
 use crate::error::VoucherCoreError;
 
+// Re-export for canonical change-key derivation (allows `super::utils::get_prefix_from_user_id` in keys.rs)
+pub use super::identity::get_prefix_from_user_id;
+
 /// Generates a mnemonic phrase with a specified word count and language.
 ///
 /// # Arguments
@@ -206,10 +209,49 @@ pub fn get_secret_scalar(signing_key: &SigningKey) -> curve25519_dalek::scalar::
     curve25519_dalek::scalar::Scalar::from_bytes_mod_order(scalar_bytes)
 }
 
+/// Computes the double-spend tag `ds_tag = H(prev_hash || sender_ephemeral_pub)`.
+///
+/// Both inputs are Base58-encoded; decoding errors are mapped to
+/// `VoucherCoreError::Crypto` (fail-closed). The digest uses
+/// length-prefixed SHA3-256 via [`get_hash_from_slices`] (second-
+/// preimage resistance).
+///
+/// # Errors
+/// Returns `VoucherCoreError::Crypto` if either input is not valid Base58.
+pub fn get_ds_tag(prev_hash: &str, sender_ephemeral_pub: &str) -> Result<String, VoucherCoreError> {
+    let prev_hash_bytes = bs58::decode(prev_hash)
+        .into_vec()
+        .map_err(|e| VoucherCoreError::Crypto(format!("Invalid Base58 for prev_hash: {}", e)))?;
+    let ephem_pub_bytes = bs58::decode(sender_ephemeral_pub)
+        .into_vec()
+        .map_err(|e| VoucherCoreError::Crypto(format!("Invalid Base58 for sender_ephemeral_pub: {}", e)))?;
+    Ok(get_hash_from_slices(&[&prev_hash_bytes, &ephem_pub_bytes]))
+}
+
 /// A secure, deterministic mapping of a byte array (e.g. prev_hash) to an Ed25519 curve point.
 #[allow(deprecated)]
 pub fn hash_to_curve(data: &[u8]) -> EdwardsPoint {
     EdwardsPoint::nonspec_map_to_curve::<Sha512>(data)
+}
+
+/// Decodes a Base58 string into a fixed-size byte array with a DoS guard.
+///
+/// Rejects inputs whose Base58 length exceeds `N*2+10` before allocating,
+/// then validates that the decoded payload is exactly `N` bytes.
+/// Errors preserve the `InvalidHashFormat` taxonomy (no flattening).
+pub fn decode_bs58_fixed<const N: usize>(s: &str, field_name: &str) -> Result<[u8; N], VoucherCoreError> {
+    if s.len() > N * 2 + 10 {
+        return Err(VoucherCoreError::InvalidHashFormat(format!(
+            "{field_name} string exceeds maximum Base58 length for {N} bytes"
+        )));
+    }
+    let bytes = bs58::decode(s)
+        .into_vec()
+        .map_err(|e| VoucherCoreError::InvalidHashFormat(format!("Invalid base58 for {field_name}: {e}")))?;
+    let len = bytes.len();
+    bytes.try_into().map_err(|_| {
+        VoucherCoreError::InvalidHashFormat(format!("{field_name} must be {N} bytes, got {len}"))
+    })
 }
 
 #[cfg(test)]
@@ -220,5 +262,66 @@ mod tests {
     fn test_get_short_hash_from_user_id() {
         let short_hash = get_short_hash_from_user_id("test_user");
         assert_eq!(short_hash.len(), 4);
+    }
+
+    #[test]
+    fn test_decode_bs58_fixed_32_bytes_ok() {
+        let raw = [7u8; 32];
+        let encoded = bs58::encode(&raw).into_string();
+        let decoded = decode_bs58_fixed::<32>(&encoded, "t_id").expect("valid 32 bytes");
+        assert_eq!(decoded, raw);
+    }
+
+    #[test]
+    fn test_decode_bs58_fixed_64_bytes_ok() {
+        let raw = [9u8; 64];
+        let encoded = bs58::encode(&raw).into_string();
+        let decoded = decode_bs58_fixed::<64>(&encoded, "layer2_signature").expect("valid 64 bytes");
+        assert_eq!(decoded, raw);
+    }
+
+    #[test]
+    fn test_decode_bs58_fixed_invalid_chars() {
+        // '0', 'O', 'I', 'l' are not in the Bitcoin Base58 alphabet
+        let err = decode_bs58_fixed::<32>("0OIl", "t_id").unwrap_err();
+        match err {
+            VoucherCoreError::InvalidHashFormat(msg) => assert!(msg.contains("Invalid base58 for t_id")),
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_decode_bs58_fixed_wrong_length() {
+        // 32 bytes expected, but we encode only 16 bytes
+        let raw = [1u8; 16];
+        let encoded = bs58::encode(&raw).into_string();
+        let err = decode_bs58_fixed::<32>(&encoded, "t_id").unwrap_err();
+        match err {
+            VoucherCoreError::InvalidHashFormat(msg) => assert!(msg.contains("must be 32 bytes, got 16")),
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_decode_bs58_fixed_dos_length_guard() {
+        // N=32 => max is 32*2+10=74; input exceeding that must be rejected before decode
+        let long = "A".repeat(75);
+        let err = decode_bs58_fixed::<32>(&long, "t_id").unwrap_err();
+        match err {
+            VoucherCoreError::InvalidHashFormat(msg) => {
+                assert!(msg.contains("exceeds maximum Base58 length for 32 bytes"))
+            }
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+        // Boundary: exactly N*2+10 must NOT trip the DoS guard (should fail on base58/length instead)
+        // Using a string of valid alphabet chars but wrong decoded length
+        let boundary = "A".repeat(74);
+        let err2 = decode_bs58_fixed::<32>(&boundary, "t_id").unwrap_err();
+        match err2 {
+            VoucherCoreError::InvalidHashFormat(msg) => {
+                assert!(!msg.contains("exceeds maximum Base58 length"))
+            }
+            other => panic!("unexpected error variant: {other:?}"),
+        }
     }
 }

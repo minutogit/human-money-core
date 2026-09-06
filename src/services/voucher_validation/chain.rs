@@ -275,9 +275,9 @@ pub fn verify_transactions(
         if let Some(revealed_pub) = &tx.sender_ephemeral_pub {
             let correct_anchor = if prev_tx.recipient_id == tx.sender_id.clone().unwrap_or_default()
             {
-                let pub_bytes = bs58::decode(revealed_pub).into_vec().map_err(|_| {
-                    VoucherCoreError::Crypto("Invalid base58 encoding in revealed_pub".to_string())
-                })?;
+                let pub_bytes = crate::services::crypto::decode_bs58_fixed::<32>(
+                    revealed_pub, "revealed_pub",
+                )?;
                 let hash_pub = get_hash(pub_bytes);
                 if let Some(prev_recv_hash) = &prev_tx.receiver_ephemeral_pub_hash {
                     if hash_pub == *prev_recv_hash {
@@ -300,11 +300,9 @@ pub fn verify_transactions(
                 } else if tx.sender_id.is_some() && tx.sender_id == prev_tx.sender_id {
                     prev_tx.change_ephemeral_pub_hash.as_ref()
                 } else {
-                    let pub_bytes = bs58::decode(revealed_pub).into_vec().map_err(|_| {
-                        VoucherCoreError::Crypto(
-                            "Invalid base58 encoding in revealed_pub".to_string(),
-                        )
-                    })?;
+                    let pub_bytes = crate::services::crypto::decode_bs58_fixed::<32>(
+                        revealed_pub, "revealed_pub",
+                    )?;
                     let hash_pub = get_hash(pub_bytes);
                     if let Some(prev_recv_hash) = &prev_tx.receiver_ephemeral_pub_hash {
                         if hash_pub == *prev_recv_hash {
@@ -349,20 +347,9 @@ pub fn verify_transactions(
             }
 
             // Structural ds_tag hygiene: must be valid Base58 32-byte hash.
-            if trap.ds_tag.len() > 64 {
-                return Err(VoucherCoreError::Crypto(
-                    "Shard ds_tag exceeds maximum Base58 length".to_string(),
-                ));
-            }
-            let ds_tag_bytes = bs58::decode(&trap.ds_tag).into_vec().map_err(|e| {
-                VoucherCoreError::Crypto(format!("Invalid Base58 for ds_tag: {}", e))
-            })?;
-            if ds_tag_bytes.len() != 32 {
-                return Err(VoucherCoreError::Crypto(format!(
-                    "Invalid ds_tag length: expected 32 bytes, found {}",
-                    ds_tag_bytes.len()
-                )));
-            }
+            let _ = crate::services::crypto::decode_bs58_fixed::<32>(
+                &trap.ds_tag, "ds_tag",
+            )?;
 
             // SECURITY (HMSEC-SA04-09): Structural shard sanity. The V3
             // digest binds the shard STRINGS verbatim, so a malicious payer
@@ -378,20 +365,10 @@ pub fn verify_transactions(
                 &trap.trap_s,
             )?;
 
-            let prev_hash_bytes = bs58::decode(&tx.prev_hash)
-                .into_vec()
-                .map_err(|_| VoucherCoreError::Crypto("Invalid prev_hash format".to_string()))?;
-            let ephem_pub_bytes = tx
-                .sender_ephemeral_pub
-                .as_ref()
-                .map(|s| bs58::decode(s).into_vec())
-                .transpose()
-                .map_err(|_| {
-                    VoucherCoreError::Crypto("Invalid sender_ephemeral_pub format".to_string())
-                })?
-                .unwrap_or_default();
-
-            let expected_ds_tag = get_hash_from_slices(&[&prev_hash_bytes, &ephem_pub_bytes]);
+            let expected_ds_tag = crate::services::crypto::get_ds_tag(
+                &tx.prev_hash,
+                tx.sender_ephemeral_pub.as_deref().unwrap_or(""),
+            )?;
 
             if trap.ds_tag != expected_ds_tag {
                 return Err(VoucherCoreError::Crypto(format!(
@@ -410,11 +387,9 @@ pub fn verify_transactions(
 
         let sender_balance_before_tx = {
             let my_revealed_pub_hash = if let Some(k) = &tx.sender_ephemeral_pub {
-                let bytes = bs58::decode(k).into_vec().map_err(|_| {
-                    VoucherCoreError::Crypto(
-                        "Invalid base58 encoding in sender_ephemeral_pub".to_string(),
-                    )
-                })?;
+                let bytes = crate::services::crypto::decode_bs58_fixed::<32>(
+                    k, "sender_ephemeral_pub",
+                )?;
                 get_hash(bytes)
             } else {
                 "".to_string()
@@ -703,52 +678,35 @@ pub fn verify_transaction_integrity_and_signature(
 
     if let Some(l2_sig) = &transaction.layer2_signature {
         if let Some(sender_ephem_pub) = &transaction.sender_ephemeral_pub {
-            let ephem_pub_bytes = bs58::decode(sender_ephem_pub).into_vec().map_err(|_| {
-                ValidationError::SignatureDecodeError("Invalid ephemeral pubkey".into())
-            })?;
-            let l2_sig_bytes = bs58::decode(l2_sig).into_vec().map_err(|_| {
-                ValidationError::SignatureDecodeError("Invalid l2 signature".into())
-            })?;
-
-            let ephem_key = ed25519_dalek::VerifyingKey::from_bytes(
-                ephem_pub_bytes.as_slice().try_into().map_err(|_| {
-                    ValidationError::SignatureDecodeError("Invalid ephemeral pubkey length".into())
-                })?,
+            let ephem_pub_32 = crate::services::crypto::decode_bs58_fixed::<32>(
+                sender_ephem_pub,
+                "sender_ephemeral_pub",
             )
-            .map_err(|_| {
-                ValidationError::SignatureDecodeError("Invalid ephemeral pubkey bytes".into())
-            })?;
-            let signature =
-                Signature::from_bytes(l2_sig_bytes.as_slice().try_into().map_err(|_| {
-                    ValidationError::SignatureDecodeError("Invalid l2 signature length".into())
-                })?);
+            .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
+            let l2_sig_bytes = crate::services::crypto::decode_bs58_fixed::<64>(
+                l2_sig,
+                "layer2_signature",
+            )
+            .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
 
-            let t_id_raw = bs58::decode(&transaction.t_id)
-                .into_vec()
-                .map_err(|_| ValidationError::SignatureDecodeError("Invalid t_id format".into()))?;
+            let ephem_key = ed25519_dalek::VerifyingKey::from_bytes(&ephem_pub_32)
+                .map_err(|_| {
+                    ValidationError::SignatureDecodeError("Invalid ephemeral pubkey bytes".into())
+                })?;
+            let signature = Signature::from_bytes(&l2_sig_bytes);
 
-            let challenge_ds_tag = if transaction.t_type == "init" {
-                transaction.t_id.clone()
-            } else {
-                transaction
-                    .trap_data
-                    .as_ref()
-                    .map(|td| td.ds_tag.clone())
-                    .ok_or_else(|| {
-                        ValidationError::InvalidTransaction(
-                            "Missing trap_data for non-init transaction".to_string(),
-                        )
-                    })?
-            };
+            let t_id_32 = crate::services::crypto::decode_bs58_fixed::<32>(
+                &transaction.t_id,
+                "t_id",
+            )
+            .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
 
-            let to_32_bytes = |vec: Vec<u8>| -> Result<[u8; 32], ValidationError> {
-                vec.try_into().map_err(|_| {
-                    ValidationError::SignatureDecodeError("Hash must be 32 bytes".into())
-                })
-            };
-
-            let t_id_32 = to_32_bytes(t_id_raw)?;
-            let ephem_pub_32 = to_32_bytes(ephem_pub_bytes)?;
+            let challenge_ds_tag = crate::services::l2_gateway::derive_challenge_tag(transaction)
+                .map_err(|_| {
+                    ValidationError::InvalidTransaction(
+                        "Missing trap_data for non-init transaction".to_string(),
+                    )
+                })?;
 
             // V3 Protocol (HMC_TX_AUTH_V3): verify against the unified,
             // domain-separated digest binding the voucher id (audit_02_11),
@@ -813,16 +771,18 @@ pub fn verify_transaction_integrity_and_signature(
             })?;
 
         let pub_key = get_pubkey_from_user_id(sender_id)?;
-        let sig_bytes = bs58::decode(identity_sig_enc)
-            .into_vec()
-            .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
-        let signature = Signature::from_bytes(sig_bytes.as_slice().try_into().map_err(|_| {
-            ValidationError::SignatureDecodeError("Invalid identity signature length".into())
-        })?);
+        let sig_bytes = crate::services::crypto::decode_bs58_fixed::<64>(
+            identity_sig_enc,
+            "sender_identity_signature",
+        )
+        .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
+        let signature = Signature::from_bytes(&sig_bytes);
 
-        let t_id_raw = bs58::decode(&transaction.t_id)
-            .into_vec()
-            .map_err(|_| ValidationError::SignatureDecodeError("Invalid t_id format".into()))?;
+        let t_id_raw = crate::services::crypto::decode_bs58_fixed::<32>(
+            &transaction.t_id,
+            "t_id",
+        )
+        .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
         if pub_key.verify(&t_id_raw, &signature).is_err() {
             return Err(ValidationError::InvalidTransaction(
                 "Invalid sender_identity_signature".to_string(),

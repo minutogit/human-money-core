@@ -321,25 +321,6 @@ impl AppService {
         crate::app_service::orchestrator::TransactionOrchestrator::execute(self, password, f)
     }
 
-    /// Delegates to [`crate::storage::seal_service::SealService::compensate_failed_seal_phase`].
-    ///
-    /// Kept for internal call-site compatibility; the canonical implementation
-    /// now lives in `SealService`.
-    #[allow(dead_code)]
-    pub(crate) fn compensate_failed_seal_phase(
-        storage: &mut FileStorage,
-        pre_tx_wallet: &Wallet,
-        identity: &UserIdentity,
-        auth: &crate::storage::AuthMethod<'_>,
-    ) -> Wallet {
-        crate::storage::seal_service::SealService::compensate_failed_seal_phase(
-            storage,
-            pre_tx_wallet,
-            identity,
-            auth,
-        )
-    }
-
     /// Checks the "Remember password" session, manages the timeout
     /// and the "sliding window" (resets 'last_activity').
     pub fn get_session_key(&mut self) -> Result<[u8; 32], crate::Error> {

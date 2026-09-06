@@ -178,6 +178,13 @@ fn parse_point_bs58(encoded: &str, label: &str) -> Result<EdwardsPoint, VoucherC
         })
 }
 
+fn parse_scalar_bs58(encoded: &str, label: &str) -> Result<Scalar, VoucherCoreError> {
+    let bytes = bs58::decode(encoded).into_vec().map_err(|e| {
+        VoucherCoreError::Crypto(format!("Invalid Base58 for {}: {}", label, e))
+    })?;
+    parse_canonical_scalar(&bytes, label)
+}
+
 /// SECURITY (HMSEC-SA04-09): Structural validation of the PUBLIC SST shard
 /// pair embedded in a transaction against the generation contract of
 /// [`generate_sst_trap`]: both shards must be Base58-decodable, exactly
@@ -212,10 +219,7 @@ pub(crate) fn validate_shard_structure(trap_r: &str, trap_s: &str) -> Result<(),
     CompressedEdwardsY(r_arr)
         .decompress()
         .ok_or_else(|| VoucherCoreError::Crypto("Decompression of trap_r failed".to_string()))?;
-    let s_bytes = bs58::decode(trap_s).into_vec().map_err(|e| {
-        VoucherCoreError::Crypto(format!("Invalid Base58 for trap_s: {}", e))
-    })?;
-    parse_canonical_scalar(&s_bytes, "trap_s")?;
+    parse_scalar_bs58(trap_s, "trap_s")?;
     Ok(())
 }
 
@@ -375,19 +379,9 @@ pub fn verify_sst_witness(
 
     // Parse witness components (strictly canonical response scalars).
     let r_sig_point = parse_point_bs58(&witness.r_sig, "R_sig")?;
-    let s_sig = parse_canonical_scalar(
-        &bs58::decode(&witness.s_sig)
-            .into_vec()
-            .map_err(|e| VoucherCoreError::Crypto(format!("Invalid Base58 for s_sig: {}", e)))?,
-        "s_sig",
-    )?;
+    let s_sig = parse_scalar_bs58(&witness.s_sig, "s_sig")?;
     let m_r_point = parse_point_bs58(&witness.m_r, "M_R")?;
-    let m_s = parse_canonical_scalar(
-        &bs58::decode(&witness.m_s)
-            .into_vec()
-            .map_err(|e| VoucherCoreError::Crypto(format!("Invalid Base58 for m_s: {}", e)))?,
-        "m_s",
-    )?;
+    let m_s = parse_scalar_bs58(&witness.m_s, "m_s")?;
 
     // Resolve the payer's public identity point.
     let payer_pk = get_pubkey_from_user_id(payer_did)?;
@@ -433,12 +427,7 @@ struct ParsedShard {
 /// Parses a Base58 shard pair into validated cryptographic components.
 fn parse_shard(trap_r: &str, trap_s: &str, tau: Scalar) -> Result<ParsedShard, VoucherCoreError> {
     let r = parse_point_bs58(trap_r, "trap_r")?;
-    let s = parse_canonical_scalar(
-        &bs58::decode(trap_s)
-            .into_vec()
-            .map_err(|e| VoucherCoreError::Crypto(format!("Invalid Base58 for trap_s: {}", e)))?,
-        "trap_s",
-    )?;
+    let s = parse_scalar_bs58(trap_s, "trap_s")?;
     Ok(ParsedShard { tau, r, s })
 }
 
@@ -679,19 +668,8 @@ pub fn verify_stored_trap_shards_against_identity(
                 "SST attribution: conflicting transaction lacks sender_ephemeral_pub".to_string(),
             )
         })?;
-        let eph_bytes: [u8; 32] = bs58::decode(eph_str)
-            .into_vec()
-            .map_err(|_| {
-                VoucherCoreError::Crypto(
-                    "SST attribution: invalid sender_ephemeral_pub encoding".to_string(),
-                )
-            })?
-            .try_into()
-            .map_err(|_| {
-                VoucherCoreError::Crypto(
-                    "SST attribution: sender_ephemeral_pub must be 32 bytes".to_string(),
-                )
-            })?;
+        let eph_bytes: [u8; 32] = crate::services::crypto::decode_bs58_fixed::<32>(eph_str, "eph_pub")
+            .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
 
         // All shards of one collision share the same context.
         match context {

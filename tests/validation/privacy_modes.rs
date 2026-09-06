@@ -38,7 +38,7 @@ fn test_public_mode_enforcement() {
     voucher.transactions.truncate(1);
 
     // Mod Init for Linking
-    let secret = bs58::encode("secret_link_seed").into_string();
+    let secret = bs58::encode([42u8; 32]).into_string();
     let secret_hash = get_hash(bs58::decode(&secret).into_vec().unwrap());
     voucher.transactions[0].receiver_ephemeral_pub_hash = Some(secret_hash);
 
@@ -113,7 +113,7 @@ fn test_private_mode_enforcement() {
     voucher.transactions.truncate(1);
 
     // Modify Init to allow Private Spending (Set ephemeral hash we know)
-    let secret_key = bs58::encode("secret_key_for_private").into_string();
+    let secret_key = bs58::encode([43u8; 32]).into_string();
     let secret_key_hash = get_hash(bs58::decode(&secret_key).into_vec().unwrap());
 
     // We KEEP recipient_id as Creator (Public) to pass Init rules.
@@ -197,7 +197,7 @@ fn test_flexible_mode_hybrid_behavior() {
     voucher.transactions.truncate(1);
 
     // Mod Init for Linking
-    let secret = bs58::encode("secret_link_flex").into_string();
+    let secret = bs58::encode([44u8; 32]).into_string();
     let secret_hash = get_hash(bs58::decode(&secret).into_vec().unwrap());
     voucher.transactions[0].receiver_ephemeral_pub_hash = Some(secret_hash);
 
