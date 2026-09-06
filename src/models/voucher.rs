@@ -73,13 +73,29 @@ pub struct Address {
 }
 
 /// Data for the identity trap (fraud detection).
+///
+/// # V3 Protocol (Shared-Signature Trap / SST)
+/// A transaction stores only its *shard* of a shared Schnorr signature
+/// $\sigma = (R_{sig}, s_{sig})$ over the spend input:
+///
+/// - `trap_r` = $R_i = R_{sig} + \tau_i \cdot M_R$ (32 bytes, Base58)
+/// - `trap_s` = $s_i = s_{sig} + \tau_i \cdot m_s \pmod q$ (32 bytes, Base58)
+///
+/// where $\tau_i = H(\text{"HMC\_TAU\_V1"} \parallel ds\_tag \parallel t\_id)$
+/// and $(M_R, m_s)$ are masking values derived exclusively from the sender's
+/// long-term key. Before a collision each shard is information-theoretically
+/// anonymous (4 unknowns); two colliding shards reconstruct the underlying
+/// Schnorr signature and mathematically reveal the offender's `did:key`
+/// identity with EUF-CMA security (no framing possible).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct TrapData {
     pub ds_tag: String,
-    pub u: String,
-    pub blinded_id: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub proof: String,
+    /// The spend-specific commitment shard $R_i$ (compressed point, Base58).
+    #[serde(default)]
+    pub trap_r: String,
+    /// The spend-specific response shard $s_i$ (canonical scalar, Base58).
+    #[serde(default)]
+    pub trap_s: String,
 }
 
 /// The decrypted payload of the privacy guard.
@@ -102,6 +118,21 @@ pub struct RecipientPayload {
     /// Response s component of the DLEQ proof.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dleq_s: Option<String>,
+    /// # V3 Protocol (SST): private trap witness $\sigma = (R_{sig}, s_{sig})$
+    /// The Schnorr commitment over the spend input (32 bytes, Base58).
+    /// Handed over privately at L1 so the recipient can reject garbage traps
+    /// immediately (fraud *prevention* at handover, R5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trap_r_sig: Option<String>,
+    /// The Schnorr response over the spend input (32 bytes, Base58).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trap_s_sig: Option<String>,
+    /// The masking point $M_R$ of the shared-signature trap (Base58).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trap_m_r: Option<String>,
+    /// The masking scalar $m_s$ of the shared-signature trap (Base58).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trap_m_s: Option<String>,
 }
 
 /// Represents a single transaction in the voucher's transaction chain.

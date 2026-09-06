@@ -15,7 +15,7 @@ use tokio::time;
 use human_money_core::models::layer2_api::{
     L2AuthPayload, L2LockRequest, L2ResponseEnvelope, L2StatusQuery, L2Verdict,
 };
-use human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw;
+use human_money_core::services::l2_gateway::{calculate_l2_payload_hash_raw, TRAP_NONE_PLACEHOLDER};
 
 // =============================================================================
 // CLI Structure
@@ -218,13 +218,15 @@ async fn cmd_genesis(url: &str) {
     // Compute signature: challenge_ds_tag for Genesis = bs58(t_id)
     let challenge_ds_tag = t_id_bs58.clone();
     let payload_hash = calculate_l2_payload_hash_raw(
+        TRAP_NONE_PLACEHOLDER,
         &challenge_ds_tag,
-        &layer2_voucher_id,
         &t_id_bytes,
         &sender_pub,
+        "none",
+        "none",
+        0,
         None,
-        None,
-        None,
+        "",
     );
     let signature = sender_key.sign(&payload_hash);
 
@@ -240,8 +242,12 @@ async fn cmd_genesis(url: &str) {
         sender_ephemeral_pub: sender_pub,
         receiver_ephemeral_pub_hash: None,
         change_ephemeral_pub_hash: None,
+        trap_r: Some("none".to_string()),
+        trap_s: Some("none".to_string()),
+        encrypted_timestamp: 0,
         layer2_signature: signature.to_bytes(),
         deletable_at: None,
+        privacy_guard: None,
     };
 
     println!("[ MANUAL | genesis ]");
@@ -337,13 +343,15 @@ async fn cmd_transfer(url: &str, voucher_id: &str) {
     let ds_tag = old_t_id_bs58.clone();
 
     let payload_hash = calculate_l2_payload_hash_raw(
-        &ds_tag,
         voucher_id,
+        &ds_tag,
         &new_t_id,
         &new_pub,
+        "none",
+        "none",
+        0,
         None,
-        None,
-        None,
+        "",
     );
     let signature = new_key.sign(&payload_hash);
 
@@ -359,8 +367,12 @@ async fn cmd_transfer(url: &str, voucher_id: &str) {
         sender_ephemeral_pub: new_pub,
         receiver_ephemeral_pub_hash: None,
         change_ephemeral_pub_hash: None,
+        trap_r: Some("none".to_string()),
+        trap_s: Some("none".to_string()),
+        encrypted_timestamp: 0,
         layer2_signature: signature.to_bytes(),
         deletable_at: None,
+        privacy_guard: None,
     };
 
     println!("[ MANUAL | transfer ]");
@@ -450,13 +462,15 @@ async fn cmd_split(url: &str, voucher_id: &str) {
     let split_t_id_bs58 = bs58::encode(&split_t_id).into_string();
 
     let split_payload_hash = calculate_l2_payload_hash_raw(
-        &ds_tag,
         voucher_id,
+        &ds_tag,
         &split_t_id,
         &split_pub,
+        "none",
+        "none",
+        0,
         None,
-        None,
-        None,
+        "",
     );
     let split_sig = split_key.sign(&split_payload_hash);
 
@@ -472,8 +486,12 @@ async fn cmd_split(url: &str, voucher_id: &str) {
         sender_ephemeral_pub: split_pub,
         receiver_ephemeral_pub_hash: None,
         change_ephemeral_pub_hash: None,
+        trap_r: Some("none".to_string()),
+        trap_s: Some("none".to_string()),
+        encrypted_timestamp: 0,
         layer2_signature: split_sig.to_bytes(),
         deletable_at: None,
+        privacy_guard: None,
     };
 
     println!("[ MANUAL | split ]");
@@ -587,13 +605,15 @@ async fn cmd_double_spend(url: &str, voucher_id: &str) {
         let attempt_t_id_bs58 = bs58::encode(&attempt_t_id).into_string();
 
         let payload_hash = calculate_l2_payload_hash_raw(
-            &ds_tag,
             voucher_id,
+            &ds_tag,
             &attempt_t_id,
             &spend_pub,
+            "none",
+            "none",
+            0,
             None,
-            None,
-            None,
+            "",
         );
         let sig = spend_key.sign(&payload_hash);
 
@@ -609,8 +629,12 @@ async fn cmd_double_spend(url: &str, voucher_id: &str) {
             sender_ephemeral_pub: spend_pub,
             receiver_ephemeral_pub_hash: None,
             change_ephemeral_pub_hash: None,
+            trap_r: Some("none".to_string()),
+            trap_s: Some("none".to_string()),
+            encrypted_timestamp: 0,
             layer2_signature: sig.to_bytes(),
             deletable_at: None,
+            privacy_guard: None,
         };
 
         println!();
@@ -815,13 +839,19 @@ fn generate_mock_lock_request(
     };
 
     let payload_hash = calculate_l2_payload_hash_raw(
+        if is_genesis {
+            TRAP_NONE_PLACEHOLDER
+        } else {
+            layer2_voucher_id.as_str()
+        },
         &challenge_ds_tag,
-        &layer2_voucher_id,
         &transaction_hash,
         &sender_pub,
+        "none",
+        "none",
+        0,
         None,
-        None,
-        None,
+        "",
     );
 
     let signature = sender_key.sign(&payload_hash);
@@ -838,8 +868,12 @@ fn generate_mock_lock_request(
         sender_ephemeral_pub: sender_pub,
         receiver_ephemeral_pub_hash: None,
         change_ephemeral_pub_hash: None,
+        trap_r: Some("none".to_string()),
+        trap_s: Some("none".to_string()),
+        encrypted_timestamp: 0,
         layer2_signature: signature.to_bytes(),
         deletable_at: None,
+        privacy_guard: None,
     };
 
     (req, sender_key)
@@ -1182,13 +1216,15 @@ fn cmd_offline_transfer(voucher_id: &str, count: u32) {
         let ds_tag = current_t_id_bs58.clone();
 
         let payload_hash = calculate_l2_payload_hash_raw(
-            &ds_tag,
             voucher_id,
+            &ds_tag,
             &new_t_id,
             &new_pub,
+            "none",
+            "none",
+            0,
             None,
-            None,
-            None,
+            "",
         );
         let signature = new_key.sign(&payload_hash);
 
@@ -1204,8 +1240,12 @@ fn cmd_offline_transfer(voucher_id: &str, count: u32) {
             sender_ephemeral_pub: new_pub,
             receiver_ephemeral_pub_hash: None,
             change_ephemeral_pub_hash: None,
+            trap_r: Some("none".to_string()),
+            trap_s: Some("none".to_string()),
+            encrypted_timestamp: 0,
             layer2_signature: signature.to_bytes(),
             deletable_at: None,
+            privacy_guard: None,
         };
 
         println!(
@@ -1486,13 +1526,19 @@ mod tests {
         let expected_challenge = bs58::encode(&req.transaction_hash).into_string();
 
         let payload_hash = calculate_l2_payload_hash_raw(
+            if req.is_genesis {
+                TRAP_NONE_PLACEHOLDER
+            } else {
+                req.layer2_voucher_id.as_str()
+            },
             &expected_challenge,
-            &req.layer2_voucher_id,
             &req.transaction_hash,
             &req.sender_ephemeral_pub,
-            req.receiver_ephemeral_pub_hash.as_ref(),
-            req.change_ephemeral_pub_hash.as_ref(),
+            req.trap_r.as_deref().unwrap_or("none"),
+            req.trap_s.as_deref().unwrap_or("none"),
+            req.encrypted_timestamp,
             req.deletable_at.as_deref(),
+            "",
         );
 
         let d_sig = Signature::from_bytes(&req.layer2_signature);

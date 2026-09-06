@@ -10,7 +10,8 @@ use crate::models::signature::DetachedSignature;
 use crate::models::voucher::Voucher;
 use crate::services::utils::to_canonical_json;
 use crate::wallet::instance::VoucherStatus;
-use crate::{error::VoucherCoreError, models::profile::PublicProfile};
+use crate::error::{ValidationError, VoucherCoreError};
+use crate::models::profile::PublicProfile;
 
 /// Methods for the signature workflow.
 impl Wallet {
@@ -98,7 +99,18 @@ impl Wallet {
             None
         };
 
-        let init_t_id = &voucher_to_sign.transactions[0].t_id;
+        // HMC-SEC-06-04: The voucher originates from an external signing
+        // request. Indexing `transactions[0]` directly on unvalidated remote
+        // input is a remotely reachable panic that aborts the host process.
+        let init_t_id = &voucher_to_sign
+            .transactions
+            .first()
+            .ok_or_else(|| {
+                VoucherCoreError::Validation(ValidationError::InvalidTransaction(
+                    "Voucher has no transactions".to_string(),
+                ))
+            })?
+            .t_id;
 
         let signed_signature =
             crate::services::signature_manager::complete_and_sign_detached_signature(
@@ -141,6 +153,14 @@ impl Wallet {
         let payload =
             crate::services::secure_container_manager::open_secure_container(&container, identity, password)?;
 
+        // HMSEC-SA06-09: Rebind the integrity id `i` to the received bytes
+        // before acting on the payload. Placed AFTER decryption so AEAD
+        // authentication errors keep precedence (established error contract);
+        // for validly encrypted containers this is the gate that rejects
+        // stolen `(i, signature)` pairs and mutated AEAD-exempt envelope
+        // fields (`unprotected`, `salt`, `et`, `c`).
+        crate::services::secure_container_manager::verify_container_integrity_binding(&container)?;
+
         if !matches!(container.c, PayloadType::DetachedSignature) {
             return Err(VoucherCoreError::InvalidPayloadType);
         }
@@ -164,7 +184,18 @@ impl Wallet {
                 ))
             })?;
 
-        let init_t_id = &target_instance_for_val.voucher.transactions[0].t_id;
+        // HMC-SEC-06-04: Graceful error instead of an index panic if the
+        // stored voucher has an empty transaction chain.
+        let init_t_id = &target_instance_for_val
+            .voucher
+            .transactions
+            .first()
+            .ok_or_else(|| {
+                VoucherCoreError::Validation(ValidationError::InvalidTransaction(
+                    "Voucher has no transactions".to_string(),
+                ))
+            })?
+            .t_id;
         crate::services::signature_manager::validate_detached_signature(&signature, init_t_id)?;
 
         // Since the voucher_id field has been removed from VoucherSignature,

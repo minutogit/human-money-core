@@ -102,6 +102,15 @@ pub fn derive_argon2_id(password: &[u8], salt: &[u8]) -> Result<String, VoucherC
 /// Computes a SHA3-256 hash of multiple inputs concatenated and returns it as a base58-encoded string.
 /// This is used to avoid string-based concatenation malleability.
 pub fn get_hash_from_slices(inputs: &[&[u8]]) -> String {
+    bs58::encode(get_raw_hash_from_slices(inputs)).into_string()
+}
+
+/// Raw-byte variant of [`get_hash_from_slices`].
+///
+/// Computes the identical length-prefixed SHA3-256 digest but returns the
+/// 32 raw bytes instead of the base58 string. Used by protocol layers that
+/// sign/verify over raw digests (e.g. the `HMC_TX_AUTH_V2` payload digest).
+pub fn get_raw_hash_from_slices(inputs: &[&[u8]]) -> [u8; 32] {
     use sha3::Digest;
     let mut hasher = sha3::Sha3_256::new();
     for input in inputs {
@@ -111,7 +120,9 @@ pub fn get_hash_from_slices(inputs: &[&[u8]]) -> String {
         hasher.update(input);
     }
     let hash_bytes = hasher.finalize();
-    bs58::encode(hash_bytes).into_string()
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&hash_bytes);
+    out
 }
 
 /// Generates a 4-character, base58-encoded short hash from the user ID for

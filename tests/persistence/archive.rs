@@ -7,11 +7,11 @@
 use human_money_core::{
     VoucherStatus,
     archive::file_archive::FileVoucherArchive,
+    archive::VoucherArchive,
     models::voucher::ValueDefinition,
     services::voucher_manager,
     wallet::Wallet,
 };
-use std::fs;
 use tempfile::tempdir;
 
 // Load test helper functions from the parent directory.
@@ -31,7 +31,7 @@ fn test_voucher_archiving_on_full_spend() {
 
     // Create Alice's archive in the temporary directory.
     let temp_dir = tempdir().unwrap();
-    let archive = FileVoucherArchive::new(temp_dir.path());
+    let archive = FileVoucherArchive::new_secure(temp_dir.path(), "audit-test-pw");
     // Use the predefined standard signed at runtime.
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
@@ -121,10 +121,12 @@ fn test_voucher_archiving_on_full_spend() {
 
     assert!(expected_file_path.exists(), "Archive file was not created.");
 
-    // Load the contents of the archived file and compare.
-    let archived_content = fs::read(expected_file_path).unwrap();
-    let archived_voucher: human_money_core::models::voucher::Voucher =
-        serde_json::from_slice(&archived_content).unwrap();
+    // Load the archived voucher through the archive API. The record on disk is
+    // encrypted at rest, so raw disk access can no longer yield the plaintext
+    // state; decryption and integrity verification are handled by the archive.
+    let archived_voucher: human_money_core::models::voucher::Voucher = archive
+        .get_archived_voucher(&voucher_id)
+        .expect("Archived voucher must be retrievable via the archive API.");
 
     // The archived voucher must match exactly the state returned by the `create_transfer` function.
     assert_eq!(archived_voucher, transferred_voucher_state);

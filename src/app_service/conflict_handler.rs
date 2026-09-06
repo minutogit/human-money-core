@@ -90,7 +90,9 @@ impl AppService {
                 None => {
                     match &mut session_cache {
                         Some(cache) => {
-                            if std::time::Instant::now() > cache.last_activity + cache.session_duration {
+                            // Panic-free deadline check (WH3-00-904): elapsed() cannot overflow,
+                            // unlike `last_activity + session_duration` for host-supplied durations.
+                            if cache.last_activity.elapsed() > cache.session_duration {
                                 self.state = AppState::Unlocked { storage, wallet: temp_wallet, identity, session_cache };
                                 return Err(AppFacadeError::SessionExpired("Session timed out or password required.".to_string()));
                             } else {
@@ -141,7 +143,9 @@ impl AppService {
                 None => {
                     match &mut session_cache {
                         Some(cache) => {
-                            if std::time::Instant::now() > cache.last_activity + cache.session_duration {
+                            // Panic-free deadline check (WH3-00-904): elapsed() cannot overflow,
+                            // unlike `last_activity + session_duration` for host-supplied durations.
+                            if cache.last_activity.elapsed() > cache.session_duration {
                                 self.state = AppState::Unlocked { storage, wallet: temp_wallet, identity, session_cache };
                                 return Err(AppFacadeError::SessionExpired("Session timed out or password required.".to_string()));
                             } else {
@@ -166,11 +170,11 @@ impl AppService {
         }
     }
 
-    /// Imports a proof from a Base64-encoded JSON string (plain text export).
-    pub fn import_proof_from_json(&mut self, json_base64: &str, password: Option<&str>) -> Result<(), AppFacadeError> {
-        let json_bytes = bs58::decode(json_base64)
+    /// Imports a proof from a bs58-encoded JSON string (plain text export).
+    pub fn import_proof_from_json(&mut self, json_bs58: &str, password: Option<&str>) -> Result<(), AppFacadeError> {
+        let json_bytes = bs58::decode(json_bs58)
             .into_vec()
-            .map_err(|e| AppFacadeError::ValidationError(format!("Invalid base64 encoding: {}", e)))?;
+            .map_err(|e| AppFacadeError::ValidationError(format!("Invalid bs58 encoding: {}", e)))?;
         let proof: ProofOfDoubleSpend =
             serde_json::from_slice(&json_bytes).map_err(|e| AppFacadeError::JsonError(e.to_string()))?;
 

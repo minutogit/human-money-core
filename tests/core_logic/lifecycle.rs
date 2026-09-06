@@ -529,15 +529,13 @@ fn test_validation_succeeds_with_extra_fields_in_json() {
 #[test]
 fn test_split_transaction_cycle_and_balance_check() {
     // 1. Setup: FreeTaler standard, as it is divisible and requires no guarantors.
-    let mut standard_obj = FREETALER_STANDARD.0.clone();
-    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
-    let mut standard_to_hash = standard_obj.clone();
-    standard_to_hash.signature = None;
-    let standard_hash = human_money_core::services::crypto_utils::get_hash(
-        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
-    );
+    // Re-sign the mutated clone so it stays self-consistent at validation time
+    // (AUDIT-M03-010 enforces signature validity when the standard enters validation).
+    let (standard_obj, standard_hash_val) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    });
     let freetaler_standard = &standard_obj;
-    let standard_hash = &standard_hash;
+    let standard_hash = &standard_hash_val;
     
     assert!(freetaler_standard.immutable.features.allow_partial_transfers);
 
@@ -619,13 +617,10 @@ fn test_split_fails_on_insufficient_funds() {
     let mut voucher_data = self::test_utils::create_minuto_voucher_data(sender_creator);
     voucher_data.nominal_value.amount = "50.0".to_string(); // Initial value 50
 
-    let mut standard_obj = FREETALER_STANDARD.0.clone();
-    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
-    let mut standard_to_hash = standard_obj.clone();
-    standard_to_hash.signature = None;
-    let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
-        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
-    );
+    // Re-signed mutated clone (see AUDIT-M03-010 note above).
+    let (standard_obj, standard_hash_val) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    });
     let freetaler_standard = &standard_obj;
     let standard_hash = &standard_hash_val;
 
@@ -715,15 +710,13 @@ fn test_fails_to_create_forbidden_transaction_type() {
 
 #[test]
 fn test_split_fails_on_non_allow_partial_transfers_voucher() {
-    // Manipulate the standard to make it non-divisible
-    let (mut standard, _) = (FREETALER_STANDARD.0.clone(), FREETALER_STANDARD.1.clone());
-    standard.immutable.features.allow_partial_transfers = false;
+    // Manipulate the standard to make it non-divisible.
+    // Re-sign the mutated clone so it stays self-consistent at validation time
+    // (AUDIT-M03-010 enforces signature validity when the standard enters validation).
+    let (standard, new_hash) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
+        s.immutable.features.allow_partial_transfers = false;
+    });
     assert!(!standard.immutable.features.allow_partial_transfers);
-
-    // Since the standard was manipulated, the consistency hash must be recalculated.
-    let mut standard_to_hash = standard.clone();
-    standard_to_hash.signature = None;
-    let new_hash = get_hash(to_canonical_json(&standard_to_hash.immutable).unwrap());
 
     let sender = &ACTORS.alice;
     let recipient = &ACTORS.bob;
@@ -879,13 +872,10 @@ fn test_double_spend_detection_logic() {
 
     // We use a FreeTaler voucher here, as it is divisible and meant to demonstrate
     // the double spend logic.
-    let mut standard_obj = FREETALER_STANDARD.0.clone();
-    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
-    let mut standard_to_hash = standard_obj.clone();
-    standard_to_hash.signature = None;
-    let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
-        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
-    );
+    // Re-signed mutated clone (see AUDIT-M03-010 note above).
+    let (standard_obj, standard_hash_val) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    });
     let freetaler_standard = &standard_obj;
     let standard_hash = &standard_hash_val;
 
@@ -1049,13 +1039,10 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
         creator_profile: alice_creator,
     };
 
-    let mut standard_obj = FREETALER_STANDARD.0.clone();
-    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
-    let mut standard_to_hash = standard_obj.clone();
-    standard_to_hash.signature = None;
-    let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
-        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
-    );
+    // Re-signed mutated clone (see AUDIT-M03-010 note above).
+    let (standard_obj, standard_hash_val) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    });
     let freetaler_standard = &standard_obj;
     let standard_hash = &standard_hash_val;
 

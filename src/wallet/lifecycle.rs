@@ -195,6 +195,58 @@ impl Wallet {
         }
         // --- END EXPIRATION SWEEP ---
 
+        // --- PROTOCOL-EPOCH SWEEP (WH3-00-901) ---
+        // DESIGN DECISION (documented per design-intent triage): instances
+        // whose chain fails the CURRENT protocol's transaction authentication
+        // (V3 t_id preimage + HMC_TX_AUTH_V3 digest — every pre-V3 legacy
+        // chain fails here) are marked distinctly NON-SPENDABLE
+        // (`Incomplete` + reason) instead of hard-failing the whole load.
+        // Rationale: this is offline cash — bricking the entire wallet login
+        // because ONE voucher was written by a legacy client would strand all
+        // other funds (worst possible outcome for the offline-first model).
+        // Leaving them `Active` is equally forbidden: every spend attempt
+        // fails with generic validation noise while the UI reports spendable
+        // value (permanent silent stranding, K1 paradox). The explicit
+        // status marker keeps the affected funds visible/forensic-addressable
+        // and tells the user exactly why they cannot spend them.
+        //
+        // Note: `verify_transaction_integrity_and_signature` short-circuits
+        // Ok under the test-utils signature bypass, mirroring production
+        // semantics for test setups.
+        for instance in wallet.voucher_store.vouchers.values_mut() {
+            if !matches!(instance.status, VoucherStatus::Active) {
+                continue;
+            }
+            let layer2_voucher_id =
+                crate::services::l2_gateway::extract_layer2_voucher_id(&instance.voucher)
+                    .unwrap_or_default();
+            let chain_broken = instance.voucher.transactions.iter().any(|tx| {
+                crate::services::voucher_validation::verify_transaction_integrity_and_signature(
+                    tx,
+                    &layer2_voucher_id,
+                )
+                .is_err()
+            });
+            if chain_broken {
+                log::warn!(
+                    "Wallet::load: voucher '{}' carries a transaction that fails \
+                     current protocol authentication (legacy pre-V3 chain); marking \
+                     it non-spendable instead of leaving it silently stranded as Active.",
+                    instance.local_instance_id
+                );
+                instance.status = VoucherStatus::Incomplete {
+                    reasons: vec![ValidationFailureReason::BusinessRule {
+                        message: "Protocol epoch mismatch: this voucher chain was \
+                                  created by a legacy (< V3) client and fails current \
+                                  transaction authentication. The funds are not lost, \
+                                  but this client version cannot spend them."
+                            .to_string(),
+                    }],
+                };
+            }
+        }
+        // --- END PROTOCOL-EPOCH SWEEP ---
+
         wallet.rebuild_derived_stores()?;
         Ok((wallet, identity))
     }

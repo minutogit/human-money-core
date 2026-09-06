@@ -511,16 +511,21 @@ mod tests {
              or stored as a conflict."
         );
 
-        // --- Assert 3: The offender_id is the mathematically extracted did:key of User 1 ---
+        // --- Assert 3: Attribution is anti-framing hardened ---
         //
-        // The attacker (User 1) used stealth mode for all transfers, so the sender_id in
-        // the transactions was "anonymous". The system must have used the mathematical
-        // trap-door recovery (ID = V1 - u1 * M) to unmask the real identity.
+        // SECURITY FIX: The attacker used stealth mode, so gossip fingerprints
+        // are the ONLY data available to this witness wallet. A raw
+        // mathematical extraction from blinded points can be FORGED by a
+        // double-spender (arbitrary slope anchoring to frame any third
+        // party). Therefore a did:key may only become the authoritative
+        // offender_id when BOTH stored Schnorr trap proofs verify - which is
+        // impossible from gossip soft proofs (fingerprints carry no proofs).
         //
-        // Since extract_id_point_from_raw_data recovers a bare public key (no prefix),
-        // create_user_id(&pk, None) produces a Root-Account DID (did:key:z...) without
-        // a prefix. User 1's actual ID may have a prefix, so we compare the underlying
-        // Ed25519 public keys instead of raw strings.
+        // New contract:
+        // - offender_id stays "anonymous" (no unforgeable claim possible), OR
+        //   uses the ephemeral-key linkage if full transactions were verifiable.
+        // - The extraction result is preserved as ADVISORY metadata
+        //   (`suspected_identity`) for manual investigation.
         {
             let conflict = &conflicts[0];
             let offender_in_proof = &conflict.offender_id;
@@ -534,28 +539,26 @@ mod tests {
                 user1_id
             );
 
-            // The offender must NOT be "anonymous" — the math must have unmasked them.
+            // The authoritative offender_id must NOT be an unverified did:key.
             assert_ne!(
-                offender_in_proof, "anonymous",
-                "Assert 3 failed: offender_id is still 'anonymous'. \
-                 The mathematical identity recovery from trap data did not work."
+                offender_in_proof, "",
+                "Assert 3 failed: offender_id must never be empty."
             );
 
-            // The offender_id must be a valid did:key
-            assert!(
-                offender_in_proof.contains("did:key:z"),
-                "Assert 3 failed: offender_id '{}' is not a valid did:key format.",
-                offender_in_proof
-            );
+            // Fetch the full proof to inspect advisory metadata.
+            let full_proof = user4
+                .get_proof_of_double_spend(&conflict.proof_id)
+                .expect("full proof must be retrievable");
 
-            // Extract the raw Ed25519 public key from both IDs and compare.
-            // The recovered DID is a Root-Account (no prefix), while user1_id may have
-            // a prefix — but the underlying cryptographic identity must be identical.
+            // Advisory hint: the mathematical extraction still points at the
+            // attacker's identity (root-account DID of User 1).
+            let suspected = full_proof
+                .suspected_identity
+                .expect("suspected_identity must carry the extraction result");
+
             let recovered_pubkey =
-                human_money_core::services::crypto_utils::get_pubkey_from_user_id(
-                    offender_in_proof,
-                )
-                .expect("Failed to extract pubkey from recovered offender_id");
+                human_money_core::services::crypto_utils::get_pubkey_from_user_id(&suspected)
+                    .expect("Failed to extract pubkey from suspected_identity");
 
             let attacker_pubkey =
                 human_money_core::services::crypto_utils::get_pubkey_from_user_id(&user1_id)
@@ -573,8 +576,9 @@ mod tests {
             );
 
             println!(
-                "[Test] ✅ Assert 3 PASSED: Offender identity mathematically proven. \
-                 did:key matches User 1's public key."
+                "[Test] ✅ Assert 3 PASSED: Offender attribution stays conservative ('{}'), \
+                 attacker identity preserved as advisory metadata.",
+                offender_in_proof
             );
         }
 

@@ -1,7 +1,7 @@
 use crate::error::{ValidationError, VoucherCoreError};
 use crate::models::voucher::{Voucher, VoucherSignature};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
-use crate::services::crypto_identity::get_pubkey_from_user_id;
+use crate::services::crypto_identity::{get_pubkey_from_user_id, validate_user_id};
 use crate::services::crypto_utils::{get_hash_from_slices, verify_ed25519};
 use crate::services::utils::to_canonical_json;
 use ed25519_dalek::Signature;
@@ -41,10 +41,52 @@ pub fn verify_signatures(
             additional_sig_count += 1;
         }
 
+        // SECURITY: Canonical identity firewall. Only user IDs that satisfy
+        // the canonical grammar (as produced by `create_user_id`) may enter
+        // signed containers. Lenient alias representations tolerated by the
+        // rfind-based parser (e.g. multiple '@' separators) are rejected
+        // before key extraction.
+        if !validate_user_id(&signature_obj.signer_id) {
+            return Err(ValidationError::BusinessRuleViolated(format!(
+                "Signer ID '{}' violates the canonical identity grammar.",
+                signature_obj.signer_id
+            ))
+            .into());
+        }
+
         let pk = match get_pubkey_from_user_id(&signature_obj.signer_id) {
             Ok(pk) => pk,
             Err(e) => return Err(ValidationError::InvalidCreatorId(e).into()),
         };
+
+        // SECURITY: Creator attribution binding (HMC-SEC-02-04). A signature
+        // claiming the "creator" role must resolve to the exact public key
+        // named by `voucher.creator_profile.id`. The comparison is performed
+        // on the raw 32-byte keys (not identity strings), so root and
+        // prefixed SAI representations of the SAME permanent key remain
+        // interchangeable, while a foreign key can never hijack the creator
+        // attribution (guaranty/reputation fraud vector).
+        if signature_obj.role == "creator" {
+            let creator_id = voucher
+                .creator_profile
+                .id
+                .as_deref()
+                .ok_or_else(|| {
+                    ValidationError::BusinessRuleViolated(
+                        "Creator-role signature present but the creator profile has no id."
+                            .to_string(),
+                    )
+                })?;
+            let creator_pk = get_pubkey_from_user_id(creator_id)
+                .map_err(ValidationError::InvalidCreatorId)?;
+            if pk.to_bytes() != creator_pk.to_bytes() {
+                return Err(ValidationError::BusinessRuleViolated(format!(
+                    "Creator-role signer '{}' does not match the attributed creator '{}'.",
+                    signature_obj.signer_id, creator_id
+                ))
+                .into());
+            }
+        }
 
         if !seen_signers.insert(pk.to_bytes()) {
             return Err(ValidationError::DuplicateIdentityDetected {
@@ -53,7 +95,17 @@ pub fn verify_signatures(
             .into());
         }
 
-        if signature_obj.signature_time < voucher.creation_date {
+        // SECURITY (AUDIT-W4-INT-502): instant-based comparison, mirroring
+        // the chain-level time-ordering hardening (offset confusion).
+        if super::chain::parse_rfc3339_instant(
+            &signature_obj.signature_time,
+            "Signature",
+            &signature_obj.signature_id,
+        )? < super::chain::parse_rfc3339_instant(
+            &voucher.creation_date,
+            "Signature",
+            &signature_obj.signature_id,
+        )? {
             return Err(ValidationError::InvalidTimeOrder {
                 entity: "Signature".to_string(),
                 id: signature_obj.signature_id.clone(),

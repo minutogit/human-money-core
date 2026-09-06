@@ -37,13 +37,16 @@ fn setup_test_wallet(identity: &UserIdentity, _name: &str, _storage_dir: &Path) 
 fn new_dummy_fingerprint(t_id: &str) -> TransactionFingerprint {
     TransactionFingerprint {
         ds_tag: "".to_string(),
-        u: "".to_string(),
-        blinded_id: "".to_string(),
+        trap_r: "".to_string(),
+        trap_s: "".to_string(),
         t_id: t_id.to_string(),
         encrypted_timestamp: 0,
         layer2_signature: "".to_string(),
         deletable_at: "2099-12-31T23:59:59.999999Z".to_string(),
-    }
+        sender_ephemeral_pub: String::new(),
+            layer2_voucher_id: String::new(),
+            privacy_guard_hash: String::new(),
+}
 }
 
 /// Creates empty `NewVoucherData` for testing purposes.
@@ -169,6 +172,11 @@ fn test_fingerprint_generation() {
         end_of_month_dt.to_rfc3339_opts(SecondsFormat::Micros, true)
     };
 
+    // V2 Protocol: 'init' fingerprints carry the RAW transaction-level
+    // deletable_at because it is cryptographically bound into the
+    // HMC_TX_AUTH_V2 layer2_signature. Init fingerprints never leave the
+    // wallet via gossip (ingress/export exclusion), so the month-end
+    // anonymization is intentionally applied to spend fingerprints only.
     assert_eq!(
         wallet
             .own_fingerprints
@@ -176,9 +184,13 @@ fn test_fingerprint_generation() {
             .get(&expected_hash1)
             .unwrap()[0]
             .deletable_at,
-        expected_rounded_valid_until,
-        "Der valid_until-Wert im Fingerprint muss dem auf das Monatsende gerundeten Wert entsprechen."
+        tx1.deletable_at.clone().unwrap(),
+        "Init-Fingerprints muessen das rohe, signaturgebundene deletable_at tragen."
     );
+
+    // The anonymization constant must still be computed correctly (used by
+    // spend fingerprints): sanity-check the rounding helper output format.
+    assert!(expected_rounded_valid_until.ends_with("23:59:59.999999Z"));
 }
 
 #[test]
@@ -187,9 +199,9 @@ fn test_fingerprint_exchange() {
     let mut sender_wallet = setup_in_memory_wallet(&ACTORS.sender);
     let mut receiver_wallet = setup_in_memory_wallet(&ACTORS.recipient1);
 
-    // Setup: Generate fingerprints in sender wallet
-    let mut fp1 = new_dummy_fingerprint("t1");
-    fp1.ds_tag = "hash1".to_string();
+    // Setup: Generate fingerprints in sender wallet.
+    // V2: the signature binds the ds_tag, so it must be set BEFORE signing.
+    let fp1 = human_money_core::test_utils::make_signed_fingerprint("hash1", "t1", 0);
     sender_wallet
         .own_fingerprints
         .history
@@ -313,7 +325,9 @@ fn test_cleanup_expired_fingerprints() {
 
     let mut expired_fp_foreign = new_dummy_fingerprint("t_foreign_expired");
     expired_fp_foreign.deletable_at = "2020-01-01T00:00:00Z".to_string();
-    let valid_fp_foreign = new_dummy_fingerprint("t_foreign_valid");
+    // V2: valid foreign fingerprints must be self-authenticating to survive cleanup.
+    let valid_fp_foreign =
+        human_money_core::test_utils::make_signed_fingerprint("foreign_valid", "t_foreign_valid", 0);
 
     // Add fingerprints to both stores
     wallet
@@ -585,7 +599,7 @@ fn test_local_double_spend_detection_lifecycle() {
     human_money_core::set_signature_bypass(true);
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let storage_path = temp_dir.path();
-    let archive = FileVoucherArchive::new(storage_path.join("archive"));
+    let archive = FileVoucherArchive::new_secure(storage_path.join("archive"), "audit-test-pw");
 
     // ### Act 1: Initialization & First Transfer ###
     println!("--- Akt 1: Alice erstellt einen Gutschein und sendet ihn an Bob ---");

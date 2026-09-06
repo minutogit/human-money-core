@@ -244,8 +244,14 @@ fn create_hacked_tx(
     hacked_tx.layer2_signature = None;
     hacked_tx.sender_identity_signature = None;
 
+    // V3 (SST) rule: strip trap_data/privacy_guard before hashing so the t_id
+    // preimage matches production; both are restored afterwards.
+    let stored_trap_data = hacked_tx.trap_data.take();
+    let stored_privacy_guard = hacked_tx.privacy_guard.take();
     let tx_json_for_id = to_canonical_json(&hacked_tx).unwrap();
     hacked_tx.t_id = get_hash(tx_json_for_id);
+    hacked_tx.trap_data = stored_trap_data;
+    hacked_tx.privacy_guard = stored_privacy_guard;
 
     // 1. Layer 2 Signature: Sign(payload_hash) with ephemeral key
     let t_id_raw = bs58::decode(&hacked_tx.t_id).into_vec().unwrap_or_default();
@@ -255,14 +261,6 @@ fn create_hacked_tx(
         .as_ref()
         .map(|s| bs58::decode(s).into_vec().unwrap_or_default())
         .unwrap_or_default();
-    let receiver_hash_raw = hacked_tx
-        .receiver_ephemeral_pub_hash
-        .as_ref()
-        .map(|h| bs58::decode(h).into_vec().unwrap_or_default());
-    let change_hash_raw = hacked_tx
-        .change_ephemeral_pub_hash
-        .as_ref()
-        .map(|h| bs58::decode(h).into_vec().unwrap_or_default());
 
     let to_32 = |v: Vec<u8>| {
         let mut arr = [0u8; 32];
@@ -281,17 +279,36 @@ fn create_hacked_tx(
             .unwrap_or_else(|| hacked_tx.t_id.clone())
     };
 
+    // V3 protocol (HMC_TX_AUTH_V3): bind the SST shard pair and the
+    // encrypted timestamp. Genesis-style transactions without trap data use
+    // the canonical "none" placeholders.
+    let (trap_r_str, trap_s_str) = match &hacked_tx.trap_data {
+        Some(td) => (td.trap_r.as_str(), td.trap_s.as_str()),
+        None => (
+            human_money_core::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
+            human_money_core::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
+        ),
+    };
+    let encrypted_timestamp =
+        human_money_core::services::conflict_manager::encrypt_transaction_timestamp(&hacked_tx)
+            .unwrap_or(0);
+
     let payload_hash = human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw(
-        &challenge_ds_tag,
+        // V3 Protocol (audit_02_11): the voucher container id is bound into
+        // the digest (callers pass the real hex id; hacked txs are spends).
         v_id,
+        &challenge_ds_tag,
         &to_32(t_id_raw.clone()),
         &to_32(sender_pub_raw),
-        receiver_hash_raw
-            .as_ref()
-            .map(|v| to_32(v.clone()))
-            .as_ref(),
-        change_hash_raw.as_ref().map(|v| to_32(v.clone())).as_ref(),
+        trap_r_str,
+        trap_s_str,
+        encrypted_timestamp,
         hacked_tx.deletable_at.as_deref(),
+        // SECURITY (HMSEC-SA04-08): bind the canonical privacy-guard
+        // commitment of the transaction ("" when no guard is present).
+        &human_money_core::services::l2_gateway::privacy_guard_commitment(
+            hacked_tx.privacy_guard.as_deref(),
+        ),
     );
 
     let l2_sig = sign_ed25519(signer_key, &payload_hash);
@@ -329,38 +346,30 @@ fn create_test_voucher_data_with_amount(
 
 fn generate_valid_trap_for_test(
     tx: &Transaction,
-    holder_secret: &ed25519_dalek::SigningKey,
     sender_permanent_key: &ed25519_dalek::SigningKey,
-    sender_id: &str,
 ) -> human_money_core::models::voucher::TrapData {
-    use human_money_core::services::crypto_utils::{
-        ed25519_pk_to_curve_point, get_hash_from_slices, get_prefix_from_user_id,
-    };
-    use human_money_core::services::trap_manager::{derive_m, generate_trap, hash_to_scalar};
+    use human_money_core::services::crypto_utils::get_hash_from_slices;
+    use human_money_core::services::trap_manager::generate_sst_trap;
+
+    // V3 (SST) rule: the canonical t_id preimage EXCLUDES trap_data and
+    // privacy_guard — mirror production creation exactly, because the shard
+    // depends on tau(t_id).
+    let mut stripped = tx.clone();
+    stripped.t_id = String::new();
+    stripped.layer2_signature = None;
+    stripped.sender_identity_signature = None;
+    stripped.trap_data = None;
+    stripped.privacy_guard = None;
+    let t_id = get_hash(to_canonical_json(&stripped).unwrap());
 
     let prev_hash_bytes = bs58::decode(&tx.prev_hash).into_vec().unwrap_or_default();
-    let holder_pub = holder_secret.verifying_key();
-    let ds_tag = get_hash_from_slices(&[&prev_hash_bytes, &holder_pub.to_bytes()]);
+    let eph_bytes = bs58::decode(tx.sender_ephemeral_pub.as_deref().unwrap_or_default())
+        .into_vec()
+        .unwrap_or_default();
+    let ds_tag = get_hash_from_slices(&[&prev_hash_bytes, &eph_bytes]);
+    let eph32: [u8; 32] = eph_bytes.try_into().expect("ephemeral pub must be 32 bytes");
 
-    let u_input_varying = format!(
-        "{}{}{}",
-        ds_tag,
-        tx.amount,
-        tx.receiver_ephemeral_pub_hash.as_deref().unwrap_or("")
-    );
-    let u_scalar = hash_to_scalar(u_input_varying.as_bytes());
-
-    let sender_id_prefix = get_prefix_from_user_id(sender_id);
-    let m = derive_m(
-        &tx.prev_hash,
-        &sender_permanent_key.to_bytes(),
-        sender_id_prefix,
-    )
-    .unwrap();
-
-    let my_id_point = ed25519_pk_to_curve_point(&sender_permanent_key.verifying_key()).unwrap();
-
-    generate_trap(ds_tag, &u_scalar, &m, &my_id_point, sender_id_prefix, None, None).unwrap().0
+    generate_sst_trap(sender_permanent_key, &ds_tag, &eph32, &t_id).unwrap().0
 }
 
 fn add_p2pkh_layer(tx: &mut Transaction, holder_secret: &ed25519_dalek::SigningKey) {
@@ -489,9 +498,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     add_p2pkh_layer(&mut final_tx, &hacker_holder_secret);
     final_tx.trap_data = Some(generate_valid_trap_for_test(
         &final_tx,
-        &hacker_holder_secret,
         &ACTORS.hacker.signing_key,
-        &ACTORS.hacker.user_id,
     ));
     let v_id =
         human_money_core::services::l2_gateway::extract_layer2_voucher_id(voucher_in_hacker_wallet)
@@ -570,9 +577,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
     add_p2pkh_layer(&mut final_tx_2, &hacker_holder_secret);
     final_tx_2.trap_data = Some(generate_valid_trap_for_test(
         &final_tx_2,
-        &hacker_holder_secret,
         &ACTORS.hacker.signing_key,
-        &ACTORS.hacker.user_id,
     ));
     let v_id =
         human_money_core::services::l2_gateway::extract_layer2_voucher_id(voucher_in_hacker_wallet)
@@ -826,9 +831,7 @@ fn test_attack_create_inconsistent_transaction() {
     add_p2pkh_layer(&mut overspend_tx_unsigned, &hacker_holder_secret);
     overspend_tx_unsigned.trap_data = Some(generate_valid_trap_for_test(
         &overspend_tx_unsigned,
-        &hacker_holder_secret,
         &ACTORS.hacker.signing_key,
-        &ACTORS.hacker.user_id,
     ));
     let v_id =
         human_money_core::services::l2_gateway::extract_layer2_voucher_id(voucher_in_hacker_wallet)
@@ -910,9 +913,7 @@ fn test_attack_inconsistent_split_transaction() {
     add_p2pkh_layer(&mut inconsistent_tx_unsigned, &holder_key);
     inconsistent_tx_unsigned.trap_data = Some(generate_valid_trap_for_test(
         &inconsistent_tx_unsigned,
-        &holder_key,
         &ACTORS.hacker.signing_key,
-        &ACTORS.hacker.user_id,
     ));
     let v_id = human_money_core::services::l2_gateway::extract_layer2_voucher_id(&voucher).unwrap();
     // NEW: Attach a valid Privacy Guard so ingest check passes

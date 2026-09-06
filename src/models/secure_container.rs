@@ -179,6 +179,18 @@ pub struct SecureContainer {
 }
 
 /// Implements `Drop` to securely zeroize sensitive fields in `SecureContainer`.
+///
+/// Coverage note (HMSEC-SA05-06): besides the JWE transport fields, every
+/// per-recipient wrapped payload key (`encrypted_key`) and the symmetric KDF
+/// salt are sensitive key-material remnants and MUST be cleared as well —
+/// recovering a wrapped payload key from stale heap memory defeats the
+/// forward-secrecy design of the ephemeral key wrapping.
+///
+/// Known limitation (defense-in-depth): JSON header structures
+/// (`unprotected`, `JweRecipient::header`) may carry identifiers but cannot be
+/// reliably zeroized (nested Strings inside `serde_json::Value`); they are
+/// released by setting them to `None`. String zeroization also cannot cover
+/// reallocated copies — this is in-place hygiene, not an allocator strategy.
 impl Drop for SecureContainer {
     fn drop(&mut self) {
         self.protected.zeroize();
@@ -186,6 +198,19 @@ impl Drop for SecureContainer {
         self.ciphertext.zeroize();
         self.tag.zeroize();
         self.signature.zeroize();
+        // Wrapped per-recipient payload keys: the most sensitive remnants.
+        for recipient in &mut self.recipients {
+            recipient.encrypted_key.zeroize();
+        }
+        // Symmetric-mode PBKDF2 salt.
+        if let Some(salt) = self.salt.as_mut() {
+            salt.zeroize();
+        }
+        // Release identifier-bearing JSON headers (cannot be byte-zeroized).
+        self.unprotected = None;
+        for recipient in &mut self.recipients {
+            recipient.header = None;
+        }
     }
 }
 

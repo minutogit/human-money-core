@@ -81,7 +81,11 @@ impl MockL2Node {
             receiver_ephemeral_pub_hash: req.receiver_ephemeral_pub_hash,
             change_ephemeral_pub_hash: req.change_ephemeral_pub_hash,
             layer2_signature: req.layer2_signature,
+            trap_r: req.trap_r.clone(),
+            trap_s: req.trap_s.clone(),
+            encrypted_timestamp: req.encrypted_timestamp,
             deletable_at: req.deletable_at.clone(),
+            privacy_guard: None,
         };
 
         // Store entry in in-memory DB ("Locking")

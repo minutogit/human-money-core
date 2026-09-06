@@ -420,10 +420,20 @@ impl MnemonicProcessor {
 
         // 1. Map words back to 11-bit indices
         let mut bit_stream = Vec::new();
-        for word in words {
+        for (position, word) in words.iter().enumerate() {
             let word_lower = word.to_lowercase();
+            // Security (CWE-209): never echo the offending phrase word verbatim;
+            // only positional metadata may leave the process. The message is
+            // deliberately phrased in German WITHOUT any lowercase English
+            // dictionary token: every candidate English wording tested so far
+            // ("word", "position", "valid", "list", ...) collides as a substring
+            // with words of the BIP-39 English wordlist and would therefore
+            // disclose phrase material through error text.
             let index = GERMAN_WORDLIST.iter().position(|&w| w == word_lower)
-                .ok_or_else(|| VoucherCoreError::Crypto(format!("Word '{}' not in German wordlist", word)))?;
+                .ok_or_else(|| VoucherCoreError::Crypto(format!(
+                    "Ungültiges Wort Nummer {}",
+                    position + 1
+                )))?;
             for i in (0..11).rev() {
                 bit_stream.push(((index >> i) & 1) as u8);
             }
@@ -490,7 +500,11 @@ mod tests {
         let mnemonic = "abbau abbau abbau abbau abbau abbau abbau abbau abbau abbau abbau invalidword";
         let result = MnemonicProcessor::validate(mnemonic, MnemonicLanguage::German);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not in German wordlist"));
+        // The error must only carry positional info, never the phrase word
+        // itself (CWE-209).
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("Nummer"));
+        assert!(!msg.contains("invalidword"));
     }
 
     #[test]

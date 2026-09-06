@@ -1,12 +1,13 @@
-use curve25519_dalek::edwards::CompressedEdwardsY;
-use curve25519_dalek::scalar::Scalar;
+use human_money_core::models::conflict::TransactionFingerprint;
 use human_money_core::models::voucher::TrapData;
 use human_money_core::services::crypto_utils;
-use human_money_core::services::trap_manager;
+use human_money_core::services::trap_manager::{self, generate_sst_trap};
 use human_money_core::test_utils::{ACTORS, TestUser};
 
-// Helper to simulate a mathematical trap setup
-fn setup_trap_data(prev_hash: &str, sender: &TestUser, t_id: &str) -> TrapData {
+// Helper to simulate a mathematical trap setup (V3 / Shared-Signature Trap).
+// Returns the public shard pair plus the revealed ephemeral key bytes needed
+// as collision context for autonomous identity extraction.
+fn setup_trap_data(prev_hash: &str, sender: &TestUser, t_id: &str) -> (TrapData, [u8; 32]) {
     // 1. Calculate Constant DS-Tag (Input based)
     let (_ephemeral_secret, ephemeral_pub) = crypto_utils::derive_ephemeral_key_pair(
         &sender.signing_key,
@@ -15,78 +16,58 @@ fn setup_trap_data(prev_hash: &str, sender: &TestUser, t_id: &str) -> TrapData {
         None,
     )
     .unwrap();
-    let sender_ephemeral_pub_b58 = bs58::encode(ephemeral_pub.as_bytes()).into_string();
+    let eph32: [u8; 32] = *ephemeral_pub.as_bytes();
 
-    let ds_tag_input = format!("{}{}{}", prev_hash, sender_ephemeral_pub_b58, "prefix");
-    let ds_tag = crypto_utils::get_hash(ds_tag_input);
+    let ds_tag = crypto_utils::get_hash_from_slices(&[prev_hash.as_bytes(), &eph32]);
 
-    // 2. Calculate Varying U (Output based) -> SCALAR now!
-    let u_input_varying = format!("{}{}", ds_tag, t_id);
-    let u_scalar = trap_manager::hash_to_scalar(u_input_varying.as_bytes());
-
-    // m derivation (Constant for same input)
-    let m = trap_manager::derive_m(prev_hash, &sender.signing_key.to_bytes(), Some("prefix")).unwrap();
-
-    let my_id_point = crypto_utils::ed25519_pk_to_curve_point(&sender.public_key).unwrap();
-
-    trap_manager::generate_trap(ds_tag, &u_scalar, &m, &my_id_point, Some("prefix"), None, None).unwrap().0
+    // 2. Generate the SST shard pair for this fork. The shards are bound to
+    //    tau(t_id), so distinct forks of the same input yield distinct shards
+    //    on one shared-signature line.
+    let (trap, _) = generate_sst_trap(&sender.signing_key, &ds_tag, &eph32, t_id).unwrap();
+    (trap, eph32)
 }
 
 #[test]
-fn test_identity_recovery_from_conflicting_fingerprints() {
+fn test_sst_identity_recovery_from_conflicting_fingerprints() {
     let alice = &ACTORS.alice;
     let prev_hash = "prev_hash_123";
 
     // 1. Transaction A (Alice -> Bob)
-    let trap_a = setup_trap_data(prev_hash, alice, "tx_id_A");
+    let (trap_a, eph) = setup_trap_data(prev_hash, alice, "tx_id_A");
 
     // 2. Transaction B (Alice -> Charlie)
-    let trap_b = setup_trap_data(prev_hash, alice, "tx_id_B");
+    let (trap_b, _) = setup_trap_data(prev_hash, alice, "tx_id_B");
 
     // Verify Double Spend Condition
     assert_eq!(trap_a.ds_tag, trap_b.ds_tag, "DS Tags must match");
-    assert_ne!(trap_a.u, trap_b.u, "U (Scalars) must differ");
+    assert_ne!(trap_a.trap_r, trap_b.trap_r, "Shards must differ across forks");
 
     // --- IDENTITY RECOVERY LOGIC ---
-    // The goal: Recover Alice's Public Key (ID) from just the two Traps.
+    // The goal: Recover Alice's Public Key (ID) from just the two gossip
+    // fingerprints (ds_tag, t_id, trap_r, trap_s).
 
-    // 1. Decode Values
-    let u_a_bytes = bs58::decode(&trap_a.u).into_vec().unwrap();
-    let u_b_bytes = bs58::decode(&trap_b.u).into_vec().unwrap();
-    let v_a_bytes = bs58::decode(&trap_a.blinded_id).into_vec().unwrap();
-    let v_b_bytes = bs58::decode(&trap_b.blinded_id).into_vec().unwrap();
+    let fp_a = TransactionFingerprint {
+        ds_tag: trap_a.ds_tag.clone(),
+        t_id: "tx_id_A".to_string(),
+        trap_r: trap_a.trap_r.clone(),
+        trap_s: trap_a.trap_s.clone(),
+        ..Default::default()
+    };
+    let fp_b = TransactionFingerprint {
+        ds_tag: trap_b.ds_tag.clone(),
+        t_id: "tx_id_B".to_string(),
+        trap_r: trap_b.trap_r.clone(),
+        trap_s: trap_b.trap_s.clone(),
+        ..Default::default()
+    };
 
-    let u_a = Scalar::from_bytes_mod_order(u_a_bytes.try_into().unwrap());
-    let u_b = Scalar::from_bytes_mod_order(u_b_bytes.try_into().unwrap());
+    // Autonomous reconstruction: the two colliding shards determine the
+    // masking values by linear interpolation and unmask the underlying
+    // Schnorr signature, whose challenge binds it to exactly one key.
+    let recovered_id_point =
+        trap_manager::extract_sst_identity(&fp_a.ds_tag, &eph, &fp_a, &fp_b).unwrap();
 
-    let v_a = CompressedEdwardsY::from_slice(&v_a_bytes)
-        .unwrap()
-        .decompress()
-        .unwrap();
-    let v_b = CompressedEdwardsY::from_slice(&v_b_bytes)
-        .unwrap()
-        .decompress()
-        .unwrap();
-
-    // 2. Calculate Deltas
-    // Delta V = V_a - V_b
-    let delta_v = v_a - v_b;
-
-    // Delta U = u_a - u_b
-    let delta_u = u_a - u_b;
-
-    // 3. Recover Slope Point M
-    // V = u * M + ID
-    // V_a - V_b = (u_a - u_b) * M
-    // M = Delta V * (Delta U)^-1
-    let delta_u_inv = delta_u.invert();
-    let m_point = delta_v * delta_u_inv;
-
-    // 4. Recover Identity ID
-    // ID = V_a - u_a * M
-    let recovered_id_point = v_a - (m_point * u_a);
-
-    // 5. Verify against Alice's actual ID
+    // Verify against Alice's actual ID
     let alice_id_point = crypto_utils::ed25519_pk_to_curve_point(&alice.public_key).unwrap();
 
     assert_eq!(

@@ -19,7 +19,7 @@
 //! - **Full transfer:** Correct creation of a transaction without remaining amount
 //!   when the entire balance is transferred.
 
-use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD};
+use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD, create_custom_standard};
 use human_money_core::{
     // Structs/Enums from the crate root (or re-exported there)
     NewVoucherData,
@@ -38,17 +38,14 @@ use rust_decimal_macros::dec;
 #[test]
 fn test_chained_transaction_math_and_scaling() {
     // --- 1. SETUP ---
-    let mut standard_obj = FREETALER_STANDARD.0.clone();
-    standard_obj.immutable.features.amount_decimal_places = 4;
-    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
-    
-    let mut standard_to_hash = standard_obj.clone();
-    standard_to_hash.signature = None;
-    let standard_hash = human_money_core::services::crypto_utils::get_hash(
-        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
-    );
+    // Re-sign the mutated clone so it stays self-consistent at validation time
+    // (AUDIT-M03-010 enforces signature validity when the standard enters validation).
+    let (standard_obj, standard_hash_val) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
+        s.immutable.features.amount_decimal_places = 4;
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    });
     let standard = &standard_obj;
-    let standard_hash = &standard_hash;
+    let standard_hash = &standard_hash_val;
 
 
     // Create Alice (sender) and Bob (recipient)
@@ -331,16 +328,13 @@ fn test_chained_transaction_math_and_scaling() {
 #[test]
 fn test_transaction_fails_on_excess_precision() {
     // --- SETUP ---
-    let mut standard_obj = FREETALER_STANDARD.0.clone();
-    standard_obj.immutable.features.amount_decimal_places = 4;
-    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
-    let mut standard_to_hash = standard_obj.clone();
-    standard_to_hash.signature = None;
-    let standard_hash = human_money_core::services::crypto_utils::get_hash(
-        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
-    );
+    // Re-signed mutated clone (see AUDIT-M03-010 note above).
+    let (standard_obj, standard_hash_val) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
+        s.immutable.features.amount_decimal_places = 4;
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    });
     let standard = &standard_obj;
-    let standard_hash = &standard_hash;
+    let standard_hash = &standard_hash_val;
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
 

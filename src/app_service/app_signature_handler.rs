@@ -4,6 +4,7 @@
 //! such as requesting, creating, and attaching detached signatures.
 
 use super::{AppService, AppState, AppFacadeError};
+use crate::error::ValidationError;
 use crate::models::secure_container::ContainerConfig;
 use crate::models::signature::DetachedSignature;
 use crate::models::voucher::{Voucher, VoucherSignature};
@@ -62,6 +63,15 @@ impl AppService {
         ) {
             return Err(AppFacadeError::ValidationError("Invalid payload type: expected VoucherForSigning".to_string()));
         }
+
+        // HMSEC-SA06-09: Strict envelope validation BEFORE payload processing.
+        // Rebind the integrity id `i` to the received bytes (covers all
+        // AEAD-exempt envelope fields) so stolen `(i, signature)` pairs or
+        // mutated unauthenticated header metadata are rejected before any
+        // content is surfaced for preview. Honest senders always satisfy this
+        // binding because `create_secure_container` computes `i` identically.
+        crate::services::secure_container_manager::verify_container_integrity_binding(&container)
+            .map_err(AppFacadeError::from)?;
 
         let payload = crate::services::secure_container_manager::open_secure_container(
             &container, identity, password,
@@ -186,8 +196,12 @@ impl AppService {
 
         self.state = new_state;
         // Update seal if action succeeded
+        // SECURITY (AUDIT-W4-WC-004): seal-phase failures fail loudly instead
+        // of silently degrading integrity coverage (see data_encryption.rs).
         if result.is_ok() {
-            let _ = self.update_seal_after_state_change(password);
+            if let Err(seal_err) = self.update_seal_after_state_change(password) {
+                return Err(seal_err);
+            }
         }
         result
     }
@@ -264,6 +278,7 @@ impl AppService {
                                     .get_voucher_instance(&updated_instance_id)
                                     .cloned()
                                     .unwrap(); // Must exist
+                                let previous_status = instance.status.clone();
 
                                 // --- START REPLACED LOGIC ---
                                 // The old logic called `self.determine_voucher_status`, which
@@ -280,6 +295,31 @@ impl AppService {
                                     Ok(_) => {
                                         // Validation successful! The voucher is now Active.
                                         (Ok(updated_instance_id.clone()), VoucherStatus::Active)
+                                    }
+                                    Err(VoucherCoreError::Validation(
+                                        validation_err @ ValidationError::InvalidTimeOrder { .. },
+                                    )) => {
+                                        // SECURITY (AUDIT-W4-WC-003 regression pin):
+                                        // time-ordering violations are STRUCTURAL
+                                        // chain corruption (unparseable/inconsistent
+                                        // timestamps), not a benign "signatures still
+                                        // missing" state. Fail closed into quarantine
+                                        // like other fatal validation errors.
+                                        temp_wallet.update_voucher_status(
+                                            &updated_instance_id,
+                                            VoucherStatus::Quarantined {
+                                                reason: validation_err.to_string(),
+                                            },
+                                        );
+                                        (
+                                            Err(AppFacadeError::ValidationError(format!(
+                                                "Voucher quarantined due to fatal validation error: {}",
+                                                validation_err
+                                            ))),
+                                            VoucherStatus::Quarantined {
+                                                reason: validation_err.to_string(),
+                                            },
+                                        )
                                     }
                                     Err(VoucherCoreError::Validation(validation_err)) => {
                                         // This is NOT a fatal error. Operation succeeded,
@@ -313,7 +353,27 @@ impl AppService {
                                     }
                                 };
 
-                                temp_wallet.update_voucher_status(&updated_instance_id, new_status);
+                                // SECURITY (AUDIT-W4-WC-003): status transitions
+                                // triggered by a detached-signature attachment
+                                // are only legitimate for vouchers the wallet
+                                // itself holds in the issuance/completion flow
+                                // (Active/Incomplete). A witness copy stored as
+                                // `Endorsed` (e.g. from a third-party signing
+                                // request) must never be activated by a mere
+                                // voucher_id match — that would bypass every
+                                // receive-path ownership gate. Adjudicated
+                                // (`Quarantined`) and historical (`Archived`)
+                                // states stay final as well (F15 monotonicity).
+                                let final_status = if matches!(
+                                    previous_status,
+                                    VoucherStatus::Active | VoucherStatus::Incomplete { .. }
+                                ) {
+                                    new_status
+                                } else {
+                                    previous_status
+                                };
+
+                                temp_wallet.update_voucher_status(&updated_instance_id, final_status);
                                 // 3. Attempt to save changes ("Commit").
                                 match temp_wallet.save(&mut storage, &identity, &auth_method) {
                                     Ok(_) => (
@@ -347,8 +407,12 @@ impl AppService {
 
         self.state = new_state;
         // Update seal if action succeeded
+        // SECURITY (AUDIT-W4-WC-004): seal-phase failures fail loudly instead
+        // of silently degrading integrity coverage (see data_encryption.rs).
         if result.is_ok() {
-            let _ = self.update_seal_after_state_change(wallet_password);
+            if let Err(seal_err) = self.update_seal_after_state_change(wallet_password) {
+                return Err(seal_err);
+            }
         }
         result
     }
@@ -465,8 +529,12 @@ impl AppService {
 
         self.state = new_state;
         // Update seal if action succeeded
+        // SECURITY (AUDIT-W4-WC-004): seal-phase failures fail loudly instead
+        // of silently degrading integrity coverage (see data_encryption.rs).
         if result.is_ok() {
-            let _ = self.update_seal_after_state_change(wallet_password);
+            if let Err(seal_err) = self.update_seal_after_state_change(wallet_password) {
+                return Err(seal_err);
+            }
         }
         result
     }

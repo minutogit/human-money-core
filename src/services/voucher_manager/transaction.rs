@@ -1,7 +1,7 @@
 //! # Transaction Creation
 //!
 //! Handles the creation of new transactions (transfer or split) within a voucher,
-//! implementing privacy flows and cryptographic anchor/trap logic.
+//! implementing privacy flows and cryptographic anchor/SST-trap logic.
 
 use crate::error::VoucherCoreError;
 use crate::models::voucher::{RecipientPayload, Transaction, Voucher};
@@ -9,9 +9,8 @@ use crate::models::voucher_standard_definition::{PrivacyMode, VoucherStandardDef
 use crate::services::crypto_utils::{
     encrypt_data, generate_ephemeral_x25519_keypair, get_hash, get_hash_from_slices,
     get_prefix_from_user_id, get_pubkey_from_user_id, perform_diffie_hellman, sign_ed25519,
-    ed25519_pk_to_curve_point, encode_base64,
+    encode_base64,
 };
-use crate::services::trap_manager::{derive_m, generate_trap, hash_to_scalar};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
 use crate::services::decimal_utils;
 use chrono::Utc;
@@ -185,7 +184,7 @@ pub fn create_transaction(
         (None, None)
     };
 
-    // 3. TRAP Generation
+    // 3. TRAP CONTEXT (input tag derivation)
     let prev_hash_bytes = bs58::decode(&prev_hash)
         .into_vec()
         .map_err(|_| VoucherCoreError::Crypto("Invalid prev_hash format".to_string()))?;
@@ -196,39 +195,54 @@ pub fn create_transaction(
     let ds_tag = get_hash_from_slices(&[&prev_hash_bytes, &sender_ephem_pub_bytes]);
     let amount_str = decimal_utils::format_for_storage(&amount_to_send, decimal_places);
 
-    let u_input_varying = format!(
-        "{}{}{}",
-        ds_tag,
-        amount_str,
-        receiver_ephemeral_pub_hash.as_deref().unwrap_or("")
-    );
-    let u_scalar = hash_to_scalar(u_input_varying.as_bytes());
+    let to_32_bytes = |vec: Vec<u8>, name: &str| -> Result<[u8; 32], VoucherCoreError> {
+        vec.try_into()
+            .map_err(|_| VoucherCoreError::InvalidHashFormat(format!("{} must be 32 bytes", name)))
+    };
 
-    let sender_id_prefix = get_prefix_from_user_id(sender_id);
-    let m = derive_m(
-        &prev_hash,
-        &sender_permanent_key.to_bytes(),
-        sender_id_prefix,
-    )?;
+    // 4. TRANSACTION STRUCT
+    // V3 (SST) rule: `trap_data` and `privacy_guard` are attached AFTER the
+    // t_id computation below, so the canonical preimage naturally excludes
+    // them. The trap shards depend on tau(t_id) (circularity), and the
+    // privacy guard is AEAD-protected + recipient-verified anyway; both are
+    // separately authenticated via the HMC_TX_AUTH_V3 layer2_signature digest.
+    let mut new_transaction = Transaction {
+        t_id: "".to_string(),
+        prev_hash: prev_hash.clone(),
+        t_type,
+        t_time,
+        sender_id: final_sender_id,
+        recipient_id: recipient_id_check.to_string(),
+        amount: amount_str,
+        sender_remaining_amount,
+        receiver_ephemeral_pub_hash,
+        sender_ephemeral_pub: Some(sender_ephemeral_pub.clone()),
+        privacy_guard: None,
+        trap_data: None,
+        layer2_signature: None,
+        deletable_at: None,
+        change_ephemeral_pub_hash,
+        sender_identity_signature: None,
+    };
 
-    let my_id_point = ed25519_pk_to_curve_point(&sender_permanent_key.verifying_key())?;
-    
-    let sk_sender_scalar = crate::services::crypto_utils::get_secret_scalar(sender_permanent_key);
-    let p_point = crate::services::crypto_utils::hash_to_curve(&prev_hash_bytes);
+    // Canonical t_id over the transaction WITHOUT trap_data/privacy_guard.
+    let tx_json_for_id = to_canonical_json(&new_transaction)?;
+    new_transaction.t_id = get_hash(tx_json_for_id);
 
-    let (trap_data_val, dleq_proof_opt) = generate_trap(
-        ds_tag.clone(),
-        &u_scalar,
-        &m,
-        &my_id_point,
-        sender_id_prefix,
-        Some(&sk_sender_scalar),
-        Some(&p_point),
-    )?;
+    // 5. TRAP GENERATION (V3 / Shared-Signature Trap)
+    let eph_pub_32 = to_32_bytes(sender_ephem_pub_bytes, "sender_ephemeral_pub")?;
+    let (sst_trap, sst_witness) =
+        crate::services::trap_manager::generate_sst_trap(
+            sender_permanent_key,
+            &ds_tag,
+            &eph_pub_32,
+            &new_transaction.t_id,
+        )?;
+    new_transaction.trap_data = Some(sst_trap);
 
-    let trap_data = Some(trap_data_val);
-
-    // 4. PAYLOAD ENCRYPTION: Send next_key_seed to recipient.
+    // 6. PAYLOAD ENCRYPTION: Send next_key_seed to recipient.
+    // Built AFTER t_id/trap generation because it embeds the private SST
+    // witness and must not influence the canonical t_id preimage (see above).
     let encoded_recipient_seed = bs58::encode(recipient_seed).into_string();
 
     let privacy_guard = if recipient_id.contains(":z") {
@@ -238,24 +252,21 @@ pub fn create_transaction(
             .unwrap_or("unknown")
             .to_string();
 
-        let (trap_k_point_str, dleq_c_str, dleq_s_str) = if let Some(dleq) = &dleq_proof_opt {
-            (
-                Some(bs58::encode(dleq.trap_k_point).into_string()),
-                Some(bs58::encode(dleq.dleq_c).into_string()),
-                Some(bs58::encode(dleq.dleq_s).into_string()),
-            )
-        } else {
-            (None, None, None)
-        };
-
         let payload = RecipientPayload {
             sender_permanent_did: sender_id.to_string(),
             target_prefix,
             timestamp: Utc::now().timestamp() as u64,
             next_key_seed: encoded_recipient_seed.clone(),
-            trap_k_point: trap_k_point_str,
-            dleq_c: dleq_c_str,
-            dleq_s: dleq_s_str,
+            // Legacy V2 DLEQ fields are no longer generated under V3.
+            trap_k_point: None,
+            dleq_c: None,
+            dleq_s: None,
+            // V3 (SST): private witness for the recipient's handover check
+            // (fraud *prevention* at L1).
+            trap_r_sig: Some(sst_witness.r_sig),
+            trap_s_sig: Some(sst_witness.s_sig),
+            trap_m_r: Some(sst_witness.m_r),
+            trap_m_s: Some(sst_witness.m_s),
         };
 
         let (ephemeral_pk, ephemeral_sk) = generate_ephemeral_x25519_keypair();
@@ -272,30 +283,9 @@ pub fn create_transaction(
     } else {
         None
     };
-
-    let mut new_transaction = Transaction {
-        t_id: "".to_string(),
-        prev_hash: prev_hash.clone(),
-        t_type,
-        t_time,
-        sender_id: final_sender_id,
-        recipient_id: recipient_id_check.to_string(),
-        amount: amount_str,
-        sender_remaining_amount,
-        receiver_ephemeral_pub_hash,
-        sender_ephemeral_pub: Some(sender_ephemeral_pub.clone()),
-        privacy_guard,
-        trap_data,
-        layer2_signature: None,
-        deletable_at: None,
-        change_ephemeral_pub_hash,
-        sender_identity_signature: None,
-    };
+    new_transaction.privacy_guard = privacy_guard;
 
     // L2 & IDENTITY SIGNATURES
-    let tx_json_for_id = to_canonical_json(&new_transaction)?;
-    new_transaction.t_id = get_hash(tx_json_for_id);
-
     let t_id_raw = bs58::decode(&new_transaction.t_id)
         .into_vec()
         .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id hash".to_string()))?;
@@ -305,40 +295,33 @@ pub fn create_transaction(
             VoucherCoreError::InvalidHashFormat("Invalid sender_ephemeral_pub format".to_string())
         })?;
 
-    let v_id = crate::services::l2_gateway::extract_layer2_voucher_id(voucher)?;
     let challenge_ds_tag = ds_tag.clone();
 
-    let to_32_bytes = |vec: Vec<u8>, name: &str| -> Result<[u8; 32], VoucherCoreError> {
-        vec.try_into()
-            .map_err(|_| VoucherCoreError::InvalidHashFormat(format!("{} must be 32 bytes", name)))
-    };
-
-    let receiver_hash_raw = if let Some(h) = &new_transaction.receiver_ephemeral_pub_hash {
-        let decoded = bs58::decode(h).into_vec().map_err(|_| {
-            VoucherCoreError::InvalidHashFormat("Invalid receiver_hash".to_string())
-        })?;
-        Some(to_32_bytes(decoded, "receiver_hash")?)
-    } else {
-        None
-    };
-
-    let change_hash_raw = if let Some(h) = &new_transaction.change_ephemeral_pub_hash {
-        let decoded = bs58::decode(h)
-            .into_vec()
-            .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid change_hash".to_string()))?;
-        Some(to_32_bytes(decoded, "change_hash")?)
-    } else {
-        None
-    };
+    // V3 Protocol (HMC_TX_AUTH_V3): bind the SST trap shards and the
+    // encrypted timestamp into the digest so gossip fingerprints carrying
+    // (ds_tag, trap_r, trap_s, encrypted_timestamp) become self-authenticating.
+    // SECURITY (audit_02_11): the voucher id is signature-bound so lock
+    // authorizations cannot be transplanted between containers.
+    // SECURITY (HMSEC-SA04-08): the canonical privacy-guard commitment is
+    // bound so guard equivocation yields distinguishable evidence.
+    let trap = new_transaction.trap_data.as_ref().ok_or(VoucherCoreError::MissingTrapData)?;
+    let encrypted_timestamp =
+        crate::services::conflict_manager::encrypt_transaction_timestamp(&new_transaction)?;
+    let l2_voucher_id = crate::services::l2_gateway::extract_layer2_voucher_id(voucher)?;
 
     let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+        &l2_voucher_id,
         &challenge_ds_tag,
-        &v_id,
         &to_32_bytes(t_id_raw.clone(), "t_id")?,
         &to_32_bytes(sender_pub_raw.clone(), "sender_pub")?,
-        receiver_hash_raw.as_ref().map(|v| &*v),
-        change_hash_raw.as_ref().map(|v| &*v),
+        &trap.trap_r,
+        &trap.trap_s,
+        encrypted_timestamp,
         new_transaction.deletable_at.as_deref(),
+        crate::services::l2_gateway::privacy_guard_commitment(
+            new_transaction.privacy_guard.as_deref(),
+        )
+        .as_str(),
     );
 
     let l2_sig_bytes = sign_ed25519(sender_ephemeral_key, &payload_hash);

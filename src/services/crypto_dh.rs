@@ -212,6 +212,16 @@ pub fn decrypt_recipient_payload(
 
     // 4. DH Exchange
     let shared_point = recipient_secret_x.diffie_hellman(&ephemeral_pk_x);
+
+    // SECURITY: Check for non-contributory behavior (e.g. point at infinity/null).
+    // Mirrors `perform_diffie_hellman`: an attacker-controlled low-order
+    // ephemeral key must never yield an attacker-known shared secret.
+    if !shared_point.was_contributory() {
+        return Err(VoucherCoreError::Crypto(
+            "Diffie-Hellman exchange was non-contributory (weak key).".to_string(),
+        ));
+    }
+
     let shared_secret_bytes = shared_point.as_bytes();
 
     // 5. HKDF Derivation with SAI-Binding

@@ -91,22 +91,28 @@ mod tests {
         let valid_date = (now + Duration::days(1)).to_rfc3339();
         let expired_fp = TransactionFingerprint {
             ds_tag: "expired_key".to_string(),
-            u: String::new(),
-            blinded_id: String::new(),
+            trap_r: "synthetic_shard".to_string(),
+            trap_s: "synthetic_shard".to_string(),
             deletable_at: expired_date,
             t_id: String::new(),
             encrypted_timestamp: 0,
             layer2_signature: String::new(),
-        };
+                    sender_ephemeral_pub: String::new(),
+            layer2_voucher_id: String::new(),
+            privacy_guard_hash: String::new(),
+};
         let valid_fp = TransactionFingerprint {
             ds_tag: "valid_key".to_string(),
-            u: String::new(),
-            blinded_id: String::new(),
+            trap_r: "synthetic_shard".to_string(),
+            trap_s: "synthetic_shard".to_string(),
             deletable_at: valid_date,
             t_id: String::new(),
             encrypted_timestamp: 0,
             layer2_signature: String::new(),
-        };
+                    sender_ephemeral_pub: String::new(),
+            layer2_voucher_id: String::new(),
+            privacy_guard_hash: String::new(),
+};
         wallet_state
             .known_fingerprints
             .local_history
@@ -158,13 +164,16 @@ mod tests {
             let key = format!("key_{}", i);
             let fp = TransactionFingerprint {
                 ds_tag: key.clone(),
-                u: String::new(),
-                blinded_id: String::new(),
+                trap_r: "synthetic_shard".to_string(),
+                trap_s: "synthetic_shard".to_string(),
                 t_id: format!("tx_{:02}", i), // Padding for correct lexical sorting
                 encrypted_timestamp: 0,
                 layer2_signature: String::new(),
                 deletable_at: String::new(),
-            };
+                            sender_ephemeral_pub: String::new(),
+            layer2_voucher_id: String::new(),
+            privacy_guard_hash: String::new(),
+};
             let mut meta = FingerprintMetadata::default();
             meta.depth = match i {
                 0 | 1 => 5, // Highest depth, deleted first
@@ -552,16 +561,11 @@ mod tests {
             .unwrap();
 
         let fp_key = "test_fp_key".to_string();
-        let fingerprint = TransactionFingerprint {
-            ds_tag: fp_key.clone(),
-            u: String::new(),
-            blinded_id: String::new(),
-            t_id: String::new(),
-            encrypted_timestamp: 0,
-            layer2_signature: String::new(),
-            // FIX: Set valid date so cleanup doesn't remove it
-            deletable_at: (Utc::now() + Duration::days(10)).to_rfc3339(),
-        };
+        // V2: gossip fingerprints must be self-authenticating to pass ingress.
+        let mut fingerprint =
+            human_money_core::test_utils::make_signed_fingerprint(&fp_key, "", 0);
+        // FIX: Set valid date so cleanup doesn't remove it
+        fingerprint.deletable_at = (Utc::now() + Duration::days(10)).to_rfc3339();
 
         // Log out Alice
         alice_service.logout();
@@ -641,14 +645,17 @@ mod tests {
         let fp_key = "test_fp_key".to_string();
         let fingerprint = TransactionFingerprint {
             ds_tag: fp_key.clone(),
-            u: String::new(),
-            blinded_id: String::new(),
+            trap_r: "synthetic_shard".to_string(),
+            trap_s: "synthetic_shard".to_string(),
             t_id: String::new(),
             encrypted_timestamp: 0,
             layer2_signature: String::new(),
             // FIX: Set a valid future date so cleanup does not remove this fingerprint
             deletable_at: (Utc::now() + Duration::days(365)).to_rfc3339(),
-        };
+                    sender_ephemeral_pub: String::new(),
+            layer2_voucher_id: String::new(),
+            privacy_guard_hash: String::new(),
+};
 
         // Manipulate state directly in memory.
         // IMPORTANT: We do NOT log Bob out. Since Alice and Bob use different folders,
@@ -804,14 +811,17 @@ mod tests {
         for i in 0..5 {
             let key = format!("key_{}", i);
             let fp = TransactionFingerprint {
-                u: String::new(),
-                blinded_id: String::new(),
+                trap_r: "synthetic_shard".to_string(),
+                trap_s: "synthetic_shard".to_string(),
                 ds_tag: key.clone(),
                 t_id: String::new(),
                 encrypted_timestamp: 0,
                 layer2_signature: String::new(),
                 deletable_at: String::new(),
-            };
+                            sender_ephemeral_pub: String::new(),
+            layer2_voucher_id: String::new(),
+            privacy_guard_hash: String::new(),
+};
             let meta = FingerprintMetadata {
                 depth: if i < 2 {
                     0
@@ -907,13 +917,16 @@ mod tests {
         let key = "key_already_known".to_string();
         let fp = TransactionFingerprint {
             ds_tag: key.clone(),
-            u: String::new(),
-            blinded_id: String::new(),
+            trap_r: "synthetic_shard".to_string(),
+            trap_s: "synthetic_shard".to_string(),
             t_id: String::new(),
             encrypted_timestamp: 0,
             layer2_signature: String::new(),
             deletable_at: String::new(),
-        };
+                    sender_ephemeral_pub: String::new(),
+            layer2_voucher_id: String::new(),
+            privacy_guard_hash: String::new(),
+};
         let mut meta = FingerprintMetadata {
             depth: 0,
             ..Default::default()
@@ -984,14 +997,17 @@ mod tests {
         for i in 0..200 {
             let key = format!("key_{}", i);
             let fp = TransactionFingerprint {
-                u: String::new(),
-                blinded_id: String::new(),
+                trap_r: "synthetic_shard".to_string(),
+                trap_s: "synthetic_shard".to_string(),
                 ds_tag: key.clone(),
                 t_id: String::new(),
                 encrypted_timestamp: 0,
                 layer2_signature: String::new(),
                 deletable_at: String::new(),
-            };
+                            sender_ephemeral_pub: String::new(),
+            layer2_voucher_id: String::new(),
+            privacy_guard_hash: String::new(),
+};
             wallet.fingerprint_metadata.insert(
                 key.clone(),
                 FingerprintMetadata {

@@ -219,7 +219,9 @@ impl AppService {
             Some(pwd) => Ok(crate::storage::AuthMethod::Password(pwd)),
             None => match session_cache {
                 Some(cache) => {
-                    if std::time::Instant::now() > cache.last_activity + cache.session_duration {
+                    // Panic-free deadline check: elapsed() cannot overflow, unlike
+                    // `last_activity + session_duration` for host-supplied durations.
+                    if cache.last_activity.elapsed() > cache.session_duration {
                         Err(crate::error::VoucherCoreError::Generic(
                             "Session timed out. Please provide password.".to_string(),
                         ))
@@ -391,6 +393,22 @@ impl AppService {
                     let local_instance_id = current_wallet.local_instance_id.clone();
                     match Wallet::load(&storage, &auth, local_instance_id) {
                         Ok((fresh_wallet, _)) => {
+                            // SECURITY GATE: the reloaded state was written by
+                            // an external party. Only trust it if the current
+                            // seal covers it -- otherwise this command would
+                            // silently operate on (potentially resurrected)
+                            // rolled-back state.
+                            if let Err(gate_err) =
+                                Self::verify_state_matches_seal(&storage, &auth, &fresh_wallet)
+                            {
+                                self.state = AppState::Unlocked {
+                                    storage,
+                                    wallet: current_wallet,
+                                    identity,
+                                    session_cache,
+                                };
+                                return Err(gate_err);
+                            }
                             current_wallet = fresh_wallet;
                         }
                         Err(e) => {
@@ -423,13 +441,37 @@ impl AppService {
                             };
                             return Err(AppFacadeError::from(e));
                         }
+                        // Advance the cryptographic seal BEFORE publishing the
+                        // new state. If this fails, the data files are already
+                        // durably persisted while the seal still anchors the
+                        // PRE-transaction state; returning Err now would brick
+                        // the next login (state-hash gate in
+                        // `verify_seal_on_login`). Compensate by restoring the
+                        // pre-transaction data so disk matches the untouched
+                        // (tmp+rename-atomic) seal again: Err => no commit.
+                        if let Err(seal_err) =
+                            Self::persist_seal_for_wallet_state(&mut storage, &identity, &auth, &temp_wallet)
+                        {
+                            let restored_wallet = Self::compensate_failed_seal_phase(
+                                &mut storage,
+                                &current_wallet,
+                                &identity,
+                                &auth,
+                            );
+                            self.state = AppState::Unlocked {
+                                storage,
+                                wallet: restored_wallet,
+                                identity,
+                                session_cache,
+                            };
+                            return Err(seal_err);
+                        }
                         self.state = AppState::Unlocked {
                             storage,
                             wallet: temp_wallet,
                             identity,
                             session_cache,
                         };
-                        self.update_seal_after_state_change(password)?;
                         Ok(res)
                     }
                     TransactionOutcome::CommitAndReturnError(err) => {
@@ -442,13 +484,32 @@ impl AppService {
                             };
                             return Err(AppFacadeError::from(e));
                         }
+                        // Same seal-first/compensate contract as the Commit arm:
+                        // a failed seal update must never leave persisted data
+                        // stranded next to a stale seal.
+                        if let Err(seal_err) =
+                            Self::persist_seal_for_wallet_state(&mut storage, &identity, &auth, &temp_wallet)
+                        {
+                            let restored_wallet = Self::compensate_failed_seal_phase(
+                                &mut storage,
+                                &current_wallet,
+                                &identity,
+                                &auth,
+                            );
+                            self.state = AppState::Unlocked {
+                                storage,
+                                wallet: restored_wallet,
+                                identity,
+                                session_cache,
+                            };
+                            return Err(seal_err);
+                        }
                         self.state = AppState::Unlocked {
                             storage,
                             wallet: temp_wallet,
                             identity,
                             session_cache,
                         };
-                        self.update_seal_after_state_change(password)?;
                         Err(err)
                     }
                     TransactionOutcome::Rollback(err) => {
@@ -466,6 +527,39 @@ impl AppService {
         }
     }
 
+    /// Compensates a half-committed transaction whose seal update failed
+    /// AFTER the wallet data files were durably persisted.
+    ///
+    /// Re-persists the PRE-transaction wallet state (with the generation
+    /// counter aligned to the value the aborted commit wrote) so that the
+    /// on-disk data matches the untouched seal again. `save_seal` writes via
+    /// tmp+rename, therefore a failed seal update always leaves the previous,
+    /// fully intact seal behind - restoring the matching data re-establishes
+    /// the invariant checked by `verify_seal_on_login` and keeps the wallet
+    /// loginable.
+    ///
+    /// Best effort: if the compensating write itself fails (active I/O
+    /// breakdown), the divergence remains and the next login will require
+    /// recovery - nothing more can be done at this point.
+    fn compensate_failed_seal_phase(
+        storage: &mut FileStorage,
+        pre_tx_wallet: &Wallet,
+        identity: &UserIdentity,
+        auth: &crate::storage::AuthMethod<'_>,
+    ) -> Wallet {
+        let mut rollback_wallet = pre_tx_wallet.clone();
+        if let Ok(disk_gen) = storage.read_generation() {
+            rollback_wallet.loaded_generation = disk_gen;
+        }
+        if let Err(e) = rollback_wallet.save(storage, identity, auth) {
+            eprintln!(
+                "Wallet seal compensation failed; manual recovery may be required: {}",
+                e
+            );
+        }
+        rollback_wallet
+    }
+
     /// Checks the "Remember password" session, manages the timeout
     /// and the "sliding window" (resets 'last_activity').
     pub fn get_session_key(&mut self) -> Result<[u8; 32], AppFacadeError> {
@@ -477,14 +571,14 @@ impl AppService {
                 session_cache,
             } => {
                 if let Some(cache) = session_cache {
-                    let now = Instant::now();
-                    if now > cache.last_activity + cache.session_duration {
+                    // Panic-free deadline check (see resolve_auth_method).
+                    if cache.last_activity.elapsed() > cache.session_duration {
                         // --- Timeout! ---
                         *session_cache = None; // Clear key
                         Err(AppFacadeError::SessionExpired("Session timed out. Please provide password.".to_string()))
                     } else {
                         // --- OK, activity detected ---
-                        cache.last_activity = now; // "Sliding Window"
+                        cache.last_activity = Instant::now(); // "Sliding Window"
                         Ok(cache.session_key)
                     }
                 } else {
@@ -503,8 +597,8 @@ impl AppService {
                 session_cache: Some(cache),
                 ..
             } => {
-                let now = std::time::Instant::now();
-                now <= cache.last_activity + cache.session_duration
+                // Panic-free deadline check (see resolve_auth_method).
+                cache.last_activity.elapsed() <= cache.session_duration
             }
             _ => false,
         }

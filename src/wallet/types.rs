@@ -125,6 +125,14 @@ pub struct CreateBundleResult {
     /// Detailed breakdown of each source voucher used in the transaction.
     #[serde(default)]
     pub involved_sources_details: Vec<InvolvedVoucherInfo>,
+    /// SECURITY (AUDIT-W4-INT-503): voucher IDs whose committed pre-states
+    /// could NOT be written to the forensic archive (best-effort phase,
+    /// AUDIT-00-WILDCARD-02). Empty when the forensic archive is complete.
+    /// Callers MUST surface a non-empty value: a silently truncated custody
+    /// chain weakens offline double-spend forensics for exactly the
+    /// fraud-relevant cases.
+    #[serde(default)]
+    pub forensic_archive_incomplete: Vec<String>,
 }
 
 /// A report summarizing the results of storage cleanup.

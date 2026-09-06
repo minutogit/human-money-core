@@ -10,13 +10,17 @@ use crate::error::ValidationError;
 use crate::error::VoucherCoreError;
 use crate::models::conflict::TransactionFingerprint;
 use crate::models::profile::{TransactionBundle, UserIdentity};
-use crate::models::secure_container::{PayloadType, PrivacyMode, SecureContainer};
+use crate::models::secure_container::{
+    EncryptionType, PayloadType, PrivacyMode, SecureContainer,
+};
 use crate::models::voucher::Voucher;
 use crate::services::crypto_identity::get_pubkey_from_user_id;
 use crate::services::crypto_utils::{
     decode_base64, get_hash, sign_ed25519, verify_ed25519,
 };
-use crate::services::secure_container_manager::{create_secure_container, open_secure_container};
+use crate::services::secure_container_manager::{
+    create_secure_container, open_secure_container, ContainerManagerError,
+};
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
 use std::collections::HashMap;
 
@@ -55,16 +59,51 @@ pub fn create_and_encrypt_bundle(
     bundle.sender_signature = bs58::encode(signature.to_bytes()).into_string();
     let signed_bundle_bytes = serde_json::to_vec(&bundle)?;
 
-    let secure_container = create_secure_container(
+    let mut secure_container = create_secure_container(
         identity,
         crate::models::secure_container::ContainerConfig::TargetDid(recipient_id.to_string(), PrivacyMode::TrialDecryption),
         &signed_bundle_bytes,
         PayloadType::TransactionBundle, // content type
     )?;
 
+    // HMC-SEC-06-02 (Privacy): If the transferred transaction chain is fully
+    // anonymous, the envelope must not carry a plaintext Ed25519 signature
+    // made with the sender's PERMANENT identity key. Such a signature is
+    // publicly verifiable against `container.i` and turns every "anonymous"
+    // transfer into a de-anonymization oracle for anyone holding a candidate
+    // public key. `i` remains verifiable: it is hashed over the
+    // empty-signature form. Post-decryption authenticity is unaffected, as
+    // the inner bundle signature stays authoritative.
+    //
+    // HMSEC-SA06-08: The gate uses ANY semantics. A single anonymous chain is
+    // sufficient to establish the privacy context of the whole container:
+    // with ALL semantics, a mixed multi-standard transfer (e.g. one Public
+    // chain plus one Stealth chain) kept the permanent-key signature alive,
+    // publicly linking the co-transferred stealth sub-chain to the sender's
+    // identity (SA06-01 oracle regression).
+    if bundle_contains_anonymous_chain(&bundle) {
+        secure_container.signature = String::new();
+    }
+
     let container_bytes = serde_json::to_vec(&secure_container)?;
 
     Ok((container_bytes, bundle))
+}
+
+/// Determines whether a bundle contains at least one anonymous
+/// (privacy mode / stealth) transaction chain. HMSEC-SA06-08: ANY semantics —
+/// a single anonymous chain forces suppression of the permanent-key envelope
+/// signature, because a publicly verifiable signature over the container
+/// would de-anonymize every co-transferred stealth chain. A chain counts as
+/// anonymous when its latest transaction has no plaintext sender
+/// (`sender_id` absent) or an anonymous recipient.
+fn bundle_contains_anonymous_chain(bundle: &TransactionBundle) -> bool {
+    !bundle.vouchers.is_empty()
+        && bundle.vouchers.iter().any(|v| {
+            v.transactions.last().is_some_and(|tx| {
+                tx.sender_id.is_none() || tx.recipient_id == crate::models::voucher::ANONYMOUS_ID
+            })
+        })
 }
 
 /// Opens a `SecureContainer`, validates the content as `TransactionBundle` and
@@ -83,13 +122,55 @@ pub fn open_and_verify_bundle(
         return Err(VoucherCoreError::InvalidPayloadType);
     }
 
+    // HMC-SEC-06-03: Enforce the "no plaintext financial payloads" fuse on
+    // the RECEIVE side as well. The creation-side check
+    // (`PlaintextNotAllowedForFinancialPayload`) only binds honest senders;
+    // without this gate a hand-crafted `EncryptionType::None` container is
+    // processed end-to-end by the wallet (CWE-311).
+    if container.et == EncryptionType::None {
+        return Err(ContainerManagerError::PlaintextNotAllowedForFinancialPayload.into());
+    }
+
+    // HMC-SEC-06-01: Recompute the container integrity ID from the received
+    // bytes and require an exact match BEFORE any signature verification.
+    // Both `i` and `signature` are excluded exactly as during creation.
+    // Without this rebinding, any observer of a legitimate
+    // `(i, signature)` pair can graft it onto different container content.
+    let mut container_for_hash = container.clone();
+    container_for_hash.i = String::new();
+    container_for_hash.signature = String::new();
+    let expected_i = get_hash(to_canonical_json(&container_for_hash)?);
+    if container.i != expected_i {
+        return Err(ValidationError::InvalidContainerSignature.into());
+    }
+
     let decrypted_bundle_bytes = open_secure_container(&container, identity, None)?;
     let bundle: TransactionBundle = serde_json::from_slice(&decrypted_bundle_bytes)?;
+
+    // HMC-SEC-06-01 (bundle level): Recompute `bundle_id` from the received
+    // content and require an exact match. `bundle_id` and `sender_signature`
+    // are excluded exactly as during creation. This enforces the documented
+    // contract that the sender signature makes the ENTIRE bundle
+    // tamper-proof; a stolen `(bundle_id, sender_signature)` pair can no
+    // longer be re-attached to manipulated content (CWE-347).
+    let mut bundle_for_hash = bundle.clone();
+    bundle_for_hash.bundle_id = String::new();
+    bundle_for_hash.sender_signature = String::new();
+    let expected_bundle_id = get_hash(to_canonical_json(&bundle_for_hash)?);
+    if bundle.bundle_id != expected_bundle_id {
+        return Err(ValidationError::InvalidBundleSignature.into());
+    }
 
     // Cascaded verification:
     // 1. First verify the signature of the *container*.
     //    For this, we need the sender_id from the decrypted bundle.
-    verify_container_signature(&mut container, &bundle.sender_id)?;
+    //    HMC-SEC-06-02: Privacy-mode containers intentionally carry NO
+    //    envelope signature (de-anonymization oracle); authenticity is then
+    //    guaranteed exclusively by the inner bundle signature below. A
+    //    present signature is always verified against the claimed sender.
+    if !container.signature.is_empty() {
+        verify_container_signature(&mut container, &bundle.sender_id)?;
+    }
 
     // 2. Then verify the internal signature of the *bundle*.
     verify_bundle_signature(&bundle)?;

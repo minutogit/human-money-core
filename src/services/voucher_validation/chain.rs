@@ -1,13 +1,34 @@
 use crate::error::{ValidationError, VoucherCoreError};
 use crate::models::voucher::{Transaction, Voucher};
 use crate::models::voucher_standard_definition::{VoucherStandardDefinition, PrivacyMode};
-use crate::services::crypto_identity::{get_pubkey_from_user_id, get_prefix_from_user_id};
-use crate::services::crypto_utils::{get_hash, get_hash_from_slices, ed25519_pk_to_curve_point};
+use crate::services::crypto_identity::get_pubkey_from_user_id;
+use crate::services::crypto_utils::{get_hash, get_hash_from_slices};
 use crate::services::utils::to_canonical_json;
-use crate::services::trap_manager::verify_trap;
 use ed25519_dalek::{Signature, Verifier};
 use rust_decimal::Decimal;
 use std::str::FromStr;
+
+/// SECURITY (AUDIT-W4-INT-502): parses an RFC 3339 timestamp into an instant
+/// for ordering comparisons. Chain time-ordering invariants must hold on
+/// parsed INSTANTS, not on raw strings: RFC 3339 allows arbitrary UTC
+/// offsets, so lexicographic string comparison does not imply chronological
+/// order (e.g. `"2026-01-02T00:00:00Z"` vs `"2026-01-01T23:59:59-14:00"`).
+/// Unparseable timestamps are rejected fail-closed.
+pub(crate) fn parse_rfc3339_instant(
+    timestamp: &str,
+    entity: &str,
+    id: &str,
+) -> Result<chrono::DateTime<chrono::FixedOffset>, VoucherCoreError> {
+    chrono::DateTime::parse_from_rfc3339(timestamp).map_err(|_| {
+        ValidationError::InvalidTimeOrder {
+            entity: entity.to_string(),
+            id: id.to_string(),
+            time1: timestamp.to_string(),
+            time2: "unparseable RFC 3339 timestamp".to_string(),
+        }
+        .into()
+    })
+}
 
 pub fn validate_privacy_mode(voucher: &Voucher, mode: &PrivacyMode) -> Result<(), VoucherCoreError> {
     for (i, tx) in voucher.transactions.iter().enumerate() {
@@ -175,7 +196,11 @@ pub fn verify_transactions(
             )
             .into());
         }
-        if tx.t_time <= last_tx_time {
+        // SECURITY (AUDIT-W4-INT-502): compare parsed instants, not raw
+        // RFC 3339 strings (offset confusion would defeat string ordering).
+        if parse_rfc3339_instant(&tx.t_time, "Transaction", &tx.t_id)?
+            <= parse_rfc3339_instant(&last_tx_time, "Transaction", &tx.t_id)?
+        {
             return Err(ValidationError::InvalidTimeOrder {
                 entity: "Transaction".to_string(),
                 id: tx.t_id.clone(),
@@ -191,7 +216,31 @@ pub fn verify_transactions(
         } else {
             Decimal::ZERO
         };
-        let total_input_needed = current_amount + current_remainder;
+        // SECURITY (HMC-SEC-04-02): Both amounts are attacker-controlled and
+        // their sum may exceed the Decimal range. The addition must be checked
+        // BEFORE the conservation comparison, otherwise rust_decimal panics
+        // instead of rejecting the hostile chain.
+        let total_input_needed = match current_amount.checked_add(current_remainder) {
+            Some(sum) => sum,
+            None => {
+                return Err(ValidationError::InsufficientFundsInChain {
+                    user_id: tx
+                        .sender_id
+                        .clone()
+                        .unwrap_or_else(|| crate::models::voucher::ANONYMOUS_ID.to_string()),
+                    needed: format!(
+                        "overflow (amount {} + remaining {})",
+                        current_amount, current_remainder
+                    ),
+                    available: valid_previous_outputs
+                        .iter()
+                        .map(|d| d.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" or "),
+                }
+                .into());
+            }
+        };
 
         let mut match_found = false;
         for valid_out in &valid_previous_outputs {
@@ -285,12 +334,33 @@ pub fn verify_transactions(
         }
 
         if let Some(trap) = &tx.trap_data {
-            if trap.blinded_id.contains(':') || trap.blinded_id.contains('@') {
+            // Base58 hygiene / DID-injection guard: shards are pure
+            // cryptographic material and must never smuggle DID marker
+            // characters (':' / '@').
+            if trap.trap_r.contains(':')
+                || trap.trap_r.contains('@')
+                || trap.trap_s.contains(':')
+                || trap.trap_s.contains('@')
+            {
                 return Err(ValidationError::TrapDataInvalid {
                     t_id: tx.t_id.clone(),
                 }
                 .into());
             }
+
+            // SECURITY (HMSEC-SA04-09): Structural shard sanity. The V3
+            // digest binds the shard STRINGS verbatim, so a malicious payer
+            // could otherwise sign arbitrary garbage as trap shards and
+            // permanently blind the SST against double-spend attribution.
+            // Enforce the generation contract (decompressable Edwards point
+            // for R_i, canonical scalar encoding for s_i) BEFORE acceptance;
+            // the genesis placeholder pair ("none"/"none") fails these gates
+            // by design. Honest sends always satisfy this via
+            // generate_sst_trap, so no legitimate path regresses.
+            crate::services::trap_manager::validate_shard_structure(
+                &trap.trap_r,
+                &trap.trap_s,
+            )?;
 
             let prev_hash_bytes = bs58::decode(&tx.prev_hash)
                 .into_vec()
@@ -314,34 +384,12 @@ pub fn verify_transactions(
                 )));
             }
 
-            if let Some(sender_id) = &tx.sender_id {
-                if let Ok(signer_pk) = get_pubkey_from_user_id(sender_id) {
-                    if let Ok(signer_id_point) = ed25519_pk_to_curve_point(&signer_pk) {
-                        let sender_prefix = get_prefix_from_user_id(sender_id);
-
-                        let u_input_varying = format!(
-                            "{}{}{}",
-                            expected_ds_tag,
-                            tx.amount,
-                            tx.receiver_ephemeral_pub_hash.as_deref().unwrap_or("")
-                        );
-
-                        if let Err(e) = verify_trap(
-                            trap,
-                            &expected_ds_tag,
-                            u_input_varying.as_bytes(),
-                            &signer_id_point,
-                            sender_prefix,
-                        ) {
-                            return Err(ValidationError::InvalidTransaction(format!(
-                                "Trap verification failed: {}",
-                                e
-                            ))
-                            .into());
-                        }
-                    }
-                }
-            }
+            // V3 (SST): The shards cannot be verified standalone against a
+            // claimed identity on-chain. They are authenticated indirectly by
+            // the HMC_TX_AUTH_V3 layer2_signature digest checked below, while
+            // attribution happens autonomously via SST collision extraction in
+            // conflict handling (two colliding shards mathematically reveal
+            // the signer).
         }
 
         let sender_balance_before_tx = {
@@ -395,6 +443,27 @@ pub fn verify_transactions(
         }
 
         if tx.t_type == "split" {
+            // SECURITY (HMSEC-SA04-05): Split-Anchor Separation invariant.
+            // The receiver output and the change output must be committed to
+            // two DIFFERENT keys. A split with identical anchors is fully
+            // self-consistent and would otherwise pass every signature and
+            // conservation check, but it places BOTH branches under the
+            // control of a single key: whoever holds that key can spend the
+            // recipient branch before the honest recipient, framing them as
+            // a double-spender, and transfer/change fingerprints become
+            // trivially linkable. No legitimate creation path can produce
+            // this state (recipient seed is randomly generated, the change
+            // seed is deterministically derived from the sender's permanent
+            // key via HKDF).
+            if tx.receiver_ephemeral_pub_hash.is_some()
+                && tx.receiver_ephemeral_pub_hash == tx.change_ephemeral_pub_hash
+            {
+                return Err(ValidationError::InvalidTransaction(
+                    "Split transaction must commit DISTINCT anchors for the receiver and change outputs (anchor overlap detected).".to_string(),
+                )
+                .into());
+            }
+
             let remaining_amount = match tx.sender_remaining_amount.as_deref() {
                 Some(rem_str) => Decimal::from_str(rem_str)?,
                 None => {
@@ -405,7 +474,21 @@ pub fn verify_transactions(
                 }
             };
 
-            if sender_balance_before_tx != (amount_to_send + remaining_amount) {
+            // SECURITY (HMC-SEC-04-02): The split sum is attacker-controlled
+            // and may overflow the Decimal range; compute it checked to avoid
+            // a panic on impossible split declarations.
+            let split_total = match amount_to_send.checked_add(remaining_amount) {
+                Some(sum) => sum,
+                None => {
+                    return Err(ValidationError::InvalidTransaction(format!(
+                        "Impossible split: sent amount ({}) plus remaining amount ({}) overflows the maximum representable value.",
+                        amount_to_send, remaining_amount
+                    ))
+                    .into());
+                }
+            };
+
+            if sender_balance_before_tx != split_total {
                 return Err(ValidationError::InvalidTransaction(format!(
                     "Invalid split balance: previous balance ({}) does not equal sent amount ({}) + remaining amount ({}).",
                     sender_balance_before_tx, amount_to_send, remaining_amount
@@ -451,12 +534,24 @@ pub fn verify_transaction_basics(
             )
             .into());
         }
-        if (voucher.creator_profile.id.is_some() && tx.sender_id != voucher.creator_profile.id)
-            || (voucher.creator_profile.id.is_some()
-                && Some(&tx.recipient_id) != voucher.creator_profile.id.as_ref())
+        // SECURITY (AUDIT-W4-INT-501): issuer attribution is MANDATORY for
+        // issuance. Previously every attribution gate was conditional on
+        // `creator_profile.id` being present, so a hand-crafted voucher with
+        // `creator_profile.id = None` bypassed the init party check, the
+        // creator-signature binding and the issuance firewall entirely —
+        // enabling unaccountable self-minting under trusted standard UUIDs.
+        let creator_id = voucher.creator_profile.id.as_deref().ok_or_else(|| {
+            ValidationError::BusinessRuleViolated(
+                "Initial transaction has no attributed creator (creator_profile.id is \
+                 missing); unattributed issuance is rejected."
+                    .to_string(),
+            )
+        })?;
+        if Some(creator_id) != tx.sender_id.as_deref()
+            || creator_id != tx.recipient_id
         {
             return Err(ValidationError::InitPartyMismatch {
-                expected: voucher.creator_profile.id.clone().unwrap_or_default(),
+                expected: creator_id.to_string(),
                 found: tx.sender_id.clone().unwrap_or_default(),
             }
             .into());
@@ -470,7 +565,14 @@ pub fn verify_transaction_basics(
             }
             .into());
         }
-        if tx.t_time < voucher.creation_date {
+        // SECURITY (AUDIT-W4-INT-502): instant-based comparison (see above).
+        if parse_rfc3339_instant(&tx.t_time, "Initial Transaction", &tx.t_id)?
+            < parse_rfc3339_instant(
+                &voucher.creation_date,
+                "Initial Transaction",
+                &tx.t_id,
+            )?
+        {
             return Err(ValidationError::InvalidTimeOrder {
                 entity: "Initial Transaction".to_string(),
                 id: tx.t_id.clone(),
@@ -538,6 +640,9 @@ pub fn verify_transaction_basics(
 
 pub fn verify_transaction_integrity_and_signature(
     transaction: &Transaction,
+    // SECURITY (audit_02_11): the layer2_voucher_id is signature-bound again
+    // (HMC_TX_AUTH_V3 digest, field 2). Genesis transactions signed the
+    // canonical "none" placeholder; callers pass the voucher's derived id.
     layer2_voucher_id: &str,
 ) -> Result<(), VoucherCoreError> {
     #[cfg(feature = "test-utils")]
@@ -550,6 +655,13 @@ pub fn verify_transaction_integrity_and_signature(
     tx_for_tid_calc.t_id = "".to_string();
     tx_for_tid_calc.layer2_signature = None;
     tx_for_tid_calc.sender_identity_signature = None;
+    // V3 (SST) rule: The canonical t_id preimage EXCLUDES `trap_data` AND
+    // `privacy_guard`. The trap shards depend on tau(t_id) (circularity), and
+    // the privacy guard is AEAD-protected + recipient-verified anyway; both
+    // are separately authenticated via the HMC_TX_AUTH_V3 layer2_signature
+    // digest.
+    tx_for_tid_calc.trap_data = None;
+    tx_for_tid_calc.privacy_guard = None;
 
     let calculated_tid = get_hash(to_canonical_json(&tx_for_tid_calc)?);
     if transaction.t_id != calculated_tid {
@@ -605,51 +717,41 @@ pub fn verify_transaction_integrity_and_signature(
                 })
             };
 
-            let receiver_hash_raw = transaction
-                .receiver_ephemeral_pub_hash
-                .as_ref()
-                .map(|h| {
-                    bs58::decode(h).into_vec().map_err(|_| {
-                        ValidationError::SignatureDecodeError(
-                            "Invalid receiver_ephemeral_pub_hash encoding".into(),
-                        )
-                    })
-                })
-                .transpose()?;
-
-            let change_hash_raw = transaction
-                .change_ephemeral_pub_hash
-                .as_ref()
-                .map(|h| {
-                    bs58::decode(h).into_vec().map_err(|_| {
-                        ValidationError::SignatureDecodeError(
-                            "Invalid change_ephemeral_pub_hash encoding".into(),
-                        )
-                    })
-                })
-                .transpose()?;
-
             let t_id_32 = to_32_bytes(t_id_raw)?;
             let ephem_pub_32 = to_32_bytes(ephem_pub_bytes)?;
 
-            let receiver_hash_32 = match receiver_hash_raw {
-                Some(v) => Some(to_32_bytes(v)?),
-                None => None,
+            // V3 Protocol (HMC_TX_AUTH_V3): verify against the unified,
+            // domain-separated digest binding the voucher id (audit_02_11),
+            // the SST trap shards (trap_r, trap_s), the encrypted timestamp
+            // and the canonical privacy-guard commitment (HMSEC-SA04-08).
+            // This makes the layer2_signature serve simultaneously as L1
+            // ownership proof and gossip ingress proof.
+            let (trap_r_str, trap_s_str) = match &transaction.trap_data {
+                Some(td) => (td.trap_r.as_str(), td.trap_s.as_str()),
+                None => (
+                    crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
+                    crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
+                ),
             };
-
-            let change_hash_32 = match change_hash_raw {
-                Some(v) => Some(to_32_bytes(v)?),
-                None => None,
-            };
+            let encrypted_timestamp = crate::services::conflict_manager::
+                encrypt_transaction_timestamp(transaction)?;
 
             let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+                if transaction.t_type == "init" {
+                    crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER
+                } else {
+                    layer2_voucher_id
+                },
                 &challenge_ds_tag,
-                layer2_voucher_id,
                 &t_id_32,
                 &ephem_pub_32,
-                receiver_hash_32.as_ref(),
-                change_hash_32.as_ref(),
+                trap_r_str,
+                trap_s_str,
+                encrypted_timestamp,
                 transaction.deletable_at.as_deref(),
+                &crate::services::l2_gateway::privacy_guard_commitment(
+                    transaction.privacy_guard.as_deref(),
+                ),
             );
 
             if ephem_key.verify(&payload_hash, &signature).is_err() {

@@ -2,8 +2,9 @@ use crate::models::profile::PublicProfile;
 use crate::models::signature::DetachedSignature;
 use crate::models::voucher::{Collateral, Transaction, ValueDefinition, Voucher, VoucherSignature};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
+use crate::models::conflict::TransactionFingerprint;
 use crate::services::crypto_utils::{self, get_hash, get_hash_from_slices, sign_ed25519};
-use crate::services::utils::{to_canonical_json};
+use crate::services::utils::{get_timestamp, to_canonical_json};
 use crate::services::voucher_manager::{create_transaction, NewVoucherData};
 use super::{ACTORS};
 use crate::{UserIdentity, VoucherCoreError};
@@ -438,14 +439,26 @@ pub fn resign_transaction(
 pub fn resign_transaction_ext(
     mut tx: Transaction,
     signer_key: &SigningKey,
+    // V3 Protocol (audit_02_11): the voucher id is signature-bound again.
+    // Genesis transactions sign the canonical "none" placeholder.
     v_id: &str,
     l2_signer_key: Option<&SigningKey>,
 ) -> Transaction {
+    // V3 Protocol (SST): the t_id preimage excludes `trap_data` and
+    // `privacy_guard` — both are attached only after t_id computation at
+    // creation time, and validators blank them before hashing as well. The
+    // trap shards AND the privacy guard are restored afterwards so the signed
+    // tx still carries them.
+    let stored_trap_data = tx.trap_data.take();
+    let stored_privacy_guard = tx.privacy_guard.take();
     tx.t_id = "".to_string();
     tx.layer2_signature = None;
     tx.sender_identity_signature = None;
 
     tx.t_id = get_hash(to_canonical_json(&tx).unwrap());
+
+    tx.trap_data = stored_trap_data;
+    tx.privacy_guard = stored_privacy_guard;
 
     let t_id_raw = bs58::decode(&tx.t_id).into_vec().unwrap();
 
@@ -454,14 +467,6 @@ pub fn resign_transaction_ext(
         .as_ref()
         .map(|s| bs58::decode(s).into_vec().unwrap_or_default())
         .unwrap_or_default();
-    let receiver_hash_raw = tx
-        .receiver_ephemeral_pub_hash
-        .as_ref()
-        .map(|h| bs58::decode(h).into_vec().unwrap());
-    let change_hash_raw = tx
-        .change_ephemeral_pub_hash
-        .as_ref()
-        .map(|h| bs58::decode(h).into_vec().unwrap());
 
     let challenge_ds_tag = if tx.t_type == "init" {
         tx.t_id.clone()
@@ -474,20 +479,32 @@ pub fn resign_transaction_ext(
 
     let to_32_bytes = |vec: Vec<u8>| -> [u8; 32] { vec[..32].try_into().unwrap() };
 
+    // V3 Protocol (HMC_TX_AUTH_V3): bind trap shards + encrypted timestamp.
+    let (trap_r, trap_s) = match &tx.trap_data {
+        Some(td) => (td.trap_r.as_str(), td.trap_s.as_str()),
+        None => (
+            crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
+            crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
+        ),
+    };
+    let encrypted_timestamp =
+        crate::services::conflict_manager::encrypt_transaction_timestamp(&tx)
+            .unwrap_or(0);
+
     let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+        if tx.t_type == "init" {
+            crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER
+        } else {
+            v_id
+        },
         &challenge_ds_tag,
-        v_id,
         &to_32_bytes(t_id_raw.clone()),
         &to_32_bytes(sender_pub_raw),
-        receiver_hash_raw
-            .as_ref()
-            .map(|v| to_32_bytes(v.clone()))
-            .as_ref(),
-        change_hash_raw
-            .as_ref()
-            .map(|v| to_32_bytes(v.clone()))
-            .as_ref(),
+        trap_r,
+        trap_s,
+        encrypted_timestamp,
         tx.deletable_at.as_deref(),
+        &crate::services::l2_gateway::privacy_guard_commitment(tx.privacy_guard.as_deref()),
     );
 
     let proof_key = l2_signer_key.unwrap_or(signer_key);
@@ -558,4 +575,114 @@ pub fn derive_holder_key(
     )
     .unwrap();
     holder_key
+}
+
+/// Creates a fully self-authenticating (V3) gossip fingerprint for tests.
+///
+/// The fingerprint carries a valid `layer2_signature` over the canonical
+/// `HMC_TX_AUTH_V3` digest, signed by a freshly generated ephemeral key that
+/// is revealed in `sender_ephemeral_pub` — exactly like fingerprints created
+/// from real spend transactions.
+#[allow(dead_code)]
+pub fn make_signed_fingerprint(
+    ds_tag: &str,
+    t_id: &str,
+    encrypted_timestamp: u128,
+) -> TransactionFingerprint {
+    use crate::services::l2_gateway::calculate_l2_payload_hash_raw;
+    use rand::RngCore;
+
+    // Use the caller-provided t_id when it is a valid base58-32 hash;
+    // otherwise fall back to a random one.
+    let t_id_bytes: [u8; 32] = match bs58::decode(t_id).into_vec() {
+        Ok(v) if v.len() == 32 => v.try_into().unwrap(),
+        _ => {
+            let mut b = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut b);
+            b
+        }
+    };
+    let t_id = bs58::encode(t_id_bytes).into_string();
+
+    let mut seed = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut seed);
+    let eph_key = SigningKey::from_bytes(&seed);
+    let eph_pub = eph_key.verifying_key().to_bytes();
+
+    // Synthetic gossip fixtures bind the canonical "none" voucher-id
+    // placeholder and an empty guard commitment; the fingerprint carries the
+    // same values so the ingress gate reproduces the digest exactly.
+    let payload_hash = calculate_l2_payload_hash_raw(
+        crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
+        ds_tag,
+        &t_id_bytes,
+        &eph_pub,
+        "test_u",
+        "test_blinded_id",
+        encrypted_timestamp,
+        None,
+        "",
+    );
+    let sig = crypto_utils::sign_ed25519(&eph_key, &payload_hash);
+
+    TransactionFingerprint {
+        ds_tag: ds_tag.to_string(),
+        trap_r: "test_u".to_string(),
+        trap_s: "test_blinded_id".to_string(),
+        t_id,
+        layer2_signature: bs58::encode(sig.to_bytes()).into_string(),
+        sender_ephemeral_pub: bs58::encode(eph_pub).into_string(),
+        deletable_at: get_timestamp(1, true),
+        encrypted_timestamp,
+        layer2_voucher_id: crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER.to_string(),
+        privacy_guard_hash: String::new(),
+    }
+}
+
+/// Signs an existing fingerprint in place with a fresh ephemeral key so it
+/// passes the V3 ingress signature gate.
+#[allow(dead_code)]
+pub fn sign_fingerprint_in_place(fp: &mut TransactionFingerprint) {
+    use crate::services::l2_gateway::calculate_l2_payload_hash_raw;
+    use rand::RngCore;
+
+    let mut seed = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut seed);
+    let eph_key = SigningKey::from_bytes(&seed);
+    let eph_pub = eph_key.verifying_key().to_bytes();
+
+    let t_id_bytes: [u8; 32] = bs58::decode(&fp.t_id)
+        .into_vec()
+        .unwrap_or_else(|_| {
+            let mut b = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut b);
+            fp.t_id = bs58::encode(b).into_string();
+            b.to_vec()
+        })
+        .try_into()
+        .unwrap();
+
+    // Sign over exactly what verify_fingerprint_signature will recompute:
+    // the fingerprint's own voucher-id and guard-commitment fields (with the
+    // canonical "none" placeholder for genesis-classified entries).
+    let effective_voucher_id = if fp.layer2_voucher_id.is_empty() {
+        crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER.to_string()
+    } else {
+        fp.layer2_voucher_id.clone()
+    };
+
+    let payload_hash = calculate_l2_payload_hash_raw(
+        &effective_voucher_id,
+        &fp.ds_tag,
+        &t_id_bytes,
+        &eph_pub,
+        &fp.trap_r,
+        &fp.trap_s,
+        fp.encrypted_timestamp,
+        None,
+        &fp.privacy_guard_hash,
+    );
+    let sig = crypto_utils::sign_ed25519(&eph_key, &payload_hash);
+    fp.layer2_signature = bs58::encode(sig.to_bytes()).into_string();
+    fp.sender_ephemeral_pub = bs58::encode(eph_pub).into_string();
 }

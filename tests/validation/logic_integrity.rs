@@ -537,9 +537,8 @@ fn test_trap_data_privacy_validation() {
 
     next_voucher.transactions[2].trap_data = Some(human_money_core::models::voucher::TrapData {
         ds_tag: "tag123".to_string(), // In bypass, hash is not validated
-        blinded_id: "user@domain.com".to_string(), // Illegal!
-        proof: "".to_string(),
-        u: "".to_string(),
+        trap_s: "user@domain.com".to_string(), // Illegal!
+        ..Default::default()
     });
 
     human_money_core::set_signature_bypass(true);
@@ -548,7 +547,7 @@ fn test_trap_data_privacy_validation() {
 
     assert!(
         res.is_err(),
-        "TrapData with email-like characters in blinded_id was incorrectly accepted."
+        "TrapData with email-like characters in trap_s was incorrectly accepted."
     );
     
     if let Err(human_money_core::error::VoucherCoreError::Validation(human_money_core::error::ValidationError::TrapDataInvalid { .. })) = res {
@@ -647,11 +646,22 @@ fn test_p2pkh_identity_match_isolation() {
     voucher.transactions[1].recipient_id = bob_id.clone();
     
     // Update t_id for tx1
+    // V3 protocol: the t_id preimage excludes trap_data and privacy_guard.
     voucher.transactions[1].t_id = "".to_string();
     voucher.transactions[1].layer2_signature = None;
     voucher.transactions[1].sender_identity_signature = None;
+    let stored_trap1 = voucher.transactions[1].trap_data.take();
+    let stored_guard1 = voucher.transactions[1].privacy_guard.take();
     voucher.transactions[1].t_id = human_money_core::crypto_utils::get_hash(
         human_money_core::to_canonical_json(&voucher.transactions[1]).unwrap()
+    );
+    voucher.transactions[1].trap_data = stored_trap1;
+    voucher.transactions[1].privacy_guard = stored_guard1;
+
+    // V3 protocol: chain LINKAGE still uses the full canonical JSON hash of
+    // the previous transaction (including its restored trap shards).
+    let tx1_chain_hash = human_money_core::crypto_utils::get_hash(
+        human_money_core::to_canonical_json(&voucher.transactions[1]).unwrap(),
     );
 
     // TX2: Alice (sender) uses her change
@@ -659,7 +669,7 @@ fn test_p2pkh_identity_match_isolation() {
     tx2.t_type = "transfer".to_string();
     tx2.amount = "90.00".to_string();
     tx2.sender_remaining_amount = None;
-    tx2.prev_hash = voucher.transactions[1].t_id.clone();
+    tx2.prev_hash = tx1_chain_hash;
     tx2.sender_id = Some(ACTORS.alice.user_id.clone()); 
     
     // SABOTAGE: We provide a wrong ephemeral_pub that does NOT match the change_hash of tx1
@@ -667,9 +677,14 @@ fn test_p2pkh_identity_match_isolation() {
     tx2.sender_ephemeral_pub = Some("bs58_encoded_dummy".to_string()); 
     
     tx2.t_id = "".to_string();
+    // V3 protocol: the t_id preimage excludes trap_data and privacy_guard.
+    let stored_trap2 = tx2.trap_data.take();
+    let stored_guard2 = tx2.privacy_guard.take();
     tx2.t_id = human_money_core::crypto_utils::get_hash(
         human_money_core::to_canonical_json(&tx2).unwrap()
     );
+    tx2.trap_data = stored_trap2;
+    tx2.privacy_guard = stored_guard2;
     
     voucher.transactions.push(tx2);
 

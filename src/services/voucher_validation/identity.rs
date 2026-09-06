@@ -23,6 +23,16 @@ pub fn verify_standard_identity(
             StandardDefinitionError::StandardHashMismatch,
         ));
     }
+
+    // AUDIT-M03-010 usage-time re-verification (defense-in-depth): the issuer
+    // signature is normally anchored once at import; here every definition
+    // entering validation must STILL carry a present-and-valid signature over
+    // its canonical representation. The signed canonical JSON covers both
+    // zones, so post-import `[mutable]`-zone rewrites (issuer_name/contract
+    // text phishing) or stripped/garbage signature blocks are rejected at use
+    // time instead of staying invisible for the installation's lifetime.
+    crate::services::standard_manager::verify_standard_signature(standard)?;
+
     Ok(())
 }
 

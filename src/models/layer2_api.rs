@@ -87,6 +87,35 @@ pub mod base58_32_opt {
     }
 }
 
+pub mod base58_u128 {
+    //! Base58 string codec for 128-bit values (e.g. encrypted timestamps).
+    //!
+    //! JSON wire format is a Base58 string because plain JSON numbers lose
+    //! precision beyond 53 bits and some serde_json configurations reject
+    //! native 128-bit integers entirely.
+    use serde::{Deserialize, Deserializer, Serializer, de};
+    use std::convert::TryInto;
+
+    pub fn serialize<S>(data: &u128, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&bs58::encode(data.to_le_bytes()).into_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u128, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let vec = bs58::decode(s).into_vec().map_err(de::Error::custom)?;
+        let arr: [u8; 16] = vec
+            .try_into()
+            .map_err(|_| de::Error::custom("Length mismatch, expected 16 bytes"))?;
+        Ok(u128::from_le_bytes(arr))
+    }
+}
+
 pub mod base58_64 {
     use serde::{Deserialize, Deserializer, Serializer, de};
     use std::convert::TryInto;
@@ -172,8 +201,35 @@ pub struct L2LockRequest {
     #[serde(with = "crate::models::layer2_api::base58_64")]
     pub layer2_signature: [u8; 64],
 
+    // --- V3 Protocol (HMC_TX_AUTH_V3 / SST): trap binding fields ---
+    /// The commitment shard $R_i$ of the shared-signature trap (Base58).
+    /// `Some("none")` for genesis locks; `Some(<R_i>)` for spend locks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trap_r: Option<String>,
+
+    /// The response shard $s_i$ of the shared-signature trap (Base58).
+    /// `Some("none")` for genesis locks; `Some(<s_i>)` for spend locks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trap_s: Option<String>,
+
+    /// The encrypted timestamp of the transaction in nanoseconds
+    /// (`encrypted_nanos = original_nanos ^ hash(prev_hash + t_id)`).
+    /// Bound into the payload digest to make the lock replay/malleability-proof.
+    #[serde(with = "crate::models::layer2_api::base58_u128", default)]
+    pub encrypted_timestamp: u128,
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletable_at: Option<String>, // Only required when is_genesis = true
+
+    // --- SECURITY (HMSEC-SA04-08): privacy-guard binding field ---
+    /// The Base64-encoded AEAD privacy guard (`Transaction.privacy_guard`) of
+    /// the locked transaction, if any. Its canonical commitment
+    /// ([`crate::services::l2_gateway::privacy_guard_commitment`]) is bound
+    /// into the V3 payload digest, so the server can verify lock signatures
+    /// for guarded spends and guard equivocation becomes attributable.
+    /// `None` commits the empty string (genesis / public-mode spends).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub privacy_guard: Option<String>,
 }
 
 /// Data structure for a single lock entry on Layer 2.
@@ -191,8 +247,24 @@ pub struct L2LockEntry {
     pub change_ephemeral_pub_hash: Option<[u8; 32]>,
     #[serde(with = "crate::models::layer2_api::base58_64")]
     pub layer2_signature: [u8; 64],
+    // --- V3 Protocol (HMC_TX_AUTH_V3 / SST): trap binding fields ---
+    /// The commitment shard $R_i$ of the shared-signature trap (`None`/legacy for genesis).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trap_r: Option<String>,
+    /// The response shard $s_i$ of the shared-signature trap (Base58).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trap_s: Option<String>,
+    /// The encrypted timestamp of the transaction in nanoseconds.
+    #[serde(with = "crate::models::layer2_api::base58_u128", default)]
+    pub encrypted_timestamp: u128,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletable_at: Option<String>,
+    // --- SECURITY (HMSEC-SA04-08): privacy-guard binding field ---
+    /// The Base64-encoded AEAD privacy guard of the locked transaction, if
+    /// any. Its canonical commitment is bound into the V3 payload digest that
+    /// `layer2_signature` authenticates (see [`crate::services::l2_gateway`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub privacy_guard: Option<String>,
 }
 
 /// Request: Query the state of a voucher and reconcile transaction history.
@@ -216,6 +288,9 @@ pub struct L2BatchLockRequest {
 
 /// Response: The verdict of the L2 server regarding the state of a tag or the chain.
 #[derive(Serialize, Deserialize, Debug, Clone)]
+// The Verified variant legitimately carries a full lock entry; boxing it
+// would only add indirection to a deserialized-once wire object.
+#[allow(clippy::large_enum_variant)]
 #[serde(tag = "type")]
 pub enum L2Verdict {
     /// The tag is occupied. Contains the complete proof (LockEntry).

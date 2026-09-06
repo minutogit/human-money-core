@@ -103,6 +103,11 @@ pub fn create_secure_container(
                     let recipient_pubkey_x = ed25519_pub_to_x25519(&recipient_pubkey_ed);
 
                     let shared_secret = esk_priv_static.diffie_hellman(&recipient_pubkey_x);
+                    if !shared_secret.was_contributory() {
+                        return Err(VoucherCoreError::Crypto(
+                            "Non-contributory X25519 key exchange rejected (low-order point)".to_string(),
+                        ));
+                    }
                     let kek = derive_kek(shared_secret.as_bytes())?;
                     let encrypted_payload_key = encrypt_data(&kek, &payload_key)?;
 
@@ -122,6 +127,11 @@ pub fn create_secure_container(
                 // Double-Key-Wrapping for the sender
                 let sender_static_sk_x = ed25519_sk_to_x25519_sk(&sender_identity.signing_key);
                 let shared_secret_sender = sender_static_sk_x.diffie_hellman(&esk_pub);
+                if !shared_secret_sender.was_contributory() {
+                    return Err(VoucherCoreError::Crypto(
+                        "Non-contributory X25519 key exchange rejected (low-order point)".to_string(),
+                    ));
+                }
                 let kek_sender = derive_kek(shared_secret_sender.as_bytes())?;
                 let encrypted_payload_key_sender = encrypt_data(&kek_sender, &payload_key)?;
 
@@ -233,6 +243,29 @@ pub fn create_secure_container(
     Ok(container)
 }
 
+/// HMSEC-SA06-09: Verifies the wrapper-vs-payload binding of a
+/// `SecureContainer` by recomputing the integrity id from the received
+/// bytes. `i` and `signature` are excluded exactly as during creation
+/// ([`create_secure_container`]), so the check covers ALL AEAD-exempt
+/// envelope fields (`unprotected`, `salt`, `et`, `c`, recipients, ...).
+///
+/// Without this rebinding, a stolen-but-genuinely-signed `(i, signature)`
+/// pair can be grafted onto manipulated container content and arbitrary
+/// unauthenticated header metadata can be injected undetected
+/// (CWE-347; same attack class as the bundle-level fix in
+/// `bundle_processor::open_and_verify_bundle`). Every protocol receive path
+/// MUST call this before acting on payload or envelope metadata.
+pub fn verify_container_integrity_binding(container: &SecureContainer) -> Result<(), VoucherCoreError> {
+    let mut container_for_hash = container.clone();
+    container_for_hash.i = String::new();
+    container_for_hash.signature = String::new();
+    let expected_i = get_hash(to_canonical_json(&container_for_hash)?);
+    if container.i != expected_i {
+        return Err(crate::error::ValidationError::InvalidContainerSignature.into());
+    }
+    Ok(())
+}
+
 /// Decrypts the payload of a JWE-compatible `SecureContainer` with configurable encryption.
 /// **Note:** This function does NOT verify the container's signature, as
 /// the `sender_id` from the (still encrypted) payload is required for that.
@@ -290,6 +323,13 @@ pub fn open_secure_container(
                 if should_try_decrypt {
                     let encrypted_payload_key = decode_base64(&recipient.encrypted_key)?;
                     let shared_secret = recipient_x25519_sk.diffie_hellman(&esk_pub);
+                    if !shared_secret.was_contributory() {
+                        // Fail closed for this entry only: skip like a failed
+                        // decrypt attempt so trial decryption over mixed
+                        // recipient lists still works.
+                        log::warn!("Skipping non-contributory X25519 key exchange (low-order point) for one recipient entry");
+                        continue;
+                    }
                     let kek = derive_kek(shared_secret.as_bytes())?;
 
                     if let Ok(payload_key_bytes) = decrypt_data(&kek, &encrypted_payload_key) {

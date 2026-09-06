@@ -40,13 +40,16 @@ mod tests {
 
         let expired_fp = TransactionFingerprint {
             ds_tag: key.clone(),
-            u: String::new(),
-            blinded_id: String::new(),
+            trap_r: String::new(),
+            trap_s: String::new(),
             deletable_at: expired_date,
             t_id: String::new(),
             encrypted_timestamp: 0,
             layer2_signature: String::new(),
-        };
+                    sender_ephemeral_pub: String::new(),
+            layer2_voucher_id: String::new(),
+            privacy_guard_hash: String::new(),
+};
 
         // Add the fingerprint to both relevant stores
         wallet

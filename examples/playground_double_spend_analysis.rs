@@ -279,8 +279,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tx1: human_money_core::models::voucher::Transaction = serde_json::from_str(&tx1_json)?;
     let tx2: human_money_core::models::voucher::Transaction = serde_json::from_str(&tx2_json)?;
 
-    let ds_tag1 = tx1.trap_data.unwrap().u;
-    let ds_tag2 = tx2.trap_data.unwrap().u;
+    let ds_tag1 = tx1.trap_data.unwrap().ds_tag;
+    let ds_tag2 = tx2.trap_data.unwrap().ds_tag;
 
     println!("\n🔍 DS-Tag Comparison:");
     println!("   Tag 1: {}", ds_tag1);

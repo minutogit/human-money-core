@@ -158,9 +158,9 @@ fn enforce_identity_consistency_in_flexible_mode() {
 }
 
 // 3. Test: prevent_trapezoidal_identity_leak
-// Scenario: Private mode uses TrapData (Zero-Knowledge-like Proof).
-// The `blinded_id` field inside TrapData MUST be a hash/blinded value, NOT a cleartext DID.
-// We use bypass to skip the cryptographic proof verification so we can inject a cleartext ID
+// Scenario: Private mode uses TrapData (V3 Shared-Signature Trap shards).
+// The `trap_r`/`trap_s` shard fields inside TrapData MUST be Base58 values, NOT cleartext DIDs.
+// We use bypass to skip the cryptographic signature verification so we can inject a cleartext ID
 // and verify existing privacy checks catch it.
 #[test]
 fn prevent_trapezoidal_identity_leak() {
@@ -179,13 +179,12 @@ fn prevent_trapezoidal_identity_leak() {
         ..Default::default()
     };
 
-    // THE ATTACK: Cleartext DID in blinded_id
+    // THE ATTACK: Cleartext DID in a trap shard field
     // This leaks the sender's identity even if sender_id is None.
     tx.trap_data = Some(TrapData {
         ds_tag: "some_tag".to_string(),
-        u: "valid_u".to_string(),
-        blinded_id: "creator:fY7@did:key:z6Mk...".to_string(), // LEAK! NOT Base58/Hex Hash like
-        proof: "valid_proof".to_string(),
+        trap_r: "valid_trap_r".to_string(),
+        trap_s: "creator:fY7@did:key:z6Mk...".to_string(), // LEAK! NOT Base58 like
     });
 
     // Fix ID to pass integrity check so we reach the TrapData validation
@@ -199,7 +198,7 @@ fn prevent_trapezoidal_identity_leak() {
 
     let result = validate_voucher_against_standard(&voucher, &standard);
 
-    let err = result.expect_err("Should reject cleartext ID in blinded_id");
+    let err = result.expect_err("Should reject cleartext ID in trap shard");
 
     // We expect a TrapDataInvalid error, likely due to format or specific check if implemented.
     // If specific "Leak" error exists for TrapData, match that. Otherwise, TrapDataInvalid is good.

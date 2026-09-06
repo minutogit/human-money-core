@@ -6,7 +6,7 @@
 
 use human_money_core::test_utils::ACTORS;
 use human_money_core::models::voucher::Transaction;
-use human_money_core::models::conflict::{ProofOfDoubleSpend, ResolutionEndorsement};
+use human_money_core::models::conflict::ProofOfDoubleSpend;
 use human_money_core::services::crypto_utils;
 use human_money_core::test_utils::setup_in_memory_wallet;
 use chrono::{Utc, Duration};
@@ -25,6 +25,7 @@ fn create_mock_proof(offender_id: &str) -> ProofOfDoubleSpend {
     ProofOfDoubleSpend {
         proof_id,
         offender_id: offender_id.to_string(),
+        suspected_identity: None,
         fork_point_prev_hash,
         conflicting_transactions: vec![Transaction::default(), Transaction::default()],
         deletable_at: (Utc::now() + Duration::days(90)).to_rfc3339(),
@@ -73,20 +74,116 @@ fn test_wallet_add_resolution_endorsement() {
         proof: proof.clone(), local_override: false, local_note: None, conflict_role: ConflictRole::Witness 
     });
 
+    // SECURITY (HMSEC-SA06-12): add_resolution_endorsement now verifies
+    // victim_signature over endorsement_id against the claimed victim key.
+    // The fixture therefore uses the canonical signer instead of a bogus
+    // placeholder signature.
     let victim = &ACTORS.victim;
-    let endorsement = ResolutionEndorsement {
-        endorsement_id: "e123".to_string(),
-        proof_id: proof.proof_id.clone(),
-        victim_id: victim.user_id.clone(),
-        resolution_timestamp: Utc::now().to_rfc3339(),
-        notes: Some("Settled".to_string()),
-        victim_signature: "sig".to_string(),
-    };
+    let endorsement =
+        human_money_core::services::conflict_manager::create_and_sign_resolution_endorsement(
+            &proof.proof_id,
+            victim,
+            Some("Settled".to_string()),
+        )
+        .unwrap();
 
     wallet.add_resolution_endorsement(endorsement).unwrap();
 
     let updated = wallet.get_proof_of_double_spend(&proof.proof_id).unwrap();
     assert_eq!(updated.resolutions.as_ref().unwrap().len(), 1);
+}
+
+// SECURITY REGRESSION TEST (HMSEC-SA04 endorsement replay / cross-proof
+// attachment): an endorsement minted for proof A must not be attachable,
+// unmodified, to proof B. The content-hash gate in add_resolution_endorsement
+// re-derives endorsement_id from the endorsement's own fields; mutating ONLY
+// the proof_id breaks that binding deterministically before any signature or
+// state mutation happens.
+#[test]
+fn test_endorsement_replay_onto_foreign_proof_is_rejected() {
+    let alice = &ACTORS.alice;
+    let mut wallet = setup_in_memory_wallet(alice);
+
+    // Two independent conflict proofs (different offenders).
+    let proof_a = create_mock_proof("offenderA");
+    let proof_b = create_mock_proof("offenderB");
+    use human_money_core::models::conflict::{ProofStoreEntry, ConflictRole};
+    wallet.proof_store.proofs.insert(
+        proof_a.proof_id.clone(),
+        ProofStoreEntry {
+            proof: proof_a.clone(),
+            local_override: false,
+            local_note: None,
+            conflict_role: ConflictRole::Witness,
+        },
+    );
+    wallet.proof_store.proofs.insert(
+        proof_b.proof_id.clone(),
+        ProofStoreEntry {
+            proof: proof_b.clone(),
+            local_override: false,
+            local_note: None,
+            conflict_role: ConflictRole::Witness,
+        },
+    );
+
+    // The victim legitimately endorses proof A.
+    let victim = &ACTORS.victim;
+    let endorsement =
+        human_money_core::services::conflict_manager::create_and_sign_resolution_endorsement(
+            &proof_a.proof_id,
+            victim,
+            Some("Settled with A".to_string()),
+        )
+        .unwrap();
+
+    // Positive control: the unmodified endorsement attaches to ITS proof.
+    {
+        let mut wallet_control = setup_in_memory_wallet(alice);
+        wallet_control.proof_store.proofs.insert(
+            proof_a.proof_id.clone(),
+            ProofStoreEntry {
+                proof: proof_a.clone(),
+                local_override: false,
+                local_note: None,
+                conflict_role: ConflictRole::Witness,
+            },
+        );
+        wallet_control
+            .add_resolution_endorsement(endorsement.clone())
+            .expect("legitimate endorsement must attach to its own proof");
+    }
+
+    // THE ATTACK: relabel the signed endorsement onto proof B WITHOUT
+    // re-signing (the signature over endorsement_id stays untouched).
+    let mut replayed = endorsement;
+    replayed.proof_id = proof_b.proof_id.clone();
+
+    let result = wallet.add_resolution_endorsement(replayed);
+    assert!(
+        result.is_err(),
+        "SECURITY VIOLATION: a validly signed endorsement for proof A was \
+         attached to foreign proof B (cross-proof replay)"
+    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("does not match canonical hash of endorsement fields"));
+
+    // Proof B remains UNRESOLVED: no resolutions recorded, reputation of its
+    // offender stays KnownOffender.
+    let b_state = wallet.get_proof_of_double_spend(&proof_b.proof_id).unwrap();
+    assert!(
+        b_state.resolutions.as_ref().map_or(true, |v| v.is_empty()),
+        "replayed endorsement leaked into proof B's resolutions"
+    );
+    assert!(
+        matches!(
+            wallet.check_reputation(&proof_b.offender_id),
+            human_money_core::models::conflict::TrustStatus::KnownOffender(_)
+        ),
+        "offender of proof B must remain KnownOffender after the rejected replay"
+    );
 }
 
 #[test]
@@ -120,28 +217,30 @@ fn test_conflict_override_persistence() {
     let mut service = AppService::new(dir.path()).unwrap();
     service.create_profile("PersistTest", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", None, Some("al"), "pwd123", MnemonicLanguage::English, "test-id".to_string()).unwrap();
 
-    // Import a proof directly
-    let mut tx = Transaction::default();
-    tx.t_id = "tx123".to_string();
-    let proof = ProofOfDoubleSpend {
-        proof_id: "persist-proof-id".to_string(),
-        offender_id: "bad_guy".to_string(),
-        conflicting_transactions: vec![tx.clone(), tx],
-        reporter_id: "reporter_xyz".to_string(),
-        resolutions: None,
-        layer2_verdict: None,
-        fork_point_prev_hash: "hash".to_string(),
-        deletable_at: "2050-01-01T00:00:00Z".to_string(),
-        report_timestamp: "2025-01-01T00:00:00Z".to_string(),
-        reporter_signature: "sig".to_string(),
-        affected_voucher_name: None,
-        voucher_standard_uuid: None,
-        non_redeemable_test_voucher: false,
+    // Import a proof directly. SECURITY: imports must be properly signed and
+    // structurally valid (import_proof enforces the gates).
+    let fork_point_prev_hash = bs58::encode([4u8; 32]).into_string();
+    let ephemeral_pub = bs58::encode([9u8; 32]).into_string();
+    let mk_tx = |id: &str| Transaction {
+        t_id: id.to_string(),
+        prev_hash: fork_point_prev_hash.clone(),
+        sender_ephemeral_pub: Some(ephemeral_pub.clone()),
+        ..Default::default()
     };
-    
+    let genuine_proof = human_money_core::services::conflict_manager::create_proof_of_double_spend(
+        "bad_guy".to_string(),
+        fork_point_prev_hash.clone(),
+        vec![mk_tx("tx123"), mk_tx("tx456")],
+        "2050-01-01T00:00:00Z".to_string(),
+        &ACTORS.bob.identity,
+        false,
+    )
+    .unwrap();
+    let persist_proof_id = genuine_proof.proof_id.clone();
+
     // Test import_proof saves it: Check that logging out and logging back in works.
-    service.import_proof(proof, Some("pwd123")).unwrap();
-    service.set_conflict_local_override("persist-proof-id", true, Some("Trust me".to_string()), Some("pwd123")).unwrap();
+    service.import_proof(genuine_proof, Some("pwd123")).unwrap();
+    service.set_conflict_local_override(&persist_proof_id, true, Some("Trust me".to_string()), Some("pwd123")).unwrap();
     
     service.logout();
     
@@ -150,7 +249,7 @@ fn test_conflict_override_persistence() {
     service.login(&profile_folder, "pwd123", false, "test-id".to_string()).unwrap();
     
     let conflicts = service.list_conflicts().unwrap();
-    let loaded_conflict = conflicts.iter().find(|c| c.proof_id == "persist-proof-id").expect("Proof should be persisted");
+    let loaded_conflict = conflicts.iter().find(|c| c.proof_id == persist_proof_id).expect("Proof should be persisted");
     
     assert!(loaded_conflict.local_override);
     assert_eq!(loaded_conflict.local_note, Some("Trust me".to_string()));

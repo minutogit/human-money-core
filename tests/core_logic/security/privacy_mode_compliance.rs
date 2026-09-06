@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use human_money_core::models::voucher_standard_definition::PrivacyMode;
-    use human_money_core::test_utils::{setup_in_memory_wallet, add_voucher_to_wallet, ACTORS, MINUTO_STANDARD};
+    use human_money_core::test_utils::{setup_in_memory_wallet, add_voucher_to_wallet, ACTORS, MINUTO_STANDARD, create_custom_standard};
     use human_money_core::wallet::types::{MultiTransferRequest, SourceTransfer};
     use human_money_core::models::voucher::ANONYMOUS_ID;
     use std::collections::HashMap;
@@ -13,10 +13,13 @@ mod tests {
         let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
         let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
         
-        let mut public_std = MINUTO_STANDARD.0.clone();
-        public_std.immutable.features.privacy_mode = PrivacyMode::Public;
-        public_std.immutable.identity.uuid = "public-test-uuid".to_string();
-        
+        // Re-sign the mutated clone so it stays self-consistent at validation
+        // time (AUDIT-M03-010 enforces signature validity at use time).
+        let (public_std, _) = create_custom_standard(&MINUTO_STANDARD.0, |s| {
+            s.immutable.features.privacy_mode = PrivacyMode::Public;
+            s.immutable.identity.uuid = "public-test-uuid".to_string();
+        });
+
         let mut standards = HashMap::new();
         standards.insert(public_std.immutable.identity.uuid.clone(), public_std.clone());
 
@@ -70,10 +73,12 @@ mod tests {
         let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
         let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
         
-        let mut flexible_std = MINUTO_STANDARD.0.clone();
-        flexible_std.immutable.features.privacy_mode = PrivacyMode::Flexible;
-        flexible_std.immutable.identity.uuid = "flexible-test-uuid".to_string();
-        
+        // Re-signed mutated clone (see AUDIT-M03-010 note above).
+        let (flexible_std, _) = create_custom_standard(&MINUTO_STANDARD.0, |s| {
+            s.immutable.features.privacy_mode = PrivacyMode::Flexible;
+            s.immutable.identity.uuid = "flexible-test-uuid".to_string();
+        });
+
         let mut standards = HashMap::new();
         standards.insert(flexible_std.immutable.identity.uuid.clone(), flexible_std.clone());
 
@@ -133,10 +138,12 @@ mod tests {
         let mut alice_wallet = setup_in_memory_wallet(&alice.identity);
         let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
         
-        let mut stealth_std = MINUTO_STANDARD.0.clone();
-        stealth_std.immutable.features.privacy_mode = PrivacyMode::Stealth;
-        stealth_std.immutable.identity.uuid = "stealth-test-uuid".to_string();
-        
+        // Re-signed mutated clone (see AUDIT-M03-010 note above).
+        let (stealth_std, _) = create_custom_standard(&MINUTO_STANDARD.0, |s| {
+            s.immutable.features.privacy_mode = PrivacyMode::Stealth;
+            s.immutable.identity.uuid = "stealth-test-uuid".to_string();
+        });
+
         let mut standards = HashMap::new();
         standards.insert(stealth_std.immutable.identity.uuid.clone(), stealth_std.clone());
 

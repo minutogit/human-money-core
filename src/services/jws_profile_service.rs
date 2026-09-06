@@ -107,6 +107,17 @@ pub fn verify_and_import_jws_profile(
         )));
     }
 
+    // HMC-SEC-06-06: Pin the `typ` header exactly like `alg`. Accepting
+    // arbitrary type values invites cross-type confusion as soon as this
+    // verifier guards additional artifact classes (e.g. TrustAssertion).
+    // The library itself only ever emits typ = "JWT" (see `JwsHeader::default`).
+    if header.typ != "JWT" {
+        return Err(VoucherCoreError::Crypto(format!(
+            "Unsupported type header: {} (expected JWT)",
+            header.typ
+        )));
+    }
+
     // 3. Decode payload (profile)
     let payload_bytes = decode_base64(payload_b64)?;
     let profile: PublicProfile = serde_json::from_slice(&payload_bytes)
@@ -140,40 +151,24 @@ pub fn verify_and_import_jws_profile(
 
 /// Extracts an Ed25519 public key from a did:key URI.
 ///
+/// Delegates to the canonical parser `crypto_identity::get_pubkey_from_user_id`:
+///
+/// * It enforces the EXACT multicodec length (34 bytes), rejecting
+///   trailing-garbage aliases such as `did:key:z<valid-key><extra>` that map
+///   to the same key but are different identity strings (malleable IDs would
+///   break equality-based authorization logic).
+/// * It transparently supports prefixed SAI user IDs
+///   (`prefix:checksum@did:key:z...`), the normal output of `create_user_id`,
+///   so exported profiles can be re-imported losslessly.
+///
 /// # Arguments
-/// * `did_key` - The did:key URI (e.g. "did:key:z6Mk...").
+/// * `did_key` - The did:key URI or prefixed SAI user ID.
 ///
 /// # Returns
 /// The EdPublicKey or an error.
 fn extract_pubkey_from_did_key(did_key: &str) -> Result<EdPublicKey, VoucherCoreError> {
-    // did:key Format: did:key:<multibase-encoded-multicodec>
-    if !did_key.starts_with("did:key:z") {
-        return Err(VoucherCoreError::InvalidHashFormat(
-            "Invalid did:key format (must start with 'did:key:z')".to_string(),
-        ));
-    }
-
-    // Remove prefix
-    let multibase = &did_key[9..]; // "did:key:z" is 9 characters
-
-    // Decode Base58
-    let decoded = bs58::decode(multibase)
-        .into_vec()?;
-
-    // Check for multicodec prefix for Ed25519 (0xed01)
-    if decoded.len() < 34 || decoded[0] != 0xed || decoded[1] != 0x01 {
-        return Err(VoucherCoreError::InvalidHashFormat(
-            "Invalid multicodec prefix (expected 0xed01 for Ed25519)".to_string(),
-        ));
-    }
-
-    // Extract 32 bytes of public key
-    let key_bytes: [u8; 32] = decoded[2..34]
-        .try_into()
-        .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid public key length".to_string()))?;
-
-    EdPublicKey::from_bytes(&key_bytes)
-        .map_err(|e| VoucherCoreError::Crypto(format!("Public key conversion failed: {}", e)))
+    crate::services::crypto_identity::get_pubkey_from_user_id(did_key)
+        .map_err(VoucherCoreError::KeyOrId)
 }
 
 #[cfg(test)]

@@ -9,30 +9,36 @@ mod tests {
     use crate::VoucherStatus;
     use std::collections::HashMap;
 
-    fn create_dummy_proof(proof_id: &str, offender_id: &str) -> ProofOfDoubleSpend {
-        ProofOfDoubleSpend {
-            proof_id: proof_id.to_string(),
-            offender_id: offender_id.to_string(),
-            fork_point_prev_hash: "hash".to_string(),
-            conflicting_transactions: vec![
-                Transaction { t_id: "t1".to_string(), ..Default::default() },
-                Transaction { t_id: "t2".to_string(), ..Default::default() },
-            ],
-            deletable_at: "2099-01-01T00:00:00Z".to_string(),
-            reporter_id: "reporter".to_string(),
-            report_timestamp: "2024-01-01T00:00:00Z".to_string(),
-            reporter_signature: "sig".to_string(),
-            affected_voucher_name: Some("Test Voucher".to_string()),
-            voucher_standard_uuid: Some("uuid".to_string()),
-            resolutions: None,
-            layer2_verdict: None,
-            non_redeemable_test_voucher: false,
-        }
+    /// Builds a structurally valid, properly SIGNED proof.
+    ///
+    /// SECURITY NOTE: Since `import_proof` enforces reporter signature,
+    /// proof-id consistency and structural collision checks, dummy proofs
+    /// must satisfy the same gates as production proofs.
+    fn create_signed_proof(offender_id: &str) -> ProofOfDoubleSpend {
+        let fork_point_prev_hash = bs58::encode([1u8; 32]).into_string();
+        let ephemeral_pub = bs58::encode([7u8; 32]).into_string();
+
+        let mut tx1 = Transaction { t_id: "t1".to_string(), ..Default::default() };
+        tx1.prev_hash = fork_point_prev_hash.clone();
+        tx1.sender_ephemeral_pub = Some(ephemeral_pub.clone());
+        let mut tx2 = Transaction { t_id: "t2".to_string(), ..Default::default() };
+        tx2.prev_hash = fork_point_prev_hash.clone();
+        tx2.sender_ephemeral_pub = Some(ephemeral_pub.clone());
+
+        crate::services::conflict_manager::create_proof_of_double_spend(
+            offender_id.to_string(),
+            fork_point_prev_hash,
+            vec![tx1, tx2],
+            "2099-01-01T00:00:00Z".to_string(),
+            &ACTORS.alice.identity,
+            false,
+        )
+        .unwrap()
     }
 
     #[test]
     fn test_wrapper_serialization_and_hash_integrity() {
-        let proof = create_dummy_proof("p1", "offender");
+        let proof = create_signed_proof("offender");
         let entry = ProofStoreEntry {
             proof: proof.clone(),
             local_override: true,
@@ -57,9 +63,9 @@ mod tests {
     fn test_import_protection_immunity() {
         let identity = &ACTORS.alice;
         let mut wallet = setup_in_memory_wallet(identity);
-        let proof_id = "p1";
         
-        let mut proof = create_dummy_proof(proof_id, "offender");
+        let mut proof = create_signed_proof("offender");
+        let proof_id = proof.proof_id.clone();
         
         // 1. Set manual override
         wallet.proof_store.proofs.insert(proof_id.to_string(), ProofStoreEntry {
@@ -74,9 +80,9 @@ mod tests {
         wallet.import_proof(proof).unwrap();
 
         // 3. Verify that local state (override) was preserved
-        let entry = wallet.proof_store.proofs.get(proof_id).unwrap();
+        let entry = wallet.proof_store.proofs.get(&proof_id).unwrap();
         assert_eq!(entry.local_override, true);
-        assert_eq!(entry.proof.reporter_id, "reporter", "Original reporter should not be overwritten");
+        assert_eq!(entry.proof.reporter_id, ACTORS.alice.identity.user_id, "Original reporter should not be overwritten");
     }
 
     #[test]
@@ -88,27 +94,27 @@ mod tests {
         wallet.fingerprint_metadata.insert("norm_0".to_string(), FingerprintMetadata { depth: 0, ..Default::default() });
         wallet.own_fingerprints.history.insert(
             "norm_0".to_string(), 
-            vec![TransactionFingerprint { ds_tag: "norm_0".to_string(), ..Default::default() }]
+            vec![TransactionFingerprint { ds_tag: "norm_0".to_string(), trap_r: "synthetic_shard".to_string(), trap_s: "synthetic_shard".to_string(), ..Default::default() }]
         );
 
         wallet.fingerprint_metadata.insert("norm_5".to_string(), FingerprintMetadata { depth: 5, ..Default::default() });
         wallet.own_fingerprints.history.insert(
             "norm_5".to_string(), 
-            vec![TransactionFingerprint { ds_tag: "norm_5".to_string(), ..Default::default() }]
+            vec![TransactionFingerprint { ds_tag: "norm_5".to_string(), trap_r: "synthetic_shard".to_string(), trap_s: "synthetic_shard".to_string(), ..Default::default() }]
         );
 
         // 2. A slightly aged VIP fingerprint (-3) -> Effective depth: abs(-3) - 2 = 1
         wallet.fingerprint_metadata.insert("vip_minus_3".to_string(), FingerprintMetadata { depth: -3, ..Default::default() });
         wallet.own_fingerprints.history.insert(
             "vip_minus_3".to_string(), 
-            vec![TransactionFingerprint { ds_tag: "vip_minus_3".to_string(), ..Default::default() }]
+            vec![TransactionFingerprint { ds_tag: "vip_minus_3".to_string(), trap_r: "synthetic_shard".to_string(), trap_s: "synthetic_shard".to_string(), ..Default::default() }]
         );
 
         // 3. A heavily aged VIP fingerprint (-10) -> Effective depth: abs(-10) - 2 = 8
         wallet.fingerprint_metadata.insert("vip_minus_10".to_string(), FingerprintMetadata { depth: -10, ..Default::default() });
         wallet.own_fingerprints.history.insert(
             "vip_minus_10".to_string(), 
-            vec![TransactionFingerprint { ds_tag: "vip_minus_10".to_string(), ..Default::default() }]
+            vec![TransactionFingerprint { ds_tag: "vip_minus_10".to_string(), trap_r: "synthetic_shard".to_string(), trap_s: "synthetic_shard".to_string(), ..Default::default() }]
         );
 
         // Selection for bundle
@@ -137,7 +143,8 @@ mod tests {
         };
 
         // Case 1: Asymmetric VIP spam (only one fingerprint with -2)
-        let f1 = TransactionFingerprint { ds_tag: "f1".to_string(), ..Default::default() };
+        // V2: fingerprints must be self-authenticating to pass the ingress gate.
+        let f1 = crate::test_utils::make_signed_fingerprint("f1", "", 0);
         let mut depths = HashMap::new();
         depths.insert("f1".to_string(), -2);
 
@@ -147,8 +154,8 @@ mod tests {
         assert!(wallet.fingerprint_metadata["f1"].depth > 0);
 
         // Case 2: Symmetric VIP (two partners with -2)
-        let f2a = TransactionFingerprint { ds_tag: "fraud".to_string(), t_id: "t1".to_string(), ..Default::default() };
-        let f2b = TransactionFingerprint { ds_tag: "fraud".to_string(), t_id: "t2".to_string(), ..Default::default() };
+        let f2a = crate::test_utils::make_signed_fingerprint("fraud", "", 0);
+        let f2b = crate::test_utils::make_signed_fingerprint("fraud", "", 0);
         let mut depths2 = HashMap::new();
         depths2.insert("fraud".to_string(), -2);
 
@@ -169,7 +176,7 @@ mod tests {
             ..Default::default()
         });
         wallet.known_fingerprints.foreign_fingerprints.insert(ds_tag.clone(), vec![
-            TransactionFingerprint { ds_tag: ds_tag.clone(), ..Default::default() }
+            crate::test_utils::make_signed_fingerprint(&ds_tag, "", 0)
         ]);
 
         let bundle_header = crate::models::profile::TransactionBundleHeader {
@@ -177,8 +184,8 @@ mod tests {
         };
         
         // Someone sends the fingerprint "fresh" with -1
-        let f = TransactionFingerprint { ds_tag: ds_tag.clone(), t_id: "t1".to_string(), ..Default::default() };
-        let f2 = TransactionFingerprint { ds_tag: ds_tag.clone(), t_id: "t2".to_string(), ..Default::default() };
+        let f = crate::test_utils::make_signed_fingerprint(&ds_tag, "", 0);
+        let f2 = crate::test_utils::make_signed_fingerprint(&ds_tag, "", 0);
         let mut depths = HashMap::new();
         depths.insert(ds_tag.clone(), -1);
 
@@ -197,8 +204,8 @@ mod tests {
             sender_id: "sender".to_string(), ..Default::default()
         };
         
-        let f1 = TransactionFingerprint { ds_tag: "bound".to_string(), t_id: "t1".to_string(), ..Default::default() };
-        let f2 = TransactionFingerprint { ds_tag: "bound".to_string(), t_id: "t2".to_string(), ..Default::default() };
+        let f1 = crate::test_utils::make_signed_fingerprint("bound", "", 0);
+        let f2 = crate::test_utils::make_signed_fingerprint("bound", "", 0);
         let mut depths = HashMap::new();
         depths.insert("bound".to_string(), -128);
 
@@ -214,21 +221,47 @@ mod tests {
         let offender = "bad_guy";
 
         // Proof A: Resolved via override
-        let proof_a = create_dummy_proof("proof_a", offender);
+        let proof_a = create_signed_proof(offender);
         wallet.import_proof(proof_a).unwrap();
-        wallet.set_conflict_local_override("proof_a", true, Some("Resolved A".to_string())).unwrap();
+        wallet.set_conflict_local_override(&wallet.list_conflicts()[0].proof_id.clone(), true, Some("Resolved A".to_string())).unwrap();
 
-        // Proof B: Unresolved
-        let proof_b = create_dummy_proof("proof_b", offender);
+        // Proof B: Unresolved (different fork point => different proof_id)
+        let proof_b = {
+            let mut p = create_signed_proof(offender);
+            // Re-derive with a different fork point so the proof ids differ.
+            let fork2 = bs58::encode([2u8; 32]).into_string();
+            for tx in p.conflicting_transactions.iter_mut() {
+                tx.prev_hash = fork2.clone();
+                tx.trap_data = None;
+            }
+            let rebuilt = crate::services::conflict_manager::create_proof_of_double_spend(
+                offender.to_string(),
+                fork2,
+                p.conflicting_transactions.clone(),
+                p.deletable_at.clone(),
+                &ACTORS.alice.identity,
+                false,
+            )
+            .unwrap();
+            assert_ne!(rebuilt.proof_id, p.proof_id);
+            rebuilt
+        };
         wallet.import_proof(proof_b).unwrap();
 
         use crate::models::conflict::TrustStatus;
         let status = wallet.check_reputation(offender);
         
+        let expected_unresolved = wallet
+            .list_conflicts()
+            .into_iter()
+            .find(|c| c.offender_id == offender && !c.is_resolved && !c.local_override)
+            .map(|c| c.proof_id)
+            .expect("one unresolved proof must exist");
+
         if let TrustStatus::KnownOffender(pid) = status {
-            assert_eq!(pid, "proof_b", "Must return the unsolved proof_b, even if proof_a is resolved");
+            assert_eq!(pid, expected_unresolved, "Must return the unsolved proof, even if the other one is resolved");
         } else {
-            panic!("Should be KnownOffender(proof_b)");
+            panic!("Should be KnownOffender(unresolved proof)");
         }
     }
 
@@ -244,7 +277,7 @@ mod tests {
             ..Default::default()
         });
         wallet.known_fingerprints.foreign_fingerprints.insert(ds_tag.clone(), vec![
-            TransactionFingerprint { ds_tag: ds_tag.clone(), t_id: "t_old".to_string(), ..Default::default() }
+            crate::test_utils::make_signed_fingerprint(&ds_tag, "", 0)
         ]);
 
         // 2. Action: A legitimate, symmetric VIP update (fraud detection) arrives
@@ -252,8 +285,8 @@ mod tests {
             sender_id: "sender".to_string(), ..Default::default()
         };
         // Two fingerprints with the same ds_tag satisfy the symmetry rule
-        let f1 = TransactionFingerprint { ds_tag: ds_tag.clone(), t_id: "t1".to_string(), ..Default::default() };
-        let f2 = TransactionFingerprint { ds_tag: ds_tag.clone(), t_id: "t2".to_string(), ..Default::default() };
+        let f1 = crate::test_utils::make_signed_fingerprint(&ds_tag, "", 0);
+        let f2 = crate::test_utils::make_signed_fingerprint(&ds_tag, "", 0);
         
         let mut depths = HashMap::new();
         depths.insert(ds_tag.clone(), -2); // Incoming VIP status
@@ -291,10 +324,14 @@ mod tests {
         wallet.voucher_store.vouchers.insert("inst_1".to_string(), instance);
         
         // 2. Create a simulated proof whose collision affects us
-        let mut proof = create_dummy_proof("p_role_test", "offender");
+        // (role check operates on the transaction list only; the helper
+        // provides valid signatures so the object matches production shape)
+        let mut proof = create_signed_proof("offender");
+        let fork_point_prev_hash = bs58::encode([3u8; 32]).into_string();
+        proof.fork_point_prev_hash = fork_point_prev_hash.clone();
         proof.conflicting_transactions = vec![
-            Transaction { t_id: tx_id_victim.to_string(), ..Default::default() }, // Our path
-            Transaction { t_id: "tx_foreign_456".to_string(), ..Default::default() }, // Other path
+            Transaction { t_id: tx_id_victim.to_string(), prev_hash: fork_point_prev_hash.clone(), ..Default::default() }, // Our path
+            Transaction { t_id: "tx_foreign_456".to_string(), prev_hash: fork_point_prev_hash, ..Default::default() }, // Other path
         ];
         
         // 3. Execute exact role check logic from transaction_handler
@@ -334,7 +371,7 @@ mod tests {
             });
             wallet.own_fingerprints.history.insert(
                 ds_tag.clone(), 
-                vec![TransactionFingerprint { ds_tag: ds_tag.clone(), ..Default::default() }]
+                vec![TransactionFingerprint { ds_tag: ds_tag.clone(), trap_r: "synthetic_shard".to_string(), trap_s: "synthetic_shard".to_string(), ..Default::default() }]
             );
         }
 
@@ -346,7 +383,7 @@ mod tests {
         });
         wallet.own_fingerprints.history.insert(
             vip_tag.clone(), 
-            vec![TransactionFingerprint { ds_tag: vip_tag.clone(), ..Default::default() }]
+            vec![TransactionFingerprint { ds_tag: vip_tag.clone(), trap_r: "synthetic_shard".to_string(), trap_s: "synthetic_shard".to_string(), ..Default::default() }]
         );
 
         // We now have 151 fingerprints in memory.

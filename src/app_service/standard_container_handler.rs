@@ -141,13 +141,62 @@ impl AppService {
         let (verified_standard, _) = verify_and_parse_standard(&toml_str).map_err(AppFacadeError::from)?;
         let standard_uuid = verified_standard.immutable.identity.uuid;
 
+        // AUDIT-M03-009 path-traversal guard: the uuid originates from an
+        // untrusted distributed file (signature validity says nothing about
+        // the string), so it MUST be treated as a hostile path component —
+        // exactly like `delete_voucher_standard` already does for its
+        // caller-supplied ID. Reject empty IDs, path separators and traversal
+        // tokens (absolute paths contain a separator and are therefore
+        // rejected as well) BEFORE any filesystem operation.
+        if standard_uuid.is_empty()
+            || standard_uuid.contains('/')
+            || standard_uuid.contains('\\')
+            || standard_uuid.contains("..")
+        {
+            return Err(AppFacadeError::ValidationError(format!(
+                "Invalid standard uuid '{}': path separators and traversal tokens are not permitted.",
+                standard_uuid
+            )));
+        }
+
         let standard_folder = target_dir.join(&standard_uuid);
         fs::create_dir_all(&standard_folder)
             .map_err(|e| AppFacadeError::StorageError(format!("Failed to create standard directory: {}", e)))?;
 
         let file_path = standard_folder.join("standard.toml");
-        fs::write(&file_path, &toml_str)
+
+        // AUDIT-M03-004 conflict detection: an installed standard under a given
+        // UUID is immutable on this device. Importing byte-identical content is
+        // an idempotent no-op; importing DIVERGENT content is refused
+        // (fail-closed) instead of silently overwriting the installation, which
+        // would brick vouchers bound to the previous definition hash or let new
+        // vouchers escape onto weakened rules. An intended upgrade is an
+        // explicit delete-then-import flow via `delete_voucher_standard`.
+        if file_path.exists() {
+            let existing_content = fs::read_to_string(&file_path).map_err(|e| {
+                AppFacadeError::StorageError(format!(
+                    "Installed standard.toml for uuid '{}' exists but cannot be read: {}",
+                    standard_uuid, e
+                ))
+            })?;
+            if existing_content != toml_str {
+                return Err(AppFacadeError::ValidationError(format!(
+                    "Conflict: a different standard is already installed under uuid '{}'. \
+                     Refusing to overwrite it silently.",
+                    standard_uuid
+                )));
+            }
+            // Byte-identical re-import: keep the installed installation untouched.
+            return Ok(standard_uuid);
+        }
+
+        // Atomic installation: write to a temporary file first, then rename so a
+        // crash can never leave a truncated/corrupt standard.toml behind.
+        let temp_path = standard_folder.join("standard.toml.tmp");
+        fs::write(&temp_path, &toml_str)
             .map_err(|e| AppFacadeError::StorageError(format!("Failed to write standard.toml: {}", e)))?;
+        fs::rename(&temp_path, &file_path)
+            .map_err(|e| AppFacadeError::StorageError(format!("Failed to finalize standard.toml: {}", e)))?;
 
         Ok(standard_uuid)
     }

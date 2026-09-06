@@ -16,6 +16,9 @@ pub enum ArchiveError {
     #[error("Voucher state not found for the given identifier.")]
     NotFound,
 
+    #[error("Archived data failed integrity verification: {0}")]
+    IntegrityViolation(String),
+
     #[error("Underlying I/O error: {0}")]
     Io(#[from] std::io::Error),
 

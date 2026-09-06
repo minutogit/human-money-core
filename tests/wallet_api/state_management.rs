@@ -33,6 +33,7 @@ fn create_mock_proof_of_double_spend(
     ProofOfDoubleSpend {
         proof_id: crypto_utils::get_hash(offender_id), // Dummy ID for test
         offender_id: offender_id.to_string(),
+        suspected_identity: None,
         conflicting_transactions: vec![Transaction::default(), Transaction::default()],
         reporter_id: victim_id.to_string(),
         resolutions,

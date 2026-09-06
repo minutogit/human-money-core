@@ -52,15 +52,26 @@ fn make_test_transaction(suffix: &str, t_time: &str) -> Transaction {
 }
 
 /// Creates a TransactionFingerprint directly (without voucher context).
+/// Creates a V2-self-authenticating foreign fingerprint that survives the
+/// ingress signature gate and cleanup purge.
+fn make_signed_foreign_fp(ds_tag: &str, deletable_at: &str) -> TransactionFingerprint {
+    let mut fp = human_money_core::test_utils::make_signed_fingerprint(ds_tag, "", 0);
+    fp.deletable_at = deletable_at.to_string();
+    fp
+}
+
 fn make_fingerprint(ds_tag: &str, t_id: &str, deletable_at: &str) -> TransactionFingerprint {
     TransactionFingerprint {
         ds_tag: ds_tag.to_string(),
         t_id: t_id.to_string(),
-        u: "none".to_string(),
-        blinded_id: "none".to_string(),
+        trap_r: "none".to_string(),
+        trap_s: "none".to_string(),
         layer2_signature: String::new(),
+        sender_ephemeral_pub: String::new(),
         deletable_at: deletable_at.to_string(),
         encrypted_timestamp: 0,
+        layer2_voucher_id: String::new(),
+        privacy_guard_hash: String::new(),
     }
 }
 
@@ -107,19 +118,25 @@ fn test_fingerprint_valid_until_is_rounded_to_end_of_month() {
     let tx = voucher.transactions[0].clone();
     let fp = create_fingerprint_for_transaction(&tx, &voucher).unwrap();
 
-    // June 15 -> rounded to June 30 23:59:59.999999Z
-    assert!(
-        fp.deletable_at.starts_with("2025-06-30"),
-        "June valid_until must round to June 30, got: {}",
-        fp.deletable_at
+    // V2 Protocol: the INIT transaction fingerprint carries the raw
+    // transaction-level deletable_at (cryptographically bound into the
+    // HMC_TX_AUTH_V2 signature); init fingerprints are excluded from gossip,
+    // so no anonymization pressure exists for them.
+    assert_eq!(
+        fp.deletable_at,
+        tx.deletable_at.clone().unwrap(),
+        "Init fingerprints must carry the raw signature-bound deletable_at"
     );
 
-    // December rollover: Dec 15 -> Dec 31
+    // Mutating voucher.valid_until AFTER creation must NOT change the
+    // fingerprint: the raw value was bound into the layer2_signature at
+    // signing time and fingerprints follow the transaction, not the container.
     voucher.valid_until = "2025-12-15T12:00:00.000000Z".to_string();
     let fp_dec = create_fingerprint_for_transaction(&tx, &voucher).unwrap();
-    assert!(
-        fp_dec.deletable_at.starts_with("2025-12-31"),
-        "December valid_until must round to Dec 31, got: {}",
+    assert_eq!(
+        fp_dec.deletable_at,
+        tx.deletable_at.clone().unwrap(),
+        "Fingerprint deletable_at must stay signature-bound to the transaction, got: {}",
         fp_dec.deletable_at
     );
 }
@@ -385,7 +402,8 @@ fn test_cleanup_known_fingerprints_removes_expired_only() {
     // Expired: lies far in the past
     let fp_expired = make_fingerprint("tag-expired", "tid-old", "2000-01-01T00:00:00.000000Z");
     // Active: lies far in the future
-    let fp_active  = make_fingerprint("tag-active",  "tid-new", "2099-01-01T00:00:00.000000Z");
+    // V2: the surviving active entry must pass the signature purge.
+    let fp_active  = make_signed_foreign_fp("tag-active",  "2099-01-01T00:00:00.000000Z");
 
     known.foreign_fingerprints.insert("tag-expired".to_string(), vec![fp_expired]);
     known.foreign_fingerprints.insert("tag-active".to_string(),  vec![fp_active]);
@@ -494,7 +512,7 @@ fn test_cleanup_long_grace_period_retains_all() {
 #[test]
 fn test_export_import_fingerprints_roundtrip() {
     let tag = "export-import-tag";
-    let fp = make_fingerprint(tag, "tid-export", "2030-12-31T23:59:59.999999Z");
+    let fp = make_signed_foreign_fp(tag, "2030-12-31T23:59:59.999999Z");
 
     let mut own = OwnFingerprints::default();
     own.history.insert(tag.to_string(), vec![fp.clone()]);
@@ -514,7 +532,7 @@ fn test_export_import_fingerprints_roundtrip() {
 #[test]
 fn test_import_foreign_fingerprints_deduplication() {
     let tag = "dedup-tag";
-    let fp = make_fingerprint(tag, "tid-dedup", "2030-12-31T23:59:59.999999Z");
+    let fp = make_signed_foreign_fp(tag, "2030-12-31T23:59:59.999999Z");
 
     let mut own = OwnFingerprints::default();
     own.history.insert(tag.to_string(), vec![fp]);

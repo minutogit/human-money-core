@@ -82,23 +82,44 @@ fn test_prevent_signature_reuse_in_init() {
         .unwrap();
 
     let sender_pub_raw = genesis_pub.to_bytes().to_vec();
-    let receiver_hash_str = bad_tx.receiver_ephemeral_pub_hash.as_ref().unwrap();
-    let receiver_hash_raw = bs58::decode(receiver_hash_str).into_vec().unwrap();
 
-    let v_id =
-        human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&bad_tx).unwrap();
-    let challenge_ds_tag = bad_tx.t_id.clone();
+    // V2 protocol: bind trap data (trap_r/trap_s) and encrypted timestamp,
+    // mirroring exactly what the production signer/verifier reconstructs.
+    let challenge_ds_tag = if bad_tx.t_type == "init" {
+        bad_tx.t_id.clone()
+    } else {
+        bad_tx
+            .trap_data
+            .as_ref()
+            .map(|td| td.ds_tag.clone())
+            .unwrap_or_else(|| bad_tx.t_id.clone())
+    };
+    let (trap_r_str, trap_s_str) = match &bad_tx.trap_data {
+        Some(td) => (td.trap_r.as_str(), td.trap_s.as_str()),
+        None => ("none", "none"),
+    };
+    let encrypted_timestamp =
+        human_money_core::services::conflict_manager::encrypt_transaction_timestamp(&bad_tx)
+            .unwrap_or(0);
 
     let to_32_bytes = |vec: Vec<u8>| -> [u8; 32] { vec.try_into().unwrap() };
 
     let payload_hash = human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw(
+        // V3 Protocol (audit_02_11): init/genesis locks sign the canonical
+        // "none" placeholder for the voucher container id.
+        human_money_core::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
         &challenge_ds_tag,
-        &v_id,
         &to_32_bytes(t_id_raw),
         &to_32_bytes(sender_pub_raw),
-        Some(&to_32_bytes(receiver_hash_raw)),
-        None,
+        trap_r_str,
+        trap_s_str,
+        encrypted_timestamp,
         bad_tx.deletable_at.as_deref(),
+        // SECURITY (HMSEC-SA04-08): bind the canonical privacy-guard
+        // commitment ("" when no guard is present).
+        &human_money_core::services::l2_gateway::privacy_guard_commitment(
+            bad_tx.privacy_guard.as_deref(),
+        ),
     );
     let l2_sig_bytes =
         human_money_core::services::crypto_utils::sign_ed25519(&genesis_secret, &payload_hash);
@@ -153,9 +174,15 @@ fn test_reject_same_key_different_prefix() {
         "1",
     ));
 
-    // Create a fake guarantor 2 that uses the CREATOR'S key but a different prefix
+    // Create a fake guarantor 2 that uses the CREATOR'S key but a different
+    // (canonical) prefix. The alias is grammatically valid per validate_user_id,
+    // so rejection MUST come from raw-pubkey deduplication, not grammar checks.
     let mut fake_g2 = identity.clone();
-    fake_g2.identity.user_id = format!("private:fake@{}", identity.user_id.split('@').last().unwrap());
+    fake_g2.identity.user_id = human_money_core::services::crypto_utils::create_user_id(
+        &fake_g2.identity.public_key,
+        Some("private-fake"),
+    )
+    .unwrap();
     
     voucher.signatures.push(create_guarantor_signature(
         &voucher,
@@ -207,9 +234,15 @@ fn test_reject_two_guarantors_same_key() {
         "1",
     ));
 
-    // Use guarantor1's key again but different prefix
+    // Use guarantor1's key again but a different (canonical) prefix. The alias
+    // is grammatically valid per validate_user_id, so rejection MUST come from
+    // raw-pubkey deduplication, not grammar checks.
     let mut fake_g2 = g1.clone();
-    fake_g2.identity.user_id = format!("private:fake@{}", g1.user_id.split('@').last().unwrap());
+    fake_g2.identity.user_id = human_money_core::services::crypto_utils::create_user_id(
+        &fake_g2.identity.public_key,
+        Some("private-fake"),
+    )
+    .unwrap();
     
     voucher.signatures.push(create_guarantor_signature(
         &voucher,

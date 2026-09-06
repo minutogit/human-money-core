@@ -2,7 +2,7 @@
 mod tests {
     use human_money_core::models::voucher::{RecipientPayload, Transaction};
     use human_money_core::services::crypto_utils::{encrypt_recipient_payload, get_hash};
-    use human_money_core::test_utils::{setup_in_memory_wallet, add_voucher_to_wallet, ACTORS, MINUTO_STANDARD, derive_holder_key};
+    use human_money_core::test_utils::{setup_in_memory_wallet, add_voucher_to_wallet, ACTORS, MINUTO_STANDARD, derive_holder_key, create_custom_standard};
     use human_money_core::services::utils::to_canonical_json;
     use std::collections::HashMap;
 
@@ -314,8 +314,12 @@ mod tests {
         let mut standards = HashMap::new();
         
         // 1. Test: Public Standard + use_privacy_mode: Some(true) -> Error
-        let mut test_public_std = MINUTO_STANDARD.0.clone();
-        test_public_std.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+        // Re-sign the mutated clone so it stays self-consistent at validation
+        // time (AUDIT-M03-010 enforces signature validity at use time) and the
+        // intended privacy-mode error is reached instead of a signature error.
+        let (test_public_std, _) = create_custom_standard(&MINUTO_STANDARD.0, |s| {
+            s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+        });
         standards.insert(test_public_std.immutable.identity.uuid.clone(), test_public_std.clone());
 
         let alice_local_id = add_voucher_to_wallet(&mut alice_wallet, &alice.identity, "100", &test_public_std, true).unwrap();

@@ -33,6 +33,12 @@ pub enum StandardDefinitionError {
     /// The specified privacy mode in the standard is invalid.
     #[error("Invalid privacy mode: {0}")]
     InvalidMode(String),
+    /// SECURITY (AUDIT-W4-CEL-102): the definition is self-consistently
+    /// signed, but its issuer identity does not match the caller's pinned
+    /// issuer for this standard uuid (trust-on-first-use violation — the
+    /// file was re-signed under a foreign key after installation).
+    #[error("The standard definition was re-signed by a different issuer than the pinned one (issuer pin violation).")]
+    IssuerPinViolation,
 }
 
 /// Defines the various errors that can occur during validation.

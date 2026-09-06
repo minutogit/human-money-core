@@ -47,8 +47,16 @@ impl AppService {
                         };
 
                         // Update seal and integrity (except for the session anchor, as it is ignored)
+                        // SECURITY (AUDIT-W4-WC-004): never swallow a failed
+                        // seal/integrity phase. A silent failure would leave
+                        // the integrity record stale (cleanup-on-login disabled
+                        // forever, tampering reported where none exists).
                         if result.is_ok() && name != "__storage_session_anchor" {
-                            let _ = self.update_seal_after_state_change(Some(pwd_str));
+                            if let Err(seal_err) =
+                                self.update_seal_after_state_change(Some(pwd_str))
+                            {
+                                return Err(seal_err);
+                            }
                         }
                         result
                     }
@@ -73,8 +81,12 @@ impl AppService {
                         };
 
                         // Update seal and integrity (via session key) (except for the session anchor)
+                        // SECURITY (AUDIT-W4-WC-004): see password branch above —
+                        // seal-phase failures must fail loudly.
                         if result.is_ok() && name != "__storage_session_anchor" {
-                            let _ = self.update_seal_after_state_change(None);
+                            if let Err(seal_err) = self.update_seal_after_state_change(None) {
+                                return Err(seal_err);
+                            }
                         }
                         result
                     }

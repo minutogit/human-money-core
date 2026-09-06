@@ -593,6 +593,41 @@ impl AppService {
         }
     }
 
+    /// Verifies that a freshly loaded wallet state is covered by the current
+    /// cryptographic seal before it may be operated on.
+    ///
+    /// This is the same state-hash discipline as [`Self::verify_seal_on_login`],
+    /// applied to the mid-session "Reload-Before-Write" path: if an external
+    /// writer (sync conflict, backup tooling) replaced the persisted stores,
+    /// the reloaded state is only trusted when its own_fingerprints hash
+    /// matches `seal.payload.state_hash`. Otherwise the command must fail hard
+    /// instead of silently resurrecting spent vouchers. Wallets without a seal
+    /// (legacy migration case) are exempt, mirroring login behavior.
+    pub(crate) fn verify_state_matches_seal(
+        storage: &FileStorage,
+        auth: &crate::storage::AuthMethod<'_>,
+        wallet: &crate::wallet::Wallet,
+    ) -> Result<(), AppFacadeError> {
+        let record_opt = storage
+            .load_seal("", auth)
+            .map_err(AppFacadeError::from)?;
+
+        if let Some(record) = record_opt {
+            let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
+                .map_err(AppFacadeError::from)?;
+            let current_state_hash = get_hash(canonical.as_bytes());
+
+            if record.seal.payload.state_hash != current_state_hash {
+                return Err(AppFacadeError::StateRollbackDetected(
+                    "Reloaded wallet state does not match the security seal. \
+                     Possible external rollback or corruption detected. Command rejected."
+                        .to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn update_seal_after_state_change(
         &mut self,
         password: Option<&str>,
@@ -607,73 +642,89 @@ impl AppService {
             } => {
                 let auth = Self::resolve_auth_method(password, session_cache)
                     .map_err(AppFacadeError::from)?;
-
-                let record_opt = storage
-                    .load_seal(&identity.user_id, &auth)
-                    .map_err(AppFacadeError::from)?;
-
-                let current_state_hash = {
-                    let canonical =
-                        crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
-                            .map_err(AppFacadeError::from)?;
-                    get_hash(canonical.as_bytes())
-                };
-
-                let updated_seal = match record_opt {
-                    Some(mut record) => {
-                        let seal = SealManager::update_seal(
-                            &record.seal,
-                            identity,
-                            &current_state_hash,
-                            &wallet.local_instance_id,
-                        )
-                        .map_err(AppFacadeError::from)?;
-
-                        record.seal = seal.clone();
-                        record.sync_status = SyncStatus::PendingUpload;
-
-                        storage
-                            .save_seal(&identity.user_id, &auth, &record)
-                            .map_err(AppFacadeError::from)?;
-                        seal
-                    }
-                    None => {
-                        let seal = SealManager::create_initial_seal(
-                            &identity.user_id,
-                            identity,
-                            &current_state_hash,
-                            &wallet.local_instance_id,
-                        )
-                        .map_err(AppFacadeError::from)?;
-
-                        let new_record = crate::models::seal::LocalSealRecord {
-                            seal: seal.clone(),
-                            sync_status: SyncStatus::PendingUpload,
-                            is_locked_due_to_fork: false,
-                        };
-                        storage
-                            .save_seal(&identity.user_id, &auth, &new_record)
-                            .map_err(AppFacadeError::from)?;
-                        seal
-                    }
-                };
-
-                // --- INTEGRITY UPDATE ---
-                let item_hashes = storage.get_all_item_hashes().map_err(AppFacadeError::from)?;
-                let integrity_record = IntegrityManager::create_integrity_record(
-                    identity,
-                    &updated_seal,
-                    item_hashes,
-                )
-                .map_err(AppFacadeError::from)?;
-
-                storage
-                    .save_integrity(&identity.user_id, &integrity_record)
-                    .map_err(AppFacadeError::from)?;
-
-                Ok(())
+                Self::persist_seal_for_wallet_state(storage, identity, &auth, wallet)
             }
             AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())),
         }
+    }
+
+    /// Persists the WalletSeal and the Integrity Record for the given wallet
+    /// state without touching the AppService's in-memory state.
+    ///
+    /// This is the pure storage-level core of
+    /// [`Self::update_seal_after_state_change`], factored out so that the
+    /// transactional orchestrator (`with_transactional_mut`) can advance the
+    /// seal for a NOT-yet-published temporary wallet and compensate cleanly
+    /// if this step fails after the wallet data was already persisted.
+    pub(crate) fn persist_seal_for_wallet_state(
+        storage: &mut FileStorage,
+        identity: &crate::models::profile::UserIdentity,
+        auth: &crate::storage::AuthMethod<'_>,
+        wallet: &crate::wallet::Wallet,
+    ) -> Result<(), AppFacadeError> {
+        let record_opt = storage
+            .load_seal(&identity.user_id, auth)
+            .map_err(AppFacadeError::from)?;
+
+        let current_state_hash = {
+            let canonical =
+                crate::services::utils::to_canonical_json(&wallet.own_fingerprints)
+                    .map_err(AppFacadeError::from)?;
+            get_hash(canonical.as_bytes())
+        };
+
+        let updated_seal = match record_opt {
+            Some(mut record) => {
+                let seal = SealManager::update_seal(
+                    &record.seal,
+                    identity,
+                    &current_state_hash,
+                    &wallet.local_instance_id,
+                )
+                .map_err(AppFacadeError::from)?;
+
+                record.seal = seal.clone();
+                record.sync_status = SyncStatus::PendingUpload;
+
+                storage
+                    .save_seal(&identity.user_id, auth, &record)
+                    .map_err(AppFacadeError::from)?;
+                seal
+            }
+            None => {
+                let seal = SealManager::create_initial_seal(
+                    &identity.user_id,
+                    identity,
+                    &current_state_hash,
+                    &wallet.local_instance_id,
+                )
+                .map_err(AppFacadeError::from)?;
+
+                let new_record = crate::models::seal::LocalSealRecord {
+                    seal: seal.clone(),
+                    sync_status: SyncStatus::PendingUpload,
+                    is_locked_due_to_fork: false,
+                };
+                storage
+                    .save_seal(&identity.user_id, auth, &new_record)
+                    .map_err(AppFacadeError::from)?;
+                seal
+            }
+        };
+
+        // --- INTEGRITY UPDATE ---
+        let item_hashes = storage.get_all_item_hashes().map_err(AppFacadeError::from)?;
+        let integrity_record = IntegrityManager::create_integrity_record(
+            identity,
+            &updated_seal,
+            item_hashes,
+        )
+        .map_err(AppFacadeError::from)?;
+
+        storage
+            .save_integrity(&identity.user_id, &integrity_record)
+            .map_err(AppFacadeError::from)?;
+
+        Ok(())
     }
 }

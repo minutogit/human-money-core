@@ -289,22 +289,38 @@ fn test_empty_password_handling() {
 
     let mut wallet = setup_in_memory_wallet(identity);
 
-    // Saving with empty password should work
+    // SECURITY (AUDIT-W4-STO-003, parity with HMSEC-SA05-10): saving a wallet
+    // under an EMPTY password is rejected in core - Argon2id("") is
+    // deterministic and offline-reconstructable from profile.enc alone.
     wallet
         .save(
             &mut storage,
             &identity,
             &AuthMethod::Password(empty_password),
         )
-        .expect("Saving with empty password should succeed");
+        .expect_err("Saving with an empty password must be rejected");
 
-    // Loading with empty password should work
-    let (loaded_wallet, _) = Wallet::load(&storage, &AuthMethod::Password(empty_password), "test-id".to_string())
-        .expect("Loading with empty password should succeed");
+    // No container may have been persisted by the rejected save.
+    assert!(
+        !storage.user_storage_path.join("profile.enc").exists(),
+        "rejected initial save must not leave a profile.enc behind"
+    );
+
+    // Resetting an existing wallet's password to empty must be rejected too.
+    wallet
+        .save(&mut storage, &identity, &AuthMethod::Password("a-real-password"))
+        .expect("Saving with a real password should succeed");
+    storage
+        .reset_password(&identity, empty_password)
+        .expect_err("Resetting the password to empty must be rejected");
+
+    // Loading with the still-valid password keeps working.
+    let (loaded_wallet, _) = Wallet::load(&storage, &AuthMethod::Password("a-real-password"), "test-id".to_string())
+        .expect("Loading with the valid password should succeed");
     assert_eq!(wallet.profile.user_id, loaded_wallet.profile.user_id);
 
-    // Loading with a wrong, non-empty password should fail
-    let result = Wallet::load(&storage, &AuthMethod::Password("a-real-password"), "test-id".to_string());
+    // Loading with a wrong, different password should fail
+    let result = Wallet::load(&storage, &AuthMethod::Password("another-password"), "test-id".to_string());
     assert!(matches!(
         result,
         Err(VoucherCoreError::Storage(
@@ -641,12 +657,15 @@ use std::collections::HashMap;
 fn dummy_fingerprint(key: &str) -> TransactionFingerprint {
     TransactionFingerprint {
         ds_tag: key.to_string(),
-        u: "u_value".to_string(),
-        blinded_id: "blinded".to_string(),
+        trap_r: "u_value".to_string(),
+        trap_s: "blinded".to_string(),
         t_id: "tid".to_string(),
         encrypted_timestamp: 0,
         layer2_signature: "sig".to_string(),
+        sender_ephemeral_pub: String::new(),
         deletable_at: "2099-01-01".to_string(),
+        layer2_voucher_id: String::new(),
+        privacy_guard_hash: String::new(),
     }
 }
 

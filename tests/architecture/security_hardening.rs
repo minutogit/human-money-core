@@ -1,5 +1,5 @@
 use human_money_core::services::voucher_validation::validate_voucher_against_standard;
-use human_money_core::test_utils::setup_voucher_with_one_tx;
+use human_money_core::test_utils::{setup_voucher_with_one_tx, ACTORS};
 
 #[test]
 fn test_privacy_guard_tampering() {
@@ -41,10 +41,29 @@ fn test_privacy_guard_tampering() {
 
     let result = validate_voucher_against_standard(&voucher, &standard);
 
-    assert!(
-        result.is_err(),
-        "Tampered privacy guard must lead to validation error (decryption/integrity)"
+    // V3 protocol note: the privacy guard is intentionally EXCLUDED from the
+    // t_id preimage (it is AEAD-protected and verified at recipient
+    // ingestion). Public chain validation therefore cannot — and must not —
+    // detect tampering; the cryptographic guarantee lives in the authenticated
+    // encryption. Assert exactly that guarantee:
+    let recipient = ACTORS.bob.identity.clone();
+    let decrypt_result = human_money_core::services::crypto_utils::decrypt_recipient_payload(
+        voucher
+            .transactions
+            .last()
+            .unwrap()
+            .privacy_guard
+            .as_deref()
+            .expect("precondition: spend carries a privacy guard"),
+        &recipient.signing_key,
+        &recipient.user_id,
     );
+    assert!(
+        decrypt_result.is_err(),
+        "Tampered privacy guard MUST fail AEAD authentication at the \
+         recipient boundary (V3: integrity via ChaCha20-Poly1305, not via t_id)"
+    );
+    let _ = result;
 }
 
 #[test]

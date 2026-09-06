@@ -2,7 +2,7 @@
 // cargo test --test core_logic_tests
 
 // NOTE: Imports module provided in `mod.rs`.
-use self::test_utils::{ACTORS, FREETALER_STANDARD, setup_in_memory_wallet};
+use self::test_utils::{ACTORS, FREETALER_STANDARD, setup_in_memory_wallet, create_custom_standard};
 use super::test_utils;
 use ed25519_dalek::SigningKey;
 use human_money_core::crypto_utils;
@@ -84,13 +84,11 @@ fn test_wallet_state_management_on_split() {
     };
     let voucher_data = create_test_voucher_data_with_amount(creator_data, "100.00");
 
-    let mut standard_obj = FREETALER_STANDARD.0.clone();
-    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
-    let mut standard_to_hash = standard_obj.clone();
-    standard_to_hash.signature = None;
-    let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
-        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
-    );
+    // Re-sign the mutated clone so it stays self-consistent at validation
+    // time (AUDIT-M03-010 enforces signature validity at use time).
+    let (standard_obj, standard_hash_val) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    });
     let standard = &standard_obj;
     let standard_hash = &standard_hash_val;
 
@@ -212,13 +210,11 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
     eve_creator.id = Some(eve_identity.user_id.clone());
     let voucher_data = create_test_voucher_data_with_amount(eve_creator, "100");
 
-    let mut standard_obj = FREETALER_STANDARD.0.clone();
-    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
-    let mut standard_to_hash = standard_obj.clone();
-    standard_to_hash.signature = None;
-    let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
-        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
-    );
+    // Re-sign the mutated clone so it stays self-consistent at validation
+    // time (AUDIT-M03-010 enforces signature validity at use time).
+    let (standard_obj, standard_hash_val) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    });
     let standard = &standard_obj;
     let standard_hash = &standard_hash_val;
 
@@ -364,13 +360,11 @@ fn test_serialization_roundtrip_with_special_chars() {
 
     let voucher_data = create_test_voucher_data_with_amount(creator, "123");
 
-    let mut standard_obj = FREETALER_STANDARD.0.clone();
-    standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
-    let mut standard_to_hash = standard_obj.clone();
-    standard_to_hash.signature = None;
-    let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
-        human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
-    );
+    // Re-sign the mutated clone so it stays self-consistent at validation
+    // time (AUDIT-M03-010 enforces signature validity at use time).
+    let (standard_obj, standard_hash_val) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
+        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+    });
     let standard = &standard_obj;
     let standard_hash = &standard_hash_val;
 

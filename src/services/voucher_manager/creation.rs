@@ -293,34 +293,32 @@ pub fn create_voucher(
         VoucherCoreError::InvalidHashFormat("Invalid genesis_pub format".to_string())
     })?;
 
-    let v_id = crate::services::l2_gateway::calculate_layer2_voucher_id(&init_transaction)?;
     let challenge_ds_tag = init_transaction.t_id.clone();
-
-    let receiver_hash_str = init_transaction
-        .receiver_ephemeral_pub_hash
-        .as_ref()
-        .ok_or_else(|| {
-            VoucherCoreError::Validation(crate::error::ValidationError::InvalidTransaction(
-                "Genesis transaction missing receiver_ephemeral_pub_hash".to_string(),
-            ))
-        })?;
-    let receiver_hash_raw = bs58::decode(receiver_hash_str)
-        .into_vec()
-        .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid receiver hash".to_string()))?;
 
     let to_32_bytes = |vec: Vec<u8>, name: &str| -> Result<[u8; 32], VoucherCoreError> {
         vec.try_into()
             .map_err(|_| VoucherCoreError::InvalidHashFormat(format!("{} must be 32 bytes", name)))
     };
 
+    // V3 Protocol (SST, HMC_TX_AUTH_V3): genesis transactions carry no trap;
+    // the canonical "none"/"none" placeholders are bound into the digest and
+    // the encrypted timestamp anchors the temporal ordering for gossip proofs.
+    // SECURITY (audit_02_11 / HMSEC-SA04-08): a genesis lock cannot bind its
+    // own derived voucher id (circularity), so the canonical "none"
+    // placeholder and an empty privacy-guard commitment are bound instead.
+    let encrypted_timestamp =
+        crate::services::conflict_manager::encrypt_transaction_timestamp(&init_transaction)?;
+
     let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+        crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
         &challenge_ds_tag,
-        &v_id,
         &to_32_bytes(t_id_raw.clone(), "t_id")?,
         &to_32_bytes(sender_pub_raw.clone(), "sender_pub")?,
-        Some(&to_32_bytes(receiver_hash_raw.clone(), "receiver_hash")?),
-        None,
+        crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
+        crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
+        encrypted_timestamp,
         init_transaction.deletable_at.as_deref(),
+        "",
     );
 
     let l2_sig_bytes = sign_ed25519(&genesis_secret, &payload_hash);

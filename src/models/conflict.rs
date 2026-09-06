@@ -21,14 +21,6 @@ pub struct TransactionFingerprint {
     /// It MUST be deterministic and constant for the same input.
     pub ds_tag: String,
 
-    /// The varying challenge point (U) of the mathematical trap.
-    /// It depends on the transaction ID and (together with v) enables
-    /// calculating the identity in the event of a double spend.
-    pub u: String,
-
-    /// The blinded identity (V = m*U + ID).
-    pub blinded_id: String,
-
     /// The unique ID of the transaction (`t_id`). A diverging value here with an
     /// identical `ds_tag` signals a double spend.
     pub t_id: String,
@@ -41,9 +33,49 @@ pub struct TransactionFingerprint {
     /// to unambiguously attribute the fraud attempt to the perpetrator (holder of the ephemeral key).
     pub layer2_signature: String,
 
+    /// The revealed ephemeral public key of the sender (32 bytes, Base58).
+    ///
+    /// # V3 Protocol (Shared-Signature Trap)
+    /// Together with the trap shards, `encrypted_timestamp` and
+    /// `deletable_at` this key allows ANY gossip recipient to verify the
+    /// embedded `layer2_signature` against the canonical
+    /// `HMC_TX_AUTH_V3` digest — turning fingerprints from unauthenticated
+    /// rumors into self-authenticating instant proofs.
+    #[serde(default)]
+    pub sender_ephemeral_pub: String,
+
     /// The date after which the fingerprint can be safely deleted from storage
     /// (corresponds to `deletable_at` of the 'init' transaction).
     pub deletable_at: String,
+
+    /// # V3 Protocol (SST): commitment shard $R_i$ of the shared Schnorr
+    /// signature (32 bytes, Base58). Genesis fingerprints carry the canonical
+    /// `"none"` placeholder. Two colliding shards reconstruct the underlying
+    /// signature and autonomously reveal the offender's `did:key` identity.
+    #[serde(default)]
+    pub trap_r: String,
+
+    /// # V3 Protocol (SST): response shard $s_i$ of the shared Schnorr
+    /// signature (32 bytes, Base58). Genesis fingerprints carry the canonical
+    /// `"none"` placeholder.
+    #[serde(default)]
+    pub trap_s: String,
+
+    /// # V3 Protocol (HMC_TX_AUTH_V3, audit_02_11): the voucher container id
+    /// that the embedded `layer2_signature` authorizes. Spends carry the hex
+    /// `layer2_voucher_id`, genesis fingerprints the canonical `"none"`
+    /// placeholder — mirroring exactly what the spender signed. Binding this
+    /// into the payload digest prevents cross-voucher lock transplantation.
+    #[serde(default)]
+    pub layer2_voucher_id: String,
+
+    /// # SECURITY (HMSEC-SA04-08): the canonical commitment
+    /// ([`crate::services::l2_gateway::privacy_guard_commitment`]) of the
+    /// transaction's `privacy_guard`. Diverging commitments under one input
+    /// expose guard equivocation as distinguishable evidence instead of
+    /// collapsing into byte-identical fingerprints.
+    #[serde(default)]
+    pub privacy_guard_hash: String,
 }
 
 /// Serves as a storage container for all known transaction fingerprints that
@@ -124,7 +156,25 @@ pub struct ProofOfDoubleSpend {
     pub proof_id: String,
 
     /// The ID of the sender (offender) who performed the double spend.
+    ///
+    /// # Attribution hierarchy (anti-framing, V3 SST)
+    /// - A `did:key` identity is written here when the Shared-Signature Trap
+    ///   shards of the colliding forks reconstruct a valid Schnorr signature
+    ///   under the extracted identity point (EUF-CMA security — framing is
+    ///   computationally infeasible).
+    /// - Otherwise the canonical offender identifier is the ephemeral key
+    ///   linkage (`ephemeral:<bs58(sender_ephemeral_pub)>`), which cannot be
+    ///   forged by third parties.
+    /// - `"anonymous"` means no attribution was possible.
     pub offender_id: String,
+
+    /// ADVISORY metadata only: a did:key identity recovered from the
+    /// mathematical trap extraction. Under the V3 SST protocol this value is
+    /// cryptographically bound to the offender (Schnorr EUF-CMA) whenever the
+    /// extraction succeeded; it is kept for UI compatibility and mirrors
+    /// `offender_id` in that case.
+    #[serde(default)]
+    pub suspected_identity: Option<String>,
 
     /// The `prev_hash` from which the fraudulent transactions fork.
     pub fork_point_prev_hash: String,

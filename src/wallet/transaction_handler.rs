@@ -23,6 +23,43 @@ use sha2::Sha256;
 use std::collections::HashMap;
 use std::str::FromStr;
 
+/// HMSEC-SA06-10: Maximum number of characters a remote-supplied display
+/// name may contribute to the local event feed and bundle metadata history.
+const MAX_COUNTERPARTY_NAME_CHARS: usize = 64;
+
+/// HMSEC-SA06-10: True for Unicode format/invisible characters that are
+/// commonly abused for spoofing or rendering manipulation (zero-width
+/// characters, joiners, bidi embedding/overrides, BOM-class marks).
+fn is_invisible_format_char(c: char) -> bool {
+    matches!(c as u32,
+        0x200B..=0x200F       // ZWSP, ZWNJ, ZWJ, LRM, RLM
+        | 0x202A..=0x202E     // bidi embedding & pop-directional formats
+        | 0x2060..=0x206F     // word joiner & invisible operators
+        | 0xFEFF              // zero-width no-break space / BOM
+    )
+}
+
+/// HMSEC-SA06-10: Sanitizes an attacker-supplied display name before it is
+/// stored in the local event feed (`EventBffData.counterparty_name`) or the
+/// persistent bundle metadata history. Control characters and invisible
+/// format characters are stripped and the length is bounded. This preserves
+/// the display purpose of the field while removing injection and log-bloat
+/// vectors. It deliberately does NOT touch `counterparty_id`, whose
+/// retention is protected intentional design for offline forensics
+/// (HMSEC-SA06-05).
+fn sanitize_display_name(raw: Option<String>) -> Option<String> {
+    let cleaned: String = raw?
+        .chars()
+        .filter(|c| !c.is_control() && !is_invisible_format_char(*c))
+        .take(MAX_COUNTERPARTY_NAME_CHARS)
+        .collect();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
 impl Wallet {
     /// Creates a `TransactionBundle`, packages it, and updates the wallet state.
     /// This is now a private helper method.
@@ -64,6 +101,16 @@ impl Wallet {
     }
 
     /// Processes a serialized `SecureContainer` containing a `TransactionBundle`.
+    ///
+    /// SECURITY (HMSEC-SA04-04): Receiving a bundle must be an all-or-nothing
+    /// operation. The ingestion loop below commits voucher instances
+    /// incrementally; if a LATER member of the bundle fails validation
+    /// (unknown standard UUID, standard violation, undecryptable privacy
+    /// guard), the already-committed members would otherwise persist as
+    /// phantom vouchers while the Layer-1 replay gate (`bundle_meta_store`)
+    /// and the event log never learn about them. Mirroring the send path's
+    /// temporary-wallet transactional pattern, we snapshot the wallet before
+    /// any mutation and roll back completely when processing returns `Err`.
     pub fn process_encrypted_transaction_bundle(
         &mut self,
         identity: &UserIdentity,
@@ -71,7 +118,42 @@ impl Wallet {
         archive: Option<&dyn VoucherArchive>,
         standard_definitions: &HashMap<String, VoucherStandardDefinition>,
     ) -> Result<ProcessBundleResult, VoucherCoreError> {
-        let bundle = bundle_processor::open_and_verify_bundle(identity, container_bytes)?;
+        // Transactional approach (see HMSEC-SA04-04): operate on a snapshot so
+        // every error path below restores the exact pre-processing state.
+        let rollback_snapshot = self.clone();
+        match self.process_encrypted_transaction_bundle_inner(
+            identity,
+            container_bytes,
+            archive,
+            standard_definitions,
+        ) {
+            Ok(result) => Ok(result),
+            Err(err) => {
+                *self = rollback_snapshot;
+                Err(err)
+            }
+        }
+    }
+
+    /// Inner implementation of [`Wallet::process_encrypted_transaction_bundle`]
+    /// running on `&mut self`; wrapped for atomic rollback by the public method.
+    fn process_encrypted_transaction_bundle_inner(
+        &mut self,
+        identity: &UserIdentity,
+        container_bytes: &[u8],
+        archive: Option<&dyn VoucherArchive>,
+        standard_definitions: &HashMap<String, VoucherStandardDefinition>,
+    ) -> Result<ProcessBundleResult, VoucherCoreError> {
+        let mut bundle = bundle_processor::open_and_verify_bundle(identity, container_bytes)?;
+
+        // HMSEC-SA06-10: The sender_profile_name is attacker-controlled
+        // display metadata. Sanitize it ONCE at the ingestion point (after
+        // all cryptographic verification) so every downstream consumer —
+        // event feed, bundle metadata history, transfer summary details —
+        // only ever sees a bounded, control-character-free name. This is a
+        // local-storage/display transformation and does not interfere with
+        // the already-completed bundle signature verification.
+        bundle.sender_profile_name = sanitize_display_name(bundle.sender_profile_name);
 
         // --- LAYER 0: BUNDLE-RECIPIENT CHECK ---
         // Prevents a wallet from accepting a bundle explicitly addressed to another
@@ -235,6 +317,23 @@ impl Wallet {
             let mut current_seed = None;
             */
             if let Some(last_tx) = voucher.transactions.last() {
+                // SECURITY (AUDIT-01-F12): R5 witness enforcement is keyed on
+                // TRAP DATA PRESENCE, never on privacy-guard presence. Every
+                // production spend attaches trap_data AND a guard carrying the
+                // private SST witness; a transaction that carries a trap shard
+                // but NO guard can never present its witness and would
+                // otherwise blind the SST autonomously (permanent double-spend
+                // detection evasion). Fail closed before any state mutation.
+                if last_tx.trap_data.is_some() && last_tx.privacy_guard.is_none() {
+                    return Err(VoucherCoreError::Validation(
+                        ValidationError::InvalidTransaction(
+                            "Payment rejected: transaction carries an SST trap shard \
+                             but no privacy guard with the private witness (R5 \
+                             fail-closed handover enforcement)."
+                                .to_string(),
+                        ),
+                    ));
+                }
                 if let Some(guard_base64) = &last_tx.privacy_guard {
                     // STRICT INGESTION: If a privacy_guard is present, it MUST
                     // be successfully decrypted and parsed.
@@ -270,84 +369,64 @@ impl Wallet {
                         }.into());
                     }
 
-                    // Verify DLEQ Proof and deterministic trap derivation if proof fields are present
-                    let sender_pubkey = crate::services::crypto_utils::get_pubkey_from_user_id(&payload.sender_permanent_did)?;
-                    let id_point = crate::services::crypto_utils::ed25519_pk_to_curve_point(&sender_pubkey)?;
-
+                    // V3 Protocol (SST/R5): the private trap witness W = (R_sig, s_sig, M_R, m_s)
+                    // travels in the encrypted RecipientPayload. Fail-closed enforcement: if the
+                    // transaction carries a trap shard, ALL witness components MUST be present and
+                    // cryptographically verify against the declared payer DID — garbage or forged
+                    // traps are rejected immediately (fraud PREVENTION at L1 handover).
                     if let Some(trap) = &last_tx.trap_data {
-                        let u_bytes = bs58::decode(&trap.u)
-                            .into_vec()
-                            .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
-                        let u = curve25519_dalek::scalar::Scalar::from_bytes_mod_order(
-                            u_bytes.try_into().map_err(|_| {
-                                VoucherCoreError::Crypto("Invalid Scalar U length".to_string())
+                        let missing_witness = || {
+                            ValidationError::InvalidTransaction(
+                                "Payment rejected: transaction carries a trap shard but the \
+                                 private SST witness (trap_r_sig/trap_s_sig/trap_m_r/trap_m_s) \
+                                 is incomplete."
+                                    .to_string(),
+                            )
+                        };
+                        let witness = crate::services::trap_manager::TrapWitness {
+                            r_sig: payload.trap_r_sig.clone().ok_or_else(missing_witness)?,
+                            s_sig: payload.trap_s_sig.clone().ok_or_else(missing_witness)?,
+                            m_r: payload.trap_m_r.clone().ok_or_else(missing_witness)?,
+                            m_s: payload.trap_m_s.clone().ok_or_else(missing_witness)?,
+                        };
+                        let eph_pub_bytes: [u8; 32] = bs58::decode(
+                            last_tx.sender_ephemeral_pub.as_deref().ok_or_else(|| {
+                                ValidationError::InvalidTransaction(
+                                    "Payment rejected: missing sender_ephemeral_pub for SST \
+                                     witness check."
+                                        .to_string(),
+                                )
                             })?,
-                        );
+                        )
+                        .into_vec()
+                        .map_err(|_| {
+                            ValidationError::InvalidTransaction(
+                                "Payment rejected: invalid sender_ephemeral_pub encoding."
+                                    .to_string(),
+                            )
+                        })?
+                        .try_into()
+                        .map_err(|_| {
+                            ValidationError::InvalidTransaction(
+                                "Payment rejected: sender_ephemeral_pub must be 32 bytes."
+                                    .to_string(),
+                            )
+                        })?;
 
-                        let blinded_id_bytes = bs58::decode(&trap.blinded_id)
-                            .into_vec()
-                            .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
-                        let v_point = curve25519_dalek::edwards::CompressedEdwardsY::from_slice(&blinded_id_bytes)
-                            .map_err(|_| VoucherCoreError::Crypto("Invalid Blinded-ID (V)".to_string()))?
-                            .decompress()
-                            .ok_or_else(|| VoucherCoreError::Crypto("Failed to decompress Blinded-ID V".to_string()))?;
-
-                        let prev_hash_bytes = bs58::decode(&last_tx.prev_hash)
-                            .into_vec()
-                            .unwrap_or_else(|_| last_tx.prev_hash.as_bytes().to_vec());
-                        let p_point = crate::services::crypto_utils::hash_to_curve(&prev_hash_bytes);
-
-                        if let (Some(k_str), Some(c_str), Some(s_str)) = (
-                            &payload.trap_k_point,
-                            &payload.dleq_c,
-                            &payload.dleq_s,
-                        ) {
-                            // 1. Decode K, c, s
-                            let k_bytes = bs58::decode(k_str)
-                                .into_vec()
-                                .map_err(|e| VoucherCoreError::Crypto(format!("Invalid K point Base58: {}", e)))?;
-                            let c_bytes = bs58::decode(c_str)
-                                .into_vec()
-                                .map_err(|e| VoucherCoreError::Crypto(format!("Invalid c Base58: {}", e)))?;
-                            let s_bytes = bs58::decode(s_str)
-                                .into_vec()
-                                .map_err(|e| VoucherCoreError::Crypto(format!("Invalid s Base58: {}", e)))?;
-
-                            let k_point = curve25519_dalek::edwards::CompressedEdwardsY::from_slice(&k_bytes)
-                                .map_err(|_| VoucherCoreError::Crypto("Invalid K point bytes".to_string()))?
-                                .decompress()
-                                .ok_or_else(|| VoucherCoreError::Crypto("Failed to decompress K point".to_string()))?;
-
-                            let c_scalar = curve25519_dalek::scalar::Scalar::from_bytes_mod_order(
-                                c_bytes.try_into().map_err(|_| {
-                                    VoucherCoreError::Crypto("Invalid c scalar length".to_string())
-                                })?,
-                            );
-                            let s_scalar = curve25519_dalek::scalar::Scalar::from_bytes_mod_order(
-                                s_bytes.try_into().map_err(|_| {
-                                    VoucherCoreError::Crypto("Invalid s scalar length".to_string())
-                                })?,
-                            );
-
-                            // 2. Perform DLEQ verification
-                            crate::services::crypto_utils::verify_dleq_proof(
-                                &id_point,
-                                &p_point,
-                                &k_point,
-                                &c_scalar,
-                                &s_scalar,
-                            )?;
-
-                            // 3. Verify trap identity derivation
-                            let m_expected = crate::services::trap_manager::hash_to_scalar(&k_point.compress().to_bytes());
-                            let v_expected = (u * m_expected) * curve25519_dalek::constants::ED25519_BASEPOINT_POINT + id_point;
-
-                            if v_expected != v_point {
-                                return Err(VoucherCoreError::InvalidTrapDerivation(
-                                    "Trap V point mismatch: slope m was not derived deterministically from the permanent key.".to_string()
-                                ));
-                            }
-                        }
+                        crate::services::trap_manager::verify_sst_witness(
+                            &witness,
+                            trap,
+                            &payload.sender_permanent_did,
+                            &trap.ds_tag,
+                            &eph_pub_bytes,
+                            &last_tx.t_id,
+                        )
+                        .map_err(|e| {
+                            ValidationError::InvalidTransaction(format!(
+                                "Payment rejected: SST trap witness verification failed ({}).",
+                                e
+                            ))
+                        })?;
                     }
 
                     // Check target_prefix (Simple validation)
@@ -407,7 +486,16 @@ impl Wallet {
                     ))
                 })?;
 
-                *current_sum = (val1 + val2).to_string();
+                // SECURITY (HMC-SEC-04-01): The plain `+` operator panics on
+                // Decimal overflow (attacker-controlled near-MAX amounts).
+                // Use checked_add so an overflowing aggregate degrades into a
+                // graceful error instead of aborting the process.
+                let new_sum = val1.checked_add(val2).ok_or_else(|| {
+                    VoucherCoreError::Generic(
+                        "Amount overflow while aggregating received voucher amounts.".to_string(),
+                    )
+                })?;
+                *current_sum = new_sum.to_string();
             } else {
                 let count = transfer_summary.countable_items.entry(display_currency).or_insert(0);
                 *count += 1;
@@ -430,7 +518,16 @@ impl Wallet {
                     &voucher.voucher_standard.name,
                     voucher.non_redeemable_test_voucher
                 ),
-                counterparty_id: Self::extract_sender_from_transaction(last_tx, identity),
+                // ARCHITECTURAL DESIGN REQUIREMENT (Offline Forensics & Hop-by-Hop Traceability):
+                // In Stealth/Privacy Mode, the voucher transaction chain itself anonymizes the
+                // transfer for third parties and subsequent chain hops. However, the direct recipient's
+                // local, encrypted wallet event log (TransferReceived) and TransferSummary MUST retain
+                // the immediate counterparty DID (from the bundle sender or privacy guard) so that in an
+                // offline system, manual double-spend investigations can trace fraud hop-by-hop back
+                // through the direct transaction history. This is strictly local to the user's encrypted
+                // storage and is an intentional, vital offline dispute-resolution mechanism, NOT a security vulnerability.
+                counterparty_id: Self::extract_sender_from_transaction(last_tx, identity)
+                    .or_else(|| Some(bundle.sender_id.clone())),
                 counterparty_name: bundle.sender_profile_name.clone(),
             });
             // --- End TransferSummary logic ---
@@ -674,7 +771,10 @@ impl Wallet {
 
     /// Performs the state transition for ONE voucher in the wallet.
     ///
-    /// This function is the core logic of the transfer. It does NOT perform bundling.
+    /// This function is the core logic of the transfer. It does NOT perform
+    /// bundling and does NOT write to the forensic archive: archive side
+    /// effects are performed by the orchestrating caller strictly after its
+    /// atomic commit point (HMC-SEC-04-03).
     pub(super) fn _execute_single_transfer(
         &mut self,
         identity: &UserIdentity,
@@ -682,7 +782,6 @@ impl Wallet {
         local_instance_id: &str,
         recipient_id: &str,
         amount_to_send: &str,
-        archive: Option<&dyn VoucherArchive>,
         use_privacy_mode: Option<bool>,
         counterparty_id: Option<String>,
         counterparty_name: Option<String>,
@@ -807,13 +906,10 @@ impl Wallet {
             */
         }
 
-        if let Some(archive_backend) = archive {
-            archive_backend.archive_voucher(
-                &new_voucher_state,
-                &identity.user_id,
-                standard_definition,
-            )?;
-        }
+        // NOTE (HMC-SEC-04-03): No archive writes here. This method may run on
+        // a temporary wallet clone inside a simulated transaction; archiving is
+        // a side effect that cannot be rolled back and therefore happens in
+        // `execute_multi_transfer_and_bundle` only AFTER the commit succeeded.
 
         // Fingerprint creation and storage in the *historical* store
         let created_tx = new_voucher_state.transactions.last().unwrap();
@@ -830,6 +926,13 @@ impl Wallet {
         }
 
         // Generate TransferSent event for UI history.
+        // ARCHITECTURAL DESIGN REQUIREMENT (Offline Forensics & Hop-by-Hop Traceability):
+        // In Stealth/Privacy Mode, the direct sender's local, encrypted wallet event log
+        // MUST retain the intended recipient DID (`counterparty_id`), even if the voucher's
+        // on-chain transaction is anonymous. If an offline double-spend is investigated later,
+        // the local wallet owner must be able to prove and trace to whom they sent the voucher.
+        // This is strictly local to the user's sealed storage and is an intentional forensic feature,
+        // NOT a security leak.
         let bff_data = crate::models::wallet_event::EventBffData {
             display_currency: crate::wallet::format_bff_name(
                 new_voucher_state.nominal_value.abbreviation.as_deref().unwrap_or(&new_voucher_state.nominal_value.unit),
@@ -890,6 +993,9 @@ impl Wallet {
                 })?;
 
             // NEW: Create InvolvedVoucherInfo for the source (BEFORE the transfer)
+            // ARCHITECTURAL DESIGN REQUIREMENT (Offline Forensics):
+            // We retain the counterparty_id here so the user has an accurate record of
+            // the intended destination for each individual voucher in the bundle.
             involved_sources_details.push(super::types::InvolvedVoucherInfo {
                 local_instance_id: source.local_instance_id.clone(),
                 voucher_id: instance.voucher.voucher_id.clone(),
@@ -917,7 +1023,6 @@ impl Wallet {
                 &source.local_instance_id,
                 &request.recipient_id,
                 &source.amount_to_send,
-                archive,
                 request.use_privacy_mode,
                 Some(request.recipient_id.clone()),
                 request.sender_profile_name.clone(),
@@ -929,6 +1034,10 @@ impl Wallet {
         // 3. **Bundling:** Create a single SecureContainer bundle.
         let (fingerprints_to_send, depths_to_send) = temp_wallet
             .select_fingerprints_for_bundle(&request.recipient_id, &vouchers_for_bundle)?;
+
+        // Snapshot of the transferred voucher states for the post-commit
+        // archiving pass (the bundle creation below consumes the originals).
+        let transferred_states = vouchers_for_bundle.clone();
 
         let (container_bytes, header) = temp_wallet.create_and_encrypt_transaction_bundle(
             identity,
@@ -945,10 +1054,61 @@ impl Wallet {
         //    original wallet state with that of the temporary instance.
         *self = temp_wallet;
 
+        // 5. **Post-commit archiving (HMC-SEC-04-03):** Archive writes are
+        //    side effects that cannot be rolled back with the wallet state,
+        //    so they are performed strictly AFTER the atomic commit point.
+        //    An aborted operation therefore never leaves ghost entries in the
+        //    forensic archive.
+        //
+        //    AUDIT-00-WILDCARD-02: failures INSIDE this phase must not be
+        //    reported as operation failures. The transfer is already
+        //    committed and the bundle bytes are irrevocably produced;
+        //    propagating an Err from here would (a) let callers believe the
+        //    send did not happen (retry -> double send) while the AppService
+        //    rollback leaves ghost entries for states the authoritative
+        //    wallet says never existed, and (b) violate the Err => no commit
+        //    contract. Archiving is therefore BEST-EFFORT in this phase:
+        //    individual failures are logged and skipped (forensic gap), the
+        //    operation itself remains successful.
+        //
+        //    SECURITY (AUDIT-W4-INT-503): a forensic gap is never SILENT.
+        //    Every voucher state that could not be archived is reported to
+        //    the caller via `CreateBundleResult::forensic_archive_incomplete`
+        //    so hosts can warn/journal the incomplete custody chain.
+        let mut forensic_archive_incomplete: Vec<String> = Vec::new();
+        if let Some(archive_backend) = archive {
+            for voucher in &transferred_states {
+                let standard_uuid = voucher.voucher_standard.uuid.clone();
+                let standard_definition = match standard_definitions.get(&standard_uuid) {
+                    Some(def) => def,
+                    None => {
+                        eprintln!(
+                            "Forensic archiving skipped: standard '{}' not found in provided definitions.",
+                            standard_uuid
+                        );
+                        forensic_archive_incomplete.push(voucher.voucher_id.clone());
+                        continue;
+                    }
+                };
+                if let Err(e) = archive_backend.archive_voucher(
+                    voucher,
+                    &identity.user_id,
+                    standard_definition,
+                ) {
+                    eprintln!(
+                        "Forensic archiving failed for a committed voucher state (best effort): {}",
+                        e
+                    );
+                    forensic_archive_incomplete.push(voucher.voucher_id.clone());
+                }
+            }
+        }
+
         Ok(CreateBundleResult {
             bundle_bytes: container_bytes,
             bundle_id: header.bundle_id,
             involved_sources_details,
+            forensic_archive_incomplete,
         })
     }
 

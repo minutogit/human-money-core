@@ -18,28 +18,19 @@ mod required_signatures_validation {
     use super::*;
 
     fn load_required_sig_standard() -> (human_money_core::VoucherStandardDefinition, String) {
-        // Use the robust lazy_static variable and add the CEL rule
-        let (mut standard, _hash) = (
-            test_utils::REQUIRED_SIG_STANDARD.0.clone(),
-            test_utils::REQUIRED_SIG_STANDARD.1.clone(),
-        );
-
-        standard.immutable.custom_rules.insert(
-            "test_rule".to_string(),
-            human_money_core::models::voucher_standard_definition::DynamicRule {
-                message: "Official Approver".to_string(),
-                expression: format!("Voucher.signatures.filter(s, s.signer_id == '{}' && s.role == 'Official Approver').size() == 1", ACTORS.charlie.user_id),
-            }
-        );
-
-        // Calculate new hash
-        let mut standard_to_hash = standard.clone();
-        standard_to_hash.signature = None;
-        let new_hash = human_money_core::services::crypto_utils::get_hash(
-            human_money_core::to_canonical_json(&standard_to_hash.immutable).unwrap(),
-        );
-
-        (standard, new_hash)
+        // Use the robust lazy_static variable and add the CEL rule.
+        // Re-sign the mutated clone via create_custom_standard so it stays
+        // self-consistent at validation time (AUDIT-M03-010 enforces signature
+        // validity when the standard enters validation).
+        test_utils::create_custom_standard(&test_utils::REQUIRED_SIG_STANDARD.0, |standard| {
+            standard.immutable.custom_rules.insert(
+                "test_rule".to_string(),
+                human_money_core::models::voucher_standard_definition::DynamicRule {
+                    message: "Official Approver".to_string(),
+                    expression: format!("Voucher.signatures.filter(s, s.signer_id == '{}' && s.role == 'Official Approver').size() == 1", ACTORS.charlie.user_id),
+                }
+            );
+        })
     }
 
     fn create_base_voucher_for_sig_test(

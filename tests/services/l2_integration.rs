@@ -62,11 +62,34 @@ impl MockL2Node {
         let req: L2LockRequest = serde_json::from_slice(req_bytes).unwrap();
 
         // --- 1. Check authority (layer2_signature) ---
+        // V3 Protocol (audit_02_11): a genesis lock signs the canonical "none"
+        // placeholder for the voucher-id field (its own derived id would be
+        // circular — see creation.rs/chain.rs), while spends bind the real hex
+        // id. An honest L2 node therefore reconstructs the digest accordingly.
+        let payload_hash = if req.is_genesis {
+            let challenge_ds_tag = bs58::encode(req.transaction_hash).into_string();
+            human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw(
+                human_money_core::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
+                &challenge_ds_tag,
+                &req.transaction_hash,
+                &req.sender_ephemeral_pub,
+                req.trap_r.as_deref()
+                    .unwrap_or(human_money_core::services::l2_gateway::TRAP_NONE_PLACEHOLDER),
+                req.trap_s.as_deref()
+                    .unwrap_or(human_money_core::services::l2_gateway::TRAP_NONE_PLACEHOLDER),
+                req.encrypted_timestamp,
+                req.deletable_at.as_deref(),
+                &human_money_core::services::l2_gateway::privacy_guard_commitment(
+                    req.privacy_guard.as_deref(),
+                ),
+            )
+        } else {
+            human_money_core::services::l2_gateway::calculate_l2_payload_hash(&req)
+        };
+
         let ephem_key = VerifyingKey::from_bytes(&req.sender_ephemeral_pub)
             .expect("Invalid sender_ephemeral_pub key format");
         let signature = Signature::from_bytes(&req.layer2_signature);
-
-        let payload_hash = human_money_core::services::l2_gateway::calculate_l2_payload_hash(&req);
 
         if !human_money_core::is_signature_bypass_active()
             && ephem_key.verify(&payload_hash, &signature).is_err()
@@ -112,7 +135,11 @@ impl MockL2Node {
             receiver_ephemeral_pub_hash: req.receiver_ephemeral_pub_hash,
             change_ephemeral_pub_hash: req.change_ephemeral_pub_hash,
             layer2_signature: req.layer2_signature,
+            trap_r: req.trap_r.clone(),
+            trap_s: req.trap_s.clone(),
+            encrypted_timestamp: req.encrypted_timestamp,
             deletable_at: req.deletable_at.clone(),
+            privacy_guard: req.privacy_guard.clone(),
         };
         voucher_locks.insert(ds_tag, entry);
 
@@ -428,17 +455,18 @@ fn test_l2_signature_payload_manipulation() {
     let req_valid_bytes = app.generate_l2_lock_request(&voucher_id_tx1).unwrap();
     let mut req_manipulated: L2LockRequest = serde_json::from_slice(&req_valid_bytes).unwrap();
 
-    // 4. Manipulation: Change receiver_ephemeral_pub_hash
-    // This is the core of the vulnerability: the signature ONLY signs the transaction_hash (t_id).
-    // An attacker can change routing fields like receiver_ephemeral_pub_hash without invalidating the signature.
-    let old_hash = req_manipulated.receiver_ephemeral_pub_hash.unwrap();
-    let mut fake_hash = old_hash;
-    fake_hash[0] = !fake_hash[0]; // Flip bits of the first byte
-    req_manipulated.receiver_ephemeral_pub_hash = Some(fake_hash);
+    // 4. Manipulation: Change the bound encrypted timestamp.
+    // V2 Protocol (HMC_TX_AUTH_V2): the signature binds the trap components
+    // (u, blinded_id), the encrypted timestamp and deletable_at. An attacker
+    // flipping bits in ANY of these fields invalidates the signature.
+    let tampered_ts = req_manipulated.encrypted_timestamp.wrapping_add(1);
+    req_manipulated.encrypted_timestamp = tampered_ts;
 
     let req_manipulated_bytes = serde_json::to_vec(&req_manipulated).unwrap();
 
-    // 5. Send manipulated request to L2 Node
+    // 5. Send manipulated request to L2 Node; the rejection MUST NOT mutate
+    // any server-side state.
+    let outputs_before_rejection = mock_l2.spendable_outputs.clone();
     let resp_manipulated = mock_l2.handle_lock_request(&req_manipulated_bytes);
     let envelope_manipulated: L2ResponseEnvelope =
         serde_json::from_slice(&resp_manipulated).unwrap();
@@ -450,13 +478,12 @@ fn test_l2_signature_payload_manipulation() {
         "Mock logic should return Rejected for invalid signature"
     );
 
-    // Verify that the MockL2Node did NOT store the manipulated hash
-    assert!(!mock_l2.spendable_outputs.contains(&fake_hash));
-    // The old hash was not spent (request was rejected)
-    // Wait, in handle_lock_request, it might have been removed if non-genesis?
-    // In this test, it's non-genesis. Check MockL2Node code.
-    // It removes it AFTER signature check. So old_hash should still be there?
-    // Actually, it's added during resp_genesis.
+    // Verify that the manipulated request was rejected BEFORE mutating state:
+    // the UTXO set must be identical to the pre-rejection snapshot.
+    assert_eq!(
+        mock_l2.spendable_outputs, outputs_before_rejection,
+        "A signature-invalid lock request must not alter server state"
+    );
 }
 
 #[test]
@@ -578,7 +605,11 @@ fn test_l2_fake_double_spend_protection() {
         receiver_ephemeral_pub_hash: None,
         change_ephemeral_pub_hash: None,
         layer2_signature: [0u8; 64], // Invalid
+        trap_r: Some("none".to_string()),
+        trap_s: Some("none".to_string()),
+        encrypted_timestamp: 0,
         deletable_at: None,
+        privacy_guard: None,
     };
 
     let resp_a = mock_l2.wrap_and_sign(L2Verdict::Verified {
@@ -604,14 +635,24 @@ fn test_l2_fake_double_spend_protection() {
     let malicious_key = SigningKey::generate(&mut rand::thread_rng());
     let malicious_pub = malicious_key.verifying_key().to_bytes();
 
+    // V3 protocol: sign exactly what the wallet reconstructs from the entry.
+    // The forged lock carries REAL-looking spend shards so the hardened
+    // digest (audit_02_11 / HMSEC-SA04-08) takes the SPEND path — binding
+    // this voucher container id and the empty privacy-guard commitment —
+    // and the assertion below actually exercises the ephemeral-key pinning
+    // check instead of failing earlier at the genesis-placeholder mismatch.
+    let fake_trap_r = bs58::encode([0x33u8; 32]).into_string();
+    let fake_trap_s = bs58::encode([0x44u8; 32]).into_string();
     let payload_hash_b = human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw(
-        &challenge_ds_tag,
         &l2_voucher_id,
+        &challenge_ds_tag,
         &fake_t_id,
         &malicious_pub,
+        &fake_trap_r,
+        &fake_trap_s,
+        0,
         None,
-        None,
-        None,
+        "",
     );
     let malicious_sig_b = malicious_key.sign(&payload_hash_b).to_bytes();
 
@@ -622,7 +663,11 @@ fn test_l2_fake_double_spend_protection() {
         receiver_ephemeral_pub_hash: None,
         change_ephemeral_pub_hash: None,
         layer2_signature: malicious_sig_b,
+        trap_r: Some(fake_trap_r),
+        trap_s: Some(fake_trap_s),
+        encrypted_timestamp: 0,
         deletable_at: None,
+        privacy_guard: None,
     };
 
     let resp_b = mock_l2.wrap_and_sign(L2Verdict::Verified {
@@ -743,7 +788,11 @@ fn test_l2_voucher_id_mixup_protection() {
         receiver_ephemeral_pub_hash: None,
         change_ephemeral_pub_hash: None,
         layer2_signature: [0u8; 64],
+        trap_r: Some("none".to_string()),
+        trap_s: Some("none".to_string()),
+        encrypted_timestamp: 0,
         deletable_at: None,
+        privacy_guard: None,
     };
 
     let resp_c = mock_l2.wrap_and_sign(L2Verdict::Verified {

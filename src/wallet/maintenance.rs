@@ -211,13 +211,33 @@ impl Wallet {
         // Step 2: Iterate over ALL instances so no fingerprints are lost.
         // The correct depth is determined by the "min(depth) wins" rule.
         for instance in self.voucher_store.vouchers.values() {
+            // SECURITY (AUDIT-W4-WC-002): mirror the Endorsed-exclusion of
+            // [`conflict_manager::scan_and_rebuild_fingerprints`]. Endorsed
+            // witness copies do not belong to the user and must not contribute
+            // to double-spend detection — at receive-time AND at load-time.
+            // A diverging filter here let remote signing-request vouchers
+            // poison `own_fingerprints` (and gossip) on every login. This also
+            // guarantees (AUDIT-W4-WC-001) that a malformed Endorsed copy can
+            // never fail the whole load/login via fingerprint parsing.
+            if matches!(
+                instance.status,
+                crate::wallet::instance::VoucherStatus::Endorsed { .. }
+            ) {
+                continue;
+            }
             let tx_count = instance.voucher.transactions.len();
             for (i, tx) in instance.voucher.transactions.iter().enumerate() {
                 // Step 3 & 4: Generate and categorize fingerprint
                 let fingerprint =
                     conflict_manager::create_fingerprint_for_transaction(tx, &instance.voucher)?;
 
-                if tx.sender_id.as_ref() == Some(&self.profile.user_id) {
+                // SECURITY (WH3-00-903): use the canonical is_sender
+                // definition (see
+                // [`conflict_manager::is_own_transaction`]) so the load-time
+                // rebuild classifies anonymous stealth/flexible spends as own
+                // exactly like the receive-time scan does. A diverging filter
+                // here would wipe the stealth history at every login.
+                if conflict_manager::is_own_transaction(tx, &self.profile.user_id) {
                     let entry = self
                         .own_fingerprints
                         .history
