@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use human_money_core::app_service::AppService;
-    use human_money_core::storage::{Storage, AuthMethod};
+    use human_money_core::storage::AuthMethod;
     use human_money_core::FileStorage;
     use human_money_core::test_utils::{self, ACTORS};
     use std::collections::HashMap;
@@ -39,7 +39,7 @@ mod tests {
                 is_locked_due_to_fork: true,
             };
             
-            storage.save_seal(&ACTORS.alice.identity.user_id, &auth, &seal_record).unwrap();
+            storage.save_seal(&auth, &seal_record).unwrap();
         }
 
         // Drop the old app service reference 

@@ -14,9 +14,9 @@ use human_money_core::{
     NewVoucherData, VoucherCoreError,
     error::ValidationError,
     services::{
-        crypto_utils,
+        crypto,
         utils::to_canonical_json,
-        voucher_manager::{self, create_voucher},
+        
         voucher_validation::validate_voucher_against_standard,
     },
 };
@@ -53,7 +53,7 @@ fn test_iso8601_duration_date_math_correctness() {
             .with_timezone(&Utc);
 
         // Assumption: `add_iso8601_duration` is callable for testing.
-        let result_date = voucher_manager::add_iso8601_duration(start_date, duration_str)
+        let result_date = human_money_core::services::utils::add_iso8601_duration(start_date, duration_str)
             .expect("Date calculation should not fail");
 
         // We only compare the date and time components up to the second
@@ -118,7 +118,7 @@ fn test_round_up_date_logic() {
             .with_timezone(&Utc);
 
         // Assumption: `round_up_date` is callable for testing.
-        let result_date = voucher_manager::round_up_date(start_date, rounding_str)
+        let result_date = human_money_core::services::utils::round_up_date(start_date, rounding_str)
             .expect("Rounding calculation should not fail");
 
         assert_eq!(
@@ -149,7 +149,7 @@ fn test_chronological_validation_with_timezones() {
     };
 
     // CORRECTION: Pass the correct `signing_key` of type &SigningKey.
-    let mut voucher = create_voucher(
+    let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         standard,
         standard_hash,
@@ -165,15 +165,15 @@ fn test_chronological_validation_with_timezones() {
     tx.t_id = "".to_string(); // Reset hash-relevant fields
     tx.layer2_signature = None;
     tx.sender_identity_signature = None;
-    tx.t_id = crypto_utils::get_hash(to_canonical_json(&tx).unwrap());
+    tx.t_id = crypto::get_hash(to_canonical_json(&tx).unwrap());
 
     // CORRECTION: Sign t_id raw for L2 (technical)
     let t_id_raw = bs58::decode(&tx.t_id).into_vec().unwrap();
-    let l2_sig = crypto_utils::sign_ed25519(&test_user.signing_key, &t_id_raw);
+    let l2_sig = crypto::sign_ed25519(&test_user.signing_key, &t_id_raw);
     tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 
     // CORRECTION: Sign t_id raw for identity (social)
-    let identity_sig = crypto_utils::sign_ed25519(&test_user.signing_key, &t_id_raw);
+    let identity_sig = crypto::sign_ed25519(&test_user.signing_key, &t_id_raw);
     tx.sender_identity_signature = Some(bs58::encode(identity_sig.to_bytes()).into_string());
 
     voucher.transactions[0] = tx;
@@ -218,21 +218,21 @@ fn test_iso8601_duration_rejects_each_format_violation_independently() {
     let now = chrono::Utc::now();
 
     // Wrong leading character, but length ≥ 3 – violates the prefix rule only.
-    let result = voucher_manager::add_iso8601_duration(now, "ABC");
+    let result = human_money_core::services::utils::add_iso8601_duration(now, "ABC");
     assert!(
         result.is_err(),
         "Expected Err for 'ABC' (wrong prefix, correct length), but got Ok"
     );
 
     // Correct 'P' prefix, but length < 3 – violates the length rule only.
-    let result2 = voucher_manager::add_iso8601_duration(now, "P");
+    let result2 = human_money_core::services::utils::add_iso8601_duration(now, "P");
     assert!(
         result2.is_err(),
         "Expected Err for 'P' (correct prefix, too short), but got Ok"
     );
 
     // Valid format must succeed.
-    let result3 = voucher_manager::add_iso8601_duration(now, "P1Y");
+    let result3 = human_money_core::services::utils::add_iso8601_duration(now, "P1Y");
     assert!(result3.is_ok(), "Expected Ok for valid 'P1Y', got Err");
 }
 
@@ -265,7 +265,7 @@ fn test_iso8601_duration_month_addition_across_year_boundary() {
             .unwrap()
             .with_timezone(&chrono::Utc);
 
-        let result = voucher_manager::add_iso8601_duration(start, duration_str)
+        let result = human_money_core::services::utils::add_iso8601_duration(start, duration_str)
             .unwrap_or_else(|e| panic!("Unexpected error for '{}': {:?}", start_str, e));
 
         assert_eq!(
@@ -295,7 +295,7 @@ fn test_round_up_date_p1m_correctly_handles_december() {
         .unwrap()
         .with_timezone(&chrono::Utc);
 
-    let result = voucher_manager::round_up_date(start, "P1M")
+    let result = human_money_core::services::utils::round_up_date(start, "P1M")
         .expect("round_up_date should not fail for December with P1M");
 
     assert_eq!(
@@ -342,7 +342,7 @@ fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
         ..Default::default()
     };
 
-    let voucher_allowed = create_voucher(
+    let voucher_allowed = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data_allowed,
         &standard_with_p1y,
         &standard_hash,
@@ -352,7 +352,7 @@ fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
     let holder_key_allowed =
         human_money_core::test_utils::derive_holder_key(&voucher_allowed, &creator.signing_key);
 
-    let result_allowed = human_money_core::services::voucher_manager::create_transaction(
+    let result_allowed = human_money_core::models::voucher::Transaction::create(
         &voucher_allowed,
         &standard_with_p1y,
         &creator.user_id,
@@ -390,7 +390,7 @@ fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
         ..Default::default()
     };
 
-    let voucher_short = create_voucher(
+    let voucher_short = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data_short,
         &standard_no_min,
         &hash_no_min,
@@ -401,7 +401,7 @@ fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
         human_money_core::test_utils::derive_holder_key(&voucher_short, &creator.signing_key);
 
     // Attempt the transaction against the stricter P1Y standard -- firewall must block it.
-    let result_short = human_money_core::services::voucher_manager::create_transaction(
+    let result_short = human_money_core::models::voucher::Transaction::create(
         &voucher_short,
         &standard_with_p1y,
         &creator.user_id,
@@ -417,7 +417,7 @@ fn test_issuance_firewall_blocks_creator_when_validity_below_minimum() {
         "Voucher with only P1D validity must be blocked by the P1Y issuance firewall"
     );
 }
-use human_money_core::services::crypto_utils::get_hash;
+use human_money_core::services::crypto::get_hash;
 use human_money_core::services::utils::get_current_timestamp;
 use human_money_core::wallet::Wallet;
 

@@ -1,7 +1,7 @@
 use crate::error::{StandardDefinitionError, ValidationError, VoucherCoreError};
 use crate::models::voucher::Voucher;
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
-use crate::services::crypto_utils::get_hash;
+use crate::services::crypto::get_hash;
 use crate::services::utils::to_canonical_json;
 
 pub fn verify_standard_identity(
@@ -31,7 +31,11 @@ pub fn verify_standard_identity(
     // zones, so post-import `[mutable]`-zone rewrites (issuer_name/contract
     // text phishing) or stripped/garbage signature blocks are rejected at use
     // time instead of staying invisible for the installation's lifetime.
-    crate::services::standard_manager::verify_standard_signature(standard)?;
+    if !standard.verify_signature()? {
+        return Err(VoucherCoreError::Standard(
+            StandardDefinitionError::InvalidSignature,
+        ));
+    }
 
     Ok(())
 }
@@ -99,7 +103,7 @@ pub fn verify_validity_duration(
             })?
             .with_timezone(&chrono::Utc);
 
-        let min_valid_until_dt = crate::services::voucher_manager::add_iso8601_duration(
+        let min_valid_until_dt = crate::services::utils::add_iso8601_duration(
             creation_dt,
             &standard_min_duration,
         )?;
@@ -119,8 +123,7 @@ pub fn verify_validity_duration(
     let standard_min_range = standard
         .immutable
         .issuance
-        .validity_duration_range
-        .get(0)
+        .validity_duration_range.first()
         .cloned()
         .unwrap_or_default();
 
@@ -132,7 +135,7 @@ pub fn verify_validity_duration(
             })?
             .with_timezone(&chrono::Utc);
 
-        let min_range_valid_until_dt = crate::services::voucher_manager::add_iso8601_duration(
+        let min_range_valid_until_dt = crate::services::utils::add_iso8601_duration(
             creation_dt,
             &standard_min_range,
         )?;
@@ -159,13 +162,13 @@ pub fn verify_validity_duration(
             })?
             .with_timezone(&chrono::Utc);
 
-        let mut max_valid_until_dt = crate::services::voucher_manager::add_iso8601_duration(
+        let mut max_valid_until_dt = crate::services::utils::add_iso8601_duration(
             creation_dt,
             &standard_max_duration,
         )?;
 
         if let Some(rounding_str) = &standard.mutable.app_config.round_up_validity_to {
-            max_valid_until_dt = crate::services::voucher_manager::round_up_date(max_valid_until_dt, rounding_str)?;
+            max_valid_until_dt = crate::services::utils::round_up_date(max_valid_until_dt, rounding_str)?;
         }
 
         let actual_valid_until_dt = chrono::DateTime::parse_from_rfc3339(&voucher.valid_until)

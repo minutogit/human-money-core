@@ -1,6 +1,6 @@
 use human_money_core::test_utils::{setup_in_memory_wallet, ACTORS};
 use human_money_core::wallet::instance::{VoucherInstance, VoucherStatus};
-use human_money_core::models::voucher::{Voucher, Transaction};
+use human_money_core::Transaction;
 
 #[test]
 fn test_balance_aggregation_strictly_separates_test_and_live_money() {
@@ -8,7 +8,7 @@ fn test_balance_aggregation_strictly_separates_test_and_live_money() {
     let mut wallet = setup_in_memory_wallet(identity);
     
     // 1. Live Minuto (10)
-    let mut v1 = Voucher::default();
+    let mut v1 = human_money_core::models::voucher::Voucher::default();
     v1.voucher_standard.uuid = "minuto-uuid".to_string();
     v1.voucher_standard.name = "Minuto".to_string();
     v1.nominal_value.unit = "Minuto".to_string();
@@ -55,10 +55,10 @@ fn test_list_vouchers_respects_test_filter() {
     let identity = &ACTORS.alice;
     let mut wallet = setup_in_memory_wallet(identity);
     
-    let mut v_live = Voucher::default();
+    let mut v_live = human_money_core::models::voucher::Voucher::default();
     v_live.non_redeemable_test_voucher = false;
     
-    let mut v_test = Voucher::default();
+    let mut v_test = human_money_core::models::voucher::Voucher::default();
     v_test.non_redeemable_test_voucher = true;
 
     wallet.voucher_store.vouchers.insert("l1".to_string(), VoucherInstance {
@@ -90,7 +90,7 @@ fn test_asset_class_listing() {
     let identity = &ACTORS.alice;
     let mut wallet = setup_in_memory_wallet(identity);
     
-    let mut v1 = Voucher::default();
+    let mut v1 = human_money_core::models::voucher::Voucher::default();
     v1.voucher_standard.uuid = "std-1".to_string();
     v1.voucher_standard.name = "Minuto".to_string();
     v1.nominal_value.unit = "Minuto".to_string();
@@ -120,7 +120,7 @@ fn test_get_voucher_details_fuzzy_lookup_success() {
     let user_id = &identity.user_id;
 
     // 1. Create a voucher with two transactions
-    let mut v = Voucher::default();
+    let mut v = human_money_core::models::voucher::Voucher::default();
     v.voucher_id = "v1".to_string();
     
     // Initial transaction (TX1)
@@ -130,7 +130,7 @@ fn test_get_voucher_details_fuzzy_lookup_success() {
         ..Default::default()
     });
     
-    let id_tx1 = human_money_core::services::crypto_utils::get_hash(format!("v1tx1{}", user_id));
+    let id_tx1 = human_money_core::services::crypto::get_hash(format!("v1tx1{}", user_id));
     
     // Second transaction (TX2) - simulates a transfer/split
     v.transactions.push(Transaction {
@@ -140,7 +140,7 @@ fn test_get_voucher_details_fuzzy_lookup_success() {
         ..Default::default()
     });
     
-    let id_tx2 = human_money_core::services::crypto_utils::get_hash(format!("v1tx2{}", user_id));
+    let id_tx2 = human_money_core::services::crypto::get_hash(format!("v1tx2{}", user_id));
     
     // Current state in wallet is ID_TX2
     wallet.voucher_store.vouchers.insert(id_tx2.clone(), VoucherInstance {

@@ -7,15 +7,11 @@
 
 // Declares the `instance` module as a public part of the `wallet` module.
 pub mod instance;
-// Declare the other files as part of this module
-mod conflict_handler;
-mod queries;
-mod signature_handler;
-// NEW: Module declarations for refactoring
-mod lifecycle;
-mod maintenance;
-mod transaction_handler;
 pub mod types;
+mod conflicts;
+mod lifecycle;
+mod queries;
+mod transactions;
 
 // in src/wallet/mod.rs
 // ...

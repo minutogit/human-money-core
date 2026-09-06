@@ -44,7 +44,7 @@ use curve25519_dalek::traits::IsIdentity;
 use sha2::{Digest, Sha512};
 use std::convert::TryInto;
 
-use crate::services::crypto_utils::{
+use crate::services::crypto::{
     ed25519_pk_to_curve_point, get_pubkey_from_user_id, get_secret_scalar, hash_to_curve,
 };
 
@@ -111,7 +111,7 @@ fn sst_scalar(tag: &[u8], parts: &[&[u8]]) -> Scalar {
 /// * `ds_tag` - The Base58-encoded double-spend tag of the spent input.
 /// * `eph_pub` - The revealed ephemeral public key of the spender (32 bytes).
 pub fn compute_trap_message_mu(ds_tag: &str, eph_pub: &[u8; 32]) -> [u8; 32] {
-    crate::services::crypto_utils::get_raw_hash_from_slices(&[
+    crate::services::crypto::get_raw_hash_from_slices(&[
         SST_DOMAIN_SIG_MSG,
         ds_tag.as_bytes(),
         eph_pub.as_slice(),
@@ -192,6 +192,13 @@ fn parse_point_bs58(encoded: &str, label: &str) -> Result<EdwardsPoint, VoucherC
 /// by design - placeholder shards are reserved for init fingerprints and
 /// must never appear inside a spend transaction.
 pub(crate) fn validate_shard_structure(trap_r: &str, trap_s: &str) -> Result<(), VoucherCoreError> {
+    // DoS guard: 32-byte payloads are ~44 Base58 chars; anything > 64 is
+    // attacker-bloated and is rejected before allocation-heavy decoding.
+    if trap_r.len() > 64 || trap_s.len() > 64 {
+        return Err(VoucherCoreError::Crypto(
+            "Shard string exceeds maximum Base58 length (64)".to_string(),
+        ));
+    }
     let r_bytes = bs58::decode(trap_r).into_vec().map_err(|e| {
         VoucherCoreError::Crypto(format!("Invalid Base58 for trap_r: {}", e))
     })?;

@@ -1,0 +1,465 @@
+//! # src/app_service/conflicts.rs
+//!
+//! Contains all `AppService` functions related to double-spend conflicts,
+//! proof management, resolution endorsements, VIP-gossip and the L2 facade.
+//! Consolidates the former `conflict_handler.rs` and `l2_facade.rs`.
+
+use super::{AppService, AppState, TransactionOutcome};
+use crate::models::conflict::{ProofOfDoubleSpend, ResolutionEndorsement};
+use crate::models::layer2_api::{L2AuthPayload, L2StatusQuery};
+use crate::services::l2_gateway::{self, VerdictAction};
+use crate::storage::WalletLockGuard;
+use crate::wallet::instance::VoucherStatus;
+use crate::wallet::Wallet;
+use crate::wallet::CleanupReport;
+use crate::wallet::ProofOfDoubleSpendSummary;
+use crate::Error;
+
+impl AppService {
+    // --- Conflict Management (from conflict_handler) ---
+
+    /// Returns a list of summaries of all known double-spend conflicts.
+    ///
+    /// # Errors
+    /// Fails if the wallet is locked (`Locked`).
+    pub fn list_conflicts(&self) -> Result<Vec<ProofOfDoubleSpendSummary>, Error> {
+        self.with_unlocked_ref(|wallet, _, _| Ok(wallet.list_conflicts()))
+    }
+
+    /// Retrieves a complete `ProofOfDoubleSpend` by its ID.
+    ///
+    /// Ideal for displaying the details of a conflict or exporting it for
+    /// manual exchange.
+    ///
+    /// # Errors
+    /// Fails if the wallet is locked or no proof with this ID exists.
+    pub fn get_proof_of_double_spend(&self, proof_id: &str) -> Result<ProofOfDoubleSpend, Error> {
+        self.with_unlocked_ref(|wallet, _, _| {
+            wallet.get_proof_of_double_spend(proof_id)
+        })
+    }
+
+    /// Creates a signed resolution endorsement (`ResolutionEndorsement`) for a conflict.
+    ///
+    /// This operation does not change the wallet state. It generates a
+    /// signed object that can be sent to other parties to signal that
+    /// the conflict has been resolved from the perspective of the wallet owner (the victim).
+    ///
+    /// # Errors
+    /// Fails if the wallet is locked or the referenced proof does not exist.
+    pub fn create_resolution_endorsement(
+        &self,
+        proof_id: &str,
+        notes: Option<String>,
+    ) -> Result<ResolutionEndorsement, Error> {
+        self.with_unlocked_ref(|wallet, identity, _| {
+            wallet.create_resolution_endorsement(identity, proof_id, notes)
+        })
+    }
+
+    /// Sets the local override for a specific conflict.
+    ///
+    /// # Errors
+    /// Fails if the wallet is locked or the proof does not exist.
+    pub fn set_conflict_local_override(
+        &mut self,
+        proof_id: &str,
+        value: bool,
+        note: Option<String>,
+        password: Option<&str>,
+    ) -> Result<(), Error> {
+        self.with_transactional_mut(password, |temp_wallet, _, _, _| {
+            match temp_wallet.set_conflict_local_override(proof_id, value, note) {
+                Ok(()) => TransactionOutcome::Commit(()),
+                Err(e) => TransactionOutcome::Rollback(e),
+            }
+        })
+    }
+
+    /// Imports a proof directly as an object.
+    pub fn import_proof(&mut self, proof: ProofOfDoubleSpend, password: Option<&str>) -> Result<(), Error> {
+        self.with_transactional_mut(password, |temp_wallet, _, _, _| {
+            match temp_wallet.import_proof(proof) {
+                Ok(()) => TransactionOutcome::Commit(()),
+                Err(e) => TransactionOutcome::Rollback(e),
+            }
+        })
+    }
+
+    /// Imports a proof from a bs58-encoded JSON string (plain text export).
+    pub fn import_proof_from_json(&mut self, json_bs58: &str, password: Option<&str>) -> Result<(), Error> {
+        let json_bytes = bs58::decode(json_bs58)
+            .into_vec()
+            .map_err(|e| Error::Bs58Decode(e.to_string()))?;
+        let proof: ProofOfDoubleSpend =
+            serde_json::from_slice(&json_bytes).map_err(Error::from)?;
+
+        self.import_proof(proof, password)
+    }
+
+    /// Imports a proof from a `SecureContainer` (secure exchange).
+    pub fn import_proof_from_container(&mut self, container_bytes: &[u8], password: Option<&str>) -> Result<(), Error> {
+        let proof = {
+            if let AppState::Unlocked { identity, .. } = &self.state {
+                let container: crate::models::secure_container::SecureContainer =
+                    serde_json::from_slice(container_bytes).map_err(Error::from)?;
+
+                if container.c != crate::models::secure_container::PayloadType::ProofOfDoubleSpend {
+                    return Err(Error::ValidationFailed("Container does not contain a Double-Spend-Proof.".to_string()));
+                }
+
+                // Wallet identity is required to open the container
+                let decrypted_payload = container.open(
+                    identity,
+                    None,
+                )?;
+
+                let parsed_proof: ProofOfDoubleSpend =
+                    serde_json::from_slice(&decrypted_payload).map_err(Error::from)?;
+                
+                parsed_proof
+            } else {
+                return Err(Error::WalletLocked);
+            }
+        };
+
+        self.import_proof(proof, password)
+    }
+
+    /// Performs storage cleanup for fingerprints and their metadata.
+    ///
+    /// This method implements the logic defined in the architecture specification:
+    /// 1. Delete all expired fingerprints.
+    /// 2. If the storage limit (`MAX_FINGERPRINTS`) is still exceeded,
+    ///    fingerprints with the highest `depth` (and oldest `t_time`)
+    ///    are deleted until the limit is no longer exceeded.
+    ///
+    /// # Returns
+    /// A `Result` with a `CleanupReport` containing details about the cleanup,
+    /// or an error if the process fails.
+    pub fn run_storage_cleanup(&mut self) -> Result<CleanupReport, Error> {
+        if let AppState::Unlocked { wallet, .. } = &mut self.state {
+            let report = wallet.run_storage_cleanup(None, super::DEFAULT_ARCHIVE_GRACE_PERIOD_YEARS)?;
+            // Note: Saving the wallet after cleanup is left to the caller
+            // (e.g. at the end of an operation) to avoid multiple writes.
+            Ok(report)
+        } else {
+            Err(Error::WalletLocked)
+        }
+    }
+
+    /// Finds the associated double-spend conflict proof ID for a voucher using cascading match strategies.
+    ///
+    /// # Errors
+    /// Returns an error if the wallet is locked.
+    pub fn get_proof_id_for_voucher(&self, local_id: &str) -> Result<Option<String>, Error> {
+        self.with_unlocked_ref(|wallet, _, _| Ok(wallet.get_proof_id_for_voucher(local_id)))
+    }
+
+    // --- L2 Facade (from l2_facade) ---
+
+    pub fn generate_l2_lock_request(&self, local_instance_id: &str) -> Result<Vec<u8>, Error> {
+        let (wallet, _identity) = match &self.state {
+            AppState::Unlocked {
+                wallet, identity, ..
+            } => (wallet, identity),
+            _ => return Err(Error::WalletLocked),
+        };
+
+        let instance = wallet
+            .get_voucher_instance(local_instance_id)
+            .ok_or_else(|| Error::VoucherNotFound(local_instance_id.to_string()))?;
+
+        let transaction = instance
+            .voucher
+            .transactions
+            .last()
+            .ok_or_else(|| Error::ValidationFailed("No transactions found in voucher".to_string()))?;
+
+        // In the new Layer 2 semantics, the voucher id is derived from the first (init) transaction.
+        let l2_voucher_id =
+            l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])?;
+
+        // TODO: In the future, derive a proper ephemeral key. For now, use dummy bytes.
+        let ephemeral_key = [0u8; 32];
+        let request =
+            l2_gateway::generate_lock_request(&l2_voucher_id, transaction, &ephemeral_key)?;
+
+        serde_json::to_vec(&request).map_err(Error::from)
+    }
+
+    /// Generates an L2StatusQuery (read query) for the current status of a voucher.
+    pub fn generate_l2_status_query(&self, local_instance_id: &str) -> Result<Vec<u8>, Error> {
+        let (wallet, _identity) = match &self.state {
+            AppState::Unlocked {
+                wallet, identity, ..
+            } => (wallet, identity),
+            _ => return Err(Error::WalletLocked),
+        };
+
+        let instance = wallet
+            .get_voucher_instance(local_instance_id)
+            .ok_or_else(|| Error::VoucherNotFound(local_instance_id.to_string()))?;
+
+        let layer2_voucher_id =
+            l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])?;
+
+        let challenge_ds_tag = if let Some(last_tx) = instance.voucher.transactions.last() {
+            l2_gateway::derive_challenge_tag(last_tx)?
+        } else {
+            return Err(Error::ValidationFailed("Voucher has no transactions".to_string()));
+        };
+
+        let locator_prefixes = l2_gateway::generate_locator_prefixes(&instance.voucher);
+
+        // TODO: derive proper ephemeral key
+        let ephemeral_key = [0u8; 32];
+        let auth = L2AuthPayload {
+            ephemeral_pubkey: ephemeral_key,
+            auth_signature: None,
+        };
+
+        let query = L2StatusQuery {
+            auth,
+            layer2_voucher_id,
+            challenge_ds_tag,
+            locator_prefixes,
+        };
+
+        serde_json::to_vec(&query).map_err(Error::from)
+    }
+
+    /// Processes an L2Verdict and executes the corresponding action on the wallet.
+    ///
+    /// # SECURITY (WH3-00-904 / WH3-00-905): transactional discipline
+    /// This is a PERSISTING command and therefore runs under the same
+    /// discipline as every other mutating `AppService` command (mirroring
+    /// `with_transactional_mut`):
+    /// 1. Fork-lock verification.
+    /// 2. State isolation (`Locked` swap) against panic-poisoned states.
+    /// 3. Exclusive physical file lock (RAII).
+    /// 4. Panic-free session resolution (`elapsed()` pattern — an extreme
+    ///    host-supplied duration must never overflow `Instant` arithmetic).
+    /// 5. UNCONDITIONAL Reload-Before-Write with seal-consistency gate: the
+    ///    plaintext `.wallet.generation` marker alone is forgeable, so the
+    ///    fresh disk state itself is reloaded and verified against the
+    ///    cryptographic seal before any quarantine is anchored. A quarantine
+    ///    is therefore never committed onto resurrected/rolled-back state.
+    /// 6. Sealed commit: save + seal update with the same compensation
+    ///    contract as the transactional orchestrator (a failed seal phase
+    ///    restores the pre-write data instead of stranding a diverging store).
+    pub fn process_l2_response(
+        &mut self,
+        local_instance_id: &str,
+        response_bytes: &[u8],
+        password: Option<&str>,
+    ) -> Result<(), Error> {
+        // 1. Fork-lock check (same first gate as with_transactional_mut).
+        self.check_fork_lock(password)?;
+
+        // 2. Unpack state (temporarily replace with Locked).
+        let current_state = std::mem::replace(&mut self.state, AppState::Locked);
+
+        let (result, new_state) = match current_state {
+            AppState::Unlocked {
+                mut storage,
+                wallet,
+                identity,
+                session_cache,
+            } => {
+                let (result, final_wallet) = Self::execute_l2_verdict_disciplined(
+                    &mut storage,
+                    wallet,
+                    &identity,
+                    &session_cache,
+                    local_instance_id,
+                    response_bytes,
+                    password,
+                );
+                (
+                    result,
+                    AppState::Unlocked {
+                        storage,
+                        wallet: final_wallet,
+                        identity,
+                        session_cache,
+                    },
+                )
+            }
+            AppState::Locked => (
+                Err(Error::WalletLocked),
+                AppState::Locked,
+            ),
+        };
+
+        self.state = new_state;
+        result
+    }
+
+    /// Disciplined execution core of [`Self::process_l2_response`].
+    ///
+    /// Returns the operation result together with the wallet state to be
+    /// published (the original RAM wallet on every failure path, the
+    /// mutated wallet only after a verified, sealed commit).
+    fn execute_l2_verdict_disciplined(
+        storage: &mut crate::storage::file_storage::FileStorage,
+        ram_wallet: crate::wallet::Wallet,
+        identity: &crate::models::profile::UserIdentity,
+        session_cache: &Option<super::SessionCache>,
+        local_instance_id: &str,
+        response_bytes: &[u8],
+        password: Option<&str>,
+    ) -> (Result<(), Error>, crate::wallet::Wallet) {
+        // 3. Physical file lock (RAII).
+        let _lock_guard = match WalletLockGuard::new(storage) {
+            Ok(guard) => guard,
+            Err(e) => return (Err(Error::from(e)), ram_wallet),
+        };
+
+        // 4. Panic-free authentication (WH3-00-904): resolve_auth_method
+        // compares `last_activity.elapsed()` against the configured duration,
+        // so extreme host-supplied durations can never overflow.
+        let auth = match Self::resolve_auth_method(password, session_cache) {
+            Ok(auth) => auth,
+            Err(_) => {
+                return (
+                    Err(Error::SessionExpired(
+                        "Session timed out or password required.".to_string(),
+                    )),
+                    ram_wallet,
+                )
+            }
+        };
+
+        // 5. UNCONDITIONAL Reload-Before-Write + seal-consistency gate
+        // (WH3-00-905). The plaintext generation marker alone is forgeable
+        // (it would defeat a generation-mismatch-triggered reload), so the
+        // fresh disk state itself is reloaded and verified against the
+        // cryptographic seal BEFORE any quarantine decision is anchored.
+        let (mut fresh_wallet, _) =
+            match Wallet::load(storage, &auth, ram_wallet.local_instance_id.clone()) {
+                Ok(loaded) => loaded,
+                Err(e) => {
+                    return (
+                        Err(Error::ValidationFailed(format!(
+                            "Failed to reload wallet before L2 write: {}",
+                            e
+                        ))),
+                        ram_wallet,
+                    )
+                }
+            };
+        if let Err(gate_err) = Self::verify_state_matches_seal(storage, &auth, &fresh_wallet) {
+            return (Err(gate_err), ram_wallet);
+        }
+
+        // Preserve the LIVE-SESSION L2 trust anchor across the mandatory
+        // reload: `l2_server_pubkey` may have been configured on the
+        // in-memory profile by the host application without an intermediate
+        // persist. It is owner-controlled session configuration, NOT part of
+        // the rolled-back disk content under attack here; every persisted-
+        // content integrity gate above stays fully enforced on the fresh
+        // state (the seal check has already passed at this point).
+        if ram_wallet.profile.l2_server_pubkey.is_some() {
+            fresh_wallet.profile.l2_server_pubkey = ram_wallet.profile.l2_server_pubkey;
+        }
+
+        // Carry unsaved UI events from the live session into the adopted
+        // state so a reload cannot silently drop pending history; events
+        // emitted by the load's own sweeps are appended after them.
+        fresh_wallet.pending_events = {
+            let mut events = ram_wallet.pending_events;
+            events.append(&mut fresh_wallet.pending_events);
+            events
+        };
+
+        // Re-derive the verdict against the SEAL-VERIFIED fresh state so a
+        // quarantine can never be anchored onto stale expectations.
+        let action = match Self::evaluate_l2_action(&fresh_wallet, local_instance_id, response_bytes)
+        {
+            Ok(action) => action,
+            Err(e) => return (Err(e), fresh_wallet),
+        };
+
+        match action {
+            VerdictAction::ConfirmLocal => {
+                // Successfully anchored, update status in the future e.g. L2Confirmed.
+                (Ok(()), fresh_wallet)
+            }
+            VerdictAction::TriggerSync { sync_point } => {
+                // This is where the synchronization logic would start.
+                // For now, we return an error describing the sync requirement,
+                // or we simply log it.
+                println!("Sync needed from: {}", sync_point);
+                (Ok(()), fresh_wallet)
+            }
+            VerdictAction::TriggerQuarantine(conflicting_t_id) => {
+                let mut temp_wallet = fresh_wallet.clone();
+                temp_wallet.update_voucher_status(
+                    local_instance_id,
+                    VoucherStatus::Quarantined {
+                        reason: format!(
+                            "Double spend detected for transaction {}",
+                            conflicting_t_id
+                        ),
+                    },
+                );
+
+                if let Err(e) = temp_wallet.save(storage, identity, &auth) {
+                    return (Err(Error::from(e)), fresh_wallet);
+                }
+
+                // Sealed commit (Wave-2 contract): advance the seal BEFORE
+                // publishing the new state. If the seal phase fails after the
+                // data was persisted, compensate by restoring the pre-write
+                // data so disk matches the untouched seal again — identical
+                // to the with_transactional_mut Commit arm.
+                if let Err(seal_err) =
+                    Self::persist_seal_for_wallet_state(storage, identity, &auth, &temp_wallet)
+                {
+                    let restored =
+                        Self::compensate_failed_seal_phase(storage, &fresh_wallet, identity, &auth);
+                    return (Err(seal_err), restored);
+                }
+
+                (Ok(()), temp_wallet)
+            }
+        }
+    }
+
+    /// Evaluates the L2 verdict against the given (verified) wallet state.
+    fn evaluate_l2_action(
+        wallet: &crate::wallet::Wallet,
+        local_instance_id: &str,
+        response_bytes: &[u8],
+    ) -> Result<VerdictAction, Error> {
+        let instance = wallet
+            .get_voucher_instance(local_instance_id)
+            .ok_or_else(|| Error::VoucherNotFound(local_instance_id.to_string()))?;
+
+        let last_tx = instance.voucher.transactions.last().ok_or_else(|| {
+            Error::ValidationFailed("No transactions found".to_string())
+        })?;
+        let last_t_id = last_tx.t_id.clone();
+        let challenge_ds_tag =
+            l2_gateway::derive_challenge_tag(last_tx)?;
+        let expected_ephemeral_pub = last_tx.sender_ephemeral_pub.as_deref();
+        let expected_voucher_id =
+            l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])?;
+
+        let server_pubkey = wallet.profile.l2_server_pubkey.ok_or_else(|| {
+            Error::ValidationFailed(
+                "L2 server public key not configured in wallet profile".to_string(),
+            )
+        })?;
+
+        l2_gateway::process_l2_verdict(
+            response_bytes,
+            &server_pubkey,
+            &last_t_id,
+            &challenge_ds_tag,
+            expected_ephemeral_pub,
+            &expected_voucher_id,
+        )
+    }
+}

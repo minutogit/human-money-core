@@ -43,16 +43,13 @@ impl Default for UserIdentity {
 
 /// An enum indicating the direction of a transaction from the profile holder's perspective.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Default)]
 pub enum TransactionDirection {
+    #[default]
     Sent,
     Received,
 }
 
-impl Default for TransactionDirection {
-    fn default() -> Self {
-        TransactionDirection::Sent
-    }
-}
 
 /// A lightweight summary of a `TransactionBundle` for display in a history.
 /// Contains all metadata, but instead of the full vouchers, only their IDs.
@@ -210,6 +207,7 @@ pub struct PublicProfile {
 /// It contains identity, voucher inventory, and transaction history.
 /// This structure is serialized and stored encrypted on disk.
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Default)]
 pub struct UserProfile {
     /// The public user ID. Derived from `identity` and duplicated here for easy access.
     pub user_id: String,
@@ -247,24 +245,37 @@ pub struct UserProfile {
 
 // Implement `Default` for UserProfile to create an empty instance that is then populated.
 // The `identity` is added separately after creation.
-impl Default for UserProfile {
-    fn default() -> Self {
-        Self {
-            user_id: String::new(),
-            first_name: None,
-            last_name: None,
-            organization: None,
-            community: None,
-            address: None,
-            gender: None,
-            email: None,
-            phone: None,
-            coordinates: None,
-            url: None,
-            service_offer: None,
-            needs: None,
-            picture_url: None,
-            l2_server_pubkey: None,
+
+impl UserProfile {
+    /// Converts this `UserProfile` into a `PublicProfile`, including the `id`.
+    pub fn to_public_profile(&self) -> PublicProfile {
+        self.to_public_profile_with_id(true)
+    }
+
+    /// Converts this `UserProfile` into a `PublicProfile`, optionally including the `id`.
+    pub fn to_public_profile_with_id(&self, include_id: bool) -> PublicProfile {
+        PublicProfile {
+            protocol_version: Some("v1".to_string()),
+            id: if include_id { Some(self.user_id.clone()) } else { None },
+            first_name: self.first_name.clone(),
+            last_name: self.last_name.clone(),
+            organization: self.organization.clone(),
+            community: self.community.clone(),
+            address: self.address.clone(),
+            gender: self.gender.clone(),
+            email: self.email.clone(),
+            phone: self.phone.clone(),
+            coordinates: self.coordinates.clone(),
+            url: self.url.clone(),
+            service_offer: self.service_offer.clone(),
+            needs: self.needs.clone(),
+            picture_url: self.picture_url.clone(),
         }
+    }
+}
+
+impl From<&UserProfile> for PublicProfile {
+    fn from(profile: &UserProfile) -> Self {
+        profile.to_public_profile()
     }
 }

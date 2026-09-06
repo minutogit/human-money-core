@@ -5,12 +5,12 @@
 //! and the logical consistency of a `Voucher` object.
 
 // We import public types re-exported in lib.rs.
-use human_money_core::crypto_utils::get_hash;
+use human_money_core::crypto::get_hash;
 use human_money_core::error::ValidationError;
 use human_money_core::test_utils;
 use human_money_core::{
-    NewVoucherData, Transaction, ValueDefinition, VoucherCoreError, create_transaction,
-    create_voucher, crypto_utils, models::profile::PublicProfile, to_canonical_json,
+    NewVoucherData, Transaction, ValueDefinition, VoucherCoreError,
+    crypto, models::profile::PublicProfile, to_canonical_json,
     validate_voucher_against_standard,
 };
 
@@ -105,7 +105,7 @@ mod structural_integrity {
         voucher.voucher_id = get_hash(to_canonical_json(&voucher_to_hash).unwrap());
 
         if !voucher.transactions.is_empty() {
-            voucher.transactions[0].prev_hash = crypto_utils::get_hash(format!(
+            voucher.transactions[0].prev_hash = crypto::get_hash(format!(
                 "{}{}",
                 &voucher.voucher_id, &voucher.voucher_nonce
             ));
@@ -142,7 +142,7 @@ mod structural_integrity {
             validity_duration: Some("P1Y".to_string()),
             ..Default::default()
         };
-        let mut voucher = create_voucher(
+        let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
             voucher_data,
             standard,
             standard_hash,
@@ -186,7 +186,7 @@ mod structural_integrity {
             standard,
             standard_hash,
             &sender.signing_key);
-        let (mut voucher_after_split, _) = create_transaction(
+        let (mut voucher_after_split, _) = human_money_core::models::voucher::Transaction::create(
             &initial_voucher,
             standard,
             &sender.user_id,
@@ -216,13 +216,12 @@ mod structural_integrity {
 #[cfg(test)]
 mod behavioral_rules {
     use super::*;
-    use human_money_core::services::standard_manager::verify_and_parse_standard;
-    use human_money_core::services::voucher_manager::VoucherManagerError;
+    use human_money_core::models::voucher_standard_definition::VoucherStandardDefinition;
     use test_utils::generate_signed_standard_toml;
 
     fn load_toml_standard(path: &str) -> (human_money_core::VoucherStandardDefinition, String) {
         let toml_str = generate_signed_standard_toml(path);
-        verify_and_parse_standard(&toml_str).unwrap()
+        VoucherStandardDefinition::from_toml(&toml_str).unwrap()
     }
 
     #[test]
@@ -265,13 +264,13 @@ mod behavioral_rules {
         voucher_to_hash.voucher_id = "".to_string();
         voucher_to_hash.transactions.clear();
         voucher_to_hash.signatures.clear();
-        voucher.voucher_id = crypto_utils::get_hash(to_canonical_json(&voucher_to_hash).unwrap());
+        voucher.voucher_id = crypto::get_hash(to_canonical_json(&voucher_to_hash).unwrap());
 
         if !voucher.transactions.is_empty() {
             let v_id_bytes = bs58::decode(&voucher.voucher_id).into_vec().unwrap();
             let v_nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
             voucher.transactions[0].prev_hash =
-                crypto_utils::get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes]);
+                crypto::get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes]);
         }
 
         human_money_core::set_signature_bypass(true);
@@ -312,7 +311,7 @@ mod behavioral_rules {
             VoucherCoreError::Validation(ValidationError::InvalidAmountPrecision { path, max_places: 2, found: 3 }) if path == "nominal_value.amount"
         ));
 
-        let mut voucher = create_voucher(
+        let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(creator_identity.user_id.clone()),
@@ -356,7 +355,7 @@ mod behavioral_rules {
             bs58::encode(sender_ephem_key.verifying_key().to_bytes()).into_string();
 
         let last_valid_tx = voucher.transactions.last().unwrap();
-        let prev_hash = crypto_utils::get_hash(to_canonical_json(last_valid_tx).unwrap());
+        let prev_hash = crypto::get_hash(to_canonical_json(last_valid_tx).unwrap());
 
         let mut invalid_transfer_tx = Transaction {
             sender_identity_signature: None,
@@ -388,17 +387,17 @@ mod behavioral_rules {
         invalid_transfer_tx.sender_identity_signature = None;
 
         let tx_json = to_canonical_json(&invalid_transfer_tx).unwrap();
-        invalid_transfer_tx.t_id = crypto_utils::get_hash(tx_json);
+        invalid_transfer_tx.t_id = crypto::get_hash(tx_json);
 
         let t_id_raw = bs58::decode(&invalid_transfer_tx.t_id).into_vec().unwrap();
-        let l2_sig = crypto_utils::sign_ed25519(&sender_ephem_key, &t_id_raw);
+        let l2_sig = crypto::sign_ed25519(&sender_ephem_key, &t_id_raw);
         invalid_transfer_tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 
         let signed_tx = invalid_transfer_tx; // No re-signing required
         voucher.transactions.push(signed_tx);
 
         human_money_core::set_signature_bypass(true);
-        let result = validate_voucher_against_standard(&voucher, &standard);
+        let result = validate_voucher_against_standard(&voucher, standard);
         human_money_core::set_signature_bypass(false);
 
         // CORRECTION: P2PKH may fail before business rules. Any validation error is acceptable.
@@ -415,7 +414,7 @@ mod behavioral_rules {
                 s.immutable.features.allow_partial_transfers = false;
             });
         let identity = &ACTORS.alice;
-        let voucher = create_voucher(
+        let voucher = human_money_core::models::voucher::Voucher::create_with_key(
             NewVoucherData {
                 creator_profile: PublicProfile {
                     id: Some(identity.user_id.clone()),
@@ -433,7 +432,7 @@ mod behavioral_rules {
             &identity.signing_key)
         .unwrap();
 
-        let result = create_transaction(
+        let result = human_money_core::models::voucher::Transaction::create(
             &voucher,
             &non_allow_partial_transfers_standard,
             &identity.user_id,
@@ -445,7 +444,7 @@ mod behavioral_rules {
         );
         assert!(matches!(
             result.unwrap_err(),
-            VoucherCoreError::Manager(VoucherManagerError::VoucherPartialTransferNotAllowed)
+            VoucherCoreError::VoucherPartialTransferNotAllowed
         ));
     }
 
@@ -501,7 +500,7 @@ mod behavioral_rules {
             .signatures
             .push(create_female_guarantor_signature(&voucher));
 
-        let result = create_transaction(
+        let result = human_money_core::models::voucher::Transaction::create(
             &voucher,
             &restricted_standard,
             &identity.user_id,
@@ -525,7 +524,6 @@ mod behavioral_rules {
     #[cfg(test)]
     mod issuance_firewall {
         use super::*;
-        use human_money_core::services::voucher_manager::VoucherManagerError;
         use human_money_core::test_utils::{FREETALER_STANDARD, create_custom_standard};
 
         /// Sets up a test environment with the required actors and standards.
@@ -600,26 +598,26 @@ mod behavioral_rules {
             voucher_to_hash.signatures.clear();
 
             // 1. Compute new hash of master data (new voucher_id)
-            let hash = crypto_utils::get_hash(to_canonical_json(&voucher_to_hash).unwrap());
+            let hash = crypto::get_hash(to_canonical_json(&voucher_to_hash).unwrap());
             voucher.voucher_id = hash;
 
             if !voucher.transactions.is_empty() {
                 let new_init_prev_hash = {
                     let v_id_bytes = bs58::decode(&voucher.voucher_id).into_vec().unwrap();
                     let v_nonce_bytes = bs58::decode(&voucher_nonce).into_vec().unwrap();
-                    crypto_utils::get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes])
+                    crypto::get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes])
                 };
                 voucher.transactions[0].prev_hash = new_init_prev_hash;
 
                 // Update t_id so the chain fits structurally
                 for i in 0..voucher.transactions.len() {
                     if i > 0 {
-                        let prev_hash = crypto_utils::get_hash(
+                        let prev_hash = crypto::get_hash(
                             to_canonical_json(&voucher.transactions[i - 1]).unwrap(),
                         );
                         voucher.transactions[i].prev_hash = prev_hash;
                     }
-                    voucher.transactions[i].t_id = crypto_utils::get_hash(
+                    voucher.transactions[i].t_id = crypto::get_hash(
                         to_canonical_json(&voucher.transactions[i]).unwrap(),
                     );
                 }
@@ -637,7 +635,7 @@ mod behavioral_rules {
             // Scenario: Create voucher with P6M validity (rule = P1Y)
             let voucher_data = create_voucher_data(setup.creator_pc, "P6M");
 
-            let result = create_voucher(
+            let result = human_money_core::models::voucher::Voucher::create_with_key(
                 voucher_data,
                 standard_a,
                 hash_a,
@@ -646,7 +644,7 @@ mod behavioral_rules {
             // Expectation: Creation (gatekeeper) fails.
             assert!(matches!(
                 result.unwrap_err(),
-                VoucherCoreError::Manager(VoucherManagerError::InvalidValidityDuration(_))
+                VoucherCoreError::InvalidValidityDuration(_)
             ));
         }
 
@@ -658,7 +656,7 @@ mod behavioral_rules {
 
             // 1. Create VALID voucher (P2Y > P1Y)
             let voucher_data = create_voucher_data(setup.creator_pc, "P2Y");
-            let mut voucher = create_voucher(
+            let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
                 voucher_data,
                 standard_a,
                 hash_a,
@@ -668,7 +666,7 @@ mod behavioral_rules {
             // 2. Simulate passage of time: Manipulate valid_until to 6 months in the future
             let now = chrono::Utc::now();
             let six_months_from_now =
-                human_money_core::services::voucher_manager::add_iso8601_duration(now, "P6M")
+                human_money_core::services::utils::add_iso8601_duration(now, "P6M")
                     .unwrap();
             let eighteen_months_ago = now - chrono::Duration::days(540); // ~1.5 years
             voucher.creation_date =
@@ -679,7 +677,7 @@ mod behavioral_rules {
 
             // 3. Action: Attempt to send (creator -> third party)
             human_money_core::set_signature_bypass(true);
-            let result = create_transaction(
+            let result = human_money_core::models::voucher::Transaction::create(
                 &voucher,
                 standard_a,
                 &setup.creator_pc.user_id,
@@ -694,7 +692,7 @@ mod behavioral_rules {
             // 4. Expectation: Firewall fails
             assert!(matches!(
                 result.unwrap_err(),
-                VoucherCoreError::Manager(VoucherManagerError::InvalidValidityDuration(msg))
+                VoucherCoreError::InvalidValidityDuration(msg)
                 if msg.contains("less than the required minimum remaining duration")
             ));
         }
@@ -705,7 +703,7 @@ mod behavioral_rules {
             let setup = setup();
             let (standard_a, hash_a) = (&setup.standard_a.0, &setup.standard_a.1);
             let voucher_data = create_voucher_data(setup.creator_pc, "P2Y");
-            let mut voucher = create_voucher(
+            let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
                 voucher_data,
                 standard_a,
                 hash_a,
@@ -715,7 +713,7 @@ mod behavioral_rules {
             // Simulate passage of time
             let now = chrono::Utc::now();
             let six_months_from_now =
-                human_money_core::services::voucher_manager::add_iso8601_duration(now, "P6M")
+                human_money_core::services::utils::add_iso8601_duration(now, "P6M")
                     .unwrap();
             let eighteen_months_ago = now - chrono::Duration::days(540); // ~1.5 years
             voucher.creation_date =
@@ -726,7 +724,7 @@ mod behavioral_rules {
 
             // Action: Send to Creator_Mobil (same PK, different prefix)
             human_money_core::set_signature_bypass(true);
-            let result = create_transaction(
+            let result = human_money_core::models::voucher::Transaction::create(
                 &voucher,
                 standard_a,
                 &setup.creator_pc.user_id,
@@ -746,7 +744,7 @@ mod behavioral_rules {
             let setup = setup();
             let (standard_a, hash_a) = (&setup.standard_a.0, &setup.standard_a.1);
             let voucher_data = create_voucher_data(setup.creator_pc, "P2Y");
-            let voucher = create_voucher(
+            let voucher = human_money_core::models::voucher::Voucher::create_with_key(
                 voucher_data,
                 standard_a,
                 hash_a,
@@ -754,7 +752,7 @@ mod behavioral_rules {
             .unwrap();
 
             // Send to User_B (successful)
-            let (voucher_at_b, secrets_b) = create_transaction(
+            let (voucher_at_b, secrets_b) = human_money_core::models::voucher::Transaction::create(
                 &voucher,
                 standard_a,
                 &setup.creator_pc.user_id,
@@ -770,7 +768,7 @@ mod behavioral_rules {
             // Voucher valid: 24 months. Remaining: 6 months (< 1 year limit).
             let now = chrono::Utc::now();
             let future_time =
-                human_money_core::services::voucher_manager::add_iso8601_duration(now, "P18M")
+                human_money_core::services::utils::add_iso8601_duration(now, "P18M")
                     .unwrap();
             let future_time_str = future_time.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
 
@@ -782,7 +780,7 @@ mod behavioral_rules {
                 ed25519_dalek::SigningKey::from_bytes(&user_b_seed.try_into().unwrap());
 
             // Action: User_B (non-creator) sends to User_C
-            let result = create_transaction(
+            let result = human_money_core::models::voucher::Transaction::create(
                 &voucher_at_b,
                 standard_a,
                 &setup.user_b.user_id,
@@ -805,14 +803,14 @@ mod behavioral_rules {
             let setup = setup();
             let (standard_a, hash_a) = (&setup.standard_a.0, &setup.standard_a.1);
             let voucher_data = create_voucher_data(setup.creator_pc, "P2Y"); // P2Y > P1Y
-            let voucher = create_voucher(
+            let voucher = human_money_core::models::voucher::Voucher::create_with_key(
                 voucher_data,
                 standard_a,
                 hash_a,
                 &setup.creator_pc.signing_key)
             .unwrap();
 
-            let result = create_transaction(
+            let result = human_money_core::models::voucher::Transaction::create(
                 &voucher,
                 standard_a,
                 &setup.creator_pc.user_id,
@@ -833,7 +831,7 @@ mod behavioral_rules {
 
             // Create voucher with P6M (would be invalid for Standard A)
             let voucher_data = create_voucher_data(setup.creator_pc, "P6M");
-            let voucher = create_voucher(
+            let voucher = human_money_core::models::voucher::Voucher::create_with_key(
                 voucher_data,
                 standard_b,
                 hash_b,
@@ -841,7 +839,7 @@ mod behavioral_rules {
             .unwrap();
 
             // Action: Send to User_B
-            let result = create_transaction(
+            let result = human_money_core::models::voucher::Transaction::create(
                 &voucher,
                 standard_b,
                 &setup.creator_pc.user_id,
@@ -879,7 +877,7 @@ mod behavioral_rules {
                 ..Default::default()
             };
 
-            let voucher = create_voucher(
+            let voucher = human_money_core::models::voucher::Voucher::create_with_key(
                 voucher_data,
                 standard,
                 standard_hash,
@@ -903,7 +901,7 @@ mod behavioral_rules {
                 .unwrap_or(&creator.user_id)
                 .to_string();
             let (_genesis_secret, _) =
-                human_money_core::services::crypto_utils::derive_ephemeral_key_pair(
+                human_money_core::services::crypto::derive_ephemeral_key_pair(
                     &creator.signing_key,
                     &nonce_bytes,
                     "genesis",
@@ -926,7 +924,7 @@ mod behavioral_rules {
             manual_tx.sender_identity_signature = None;
 
             let canonical_json = to_canonical_json(&manual_tx).unwrap();
-            manual_tx.t_id = human_money_core::services::crypto_utils::get_hash(canonical_json);
+            manual_tx.t_id = human_money_core::services::crypto::get_hash(canonical_json);
 
             // 2. Add the OLD L2 Signature (which doesn't match the new t_id)
             manual_tx.layer2_signature = original_l2_sig;
@@ -934,7 +932,7 @@ mod behavioral_rules {
             // 3. Sign Identity (L1) with Creator Key to pass that check
             if manual_tx.sender_id.is_some() {
                 let t_id_raw = bs58::decode(&manual_tx.t_id).into_vec().unwrap();
-                let id_sig = human_money_core::services::crypto_utils::sign_ed25519(
+                let id_sig = human_money_core::services::crypto::sign_ed25519(
                     &creator.signing_key,
                     &t_id_raw,
                 );

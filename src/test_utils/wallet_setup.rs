@@ -3,10 +3,10 @@ use crate::models::conflict::{CanonicalMetadataStore, KnownFingerprints, OwnFing
 use crate::models::profile::{BundleMetadataStore, PublicProfile, UserProfile, VoucherStore};
 use crate::models::voucher::{Address, ValueDefinition};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
-use crate::services::crypto_utils::{get_hash, generate_ed25519_keypair_for_tests, create_user_id};
+use crate::services::crypto::{create_user_id, generate_ed25519_keypair_for_tests, get_hash};
 use crate::services::mnemonic::MnemonicLanguage;
 use crate::services::utils::to_canonical_json;
-use crate::services::{bundle_processor, secure_container_manager, signature_manager};
+use crate::services::bundle_processor;
 use super::ACTORS;
 use super::voucher_setup::{create_guarantor_signature_data, create_voucher_for_manipulation};
 use crate::wallet::Wallet;
@@ -90,7 +90,7 @@ pub fn add_voucher_to_wallet(
         ..Default::default()
     };
 
-    let new_voucher_data = crate::services::voucher_manager::NewVoucherData {
+    let new_voucher_data = crate::models::voucher::NewVoucherData {
         creator_profile: creator_info,
         nominal_value: nominal_value_info,
         validity_duration: Some("P4Y".to_string()),
@@ -127,15 +127,13 @@ pub fn add_voucher_to_wallet(
 
         let init_t_id = &voucher.transactions[0].t_id;
 
-        let signed_sig1 = signature_manager::complete_and_sign_detached_signature(
-            sig_data1,
+        let signed_sig1 = sig_data1.complete_and_sign(
             &ACTORS.guarantor1.identity,
             details1,
             &voucher.voucher_id,
             init_t_id,
         )?;
-        let signed_sig2 = signature_manager::complete_and_sign_detached_signature(
-            sig_data2,
+        let signed_sig2 = sig_data2.complete_and_sign(
             &ACTORS.guarantor2.identity,
             details2,
             &voucher.voucher_id,
@@ -215,7 +213,7 @@ pub fn debug_open_container(
 ) -> Result<Voucher, VoucherCoreError> {
     let container: crate::models::secure_container::SecureContainer =
         serde_json::from_slice(container_bytes)?;
-    let payload = secure_container_manager::open_secure_container(&container, recipient_identity, None)?;
+    let payload = container.open(recipient_identity, None)?;
     let voucher: Voucher = serde_json::from_slice(&payload)?;
     Ok(voucher)
 }

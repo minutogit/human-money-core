@@ -4,22 +4,21 @@
 use self::test_utils::{ACTORS, FREETALER_STANDARD, setup_in_memory_wallet};
 use super::test_utils;
 use human_money_core::VoucherInstance;
-use human_money_core::crypto_utils;
+use human_money_core::crypto;
 use human_money_core::error::ValidationError;
 use human_money_core::models::profile::TransactionBundle;
-use human_money_core::models::secure_container::{ContainerConfig, PayloadType, PrivacyMode};
+use human_money_core::models::secure_container::{ContainerConfig, PayloadType, PrivacyMode, SecureContainer};
 use human_money_core::models::voucher::{
     Collateral, Transaction, ValueDefinition, Voucher, VoucherSignature,
 };
-use human_money_core::services::crypto_utils::{get_hash, get_hash_from_slices, sign_ed25519};
-use human_money_core::services::secure_container_manager::create_secure_container;
+use human_money_core::services::crypto::{get_hash, get_hash_from_slices, sign_ed25519};
 use human_money_core::services::utils::get_current_timestamp;
-use human_money_core::services::voucher_manager::{self, NewVoucherData};
+use human_money_core::{self, NewVoucherData};
 use human_money_core::services::voucher_validation::{self};
 use human_money_core::test_utils::derive_holder_key;
 use human_money_core::wallet::Wallet;
 use human_money_core::{UserIdentity, VoucherStatus};
-use human_money_core::{VoucherCoreError, create_transaction, create_voucher, to_canonical_json};
+use human_money_core::{VoucherCoreError, to_canonical_json};
 use rand::seq::SliceRandom;
 use rand::{Rng, thread_rng};
 use rust_decimal::Decimal;
@@ -40,9 +39,9 @@ fn attach_test_privacy_guard(tx: &mut Transaction, _v_id: &str, recipient_id: &s
         ..Default::default()
     };
     let payload_bytes = serde_json::to_vec(&payload).unwrap();
-    let recipient_pubkey = human_money_core::services::crypto_utils::get_pubkey_from_user_id(recipient_id).unwrap();
+    let recipient_pubkey = human_money_core::services::crypto::get_pubkey_from_user_id(recipient_id).unwrap();
     
-    tx.privacy_guard = Some(human_money_core::services::crypto_utils::encrypt_recipient_payload(
+    tx.privacy_guard = Some(human_money_core::services::crypto::encrypt_recipient_payload(
         &payload_bytes,
         &recipient_pubkey,
         recipient_id,
@@ -57,15 +56,13 @@ fn mutate_to_negative_amount(voucher: &mut Voucher) -> String {
     let mut rng = thread_rng();
     let tx_index = rng.gen_range(1..voucher.transactions.len());
 
-    if let Some(tx) = voucher.transactions.get_mut(tx_index) {
-        if let Ok(mut amount) = Decimal::from_str(&tx.amount) {
-            if amount > Decimal::ZERO {
+    if let Some(tx) = voucher.transactions.get_mut(tx_index)
+        && let Ok(mut amount) = Decimal::from_str(&tx.amount)
+            && amount > Decimal::ZERO {
                 amount.set_sign_negative(true);
                 tx.amount = amount.to_string();
                 return format!("Set tx[{}] amount to negative: {}", tx_index, tx.amount);
             }
-        }
-    }
     "Failed to apply negative amount mutation".to_string()
 }
 
@@ -81,11 +78,11 @@ fn mutate_to_negative_remainder(voucher: &mut Voucher) -> String {
         .map(|(i, _)| i)
         .collect();
 
-    if let Some(&tx_index) = splittable_indices.choose(&mut rng) {
-        if let Some(tx) = voucher.transactions.get_mut(tx_index) {
-            if let Some(remainder_str) = &tx.sender_remaining_amount {
-                if let Ok(mut remainder) = Decimal::from_str(remainder_str) {
-                    if remainder > Decimal::ZERO {
+    if let Some(&tx_index) = splittable_indices.choose(&mut rng)
+        && let Some(tx) = voucher.transactions.get_mut(tx_index)
+            && let Some(remainder_str) = &tx.sender_remaining_amount
+                && let Ok(mut remainder) = Decimal::from_str(remainder_str)
+                    && remainder > Decimal::ZERO {
                         remainder.set_sign_negative(true);
                         tx.sender_remaining_amount = Some(remainder.to_string());
                         return format!(
@@ -93,10 +90,6 @@ fn mutate_to_negative_remainder(voucher: &mut Voucher) -> String {
                             tx_index, remainder
                         );
                     }
-                }
-            }
-        }
-    }
     "No suitable split transaction found to mutate".to_string()
 }
 
@@ -223,9 +216,9 @@ fn create_hacked_bundle_and_container(
     let signature = sign_ed25519(&hacker_identity.signing_key, bundle.bundle_id.as_bytes());
     bundle.sender_signature = bs58::encode(signature.to_bytes()).into_string();
     let signed_bundle_bytes = serde_json::to_vec(&bundle).unwrap();
-    let secure_container = create_secure_container(
+    let secure_container = SecureContainer::seal(
         hacker_identity,
-        ContainerConfig::TargetDid(victim_id.to_string(), PrivacyMode::TrialDecryption),
+        &ContainerConfig::TargetDid(victim_id.to_string(), PrivacyMode::TrialDecryption),
         &signed_bundle_bytes,
         PayloadType::TransactionBundle,
     )
@@ -315,12 +308,11 @@ fn create_hacked_tx(
     hacked_tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 
     // 2. Sender Identity Signature (L1): Optional, if sender_id is present
-    if let Some(id_key) = identity_key {
-        if hacked_tx.sender_id.is_some() {
+    if let Some(id_key) = identity_key
+        && hacked_tx.sender_id.is_some() {
             let sig = sign_ed25519(id_key, &t_id_raw);
             hacked_tx.sender_identity_signature = Some(bs58::encode(sig.to_bytes()).into_string());
         }
-    }
 
     hacked_tx
 }
@@ -348,7 +340,7 @@ fn generate_valid_trap_for_test(
     tx: &Transaction,
     sender_permanent_key: &ed25519_dalek::SigningKey,
 ) -> human_money_core::models::voucher::TrapData {
-    use human_money_core::services::crypto_utils::get_hash_from_slices;
+    use human_money_core::services::crypto::get_hash_from_slices;
     use human_money_core::services::trap_manager::generate_sst_trap;
 
     // V3 (SST) rule: the canonical t_id preimage EXCLUDES trap_data and
@@ -406,7 +398,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
 
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
-    let mut valid_voucher = voucher_manager::create_voucher(
+    let mut valid_voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         standard,
         standard_hash,
@@ -640,7 +632,7 @@ fn test_attack_tamper_transaction_history() {
 
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
-    let voucher_a = voucher_manager::create_voucher(
+    let voucher_a = human_money_core::models::voucher::Voucher::create_with_key(
         data,
         standard,
         standard_hash,
@@ -708,13 +700,13 @@ fn test_attack_tamper_transaction_history() {
     voucher_with_tampered_history.transactions[0].layer2_signature =
         Some("invalid_signature".to_string());
 
-    // THANKS TO THE SECURITY PATCH in `voucher_manager` this call now fails,
+    // THANKS TO THE SECURITY PATCH in `voucher_math` this call now fails,
     // since `create_transaction` validates the voucher beforehand.
     let bob_key = bob_wallet_hacker
         .rederive_secret_seed(&voucher_with_tampered_history, &ACTORS.bob)
         .unwrap();
 
-    let transfer_attempt_result = voucher_manager::create_transaction(
+    let transfer_attempt_result = human_money_core::models::voucher::Transaction::create(
         &voucher_with_tampered_history,
         standard,
         &ACTORS.bob.user_id,
@@ -744,7 +736,7 @@ fn test_attack_create_inconsistent_transaction() {
 
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
-    let initial_voucher = voucher_manager::create_voucher(
+    let initial_voucher = human_money_core::models::voucher::Voucher::create_with_key(
         data,
         standard,
         standard_hash,
@@ -884,7 +876,7 @@ fn test_attack_inconsistent_split_transaction() {
     let _victim_identity = &ACTORS.victim;
     let data = new_test_voucher_data(hacker_identity.user_id.clone());
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
-    let voucher = voucher_manager::create_voucher(
+    let voucher = human_money_core::models::voucher::Voucher::create_with_key(
         data,
         standard,
         standard_hash,
@@ -956,7 +948,7 @@ fn test_attack_init_amount_mismatch() {
     let hacker_identity = &ACTORS.hacker;
     let data = new_test_voucher_data(hacker_identity.user_id.clone());
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
-    let mut voucher = voucher_manager::create_voucher(
+    let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
         data,
         standard,
         standard_hash,
@@ -992,7 +984,7 @@ fn test_attack_negative_or_zero_amount_transaction() {
     let _victim_identity = &ACTORS.victim;
     let data = new_test_voucher_data(hacker_identity.user_id.clone());
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
-    let voucher = voucher_manager::create_voucher(
+    let voucher = human_money_core::models::voucher::Voucher::create_with_key(
         data,
         standard,
         standard_hash,
@@ -1058,7 +1050,7 @@ fn test_attack_invalid_precision_in_nominal_value() {
 
     // ### ATTACK ###
     // The `create_voucher` function itself does not validate this yet, so the state is created.
-    let malicious_voucher = voucher_manager::create_voucher(
+    let malicious_voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         standard,
         standard_hash,
@@ -1081,8 +1073,8 @@ fn test_attack_full_transfer_amount_mismatch() {
     // ### SETUP ###
     let (standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let (public_key, signing_key) =
-        crypto_utils::generate_ed25519_keypair_for_tests(Some("creator_stub"));
-    let user_id = crypto_utils::create_user_id(&public_key, Some("cs")).unwrap();
+        crypto::generate_ed25519_keypair_for_tests(Some("creator_stub"));
+    let user_id = crypto::create_user_id(&public_key, Some("cs")).unwrap();
     let creator_identity = UserIdentity {
         signing_key,
         public_key,
@@ -1095,7 +1087,7 @@ fn test_attack_full_transfer_amount_mismatch() {
         ..Default::default()
     };
     let voucher_data = create_test_voucher_data_with_amount(creator.clone(), "100");
-    let mut voucher = create_voucher(
+    let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         standard,
         &FREETALER_STANDARD.1,
@@ -1139,8 +1131,8 @@ fn test_attack_remainder_in_full_transfer() {
     // ### SETUP ###
     let (standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
     let (public_key, signing_key) =
-        crypto_utils::generate_ed25519_keypair_for_tests(Some("creator_stub_2"));
-    let user_id = crypto_utils::create_user_id(&public_key, Some("cs2")).unwrap();
+        crypto::generate_ed25519_keypair_for_tests(Some("creator_stub_2"));
+    let user_id = crypto::create_user_id(&public_key, Some("cs2")).unwrap();
     let creator_identity = UserIdentity {
         signing_key,
         public_key,
@@ -1153,7 +1145,7 @@ fn test_attack_remainder_in_full_transfer() {
         ..Default::default()
     };
     let voucher_data = create_test_voucher_data_with_amount(creator.clone(), "100");
-    let mut voucher = create_voucher(
+    let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         standard,
         &FREETALER_STANDARD.1,
@@ -1273,7 +1265,7 @@ fn test_attack_fuzzing_random_mutations() {
 
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
-    let mut master_voucher = voucher_manager::create_voucher(
+    let mut master_voucher = human_money_core::models::voucher::Voucher::create_with_key(
         data,
         standard,
         standard_hash,
@@ -1322,7 +1314,7 @@ fn test_attack_fuzzing_random_mutations() {
         &master_voucher,
         &ACTORS.issuer.signing_key,
     );
-    let (mv, secrets_1) = create_transaction(
+    let (mv, secrets_1) = human_money_core::models::voucher::Transaction::create(
         &master_voucher,
         standard,
         &ACTORS.issuer.user_id,
@@ -1342,7 +1334,7 @@ fn test_attack_fuzzing_random_mutations() {
             .try_into()
             .unwrap(),
     );
-    let (mv, _) = create_transaction(
+    let (mv, _) = human_money_core::models::voucher::Transaction::create(
         &master_voucher,
         standard,
         &ACTORS.alice.user_id,

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use human_money_core::models::voucher::{RecipientPayload, Transaction};
-    use human_money_core::services::crypto_utils::{encrypt_recipient_payload, get_hash};
+    use human_money_core::services::crypto::{encrypt_recipient_payload, get_hash};
     use human_money_core::test_utils::{setup_in_memory_wallet, add_voucher_to_wallet, ACTORS, MINUTO_STANDARD, derive_holder_key, create_custom_standard};
     use human_money_core::services::utils::to_canonical_json;
     use std::collections::HashMap;
@@ -26,7 +26,7 @@ mod tests {
 
         let holder_key = derive_holder_key(&voucher, &alice.identity.signing_key);
 
-        let (voucher_for_bob, _secrets) = human_money_core::services::voucher_manager::create_transaction(
+        let (voucher_for_bob, _secrets) = human_money_core::models::voucher::Transaction::create(
             &voucher,
             &MINUTO_STANDARD.0,
             &alice.identity.user_id,

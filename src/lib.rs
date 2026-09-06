@@ -1,8 +1,39 @@
-//! # src/lib.rs
+//! # human_money_core
 //!
-//! The core logic of a decentralized, trust-based electronic voucher payment system.
-//! This library provides the data structures and functions for creating, managing
-//! and verifying digital vouchers.
+//! Core library of a decentralized, trust-based electronic voucher payment system.
+//! Provides data structures and stateless services for creating, managing and
+//! verifying digital vouchers – persisted via the concrete [`FileStorage`](storage::file_storage::FileStorage)
+//! encrypted-file backend.
+//!
+//! ## Architecture
+//!
+//! - **Concrete persistence:** [`Wallet`] persists via the concrete [`FileStorage`](storage::file_storage::FileStorage)
+//!   encrypted-file backend (no abstract `Storage` trait). All file I/O is target-gated via
+//!   `cfg(not(target_arch="wasm32"))` – the library compiles for `wasm32-unknown-unknown`.
+//! - **Stateless services** (`services::*`): pure functions (crypto, CEL, validation, L2 gateway, …).
+//!   Only `Wallet` and [`AppService`](app_service::AppService) hold state.
+//! - **Offline-first:** no network calls in core. L2 locking/status is modeled by
+//!   [`services::l2_gateway`] and executed by the host.
+//! - **Fraud detection, not prevention:** double-spending is cryptographically provable via
+//!   transaction fingerprints and L2 trap commitments.
+//! - **Cryptographic stability:** core models serialize in canonical `snake_case` (serde without
+//!   `camelCase` renames); JS/DTO transforms happen only at the app boundary (`AppService` / Tauri wrapper).
+//!
+//! ## Modules
+//!
+//! - [`app_service`]: high-level facade for client apps (profile lifecycle, transfers, bundles, seals).
+//! - [`models`]: vouchers, identities, standards, seals, integrity records, wallet events, L2 API types.
+//! - [`services`]: `crypto` (Ed25519/X25519/ChaCha20Poly1305), `voucher_validation`, `cel`, `l2_gateway`, `utils`, …
+//! - [`storage`]: [`FileStorage`](storage::file_storage::FileStorage) with
+//!   authenticated multi-file bindings, generation counters and file locking.
+//! - [`archive`]: [`FileVoucherArchive`](archive::file_archive::FileVoucherArchive) for long-term voucher history.
+//! - [`wallet`]: [`Wallet`] facade, Voucher lifecycle instances, trust checks and event logging.
+//!
+//! ## Safety fuses
+//!
+//! `test-utils` enables a thread-local signature bypass for integration tests and is
+//! forbidden in release builds (compile_error). `cargo check --target wasm32-unknown-unknown`
+//! and `cargo check --manifest-path bindings/wasm/Cargo.toml` must stay green.
 
 // Declare main modules of the library and make them public.
 pub mod app_service;
@@ -16,12 +47,15 @@ pub mod wallet;
 // Re-export key public types for easier use.
 // Instead of `human_money_core::models::voucher::Voucher`, users can now write `human_money_core::Voucher`.
 
-// Models
-pub use error::VoucherCoreError;
+// Models & Error
+pub use error::{AppFacadeError, Error, StandardDefinitionError, ValidationError, VoucherCoreError};
 pub use models::profile::{UserIdentity, UserProfile, VoucherStore};
 pub use models::seal::{LocalSealRecord, SealPayload, SealSyncState, SyncStatus, WalletSeal};
+pub use models::secure_container::{ContainerConfig, EncryptionType, PayloadType, PrivacyMode, SecureContainer};
+pub use models::storage_integrity::{IntegrityPayload, IntegrityReport, LocalIntegrityRecord, StorageIntegrityRecord};
 pub use models::voucher::{
-    Address, Collateral, Transaction, ValueDefinition, Voucher, VoucherSignature, VoucherStandard,
+    Address, Collateral, NewVoucherData, Transaction, TransactionSecrets, ValueDefinition, Voucher,
+    VoucherSignature, VoucherStandard,
 };
 pub use models::voucher_standard_definition::VoucherStandardDefinition;
 pub use models::wallet_event::{EventBffData, WalletEvent, WalletEventType};
@@ -30,21 +64,17 @@ pub use wallet::instance::{ValidationFailureReason, VoucherInstance, VoucherStat
 // Wallet & Storage Facades
 pub use services::mnemonic::MnemonicLanguage;
 pub use storage::file_storage::FileStorage;
-pub use storage::{AuthMethod, Storage, StorageError};
+pub use storage::{AuthMethod, StorageError};
 pub use wallet::Wallet;
 
 // Archive
 pub use archive::file_archive::FileVoucherArchive;
-pub use archive::{ArchiveError, VoucherArchive};
 
 // Services
-pub use services::crypto_utils;
-pub use services::standard_manager::verify_and_parse_standard;
+pub use services::crypto;
+pub use services::trust_provider::{NoopTrustProvider, TrustProvider};
 pub use services::utils;
 pub use services::utils::to_canonical_json;
-pub use services::voucher_manager::{
-    NewVoucherData, create_transaction, create_voucher, from_json, get_spendable_balance, to_json,
-};
 pub use services::voucher_validation::validate_voucher_against_standard;
 
 // =========================================================================
@@ -67,7 +97,7 @@ use std::cell::Cell;
 thread_local! {
     /// Stores the bypass status exclusively for the current thread.
     /// Default: false (security active).
-    static SIGNATURE_BYPASS_ACTIVE: Cell<bool> = Cell::new(false);
+    static SIGNATURE_BYPASS_ACTIVE: Cell<bool> = const { Cell::new(false) };
 }
 
 // 3. PUBLIC API (Only available with feature="test-utils")

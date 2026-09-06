@@ -173,13 +173,11 @@
 
 use human_money_core::app_service::AppService;
 use human_money_core::models::profile::UserIdentity;
-use human_money_core::models::voucher::Voucher;
 use human_money_core::models::voucher_standard_definition::{
     SignatureBlock, VoucherStandardDefinition,
 };
-use human_money_core::services::crypto_utils::{get_hash, sign_ed25519};
+use human_money_core::services::crypto::{get_hash, sign_ed25519};
 use human_money_core::services::dynamic_policy_engine::{DynamicPolicyEngine, PolicyEngineError};
-use human_money_core::services::standard_manager::verify_and_parse_standard;
 use human_money_core::services::utils::to_canonical_json;
 use human_money_core::services::voucher_validation::{
     verify_standard_identity, verify_validity_duration,
@@ -272,8 +270,8 @@ fn sign_and_serialize(
 /// Voucher bound to the audited standard whose validity MASSIVELY exceeds the
 /// issuer window: created 2026-01-01, valid until 2026-12-15 (>11 months vs.
 /// max "P1M").
-fn overlong_voucher(standard_uuid: &str, definition_hash: &str) -> Voucher {
-    let mut voucher = Voucher::default();
+fn overlong_voucher(standard_uuid: &str, definition_hash: &str) -> human_money_core::models::voucher::Voucher {
+    let mut voucher = human_money_core::models::voucher::Voucher::default();
     voucher.voucher_standard.uuid = standard_uuid.to_string();
     voucher.voucher_standard.standard_definition_hash = definition_hash.to_string();
     voucher.nominal_value.unit = "AuditUnit".to_string();
@@ -285,8 +283,8 @@ fn overlong_voucher(standard_uuid: &str, definition_hash: &str) -> Voucher {
 
 /// Short-lived voucher INSIDE the issuer window [P1M, P1M] (used by controls):
 /// min == max == creation + P1M, so only the exact boundary satisfies both.
-fn compliant_voucher(standard_uuid: &str, definition_hash: &str) -> Voucher {
-    let mut voucher = Voucher::default();
+fn compliant_voucher(standard_uuid: &str, definition_hash: &str) -> human_money_core::models::voucher::Voucher {
+    let mut voucher = human_money_core::models::voucher::Voucher::default();
     voucher.voucher_standard.uuid = standard_uuid.to_string();
     voucher.voucher_standard.standard_definition_hash = definition_hash.to_string();
     voucher.nominal_value.unit = "AuditUnit".to_string();
@@ -332,7 +330,7 @@ fn install_then_resign_on_disk() -> (
     );
 
     let (pristine, pristine_hash) =
-        verify_and_parse_standard(&legit_toml).expect("pristine standard verifies");
+        VoucherStandardDefinition::from_toml(&legit_toml).expect("pristine standard verifies");
 
     // 2. Attacker re-signs: immutable zone UNTOUCHED, mutable zone rewritten.
     let mut resigned = pristine.clone();
@@ -342,7 +340,7 @@ fn install_then_resign_on_disk() -> (
 
     // Enabling precondition: the re-signed file is SELF-CONSISTENTLY valid
     // because both verifiers take the public key from the file itself.
-    let (reloaded, reloaded_hash) = verify_and_parse_standard(&swapped_toml)
+    let (reloaded, reloaded_hash) = VoucherStandardDefinition::from_toml(&swapped_toml)
         .expect("precondition: attacker-re-signed standard must pass verify_and_parse_standard");
     assert_eq!(
         pristine_hash, reloaded_hash,
@@ -596,7 +594,7 @@ fn finding103_misaligned_index_must_fail_closed_not_invent_values() {
 
     let neq = DynamicPolicyEngine::evaluate_rule(&rule_neq, &state, None);
     assert!(
-        matches!(neq, Err(_)),
+        neq.is_err(),
         "AUDIT-W4-CEL-103 FAIL-OPEN: misaligned index produced an invented value and \
          \"Voucher.unit[2] != '\\u{{0000}}'\" returned {:?} instead of Err. The \
          interpreter yields Null (byte slice fails) making the inequality vacuously \
@@ -607,7 +605,7 @@ fn finding103_misaligned_index_must_fail_closed_not_invent_values() {
 
     let eq = DynamicPolicyEngine::evaluate_rule(&rule_eq, &state, None);
     assert!(
-        matches!(eq, Err(_)),
+        eq.is_err(),
         "AUDIT-W4-CEL-103 EVALUATOR DIVERGENCE: equality against a fabricated NUL \
          returned {:?} instead of Err. The two evaluators disagree (pre-check: \
          synthetic '\\\\0'; interpreter: Null), so the verdict depends on which one \

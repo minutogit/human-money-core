@@ -16,8 +16,9 @@
 //! Run: `cargo test --test services_tests services::crypto_properties`
 
 use human_money_core::MnemonicLanguage;
-use human_money_core::services::crypto_utils::{
-    UserIdError, create_user_id, decrypt_data, generate_ed25519_keypair_for_tests,
+use human_money_core::error::ValidationError;
+use human_money_core::services::crypto::{
+    create_user_id, decrypt_data, generate_ed25519_keypair_for_tests,
     generate_mnemonic, validate_user_id,
 };
 
@@ -66,7 +67,7 @@ fn test_mnemonic_generation_rejects_unsupported_sizes() {
 /// - Fixed 4-byte output (no empty, trivial, or variable return value)
 #[test]
 fn test_short_hash_is_deterministic_unique_and_fixed_size() {
-    use human_money_core::services::crypto_utils::get_short_hash_from_user_id;
+    use human_money_core::services::crypto::get_short_hash_from_user_id;
 
     let hash_alice = get_short_hash_from_user_id("alice@did:key:z6MkTest1");
     let hash_bob   = get_short_hash_from_user_id("bob@did:key:z6MkTest2");
@@ -98,7 +99,7 @@ fn test_short_hash_is_deterministic_unique_and_fixed_size() {
 /// order-independent context string for the HKDF-Expand step during DH key exchange.
 #[test]
 fn test_hkdf_info_contains_key_material_and_differs_per_keypair() {
-    use human_money_core::services::crypto_utils::{build_hkdf_info, generate_ephemeral_x25519_keypair};
+    use human_money_core::services::crypto::{build_hkdf_info, generate_ephemeral_x25519_keypair};
 
     let (pk1, _) = generate_ephemeral_x25519_keypair();
     let (pk2, _) = generate_ephemeral_x25519_keypair();
@@ -121,7 +122,7 @@ fn test_hkdf_info_contains_key_material_and_differs_per_keypair() {
 /// symmetric key without coordinating the order in advance.
 #[test]
 fn test_hkdf_info_is_independent_of_argument_order() {
-    use human_money_core::services::crypto_utils::{
+    use human_money_core::services::crypto::{
         build_hkdf_info, ed25519_pub_to_x25519, generate_ed25519_keypair_for_tests,
     };
 
@@ -161,7 +162,7 @@ fn test_hkdf_info_is_independent_of_argument_order() {
 #[test]
 fn test_recipient_payload_decryption_requires_minimum_byte_length() {
     use base64::Engine as _;
-    use human_money_core::services::crypto_utils::{decrypt_recipient_payload, generate_ed25519_keypair_for_tests};
+    use human_money_core::services::crypto::{decrypt_recipient_payload, generate_ed25519_keypair_for_tests};
     let engine = base64::engine::general_purpose::STANDARD;
 
     let (_, sk) = generate_ed25519_keypair_for_tests(Some("min-length-test"));
@@ -245,7 +246,7 @@ fn test_user_id_prefix_length_is_enforced_at_63_chars() {
 
     let result_64 = create_user_id(&pub_key, Some(&"a".repeat(64)));
     assert!(
-        matches!(result_64, Err(UserIdError::PrefixTooLong(_))),
+        matches!(result_64, Err(ValidationError::PrefixTooLong(_))),
         "64-char prefix must be rejected as PrefixTooLong, got: {:?}", result_64
     );
 }
@@ -264,14 +265,14 @@ fn test_user_id_prefix_only_allows_lowercase_digits_and_hyphens() {
     // Space -> invalid
     let result_space = create_user_id(&pub_key, Some("my prefix"));
     assert!(
-        matches!(result_space, Err(UserIdError::InvalidPrefixChars)),
+        matches!(result_space, Err(ValidationError::InvalidPrefixChars)),
         "Space in prefix must be rejected as InvalidPrefixChars, got: {:?}", result_space
     );
 
     // '@' character -> invalid (collides with the ID format delimiter)
     let result_at = create_user_id(&pub_key, Some("pre@fix"));
     assert!(
-        matches!(result_at, Err(UserIdError::InvalidPrefixChars)),
+        matches!(result_at, Err(ValidationError::InvalidPrefixChars)),
         "'@' in prefix must be rejected as InvalidPrefixChars, got: {:?}", result_at
     );
 }
@@ -285,13 +286,13 @@ fn test_user_id_prefix_cannot_start_or_end_with_hyphen() {
 
     let r_leading = create_user_id(&pub_key, Some("-prefix"));
     assert!(
-        matches!(r_leading, Err(UserIdError::InvalidPrefixStartEnd)),
+        matches!(r_leading, Err(ValidationError::InvalidPrefixStartEnd)),
         "Leading hyphen must be rejected, got: {:?}", r_leading
     );
 
     let r_trailing = create_user_id(&pub_key, Some("prefix-"));
     assert!(
-        matches!(r_trailing, Err(UserIdError::InvalidPrefixStartEnd)),
+        matches!(r_trailing, Err(ValidationError::InvalidPrefixStartEnd)),
         "Trailing hyphen must be rejected, got: {:?}", r_trailing
     );
 
@@ -308,7 +309,7 @@ fn test_user_id_prefix_cannot_contain_consecutive_hyphens() {
 
     let r_double = create_user_id(&pub_key, Some("my--prefix"));
     assert!(
-        matches!(r_double, Err(UserIdError::PrefixHasConsecutiveSeparators)),
+        matches!(r_double, Err(ValidationError::PrefixHasConsecutiveSeparators)),
         "Double hyphen '--' must be rejected, got: {:?}", r_double
     );
 
@@ -446,15 +447,15 @@ fn test_user_id_validation_accepts_hyphens_and_digits_in_prefix() {
 // Error Messages (Display & Error::source)
 // =============================================================================
 
-/// All variants of `UserIdError` must provide a non-empty, readable error message.
+/// All variants of `ValidationError` must provide a non-empty, readable error message.
 /// This is important for meaningful feedback to users and developers.
 #[test]
 fn test_user_id_error_variants_have_descriptive_messages() {
     let errors = [
-        UserIdError::PrefixTooLong(100),
-        UserIdError::InvalidPrefixChars,
-        UserIdError::InvalidPrefixStartEnd,
-        UserIdError::PrefixHasConsecutiveSeparators,
+        ValidationError::PrefixTooLong(100),
+        ValidationError::InvalidPrefixChars,
+        ValidationError::InvalidPrefixStartEnd,
+        ValidationError::PrefixHasConsecutiveSeparators,
     ];
     for e in &errors {
         let msg = format!("{e}");
@@ -471,7 +472,7 @@ fn test_user_id_error_variants_have_descriptive_messages() {
 /// All other variants should return `None`.
 #[test]
 fn test_get_pubkey_error_has_readable_messages_and_correct_cause_chain() {
-    use human_money_core::services::crypto_utils::GetPubkeyError;
+    use human_money_core::services::crypto::GetPubkeyError;
     use std::error::Error;
 
     // Display must provide a non-empty message for all terminal variants
@@ -512,7 +513,7 @@ fn test_get_pubkey_error_has_readable_messages_and_correct_cause_chain() {
 /// - Same key -> always the same point (determinism)
 #[test]
 fn test_curve_point_derivation_is_injective_and_deterministic() {
-    use human_money_core::services::crypto_utils::{
+    use human_money_core::services::crypto::{
         ed25519_pk_to_curve_point, generate_ed25519_keypair_for_tests,
     };
 

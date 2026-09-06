@@ -8,7 +8,7 @@
 #[cfg(test)]
 mod tests {
     use human_money_core::app_service::AppService;
-    use human_money_core::services::voucher_manager::NewVoucherData;
+    use human_money_core::NewVoucherData;
     use human_money_core::test_utils;
     use human_money_core::test_utils::{ACTORS, generate_signed_standard_toml, TestUser};
     use human_money_core::models::secure_container::{ContainerConfig, PrivacyMode};
@@ -33,7 +33,7 @@ mod tests {
 
         let voucher_data = NewVoucherData {
             creator_profile: human_money_core::models::profile::PublicProfile {
-                id: Some(service.get_user_id().unwrap()),
+                id: Some(service.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
                 ..Default::default()
             },
             nominal_value: human_money_core::models::voucher::ValueDefinition {
@@ -62,13 +62,15 @@ mod tests {
         // User A creates a voucher
         let (service_a, _dir_a) = setup_service_with_voucher(PASSWORD, &ACTORS.alice, "Alice");
         let voucher_summary = service_a
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .pop()
             .expect("Alice should have a voucher");
 
         // Verify that Alice has a balance
-        let balance_a = service_a.get_total_balance_by_currency().unwrap();
+        let balance_a = service_a
+            .with_wallet_and_identity(|w, id| w.get_total_balance_by_currency(Some(id)))
+            .unwrap();
         assert!(!balance_a.is_empty(), "Alice should have a balance");
 
         // User B creates a wallet (without vouchers)
@@ -81,12 +83,14 @@ mod tests {
         );
 
         // Bob should have no balance
-        let balance_b_before = service_b.get_total_balance_by_currency().unwrap();
+        let balance_b_before = service_b
+            .with_wallet_and_identity(|w, id| w.get_total_balance_by_currency(Some(id)))
+            .unwrap();
         assert!(balance_b_before.is_empty(), "Bob should have no balance initially");
 
         // Bob retrieves the voucher directly from Alice (simulating reception outside signature workflow)
         let voucher_details = service_a
-            .get_voucher_details(&voucher_summary.local_instance_id)
+            .with_wallet(|w| w.get_voucher_details(&voucher_summary.local_instance_id).unwrap())
             .unwrap();
         let voucher_to_sign = voucher_details.voucher;
 
@@ -104,14 +108,18 @@ mod tests {
             .expect("Signature creation should succeed");
 
         // Verify that Bob's balance is still 0
-        let balance_b_after = service_b.get_total_balance_by_currency().unwrap();
+        let balance_b_after = service_b
+            .with_wallet_and_identity(|w, id| w.get_total_balance_by_currency(Some(id)))
+            .unwrap();
         assert!(
             balance_b_after.is_empty(),
             "Bob's balance should still be 0 after endorsing"
         );
 
         // Verify that the voucher was stored in Bob's wallet with Endorsed status
-        let vouchers_b = service_b.get_voucher_summaries(None, None, None).unwrap();
+        let vouchers_b = service_b
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap();
         let endorsed_voucher = vouchers_b
             .iter()
             .find(|v| matches!(v.status, VoucherStatus::Endorsed { .. }))
@@ -141,7 +149,7 @@ mod tests {
         // User A creates a voucher
         let (service_a, _dir_a) = setup_service_with_voucher(PASSWORD, &ACTORS.alice, "Alice");
         let voucher_summary = service_a
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .pop()
             .expect("Alice should have a voucher");
@@ -157,7 +165,7 @@ mod tests {
 
         // Bob signs Alice's voucher
         let voucher_details = service_a
-            .get_voucher_details(&voucher_summary.local_instance_id)
+            .with_wallet(|w| w.get_voucher_details(&voucher_summary.local_instance_id).unwrap())
             .unwrap();
         let voucher_to_sign = voucher_details.voucher;
 
@@ -189,7 +197,7 @@ mod tests {
         // User A creates a voucher
         let (service_a, _dir_a) = setup_service_with_voucher(PASSWORD, &ACTORS.alice, "Alice");
         let voucher_summary = service_a
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .pop()
             .expect("Alice should have a voucher");
@@ -204,7 +212,7 @@ mod tests {
 
         // Bob retrieves the voucher directly from Alice (simulating reception outside signature workflow)
         let voucher_details = service_a
-            .get_voucher_details(&voucher_summary.local_instance_id)
+            .with_wallet(|w| w.get_voucher_details(&voucher_summary.local_instance_id).unwrap())
             .unwrap();
         let voucher_to_sign = voucher_details.voucher;
 
@@ -220,7 +228,9 @@ mod tests {
             .expect("Signature creation should succeed");
 
         // Verify that the endorsed voucher is present
-        let vouchers_before = service_b.get_voucher_summaries(None, None, None).unwrap();
+        let vouchers_before = service_b
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap();
         let endorsed_count_before = vouchers_before
             .iter()
             .filter(|v| matches!(v.status, VoucherStatus::Endorsed { .. }))
@@ -239,7 +249,9 @@ mod tests {
             .expect("Login should succeed");
 
         // Verify that the endorsed voucher is still present
-        let vouchers_after = service_b.get_voucher_summaries(None, None, None).unwrap();
+        let vouchers_after = service_b
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap();
         let endorsed_count_after = vouchers_after
             .iter()
             .filter(|v| matches!(v.status, VoucherStatus::Endorsed { .. }))

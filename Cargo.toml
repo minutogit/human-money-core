@@ -54,6 +54,10 @@ sysinfo = "0.30"
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros"] }
 reqwest = { version = "0.13.2", features = ["json"] }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+uuid = { version = "1.8.0", features = ["v4", "serde", "js"] }
+
 [lib]
 name = "human_money_core"
 path = "src/lib.rs"
@@ -92,5 +96,20 @@ path = "examples/playground_utils.rs"
 [[example]]
 name = "playground_voucher_lifecycle"
 path = "examples/playground_voucher_lifecycle.rs"
+
+[lints.clippy]
+field_reassign_with_default = "allow"
+doc_overindented_list_items = "allow"
+doc_lazy_continuation = "allow"
+format_in_format_args = "allow"
+needless_update = "allow"
+needless_range_loop = "allow"
+unnecessary_get_then_check = "allow"
+collapsible_if = "allow"
+collapsible_match = "allow"
+empty_line_after_doc_comments = "allow"
+assertions_on_constants = "allow"
+nonminimal_bool = "allow"
+large_const_arrays = "allow"
 
 

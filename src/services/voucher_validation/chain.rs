@@ -1,8 +1,8 @@
+#![allow(clippy::manual_filter, clippy::get_first, clippy::if_same_then_else, clippy::collapsible_if)]
 use crate::error::{ValidationError, VoucherCoreError};
 use crate::models::voucher::{Transaction, Voucher};
 use crate::models::voucher_standard_definition::{VoucherStandardDefinition, PrivacyMode};
-use crate::services::crypto_identity::get_pubkey_from_user_id;
-use crate::services::crypto_utils::{get_hash, get_hash_from_slices};
+use crate::services::crypto::{get_hash, get_hash_from_slices, get_pubkey_from_user_id};
 use crate::services::utils::to_canonical_json;
 use ed25519_dalek::{Signature, Verifier};
 use rust_decimal::Decimal;
@@ -348,6 +348,22 @@ pub fn verify_transactions(
                 .into());
             }
 
+            // Structural ds_tag hygiene: must be valid Base58 32-byte hash.
+            if trap.ds_tag.len() > 64 {
+                return Err(VoucherCoreError::Crypto(
+                    "Shard ds_tag exceeds maximum Base58 length".to_string(),
+                ));
+            }
+            let ds_tag_bytes = bs58::decode(&trap.ds_tag).into_vec().map_err(|e| {
+                VoucherCoreError::Crypto(format!("Invalid Base58 for ds_tag: {}", e))
+            })?;
+            if ds_tag_bytes.len() != 32 {
+                return Err(VoucherCoreError::Crypto(format!(
+                    "Invalid ds_tag length: expected 32 bytes, found {}",
+                    ds_tag_bytes.len()
+                )));
+            }
+
             // SECURITY (HMSEC-SA04-09): Structural shard sanity. The V3
             // digest binds the shard STRINGS verbatim, so a malicious payer
             // could otherwise sign arbitrary garbage as trap shards and
@@ -533,6 +549,20 @@ pub fn verify_transaction_basics(
                 "Initial transaction has invalid prev_hash.".to_string(),
             )
             .into());
+        }
+        // SECURITY (AUDIT-W4-TRAP-202): Genesis/init transactions must not contain
+        // non-trivial trap_data. Shards / foreign ds_tags in the init row are
+        // rejected fail-closed to prevent authenticated spend-claim masquerades.
+        if let Some(trap) = &tx.trap_data {
+            let is_trivial = (trap.trap_r.is_empty() || trap.trap_r == "none")
+                && (trap.trap_s.is_empty() || trap.trap_s == "none")
+                && (trap.ds_tag.is_empty() || trap.ds_tag == "none");
+            if !is_trivial {
+                return Err(ValidationError::InvalidTransaction(
+                    "Initial ('init') transaction must not contain non-trivial trap_data.".to_string(),
+                )
+                .into());
+            }
         }
         // SECURITY (AUDIT-W4-INT-501): issuer attribution is MANDATORY for
         // issuance. Previously every attribution gate was conditional on

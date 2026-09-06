@@ -16,6 +16,13 @@ pub(crate) fn format_bff_name(raw_name: &str, is_test: bool) -> String {
     if is_test && !raw_name.starts_with("TEST-") {
         format!("TEST-{}", raw_name)
     } else {
+        if !is_test && raw_name.starts_with("TEST-") {
+            log::warn!(
+                "format_bff_name: name '{}' has TEST- prefix but is_test=false. \
+                 Possible data inconsistency in voucher standard definition.",
+                raw_name
+            );
+        }
         raw_name.to_string()
     }
 }

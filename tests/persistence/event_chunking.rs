@@ -1,4 +1,4 @@
-use human_money_core::storage::{AuthMethod, Storage, file_storage::FileStorage};
+use human_money_core::storage::{AuthMethod, file_storage::FileStorage};
 use human_money_core::models::wallet_event::{WalletEvent, WalletEventType, EventBffData};
 use tempfile::tempdir;
 use chrono::{TimeZone, Utc};
@@ -36,7 +36,7 @@ fn test_event_migration_and_chunking() {
     let mut event_new = WalletEvent::new("l2".into(), "v2".into(), WalletEventType::VoucherCreated, bff_data.clone());
     event_new.timestamp = Utc.with_ymd_and_hms(2026, 2, 20, 12, 0, 0).unwrap();
 
-    let _legacy_events = vec![event_old.clone(), event_new.clone()];
+    let _legacy_events = [event_old.clone(), event_new.clone()];
     
     // Write legacy file manually (simulating old version)
     // We need to use the encryption logic from FileStorage or just use the old append_events implementation logic.
@@ -63,7 +63,7 @@ fn test_event_migration_and_chunking() {
     }
 
     // 1. Create events in the NEW system
-    storage.append_events(user_id, &auth, &[event_old.clone(), event_new.clone()]).unwrap();
+    storage.append_events(&auth, &[event_old.clone(), event_new.clone()]).unwrap();
     
     // Verify they are in chunks
     assert!(storage_path.join("events/2026_01.json.enc").exists());
@@ -79,7 +79,7 @@ fn test_event_migration_and_chunking() {
     let mut event_march = event_march;
     event_march.timestamp = Utc.with_ymd_and_hms(2026, 3, 10, 12, 0, 0).unwrap();
     
-    storage.append_events(user_id, &auth, &[event_march.clone()]).unwrap();
+    storage.append_events(&auth, &[event_march.clone()]).unwrap();
 
     // 4. Verify migration
     assert!(!legacy_path.exists());
@@ -88,13 +88,13 @@ fn test_event_migration_and_chunking() {
 
     // 5. Verify load_events pagination
     // Should return newest first: March, then January
-    let all_events = storage.load_events(user_id, &auth, 0, 10).unwrap();
+    let all_events = storage.load_events(&auth, 0, 10).unwrap();
     assert_eq!(all_events.len(), 2);
     assert_eq!(all_events[0].event_id, event_march.event_id);
     assert_eq!(all_events[1].event_id, event_old.event_id);
 
     // Test offset
-    let paged_events = storage.load_events(user_id, &auth, 1, 10).unwrap();
+    let paged_events = storage.load_events(&auth, 1, 10).unwrap();
     assert_eq!(paged_events.len(), 1);
     assert_eq!(paged_events[0].event_id, event_old.event_id);
 }

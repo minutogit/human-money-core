@@ -39,10 +39,9 @@
 //! defense-in-depth rest behind Base58 chain validation).
 
 use human_money_core::archive::file_archive::FileVoucherArchive;
-use human_money_core::archive::VoucherArchive;
-use human_money_core::models::voucher::Voucher;
 use human_money_core::services::mnemonic::{GERMAN_WORDLIST, MnemonicLanguage, MnemonicProcessor};
 use human_money_core::test_utils::setup_voucher_with_one_tx;
+use human_money_core::{Transaction, Voucher};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
@@ -359,7 +358,6 @@ fn sa05_03_mnemonic_validation_errors_must_not_disclose_phrase_words() {
 #[test]
 fn sa05_04_rolled_back_voucher_store_must_not_load_silently() {
     use human_money_core::FileStorage;
-    use human_money_core::Storage;
     use human_money_core::StorageError;
     use human_money_core::models::profile::{UserProfile, VoucherStore};
     use human_money_core::storage::AuthMethod;
@@ -391,7 +389,7 @@ fn sa05_04_rolled_back_voucher_store_must_not_load_silently() {
     );
 
     storage
-        .save_wallet(&profile, &store_with_voucher, &alice, &auth)
+        .save_wallet(&profile, &store_with_voucher, alice, &auth)
         .expect("initial save must succeed");
     assert!(
         storage.profile_exists(),
@@ -406,7 +404,7 @@ fn sa05_04_rolled_back_voucher_store_must_not_load_silently() {
     //    (simulating spend/transfer), producing a NEWER consistent pair.
     let empty_store = VoucherStore::default();
     storage
-        .save_wallet(&profile, &empty_store, &alice, &auth)
+        .save_wallet(&profile, &empty_store, alice, &auth)
         .expect("second save must succeed");
 
     // 3. ATTACK / SIMULATED CRASH: revert vouchers.enc to the previous
@@ -494,7 +492,7 @@ fn sa05_04_rolled_back_voucher_store_must_not_load_silently() {
 // =============================================================================
 #[test]
 fn sa05_05_plaintext_archive_record_must_be_rejected_as_integrity_violation() {
-    use human_money_core::archive::ArchiveError;
+    use human_money_core::StorageError;
 
     // 1. SETUP: archive one valid voucher state via the sealed writer.
     let (standard, _standard_hash, alice, _bob, voucher, _secrets) = setup_voucher_with_one_tx();
@@ -528,7 +526,7 @@ fn sa05_05_plaintext_archive_record_must_be_rejected_as_integrity_violation() {
     //    never served back into the forensics pipeline.
     let by_tx = archive.find_transaction_by_id(&last_tx.t_id);
     assert!(
-        matches!(by_tx, Err(ArchiveError::IntegrityViolation(_))),
+        matches!(by_tx, Err(StorageError::IntegrityViolation(_))),
         "HMSEC-SA05-05 VIOLATION: find_transaction_by_id accepted a plaintext \
          forged record instead of failing with IntegrityViolation (got {:?}). \
          Unencrypted records bypass the AEAD integrity check — the legacy \
@@ -542,7 +540,7 @@ fn sa05_05_plaintext_archive_record_must_be_rejected_as_integrity_violation() {
 
     let by_voucher = archive.get_archived_voucher(&voucher.voucher_id);
     assert!(
-        matches!(by_voucher, Err(ArchiveError::IntegrityViolation(_))),
+        matches!(by_voucher, Err(StorageError::IntegrityViolation(_))),
         "HMSEC-SA05-05 VIOLATION: get_archived_voucher accepted a plaintext \
          forged record instead of failing with IntegrityViolation \
          (CWE-347/CWE-693)."
@@ -726,10 +724,10 @@ fn sa05_06_secure_container_drop_must_zeroize_all_sensitive_fields() {
 #[test]
 fn sa05_07_store_binding_hash_must_be_authenticated_and_mandatory() {
     use human_money_core::models::profile::{UserProfile, VoucherStore};
-    use human_money_core::services::crypto_utils::get_hash;
+    use human_money_core::services::crypto::get_hash;
     use human_money_core::storage::AuthMethod;
     use human_money_core::wallet::Wallet;
-    use human_money_core::{FileStorage, Storage, StorageError, VoucherInstance, VoucherStatus};
+    use human_money_core::{FileStorage, StorageError, VoucherInstance, VoucherStatus};
 
     // Rewrites profile.enc (plaintext JSON container) through `f`.
     fn modify_profile_json(
@@ -769,7 +767,7 @@ fn sa05_07_store_binding_hash_must_be_authenticated_and_mandatory() {
     );
 
     storage
-        .save_wallet(&profile, &store_with_voucher, &alice, &auth)
+        .save_wallet(&profile, &store_with_voucher, alice, &auth)
         .expect("initial save must succeed");
 
     let store_path = storage.user_storage_path.join("vouchers.enc");
@@ -778,7 +776,7 @@ fn sa05_07_store_binding_hash_must_be_authenticated_and_mandatory() {
 
     let empty_store = VoucherStore::default();
     storage
-        .save_wallet(&profile, &empty_store, &alice, &auth)
+        .save_wallet(&profile, &empty_store, alice, &auth)
         .expect("second save must succeed");
 
     // Baseline control: the consistent Gen2 pair loads cleanly.
@@ -878,9 +876,9 @@ fn sa05_08_legacy_v2_fingerprint_data_must_not_be_silently_degraded() {
     use base64::{engine::general_purpose, Engine as _};
     use human_money_core::models::conflict::{OwnFingerprints, TransactionFingerprint};
     use human_money_core::models::profile::{UserProfile, VoucherStore};
-    use human_money_core::services::crypto_utils::{decrypt_data, encrypt_data};
+    use human_money_core::services::crypto::{decrypt_data, encrypt_data};
     use human_money_core::storage::AuthMethod;
-    use human_money_core::{FileStorage, Storage};
+    use human_money_core::FileStorage;
 
     const PW: &str = "sa05-08-pw";
 
@@ -895,7 +893,7 @@ fn sa05_08_legacy_v2_fingerprint_data_must_not_be_silently_degraded() {
         ..Default::default()
     };
     storage
-        .save_wallet(&profile, &VoucherStore::default(), &alice, &auth)
+        .save_wallet(&profile, &VoucherStore::default(), alice, &auth)
         .expect("initial save must succeed");
 
     // CONTROL: prove the plumbing itself works — current-shape stores round
@@ -919,10 +917,10 @@ fn sa05_08_legacy_v2_fingerprint_data_must_not_be_silently_degraded() {
         }],
     );
     storage
-        .save_own_fingerprints(&alice.user_id, &auth, &control)
+        .save_own_fingerprints(&auth, &control)
         .expect("control save must succeed");
     let reloaded = storage
-        .load_own_fingerprints(&alice.user_id, &auth)
+        .load_own_fingerprints(&auth)
         .expect("control load must succeed");
     assert_eq!(
         reloaded.history.get("control-key"),
@@ -982,7 +980,7 @@ fn sa05_08_legacy_v2_fingerprint_data_must_not_be_silently_degraded() {
 
     // SECURE INVARIANT (Soll-Verhalten): schema gate OR preservation — never
     // silent degradation, never lossy write-back.
-    match storage.load_own_fingerprints(&alice.user_id, &auth) {
+    match storage.load_own_fingerprints(&auth) {
         Err(_) => {
             // Schema-gate variant: hard failure instead of silent loss is an
             // accepted secure outcome; nothing else to pin here.
@@ -994,7 +992,7 @@ fn sa05_08_legacy_v2_fingerprint_data_must_not_be_silently_degraded() {
                 let shards_missing =
                     fingerprint.trap_r.is_empty() || fingerprint.trap_s.is_empty();
                 assert!(
-                    !(fingerprint.layer2_signature != "" && shards_missing),
+                    !(!fingerprint.layer2_signature.is_empty() && shards_missing),
                     "HMSEC-SA05-08 VIOLATION: legacy V2 spend fingerprint loaded as \
                      degraded hybrid (layer2_signature present while trap_r/trap_s \
                      default to empty strings) — serde field-drop destroyed the \
@@ -1006,7 +1004,7 @@ fn sa05_08_legacy_v2_fingerprint_data_must_not_be_silently_degraded() {
             //     immutable" history: the V2 identity material must still be on
             //     disk, or the entry must have been genuinely upgraded to V3.
             storage
-                .save_own_fingerprints(&alice.user_id, &auth, &own)
+                .save_own_fingerprints(&auth, &own)
                 .expect("write-back save must succeed");
             let written: serde_json::Value = serde_json::from_slice(
                 &fs::read(storage.user_storage_path.join("own_fingerprints.enc"))
@@ -1025,8 +1023,8 @@ fn sa05_08_legacy_v2_fingerprint_data_must_not_be_silently_degraded() {
             let entry = &round_trip["history"]["legacy-v2-spend-t-id"][0];
             let preserved_verbatim =
                 entry.get("u").is_some() && entry.get("blinded_id").is_some();
-            let upgraded_to_v3 = entry["trap_r"].as_str().map_or(false, |s| !s.is_empty())
-                && entry["trap_s"].as_str().map_or(false, |s| !s.is_empty());
+            let upgraded_to_v3 = entry["trap_r"].as_str().is_some_and(|s| !s.is_empty())
+                && entry["trap_s"].as_str().is_some_and(|s| !s.is_empty());
             assert!(
                 preserved_verbatim || upgraded_to_v3,
                 "HMSEC-SA05-08 VIOLATION: the 'complete and immutable' own-\
@@ -1079,8 +1077,7 @@ fn sa05_08_legacy_v2_fingerprint_data_must_not_be_silently_degraded() {
 // =============================================================================
 #[test]
 fn sa05_09_archive_record_deletion_and_relocation_must_be_detectable() {
-    use human_money_core::models::voucher::Transaction;
-
+    
     let (standard, _standard_hash, alice, _bob, voucher, _secrets) = setup_voucher_with_one_tx();
 
     // Fabricate a strictly newer state (longer chain). The archive layer is
@@ -1283,7 +1280,7 @@ fn sa05_10_archive_construction_with_empty_password_must_be_rejected() {
 fn sa05_11_arbitrary_data_read_paths_must_enforce_name_sanitization() {
     use human_money_core::models::profile::{UserProfile, VoucherStore};
     use human_money_core::storage::AuthMethod;
-    use human_money_core::{FileStorage, Storage, StorageError};
+    use human_money_core::{FileStorage, StorageError};
 
     let (_standard, _standard_hash, alice, _bob, _voucher, _secrets) = setup_voucher_with_one_tx();
     let auth = AuthMethod::Password("sa05-11-pw");
@@ -1298,12 +1295,12 @@ fn sa05_11_arbitrary_data_read_paths_must_enforce_name_sanitization() {
         ..Default::default()
     };
     storage
-        .save_wallet(&profile, &VoucherStore::default(), &alice, &auth)
+        .save_wallet(&profile, &VoucherStore::default(), alice, &auth)
         .expect("initial save must succeed");
 
     // DOCUMENTED CONVENTION (control, passes today): the WRITE side validates
     // names before any path construction.
-    let save_reject = storage.save_arbitrary_data(&alice.user_id, &auth, "../outside", b"x");
+    let save_reject = storage.save_arbitrary_data(&auth, "../outside", b"x");
     assert!(
         matches!(save_reject, Err(StorageError::Generic(_))),
         "test setup: save_arbitrary_data must reject traversal names (existing convention)"
@@ -1331,7 +1328,7 @@ fn sa05_11_arbitrary_data_read_paths_must_enforce_name_sanitization() {
     // CONSISTENCY (Soll): the READ side must apply the SAME validation class
     // as the write side — NotFound would leak path-resolution semantics rather
     // than rejecting the hostile name itself.
-    match storage.load_arbitrary_data(&alice.user_id, &auth, "../outside") {
+    match storage.load_arbitrary_data(&auth, "../outside") {
         Err(StorageError::Generic(_)) => {}
         other => panic!(
             "HMSEC-SA05-11 VIOLATION: load_arbitrary_data does not enforce the name \

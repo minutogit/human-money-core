@@ -8,7 +8,7 @@
 mod tests {
     use chrono::{Duration, Utc};
     use human_money_core::models::conflict::TransactionFingerprint;
-    use human_money_core::services::voucher_manager::NewVoucherData;
+    use human_money_core::NewVoucherData;
     use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD};
     use tempfile::tempdir;
 
@@ -126,7 +126,9 @@ mod tests {
                 Some(PASSWORD),
             )
             .unwrap();
-        let local_id = alice_service.get_voucher_summaries(None, None, None).unwrap()[0]
+        let local_id = alice_service
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap()[0]
             .local_instance_id
             .clone();
 

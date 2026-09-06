@@ -9,11 +9,10 @@ use human_money_core::UserIdentity;
 use human_money_core::VoucherStatus;
 use human_money_core::error::VoucherCoreError;
 use human_money_core::models::voucher::{ValueDefinition, Voucher};
-use human_money_core::services::crypto_utils;
-use human_money_core::services::voucher_manager;
-use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::services::crypto;
+use human_money_core::NewVoucherData;
 use human_money_core::storage::AuthMethod;
-use human_money_core::{FileStorage, Storage, StorageError, Wallet};
+use human_money_core::{FileStorage, StorageError, Wallet};
 use std::fs;
 use tempfile::tempdir;
 
@@ -47,7 +46,7 @@ fn create_test_voucher(identity: &UserIdentity) -> Voucher {
         ..Default::default()
     };
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
-    voucher_manager::create_voucher(
+    human_money_core::models::voucher::Voucher::create_with_key(
         new_voucher_data,
         standard,
         standard_hash,
@@ -71,7 +70,7 @@ fn test_wallet_creation_save_and_load() {
             identity.prefix.unwrap_or("")
         );
         const SALT: &[u8] = b"human-money-profile-folder-v1";
-        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
+        crypto::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
@@ -80,7 +79,7 @@ fn test_wallet_creation_save_and_load() {
 
     // 2. Save
     wallet
-        .save(&mut storage, &identity, &AuthMethod::Password(password))
+        .save(&mut storage, identity, &AuthMethod::Password(password))
         .expect("Failed to save wallet");
 
     // 3. Load and verify
@@ -114,7 +113,7 @@ fn test_password_recovery_and_reset_with_data() {
             identity.prefix.unwrap_or("")
         );
         const SALT: &[u8] = b"human-money-profile-folder-v1";
-        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
+        crypto::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
@@ -129,7 +128,7 @@ fn test_password_recovery_and_reset_with_data() {
     wallet
         .save(
             &mut storage,
-            &identity,
+            identity,
             &AuthMethod::Password(initial_password),
         )
         .expect("Initial save failed");
@@ -207,14 +206,14 @@ fn test_load_with_missing_voucher_store() {
             identity.prefix.unwrap_or("")
         );
         const SALT: &[u8] = b"human-money-profile-folder-v1";
-        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
+        crypto::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
 
     let mut wallet = setup_in_memory_wallet(identity);
     wallet
-        .save(&mut storage, &identity, &AuthMethod::Password(password))
+        .save(&mut storage, identity, &AuthMethod::Password(password))
         .unwrap();
 
     // Delete the voucher file
@@ -244,14 +243,14 @@ fn test_load_from_corrupted_profile_file() {
             identity.prefix.unwrap_or("")
         );
         const SALT: &[u8] = b"human-money-profile-folder-v1";
-        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
+        crypto::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
 
     let mut wallet = setup_in_memory_wallet(identity);
     wallet
-        .save(&mut storage, &identity, &AuthMethod::Password(password))
+        .save(&mut storage, identity, &AuthMethod::Password(password))
         .unwrap();
 
     // Corrupt the profile file
@@ -282,7 +281,7 @@ fn test_empty_password_handling() {
             identity.prefix.unwrap_or("")
         );
         const SALT: &[u8] = b"human-money-profile-folder-v1";
-        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
+        crypto::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
@@ -295,7 +294,7 @@ fn test_empty_password_handling() {
     wallet
         .save(
             &mut storage,
-            &identity,
+            identity,
             &AuthMethod::Password(empty_password),
         )
         .expect_err("Saving with an empty password must be rejected");
@@ -308,10 +307,10 @@ fn test_empty_password_handling() {
 
     // Resetting an existing wallet's password to empty must be rejected too.
     wallet
-        .save(&mut storage, &identity, &AuthMethod::Password("a-real-password"))
+        .save(&mut storage, identity, &AuthMethod::Password("a-real-password"))
         .expect("Saving with a real password should succeed");
     storage
-        .reset_password(&identity, empty_password)
+        .reset_password(identity, empty_password)
         .expect_err("Resetting the password to empty must be rejected");
 
     // Loading with the still-valid password keeps working.
@@ -345,7 +344,7 @@ fn test_save_and_load_with_bundle_history() {
             alice_identity.prefix.unwrap_or("")
         );
         const SALT: &[u8] = b"human-money-profile-folder-v1";
-        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
+        crypto::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
@@ -387,7 +386,7 @@ fn test_save_and_load_with_bundle_history() {
             alice_identity,
             &standards,
             request,
-            None::<&dyn human_money_core::archive::VoucherArchive>,
+            None,
         )
         .expect("Transfer failed");
 
@@ -405,7 +404,7 @@ fn test_save_and_load_with_bundle_history() {
     alice_wallet
         .save(
             &mut storage,
-            &alice_identity,
+            alice_identity,
             &AuthMethod::Password(password),
         )
         .expect("Failed to save wallet with history");
@@ -454,7 +453,7 @@ fn test_save_and_load_arbitrary_data() {
             identity.prefix.unwrap_or("")
         );
         const SALT: &[u8] = b"human-money-profile-folder-v1";
-        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
+        crypto::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
     let mut storage = FileStorage::new(user_storage_path);
@@ -486,18 +485,14 @@ fn test_save_and_load_arbitrary_data() {
     // 3. Save the data
     println!("--> Saving blobs to storage...");
     storage
-        .save_arbitrary_data(
-            &identity.user_id,
-            &AuthMethod::Password(password),
+        .save_arbitrary_data(&AuthMethod::Password(password),
             blob_name1,
             &simple_data,
         )
         .expect("Saving simple blob should succeed");
 
     storage
-        .save_arbitrary_data(
-            &identity.user_id,
-            &AuthMethod::Password(password),
+        .save_arbitrary_data(&AuthMethod::Password(password),
             blob_name2,
             &complex_data_bytes,
         )
@@ -526,18 +521,14 @@ fn test_save_and_load_arbitrary_data() {
 
     // 4. Load and verify
     let loaded_simple_data = storage
-        .load_arbitrary_data(
-            &identity.user_id,
-            &AuthMethod::Password(password),
+        .load_arbitrary_data(&AuthMethod::Password(password),
             blob_name1,
         )
         .expect("Loading simple blob should succeed");
     assert_eq!(simple_data, loaded_simple_data);
 
     let loaded_complex_data_bytes = storage
-        .load_arbitrary_data(
-            &identity.user_id,
-            &AuthMethod::Password(password),
+        .load_arbitrary_data(&AuthMethod::Password(password),
             blob_name2,
         )
         .expect("Loading complex blob should succeed");
@@ -547,17 +538,13 @@ fn test_save_and_load_arbitrary_data() {
 
     // 5. Error cases
     // Wrong password
-    let res = storage.load_arbitrary_data(
-        &identity.user_id,
-        &AuthMethod::Password("wrong-pass"),
+    let res = storage.load_arbitrary_data(&AuthMethod::Password("wrong-pass"),
         blob_name1,
     );
     assert!(matches!(res, Err(StorageError::AuthenticationFailed)));
 
     // Non-existent data
-    let res = storage.load_arbitrary_data(
-        &identity.user_id,
-        &AuthMethod::Password(password),
+    let res = storage.load_arbitrary_data(&AuthMethod::Password(password),
         "non-existent-blob",
     );
     assert!(matches!(res, Err(StorageError::NotFound)));
@@ -565,18 +552,14 @@ fn test_save_and_load_arbitrary_data() {
     // 6. Test overwriting
     let new_simple_data = b"this is updated data".to_vec();
     storage
-        .save_arbitrary_data(
-            &identity.user_id,
-            &AuthMethod::Password(password),
+        .save_arbitrary_data(&AuthMethod::Password(password),
             blob_name1,
             &new_simple_data,
         )
         .expect("Overwriting blob should succeed");
 
     let reloaded_data = storage
-        .load_arbitrary_data(
-            &identity.user_id,
-            &AuthMethod::Password(password),
+        .load_arbitrary_data(&AuthMethod::Password(password),
             blob_name1,
         )
         .expect("Loading overwritten blob should succeed");
@@ -604,7 +587,7 @@ fn test_storage_reentrancy_same_process() {
             identity.prefix.unwrap_or("")
         );
         const SALT: &[u8] = b"human-money-profile-folder-v1";
-        crypto_utils::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
+        crypto::derive_argon2_id(secret_string.as_bytes(), SALT).unwrap()
     };
     let user_storage_path = temp_dir.path().join(folder_name);
 
@@ -627,9 +610,7 @@ fn test_storage_reentrancy_same_process() {
     // 4. ACT: Attempt to save data.
     // This internally calls lock(). If the re-entrancy fix is missing, it would see the lock file,
     // read the PID, and throw LockFailed because it "thinks" it is blocked.
-    let res = storage2.save_arbitrary_data(
-        &identity.user_id,
-        &AuthMethod::Password(password),
+    let res = storage2.save_arbitrary_data(&AuthMethod::Password(password),
         "reentrancy_blob",
         b"data",
     );
@@ -699,9 +680,7 @@ fn test_lock_file_is_deleted_after_unlock() {
 
     // Perform a write operation – this internally calls lock() and unlock().
     storage
-        .save_arbitrary_data(
-            &identity.user_id,
-            &AuthMethod::Password(password),
+        .save_arbitrary_data(&AuthMethod::Password(password),
             "lock_test",
             b"payload",
         )
@@ -797,12 +776,12 @@ fn test_known_fingerprints_persist_and_load() {
 
     // Save.
     storage
-        .save_known_fingerprints(&identity.user_id, &auth, &store)
+        .save_known_fingerprints(&auth, &store)
         .expect("save_known_fingerprints should succeed");
 
     // Load and verify.
     let loaded = storage
-        .load_known_fingerprints(&identity.user_id, &auth)
+        .load_known_fingerprints(&auth)
         .expect("load_known_fingerprints should succeed");
 
     assert!(
@@ -842,12 +821,12 @@ fn test_own_fingerprints_persist_and_load() {
 
     // Save.
     storage
-        .save_own_fingerprints(&identity.user_id, &auth, &store)
+        .save_own_fingerprints(&auth, &store)
         .expect("save_own_fingerprints should succeed");
 
     // Load and verify.
     let loaded = storage
-        .load_own_fingerprints(&identity.user_id, &auth)
+        .load_own_fingerprints(&auth)
         .expect("load_own_fingerprints should succeed");
 
     assert!(
@@ -881,12 +860,12 @@ fn test_fingerprint_metadata_persists_and_loads() {
 
     // Save.
     storage
-        .save_fingerprint_metadata(&identity.user_id, &auth, &metadata_store)
+        .save_fingerprint_metadata(&auth, &metadata_store)
         .expect("save_fingerprint_metadata should succeed");
 
     // Load and verify.
     let loaded = storage
-        .load_fingerprint_metadata(&identity.user_id, &auth)
+        .load_fingerprint_metadata(&auth)
         .expect("load_fingerprint_metadata should succeed");
 
     assert!(
@@ -902,7 +881,7 @@ fn test_fingerprint_metadata_persists_and_loads() {
 
 #[test]
 fn test_wallet_lock_guard_does_not_delete_persistent_lock() {
-    use human_money_core::storage::{Storage, WalletLockGuard};
+    use human_money_core::storage::WalletLockGuard;
     use human_money_core::storage::file_storage::FileStorage;
     use tempfile::tempdir;
 

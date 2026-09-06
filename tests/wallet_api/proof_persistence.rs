@@ -41,7 +41,7 @@ fn test_proof_is_created_even_when_transaction_missing_from_store() {
     let mut watchtower_wallet = setup_in_memory_wallet(&watchtower.identity);
 
     // T1: Alice -> Watchtower
-    let (voucher_to_wt_1, _secrets1) = human_money_core::services::voucher_manager::create_transaction(
+    let (voucher_to_wt_1, _secrets1) = human_money_core::models::voucher::Transaction::create(
         &voucher_after_init,
         standard,
         &alice.identity.user_id,
@@ -53,7 +53,7 @@ fn test_proof_is_created_even_when_transaction_missing_from_store() {
     ).unwrap();
 
     // T2: Alice -> Watchtower (Double Spend of T1)
-    let (voucher_to_wt_2, _secrets2) = human_money_core::services::voucher_manager::create_transaction(
+    let (voucher_to_wt_2, _secrets2) = human_money_core::models::voucher::Transaction::create(
         &voucher_after_init,
         standard,
         &alice.identity.user_id,

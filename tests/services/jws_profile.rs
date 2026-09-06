@@ -3,7 +3,7 @@
 //! Roundtrip tests for JWS Profile Service (RFC 7515 Compact Serialization).
 
 use human_money_core::models::profile::PublicProfile;
-use human_money_core::services::crypto_utils::generate_ed25519_keypair_for_tests;
+use human_money_core::services::crypto::generate_ed25519_keypair_for_tests;
 use human_money_core::services::jws_profile_service::{
     export_profile_as_jws, verify_and_import_jws_profile,
 };

@@ -3,32 +3,15 @@
 //! Contains the implementation of `Wallet` methods that serve as "view-models".
 //! They prepare data for display in client applications.
 
+use super::types::format_bff_name;
 use super::{AggregatedBalance, AssetClass, VoucherDetails, VoucherSummary, Wallet};
 use crate::error::VoucherCoreError;
-use crate::models::profile::PublicProfile;
 use crate::services::jws_profile_service::export_profile_as_jws;
 use crate::wallet::instance::VoucherStatus;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::Zero;
 use std::collections::HashMap;
 use std::str::FromStr;
-
-/// Helper function for formatting names for the user interface (BFF pattern).
-/// Ensures that test vouchers receive a consistent "TEST-" prefix.
-pub(crate) fn format_bff_name(raw_name: &str, is_test: bool) -> String {
-    if is_test && !raw_name.starts_with("TEST-") {
-        format!("TEST-{}", raw_name)
-    } else {
-        if !is_test && raw_name.starts_with("TEST-") {
-            log::warn!(
-                "format_bff_name: name '{}' has TEST- prefix but is_test=false. \
-                 Possible data inconsistency in voucher standard definition.",
-                raw_name
-            );
-        }
-        raw_name.to_string()
-    }
-}
 
 /// View-model / convenience functions for client applications.
 impl Wallet {
@@ -85,7 +68,7 @@ impl Wallet {
                     let holder_pub_hash = identity.and_then(|id| {
                          self.rederive_secret_seed(voucher, id).ok()
                     }).map(|key| {
-                        crate::services::crypto_utils::get_hash(key.verifying_key().to_bytes())
+                        crate::services::crypto::get_hash(key.verifying_key().to_bytes())
                     });
 
                     // Use core service for precise calculation
@@ -203,7 +186,7 @@ impl Wallet {
                     {
                         // Calculate the historical ID that would have corresponded to this transaction.
                         // The ID is based on voucher_id + transaction_id + user_id.
-                        let historical_id = crate::services::crypto_utils::get_hash(format!(
+                        let historical_id = crate::services::crypto::get_hash(format!(
                             "{}{}{}",
                             inst.voucher.voucher_id, tx.t_id, self.profile.user_id
                         ));
@@ -257,7 +240,7 @@ impl Wallet {
                 // Case A: privacy_guard present
                 // Attempt to decrypt. If successful, use payload.sender_permanent_did.
                 // If decryption fails (e.g. key unavailable), abort and return Ok(None)!
-                match crate::services::crypto_utils::decrypt_recipient_payload(
+                match crate::services::crypto::decrypt_recipient_payload(
                     guard_base64,
                     &identity.signing_key,
                     &identity.user_id,
@@ -338,14 +321,14 @@ impl Wallet {
                     .last()
                     .map(|tx| {
                         // Prefer cryptographic check
-                        if let Some(id) = identity {
-                            if let Ok(key) = self.rederive_secret_seed(voucher, id) {
-                                let hash = crate::services::crypto_utils::get_hash(key.verifying_key().to_bytes());
-                                if Some(&hash) == tx.receiver_ephemeral_pub_hash.as_ref() {
-                                    return tx.amount.clone();
-                                } else if Some(&hash) == tx.change_ephemeral_pub_hash.as_ref() {
-                                    return tx.sender_remaining_amount.clone().unwrap_or_else(|| "0".to_string());
-                                }
+                        if let Some(id) = identity
+                            && let Ok(key) = self.rederive_secret_seed(voucher, id)
+                        {
+                            let hash = crate::services::crypto::get_hash(key.verifying_key().to_bytes());
+                            if Some(&hash) == tx.receiver_ephemeral_pub_hash.as_ref() {
+                                return tx.amount.clone();
+                            } else if Some(&hash) == tx.change_ephemeral_pub_hash.as_ref() {
+                                return tx.sender_remaining_amount.clone().unwrap_or_else(|| "0".to_string());
                             }
                         }
 
@@ -451,15 +434,34 @@ impl Wallet {
     /// This function implements the implicit Web-of-Trust. It searches the
     /// `proof_store` for unresolved conflicts caused by `user_id`.
     pub fn check_reputation(&self, offender_id: &str) -> crate::models::conflict::TrustStatus {
+        self.check_reputation_with_provider(offender_id, None)
+    }
+
+    /// Checks reputation with an optional external [`crate::services::trust_provider::TrustProvider`].
+    ///
+    /// Evaluation order (local-first):
+    /// 1. Scan `proof_store` for unresolved conflicts (existing semantics).
+    /// 2. If the local result is `Clean` and a provider is supplied, delegate
+    ///    to `provider.check_reputation(offender_id)`.
+    /// 3. Otherwise return the local verdict.
+    ///
+    /// This keeps the core WASM-compatible and dependency-free while allowing
+    /// the `humoco-web-of-trust` crate to plug in graph-based scoring without
+    /// modifying core.
+    pub fn check_reputation_with_provider(
+        &self,
+        offender_id: &str,
+        provider: Option<&dyn crate::services::trust_provider::TrustProvider>,
+    ) -> crate::models::conflict::TrustStatus {
         use crate::models::conflict::TrustStatus;
 
         let mut latest_resolved = None;
 
         for entry in self.proof_store.proofs.values() {
             if entry.proof.offender_id == offender_id {
-                let is_officially_resolved = entry.proof.resolutions.as_ref().map_or(false, |r| !r.is_empty())
+                let is_officially_resolved = entry.proof.resolutions.as_ref().is_some_and(|r| !r.is_empty())
                     || entry.proof.layer2_verdict.is_some();
-                
+
                 if is_officially_resolved || entry.local_override {
                     // Remember the latest resolved one in case no unresolved proof is found.
                     latest_resolved = Some(TrustStatus::Resolved {
@@ -474,7 +476,16 @@ impl Wallet {
             }
         }
 
-        latest_resolved.unwrap_or(TrustStatus::Clean)
+        if let Some(local) = latest_resolved {
+            return local;
+        }
+
+        // Local is Clean -> delegate to WoT provider if present.
+        if let Some(p) = provider {
+            return p.check_reputation(offender_id);
+        }
+
+        TrustStatus::Clean
     }
 
     /// Exports own profile as a JWS Compact Serialization string.
@@ -491,25 +502,7 @@ impl Wallet {
         &self,
         identity: &crate::models::profile::UserIdentity,
     ) -> Result<String, VoucherCoreError> {
-        // Create a PublicProfile from the wallet profile
-        let public_profile = PublicProfile {
-            protocol_version: Some("v1".to_string()),
-            id: Some(self.profile.user_id.clone()),
-            first_name: self.profile.first_name.clone(),
-            last_name: self.profile.last_name.clone(),
-            organization: self.profile.organization.clone(),
-            community: self.profile.community.clone(),
-            address: self.profile.address.clone(),
-            gender: self.profile.gender.clone(),
-            email: self.profile.email.clone(),
-            phone: self.profile.phone.clone(),
-            coordinates: self.profile.coordinates.clone(),
-            url: self.profile.url.clone(),
-            service_offer: self.profile.service_offer.clone(),
-            needs: self.profile.needs.clone(),
-            picture_url: self.profile.picture_url.clone(),
-        };
-
+        let public_profile = self.profile.to_public_profile();
         export_profile_as_jws(&identity.signing_key, &public_profile)
     }
 
@@ -523,9 +516,9 @@ impl Wallet {
     ///
     /// # Returns
     /// A chronologically descending sorted list of `WalletEvent` objects.
-    pub fn get_event_history<S: crate::storage::Storage>(
+    pub fn get_event_history(
         &self,
-        storage: &S,
+        storage: &crate::storage::FileStorage,
         auth: &crate::storage::AuthMethod,
         offset: usize,
         limit: usize,
@@ -551,15 +544,11 @@ impl Wallet {
             // Calculate the correct offset for storage.
             // If user offset is larger than what we have in RAM,
             // subtract the RAM size from the offset.
-            let storage_offset = if offset > pending_len {
-                offset - pending_len
-            } else {
-                0
-            };
+            let storage_offset = offset.saturating_sub(pending_len);
 
             // Here we pass the ACTUAL limit and offset! Chunking is optimally utilized.
             let persisted_page = storage
-                .load_events(&self.profile.user_id, auth, storage_offset, remaining_limit)
+                .load_events(auth, storage_offset, remaining_limit)
                 .map_err(VoucherCoreError::Storage)?;
 
             result.extend(persisted_page);

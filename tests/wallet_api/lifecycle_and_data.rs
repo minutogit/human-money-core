@@ -10,7 +10,7 @@ mod tests {
 
     use human_money_core::app_service::{AppService, ProfileInfo};
     use human_money_core::MnemonicLanguage;
-    use human_money_core::services::voucher_manager::NewVoucherData;
+    use human_money_core::NewVoucherData;
     use human_money_core::test_utils;
     use human_money_core::test_utils::{ACTORS, generate_signed_standard_toml};
     use tempfile::tempdir;
@@ -27,7 +27,7 @@ mod tests {
     /// Requires a service that already has a voucher.
     fn create_dummy_transfer_request(service: &mut AppService) -> MultiTransferRequest {
         let summary = service
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .pop()
             .expect("Service has no vouchers to transfer");
@@ -59,7 +59,7 @@ mod tests {
 
         let voucher_data = NewVoucherData {
             creator_profile: human_money_core::models::profile::PublicProfile {
-                id: Some(service.get_user_id().unwrap()),
+                id: Some(service.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
                 ..Default::default()
             },
             nominal_value: human_money_core::models::voucher::ValueDefinition {
@@ -78,7 +78,7 @@ mod tests {
             .create_new_voucher(&signed_standard, voucher_data, Some(password))
             .expect("Voucher creation in setup_service_with_voucher failed");
         let local_id = service
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .pop()
             .unwrap()
@@ -207,7 +207,7 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("mnemonic"));
-        assert!(service.get_user_id().is_err());
+        assert!(service.with_wallet(|w| w.get_user_id().to_string()).is_err());
     }
 
     /// **Test 4.2: Passphrase affects key derivation** (Plan C)
@@ -243,7 +243,7 @@ mod tests {
                 .contains("Login failed (check password)")
         );
         assert!(
-            service.get_user_id().is_err(),
+            service.with_wallet(|w| w.get_user_id().to_string()).is_err(),
             "Should not be able to get user ID while locked."
         );
     }
@@ -264,7 +264,7 @@ mod tests {
         );
 
         // 2. Create a test voucher (requires Mode B)
-        let user_id = service.get_user_id().unwrap();
+        let user_id = service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
         let voucher_data = NewVoucherData {
             creator_profile: human_money_core::models::profile::PublicProfile {
@@ -288,7 +288,9 @@ mod tests {
             .expect("Voucher creation should succeed");
 
         // 3. Check if the voucher is present
-        let summaries_before = service.get_voucher_summaries(None, None, None).unwrap();
+        let summaries_before = service
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap();
         assert_eq!(summaries_before.len(), 1);
         let local_id = summaries_before[0].local_instance_id.clone();
 
@@ -308,7 +310,7 @@ mod tests {
             .expect("Recovery should succeed");
 
         // 6. Assert: Voucher must still be present after recovery
-        let details_after = service.get_voucher_details(&local_id).unwrap();
+        let details_after = service.with_wallet(|w| w.get_voucher_details(&local_id).unwrap()).unwrap();
         assert_eq!(details_after.local_instance_id, local_id);
         assert_eq!(details_after.voucher.voucher_id, created_voucher.voucher_id);
 

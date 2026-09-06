@@ -9,7 +9,7 @@ use curve25519_dalek::scalar::Scalar;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use human_money_core::models::conflict::TransactionFingerprint;
 use human_money_core::models::voucher::TrapData;
-use human_money_core::services::crypto_utils::{
+use human_money_core::services::crypto::{
     create_user_id, ed25519_pk_to_curve_point, get_hash_from_slices, sign_ed25519,
 };
 use human_money_core::services::trap_manager::{
@@ -411,11 +411,10 @@ fn test_degenerate_and_invalid_extraction_handling() {
     // If the public key conversion fails (e.g. due to corrupted/invalid bytes), the wallet logic
     // preserves the offender_id as "anonymous" and does not update it.
     let mut offender_id = "anonymous".to_string();
-    if let Ok(pk) = VerifyingKey::from_bytes(&corrupted_pk_bytes) {
-        if let Ok(did_id) = create_user_id(&pk, None) {
+    if let Ok(pk) = VerifyingKey::from_bytes(&corrupted_pk_bytes)
+        && let Ok(did_id) = create_user_id(&pk, None) {
             offender_id = did_id;
         }
-    }
 
     assert_eq!(offender_id, "anonymous", "offender_id must not be updated with the invalid key");
 }
@@ -453,7 +452,7 @@ fn test_manipulated_shard_rejected_by_recipient_witness_check() {
 
     // 1. Create a legitimate transaction (SST trap + private witness inside
     //    the encrypted RecipientPayload).
-    let (mut voucher_for_bob, _secrets) = human_money_core::services::voucher_manager::create_transaction(
+    let (mut voucher_for_bob, _secrets) = human_money_core::models::voucher::Transaction::create(
         &voucher,
         &MINUTO_STANDARD.0,
         &alice.identity.user_id,

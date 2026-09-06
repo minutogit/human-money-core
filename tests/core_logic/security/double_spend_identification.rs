@@ -1,6 +1,6 @@
 use human_money_core::models::conflict::TransactionFingerprint;
 use human_money_core::models::voucher::TrapData;
-use human_money_core::services::crypto_utils;
+use human_money_core::services::crypto;
 use human_money_core::services::trap_manager::{self, generate_sst_trap};
 use human_money_core::test_utils::{ACTORS, TestUser};
 
@@ -9,7 +9,7 @@ use human_money_core::test_utils::{ACTORS, TestUser};
 // as collision context for autonomous identity extraction.
 fn setup_trap_data(prev_hash: &str, sender: &TestUser, t_id: &str) -> (TrapData, [u8; 32]) {
     // 1. Calculate Constant DS-Tag (Input based)
-    let (_ephemeral_secret, ephemeral_pub) = crypto_utils::derive_ephemeral_key_pair(
+    let (_ephemeral_secret, ephemeral_pub) = crypto::derive_ephemeral_key_pair(
         &sender.signing_key,
         prev_hash.as_bytes(),
         "test_ephemeral_gen",
@@ -18,7 +18,7 @@ fn setup_trap_data(prev_hash: &str, sender: &TestUser, t_id: &str) -> (TrapData,
     .unwrap();
     let eph32: [u8; 32] = *ephemeral_pub.as_bytes();
 
-    let ds_tag = crypto_utils::get_hash_from_slices(&[prev_hash.as_bytes(), &eph32]);
+    let ds_tag = crypto::get_hash_from_slices(&[prev_hash.as_bytes(), &eph32]);
 
     // 2. Generate the SST shard pair for this fork. The shards are bound to
     //    tau(t_id), so distinct forks of the same input yield distinct shards
@@ -68,7 +68,7 @@ fn test_sst_identity_recovery_from_conflicting_fingerprints() {
         trap_manager::extract_sst_identity(&fp_a.ds_tag, &eph, &fp_a, &fp_b).unwrap();
 
     // Verify against Alice's actual ID
-    let alice_id_point = crypto_utils::ed25519_pk_to_curve_point(&alice.public_key).unwrap();
+    let alice_id_point = crypto::ed25519_pk_to_curve_point(&alice.public_key).unwrap();
 
     assert_eq!(
         recovered_id_point, alice_id_point,

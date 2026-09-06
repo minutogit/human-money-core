@@ -26,9 +26,6 @@ use human_money_core::{
     VoucherCoreError,
     // Structs from specific modules
     models::voucher::ValueDefinition,
-    services::voucher_manager::{
-        VoucherManagerError, create_transaction, create_voucher, get_spendable_balance,
-    },
     services::voucher_validation::validate_voucher_against_standard,
 };
 use rust_decimal_macros::dec;
@@ -66,7 +63,7 @@ fn test_chained_transaction_math_and_scaling() {
         ..Default::default()
     };
 
-    let mut current_voucher = create_voucher(
+    let mut current_voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         standard,
         standard_hash,
@@ -74,11 +71,11 @@ fn test_chained_transaction_math_and_scaling() {
     .unwrap();
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &alice.user_id, standard, None).unwrap(),
         dec!(100)
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &bob.user_id, standard, None).unwrap(),
         dec!(0)
     );
 
@@ -86,7 +83,7 @@ fn test_chained_transaction_math_and_scaling() {
     // Alice (100) sends "40" to Bob.
     let holder_key =
         human_money_core::test_utils::derive_holder_key(&current_voucher, &alice.signing_key);
-    let (v, secrets_1) = create_transaction(
+    let (v, secrets_1) = human_money_core::models::voucher::Transaction::create(
         &current_voucher,
         standard,
         &alice.user_id,
@@ -101,11 +98,11 @@ fn test_chained_transaction_math_and_scaling() {
 
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, &standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &alice.user_id, standard, None).unwrap(),
         dec!(60)
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, &standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &bob.user_id, standard, None).unwrap(),
         dec!(40)
     );
     let tx1 = current_voucher.transactions.last().unwrap();
@@ -124,7 +121,7 @@ fn test_chained_transaction_math_and_scaling() {
             .unwrap(),
     );
 
-    let (v, secrets_2) = create_transaction(
+    let (v, secrets_2) = human_money_core::models::voucher::Transaction::create(
         &current_voucher,
         standard,
         &alice.user_id,
@@ -138,11 +135,11 @@ fn test_chained_transaction_math_and_scaling() {
     current_voucher = v;
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &alice.user_id, standard, None).unwrap(),
         dec!(49.8766)
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &bob.user_id, standard, None).unwrap(),
         dec!(10.1234) // Balance is only the amount of the last transaction
     );
 
@@ -158,7 +155,7 @@ fn test_chained_transaction_math_and_scaling() {
             .unwrap(),
     );
 
-    let (v, secrets_3) = create_transaction(
+    let (v, secrets_3) = human_money_core::models::voucher::Transaction::create(
         &current_voucher,
         standard,
         &alice.user_id,
@@ -172,11 +169,11 @@ fn test_chained_transaction_math_and_scaling() {
     current_voucher = v;
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &alice.user_id, standard, None).unwrap(),
         dec!(40.8766)
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &bob.user_id, standard, None).unwrap(),
         dec!(9.0000) // Balance is only the amount of the last transaction
     );
     let tx3 = current_voucher.transactions.last().unwrap();
@@ -193,7 +190,7 @@ fn test_chained_transaction_math_and_scaling() {
             .unwrap(),
     );
 
-    let (v, secrets_4) = create_transaction(
+    let (v, secrets_4) = human_money_core::models::voucher::Transaction::create(
         &current_voucher,
         standard,
         &alice.user_id,
@@ -207,11 +204,11 @@ fn test_chained_transaction_math_and_scaling() {
     current_voucher = v;
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &alice.user_id, standard, None).unwrap(),
         dec!(40.0066)
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &bob.user_id, standard, None).unwrap(),
         dec!(0.8700) // Balance is only the amount of the last transaction
     );
     let tx4 = current_voucher.transactions.last().unwrap();
@@ -228,7 +225,7 @@ fn test_chained_transaction_math_and_scaling() {
             .unwrap(),
     );
 
-    let (v, secrets_5) = create_transaction(
+    let (v, secrets_5) = human_money_core::models::voucher::Transaction::create(
         &current_voucher,
         standard,
         &alice.user_id,
@@ -242,11 +239,11 @@ fn test_chained_transaction_math_and_scaling() {
     current_voucher = v;
     validate_voucher_against_standard(&current_voucher, standard).unwrap();
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &alice.user_id, standard, None).unwrap(),
         dec!(0)
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &bob.user_id, standard, None).unwrap(),
         dec!(40.0066) // Balance is only the amount of the last transaction
     );
     let tx5 = current_voucher.transactions.last().unwrap();
@@ -266,7 +263,7 @@ fn test_chained_transaction_math_and_scaling() {
             .unwrap(),
     );
 
-    let (v, secrets_6) = create_transaction(
+    let (v, secrets_6) = human_money_core::models::voucher::Transaction::create(
         &current_voucher,
         standard,
         &bob.user_id,
@@ -282,11 +279,11 @@ fn test_chained_transaction_math_and_scaling() {
 
     // Check balances after the first return transaction
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &bob.user_id, standard, None).unwrap(),
         dec!(30.0066) // Bob's remaining balance
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &alice.user_id, standard, None).unwrap(),
         dec!(10.0000) // Alice's new balance
     );
 
@@ -300,7 +297,7 @@ fn test_chained_transaction_math_and_scaling() {
             .unwrap(),
     );
 
-    let (v, _) = create_transaction(
+    let (v, _) = human_money_core::models::voucher::Transaction::create(
         &current_voucher,
         standard,
         &bob.user_id,
@@ -316,11 +313,11 @@ fn test_chained_transaction_math_and_scaling() {
 
     // Check balances after the second return transaction
     assert_eq!(
-        get_spendable_balance(&current_voucher, &bob.user_id, standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &bob.user_id, standard, None).unwrap(),
         dec!(30.0000) // Bob's remaining balance
     );
     assert_eq!(
-        get_spendable_balance(&current_voucher, &alice.user_id, &standard, None).unwrap(),
+        current_voucher.spendable_balance_for_user( &alice.user_id, standard, None).unwrap(),
         dec!(0.0066) // Alice's new balance
     );
 }
@@ -351,7 +348,7 @@ fn test_transaction_fails_on_excess_precision() {
         ..Default::default()
     };
 
-    let voucher = create_voucher(
+    let voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         standard,
         standard_hash,
@@ -360,7 +357,7 @@ fn test_transaction_fails_on_excess_precision() {
 
     // --- ACTION & VERIFICATION ---
     // Alice attempts to send "0.12345" (5 decimal places), but only 4 are allowed.
-    let result = create_transaction(
+    let result = human_money_core::models::voucher::Transaction::create(
         &voucher,
         standard,
         &alice.user_id,
@@ -374,9 +371,9 @@ fn test_transaction_fails_on_excess_precision() {
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
-        VoucherCoreError::Manager(VoucherManagerError::AmountPrecisionExceeded {
+        VoucherCoreError::AmountPrecisionExceeded {
             allowed: 4,
             found: 5
-        })
+        }
     ));
 }

@@ -27,7 +27,7 @@
 
 use human_money_core::app_service::{AppFacadeError, AppService};
 use human_money_core::models::profile::PublicProfile;
-use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::NewVoucherData;
 use human_money_core::test_utils::{generate_signed_standard_toml, setup_service_with_profile, ACTORS};
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -46,7 +46,7 @@ fn setup_unlocked_with_voucher(profile_label: &str) -> (AppService, human_money_
     let signed_standard = generate_signed_standard_toml(FREETALER_TOML);
     let voucher_data = NewVoucherData {
         creator_profile: PublicProfile {
-            id: Some(service.get_user_id().unwrap()),
+            id: Some(service.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
             ..Default::default()
         },
         nominal_value: human_money_core::models::voucher::ValueDefinition {
@@ -146,7 +146,7 @@ fn wildcard_01_seal_update_failure_after_commit_must_not_brick_login() {
     let signed_standard = generate_signed_standard_toml(FREETALER_TOML);
     let voucher_data = NewVoucherData {
         creator_profile: PublicProfile {
-            id: Some(service.get_user_id().unwrap()),
+            id: Some(service.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
             ..Default::default()
         },
         nominal_value: human_money_core::models::voucher::ValueDefinition {
@@ -187,7 +187,7 @@ fn wildcard_01_seal_update_failure_after_commit_must_not_brick_login() {
     // The recovered session must be fully operational (readable, consistent
     // store) -- i.e. the system ended in ONE coherent state, not a zombie.
     service
-        .get_voucher_summaries(None, None, None)
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
         .expect("recovered wallet must answer read queries");
 }
 
@@ -278,7 +278,7 @@ fn wildcard_03_external_state_rollback_mid_session_must_be_rejected_before_mutat
     let signed_standard = generate_signed_standard_toml(FREETALER_TOML);
     let voucher_b = NewVoucherData {
         creator_profile: PublicProfile {
-            id: Some(service.get_user_id().unwrap()),
+            id: Some(service.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
             ..Default::default()
         },
         nominal_value: human_money_core::models::voucher::ValueDefinition {
@@ -301,7 +301,7 @@ fn wildcard_03_external_state_rollback_mid_session_must_be_rejected_before_mutat
     // --- Mutation attempt on top of the resurrected state -------------------
     let voucher_c = NewVoucherData {
         creator_profile: PublicProfile {
-            id: Some(service.get_user_id().unwrap()),
+            id: Some(service.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
             ..Default::default()
         },
         nominal_value: human_money_core::models::voucher::ValueDefinition {
@@ -317,33 +317,23 @@ fn wildcard_03_external_state_rollback_mid_session_must_be_rejected_before_mutat
     // externally rolled-back state instead of silently reloading and minting
     // value on top of a stale snapshot.
     match outcome {
-        Err(AppFacadeError::StateRollbackDetected(_)) | Err(AppFacadeError::ValidationError(_)) => {}
+        Err(AppFacadeError::StateRollbackDetected)
+        | Err(AppFacadeError::Validation(_))
+        | Err(AppFacadeError::ValidationFailed(_)) => {}
         other => panic!(
-            "AUDIT-00-WILDCARD-03 VIOLATION: a mutating command executed ON TOP \
-             of an externally rolled-back data store was accepted ({:?}). The \
-             silent mid-session reload trusts the generation marker alone, so \
-             previously spent vouchers are resurrected as Active and the user \
-             is framed into double-spending. The reload path must enforce the \
-             same seal/state-hash gate as login.",
-            other.map(|_| "Ok(voucher)")
+            "AUDIT-00-WILDCARD-03 VIOLATION: with_transactional_mut reloaded a \
+             state that was coherently rolled back behind its back (older data \
+             files restored, generation counter rewound, seal unchanged) and \
+             committed new transactions on top of it. Expected \
+             StateRollbackDetected / ValidationError on reload, got {other:?}."
         ),
     }
 }
 
 // =============================================================================
-// FINDING AUDIT-00-WILDCARD-04a (Hypothesis H-00-4, part 1)
+// FINDING AUDIT-00-WILDCARD-04 (Hypothesis H-00-4)
 // -----------------------------------------------------------------------------
 // Finding-ID:       AUDIT-00-WILDCARD-04
-// Severity:         Medium
-// CWE:              CWE-667 (Improper Locking) / CWE-459 (Incomplete Cleanup)
-// Target Location:  src/storage/file_storage.rs :: unlock (unconditional
-//                   fs::remove_file of .wallet.lock; reachable through
-//                   AppService::logout in src/app_service/lifecycle.rs)
-// Threat Model:     The lock file is the only cross-process write exclusion.
-//                   unlock() deletes it unconditionally, so logout() performed
-//                   while ANOTHER live wallet process holds the lock silently
-//                   destroys the foreign lock; a third party then acquires the
-//                   lock and writes concurrently -- the documented exclusive-
 //                   lock guarantee becomes worthless. (Related, not directly
 //                   testable here: PID recycling turns stale-lock detection
 //                   into a permanent LockFailed brick.)
@@ -364,7 +354,6 @@ fn wildcard_03_external_state_rollback_mid_session_must_be_rejected_before_mutat
 // =============================================================================
 #[test]
 fn wildcard_04a_unlock_must_not_remove_foreign_live_lock() {
-    use human_money_core::storage::Storage;
     use std::process::{Command, Stdio};
 
     let dir = tempdir().expect("tempdir creation failed");
@@ -463,7 +452,7 @@ fn wildcard_04b_session_timeout_arithmetic_must_be_panic_free() {
     );
 
     let balance_check = catch_unwind(AssertUnwindSafe(|| {
-        let _ = service.get_total_balance_by_currency();
+        let _ = service.with_wallet_and_identity(|w, id| w.get_total_balance_by_currency(Some(id)));
     }));
     assert!(
         balance_check.is_ok(),
@@ -517,52 +506,9 @@ fn wildcard_04b_session_timeout_arithmetic_must_be_panic_free() {
 //                   An Err result together with recorded entries violates the
 //                   atomicity contract. FAILS on unpatched code.
 // =============================================================================
-#[derive(Default)]
-struct FailOnSecondArchive {
-    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-}
-
-impl human_money_core::archive::VoucherArchive for FailOnSecondArchive {
-    fn archive_voucher(
-        &self,
-        _voucher: &human_money_core::models::voucher::Voucher,
-        _owner_id: &str,
-        _standard: &human_money_core::VoucherStandardDefinition,
-    ) -> Result<(), human_money_core::archive::ArchiveError> {
-        let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        if n >= 1 {
-            Err(human_money_core::archive::ArchiveError::Io(
-                std::io::Error::other("injected archive fault"),
-            ))
-        } else {
-            Ok(())
-        }
-    }
-
-    fn get_archived_voucher(
-        &self,
-        _voucher_id: &str,
-    ) -> Result<human_money_core::models::voucher::Voucher, human_money_core::archive::ArchiveError> {
-        Err(human_money_core::archive::ArchiveError::NotFound)
-    }
-
-    fn find_transaction_by_id(
-        &self,
-        _t_id: &str,
-    ) -> Result<Option<(human_money_core::models::voucher::Voucher, human_money_core::models::voucher::Transaction)>, human_money_core::archive::ArchiveError> {
-        Err(human_money_core::archive::ArchiveError::NotFound)
-    }
-
-    fn find_voucher_by_tx_id(
-        &self,
-        _t_id: &str,
-    ) -> Result<Option<human_money_core::models::voucher::Voucher>, human_money_core::archive::ArchiveError> {
-        Err(human_money_core::archive::ArchiveError::NotFound)
-    }
-}
-
 #[test]
 fn wildcard_02_post_commit_archive_failure_must_not_desync_wallet_and_archive() {
+    use human_money_core::archive::file_archive::FileVoucherArchive;
     use human_money_core::test_utils::{add_voucher_to_wallet, create_test_wallet, MINUTO_STANDARD};
     use human_money_core::wallet::{MultiTransferRequest, SourceTransfer};
     use std::collections::HashMap;
@@ -577,7 +523,7 @@ fn wildcard_02_post_commit_archive_failure_must_not_desync_wallet_and_archive() 
     let id_b = add_voucher_to_wallet(&mut sender_wallet, &sender_identity, "100", standard, true)
         .expect("voucher B setup failed");
 
-    let recipient_did = human_money_core::services::crypto_utils::create_user_id(
+    let recipient_did = human_money_core::services::crypto::create_user_id(
         &ed25519_dalek::SigningKey::from_bytes(&[0x42u8; 32]).verifying_key(),
         None,
     )
@@ -586,25 +532,18 @@ fn wildcard_02_post_commit_archive_failure_must_not_desync_wallet_and_archive() 
     let mut definitions = HashMap::new();
     definitions.insert(standard.immutable.identity.uuid.clone(), standard.clone());
 
-    let archive = FailOnSecondArchive::default();
+    let archive_dir = tempdir().expect("tempdir creation failed");
+    let archive = FileVoucherArchive::new_secure(archive_dir.path(), "audit-test-pw");
 
-    // Sanity pre-check of the spy itself: first call succeeds, second fails.
-    {
-        use human_money_core::archive::VoucherArchive as _;
-        assert!(archive.archive_voucher(
-            &human_money_core::models::voucher::Voucher::default(),
-            "x",
-            standard,
-        )
-        .is_ok());
-        assert!(archive.archive_voucher(
-            &human_money_core::models::voucher::Voucher::default(),
-            "x",
-            standard,
-        )
-        .is_err());
-    }
-    let recorded_before = archive.calls.load(std::sync::atomic::Ordering::SeqCst);
+    let id_b_voucher_id = sender_wallet
+        .get_voucher_instance(&id_b)
+        .expect("source B instance missing")
+        .voucher
+        .voucher_id
+        .clone();
+
+    // Block archiving for voucher B by creating a regular file with voucher B's id
+    std::fs::write(archive_dir.path().join(&id_b_voucher_id), b"blocker").expect("write blocker file");
 
     let request = MultiTransferRequest {
         recipient_id: recipient_did,
@@ -630,25 +569,17 @@ fn wildcard_02_post_commit_archive_failure_must_not_desync_wallet_and_archive() 
         Some(&archive),
     );
 
-    let recorded_after = archive.calls.load(std::sync::atomic::Ordering::SeqCst);
-    let new_records = recorded_after - recorded_before;
-
     // SECURE INVARIANT (Soll-Verhalten): outcome and archive must agree.
     // Either the operation aborted (Err) and wrote NOTHING to the archive,
     // or it committed (Ok) and its archive records describe a real transfer.
     match &result {
-        Err(_) => {
-            assert_eq!(
-                new_records, 0,
-                "AUDIT-00-WILDCARD-02 VIOLATION: the transfer returned Err but \
-                 {new_records} archive record(s) were already written after the \
-                 commit point. The wallet rolls back while the forensic archive \
-                 keeps ghost evidence of transfers that never happened."
-            );
-        }
-        Ok(_) => {
+        Ok(res) => {
             // Committed truthfully; best-effort forensics may have gaps, but
-            // no fabricated evidence may exist for non-committed states.
+            // gap is reported in forensic_archive_incomplete.
+            assert!(res.forensic_archive_incomplete.contains(&id_b_voucher_id));
+        }
+        Err(e) => {
+            panic!("Transfer should have succeeded (best-effort archiving), got error: {e:?}");
         }
     }
 }
@@ -727,7 +658,7 @@ fn wildcard_05_empty_shard_spend_fork_must_stay_visible_at_gossip_ingress() {
     use human_money_core::services::conflict_manager::{
         is_init_fingerprint, verify_fingerprint_signature,
     };
-    use human_money_core::services::crypto_utils::{get_hash_from_slices, sign_ed25519};
+    use human_money_core::services::crypto::{get_hash_from_slices, sign_ed25519};
     use human_money_core::services::l2_gateway::{
         calculate_l2_payload_hash_raw, TRAP_NONE_PLACEHOLDER,
     };
@@ -908,7 +839,7 @@ fn wildcard_05_empty_shard_spend_fork_must_stay_visible_at_gossip_ingress() {
 #[test]
 fn wildcard_06_v2_legacy_voucher_must_not_be_displayed_active_after_load() {
     use human_money_core::models::voucher::{ANONYMOUS_ID as ANONYMOUS_ID_LEGACY, Transaction};
-    use human_money_core::storage::{AuthMethod, Storage};
+    use human_money_core::storage::AuthMethod;
     use human_money_core::FileStorage;
 
     let (mut service, profile, dir) = setup_unlocked_with_voucher("Wildcard Stranding");
@@ -932,7 +863,7 @@ fn wildcard_06_v2_legacy_voucher_must_not_be_displayed_active_after_load() {
     // the HMC_TX_AUTH_V3 digest. Under V3 rules exactly ONE thing fails:
     // the authentication epoch. That isolates the stranding gap (an honest
     // upgrader's voucher) from mere garbage input.
-    use human_money_core::services::crypto_utils::{get_hash, get_hash_from_slices, sign_ed25519};
+    use human_money_core::services::crypto::{get_hash, get_hash_from_slices, sign_ed25519};
     use human_money_core::services::trap_manager;
     use human_money_core::services::utils::to_canonical_json;
 
@@ -941,7 +872,7 @@ fn wildcard_06_v2_legacy_voucher_must_not_be_displayed_active_after_load() {
     let eph_b58 = bs58::encode(eph_bytes).into_string();
     let prev_b58 = w3_random_b58_32();
     let prev_bytes = bs58::decode(&prev_b58).into_vec().unwrap();
-    let ds_tag = get_hash_from_slices(&[&prev_bytes, &eph_bytes.as_slice()]);
+    let ds_tag = get_hash_from_slices(&[&prev_bytes, eph_bytes.as_slice()]);
 
     let mut legacy_tx = Transaction {
         t_type: "transfer".to_string(),
@@ -953,8 +884,8 @@ fn wildcard_06_v2_legacy_voucher_must_not_be_displayed_active_after_load() {
         ..Default::default()
     };
     // t_id per the CURRENT canonical preimage (trap_data excluded).
-    legacy_tx.t_id = human_money_core::services::crypto_utils::get_hash(
-        &to_canonical_json(&legacy_tx).expect("canonical tx json").into_bytes(),
+    legacy_tx.t_id = human_money_core::services::crypto::get_hash(
+        to_canonical_json(&legacy_tx).expect("canonical tx json").into_bytes(),
     );
     // Genuine production shards bound to this exact input anchor.
     let (legacy_trap, _witness) =
@@ -965,7 +896,7 @@ fn wildcard_06_v2_legacy_voucher_must_not_be_displayed_active_after_load() {
     // V2-style authentication: sign a digest over the OLD preimage shape
     // (transaction INCLUDING trap_data) instead of the V3 unified digest.
     let v2_style_payload = get_hash(
-        &to_canonical_json(&legacy_tx).expect("canonical legacy payload").into_bytes(),
+        to_canonical_json(&legacy_tx).expect("canonical legacy payload").into_bytes(),
     );
     legacy_tx.layer2_signature = Some(
         bs58::encode(sign_ed25519(&legacy_sk, v2_style_payload.as_bytes()).to_bytes()).into_string(),
@@ -986,7 +917,7 @@ fn wildcard_06_v2_legacy_voucher_must_not_be_displayed_active_after_load() {
         }
         Ok(()) => {
             let summaries = service
-                .get_voucher_summaries(None, None, None)
+                .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
                 .expect("voucher query after legacy reload failed");
             assert_eq!(summaries.len(), 1, "precondition: single voucher expected");
             assert!(
@@ -1051,7 +982,7 @@ fn wildcard_07_stealth_spend_history_must_survive_bundle_receive_rebuild() {
     use human_money_core::models::conflict::TransactionFingerprint;
     use human_money_core::models::profile::PublicProfile;
     use human_money_core::models::voucher::ValueDefinition;
-    use human_money_core::services::voucher_manager::NewVoucherData;
+    use human_money_core::NewVoucherData;
     use human_money_core::test_utils::{
         setup_service_with_profile, ACTORS, FREETALER_STANDARD,
     };
@@ -1087,14 +1018,17 @@ fn wildcard_07_stealth_spend_history_must_survive_bundle_receive_rebuild() {
         setup_service_with_profile(dir.path(), &ACTORS.bob, "W07-Bob", PASSWORD);
 
     // Alice mints one voucher and STEALTH-spends it completely.
+    let alice_id = alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     alice
         .create_new_voucher(
             &standard_toml,
-            make_voucher_data("100", alice.get_user_id().unwrap()),
+            make_voucher_data("100", alice_id),
             Some(PASSWORD),
         )
         .expect("alice voucher creation failed");
-    let v1_local = alice.get_voucher_summaries(None, None, None).unwrap()[0]
+    let v1_local = alice
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
 
@@ -1104,8 +1038,9 @@ fn wildcard_07_stealth_spend_history_must_survive_bundle_receive_rebuild() {
     // (sender_id = None, recipient_id = "anonymous"). The previous fixture
     // passed ANONYMOUS_ID here, which fails DID validation at setup and
     // masked the actual vulnerability under test.
+    let bob_id = bob.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     let stealth_request = MultiTransferRequest {
-        recipient_id: bob.get_user_id().unwrap(),
+        recipient_id: bob_id,
         sources: vec![SourceTransfer {
             local_instance_id: v1_local,
             amount_to_send: "100".to_string(),
@@ -1143,17 +1078,21 @@ fn wildcard_07_stealth_spend_history_must_survive_bundle_receive_rebuild() {
     );
 
     // TRIGGER: any unrelated bundle receipt runs scan_and_rebuild_fingerprints.
+    let bob_id_again = bob.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     bob.create_new_voucher(
         &standard_toml,
-        make_voucher_data("10", bob.get_user_id().unwrap()),
+        make_voucher_data("10", bob_id_again),
         Some(PASSWORD),
     )
     .expect("bob voucher creation failed");
-    let b_local = bob.get_voucher_summaries(None, None, None).unwrap()[0]
+    let b_local = bob
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
+    let alice_id_again = alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     let bob_request = MultiTransferRequest {
-        recipient_id: alice.get_user_id().unwrap(),
+        recipient_id: alice_id_again,
         sources: vec![SourceTransfer {
             local_instance_id: b_local,
             amount_to_send: "10".to_string(),
@@ -1368,7 +1307,6 @@ fn wildcard_09_l2_quarantine_write_must_respect_rollback_discipline() {
     use human_money_core::models::profile::PublicProfile;
     use human_money_core::models::voucher::ValueDefinition;
     use human_money_core::services::l2_gateway;
-    use human_money_core::storage::Storage;
     use human_money_core::FileStorage;
 
     let (mut service, profile, dir) = setup_unlocked_with_voucher("Wildcard L2 Discipline");
@@ -1407,7 +1345,7 @@ fn wildcard_09_l2_quarantine_write_must_respect_rollback_discipline() {
             &signed_standard,
             NewVoucherData {
                 creator_profile: PublicProfile {
-                    id: Some(service.get_user_id().unwrap()),
+                    id: Some(service.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
                     ..Default::default()
                 },
                 nominal_value: ValueDefinition {

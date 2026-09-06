@@ -25,7 +25,6 @@
 //! temp/wave4-results/module-05.md, BLOCKED with rationale).
 
 use human_money_core::archive::file_archive::FileVoucherArchive;
-use human_money_core::archive::VoucherArchive;
 use human_money_core::models::voucher::{Transaction, Voucher};
 use human_money_core::test_utils::setup_voucher_with_one_tx;
 use std::fs;
@@ -120,7 +119,7 @@ fn record_path(archive_root: &Path, voucher_id: &str, last_t_id: &str) -> std::p
 // =============================================================================
 #[test]
 fn wh4_05_001_record_substitution_within_directory_must_be_detected() {
-    use human_money_core::archive::ArchiveError;
+    use human_money_core::StorageError;
 
     let (standard, _standard_hash, alice, _bob, voucher, _secrets) = setup_voucher_with_one_tx();
     let vid = voucher.voucher_id.clone();
@@ -172,7 +171,7 @@ fn wh4_05_001_record_substitution_within_directory_must_be_detected() {
     //    MUST be detected deterministically before any state is served.
     let after = archive.get_archived_voucher(&vid);
     assert!(
-        matches!(after, Err(ArchiveError::IntegrityViolation(_))),
+        matches!(after, Err(StorageError::IntegrityViolation(_))),
         "AUDIT-W4-STO-601 VIOLATION: copying the older genuine record <{}>.json \
          over the newest record <{}>.json went UNDETECTED — \
          get_archived_voucher served a ROLLED-BACK history ({} transactions \
@@ -262,7 +261,7 @@ fn wh4_05_001_record_substitution_within_directory_must_be_detected() {
 // =============================================================================
 #[test]
 fn wh4_05_002a_manifest_sync_must_refuse_diverged_disk_state() {
-    use human_money_core::archive::ArchiveError;
+    use human_money_core::StorageError;
 
     let (standard, _standard_hash, alice, _bob, voucher, _secrets) = setup_voucher_with_one_tx();
     let vid = voucher.voucher_id.clone();
@@ -305,11 +304,11 @@ fn wh4_05_002a_manifest_sync_must_refuse_diverged_disk_state() {
 
     match write_result {
         // Secure behavior: the sync refuses to enshrine the diverged state.
-        Err(ArchiveError::IntegrityViolation(_)) => { /* secure */ }
+        Err(StorageError::IntegrityViolation(_)) => { /* secure */ }
         Err(other) => panic!(
             "AUDIT-W4-STO-602 VIOLATION (wrong error class): the manifest sync \
              detected the delete+inject divergence but surfaced {:?} instead of \
-             ArchiveError::IntegrityViolation — detection must be typed and \
+             StorageError::IntegrityViolation — detection must be typed and \
              deterministic (CWE-354/CWE-345).",
             other
         ),
@@ -399,7 +398,7 @@ fn wh4_05_002a_manifest_sync_must_refuse_diverged_disk_state() {
 // =============================================================================
 #[test]
 fn wh4_05_002b_missing_manifest_must_not_bootstrap_over_deleted_records() {
-    use human_money_core::archive::ArchiveError;
+    use human_money_core::StorageError;
 
     let (standard, _standard_hash, alice, _bob, voucher, _secrets) = setup_voucher_with_one_tx();
     let vid = voucher.voucher_id.clone();
@@ -431,7 +430,7 @@ fn wh4_05_002b_missing_manifest_must_not_bootstrap_over_deleted_records() {
     //    the attacker-reduced record set.
     let write_result = archive.archive_voucher(&state3, &alice.user_id, standard);
     assert!(
-        matches!(write_result, Err(ArchiveError::IntegrityViolation(_))),
+        matches!(write_result, Err(StorageError::IntegrityViolation(_))),
         "AUDIT-W4-STO-603 VIOLATION: after deleting the sealed manifest and the \
          genuine record <{}>.json, the next legitimate archive_voucher \
          BOOTSTRAPPED a fresh manifest from the tampered disk contents and \
@@ -498,7 +497,7 @@ fn wh4_05_002b_missing_manifest_must_not_bootstrap_over_deleted_records() {
 fn wh4_05_003_file_storage_must_reject_empty_passwords_at_save_and_reset() {
     use human_money_core::models::profile::{UserProfile, VoucherStore};
     use human_money_core::storage::AuthMethod;
-    use human_money_core::{FileStorage, Storage, StorageError};
+    use human_money_core::{FileStorage, StorageError};
 
     let (_standard, _standard_hash, alice, _bob, _voucher, _secrets) =
         setup_voucher_with_one_tx();
@@ -513,7 +512,7 @@ fn wh4_05_003_file_storage_must_reject_empty_passwords_at_save_and_reset() {
     let mut storage_a = FileStorage::new(dir_a.path().join("wallet"));
 
     let save_result =
-        storage_a.save_wallet(&profile, &empty_store, &alice, &AuthMethod::Password(""));
+        storage_a.save_wallet(&profile, &empty_store, alice, &AuthMethod::Password(""));
     assert!(
         matches!(save_result, Err(StorageError::Generic(_))),
         "AUDIT-W4-STO-604 VIOLATION (a): FileStorage::save_wallet accepted an \
@@ -536,13 +535,13 @@ fn wh4_05_003_file_storage_must_reject_empty_passwords_at_save_and_reset() {
     let mut storage_b = FileStorage::new(dir_b.path().join("wallet"));
     let auth_valid = AuthMethod::Password("wh4-05-03-valid-password");
     storage_b
-        .save_wallet(&profile, &empty_store, &alice, &auth_valid)
+        .save_wallet(&profile, &empty_store, alice, &auth_valid)
         .expect("setup save with a valid password must succeed");
 
     let profile_path = dir_b.path().join("wallet").join("profile.enc");
     let bytes_before = fs::read(&profile_path).expect("profile.enc readable after setup");
 
-    let reset_result = storage_b.reset_password(&alice, "");
+    let reset_result = storage_b.reset_password(alice, "");
     assert!(
         matches!(reset_result, Err(StorageError::Generic(_))),
         "AUDIT-W4-STO-604 VIOLATION (b): FileStorage::reset_password accepted \

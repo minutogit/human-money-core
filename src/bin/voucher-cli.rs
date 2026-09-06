@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use ed25519_dalek::SigningKey;
 use human_money_core::{
-    crypto_utils::{self, get_hash},
+    crypto::{self, get_hash},
     models::voucher_standard_definition::VoucherStandardDefinition,
     to_canonical_json, MnemonicLanguage,
 };
@@ -82,7 +82,7 @@ fn generate_keys(prefix: &str) -> Result<()> {
     println!("🔑 Erzeuge neue Mnemonic-Phrase und Schlüsselpaar...");
 
     // 1. Generate and save mnemonic
-    let mnemonic = crypto_utils::generate_mnemonic(12, MnemonicLanguage::English)
+    let mnemonic = crypto::generate_mnemonic(12, MnemonicLanguage::English)
         .map_err(|e| anyhow::anyhow!(e.to_string()))
         .context("Mnemonic konnte nicht generiert werden")?;
     fs::write(&mnemonic_path, &mnemonic).with_context(|| {
@@ -93,7 +93,7 @@ fn generate_keys(prefix: &str) -> Result<()> {
     })?;
 
     // 2. Derive key pair from mnemonic
-    let (public_key, signing_key) = crypto_utils::derive_ed25519_keypair(&mnemonic, None, MnemonicLanguage::English)?;
+    let (public_key, signing_key) = crypto::derive_ed25519_keypair(&mnemonic, None, MnemonicLanguage::English)?;
 
     // 3. Save private key
     fs::write(&key_path, signing_key.to_bytes()).with_context(|| {
@@ -104,7 +104,7 @@ fn generate_keys(prefix: &str) -> Result<()> {
     })?;
 
     // 4. Generate and output Issuer ID
-    let issuer_id = crypto_utils::create_user_id(&public_key, Some(prefix))
+    let issuer_id = crypto::create_user_id(&public_key, Some(prefix))
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     println!("✅ Schlüssel erfolgreich generiert!");
@@ -158,11 +158,11 @@ fn sign_standard(key_path: &Path, prefix: &str, standard_path: &Path) -> Result<
 
     // 5. Compute hash and sign
     let hash_to_sign = get_hash(canonical_json.as_bytes());
-    let signature = crypto_utils::sign_ed25519(&signing_key, hash_to_sign.as_bytes());
+    let signature = crypto::sign_ed25519(&signing_key, hash_to_sign.as_bytes());
     let signature_b58 = bs58::encode(signature.to_bytes()).into_string();
 
     // 6. Create Issuer ID
-    let issuer_id = crypto_utils::create_user_id(&public_key, Some(prefix))
+    let issuer_id = crypto::create_user_id(&public_key, Some(prefix))
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     // 7. Create new signature block

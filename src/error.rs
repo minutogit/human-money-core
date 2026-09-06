@@ -6,17 +6,16 @@
 
 use crate::wallet::instance::VoucherStatus;
 use crate::{
-    services::{
-        crypto_utils::{GetPubkeyError, SymmetricEncryptionError},
-        secure_container_manager::ContainerManagerError,
-        voucher_manager::VoucherManagerError,
-    },
+    services::crypto::{GetPubkeyError, SymmetricEncryptionError},
     storage::StorageError,
 };
+use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Defines errors that can occur during the processing of a `VoucherStandardDefinition`.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", content = "payload", rename_all = "camelCase")]
 pub enum StandardDefinitionError {
     /// The `[signature]` block is missing from the definition.
     #[error("The [signature] block is missing from the standard definition.")]
@@ -43,7 +42,8 @@ pub enum StandardDefinitionError {
 
 /// Defines the various errors that can occur during validation.
 /// These errors are specific to verifying a voucher against its standard.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", content = "payload", rename_all = "camelCase")]
 pub enum ValidationError {
     // --- Data-driven validation errors ---
     /// A quantitative rule was violated (e.g. too many or too few signatures).
@@ -145,7 +145,7 @@ pub enum ValidationError {
 
     /// The creator's User ID is invalid or the public key cannot be extracted.
     #[error("Invalid creator ID: {0}")]
-    InvalidCreatorId(#[from] GetPubkeyError),
+    InvalidCreatorId(String),
 
     /// Private Mode: An identity signature was found even though the mode mandates anonymity.
     #[error(
@@ -325,7 +325,7 @@ pub enum ValidationError {
 
     /// JSON parsing error within validation context
     #[error("JSON validation error: {0}")]
-    Json(#[from] serde_json::Error),
+    Json(String),
 
     /// A timestamp is too far in the future.
     #[error("Rejection: {entity} '{id}' has a timestamp '{timestamp}' that is too far in the future (Limit: {limit}). Please wait {wait_duration} before importing.")]
@@ -340,11 +340,41 @@ pub enum ValidationError {
     /// The voucher uses a name (currency or standard) that simulates test money, even though it is declared as real money.
     #[error("Anti-Spoofing: Genuine voucher uses deceptive 'TEST' prefix in currency or standard name: {reason}")]
     DeceptiveNaming { reason: String },
+
+    // --- User ID & Identity validation errors ---
+    /// The prefix is too long (maximum 63 characters allowed).
+    #[error("Prefix is too long: {0} characters (maximum is 63).")]
+    PrefixTooLong(usize),
+
+    /// The prefix contains invalid characters.
+    #[error("Prefix contains invalid characters. Only lowercase letters (a-z), numbers (0-9), and hyphens (-) are allowed.")]
+    InvalidPrefixChars,
+
+    /// The prefix must not start or end with a hyphen.
+    #[error("Prefix must not start or end with a hyphen.")]
+    InvalidPrefixStartEnd,
+
+    /// The prefix must not contain two consecutive hyphens.
+    #[error("Prefix contains consecutive separators (- or :)")]
+    PrefixHasConsecutiveSeparators,
+}
+
+impl From<GetPubkeyError> for ValidationError {
+    fn from(err: GetPubkeyError) -> Self {
+        ValidationError::InvalidCreatorId(err.to_string())
+    }
+}
+
+impl From<serde_json::Error> for ValidationError {
+    fn from(err: serde_json::Error) -> Self {
+        ValidationError::Json(err.to_string())
+    }
 }
 
 /// The central error type for all operations in the `human_money_core` library.
-#[derive(Error, Debug)]
-pub enum VoucherCoreError {
+#[derive(Error, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", content = "payload", rename_all = "camelCase")]
+pub enum Error {
     // --- Validation & Verification Errors ---
 
     /// Error wrapper for schema and logic validation errors.
@@ -488,7 +518,7 @@ pub enum VoucherCoreError {
 
     /// Failed to retrieve or parse a public key from a user identity.
     #[error("User ID or Key Error: {0}")]
-    KeyOrId(#[from] GetPubkeyError),
+    KeyOrId(String),
 
     /// General cryptographic error.
     #[error("Cryptography error: {0}")]
@@ -500,7 +530,7 @@ pub enum VoucherCoreError {
 
     /// Base58 encoding/decoding failed.
     #[error("Base58 decode error: {0}")]
-    Bs58Decode(#[from] bs58::decode::Error),
+    Bs58Decode(String),
 
     /// Base64 encoding/decoding failed.
     #[error("Base64 decode error: {0}")]
@@ -508,45 +538,99 @@ pub enum VoucherCoreError {
 
     /// Underlying Ed25519 signature algorithm error.
     #[error("Ed25519 crypto error: {0}")]
-    Ed25519(#[from] ed25519_dalek::ed25519::Error),
+    Ed25519(String),
 
-    // --- System & Sub-Manager Errors ---
+    // --- Secure Container Errors ---
 
-    /// High-level Voucher Manager error.
+    /// The current user is not in the list of recipients for this container.
+    #[error("The current user is not in the list of recipients for this container.")]
+    NotAnIntendedRecipient,
+
+    /// Key derivation for container key encryption failed.
+    #[error("Failed to derive key for key encryption: {0}")]
+    KeyDerivationError(String),
+
+    /// Security violation: Plaintext encryption is not allowed for financial payloads.
+    #[error("Security violation: Plaintext encryption is not allowed for financial payloads (TransactionBundle).")]
+    PlaintextNotAllowedForFinancialPayload,
+
+    /// Password required for symmetric encryption.
+    #[error("Password required for symmetric encryption.")]
+    PasswordRequired,
+
+    /// Invalid encryption configuration.
+    #[error("Invalid encryption configuration.")]
+    InvalidEncryptionConfig,
+
+    // --- Voucher Manager / Business Logic Errors (flattened) ---
+
+    /// Insufficient funds for the transaction.
+    #[error("Insufficient funds: Available: {available}, Needed: {needed}")]
+    InsufficientFunds { available: Decimal, needed: Decimal },
+
+    /// Amount precision exceeds the limit allowed by the standard.
+    #[error("Amount precision exceeds standard limit. Allowed: {allowed}, Found: {found}")]
+    AmountPrecisionExceeded { allowed: u32, found: u32 },
+
+    /// A template value from the standard is invalid.
+    #[error("Invalid template value from standard: {0}")]
+    InvalidTemplateValue(String),
+
+    /// The specified validity duration does not meet the standard's requirements.
+    #[error("Invalid validity duration: {0}")]
+    InvalidValidityDuration(String),
+
+    /// The voucher does not allow partial transfers according to its standard.
+    #[error("Voucher does not allow partial transfers according to its standard.")]
+    VoucherPartialTransferNotAllowed,
+
+    /// Generic voucher manager error.
     #[error("Voucher Manager Error: {0}")]
-    Manager(#[from] VoucherManagerError),
+    VoucherManagerGeneric(String),
+
+    // --- Session & Profile Errors (flattened from AppService layer) ---
+
+    /// The requested profile folder or metadata could not be found.
+    #[error("Profile not found: {0}")]
+    ProfileNotFound(String),
+
+    /// A profile already exists.
+    #[error("Profile already exists: {0}")]
+    ProfileAlreadyExists(String),
+
+    /// An active session has expired.
+    #[error("{0}")]
+    SessionExpired(String),
+
+    /// No session is currently active.
+    #[error("Session not active: {0}")]
+    SessionNotActive(String),
+
+    // --- System Errors ---
 
     /// Underlying storage (file system, database) error.
     #[error("Storage Error: {0}")]
     Storage(#[from] StorageError),
 
-    /// Secure container management error.
-    #[error("Secure Container Error: {0}")]
-    Container(#[from] ContainerManagerError),
-
     /// Standard definition validation or loading error.
     #[error("Standard Definition Error: {0}")]
     Standard(#[from] StandardDefinitionError),
 
-    /// Archiving or backup process error.
-    #[error("Archive error: {0}")]
-    Archive(#[from] crate::archive::ArchiveError),
-
     /// JSON serialization/deserialization error.
     #[error("JSON Processing Error: {0}")]
-    Json(#[from] serde_json::Error),
+    Json(String),
 
     /// TOML parsing or serialization error.
     #[error("TOML Deserialization Error: {0}")]
-    Toml(#[from] toml::de::Error),
+    Toml(String),
 
     /// Decimal number processing or parsing error.
     #[error("Amount Conversion Error: {0}")]
-    AmountConversion(#[from] rust_decimal::Error),
+    AmountConversion(String),
 
     /// System I/O error.
     #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(String),
 
     /// Generic error string for unclassified conditions.
     #[error("Generic error: {0}")]
@@ -557,10 +641,85 @@ pub enum VoucherCoreError {
     InvalidPayloadType,
 
     /// The wallet is currently locked, preventing state changes.
-    #[error("Operation failed because the wallet is locked.")]
+    #[error("Wallet is locked.")]
     WalletLocked,
 
     /// The requested feature is not implemented.
     #[error("Feature not implemented yet: {0}")]
     NotImplemented(String),
+
+    // --- Fingerprint & Proof specific typed errors (reduce Generic usage) ---
+
+    /// Fingerprint creation or verification failed.
+    #[error("Fingerprint error: {0}")]
+    Fingerprint(String),
+
+    /// Proof import or verification failed.
+    #[error("Proof import error: {0}")]
+    ProofImport(String),
+
+    /// Timestamp parsing or validation failed.
+    #[error("Invalid timestamp: {0}")]
+    InvalidTimestamp(String),
 }
+
+/// Backward compatibility alias for the central error type.
+pub type VoucherCoreError = Error;
+
+/// Backward compatibility alias for the AppService facade error type.
+pub type AppFacadeError = Error;
+
+impl From<GetPubkeyError> for Error {
+    fn from(err: GetPubkeyError) -> Self {
+        Error::KeyOrId(err.to_string())
+    }
+}
+
+impl From<bs58::decode::Error> for Error {
+    fn from(err: bs58::decode::Error) -> Self {
+        Error::Bs58Decode(err.to_string())
+    }
+}
+
+impl From<ed25519_dalek::ed25519::Error> for Error {
+    fn from(err: ed25519_dalek::ed25519::Error) -> Self {
+        Error::Ed25519(err.to_string())
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(err: serde_json::Error) -> Self {
+        Error::Json(err.to_string())
+    }
+}
+
+impl From<toml::de::Error> for Error {
+    fn from(err: toml::de::Error) -> Self {
+        Error::Toml(err.to_string())
+    }
+}
+
+impl From<rust_decimal::Error> for Error {
+    fn from(err: rust_decimal::Error) -> Self {
+        Error::AmountConversion(err.to_string())
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::Io(err.to_string())
+    }
+}
+
+impl From<base64::DecodeError> for Error {
+    fn from(err: base64::DecodeError) -> Self {
+        Error::Base64(err.to_string())
+    }
+}
+
+impl From<std::string::FromUtf8Error> for Error {
+    fn from(err: std::string::FromUtf8Error) -> Self {
+        Error::DeserializationError(err.to_string())
+    }
+}
+

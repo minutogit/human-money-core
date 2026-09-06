@@ -47,11 +47,11 @@
 //!   disk, so deleting (or injecting) whole records is detected instead of
 //!   silently serving a rolled-back history. The manifest is sealed under the
 //!   same key source, making undetected manifest edits impossible.
-use super::{ArchiveError, VoucherArchive};
+use crate::storage::StorageError;
 use crate::models::voucher::Transaction;
 use crate::models::voucher::Voucher;
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
-use crate::services::crypto_symmetric::{
+use crate::services::crypto::symmetric::{
     decrypt_data, decrypt_symmetric_password, encrypt_data, encrypt_symmetric_password,
 };
 use crate::services::utils::to_canonical_json;
@@ -87,35 +87,6 @@ struct ManifestEntry {
     sha3: Option<String>,
 }
 
-/// A minimal placeholder that implements the `VoucherArchive` trait,
-/// but does not store or find any data. Used when no real
-/// archive backend is configured, so that proof generation can still
-/// be performed with local data in the voucher_store.
-pub struct NoOpArchive;
-
-impl VoucherArchive for NoOpArchive {
-    fn archive_voucher(
-        &self,
-        _voucher: &Voucher,
-        _owner_id: &str,
-        _standard: &VoucherStandardDefinition,
-    ) -> Result<(), ArchiveError> {
-        Ok(())
-    }
-    fn get_archived_voucher(&self, _voucher_id: &str) -> Result<Voucher, ArchiveError> {
-        Err(ArchiveError::NotFound)
-    }
-    fn find_transaction_by_id(
-        &self,
-        _t_id: &str,
-    ) -> Result<Option<(Voucher, Transaction)>, ArchiveError> {
-        Ok(None)
-    }
-    fn find_voucher_by_tx_id(&self, _t_id: &str) -> Result<Option<Voucher>, ArchiveError> {
-        Ok(None)
-    }
-}
-
 /// Key source used to protect the archive records.
 enum ArchiveKeySource {
     /// Records are keyed via PBKDF2-HMAC-SHA512 from this password and a
@@ -139,7 +110,7 @@ enum ArchiveKeySource {
 /// ChaCha20-Poly1305: the tag authenticates the entire plaintext (nonce +
 /// ciphertext are bound to the derived key), so any bit-level modification of
 /// the stored record causes decryption to fail. All readers surface such
-/// failures as [`ArchiveError::IntegrityViolation`] instead of silently
+/// failures as [`StorageError::IntegrityViolation`] instead of silently
 /// skipping or returning tampered data. Only after successful authenticated
 /// decryption is the plaintext handed to `serde_json`.
 pub struct FileVoucherArchive {
@@ -182,21 +153,21 @@ impl FileVoucherArchive {
 
     /// Encrypts `plaintext` (canonical voucher JSON) into a JSON envelope
     /// value according to the configured key source.
-    fn seal_record(&self, plaintext: &[u8]) -> Result<serde_json::Value, ArchiveError> {
+    fn seal_record(&self, plaintext: &[u8]) -> Result<serde_json::Value, StorageError> {
         // Empty credential guard (HMSEC-SA05-10): an empty password yields a
         // fully deterministic PBKDF2("") key that any offline scanner can
         // reconstruct from the public envelope format; an all-zero raw key is
         // equally degenerate. Both are rejected BEFORE any bytes touch disk.
         match &self.key_source {
             ArchiveKeySource::Password(password) if password.is_empty() => {
-                return Err(ArchiveError::Generic(
+                return Err(StorageError::Generic(
                     "Refusing to seal archive records under an EMPTY password \
                      (zero-entropy key material)."
                         .to_string(),
                 ));
             }
             ArchiveKeySource::RawKey(key) if key.iter().all(|&b| b == 0) => {
-                return Err(ArchiveError::Generic(
+                return Err(StorageError::Generic(
                     "Refusing to seal archive records under a degenerate \
                      all-zero key."
                         .to_string(),
@@ -208,7 +179,7 @@ impl FileVoucherArchive {
         match &self.key_source {
             ArchiveKeySource::Password(password) => {
                 let (ciphertext, salt) = encrypt_symmetric_password(plaintext, password)
-                    .map_err(|e| ArchiveError::Generic(format!("Archive encryption failed: {}", e)))?;
+                    .map_err(|e| StorageError::Generic(format!("Archive encryption failed: {}", e)))?;
                 Ok(serde_json::json!({
                     "format": FORMAT_ID,
                     "kdf": KDF_PBKDF2_SHA512,
@@ -218,7 +189,7 @@ impl FileVoucherArchive {
             }
             ArchiveKeySource::RawKey(key) => {
                 let ciphertext = encrypt_data(key, plaintext)
-                    .map_err(|e| ArchiveError::Generic(format!("Archive encryption failed: {}", e)))?;
+                    .map_err(|e| StorageError::Generic(format!("Archive encryption failed: {}", e)))?;
                 Ok(serde_json::json!({
                     "format": FORMAT_ID,
                     "kdf": KDF_RAW,
@@ -233,16 +204,16 @@ impl FileVoucherArchive {
     ///
     /// Sealed envelopes are authenticated (AEAD tag verification) BEFORE the
     /// decrypted plaintext is returned; any failure in this chain yields
-    /// [`ArchiveError::IntegrityViolation`] and tampered data is never
+    /// [`StorageError::IntegrityViolation`] and tampered data is never
     /// returned. Records without sealed-envelope markers (e.g. plaintext
     /// files written by pre-encryption archive versions, or attacker
     /// supplied downgraded records) are likewise rejected with
-    /// [`ArchiveError::IntegrityViolation`] — accepting unauthenticated
+    /// [`StorageError::IntegrityViolation`] — accepting unauthenticated
     /// plaintext would bypass the AEAD integrity check entirely
     /// (HMSEC-SA05-05).
-    fn open_envelope(&self, bytes: &[u8], path: &Path) -> Result<Vec<u8>, ArchiveError> {
+    fn open_envelope(&self, bytes: &[u8], path: &Path) -> Result<Vec<u8>, StorageError> {
         let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| {
-            ArchiveError::IntegrityViolation(format!(
+            StorageError::IntegrityViolation(format!(
                 "Archive record {} is not valid JSON and may have been tampered with.",
                 path.display()
             ))
@@ -263,7 +234,7 @@ impl FileVoucherArchive {
             // pre-encryption versions are no longer readable here. Re-import
             // such states via the public API instead of accepting
             // unauthenticated forensic data.
-            return Err(ArchiveError::IntegrityViolation(format!(
+            return Err(StorageError::IntegrityViolation(format!(
                 "Archive record {} is not a sealed envelope; unauthenticated \
                  plaintext records are rejected to prevent the legacy downgrade \
                  bypass.",
@@ -275,13 +246,13 @@ impl FileVoucherArchive {
             .get("ciphertext")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                ArchiveError::IntegrityViolation(format!(
+                StorageError::IntegrityViolation(format!(
                     "Archive record {} is missing a valid ciphertext field.",
                     path.display()
                 ))
             })?;
         let ciphertext = general_purpose::STANDARD.decode(ciphertext_b64).map_err(|_| {
-            ArchiveError::IntegrityViolation(format!(
+            StorageError::IntegrityViolation(format!(
                 "Archive record {} contains corrupt ciphertext material.",
                 path.display()
             ))
@@ -294,7 +265,7 @@ impl FileVoucherArchive {
                 let password = match &self.key_source {
                     ArchiveKeySource::Password(p) => p,
                     ArchiveKeySource::RawKey(_) => {
-                        return Err(ArchiveError::IntegrityViolation(format!(
+                        return Err(StorageError::IntegrityViolation(format!(
                             "Archive record {} requires a password key source.",
                             path.display()
                         )));
@@ -304,26 +275,26 @@ impl FileVoucherArchive {
                     .get("kdf_salt")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
-                        ArchiveError::IntegrityViolation(format!(
+                        StorageError::IntegrityViolation(format!(
                             "Archive record {} is missing its KDF salt.",
                             path.display()
                         ))
                     })?;
                 let salt_bytes = general_purpose::STANDARD.decode(salt_b64).map_err(|_| {
-                    ArchiveError::IntegrityViolation(format!(
+                    StorageError::IntegrityViolation(format!(
                         "Archive record {} contains a corrupt KDF salt.",
                         path.display()
                     ))
                 })?;
                 let salt: [u8; 16] = salt_bytes.try_into().map_err(|_| {
-                    ArchiveError::IntegrityViolation(format!(
+                    StorageError::IntegrityViolation(format!(
                         "Archive record {} contains a KDF salt of invalid length.",
                         path.display()
                     ))
                 })?;
 
                 decrypt_symmetric_password(&ciphertext, password, &salt).map_err(|e| {
-                    ArchiveError::IntegrityViolation(format!(
+                    StorageError::IntegrityViolation(format!(
                         "AEAD verification failed for {}: {}",
                         path.display(),
                         e
@@ -334,21 +305,21 @@ impl FileVoucherArchive {
                 let key = match &self.key_source {
                     ArchiveKeySource::RawKey(k) => k,
                     ArchiveKeySource::Password(_) => {
-                        return Err(ArchiveError::IntegrityViolation(format!(
+                        return Err(StorageError::IntegrityViolation(format!(
                             "Archive record {} requires a raw key source.",
                             path.display()
                         )));
                     }
                 };
                 decrypt_data(key, &ciphertext).map_err(|e| {
-                    ArchiveError::IntegrityViolation(format!(
+                    StorageError::IntegrityViolation(format!(
                         "AEAD verification failed for {}: {}",
                         path.display(),
                         e
                     ))
                 })
             }
-            other => Err(ArchiveError::IntegrityViolation(format!(
+            other => Err(StorageError::IntegrityViolation(format!(
                 "Archive record {} uses an unknown KDF identifier '{}'.",
                 path.display(),
                 other
@@ -363,7 +334,7 @@ impl FileVoucherArchive {
     /// voucher's `voucher_id` must match the directory context it was loaded
     /// from, so relocated or smuggled envelopes can never be attributed to
     /// another voucher.
-    fn read_record(&self, path: &Path) -> Result<Voucher, ArchiveError> {
+    fn read_record(&self, path: &Path) -> Result<Voucher, StorageError> {
         let bytes = fs::read(path)?;
         self.decode_record(&bytes, path)
     }
@@ -375,14 +346,14 @@ impl FileVoucherArchive {
     /// voucher's `voucher_id` must match the directory context it was loaded
     /// from, so relocated or smuggled envelopes can never be attributed to
     /// another voucher.
-    fn decode_record(&self, bytes: &[u8], path: &Path) -> Result<Voucher, ArchiveError> {
+    fn decode_record(&self, bytes: &[u8], path: &Path) -> Result<Voucher, StorageError> {
         let plaintext = self.open_envelope(bytes, path)?;
 
         // The AEAD tag already authenticates this plaintext; deserialization
         // failures therefore indicate a corrupted writer, not attacker-controlled
         // content, and are surfaced as integrity violations as well.
         let voucher: Voucher = serde_json::from_slice(&plaintext).map_err(|e| {
-            ArchiveError::IntegrityViolation(format!(
+            StorageError::IntegrityViolation(format!(
                 "Decrypted archive record {} does not contain a valid voucher: {}",
                 path.display(),
                 e
@@ -398,13 +369,13 @@ impl FileVoucherArchive {
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
             .ok_or_else(|| {
-                ArchiveError::IntegrityViolation(format!(
+                StorageError::IntegrityViolation(format!(
                     "Archive record {} has no resolvable voucher directory context.",
                     path.display()
                 ))
             })?;
         if context_voucher_id != voucher.voucher_id {
-            return Err(ArchiveError::IntegrityViolation(format!(
+            return Err(StorageError::IntegrityViolation(format!(
                 "Archive record {} was relocated: directory context '{}' does \
                  not match the sealed voucher_id '{}'.",
                 path.display(),
@@ -425,7 +396,7 @@ impl FileVoucherArchive {
     /// is detected deterministically. Legacy v1 manifests (plain id strings)
     /// are tolerated for pre-existing installations; their entries carry no
     /// hash and get no freshness binding until the next manifest rewrite.
-    fn read_manifest(&self, voucher_dir: &Path) -> Result<Vec<ManifestEntry>, ArchiveError> {
+    fn read_manifest(&self, voucher_dir: &Path) -> Result<Vec<ManifestEntry>, StorageError> {
         let path = voucher_dir.join(MANIFEST_FILE_NAME);
         let bytes = fs::read(&path)?;
         let plaintext = self.open_envelope(&bytes, &path)?;
@@ -437,7 +408,7 @@ impl FileVoucherArchive {
             .get("records")
             .and_then(|r| r.as_array())
             .ok_or_else(|| {
-                ArchiveError::IntegrityViolation(format!(
+                StorageError::IntegrityViolation(format!(
                     "Archive manifest {} is missing its records list.",
                     path.display()
                 ))
@@ -452,13 +423,13 @@ impl FileVoucherArchive {
                     });
                 }
                 let obj = entry.as_object().ok_or_else(|| {
-                    ArchiveError::IntegrityViolation(format!(
+                    StorageError::IntegrityViolation(format!(
                         "Archive manifest {} contains an invalid record entry.",
                         path.display()
                     ))
                 })?;
                 let id = obj.get("id").and_then(|v| v.as_str()).ok_or_else(|| {
-                    ArchiveError::IntegrityViolation(format!(
+                    StorageError::IntegrityViolation(format!(
                         "Archive manifest {} contains a record entry without id.",
                         path.display()
                     ))
@@ -469,7 +440,7 @@ impl FileVoucherArchive {
                     sha3,
                 })
             })
-            .collect::<Result<Vec<ManifestEntry>, ArchiveError>>()?;
+            .collect::<Result<Vec<ManifestEntry>, StorageError>>()?;
         Ok(records)
     }
 
@@ -481,7 +452,7 @@ impl FileVoucherArchive {
         &self,
         voucher_dir: &Path,
         mut entries: Vec<(String, String)>,
-    ) -> Result<(), ArchiveError> {
+    ) -> Result<(), StorageError> {
         entries.sort();
         entries.dedup();
         let records: Vec<serde_json::Value> = entries
@@ -503,25 +474,25 @@ impl FileVoucherArchive {
 
     /// Computes the current manifest entries from disk contents: each record
     /// id with the SHA-3 hash of its envelope bytes.
-    fn collect_manifest_entries(voucher_dir: &Path) -> Result<Vec<(String, String)>, ArchiveError> {
+    fn collect_manifest_entries(voucher_dir: &Path) -> Result<Vec<(String, String)>, StorageError> {
         let mut entries = Vec::new();
         for id in Self::collect_record_ids(voucher_dir)? {
             let path = voucher_dir.join(format!("{}.json", id));
             let bytes = fs::read(&path)?;
-            entries.push((id, crate::services::crypto_utils::get_hash(&bytes)));
+            entries.push((id, crate::services::crypto::get_hash(&bytes)));
         }
         Ok(entries)
     }
 
     /// Collects the sorted IDs of the state records currently on disk in a
     /// voucher directory (basenames of all `*.json` files).
-    fn collect_record_ids(voucher_dir: &Path) -> Result<Vec<String>, ArchiveError> {
+    fn collect_record_ids(voucher_dir: &Path) -> Result<Vec<String>, StorageError> {
         let mut ids = Vec::new();
         for entry in fs::read_dir(voucher_dir)? {
             let path = entry?.path();
-            if path.is_file() && path.extension().map_or(false, |s| s == "json") {
+            if path.is_file() && path.extension().is_some_and(|s| s == "json") {
                 let stem = path.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
-                    ArchiveError::IntegrityViolation(format!(
+                    StorageError::IntegrityViolation(format!(
                         "Archive record {} has an unusable file name.",
                         path.display()
                     ))
@@ -552,7 +523,7 @@ impl FileVoucherArchive {
     ///   was intact): refuses to rewrite. Silently re-syncing the
     ///   bookkeeping would launder a whole-record deletion executed between
     ///   two legitimate archiving operations (AUDIT-W4-STO-002a).
-    fn sync_manifest(&self, voucher_dir: &Path) -> Result<(), ArchiveError> {
+    fn sync_manifest(&self, voucher_dir: &Path) -> Result<(), StorageError> {
         let actual = Self::collect_record_ids(voucher_dir)?;
         let manifest_path = voucher_dir.join(MANIFEST_FILE_NAME);
 
@@ -560,7 +531,7 @@ impl FileVoucherArchive {
             if actual.len() <= 1 {
                 return self.write_manifest(voucher_dir, Self::collect_manifest_entries(voucher_dir)?);
             }
-            return Err(ArchiveError::IntegrityViolation(format!(
+            return Err(StorageError::IntegrityViolation(format!(
                 "Refusing to bootstrap archive manifest for {}: directory \
                  holds multiple records but no manifest; deletion of records \
                  and manifest cannot be ruled out.",
@@ -591,7 +562,7 @@ impl FileVoucherArchive {
                 .write_manifest(voucher_dir, Self::collect_manifest_entries(voucher_dir)?);
         }
 
-        Err(ArchiveError::IntegrityViolation(format!(
+        Err(StorageError::IntegrityViolation(format!(
             "Refusing to update archive manifest for {}: record set diverged \
              from the sealed manifest (deletion and/or substitution); possible \
              tampering or rollback of archive records.",
@@ -612,16 +583,16 @@ fn looks_like_envelope(value: &serde_json::Value) -> bool {
         || value.get("kdf_salt").is_some()
 }
 
-impl VoucherArchive for FileVoucherArchive {
-    fn archive_voucher(
+impl FileVoucherArchive {
+    pub fn archive_voucher(
         &self,
         voucher: &Voucher,
         _owner_id: &str,
         _standard: &VoucherStandardDefinition,
-    ) -> Result<(), ArchiveError> {
+    ) -> Result<(), StorageError> {
         // Each state is uniquely identified by the ID of the last transaction.
         let last_tx = voucher.transactions.last().ok_or_else(|| {
-            ArchiveError::Generic("Cannot archive voucher with no transactions.".to_string())
+            StorageError::Generic("Cannot archive voucher with no transactions.".to_string())
         })?;
 
         // Create a subdirectory for each voucher to group the states.
@@ -656,10 +627,10 @@ impl VoucherArchive for FileVoucherArchive {
         Ok(())
     }
 
-    fn get_archived_voucher(&self, voucher_id: &str) -> Result<Voucher, ArchiveError> {
+    pub fn get_archived_voucher(&self, voucher_id: &str) -> Result<Voucher, StorageError> {
         let voucher_dir = self.archive_directory.join(voucher_id);
         if !voucher_dir.is_dir() {
-            return Err(ArchiveError::NotFound);
+            return Err(StorageError::NotFound);
         }
 
         // Whole-record loss detection (HMSEC-SA05-09): the sealed manifest
@@ -668,7 +639,7 @@ impl VoucherArchive for FileVoucherArchive {
         // and the files actually on disk is a whole-record deletion/injection.
         let manifest_path = voucher_dir.join(MANIFEST_FILE_NAME);
         if !manifest_path.exists() {
-            return Err(ArchiveError::IntegrityViolation(format!(
+            return Err(StorageError::IntegrityViolation(format!(
                 "Archive record manifest missing for {}; whole-record deletion \
                  cannot be ruled out.",
                 voucher_dir.display()
@@ -683,7 +654,7 @@ impl VoucherArchive for FileVoucherArchive {
         expected.sort();
         let actual = Self::collect_record_ids(&voucher_dir)?;
         if actual != expected {
-            return Err(ArchiveError::IntegrityViolation(format!(
+            return Err(StorageError::IntegrityViolation(format!(
                 "Archive record set mismatch for {}: manifest lists {} \
                  record(s), found {} on disk; whole-record deletion or \
                  injection detected.",
@@ -707,14 +678,14 @@ impl VoucherArchive for FileVoucherArchive {
         for entry in fs::read_dir(&voucher_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |s| s == "json") {
+            if path.is_file() && path.extension().is_some_and(|s| s == "json") {
                 let bytes = fs::read(&path)?;
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if let Some(expected_hash) = hash_by_id.get(stem) {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                    && let Some(expected_hash) = hash_by_id.get(stem) {
                         let actual_hash =
-                            crate::services::crypto_utils::get_hash(&bytes);
+                            crate::services::crypto::get_hash(&bytes);
                         if actual_hash != *expected_hash {
-                            return Err(ArchiveError::IntegrityViolation(format!(
+                            return Err(StorageError::IntegrityViolation(format!(
                                 "Archive record {} does not match its sealed \
                                  manifest entry (content substituted or rolled \
                                  back).",
@@ -722,7 +693,6 @@ impl VoucherArchive for FileVoucherArchive {
                             )));
                         }
                     }
-                }
                 states.push(self.decode_record(&bytes, &path)?);
             }
         }
@@ -741,13 +711,13 @@ impl VoucherArchive for FileVoucherArchive {
                 })
         });
 
-        states.pop().ok_or(ArchiveError::NotFound)
+        states.pop().ok_or(StorageError::NotFound)
     }
 
-    fn find_transaction_by_id(
+    pub fn find_transaction_by_id(
         &self,
         t_id: &str,
-    ) -> Result<Option<(Voucher, Transaction)>, ArchiveError> {
+    ) -> Result<Option<(Voucher, Transaction)>, StorageError> {
         // Search all subdirectories (each `voucher_id` directory).
         // Corrupt/tampered records propagate their IntegrityViolation instead
         // of being silently skipped (HMSEC-SA05-02).
@@ -757,7 +727,7 @@ impl VoucherArchive for FileVoucherArchive {
                 for entry in fs::read_dir(voucher_dir_path)? {
                     let entry = entry?;
                     let path = entry.path();
-                    if path.is_file() && path.extension().map_or(false, |s| s == "json") {
+                    if path.is_file() && path.extension().is_some_and(|s| s == "json") {
                         let voucher = self.read_record(&path)?;
                         if let Some(tx) = voucher.transactions.iter().find(|t| t.t_id == t_id) {
                             return Ok(Some((voucher.clone(), tx.clone())));
@@ -768,7 +738,8 @@ impl VoucherArchive for FileVoucherArchive {
         }
         Ok(None)
     }
-    fn find_voucher_by_tx_id(&self, t_id: &str) -> Result<Option<Voucher>, ArchiveError> {
+
+    pub fn find_voucher_by_tx_id(&self, t_id: &str) -> Result<Option<Voucher>, StorageError> {
         // Use the existing logic of `find_transaction_by_id`.
         if let Some((voucher, _)) = self.find_transaction_by_id(t_id)? {
             Ok(Some(voucher))

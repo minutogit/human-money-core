@@ -2,9 +2,8 @@ use human_money_core::VoucherCoreError;
 use human_money_core::error::ValidationError;
 use human_money_core::models::voucher::{TrapData, Voucher};
 use human_money_core::models::voucher_standard_definition::VoucherStandardDefinition;
-use human_money_core::services::crypto_utils::get_hash;
+use human_money_core::services::crypto::get_hash;
 use human_money_core::services::utils::to_canonical_json;
-use human_money_core::services::voucher_manager::create_voucher;
 use human_money_core::services::voucher_validation::validate_voucher_against_standard;
 use human_money_core::set_signature_bypass;
 use human_money_core::test_utils::{
@@ -41,7 +40,7 @@ fn create_valid_voucher(standard: &VoucherStandardDefinition, standard_hash: &st
     let voucher_data = create_minuto_voucher_data(creator);
 
     // Create the base voucher (genesis_tx is signed normally, which is fine)
-    let mut voucher = create_voucher(
+    let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         standard,
         standard_hash,
@@ -273,11 +272,10 @@ fn prevent_trap_data_replay() {
     use human_money_core::models::profile::PublicProfile;
     use human_money_core::models::signature::DetachedSignature;
     use human_money_core::models::voucher::{Transaction, ValueDefinition};
-    use human_money_core::services::crypto_utils::{
+    use human_money_core::services::crypto::{
         create_user_id, generate_ed25519_keypair_for_tests, get_hash,
     };
-    use human_money_core::services::signature_manager;
-    use human_money_core::services::voucher_manager::{NewVoucherData, create_voucher};
+    use human_money_core::NewVoucherData;
     use human_money_core::test_utils::{
         ACTORS, create_guarantor_signature_data, derive_holder_key,
     };
@@ -289,7 +287,7 @@ fn prevent_trap_data_replay() {
     let (pk, sk) = generate_ed25519_keypair_for_tests(Some("creator_seed"));
     let creator_id = create_user_id(&pk, Some("cre")).unwrap();
     let _my_id_point =
-        human_money_core::services::crypto_utils::ed25519_pk_to_curve_point(&pk).unwrap();
+        human_money_core::services::crypto::ed25519_pk_to_curve_point(&pk).unwrap();
 
     let voucher_data = NewVoucherData {
         creator_profile: PublicProfile {
@@ -303,7 +301,7 @@ fn prevent_trap_data_replay() {
         validity_duration: Some("P4Y".to_string()),
         ..Default::default()
     };
-    let mut voucher = create_voucher(voucher_data, &standard, &standard_hash, &sk)
+    let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(voucher_data, &standard, &standard_hash, &sk)
         .expect("Voucher creation failed");
 
     // Add Guarantors
@@ -316,28 +314,28 @@ fn prevent_trap_data_replay() {
     let details1 = match &sig_data1 {
         DetachedSignature::Signature(s) => s.details.clone(),
     };
-    let signed1 = signature_manager::complete_and_sign_detached_signature(
-        sig_data1,
-        &ACTORS.guarantor1.identity,
-        details1,
-        &voucher.voucher_id,
-        init_t_id,
-    )
-    .unwrap();
+    let signed1 = sig_data1
+        .complete_and_sign(
+            &ACTORS.guarantor1.identity,
+            details1,
+            &voucher.voucher_id,
+            init_t_id,
+        )
+        .unwrap();
     let DetachedSignature::Signature(s1) = signed1;
     voucher.signatures.push(s1);
 
     let details2 = match &sig_data2 {
         DetachedSignature::Signature(s) => s.details.clone(),
     };
-    let signed2 = signature_manager::complete_and_sign_detached_signature(
-        sig_data2,
-        &ACTORS.guarantor2.identity,
-        details2,
-        &voucher.voucher_id,
-        init_t_id,
-    )
-    .unwrap();
+    let signed2 = sig_data2
+        .complete_and_sign(
+            &ACTORS.guarantor2.identity,
+            details2,
+            &voucher.voucher_id,
+            init_t_id,
+        )
+        .unwrap();
     let DetachedSignature::Signature(s2) = signed2;
     voucher.signatures.push(s2);
 
@@ -349,11 +347,11 @@ fn prevent_trap_data_replay() {
     // Prepare Link 2 (Tx1 -> Tx2)
     let (pk_tx2, _) = generate_ed25519_keypair_for_tests(Some("tx2_seed"));
     let receiver_ephemeral_pub_hash_tx1 =
-        human_money_core::services::crypto_utils::get_hash(pk_tx2.as_bytes());
+        human_money_core::services::crypto::get_hash(pk_tx2.as_bytes());
 
     // 3. Create Tx1 (Valid) via create_transaction
     let amount = "60";
-    let (mut voucher, secrets) = human_money_core::services::voucher_manager::create_transaction(
+    let (mut voucher, secrets) = human_money_core::models::voucher::Transaction::create(
         &voucher,
         &standard,
         &creator_id,
@@ -488,7 +486,7 @@ fn enforce_ephemeral_key_uniqueness() {
 #[test]
 #[should_panic(expected = "Encryption leakage detected")]
 fn verify_encryption_padding_constancy() {
-    use human_money_core::services::crypto_utils::encrypt_data;
+    use human_money_core::services::crypto::encrypt_data;
 
     let key = [0u8; 32]; // Dummy key
 

@@ -15,7 +15,7 @@ fn test_cleanup_of_expired_archived_instances() {
     let mut wallet = setup_in_memory_wallet(user);
     let (standard, hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
-    let voucher_data = human_money_core::services::voucher_manager::NewVoucherData {
+    let voucher_data = human_money_core::NewVoucherData {
         validity_duration: Some("P1Y".to_string()),
         creator_profile: human_money_core::models::profile::PublicProfile {
             id: Some(user.user_id.clone()),

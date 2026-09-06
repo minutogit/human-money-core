@@ -13,14 +13,14 @@
 //! - **Double Spend Detection:** Verification of the Identity Trap for root accounts
 
 use human_money_core::test_utils;
-use human_money_core::crypto_utils;
-use human_money_core::services::crypto_utils::{
+use human_money_core::crypto;
+use human_money_core::services::crypto::{
     create_user_id, get_prefix_from_user_id, get_pubkey_from_user_id, validate_user_id,
 };
 use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD, create_custom_standard, create_minuto_voucher_data};
 use human_money_core::{
-    create_voucher, models::voucher::ValueDefinition,
-    services::voucher_manager::{create_transaction, get_spendable_balance, NewVoucherData},
+    models::voucher::ValueDefinition,
+    NewVoucherData,
     models::profile::PublicProfile,
 };
 use rust_decimal_macros::dec;
@@ -28,7 +28,7 @@ use rust_decimal_macros::dec;
 #[test]
 fn test_create_root_account_user_id() {
     // Test: Creation of a root account user ID (without prefix)
-    let (_pub_key, _priv_key) = crypto_utils::generate_ed25519_keypair_for_tests(None);
+    let (_pub_key, _priv_key) = crypto::generate_ed25519_keypair_for_tests(None);
     
     // Root account: user_prefix = None
     let root_id = create_user_id(&_pub_key, None).unwrap();
@@ -47,7 +47,7 @@ fn test_create_root_account_user_id() {
 #[test]
 fn test_create_prefix_account_user_id() {
     // Test: Creation of a prefix account user ID (with prefix)
-    let (_pub_key, _priv_key) = crypto_utils::generate_ed25519_keypair_for_tests(None);
+    let (_pub_key, _priv_key) = crypto::generate_ed25519_keypair_for_tests(None);
     
     // Prefix account: user_prefix = Some("test")
     let prefix_id = create_user_id(&_pub_key, Some("test")).unwrap();
@@ -85,7 +85,7 @@ fn test_validate_root_account_user_id() {
     // Test: Validation of root account user IDs
     
     // 1. Valid root account ID
-    let (_pub_key, _priv_key) = crypto_utils::generate_ed25519_keypair_for_tests(None);
+    let (_pub_key, _priv_key) = crypto::generate_ed25519_keypair_for_tests(None);
     let root_id = create_user_id(&_pub_key, None).unwrap();
     assert!(validate_user_id(&root_id));
     
@@ -121,7 +121,7 @@ fn test_genesis_with_root_account() {
         create_custom_standard(&FREETALER_STANDARD.0, |s| s.immutable.custom_rules.clear());
     
     // Creation of the voucher
-    let voucher = create_voucher(
+    let voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         &custom_standard,
         &standard_hash,
@@ -149,7 +149,7 @@ fn test_genesis_with_root_account() {
 fn test_pubkey_extraction_from_root_account() {
     // Test: Extraction of public key from a root account user ID
     
-    let (_pub_key, _priv_key) = crypto_utils::generate_ed25519_keypair_for_tests(None);
+    let (_pub_key, _priv_key) = crypto::generate_ed25519_keypair_for_tests(None);
     
     // Create a root account user ID
     let root_id = create_user_id(&_pub_key, None).unwrap();
@@ -167,7 +167,7 @@ fn test_pubkey_extraction_from_root_account() {
 fn test_pubkey_extraction_from_prefix_account() {
     // Test: Extraction of public key from a prefix account user ID
     
-    let (_pub_key, _priv_key) = crypto_utils::generate_ed25519_keypair_for_tests(None);
+    let (_pub_key, _priv_key) = crypto::generate_ed25519_keypair_for_tests(None);
     
     // Create a prefix account user ID
     let prefix_id = create_user_id(&_pub_key, Some("test")).unwrap();
@@ -200,22 +200,22 @@ fn test_balance_lifecycle_root_to_root() {
         ..Default::default()
     };
     
-    let mut voucher = create_voucher(
+    let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data, standard, &standard_hash, &alice.signing_key).unwrap();
     
     // 3. Check Balance Alice (100)
-    assert_eq!(get_spendable_balance(&voucher, &alice_id, standard, None).unwrap(), dec!(100));
+    assert_eq!(voucher.spendable_balance_for_user( &alice_id, standard, None).unwrap(), dec!(100));
     
     // 4. Alice (Root) sends 40 to Bob (Root)
     let alice_holder_key = test_utils::derive_holder_key(&voucher, &alice.signing_key);
-    let (v_after_split, secrets) = create_transaction(
+    let (v_after_split, secrets) = human_money_core::models::voucher::Transaction::create(
         &voucher, standard, &alice_id, &alice.signing_key, &alice_holder_key, &bob_id, "40", None
     ).unwrap();
     voucher = v_after_split;
     
     // 5. Check Balances: Alice (60), Bob (40)
-    assert_eq!(get_spendable_balance(&voucher, &alice_id, standard, None).unwrap(), dec!(60));
-    assert_eq!(get_spendable_balance(&voucher, &bob_id, standard, None).unwrap(), dec!(40));
+    assert_eq!(voucher.spendable_balance_for_user( &alice_id, standard, None).unwrap(), dec!(60));
+    assert_eq!(voucher.spendable_balance_for_user( &bob_id, standard, None).unwrap(), dec!(40));
     
     // 6. Bob (Root) sends 10 to Alice (Root)
     // Bob must derive his holder key.
@@ -223,7 +223,7 @@ fn test_balance_lifecycle_root_to_root() {
         &bs58::decode(&secrets.recipient_seed).into_vec().unwrap().try_into().unwrap()
     );
     
-    let (v_after_back, _secrets2) = create_transaction(
+    let (v_after_back, _secrets2) = human_money_core::models::voucher::Transaction::create(
         &voucher, standard, &bob_id, &bob.signing_key, &bob_holder_key, &alice_id, "10", None
     ).unwrap();
     voucher = v_after_back;
@@ -231,8 +231,8 @@ fn test_balance_lifecycle_root_to_root() {
     // 7. Check Balances: Alice (10), Bob (30)
     // Note: Alice now has 10 in the NEWEST tx branch. Her previous funds (60) are no longer "spendable" in this branch
     // without using the change key from the previous step.
-    assert_eq!(get_spendable_balance(&voucher, &alice_id, standard, None).unwrap(), dec!(10));
-    assert_eq!(get_spendable_balance(&voucher, &bob_id, standard, None).unwrap(), dec!(30));
+    assert_eq!(voucher.spendable_balance_for_user( &alice_id, standard, None).unwrap(), dec!(10));
+    assert_eq!(voucher.spendable_balance_for_user( &bob_id, standard, None).unwrap(), dec!(30));
 }
 
 #[test]
@@ -256,22 +256,22 @@ fn test_balance_lifecycle_mixed_identities() {
         ..Default::default()
     };
     
-    let mut voucher = create_voucher(
+    let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data, standard, &standard_hash, &alice.signing_key).unwrap();
     
     // Alice (Root) -> Charlie (Prefix)
     let alice_holder_key = test_utils::derive_holder_key(&voucher, &alice.signing_key);
-    let (v, _) = create_transaction(
+    let (v, _) = human_money_core::models::voucher::Transaction::create(
         &voucher, standard, &alice_id, &alice.signing_key, &alice_holder_key, &charlie_id, "30", None
     ).unwrap();
     voucher = v;
     
-    assert_eq!(get_spendable_balance(&voucher, &alice_id, standard, None).unwrap(), dec!(70));
-    assert_eq!(get_spendable_balance(&voucher, &charlie_id, standard, None).unwrap(), dec!(30));
+    assert_eq!(voucher.spendable_balance_for_user( &alice_id, standard, None).unwrap(), dec!(70));
+    assert_eq!(voucher.spendable_balance_for_user( &charlie_id, standard, None).unwrap(), dec!(30));
     
     // Ensure that Charlie (Root) - if he were to exist - has 0
     let charlie_root_id = create_user_id(&charlie.signing_key.verifying_key(), None).unwrap();
-    assert_eq!(get_spendable_balance(&voucher, &charlie_root_id, standard, None).unwrap(), dec!(0));
+    assert_eq!(voucher.spendable_balance_for_user( &charlie_root_id, standard, None).unwrap(), dec!(0));
 }
 
 #[test]
@@ -294,18 +294,18 @@ fn test_stealth_balance_root_account() {
         ..Default::default()
     };
     
-    let mut voucher = create_voucher(
+    let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data, standard, &standard_hash, &alice.signing_key).unwrap();
     
     // We use stealth matching (via hash)
     // 1. Alice Holder Hash
     let alice_holder_key = test_utils::derive_holder_key(&voucher, &alice.signing_key);
-    let alice_holder_hash = human_money_core::services::crypto_utils::get_hash(alice_holder_key.verifying_key().to_bytes());
+    let alice_holder_hash = human_money_core::services::crypto::get_hash(alice_holder_key.verifying_key().to_bytes());
     
-    assert_eq!(get_spendable_balance(&voucher, &alice_id, standard, Some(&alice_holder_hash)).unwrap(), dec!(100));
+    assert_eq!(voucher.spendable_balance_for_user( &alice_id, standard, Some(&alice_holder_hash)).unwrap(), dec!(100));
     
     // 2. Alice (Root) -> Bob (Root) via Stealth
-    let (v, secrets) = create_transaction(
+    let (v, secrets) = human_money_core::models::voucher::Transaction::create(
         &voucher, standard, &alice_id, &alice.signing_key, &alice_holder_key, &bob_id, "40", None
     ).unwrap();
     voucher = v;
@@ -314,14 +314,14 @@ fn test_stealth_balance_root_account() {
     let bob_receiver_hash = last_tx.receiver_ephemeral_pub_hash.as_deref().unwrap();
     let alice_change_hash = last_tx.change_ephemeral_pub_hash.as_deref().unwrap();
     
-    assert_eq!(get_spendable_balance(&voucher, &bob_id, standard, Some(bob_receiver_hash)).unwrap(), dec!(40));
-    assert_eq!(get_spendable_balance(&voucher, &alice_id, standard, Some(alice_change_hash)).unwrap(), dec!(60));
+    assert_eq!(voucher.spendable_balance_for_user( &bob_id, standard, Some(bob_receiver_hash)).unwrap(), dec!(40));
+    assert_eq!(voucher.spendable_balance_for_user( &alice_id, standard, Some(alice_change_hash)).unwrap(), dec!(60));
     
     // Verify that the seed was derived correctly (must match empty prefix)
     let bob_holder_key = ed25519_dalek::SigningKey::from_bytes(
         &bs58::decode(&secrets.recipient_seed).into_vec().unwrap().try_into().unwrap()
     );
-    let bob_derived_hash = human_money_core::services::crypto_utils::get_hash(bob_holder_key.verifying_key().to_bytes());
+    let bob_derived_hash = human_money_core::services::crypto::get_hash(bob_holder_key.verifying_key().to_bytes());
     
     assert_eq!(bob_derived_hash, bob_receiver_hash);
 }

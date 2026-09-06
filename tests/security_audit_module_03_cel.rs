@@ -210,9 +210,9 @@
 //!             signature validity alone cannot prevent the swap. A control
 //!             pins that re-importing IDENTICAL content stays allowed.
 
-use human_money_core::services::crypto_utils::{get_hash, sign_ed25519};
+use human_money_core::models::voucher_standard_definition::VoucherStandardDefinition;
+use human_money_core::services::crypto::{get_hash, sign_ed25519};
 use human_money_core::services::dynamic_policy_engine::{DynamicPolicyEngine, PolicyEngineError};
-use human_money_core::services::standard_manager::verify_and_parse_standard;
 use human_money_core::services::utils::to_canonical_json;
 use human_money_core::test_utils::actors::user_from_mnemonic_fast;
 use human_money_core::app_service::AppService;
@@ -514,8 +514,8 @@ fn finding04_import_same_uuid_divergent_content_must_not_overwrite_installed_sta
 
     // Sanity: both verify WITHOUT any test-utils bypass -> signature validity
     // alone cannot distinguish them; the conflict guard is required.
-    assert!(verify_and_parse_standard(&toml_original).is_ok());
-    assert!(verify_and_parse_standard(&toml_weakened).is_ok());
+    assert!(VoucherStandardDefinition::from_toml(&toml_original).is_ok());
+    assert!(VoucherStandardDefinition::from_toml(&toml_weakened).is_ok());
     assert_ne!(toml_original, toml_weakened);
 
     // First import installs the original standard.
@@ -864,7 +864,7 @@ fn finding05_deeply_nested_expression_must_err_not_abort() {
 #[test]
 fn finding05_comprehension_over_large_array_must_respect_iteration_budget() {
     let big_items: Vec<serde_json::Value> =
-        std::iter::repeat(json!({ "x": 1 })).take(5_000).collect();
+        std::iter::repeat_n(json!({ "x": 1 }), 5_000).collect();
     let voucher = json!({ "items": big_items });
 
     let result = DynamicPolicyEngine::evaluate_rule(
@@ -886,7 +886,6 @@ fn finding05_comprehension_over_large_array_must_respect_iteration_budget() {
 // WAVE 3 ADDITIONS (Security Audit Wave 3, Phase B)
 // ===========================================================================
 
-use human_money_core::models::voucher::Voucher;
 use human_money_core::services::voucher_validation::verify_standard_identity;
 
 // ===========================================================================
@@ -1193,7 +1192,7 @@ fn finding09_import_must_reject_path_traversal_and_absolute_uuid() {
     let toml_traversal =
         signed_standard_toml("../m03_w3_escape_probe", "Escape Probe", 2, &issuer);
     assert!(
-        verify_and_parse_standard(&toml_traversal).is_ok(),
+        VoucherStandardDefinition::from_toml(&toml_traversal).is_ok(),
         "precondition: traversal-uuid standard must be self-consistently signed — \
          signature validity alone cannot reject hostile uuids"
     );
@@ -1223,7 +1222,7 @@ fn finding09_import_must_reject_path_traversal_and_absolute_uuid() {
         &issuer,
     );
     assert!(
-        verify_and_parse_standard(&toml_absolute).is_ok(),
+        VoucherStandardDefinition::from_toml(&toml_absolute).is_ok(),
         "precondition: absolute-path-uuid standard must be self-consistently signed"
     );
     let res_absolute =
@@ -1309,10 +1308,10 @@ fn finding10_usage_time_identity_check_must_reject_tampered_mutable_zone_and_str
     let toml = signed_standard_toml("audit-m03-0010-uuid", "Integrity Probe", 2, &issuer);
 
     let (mut def, logic_hash) =
-        verify_and_parse_standard(&toml).expect("precondition: pristine standard verifies");
+        VoucherStandardDefinition::from_toml(&toml).expect("precondition: pristine standard verifies");
 
     // Voucher bound to THIS installation (uuid + immutable-zone hash match).
-    let mut voucher = Voucher::default();
+    let mut voucher = human_money_core::models::voucher::Voucher::default();
     voucher.voucher_standard.uuid = def.immutable.identity.uuid.clone();
     voucher.voucher_standard.standard_definition_hash = logic_hash;
 

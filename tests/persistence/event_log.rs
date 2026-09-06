@@ -1,5 +1,5 @@
 use human_money_core::app_service::AppService;
-use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::NewVoucherData;
 use tempfile::tempdir;
 
 #[test]
@@ -15,7 +15,7 @@ fn test_voucher_creation_emits_event() {
     // Load standard
     let standard_toml = include_str!("../../voucher_standards/minuto_v1/standard.toml");
     
-    let user_id = app.get_user_id().expect("User ID missing");
+    let user_id = app.with_wallet(|w| w.get_user_id().to_string()).expect("User ID missing");
 
     let data = NewVoucherData {
         validity_duration: Some("P3Y".to_string()),
@@ -65,7 +65,7 @@ fn test_status_transition_emits_event() {
 
     // 1. Create a voucher (will be Incomplete due to missing signatures in Minuto standard)
     let standard_toml = include_str!("../../voucher_standards/minuto_v1/standard.toml");
-    let user_id = app.get_user_id().expect("User ID missing");
+    let user_id = app.with_wallet(|w| w.get_user_id().to_string()).expect("User ID missing");
     let data = NewVoucherData {
         validity_duration: Some("P3Y".to_string()),
         nominal_value: human_money_core::models::voucher::ValueDefinition {
@@ -83,7 +83,7 @@ fn test_status_transition_emits_event() {
     let _voucher = app.create_new_voucher(standard_toml, data, Some("password123"))
         .expect("Failed to create voucher");
 
-    let local_id = app.get_voucher_summaries(None, None, None).expect("Failed to get summaries")[0].local_instance_id.clone();
+    let local_id = app.with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None)).expect("Failed to get summaries")[0].local_instance_id.clone();
 
     // 2. Manually transition to Quarantined
     {

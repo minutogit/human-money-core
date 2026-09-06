@@ -1,10 +1,9 @@
-use human_money_core::models::voucher::Transaction;
 
-use human_money_core::services::crypto_utils::get_hash;
+use human_money_core::services::crypto::get_hash;
 use human_money_core::services::utils::get_current_timestamp;
 use human_money_core::services::voucher_validation::validate_voucher_against_standard;
 use human_money_core::test_utils::setup_voucher_with_one_tx;
-use human_money_core::to_canonical_json;
+use human_money_core::{to_canonical_json, Transaction};
 
 #[test]
 fn test_public_mode_enforcement() {
@@ -47,7 +46,7 @@ fn test_public_mode_enforcement() {
     let genesis_prev_hash = {
         let v_id_bytes = bs58::decode(&new_voucher_id).into_vec().unwrap();
         let v_nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
-        human_money_core::services::crypto_utils::get_hash_from_slices(&[
+        human_money_core::services::crypto::get_hash_from_slices(&[
             &v_id_bytes,
             &v_nonce_bytes,
         ])
@@ -62,7 +61,7 @@ fn test_public_mode_enforcement() {
         prev_hash: genesis_hash,
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: amount,
+        amount,
         sender_id: None, // Fail case first
         recipient_id: "did:key:recipient".to_string(),
         sender_ephemeral_pub: Some(secret.to_string()), // Needed for balance check
@@ -123,7 +122,7 @@ fn test_private_mode_enforcement() {
     let genesis_prev_hash = {
         let v_id_bytes = bs58::decode(&new_voucher_id).into_vec().unwrap();
         let v_nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
-        human_money_core::services::crypto_utils::get_hash_from_slices(&[
+        human_money_core::services::crypto::get_hash_from_slices(&[
             &v_id_bytes,
             &v_nonce_bytes,
         ])
@@ -139,7 +138,7 @@ fn test_private_mode_enforcement() {
         prev_hash: genesis_hash,
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: amount, // Must match exactly
+        amount, // Must match exactly
         sender_id: None, // Correct for Private
         recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(), // Correct for Private
         sender_ephemeral_pub: Some(secret_key.to_string()), // Reveals key -> Links to Init
@@ -205,7 +204,7 @@ fn test_flexible_mode_hybrid_behavior() {
     let genesis_prev_hash = {
         let v_id_bytes = bs58::decode(&new_voucher_id).into_vec().unwrap();
         let v_nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
-        human_money_core::services::crypto_utils::get_hash_from_slices(&[
+        human_money_core::services::crypto::get_hash_from_slices(&[
             &v_id_bytes,
             &v_nonce_bytes,
         ])
@@ -220,7 +219,7 @@ fn test_flexible_mode_hybrid_behavior() {
         prev_hash: genesis_hash,
         t_time: get_current_timestamp(),
         t_type: "transfer".to_string(),
-        amount: amount,
+        amount,
         sender_id: Some(voucher.transactions[0].recipient_id.clone()), // Valid Sender (Public)
         recipient_id: human_money_core::models::voucher::ANONYMOUS_ID.to_string(),
         sender_ephemeral_pub: Some(secret.to_string()),

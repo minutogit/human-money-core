@@ -4,7 +4,7 @@ use human_money_core::models::layer2_api::{
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::models::voucher::ValueDefinition;
 
-use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::NewVoucherData;
 use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD};
 use std::collections::{HashMap, HashSet};
 use tempfile::tempdir;
@@ -16,6 +16,12 @@ pub struct MockL2Node {
     vouchers: HashSet<String>,
     locks: HashMap<String, HashMap<String, L2LockEntry>>,
     server_key: SigningKey,
+}
+
+impl Default for MockL2Node {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MockL2Node {
@@ -100,7 +106,7 @@ impl MockL2Node {
 
         // 2. Locator Search
         for prefix in &req.locator_prefixes {
-            for (ds_tag, _entry) in voucher_locks {
+            for ds_tag in voucher_locks.keys() {
                 if ds_tag.starts_with(prefix) {
                     return self.wrap_and_sign(L2Verdict::MissingLocks {
                         sync_point: prefix.clone(),
@@ -132,7 +138,7 @@ fn test_scenario_1_happy_path() {
         s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
-    let user_id = app.get_user_id().unwrap();
+    let user_id = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     app.create_new_voucher(
         &flexible_toml,
         NewVoucherData {
@@ -150,7 +156,9 @@ fn test_scenario_1_happy_path() {
     )
     .unwrap();
 
-    let voucher_id = app.get_voucher_summaries(None, None, None).unwrap()[0]
+    let voucher_id = app
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
     let mut mock_l2 = MockL2Node::new();
@@ -189,7 +197,7 @@ fn test_scenario_2_offline_sync() {
         s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
-    let user_id = app.get_user_id().unwrap();
+    let user_id = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     app.create_new_voucher(
         &flexible_toml,
         NewVoucherData {
@@ -207,7 +215,9 @@ fn test_scenario_2_offline_sync() {
     )
     .unwrap();
 
-    let voucher_id = app.get_voucher_summaries(None, None, None).unwrap()[0]
+    let voucher_id = app
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
     let mut mock_l2 = MockL2Node::new();
@@ -244,11 +254,14 @@ fn test_scenario_2_offline_sync() {
     .unwrap();
 
     let v_id_tx1 = app
-        .get_voucher_summaries(
-            None,
-            Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
-            None,
-        )
+        .with_wallet_and_identity(|w, id| {
+            w.list_vouchers(
+                Some(id),
+                None,
+                Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+                None,
+            )
+        })
         .unwrap()
         .last()
         .unwrap()
@@ -274,11 +287,14 @@ fn test_scenario_2_offline_sync() {
     .unwrap();
 
     let v_id_tx2 = app
-        .get_voucher_summaries(
-            None,
-            Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
-            None,
-        )
+        .with_wallet_and_identity(|w, id| {
+            w.list_vouchers(
+                Some(id),
+                None,
+                Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+                None,
+            )
+        })
         .unwrap()
         .last()
         .unwrap()
@@ -319,7 +335,7 @@ fn test_scenario_3_double_spend_detection() {
         s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
-    let user_id = app.get_user_id().unwrap();
+    let user_id = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     app.create_new_voucher(
         &flexible_toml,
         NewVoucherData {
@@ -337,7 +353,9 @@ fn test_scenario_3_double_spend_detection() {
     )
     .unwrap();
 
-    let voucher_id = app.get_voucher_summaries(None, None, None).unwrap()[0]
+    let voucher_id = app
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
     let mut mock_l2 = MockL2Node::new();
@@ -372,11 +390,14 @@ fn test_scenario_3_double_spend_detection() {
     .unwrap();
 
     let v_id_transfer = app
-        .get_voucher_summaries(
-            None,
-            Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
-            None,
-        )
+        .with_wallet_and_identity(|w, id| {
+            w.list_vouchers(
+                Some(id),
+                None,
+                Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+                None,
+            )
+        })
         .unwrap()
         .last()
         .unwrap()
@@ -400,7 +421,7 @@ fn test_scenario_3_double_spend_detection() {
         .unwrap();
 
     // 5. Check if quarantined
-    let details = app.get_voucher_details(&v_id_transfer).unwrap();
+    let details = app.with_wallet(|w| w.get_voucher_details(&v_id_transfer).unwrap()).unwrap();
     assert!(matches!(
         details.status,
         human_money_core::wallet::instance::VoucherStatus::Quarantined { .. }
@@ -424,7 +445,7 @@ fn test_scenario_4_initial_registration() {
         s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
-    let user_id = app.get_user_id().unwrap();
+    let user_id = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     app.create_new_voucher(
         &flexible_toml,
         NewVoucherData {
@@ -442,7 +463,9 @@ fn test_scenario_4_initial_registration() {
     )
     .unwrap();
 
-    let voucher_id = app.get_voucher_summaries(None, None, None).unwrap()[0]
+    let voucher_id = app
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
     let mock_l2 = MockL2Node::new(); // EMPTY L2

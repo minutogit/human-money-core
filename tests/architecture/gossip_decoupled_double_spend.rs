@@ -33,7 +33,7 @@ mod tests {
     use human_money_core::app_service::AppService;
     use human_money_core::models::profile::PublicProfile;
     use human_money_core::models::voucher::ValueDefinition;
-    use human_money_core::services::voucher_manager::NewVoucherData;
+    use human_money_core::NewVoucherData;
     use human_money_core::test_utils::{self, actors, ACTORS, FREETALER_STANDARD};
     use human_money_core::wallet::{MultiTransferRequest, SourceTransfer};
     use std::collections::HashMap;
@@ -136,27 +136,27 @@ mod tests {
         // Login once to save IDs
         clear_lock(base, &profile0.folder_name);
         user0.login(&profile0.folder_name, PASSWORD, false, "test-id".to_string()).unwrap();
-        let user0_id = user0.get_user_id().unwrap();
+        let user0_id = user0.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         user0.logout();
 
         clear_lock(base, &profile1.folder_name);
         user1.login(&profile1.folder_name, PASSWORD, false, "test-id".to_string()).unwrap();
-        let user1_id = user1.get_user_id().unwrap();
+        let user1_id = user1.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         user1.logout();
 
         clear_lock(base, &profile2.folder_name);
         user2.login(&profile2.folder_name, PASSWORD, false, "test-id".to_string()).unwrap();
-        let user2_id = user2.get_user_id().unwrap();
+        let user2_id = user2.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         user2.logout();
 
         clear_lock(base, &profile3.folder_name);
         user3.login(&profile3.folder_name, PASSWORD, false, "test-id".to_string()).unwrap();
-        let user3_id = user3.get_user_id().unwrap();
+        let user3_id = user3.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         user3.logout();
 
         clear_lock(base, &profile4.folder_name);
         user4.login(&profile4.folder_name, PASSWORD, false, "test-id".to_string()).unwrap();
-        let user4_id = user4.get_user_id().unwrap();
+        let user4_id = user4.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         user4.logout();
 
         // =======================================================================
@@ -167,7 +167,7 @@ mod tests {
 
         create_voucher_for_user(&mut user0, &user0_id, PASSWORD);
         let voucher_a_local_id = user0
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()[0]
             .local_instance_id
             .clone();
@@ -198,7 +198,7 @@ mod tests {
         user1.login(&profile1.folder_name, PASSWORD, false, "test-id".to_string()).unwrap();
         user1.receive_bundle(&bundle_a0, &standards, None, Some(PASSWORD), false).unwrap();
         let voucher_a_at_user1 = user1
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()[0]
             .local_instance_id
             .clone();
@@ -259,7 +259,7 @@ mod tests {
 
         // After rollback: user1 has Voucher A as Active again
         let voucher_a_after_rollback = user1
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()[0]
             .local_instance_id
             .clone();
@@ -303,13 +303,15 @@ mod tests {
 
         // user2 creates a completely independent Voucher B
         create_voucher_for_user(&mut user2, &user2_id, PASSWORD);
-        let summaries = user2.get_voucher_summaries(None, None, None).unwrap();
+        let summaries = user2
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap();
         // The newly created Voucher B is the one where creator == user2_id
         // We filter for the one not received (status = Active, creator-TX present)
         let voucher_b_summary = summaries
             .iter()
             .find(|s| {
-                let details = user2.get_voucher_details(&s.local_instance_id).unwrap();
+                let details = user2.with_wallet(|w| w.get_voucher_details(&s.local_instance_id).unwrap()).unwrap();
                 details
                     .voucher
                     .transactions
@@ -354,11 +356,13 @@ mod tests {
         // =======================================================================
         // user3 creates a completely independent Voucher C
         create_voucher_for_user(&mut user3, &user3_id, PASSWORD);
-        let summaries3 = user3.get_voucher_summaries(None, None, None).unwrap();
+        let summaries3 = user3
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap();
         let voucher_c_local_id = summaries3
             .iter()
             .find(|s| {
-                let details = user3.get_voucher_details(&s.local_instance_id).unwrap();
+                let details = user3.with_wallet(|w| w.get_voucher_details(&s.local_instance_id).unwrap()).unwrap();
                 details
                     .voucher
                     .transactions
@@ -557,11 +561,11 @@ mod tests {
                 .expect("suspected_identity must carry the extraction result");
 
             let recovered_pubkey =
-                human_money_core::services::crypto_utils::get_pubkey_from_user_id(&suspected)
+                human_money_core::services::crypto::get_pubkey_from_user_id(&suspected)
                     .expect("Failed to extract pubkey from suspected_identity");
 
             let attacker_pubkey =
-                human_money_core::services::crypto_utils::get_pubkey_from_user_id(&user1_id)
+                human_money_core::services::crypto::get_pubkey_from_user_id(&user1_id)
                     .expect("Failed to extract pubkey from user1_id");
 
             assert_eq!(

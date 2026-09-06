@@ -37,15 +37,14 @@
 use human_money_core::test_utils;
 
 use human_money_core::error::ValidationError;
-use human_money_core::services::crypto_utils::get_hash;
-use human_money_core::services::voucher_manager::VoucherManagerError;
+use human_money_core::services::crypto::get_hash;
 use human_money_core::test_utils::{
     ACTORS, MINUTO_STANDARD, FREETALER_STANDARD, create_custom_standard, setup_in_memory_wallet,
 };
 use human_money_core::{
     Collateral, NewVoucherData, Transaction, ValueDefinition, Voucher, VoucherCoreError,
-    VoucherInstance, VoucherStatus, create_transaction, create_voucher, crypto_utils, from_json,
-    get_spendable_balance, models::profile::PublicProfile, to_canonical_json, to_json,
+    VoucherInstance, VoucherStatus, crypto,
+    models::profile::PublicProfile, to_canonical_json,
     validate_voucher_against_standard,
 };
 use rust_decimal::Decimal;
@@ -150,10 +149,10 @@ fn test_serialization_deserialization() {
         &identity.signing_key);
 
     // 2. Serialize to JSON
-    let json_string = to_json(&original_voucher).unwrap();
+    let json_string = original_voucher.to_json_string().unwrap();
 
     // 3. Deserialize back
-    let deserialized_voucher: Voucher = from_json(&json_string).unwrap();
+    let deserialized_voucher: Voucher = Voucher::from_json_str(&json_string).unwrap();
 
     // 4. Compare objects
     assert_eq!(original_voucher, deserialized_voucher);
@@ -298,7 +297,7 @@ fn test_validation_fails_on_inconsistent_unit() {
     standard_obj.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     let mut standard_to_hash = standard_obj.clone();
     standard_to_hash.signature = None;
-    let standard_hash_val = human_money_core::services::crypto_utils::get_hash(
+    let standard_hash_val = human_money_core::services::crypto::get_hash(
         human_money_core::services::utils::to_canonical_json(&standard_to_hash.immutable).unwrap()
     );
     let freetaler_standard = &standard_obj;
@@ -326,7 +325,7 @@ fn test_validation_fails_on_inconsistent_unit() {
     let new_hash = get_hash(to_canonical_json(&standard_to_hash.immutable).unwrap());
 
     // Create voucher with ORIGINAL standard which sets a correct unit.
-    let mut voucher = create_voucher(
+    let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         freetaler_standard,
         standard_hash,
@@ -344,7 +343,7 @@ fn test_validation_fails_on_inconsistent_unit() {
     voucher_to_hash.voucher_id = "".to_string();
     voucher_to_hash.transactions.clear();
     voucher_to_hash.signatures.clear();
-    let new_voucher_hash = crypto_utils::get_hash(to_canonical_json(&voucher_to_hash).unwrap());
+    let new_voucher_hash = crypto::get_hash(to_canonical_json(&voucher_to_hash).unwrap());
     voucher.voucher_id = new_voucher_hash;
 
     human_money_core::set_signature_bypass(true);
@@ -505,7 +504,7 @@ fn test_validation_succeeds_with_extra_fields_in_json() {
     let json_with_extra_fields = serde_json::to_string(&voucher_as_value).unwrap();
 
     // 3. Deserialize this JSON string. `serde` should ignore unknown fields.
-    let deserialized_voucher: Voucher = from_json(&json_with_extra_fields).unwrap();
+    let deserialized_voucher: Voucher = Voucher::from_json_str(&json_with_extra_fields).unwrap();
 
     // 4. The deserialized voucher should match the original exactly since
     // extra fields were discarded.
@@ -551,7 +550,7 @@ fn test_split_transaction_cycle_and_balance_check() {
     let mut voucher_data = self::test_utils::create_minuto_voucher_data(sender_creator);
     voucher_data.nominal_value.amount = "100.00".to_string();
 
-    let initial_voucher = create_voucher(
+    let initial_voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         freetaler_standard,
         standard_hash,
@@ -561,14 +560,14 @@ fn test_split_transaction_cycle_and_balance_check() {
     // 4. Check initial state and balance
     assert!(validate_voucher_against_standard(&initial_voucher, freetaler_standard).is_ok());
     let initial_balance =
-        get_spendable_balance(&initial_voucher, &sender.user_id, freetaler_standard, None).unwrap();
+        initial_voucher.spendable_balance_for_user( &sender.user_id, freetaler_standard, None).unwrap();
     assert_eq!(initial_balance, dec!(100.00));
 
     // 5. Perform a split transaction: Send 30.50 to recipient
     let split_amount = "30.50";
     let holder_key =
         human_money_core::test_utils::derive_holder_key(&initial_voucher, &sender.signing_key);
-    let (voucher_after_split, _) = create_transaction(
+    let (voucher_after_split, _) = human_money_core::models::voucher::Transaction::create(
         &initial_voucher, // CORRECTION: Was missing in previous attempt
         freetaler_standard,
         &sender.user_id,
@@ -596,9 +595,9 @@ fn test_split_transaction_cycle_and_balance_check() {
 
     // 7. Check balances of both parties
     let sender_balance_after_split =
-        get_spendable_balance(&voucher_after_split, &sender.user_id, freetaler_standard, None).unwrap();
+        voucher_after_split.spendable_balance_for_user( &sender.user_id, freetaler_standard, None).unwrap();
     let recipient_balance_after_split =
-        get_spendable_balance(&voucher_after_split, &recipient.user_id, freetaler_standard, None).unwrap();
+        voucher_after_split.spendable_balance_for_user( &recipient.user_id, freetaler_standard, None).unwrap();
 
     assert_eq!(sender_balance_after_split, dec!(69.50)); // 100.00 - 30.50
     assert_eq!(recipient_balance_after_split, dec!(30.50));
@@ -624,7 +623,7 @@ fn test_split_fails_on_insufficient_funds() {
     let freetaler_standard = &standard_obj;
     let standard_hash = &standard_hash_val;
 
-    let initial_voucher = create_voucher(
+    let initial_voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         freetaler_standard,
         standard_hash,
@@ -633,7 +632,7 @@ fn test_split_fails_on_insufficient_funds() {
 
     // Attempt to send 50.1 (more than available)
     let holder_key = self::test_utils::derive_holder_key(&initial_voucher, &sender.signing_key);
-    let split_result = create_transaction(
+    let split_result = human_money_core::models::voucher::Transaction::create(
         &initial_voucher,
         freetaler_standard,
         &sender.user_id,
@@ -647,7 +646,7 @@ fn test_split_fails_on_insufficient_funds() {
 
     assert!(matches!(
         split_result.unwrap_err(),
-        VoucherCoreError::Manager(VoucherManagerError::InsufficientFunds { .. })
+        VoucherCoreError::InsufficientFunds { .. }
     ));
 }
 
@@ -675,7 +674,7 @@ fn test_fails_to_create_forbidden_transaction_type() {
     let mut voucher_data = self::test_utils::create_minuto_voucher_data(creator);
     voucher_data.nominal_value.amount = "100".to_string();
 
-    let initial_voucher = create_voucher(
+    let initial_voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         &standard,
         &standard_hash,
@@ -685,7 +684,7 @@ fn test_fails_to_create_forbidden_transaction_type() {
 
     // 3. Attempt to create a "split" transaction even though it is forbidden.
     let holder_key = self::test_utils::derive_holder_key(&initial_voucher, &sender.signing_key);
-    let split_result = create_transaction(
+    let split_result = human_money_core::models::voucher::Transaction::create(
         &initial_voucher,
         &standard,
         &sender.user_id,
@@ -728,7 +727,7 @@ fn test_split_fails_on_non_allow_partial_transfers_voucher() {
     let mut voucher_data = self::test_utils::create_minuto_voucher_data(sender_creator);
     voucher_data.nominal_value.amount = "60.00".to_string();
 
-    let initial_voucher = create_voucher(
+    let initial_voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         &standard,
         &new_hash,
@@ -736,7 +735,7 @@ fn test_split_fails_on_non_allow_partial_transfers_voucher() {
     .unwrap();
 
     let holder_key = self::test_utils::derive_holder_key(&initial_voucher, &sender.signing_key);
-    let split_result = create_transaction(
+    let split_result = human_money_core::models::voucher::Transaction::create(
         &initial_voucher, // CORRECTION
         &standard,
         &sender.user_id,
@@ -750,7 +749,7 @@ fn test_split_fails_on_non_allow_partial_transfers_voucher() {
 
     assert!(matches!(
         split_result.unwrap_err(),
-        VoucherCoreError::Manager(VoucherManagerError::VoucherPartialTransferNotAllowed)
+        VoucherCoreError::VoucherPartialTransferNotAllowed
     ));
 }
 
@@ -768,7 +767,7 @@ fn test_validity_duration_rules() {
     let (minuto_standard, standard_hash) = (&MINUTO_STANDARD.0, &MINUTO_STANDARD.1);
 
     short_duration_data.validity_duration = Some("P2Y".to_string());
-    let creation_result = create_voucher(
+    let creation_result = human_money_core::models::voucher::Voucher::create_with_key(
         short_duration_data,
         minuto_standard,
         standard_hash,
@@ -777,7 +776,7 @@ fn test_validity_duration_rules() {
     assert!(
         matches!(
             creation_result.unwrap_err(),
-            VoucherCoreError::Manager(VoucherManagerError::InvalidValidityDuration(_))
+            VoucherCoreError::InvalidValidityDuration(_)
         ),
         "Creation should fail with InvalidValidityDuration error"
     );
@@ -889,7 +888,7 @@ fn test_double_spend_detection_logic() {
     // 3. Alice performs a first, legitimate transaction: sends 40 to Bob.
     let holder_key =
         human_money_core::test_utils::derive_holder_key(&initial_voucher, &alice.signing_key);
-    let (voucher_after_split, _) = create_transaction(
+    let (voucher_after_split, _) = human_money_core::models::voucher::Transaction::create(
         &initial_voucher,
         freetaler_standard,
         &alice.user_id,
@@ -909,7 +908,7 @@ fn test_double_spend_detection_logic() {
     );
     // 4. Alice cheats: she takes the state BEFORE the transaction to Bob (`initial_voucher`)
     //    and attempts to spend her original balance of 100 again by sending 60 to Frank.
-    let (fraudulent_voucher, _) = create_transaction(
+    let (fraudulent_voucher, _) = human_money_core::models::voucher::Transaction::create(
         &initial_voucher,
         freetaler_standard,
         &alice.user_id,
@@ -1088,10 +1087,10 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
         ..
     } = alice_wallet
         .execute_multi_transfer_and_bundle(
-            &alice_identity,
+            alice_identity,
             &standards,
             request,
-            None::<&dyn human_money_core::archive::VoucherArchive>,
+            None,
         )
         .unwrap();
 
@@ -1121,9 +1120,9 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
     );
     bob_wallet
         .process_encrypted_transaction_bundle(
-            &bob_identity,
+            bob_identity,
             &encrypted_bundle_for_bob,
-            None::<&dyn human_money_core::archive::VoucherArchive>,
+            None,
             &standards_for_bob,
         )
         .unwrap();

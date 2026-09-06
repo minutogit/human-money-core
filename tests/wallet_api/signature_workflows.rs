@@ -8,7 +8,7 @@
 // Explicitly include the `test_utils` module via its file path.
 
 use human_money_core::{
-    UserIdentity, VoucherCoreError, VoucherInstance, VoucherStatus, Wallet,
+    NewVoucherData, UserIdentity, VoucherCoreError, VoucherInstance, VoucherStatus, Wallet,
     error::ValidationError,
     models::{
         profile::PublicProfile,
@@ -17,8 +17,6 @@ use human_money_core::{
         voucher::{ValueDefinition, Voucher, VoucherSignature},
     },
     services::{
-        secure_container_manager::{self, ContainerManagerError},
-        voucher_manager::NewVoucherData,
         voucher_validation,
     },
     test_utils::{
@@ -107,7 +105,7 @@ fn api_wallet_full_signature_workflow() {
     let received_request_bytes = fs::read(&request_file_path).unwrap();
     let container: SecureContainer = serde_json::from_slice(&received_request_bytes).unwrap();
     let decrypted_payload =
-        secure_container_manager::open_secure_container(&container, &bob.identity, None).unwrap();
+        container.open(&bob.identity, None).unwrap();
     let voucher_from_alice: Voucher = serde_json::from_slice(&decrypted_payload).unwrap();
 
     let guarantor_metadata = VoucherSignature {
@@ -172,11 +170,11 @@ fn api_wallet_signature_fail_wrong_recipient() {
         .unwrap();
 
     let container: SecureContainer = serde_json::from_slice(&request_bytes).unwrap();
-    let result = secure_container_manager::open_secure_container(&container, &eve.identity, None);
+    let result = container.open(&eve.identity, None);
 
     assert!(matches!(
         result.unwrap_err(),
-        VoucherCoreError::Container(ContainerManagerError::NotAnIntendedRecipient)
+        VoucherCoreError::NotAnIntendedRecipient
     ));
 }
 
@@ -348,14 +346,14 @@ fn api_app_service_full_signature_workflow() {
         "Guarantor",
         password,
     );
-    let id_guarantor = service_guarantor.get_user_id().unwrap();
+    let id_guarantor = service_guarantor.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     let _voucher = service_creator
         .create_new_voucher(
             &freetaler_standard_toml,
             NewVoucherData {
                 creator_profile: PublicProfile {
-                    id: Some(service_creator.get_user_id().unwrap()),
+                    id: Some(service_creator.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
                     ..Default::default()
                 },
                 nominal_value: ValueDefinition {
@@ -367,7 +365,9 @@ fn api_app_service_full_signature_workflow() {
             Some(password),
         )
         .unwrap();
-    let local_id = service_creator.get_voucher_summaries(None, None, None).unwrap()[0]
+    let local_id = service_creator
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
 
@@ -393,7 +393,7 @@ fn api_app_service_full_signature_workflow() {
             &voucher_to_sign,
             "notary", // Role (based on `create_additional_signature_data`)
             true,     // include_details
-            ContainerConfig::TargetDid(service_creator.get_user_id().unwrap(), PrivacyMode::TrialDecryption),
+            ContainerConfig::TargetDid(service_creator.with_wallet(|w| w.get_user_id().to_string()).unwrap(), PrivacyMode::TrialDecryption),
             Some(password),
         )
         .unwrap();
@@ -402,7 +402,7 @@ fn api_app_service_full_signature_workflow() {
         .process_and_attach_signature(&response_bytes, &freetaler_standard_toml, None, Some(password))
         .unwrap();
 
-    let details = service_creator.get_voucher_details(&local_id).unwrap();
+    let details = service_creator.with_wallet(|w| w.get_voucher_details(&local_id).unwrap()).unwrap();
     // FIX: 2 signatures (creator + notary)
     assert_eq!(details.voucher.signatures.len(), 2);
     // FIX: Find the signature that is *not* "creator" and *not* "guarantor".
@@ -530,27 +530,25 @@ fn test_full_guarantor_workflow_via_app_service() {
     let password = "password123";
 
     let minuto_standard_toml =
-        generate_signed_standard_toml("voucher_standards/minuto_v1/standard.toml");
-
-    // Creator Service
+        generate_signed_standard_toml("voucher_standards/minuto_v1/standard.toml");    // Creator Service
     let creator = &ACTORS.alice;
     let (mut service_creator, _) =
         test_utils::setup_service_with_profile(dir_creator.path(), creator, "Creator", password);
-    let creator_id = service_creator.get_user_id().unwrap();
+    let creator_id = service_creator.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     let (mut service_g1, profile_g1) = test_utils::setup_service_with_profile(
         dir_g1.path(),
         &ACTORS.male_guarantor,
         "Male Guarantor",
         password,
     );
-    let g1_id = service_g1.get_user_id().unwrap();
+    let g1_id = service_g1.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     let (mut service_g2, profile_g2) = test_utils::setup_service_with_profile(
         dir_g2.path(),
         &ACTORS.female_guarantor,
         "Female Guarantor",
         password,
     );
-    let g2_id = service_g2.get_user_id().unwrap();
+    let g2_id = service_g2.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     // --- 2. Step 1: Creation of incomplete voucher ---
     // NOW CALL THE FIXED API FUNCTION
@@ -574,7 +572,7 @@ fn test_full_guarantor_workflow_via_app_service() {
         .expect("create_new_voucher should now succeed for incomplete vouchers");
 
     let summary = service_creator
-        .get_voucher_summaries(None, None, None)
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
         .expect("Failed to get summaries")
         .pop()
         .expect("Wallet should contain one voucher");
@@ -582,7 +580,7 @@ fn test_full_guarantor_workflow_via_app_service() {
 
     // --- 3. Assertion 1: Status is `Incomplete` ---
     let details_before = service_creator
-        .get_voucher_details(&local_id)
+        .with_wallet(|w| w.get_voucher_details(&local_id).unwrap())
         .expect("Should find voucher details");
     assert!(matches!(
         details_before.status,
@@ -614,14 +612,14 @@ fn test_full_guarantor_workflow_via_app_service() {
             &details_before.voucher,
             "guarantor",
             true, // include_details
-            ContainerConfig::TargetDid(service_creator.get_user_id().unwrap(), PrivacyMode::TrialDecryption),
+            ContainerConfig::TargetDid(service_creator.with_wallet(|w| w.get_user_id().to_string()).unwrap(), PrivacyMode::TrialDecryption),
             Some(password),
         )
         .expect("Failed to create signature response from G1");
     service_creator
         .process_and_attach_signature(&response_bundle_1, &minuto_standard_toml, None, Some(password))
         .expect("Failed to attach G1's signature");
-    let details_mid = service_creator.get_voucher_details(&local_id).unwrap();
+    let details_mid = service_creator.with_wallet(|w| w.get_voucher_details(&local_id).unwrap()).unwrap();
     assert!(matches!(
         details_mid.status,
         VoucherStatus::Incomplete { .. }
@@ -647,7 +645,7 @@ fn test_full_guarantor_workflow_via_app_service() {
             &details_mid.voucher,
             "guarantor",
             true, // include_details
-            ContainerConfig::TargetDid(service_creator.get_user_id().unwrap(), PrivacyMode::TrialDecryption),
+            ContainerConfig::TargetDid(service_creator.with_wallet(|w| w.get_user_id().to_string()).unwrap(), PrivacyMode::TrialDecryption),
             Some(password),
         )
         .expect("Failed to create signature response from G2");
@@ -656,7 +654,7 @@ fn test_full_guarantor_workflow_via_app_service() {
         .expect("Failed to attach G2's signature");
 
     // --- 5. Assertion 3: Verify final `Active` state ---
-    let details_after = service_creator.get_voucher_details(&local_id).unwrap();
+    let details_after = service_creator.with_wallet(|w| w.get_voucher_details(&local_id).unwrap()).unwrap();
     assert_eq!(
         details_after.status,
         VoucherStatus::Active,
@@ -793,7 +791,7 @@ fn api_app_service_symmetric_signature_workflow() {
             &freetaler_standard_toml,
             NewVoucherData {
                 creator_profile: PublicProfile {
-                    id: Some(service_creator.get_user_id().unwrap()),
+                    id: Some(service_creator.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
                     ..Default::default()
                 },
                 nominal_value: ValueDefinition {
@@ -805,7 +803,9 @@ fn api_app_service_symmetric_signature_workflow() {
             Some(wallet_password),
         )
         .unwrap();
-    let local_id = service_creator.get_voucher_summaries(None, None, None).unwrap()[0]
+    let local_id = service_creator
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
 
@@ -820,8 +820,7 @@ fn api_app_service_symmetric_signature_workflow() {
     let guarantor_identity = unlocked_guarantor.1;
 
     let request_container: SecureContainer = serde_json::from_slice(&request_bytes).unwrap();
-    let opened_payload = human_money_core::services::secure_container_manager::open_secure_container(
-        &request_container,
+    let opened_payload = request_container.open(
         guarantor_identity,
         Some(container_password),
     ).expect("Symmetric container opening failed");
@@ -849,7 +848,7 @@ fn api_app_service_symmetric_signature_workflow() {
         )
         .expect("Attaching symmetric signature response failed");
 
-    let details = service_creator.get_voucher_details(&local_id).unwrap();
+    let details = service_creator.with_wallet(|w| w.get_voucher_details(&local_id).unwrap()).unwrap();
     assert_eq!(details.voucher.signatures.len(), 2);
 }
 
@@ -1098,7 +1097,7 @@ fn test_remove_signature_triggers_status_downgrade() {
 
         let signature_data_enum = test_utils::create_guarantor_signature_data(
             signer,
-            &if signer.user_id == bob.identity.user_id { "1" } else { "2" },
+            if signer.user_id == bob.identity.user_id { "1" } else { "2" },
             &voucher_for_signing.voucher_id,
         );
 

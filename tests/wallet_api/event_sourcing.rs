@@ -1,6 +1,6 @@
 use human_money_core::test_utils::{setup_in_memory_wallet, ACTORS, setup_service_with_profile, FREETALER_STANDARD};
 use human_money_core::wallet::Wallet;
-use human_money_core::storage::{AuthMethod, Storage, file_storage::FileStorage};
+use human_money_core::storage::{AuthMethod, file_storage::FileStorage};
 use human_money_core::models::wallet_event::{WalletEventType, WalletEvent, EventBffData};
 use human_money_core::models::profile::UserIdentity;
 use tempfile::tempdir;
@@ -22,7 +22,7 @@ fn test_event_generation_on_create() {
         identity,
         standard,
         standard_hash,
-        human_money_core::services::voucher_manager::NewVoucherData {
+        human_money_core::NewVoucherData {
             nominal_value: human_money_core::models::voucher::ValueDefinition {
                 amount: "100".to_string(),
                 ..Default::default()
@@ -68,7 +68,7 @@ fn test_transactional_safety_and_rollback() {
     assert_eq!(wallet.pending_events.len(), 0);
     
     // 3. Verify it's in storage
-    let events = storage.load_events(&identity.user_id, &auth, 0, 10).unwrap();
+    let events = storage.load_events(&auth, 0, 10).unwrap();
     assert_eq!(events.len(), 1);
 }
 
@@ -97,7 +97,7 @@ fn test_persistence_flush_order() {
     
     // Reload and check
     let (reloaded_wallet, _) = Wallet::load(&storage, &auth, "test-id".to_string()).unwrap();
-    let events = storage.load_events(&identity.user_id, &auth, 0, 10).unwrap();
+    let events = storage.load_events(&auth, 0, 10).unwrap();
     
     assert_eq!(events.len(), 1);
     assert_eq!(reloaded_wallet.pending_events.len(), 0);
@@ -168,7 +168,7 @@ fn test_get_event_history_merging() {
         WalletEventType::VoucherCreated,
         bff_data1
     );
-    storage.append_events(&identity.user_id, &auth, &[event1]).unwrap();
+    storage.append_events(&auth, &[event1]).unwrap();
     
     // 2. Pending event (newer)
     let bff_data2 = EventBffData {

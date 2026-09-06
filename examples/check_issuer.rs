@@ -4,13 +4,10 @@
 //!
 //! Run with: `cargo run --example check_issuer`
 
-use std::fs;
-use human_money_core::services::crypto_utils;
+use human_money_core::services::crypto;
 
 fn main() {
-    let key_bytes = fs::read("target/dev-keys/issuer.key").expect("Failed to read key file");
-    let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes.try_into().unwrap());
-    let public_key = signing_key.verifying_key();
-    let user_id = crypto_utils::create_user_id(&public_key, Some("0")).unwrap();
+    let (public_key, _) = crypto::generate_ed25519_keypair_for_tests(Some("freetaler-issuer"));
+    let user_id = crypto::create_user_id(&public_key, Some("0")).unwrap();
     println!("User ID: {}", user_id);
 }

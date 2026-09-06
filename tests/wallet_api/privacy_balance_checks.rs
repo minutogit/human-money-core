@@ -1,7 +1,7 @@
 // tests/wallet_api/privacy_balance_checks.rs
 
 use human_money_core::models::voucher_standard_definition::{VoucherStandardDefinition, PrivacyMode};
-use human_money_core::services::crypto_utils::get_hash;
+use human_money_core::services::crypto::get_hash;
 use human_money_core::services::utils::to_canonical_json;
 use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD};
 use human_money_core::wallet::types::{MultiTransferRequest, SourceTransfer, CreateBundleResult};

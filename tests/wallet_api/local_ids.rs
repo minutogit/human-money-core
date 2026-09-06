@@ -7,7 +7,7 @@
 
 use human_money_core::test_utils::{self, ACTORS};
 use human_money_core::Wallet;
-use human_money_core::services::voucher_manager::{create_transaction, NewVoucherData};
+use human_money_core::NewVoucherData;
 use human_money_core::models::{profile::PublicProfile, voucher::ValueDefinition};
 use human_money_core::VoucherCoreError;
 use bs58;
@@ -20,11 +20,11 @@ fn test_correct_id_after_split_and_uniqueness() {
     let alice_local_id = Wallet::calculate_local_instance_id(&voucher_after_split, &alice.user_id).unwrap();
     let bob_local_id = Wallet::calculate_local_instance_id(&voucher_after_split, &bob.user_id).unwrap();
 
-    let expected_alice_id = human_money_core::services::crypto_utils::get_hash(format!(
+    let expected_alice_id = human_money_core::services::crypto::get_hash(format!(
         "{}{}{}",
         voucher_after_split.voucher_id, split_tx.t_id, alice.user_id
     ));
-    let expected_bob_id = human_money_core::services::crypto_utils::get_hash(format!(
+    let expected_bob_id = human_money_core::services::crypto::get_hash(format!(
         "{}{}{}",
         voucher_after_split.voucher_id, split_tx.t_id, bob.user_id
     ));
@@ -42,7 +42,7 @@ fn test_path_dependency_long_chain() {
     let bob_seed_bytes = bs58::decode(secrets.recipient_seed).into_vec().unwrap();
     let bob_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(&bob_seed_bytes.try_into().unwrap());
 
-    let (voucher_after_tx2, _) = create_transaction(
+    let (voucher_after_tx2, _) = human_money_core::models::voucher::Transaction::create(
         &voucher_after_tx1,
         standard,
         &bob.user_id,
@@ -56,7 +56,7 @@ fn test_path_dependency_long_chain() {
 
     let charlie_local_id = Wallet::calculate_local_instance_id(&voucher_after_tx2, &charlie.user_id).unwrap();
 
-    let expected_charlie_id = human_money_core::services::crypto_utils::get_hash(format!(
+    let expected_charlie_id = human_money_core::services::crypto::get_hash(format!(
         "{}{}{}",
         voucher_after_tx2.voucher_id, final_tx.t_id, charlie.user_id
     ));
@@ -70,7 +70,7 @@ fn test_path_dependency_bounce_back() {
     let bob_seed_bytes = bs58::decode(secrets.recipient_seed).into_vec().unwrap();
     let bob_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(&bob_seed_bytes.try_into().unwrap());
 
-    let (voucher_after_tx2, _) = create_transaction(
+    let (voucher_after_tx2, _) = human_money_core::models::voucher::Transaction::create(
         &voucher_after_tx1,
         standard,
         &bob.user_id,
@@ -84,7 +84,7 @@ fn test_path_dependency_bounce_back() {
 
     let alice_final_local_id = Wallet::calculate_local_instance_id(&voucher_after_tx2, &alice.user_id).unwrap();
 
-    let expected_alice_id = human_money_core::services::crypto_utils::get_hash(format!(
+    let expected_alice_id = human_money_core::services::crypto::get_hash(format!(
         "{}{}{}",
         voucher_after_tx2.voucher_id, final_tx.t_id, alice.user_id
     ));
@@ -99,7 +99,7 @@ fn test_correct_id_for_archived_state() {
     let alice_change_key_bytes = bs58::decode(alice_change_seed).into_vec().unwrap();
     let alice_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(&alice_change_key_bytes.try_into().unwrap());
 
-    let (voucher_after_full_transfer, _) = create_transaction(
+    let (voucher_after_full_transfer, _) = human_money_core::models::voucher::Transaction::create(
         &initial_voucher,
         standard,
         &alice.user_id,
@@ -113,7 +113,7 @@ fn test_correct_id_for_archived_state() {
 
     let alice_archived_id = Wallet::calculate_local_instance_id(&voucher_after_full_transfer, &alice.user_id).unwrap();
 
-    let expected_alice_id = human_money_core::services::crypto_utils::get_hash(format!(
+    let expected_alice_id = human_money_core::services::crypto::get_hash(format!(
         "{}{}{}",
         voucher_after_full_transfer.voucher_id, final_tx.t_id, alice.user_id
     ));
@@ -133,7 +133,7 @@ fn test_error_when_user_has_no_balance_or_history() {
         nominal_value: ValueDefinition { amount: "100".to_string(), ..Default::default() },
         ..Default::default()
     };
-    let voucher = human_money_core::services::voucher_manager::create_voucher(voucher_data, &public_standard, standard_hash, &creator.signing_key).unwrap();
+    let voucher = human_money_core::models::voucher::Voucher::create_with_key(voucher_data, &public_standard, standard_hash, &creator.signing_key).unwrap();
 
     let charlie = &ACTORS.charlie;
 

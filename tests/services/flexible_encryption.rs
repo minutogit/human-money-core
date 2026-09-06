@@ -7,10 +7,7 @@ use human_money_core::{
         profile::UserIdentity,
         secure_container::{ContainerConfig, EncryptionType, PayloadType, SecureContainer},
     },
-    services::{
-        crypto_utils::{self, encrypt_symmetric_password},
-        secure_container_manager,
-    },
+    services::crypto::{self, encrypt_symmetric_password},
     test_utils::setup_in_memory_wallet,
 };
 use serde_json;
@@ -38,7 +35,7 @@ fn test_backward_compatibility_old_containers() {
 #[test]
 #[cfg(feature = "test-utils")]
 fn test_plaintext_blocked_for_financial_payloads() {
-    let (pk, sk) = human_money_core::services::crypto_utils::generate_ed25519_keypair_for_tests(Some("alice"));
+    let (pk, sk) = human_money_core::services::crypto::generate_ed25519_keypair_for_tests(Some("alice"));
 
     let _alice_wallet = setup_in_memory_wallet(&UserIdentity {
         user_id: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK".to_string(),
@@ -53,9 +50,9 @@ fn test_plaintext_blocked_for_financial_payloads() {
     };
 
     let payload = b"test financial payload";
-    let result = secure_container_manager::create_secure_container(
+    let result = SecureContainer::seal(
         &alice_identity,
-        ContainerConfig::Cleartext,
+        &ContainerConfig::Cleartext,
         payload,
         PayloadType::TransactionBundle,
     );
@@ -67,7 +64,7 @@ fn test_plaintext_blocked_for_financial_payloads() {
 #[test]
 #[cfg(feature = "test-utils")]
 fn test_plaintext_allowed_for_non_financial_payloads() {
-    let (pk, sk) = human_money_core::services::crypto_utils::generate_ed25519_keypair_for_tests(Some("alice"));
+    let (pk, sk) = human_money_core::services::crypto::generate_ed25519_keypair_for_tests(Some("alice"));
 
     let _alice_wallet = setup_in_memory_wallet(&UserIdentity {
         user_id: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK".to_string(),
@@ -82,9 +79,9 @@ fn test_plaintext_allowed_for_non_financial_payloads() {
     };
 
     let payload = b"test voucher for signing";
-    let result = secure_container_manager::create_secure_container(
+    let result = SecureContainer::seal(
         &alice_identity,
-        ContainerConfig::Cleartext,
+        &ContainerConfig::Cleartext,
         payload,
         PayloadType::VoucherForSigning,
     );
@@ -99,7 +96,7 @@ fn test_plaintext_allowed_for_non_financial_payloads() {
 #[test]
 #[cfg(feature = "test-utils")]
 fn test_symmetric_encryption() {
-    let (pk, sk) = human_money_core::services::crypto_utils::generate_ed25519_keypair_for_tests(Some("alice"));
+    let (pk, sk) = human_money_core::services::crypto::generate_ed25519_keypair_for_tests(Some("alice"));
 
     let _alice_wallet = setup_in_memory_wallet(&UserIdentity {
         user_id: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK".to_string(),
@@ -116,9 +113,9 @@ fn test_symmetric_encryption() {
     let payload = b"secret payload";
     let password = "test123";
 
-    let container = secure_container_manager::create_secure_container(
+    let container = SecureContainer::seal(
         &alice_identity,
-        ContainerConfig::Password(password.to_string()),
+        &ContainerConfig::Password(password.to_string()),
         payload,
         PayloadType::VoucherForSigning,
     ).unwrap();
@@ -126,8 +123,7 @@ fn test_symmetric_encryption() {
     assert_eq!(container.et, EncryptionType::Symmetric);
     assert!(container.salt.is_some());
 
-    let decrypted = secure_container_manager::open_secure_container(
-        &container,
+    let decrypted = container.open(
         &alice_identity,
         Some(password),
     ).unwrap();
@@ -142,10 +138,10 @@ fn test_pbkdf2_key_derivation() {
     let password = "test123";
 
     let (ciphertext, salt) = encrypt_symmetric_password(payload, password).unwrap();
-    let decrypted = crypto_utils::decrypt_symmetric_password(&ciphertext, password, &salt).unwrap();
+    let decrypted = crypto::decrypt_symmetric_password(&ciphertext, password, &salt).unwrap();
     assert_eq!(decrypted, payload);
 
-    let result = crypto_utils::decrypt_symmetric_password(&ciphertext, "wrong", &salt);
+    let result = crypto::decrypt_symmetric_password(&ciphertext, "wrong", &salt);
     assert!(result.is_err());
 }
 

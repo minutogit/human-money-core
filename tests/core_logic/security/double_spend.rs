@@ -19,9 +19,9 @@ use std::path::Path;
 use super::test_utils::{ACTORS, FREETALER_STANDARD, setup_in_memory_wallet};
 use human_money_core::models::conflict::TransactionFingerprint;
 use human_money_core::models::voucher::{Address, Collateral, ValueDefinition};
-use human_money_core::services::voucher_manager::{self, NewVoucherData};
+use human_money_core::{self, NewVoucherData};
 use human_money_core::wallet::Wallet;
-use human_money_core::{UserIdentity, VoucherStatus, services::crypto_utils, MnemonicLanguage};
+use human_money_core::{UserIdentity, VoucherStatus, services::crypto, MnemonicLanguage};
 
 // ===================================================================================
 // HELPER FUNCTIONS
@@ -94,7 +94,7 @@ fn test_fingerprint_generation() {
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     // create_voucher expects &SigningKey, not the entire Identity.
-    let voucher = voucher_manager::create_voucher(
+    let voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         standard,
         standard_hash,
@@ -102,7 +102,7 @@ fn test_fingerprint_generation() {
     .unwrap();
     let holder_key =
         human_money_core::test_utils::derive_holder_key(&voucher, &identity.signing_key);
-    let (v, _secrets) = voucher_manager::create_transaction(
+    let (v, _secrets) = human_money_core::models::voucher::Transaction::create(
         &voucher,
         standard,
         &identity.user_id,
@@ -144,7 +144,7 @@ fn test_fingerprint_generation() {
     let expected_hash1 = {
         let prev_hash_bytes = bs58::decode(&tx1.prev_hash).into_vec().unwrap();
         let ephem_key_bytes = bs58::decode(ephem_key).into_vec().unwrap();
-        crypto_utils::get_hash_from_slices(&[&prev_hash_bytes, &ephem_key_bytes])
+        crypto::get_hash_from_slices(&[&prev_hash_bytes, &ephem_key_bytes])
     };
     assert!(
         wallet
@@ -428,7 +428,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
     standards_map.insert(standard.immutable.identity.uuid.clone(), freetaler_toml_str.to_string());
 
     // 2. Sender receives an initial voucher.
-    let voucher_data = new_test_voucher_data(app_service.get_user_id().unwrap());
+    let voucher_data = new_test_voucher_data(app_service.with_wallet(|w| w.get_user_id().to_string()).unwrap());
     let initial_voucher = app_service
         .create_new_voucher(
             freetaler_toml_str, // CORRECTION (Panic-Fix): Pass TOML content, not the hash
@@ -438,7 +438,9 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         .unwrap();
 
     // Remember the local ID of the voucher
-    let initial_local_id = app_service.get_voucher_summaries(None, None, None).unwrap()[0]
+    let initial_local_id = app_service
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
     let original_voucher_state_for_attack = initial_voucher.clone(); // Clone for later attack
@@ -464,7 +466,9 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
     );
 
     // Status check: The voucher should now be 'Archived'
-    let summary_after_send = app_service.get_voucher_summaries(None, None, None).unwrap();
+    let summary_after_send = app_service
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
 
     // CORRECTION: 'initial_local_id' no longer exists. Wallet logic
     // removed the old instance and created a NEW instance with a NEW local_id
@@ -532,7 +536,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         .unwrap();
     assert_eq!(
         app_service
-            .get_voucher_summaries(None, Some(&[VoucherStatus::Active]), None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, Some(&[VoucherStatus::Active]), None))
             .unwrap()
             .len(),
         1,
@@ -575,7 +579,9 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
 
     // ### Act 4: Verification of Self-Healing ###
     // Verify whether AppService set the inconsistent voucher to 'Quarantined'.
-    let summary_after_fail = app_service.get_voucher_summaries(None, None, None).unwrap();
+    let summary_after_fail = app_service
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
     let instance = summary_after_fail
         .iter()
         .find(|s| s.local_instance_id.contains(&initial_local_id))
@@ -612,7 +618,7 @@ fn test_local_double_spend_detection_lifecycle() {
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
     let voucher_data = new_test_voucher_data(alice_identity.user_id.clone());
-    let initial_voucher = voucher_manager::create_voucher(
+    let initial_voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         standard,
         standard_hash,
@@ -718,7 +724,7 @@ fn test_local_double_spend_detection_lifecycle() {
     // and manually creates two conflicting transactions from the same state.
     // Important: We insert a small delay to ensure that the timestamps
     // of the fraudulent transactions are deterministically distinguishable.
-    let (voucher_for_charlie, _) = voucher_manager::create_transaction(
+    let (voucher_for_charlie, _) = human_money_core::models::voucher::Transaction::create(
         &voucher_from_bob,
         standard,
         &bob_identity.user_id,
@@ -730,7 +736,7 @@ fn test_local_double_spend_detection_lifecycle() {
     )
     .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(10));
-    let (voucher_for_david, _) = voucher_manager::create_transaction(
+    let (voucher_for_david, _) = human_money_core::models::voucher::Transaction::create(
         &voucher_from_bob,
         standard,
         &bob_identity.user_id,

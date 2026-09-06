@@ -15,6 +15,10 @@
 //!   i18n translations. Changes here do **not** alter the `logic_hash`, but require
 //!   renewing the issuer signature in the `[signature]` block.
 
+use crate::error::{StandardDefinitionError, VoucherCoreError};
+use crate::services::crypto::{get_hash, get_pubkey_from_user_id, verify_ed25519};
+use crate::services::utils::to_canonical_json;
+use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -236,4 +240,117 @@ pub struct VoucherStandardDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<SignatureBlock>,
 }
+
+impl VoucherStandardDefinition {
+    /// Computes the deterministic logic_hash over the `[immutable]` zone ONLY.
+    pub fn compute_logic_hash(&self) -> Result<String, VoucherCoreError> {
+        let canonical_json_immutable = to_canonical_json(&self.immutable)?;
+        Ok(get_hash(canonical_json_immutable.as_bytes()))
+    }
+
+    /// Verifies the Ed25519 issuer signature against the canonical JSON representation
+    /// of the entire standard (excluding the signature block itself).
+    pub fn verify_signature(&self) -> Result<bool, VoucherCoreError> {
+        let signature_block = self.signature.as_ref().ok_or({
+            VoucherCoreError::Standard(StandardDefinitionError::MissingSignatureBlock)
+        })?;
+
+        let mut body = self.clone();
+        body.signature = None;
+        let canonical_json_all = to_canonical_json(&body)?;
+        let signature_hash = get_hash(canonical_json_all.as_bytes());
+
+        let signature_bytes = bs58::decode(&signature_block.signature)
+            .into_vec()
+            .map_err(|e| {
+                VoucherCoreError::Standard(StandardDefinitionError::SignatureDecode(e.to_string()))
+            })?;
+
+        let signature = Signature::from_slice(&signature_bytes).map_err(|e| {
+            VoucherCoreError::Standard(StandardDefinitionError::SignatureDecode(e.to_string()))
+        })?;
+
+        let public_key = get_pubkey_from_user_id(&signature_block.issuer_id)?;
+
+        #[cfg(feature = "test-utils")]
+        {
+            if crate::is_signature_bypass_active() {
+                return Ok(true);
+            }
+        }
+
+        Ok(verify_ed25519(&public_key, signature_hash.as_bytes(), &signature))
+    }
+
+    /// Parses and verifies a TOML string into `(VoucherStandardDefinition, logic_hash)`.
+    pub fn from_toml(toml_str: &str) -> Result<(Self, String), VoucherCoreError> {
+        Self::from_toml_with_issuer_pin(toml_str, None)
+    }
+
+    /// Parses and verifies a TOML string with optional trust-on-first-use issuer pinning.
+    ///
+    /// SECURITY (AUDIT-W4-CEL-102): trust-on-first-use issuer pinning.
+    /// When a pin is supplied, additionally enforces that the signature block's
+    /// issuer resolves to the SAME public key as the pinned identity.
+    pub fn from_toml_with_issuer_pin(
+        toml_str: &str,
+        pinned_issuer_id: Option<&str>,
+    ) -> Result<(Self, String), VoucherCoreError> {
+        let standard: VoucherStandardDefinition = toml::from_str(toml_str)?;
+
+        if !standard.verify_signature()? {
+            return Err(VoucherCoreError::Standard(
+                StandardDefinitionError::InvalidSignature,
+            ));
+        }
+
+        if let Some(expected_issuer_id) = pinned_issuer_id {
+            let signature_block = standard.signature.as_ref().ok_or({
+                VoucherCoreError::Standard(StandardDefinitionError::MissingSignatureBlock)
+            })?;
+            let expected_pk = get_pubkey_from_user_id(expected_issuer_id)
+                .map_err(|e| crate::error::ValidationError::InvalidCreatorId(e.to_string()))?;
+            let actual_pk = get_pubkey_from_user_id(&signature_block.issuer_id)
+                .map_err(|e| crate::error::ValidationError::InvalidCreatorId(e.to_string()))?;
+            if expected_pk.to_bytes() != actual_pk.to_bytes() {
+                return Err(VoucherCoreError::Standard(
+                    StandardDefinitionError::IssuerPinViolation,
+                ));
+            }
+        }
+
+        let logic_hash = standard.compute_logic_hash()?;
+        Ok((standard, logic_hash))
+    }
+
+    /// Resolves localized text according to fallback logic defined in the specification.
+    ///
+    /// Search order:
+    /// 1. Direct match with `lang_preference`.
+    /// 2. Fallback to English ("en").
+    /// 3. Fallback to lexicographically first element.
+    pub fn get_localized_text<'a>(
+        texts: &'a HashMap<String, String>,
+        lang_preference: &str,
+    ) -> Option<&'a str> {
+        if texts.is_empty() {
+            return None;
+        }
+
+        if let Some(text) = texts.get(lang_preference) {
+            return Some(text.as_str());
+        }
+
+        if let Some(text) = texts.get("en") {
+            return Some(text.as_str());
+        }
+
+        let mut keys: Vec<&String> = texts.keys().collect();
+        keys.sort();
+        keys.first()
+            .and_then(|k| texts.get(*k))
+            .map(|t| t.as_str())
+    }
+}
+
 

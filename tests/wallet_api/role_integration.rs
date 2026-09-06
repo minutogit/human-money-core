@@ -11,7 +11,7 @@ use human_money_core::{
         voucher::{ValueDefinition, Transaction},
         conflict::ConflictRole,
     },
-    services::{crypto_utils, voucher_manager::NewVoucherData},
+    services::crypto, NewVoucherData,
     test_utils::{self, ACTORS, FREETALER_STANDARD, generate_signed_standard_toml},
 };
 
@@ -39,7 +39,7 @@ fn attach_valid_trap(
     tx.sender_identity_signature = None;
     tx.trap_data = None;
     tx.privacy_guard = None;
-    let t_id = crypto_utils::get_hash(
+    let t_id = crypto::get_hash(
         human_money_core::services::utils::to_canonical_json(&tx).unwrap(),
     );
     tx.t_id = t_id;
@@ -52,7 +52,7 @@ fn attach_valid_trap(
         .unwrap()
         .try_into()
         .unwrap();
-    let ds_tag = crypto_utils::get_hash_from_slices(&[&prev, &bs58::decode(&eph_b58).into_vec().unwrap()]);
+    let ds_tag = crypto::get_hash_from_slices(&[&prev, &bs58::decode(&eph_b58).into_vec().unwrap()]);
     let (trap, _) = human_money_core::services::trap_manager::generate_sst_trap(
         sender_permanent_key,
         &ds_tag,
@@ -105,9 +105,9 @@ fn attach_sst_privacy_guard(
         ..Default::default()
     };
     let payload_bytes = serde_json::to_vec(&payload).unwrap();
-    let recipient_pubkey = crypto_utils::get_pubkey_from_user_id(recipient_id).unwrap();
+    let recipient_pubkey = crypto::get_pubkey_from_user_id(recipient_id).unwrap();
     tx.privacy_guard = Some(
-        crypto_utils::encrypt_recipient_payload(&payload_bytes, &recipient_pubkey, recipient_id)
+        crypto::encrypt_recipient_payload(&payload_bytes, &recipient_pubkey, recipient_id)
             .unwrap(),
     );
 }
@@ -124,7 +124,7 @@ fn test_integration_detects_victim_role() {
     let alice = &ACTORS.alice;
     let (mut service_alice, _) = test_utils::setup_service_with_profile(dir_alice.path(), alice, "Alice", "pwd");
     service_alice.unlock_session("pwd", 60).unwrap();
-    let id_alice = service_alice.get_user_id().unwrap();
+    let id_alice = service_alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     
     let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let (standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
@@ -142,13 +142,17 @@ fn test_integration_detects_victim_role() {
         Some("pwd"),
     ).unwrap();
     
-    let alice_v_id = service_alice.get_voucher_summaries(None, None, None).unwrap()[0].local_instance_id.clone();
+    let alice_v_id = service_alice
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
+        .local_instance_id
+        .clone();
     
     // Retrieve data for the proof
     let (wallet_alice, identity_alice) = service_alice.get_unlocked_mut_for_test();
     let voucher_base = wallet_alice.voucher_store.vouchers.get(&alice_v_id).unwrap().voucher.clone();
     let prev_tx = voucher_base.transactions.last().unwrap();
-    let prev_tx_hash = crypto_utils::get_hash(human_money_core::services::utils::to_canonical_json(prev_tx).unwrap());
+    let prev_tx_hash = crypto::get_hash(human_money_core::services::utils::to_canonical_json(prev_tx).unwrap());
     let alice_holder_key = test_utils::derive_holder_key(&voucher_base, &identity_alice.signing_key);
     let alice_holder_pub = bs58::encode(alice_holder_key.verifying_key().to_bytes()).into_string();
 
@@ -242,8 +246,8 @@ fn test_integration_detects_witness_role_on_split_win() {
     let (mut service_bob, _) = test_utils::setup_service_with_profile(dir_bob.path(), bob, "Bob", "pwd");
     service_alice.unlock_session("pwd", 60).unwrap();
     service_bob.unlock_session("pwd", 60).unwrap();
-    let id_alice = service_alice.get_user_id().unwrap();
-    let id_bob = service_bob.get_user_id().unwrap();
+    let id_alice = service_alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+    let id_bob = service_bob.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     
     let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let mut standards_map = HashMap::new();
@@ -260,13 +264,17 @@ fn test_integration_detects_witness_role_on_split_win() {
         Some("pwd"),
     ).unwrap();
     
-    let bob_v_id = service_bob.get_voucher_summaries(None, None, None).unwrap()[0].local_instance_id.clone();
+    let bob_v_id = service_bob
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
+        .local_instance_id
+        .clone();
     let (wallet_bob, identity_bob) = service_bob.get_unlocked_mut_for_test();
     let voucher_base = wallet_bob.voucher_store.vouchers.get(&bob_v_id).unwrap().voucher.clone();
 
     // --- 3. Bob creates two competing paths to Alice ---
     let prev_tx = voucher_base.transactions.last().unwrap();
-    let prev_tx_hash = crypto_utils::get_hash(human_money_core::services::utils::to_canonical_json(prev_tx).unwrap());
+    let prev_tx_hash = crypto::get_hash(human_money_core::services::utils::to_canonical_json(prev_tx).unwrap());
     let bob_holder_key = test_utils::derive_holder_key(&voucher_base, &identity_bob.signing_key);
     let bob_holder_pub = bs58::encode(bob_holder_key.verifying_key().to_bytes()).into_string();
 
@@ -294,7 +302,7 @@ fn test_integration_detects_witness_role_on_split_win() {
     );
     let mut v_early = voucher_base.clone();
     v_early.transactions.push(tx_early);
-    let bundle_early = test_utils::create_test_bundle(&identity_bob, vec![v_early], &id_alice, None).unwrap();
+    let bundle_early = test_utils::create_test_bundle(identity_bob, vec![v_early], &id_alice, None).unwrap();
 
     // Path B (Late)
     let tx_late_raw = Transaction {
@@ -316,7 +324,7 @@ fn test_integration_detects_witness_role_on_split_win() {
     );
     let mut v_late = voucher_base.clone();
     v_late.transactions.push(tx_late);
-    let bundle_late = test_utils::create_test_bundle(&identity_bob, vec![v_late], &id_alice, None).unwrap();
+    let bundle_late = test_utils::create_test_bundle(identity_bob, vec![v_late], &id_alice, None).unwrap();
 
     // --- 4. Alice receives both ---
     service_alice.receive_bundle(&bundle_early, &standards_map, None, Some("pwd"), false).unwrap();
@@ -343,8 +351,8 @@ fn test_integration_detects_victim_role_on_loser_only() {
     let (mut service_bob, _) = test_utils::setup_service_with_profile(dir_bob.path(), bob, "Bob", "pwd");
     service_alice.unlock_session("pwd", 60).unwrap();
     service_bob.unlock_session("pwd", 60).unwrap();
-    let id_alice = service_alice.get_user_id().unwrap();
-    let id_bob = service_bob.get_user_id().unwrap();
+    let id_alice = service_alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+    let id_bob = service_bob.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     
     let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let mut standards_map = HashMap::new();
@@ -361,13 +369,17 @@ fn test_integration_detects_victim_role_on_loser_only() {
         Some("pwd"),
     ).unwrap();
     
-    let bob_v_id = service_bob.get_voucher_summaries(None, None, None).unwrap()[0].local_instance_id.clone();
+    let bob_v_id = service_bob
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
+        .local_instance_id
+        .clone();
     let (wallet_bob, identity_bob) = service_bob.get_unlocked_mut_for_test();
     let voucher_base = wallet_bob.voucher_store.vouchers.get(&bob_v_id).unwrap().voucher.clone();
 
     // Retrieve cryptographic data
     let prev_tx = voucher_base.transactions.last().unwrap();
-    let prev_tx_hash = crypto_utils::get_hash(human_money_core::services::utils::to_canonical_json(prev_tx).unwrap());
+    let prev_tx_hash = crypto::get_hash(human_money_core::services::utils::to_canonical_json(prev_tx).unwrap());
     let bob_holder_key = test_utils::derive_holder_key(&voucher_base, &identity_bob.signing_key);
     let bob_holder_pub = bs58::encode(bob_holder_key.verifying_key().to_bytes()).into_string();
     let v_id = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&voucher_base.transactions[0]).unwrap();
@@ -433,11 +445,15 @@ fn test_integration_detects_victim_role_on_loser_only() {
     // Build voucher with loser transaction for Alice
     let mut v_late = voucher_base.clone();
     v_late.transactions.push(tx_late.clone());
-    let bundle_late = test_utils::create_test_bundle(&identity_bob, vec![v_late], &id_alice, None).unwrap();
+    let bundle_late = test_utils::create_test_bundle(identity_bob, vec![v_late], &id_alice, None).unwrap();
 
     // --- 4. Alice receives bundle with loser transaction ---
     service_alice.receive_bundle(&bundle_late, &standards_map, None, Some("pwd"), false).unwrap();
-    let alice_v_id = service_alice.get_voucher_summaries(None, None, None).unwrap()[0].local_instance_id.clone();
+    let alice_v_id = service_alice
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
+        .local_instance_id
+        .clone();
 
     // Check if Alice's voucher is initially active
     {

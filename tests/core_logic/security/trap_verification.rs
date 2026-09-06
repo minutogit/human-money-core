@@ -2,7 +2,7 @@ use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use curve25519_dalek::scalar::Scalar;
 use ed25519_dalek::SigningKey;
-use human_money_core::services::crypto_utils::{
+use human_money_core::services::crypto::{
     create_user_id, ed25519_pk_to_curve_point, get_hash_from_slices,
 };
 use human_money_core::services::trap_manager::{
@@ -238,7 +238,7 @@ fn test_hash_to_curve_not_default() {
     // This test ensures that `hash_to_curve` does not simply return the
     // default value of the EdwardsPoint curve. A trivial point on the curve
     // completely undermines the security of Elliptic Curve Cryptography.
-    let point = human_money_core::services::crypto_utils::hash_to_curve(b"test_input");
+    let point = human_money_core::services::crypto::hash_to_curve(b"test_input");
     let default_point = curve25519_dalek::edwards::EdwardsPoint::default();
     assert_ne!(point, default_point, "hash_to_curve must not return the default identity point");
 }

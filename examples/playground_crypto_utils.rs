@@ -10,8 +10,7 @@
 //! Run with: `cargo run --example playground_crypto_utils`
 
 use human_money_core::MnemonicLanguage;
-use hex;
-use human_money_core::services::crypto_utils::{
+use human_money_core::services::crypto::{
     create_user_id, derive_ed25519_keypair, ed25519_pub_to_x25519,
     generate_ephemeral_x25519_keypair, generate_mnemonic, get_hash, get_pubkey_from_user_id,
     perform_diffie_hellman, sign_ed25519, validate_user_id, verify_ed25519,

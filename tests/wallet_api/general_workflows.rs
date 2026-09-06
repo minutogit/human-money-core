@@ -18,7 +18,7 @@ use human_money_core::{
         profile::PublicProfile, voucher::ValueDefinition,
         voucher_standard_definition::VoucherStandardDefinition,
     },
-    services::voucher_manager::NewVoucherData,
+    NewVoucherData,
     storage::AuthMethod,
     wallet::Wallet,
 };
@@ -58,19 +58,19 @@ fn api_app_service_full_lifecycle() {
     let (mut service_bob, _) =
         setup_service_with_profile(dir_bob.path(), actor_bob, "Bob", "password");
 
-    let id_alice = service_alice.get_user_id().unwrap();
-    let id_bob = service_bob.get_user_id().unwrap();
+    let id_alice = service_alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+    let id_bob = service_bob.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     // --- 3. Logout and login for Alice ---
     service_alice.logout();
     assert!(
-        service_alice.get_user_id().is_err(),
+        service_alice.with_wallet(|w| w.get_user_id().to_string()).is_err(),
         "Service should be locked after logout"
     );
     service_alice
         .login(&profile_info_alice.folder_name, "password", false, "test-id".to_string())
         .expect("Login with correct password should succeed");
-    assert_eq!(service_alice.get_user_id().unwrap(), id_alice);
+    assert_eq!(service_alice.with_wallet(|w| w.get_user_id().to_string()).unwrap(), id_alice);
 
     // --- 4. Alice creates a voucher ---
     service_alice.unlock_session("password", 60).unwrap();
@@ -91,7 +91,9 @@ fn api_app_service_full_lifecycle() {
             Some("password"),
         )
         .expect("Voucher creation failed");
-    let summaries_alice = service_alice.get_voucher_summaries(None, None, None).unwrap();
+    let summaries_alice = service_alice
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
     let local_id_alice = summaries_alice[0].local_instance_id.clone();
 
     // --- 5. Alice sends the voucher to Bob ---
@@ -115,7 +117,7 @@ fn api_app_service_full_lifecycle() {
         .create_transfer_bundle(request, &standards_toml, None, Some("password"))
         .expect("Transfer failed");
     let summary = service_alice
-        .get_voucher_details(&local_id_alice)
+        .with_wallet(|w| w.get_voucher_details(&local_id_alice).unwrap())
         .expect("Fuzzy search should resolve the old ID to the archived voucher");
     assert_eq!(summary.status, VoucherStatus::Archived, "The voucher should be archived after a full transfer");
 
@@ -126,12 +128,14 @@ fn api_app_service_full_lifecycle() {
     service_bob
         .receive_bundle(&transfer_bundle, &standards, None, Some("password"), false)
         .unwrap();
-    let balance_bob = service_bob.get_total_balance_by_currency().unwrap();
+    let balance_bob = service_bob
+        .with_wallet_and_identity(|w, id| w.get_total_balance_by_currency(Some(id)))
+        .unwrap();
     // CORRECTION: The balance is now grouped by currency abbreviation, not by unit.
     let silver_abbreviation = "Taler"; // Corrected, static abbreviation for the FreeTaler standard.
     let bob_silver_balance = balance_bob
         .iter()
-        .find(|b| &b.unit == silver_abbreviation)
+        .find(|b| b.unit == silver_abbreviation)
         .map(|b| b.total_amount.as_str())
         .expect("Bob should have a silver balance");
     assert_eq!(bob_silver_balance, "100.00");
@@ -153,7 +157,7 @@ fn api_app_service_lifecycle_with_passphrase() {
     // --- 2. Create profile with passphrase and unlock service ---
     let (mut service, profile_info) =
         setup_service_with_profile(dir.path(), actor_with_passphrase, "Test User", "password");
-    let original_user_id = service.get_user_id().unwrap();
+    let original_user_id = service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     assert!(original_user_id.starts_with(actor_with_passphrase.prefix.unwrap()));
     service.logout();
 
@@ -180,7 +184,7 @@ fn api_app_service_lifecycle_with_passphrase() {
     );
 
     assert!(
-        service.get_user_id().is_err(),
+        service.with_wallet(|w| w.get_user_id().to_string()).is_err(),
         "Service should remain locked after failed recovery"
     );
 }
@@ -257,7 +261,7 @@ fn api_app_service_password_recovery() {
             .is_err()
     );
     assert!(
-        service.get_user_id().is_err(),
+        service.with_wallet(|w| w.get_user_id().to_string()).is_err(),
         "Service should remain locked after failed recovery"
     );
 
@@ -273,7 +277,7 @@ fn api_app_service_password_recovery() {
         )
         .expect("Recovery with correct mnemonic should succeed");
     assert!(
-        service.get_user_id().is_ok(),
+        service.with_wallet(|w| w.get_user_id().to_string()).is_ok(),
         "Service should be unlocked after successful recovery"
     );
 
@@ -372,7 +376,7 @@ fn api_wallet_lifecycle() {
             test_user.passphrase.unwrap_or(""),
             test_user.prefix.unwrap_or("")
         );
-        human_money_core::services::crypto_utils::get_hash(secret_string.as_bytes())
+        human_money_core::services::crypto::get_hash(secret_string.as_bytes())
     };
     let user_storage_path = dir.path().join(folder_name);
     let mut storage = human_money_core::storage::file_storage::FileStorage::new(user_storage_path);
@@ -575,7 +579,7 @@ fn api_wallet_transfer_invalid_amount() {
 
     let result_negative =
         alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None);
-    assert!(matches!(result_negative, Err(VoucherCoreError::Manager(_))));
+    assert!(matches!(result_negative, Err(VoucherCoreError::VoucherManagerGeneric(_)) | Err(VoucherCoreError::AmountPrecisionExceeded { .. })));
 
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob.identity.user_id.clone(),
@@ -596,7 +600,7 @@ fn api_wallet_transfer_invalid_amount() {
 
     let result_decimal =
         alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None);
-    assert!(matches!(result_decimal, Err(VoucherCoreError::Manager(_))));
+    assert!(matches!(result_decimal, Err(VoucherCoreError::VoucherManagerGeneric(_)) | Err(VoucherCoreError::AmountPrecisionExceeded { .. })));
 }
 
 /// Ensures that transfers are only possible with `Active` vouchers.
@@ -798,7 +802,7 @@ fn api_wallet_query_total_balance() {
             };
             let mut standard_to_hash = standard.clone();
             standard_to_hash.signature = None;
-            let correct_hash = human_money_core::services::crypto_utils::get_hash(
+            let correct_hash = human_money_core::services::crypto::get_hash(
                 human_money_core::services::utils::to_canonical_json(&standard_to_hash).unwrap(),
             );
             let voucher = create_voucher_for_manipulation(
@@ -832,7 +836,7 @@ fn api_wallet_query_total_balance() {
     let actual_minuto_balance = Decimal::from_str(
         balances
             .iter()
-            .find(|b| &b.unit == minuto_abbreviation)
+            .find(|b| b.unit == minuto_abbreviation)
             .map(|b| b.total_amount.as_str())
             .unwrap(),
     )
@@ -844,7 +848,7 @@ fn api_wallet_query_total_balance() {
     let actual_silver_balance = Decimal::from_str(
         balances
             .iter()
-            .find(|b| &b.unit == silver_abbreviation)
+            .find(|b| b.unit == silver_abbreviation)
             .map(|b| b.total_amount.as_str())
             .unwrap(),
     )
@@ -887,10 +891,10 @@ fn api_wallet_rejects_invalid_bundle() {
         ..Default::default()
     };
 
-    let standard_hash = human_money_core::services::crypto_utils::get_hash(
+    let standard_hash = human_money_core::services::crypto::get_hash(
         human_money_core::services::utils::to_canonical_json(&standard.immutable).unwrap(),
     );
-    let mut voucher = human_money_core::services::voucher_manager::create_voucher(
+    let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         &standard,
         &standard_hash,
@@ -906,19 +910,19 @@ fn api_wallet_rejects_invalid_bundle() {
     voucher_to_hash.voucher_id = "".to_string();
     voucher_to_hash.transactions.clear();
     voucher_to_hash.signatures.clear();
-    voucher.voucher_id = human_money_core::services::crypto_utils::get_hash(
+    voucher.voucher_id = human_money_core::services::crypto::get_hash(
         human_money_core::services::utils::to_canonical_json(&voucher_to_hash).unwrap()
     );
     if !voucher.transactions.is_empty() {
         let v_id_bytes = bs58::decode(&voucher.voucher_id).into_vec().unwrap();
         let v_nonce_bytes = bs58::decode(&voucher_nonce).into_vec().unwrap();
-        voucher.transactions[0].prev_hash = human_money_core::services::crypto_utils::get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes]);
+        voucher.transactions[0].prev_hash = human_money_core::services::crypto::get_hash_from_slices(&[&v_id_bytes, &v_nonce_bytes]);
         // Also update tx hash so it is valid
         let mut tx_to_hash = voucher.transactions[0].clone();
         tx_to_hash.t_id = "".to_string();
         tx_to_hash.sender_identity_signature = None;
         tx_to_hash.layer2_signature = None;
-        voucher.transactions[0].t_id = human_money_core::services::crypto_utils::get_hash(
+        voucher.transactions[0].t_id = human_money_core::services::crypto::get_hash(
             human_money_core::services::utils::to_canonical_json(&tx_to_hash).unwrap()
         );
     }
@@ -989,7 +993,7 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
         .create_profile("Alice Details", &mnemonic, None, Some("alice"), "password", MnemonicLanguage::English, "test-id".to_string())
         .expect("Alice profile creation failed");
 
-    let id_alice = service_alice.get_user_id().unwrap();
+    let id_alice = service_alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     // 2. Alice creates a voucher
     service_alice.unlock_session("password", 60).unwrap();
@@ -1012,13 +1016,15 @@ fn api_app_service_get_voucher_details_returns_correct_data() {
         .expect("Voucher creation failed");
 
     // 3. Determine local ID of voucher
-    let summaries_alice = service_alice.get_voucher_summaries(None, None, None).unwrap();
+    let summaries_alice = service_alice
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
     assert_eq!(summaries_alice.len(), 1, "Should have one voucher");
     let local_id = &summaries_alice[0].local_instance_id;
 
     // 4. Retrieve voucher details
     let details = service_alice
-        .get_voucher_details(local_id)
+        .with_wallet(|w| w.get_voucher_details(local_id).unwrap())
         .expect("Should be able to get voucher details");
 
     // 5. Verify details are correct

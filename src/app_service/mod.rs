@@ -20,7 +20,7 @@
 //! use human_money_core::app_service::AppService;
 //! use human_money_core::MnemonicLanguage;
 //! use std::path::Path;
-//! # use human_money_core::services::voucher_manager::NewVoucherData;
+//! # use human_money_core::NewVoucherData;
 //! # use human_money_core::models::voucher_standard_definition::VoucherStandardDefinition;
 //!
 //! // 1. Initialize the service with a base storage path.
@@ -33,7 +33,9 @@
 //!    .expect("Profile could not be created.");
 //!
 //! // 3. Perform an action (e.g., check balance).
-//! let balance = app.get_total_balance_by_currency().unwrap();
+//! let balance = app.with_wallet_and_identity(|wallet, identity| {
+//!     wallet.get_total_balance_by_currency(Some(identity))
+//! }).unwrap();
 //! assert!(balance.is_empty());
 //!
 //! // 4. Lock the wallet (Logout).
@@ -48,14 +50,14 @@
 //!    .expect("Login failed.");
 //!
 //! // 7. Retrieve the User ID.
-//! let user_id = app.get_user_id().unwrap();
+//! let user_id = app.with_wallet(|wallet| wallet.get_user_id().to_string()).unwrap();
 //! println!("Logged in as: {}", user_id);
 //! ```
 
 use crate::models::profile::UserIdentity;
-use crate::services::{bundle_processor, crypto_utils};
-use crate::services::crypto_constants::ARGON2_PROFILE_FOLDER_SALT;
-use crate::storage::{Storage, file_storage::FileStorage};
+use crate::services::{bundle_processor, crypto};
+use crate::services::crypto::constants::ARGON2_PROFILE_FOLDER_SALT;
+use crate::storage::FileStorage;
 use crate::wallet::Wallet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -64,21 +66,14 @@ use std::time::{Duration, Instant};
 
 pub const DEFAULT_ARCHIVE_GRACE_PERIOD_YEARS: i64 = 2;
 
-pub mod error;
-pub use error::AppFacadeError;
+pub use crate::error::Error as AppFacadeError;
 
-// Declaration of the new handlers as public sub-modules.
-// Each file contains an `impl AppService` block for its specific area.
-pub mod app_profile_handler;
-pub mod app_queries;
-pub mod app_signature_handler;
-pub mod command_handler;
-pub mod conflict_handler;
-pub mod data_encryption;
-pub mod l2_facade;
+// Declaration of the consolidated domain modules as public sub-modules.
+// Each file contains `impl AppService` blocks for its specific domain.
+pub mod conflicts;
 pub mod lifecycle;
-pub mod seal_handler;
-pub mod standard_container_handler;
+pub mod storage_ops;
+pub mod transactions;
 
 /// Represents the publicly visible information of a profile.
 /// Used to pass a list of available profiles to the frontend.
@@ -103,6 +98,7 @@ pub struct SessionCache {
 }
 
 /// Represents the core state of the application.
+#[allow(clippy::large_enum_variant)]
 pub enum AppState {
     /// No wallet is loaded and no `UserIdentity` is in memory.
     Locked,
@@ -169,41 +165,38 @@ impl AppService {
 
         // 2. Use Argon2id key stretching for the anonymous folder name (Mobile/WASM tuned).
         // This provides significantly higher protection against brute-force attacks on the folder name.
-        crypto_utils::derive_argon2_id(secret_string.as_bytes(), ARGON2_PROFILE_FOLDER_SALT)
-            .unwrap_or_else(|_| crypto_utils::get_hash(secret_string.as_bytes()))
+        crypto::derive_argon2_id(secret_string.as_bytes(), ARGON2_PROFILE_FOLDER_SALT)
+            .unwrap_or_else(|_| crypto::get_hash(secret_string.as_bytes()))
     }
 
     /// Validates all vouchers within an encrypted bundle.
-    /// This method is called by the `command_handler` before processing a bundle
+    /// This method is called by the `transactions` handler before processing a bundle
     /// and therefore remains centrally available here.
     fn validate_vouchers_in_bundle(
         identity: &UserIdentity,
         bundle_data: &[u8],
         standard_definitions_toml: &HashMap<String, String>,
-    ) -> Result<(), AppFacadeError> {
-        let bundle = bundle_processor::open_and_verify_bundle(identity, bundle_data)
-            .map_err(AppFacadeError::from)?;
+    ) -> Result<(), crate::Error> {
+        let bundle = bundle_processor::open_and_verify_bundle(identity, bundle_data)?;
 
         for voucher in &bundle.vouchers {
             let standard_uuid = &voucher.voucher_standard.uuid;
             let standard_toml = standard_definitions_toml
                 .get(standard_uuid)
                 .ok_or_else(|| {
-                    AppFacadeError::ValidationError(format!(
+                    crate::Error::ValidationFailed(format!(
                         "Required standard definition for UUID '{}' not provided.",
                         standard_uuid
                     ))
                 })?;
 
             let (verified_standard, _) =
-                crate::services::standard_manager::verify_and_parse_standard(standard_toml)
-                    .map_err(AppFacadeError::from)?;
+                crate::models::voucher_standard_definition::VoucherStandardDefinition::from_toml(standard_toml)?;
 
             crate::services::voucher_validation::validate_voucher_against_standard(
                 voucher,
                 &verified_standard,
-            )
-            .map_err(AppFacadeError::from)?;
+            )?;
         }
         Ok(())
     }
@@ -214,7 +207,7 @@ impl AppService {
     pub(super) fn resolve_auth_method<'a>(
         password: Option<&'a str>,
         session_cache: &Option<SessionCache>,
-    ) -> Result<crate::storage::AuthMethod<'a>, crate::error::VoucherCoreError> {
+    ) -> Result<crate::storage::AuthMethod<'a>, crate::Error> {
         match password {
             Some(pwd) => Ok(crate::storage::AuthMethod::Password(pwd)),
             None => match session_cache {
@@ -222,14 +215,14 @@ impl AppService {
                     // Panic-free deadline check: elapsed() cannot overflow, unlike
                     // `last_activity + session_duration` for host-supplied durations.
                     if cache.last_activity.elapsed() > cache.session_duration {
-                        Err(crate::error::VoucherCoreError::Generic(
+                        Err(crate::Error::Generic(
                             "Session timed out. Please provide password.".to_string(),
                         ))
                     } else {
                         Ok(crate::storage::AuthMethod::SessionKey(cache.session_key))
                     }
                 }
-                None => Err(crate::error::VoucherCoreError::Generic(
+                None => Err(crate::Error::Generic(
                     "Password required. Please use 'unlock_session'.".to_string(),
                 )),
             },
@@ -237,25 +230,25 @@ impl AppService {
     }
 
     /// Helper method for read-only access to the wallet.
-    pub(super) fn get_wallet(&self) -> Result<&Wallet, AppFacadeError> {
+    pub(super) fn get_wallet(&self) -> Result<&Wallet, crate::Error> {
         match &self.state {
             AppState::Unlocked { wallet, .. } => Ok(wallet),
-            AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())),
+            AppState::Locked => Err(crate::Error::WalletLocked),
         }
     }
 
     /// Helper method for access to the identity.
-    pub(super) fn get_identity(&self) -> Result<&UserIdentity, AppFacadeError> {
+    pub(super) fn get_identity(&self) -> Result<&UserIdentity, crate::Error> {
         match &self.state {
             AppState::Unlocked { identity, .. } => Ok(identity),
-            AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())),
+            AppState::Locked => Err(crate::Error::WalletLocked),
         }
     }
 
     /// Encapsulates read access to the unlocked wallet.
-    pub(super) fn with_unlocked_ref<F, R>(&self, f: F) -> Result<R, AppFacadeError>
+    pub(super) fn with_unlocked_ref<F, R>(&self, f: F) -> Result<R, crate::Error>
     where
-        F: FnOnce(&Wallet, &UserIdentity, &FileStorage) -> Result<R, AppFacadeError>,
+        F: FnOnce(&Wallet, &UserIdentity, &FileStorage) -> Result<R, crate::Error>,
     {
         match &self.state {
             AppState::Unlocked {
@@ -264,8 +257,24 @@ impl AppService {
                 identity,
                 ..
             } => f(wallet, identity, storage),
-            AppState::Locked => Err(AppFacadeError::WalletLocked("AppService is locked.".to_string())),
+            AppState::Locked => Err(crate::Error::WalletLocked),
         }
+    }
+
+    /// Provides safe, read-only access to the internal `Wallet` instance.
+    pub fn with_wallet<F, R>(&self, f: F) -> Result<R, crate::Error>
+    where
+        F: FnOnce(&Wallet) -> R,
+    {
+        self.with_unlocked_ref(|wallet, _, _| Ok(f(wallet)))
+    }
+
+    /// Provides safe, read-only access to both the internal `Wallet` and `UserIdentity` instances.
+    pub fn with_wallet_and_identity<F, R>(&self, f: F) -> Result<R, crate::Error>
+    where
+        F: FnOnce(&Wallet, &UserIdentity) -> R,
+    {
+        self.with_unlocked_ref(|wallet, identity, _| Ok(f(wallet, identity)))
     }
 
     /// Orchestrates the lifecycle of a mutating transaction on the wallet state.
@@ -324,8 +333,8 @@ impl AppService {
     ///
     /// # Errors
     ///
-    /// Returns an [`AppFacadeError`] if:
-    /// - The wallet is locked ([`AppFacadeError::WalletLocked`])
+    /// Returns an [`crate::Error`] if:
+    /// - The wallet is locked ([`crate::Error::WalletLocked`])
     /// - The fork-lock check fails
     /// - Authentication fails (e.g. session expired or wrong password)
     /// - Reloading or saving the wallet storage fails
@@ -334,17 +343,17 @@ impl AppService {
         &mut self,
         password: Option<&str>,
         f: F,
-    ) -> Result<R, AppFacadeError>
+    ) -> Result<R, crate::Error>
     where
         F: FnOnce(
             &mut Wallet,
             &UserIdentity,
             &mut FileStorage,
             &crate::storage::AuthMethod,
-        ) -> TransactionOutcome<R, AppFacadeError>,
+        ) -> TransactionOutcome<R, crate::Error>,
     {
         // 1. Check fork-lock
-        self.check_fork_lock(password).map_err(AppFacadeError::from)?;
+        self.check_fork_lock(password)?;
 
         // 2. Unpack state (temporarily replace with Locked)
         let old_state = std::mem::replace(&mut self.state, AppState::Locked);
@@ -358,7 +367,7 @@ impl AppService {
             } => {
                 // 3. Request file-lock (RAII)
                 let _lock =
-                    crate::storage::WalletLockGuard::new(&storage).map_err(AppFacadeError::from)?;
+                    crate::storage::WalletLockGuard::new(&storage).map_err(crate::Error::from)?;
 
                 // 4. Resolve authentication
                 let auth = match Self::resolve_auth_method(password, &session_cache) {
@@ -370,7 +379,7 @@ impl AppService {
                             identity,
                             session_cache,
                         };
-                        return Err(AppFacadeError::from(e));
+                        return Err(e);
                     }
                 };
 
@@ -385,7 +394,7 @@ impl AppService {
                             identity,
                             session_cache,
                         };
-                        return Err(AppFacadeError::from(e));
+                        return Err(crate::Error::from(e));
                     }
                 };
 
@@ -418,7 +427,7 @@ impl AppService {
                                 identity,
                                 session_cache,
                             };
-                            return Err(AppFacadeError::ValidationError(format!("Failed to reload wallet: {}", e)));
+                            return Err(crate::Error::ValidationFailed(format!("Failed to reload wallet: {}", e)));
                         }
                     }
                 }
@@ -439,7 +448,7 @@ impl AppService {
                                 identity,
                                 session_cache,
                             };
-                            return Err(AppFacadeError::from(e));
+                            return Err(crate::Error::from(e));
                         }
                         // Advance the cryptographic seal BEFORE publishing the
                         // new state. If this fails, the data files are already
@@ -482,7 +491,7 @@ impl AppService {
                                 identity,
                                 session_cache,
                             };
-                            return Err(AppFacadeError::from(e));
+                            return Err(crate::Error::from(e));
                         }
                         // Same seal-first/compensate contract as the Commit arm:
                         // a failed seal update must never leave persisted data
@@ -523,7 +532,7 @@ impl AppService {
                     }
                 }
             }
-            AppState::Locked => Err(AppFacadeError::WalletLocked("AppService is locked.".to_string())),
+            AppState::Locked => Err(crate::Error::WalletLocked),
         }
     }
 
@@ -562,7 +571,7 @@ impl AppService {
 
     /// Checks the "Remember password" session, manages the timeout
     /// and the "sliding window" (resets 'last_activity').
-    pub fn get_session_key(&mut self) -> Result<[u8; 32], AppFacadeError> {
+    pub fn get_session_key(&mut self) -> Result<[u8; 32], crate::Error> {
         match &mut self.state {
             AppState::Unlocked {
                 storage: _,
@@ -575,17 +584,17 @@ impl AppService {
                     if cache.last_activity.elapsed() > cache.session_duration {
                         // --- Timeout! ---
                         *session_cache = None; // Clear key
-                        Err(AppFacadeError::SessionExpired("Session timed out. Please provide password.".to_string()))
+                        Err(crate::Error::SessionExpired("Session timed out. Please provide password.".to_string()))
                     } else {
                         // --- OK, activity detected ---
                         cache.last_activity = Instant::now(); // "Sliding Window"
                         Ok(cache.session_key)
                     }
                 } else {
-                    Err(AppFacadeError::SessionNotActive("Password required. Please use 'unlock_session'.".to_string()))
+                    Err(crate::Error::SessionNotActive("Password required. Please use 'unlock_session'.".to_string()))
                 }
             }
-            AppState::Locked => Err(AppFacadeError::WalletLocked("Wallet is locked.".to_string())),
+            AppState::Locked => Err(crate::Error::WalletLocked),
         }
     }
 

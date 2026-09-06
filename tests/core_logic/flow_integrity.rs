@@ -1,6 +1,6 @@
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD, create_minuto_voucher_data};
-use human_money_core::{create_transaction, create_voucher, validate_voucher_against_standard};
+use human_money_core::validate_voucher_against_standard;
 
 #[test]
 fn test_init_transfer_split_chain() {
@@ -19,7 +19,7 @@ fn test_init_transfer_split_chain() {
     let mut voucher_data = create_minuto_voucher_data(creator);
     voucher_data.nominal_value.amount = "50.0".to_string(); // FreeTaler is allow_partial_transfers
 
-    let voucher_0 = create_voucher(
+    let voucher_0 = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         standard,
         standard_hash,
@@ -43,7 +43,7 @@ fn test_init_transfer_split_chain() {
     let holder_key_0 =
         human_money_core::test_utils::derive_holder_key(&voucher_0, &alice.signing_key);
 
-    let (voucher_1, secrets_1) = create_transaction(
+    let (voucher_1, secrets_1) = human_money_core::models::voucher::Transaction::create(
         &voucher_0,
         standard,
         &alice.user_id,
@@ -74,7 +74,7 @@ fn test_init_transfer_split_chain() {
     // In `create_transaction` test utils, we usually need the current holder's signing key.
     // But `create_transaction` signature asks for `sender_signing_key` and `sender_ephemeral_key`?
     // Wait, let's look at `create_transaction` signature in `lifecycle.rs`:
-    // create_transaction(..., &sender.signing_key, &holder_key, ...)
+    // human_money_core::models::voucher::Transaction::create(..., &sender.signing_key, &holder_key, ...)
     // For Bob, he needs to RECOVER the key from the `secrets_1` (which simulated the encrypted payload).
     // OR we assume Bob is the recipient and `secrets_1` creates it?
     // Actually, `create_transaction` returns (Voucher, Vec<Secret>).
@@ -103,7 +103,7 @@ fn test_init_transfer_split_chain() {
     let holder_key_bob = &holder_key_bob_owned;
 
     // Bob sends 10 to Charlie.
-    let (voucher_2, _) = create_transaction(
+    let (voucher_2, _) = human_money_core::models::voucher::Transaction::create(
         &voucher_1,
         standard,
         &bob.user_id,

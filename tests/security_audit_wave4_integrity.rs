@@ -8,16 +8,16 @@
 //! corresponding remediation has been implemented.
 //!
 //! Scope: `services/voucher_validation/{chain,signatures}.rs`,
-//! `services/voucher_manager/balance.rs` (issuance attribution + ordering).
+//! `services/voucher_math/balance.rs` (issuance attribution + ordering).
 
 use ed25519_dalek::SigningKey;
-use human_money_core::archive::{ArchiveError, VoucherArchive};
+use human_money_core::archive::FileVoucherArchive;
 use human_money_core::error::ValidationError;
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::models::voucher::{
     Transaction, ValueDefinition, Voucher, VoucherSignature, VoucherStandard,
 };
-use human_money_core::services::crypto_utils::{
+use human_money_core::services::crypto::{
     create_user_id, get_hash, get_hash_from_slices, sign_ed25519,
 };
 use human_money_core::services::l2_gateway::calculate_layer2_voucher_id;
@@ -33,7 +33,6 @@ use human_money_core::test_utils::{
 use human_money_core::wallet::{MultiTransferRequest, SourceTransfer};
 use human_money_core::VoucherCoreError;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 // =============================================================================
 // FINDING AUDIT-W4-INT-501 (WH4-04-501)
@@ -45,7 +44,7 @@ use std::sync::{Arc, Mutex};
 // - Target Location: src/services/voucher_validation/chain.rs:511-520
 //                   (`verify_transaction_basics`, init party gate) in
 //                   interaction with signatures.rs:26-42,69-89 (creator-role
-//                   signature optional) and voucher_manager/balance.rs:33-39
+//                   signature optional) and voucher_math/balance.rs:33-39
 //                   (issuance firewall skipped when creator id absent)
 //
 // ## Threat Model & Exploitation
@@ -507,62 +506,6 @@ fn wh4_04_502_chain_time_ordering_must_reject_offset_confusion() {
 // the archive OR the result reports incompleteness. On unpatched code the
 // call returns Ok with only source #1 archived, so this test FAILS.
 // =============================================================================
-#[derive(Default, Clone)]
-struct SelectivelyFailingArchive {
-    fail_for: Arc<Mutex<Option<String>>>,
-    archived: Arc<Mutex<Vec<String>>>,
-}
-
-impl SelectivelyFailingArchive {
-    fn new(fail_for_voucher_id: String) -> Self {
-        Self {
-            fail_for: Arc::new(Mutex::new(Some(fail_for_voucher_id))),
-            archived: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    fn archived_ids(&self) -> Vec<String> {
-        self.archived.lock().expect("poisoned mutex").clone()
-    }
-}
-
-impl VoucherArchive for SelectivelyFailingArchive {
-    fn archive_voucher(
-        &self,
-        voucher: &Voucher,
-        _owner_id: &str,
-        _standard: &human_money_core::VoucherStandardDefinition,
-    ) -> Result<(), ArchiveError> {
-        if self.fail_for.lock().expect("poisoned mutex").as_deref() == Some(voucher.voucher_id.as_str())
-        {
-            // Persistent failure for exactly this state (e.g. storage fault).
-            return Err(ArchiveError::Generic(
-                "injected persistent archive fault".to_string(),
-            ));
-        }
-        self.archived
-            .lock()
-            .expect("poisoned mutex")
-            .push(voucher.voucher_id.clone());
-        Ok(())
-    }
-
-    fn get_archived_voucher(&self, _voucher_id: &str) -> Result<Voucher, ArchiveError> {
-        Err(ArchiveError::NotFound)
-    }
-
-    fn find_transaction_by_id(
-        &self,
-        _t_id: &str,
-    ) -> Result<Option<(Voucher, Transaction)>, ArchiveError> {
-        Err(ArchiveError::NotFound)
-    }
-
-    fn find_voucher_by_tx_id(&self, _t_id: &str) -> Result<Option<Voucher>, ArchiveError> {
-        Err(ArchiveError::NotFound)
-    }
-}
-
 #[test]
 fn wh4_04_k4_committed_multi_send_must_not_silently_lose_forensics() {
     let (mut sender_wallet, sender_identity) =
@@ -589,7 +532,7 @@ fn wh4_04_k4_committed_multi_send_must_not_silently_lose_forensics() {
     )
     .expect("source B setup failed");
 
-    let recipient_did = human_money_core::services::crypto_utils::create_user_id(
+    let recipient_did = human_money_core::services::crypto::create_user_id(
         &SigningKey::from_bytes(&[0x7Au8; 32]).verifying_key(),
         None,
     )
@@ -598,7 +541,8 @@ fn wh4_04_k4_committed_multi_send_must_not_silently_lose_forensics() {
     let mut definitions = HashMap::new();
     definitions.insert(standard.immutable.identity.uuid.clone(), standard.clone());
 
-    let archive = SelectivelyFailingArchive::new(id_b.clone());
+    let temp_dir = tempfile::tempdir().expect("tempdir failed");
+    let archive = FileVoucherArchive::new_secure(temp_dir.path(), "audit-test-pw");
 
     // The forensic archive and the incompleteness report are keyed by the
     // domain-stable voucher_id, not by the wallet-local instance id.
@@ -608,6 +552,9 @@ fn wh4_04_k4_committed_multi_send_must_not_silently_lose_forensics() {
         .voucher
         .voucher_id
         .clone();
+
+    // Create a regular file blocking the directory creation for voucher B, so archiving B fails
+    std::fs::write(temp_dir.path().join(&id_b_voucher_id), b"blocker").expect("write blocker file");
 
     let request = MultiTransferRequest {
         recipient_id: recipient_did,
@@ -643,8 +590,7 @@ fn wh4_04_k4_committed_multi_send_must_not_silently_lose_forensics() {
     // SECURE INVARIANT (Soll-Verhalten): a committed multi-source send may
     // never SILENTLY truncate the forensic archive. Either every transferred
     // pre-state is archived, or the caller is informed about the gap.
-    let archived = archive.archived_ids();
-    let forensic_complete = archived.contains(&id_b_voucher_id);
+    let forensic_complete = archive.get_archived_voucher(&id_b_voucher_id).is_ok();
     let gap_reported = result
         .as_ref()
         .map(|r| r.forensic_archive_incomplete.contains(&id_b_voucher_id))
@@ -652,11 +598,9 @@ fn wh4_04_k4_committed_multi_send_must_not_silently_lose_forensics() {
     assert!(
         forensic_complete || gap_reported,
         "AUDIT-W4-INT-503 VIOLATION: atomically committed 2-source send \
-         returned Ok(()) while the forensic archive holds only {:?} -- the \
-         pre-state of voucher '{}' was lost to a per-voucher 'continue' in \
+         returned Ok(()) while the pre-state of voucher '{}' was lost in \
          the best-effort archiving loop with no completeness signal to the \
          caller (transaction_handler.rs:1073-1097).",
-        archived,
         id_b
     );
 }

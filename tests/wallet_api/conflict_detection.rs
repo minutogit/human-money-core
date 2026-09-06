@@ -84,10 +84,10 @@ fn make_fingerprint(ds_tag: &str, t_id: &str, deletable_at: &str) -> Transaction
 #[test]
 fn test_fingerprint_valid_until_is_rounded_to_end_of_month() {
     use human_money_core::test_utils::create_voucher_for_manipulation;
-    use human_money_core::services::voucher_manager::NewVoucherData;
+    use human_money_core::NewVoucherData;
     use human_money_core::models::voucher::ValueDefinition;
     use human_money_core::models::profile::PublicProfile;
-    use human_money_core::services::crypto_utils::get_hash;
+    use human_money_core::services::crypto::get_hash;
     use human_money_core::services::utils::to_canonical_json;
 
     // Use the Minuto standard, but set valid_until manually
@@ -147,10 +147,10 @@ fn test_fingerprint_valid_until_is_rounded_to_end_of_month() {
 #[test]
 fn test_fingerprint_ds_tag_is_non_empty() {
     use human_money_core::test_utils::create_voucher_for_manipulation;
-    use human_money_core::services::voucher_manager::NewVoucherData;
+    use human_money_core::NewVoucherData;
     use human_money_core::models::voucher::ValueDefinition;
     use human_money_core::models::profile::PublicProfile;
-    use human_money_core::services::crypto_utils::get_hash;
+    use human_money_core::services::crypto::get_hash;
     use human_money_core::services::utils::to_canonical_json;
 
     let (std, _) = &*MINUTO_STANDARD;

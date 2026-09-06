@@ -50,7 +50,7 @@ mod tests {
         let deserialized: ProofStoreEntry = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(deserialized.proof.proof_id, proof.proof_id);
-        assert_eq!(deserialized.local_override, true);
+        assert!(deserialized.local_override);
         assert_eq!(deserialized.conflict_role, ConflictRole::Victim);
         
         // Export simulation: just the inner proof
@@ -81,7 +81,7 @@ mod tests {
 
         // 3. Verify that local state (override) was preserved
         let entry = wallet.proof_store.proofs.get(&proof_id).unwrap();
-        assert_eq!(entry.local_override, true);
+        assert!(entry.local_override);
         assert_eq!(entry.proof.reporter_id, ACTORS.alice.identity.user_id, "Original reporter should not be overwritten");
     }
 
@@ -337,12 +337,11 @@ mod tests {
         // 3. Execute exact role check logic from transaction_handler
         let mut conflict_role = ConflictRole::Witness;
         for tx in &proof.conflicting_transactions {
-            if let Some(local_inst) = wallet.find_local_voucher_by_tx_id(&tx.t_id) {
-                if matches!(local_inst.status, VoucherStatus::Quarantined { .. }) {
+            if let Some(local_inst) = wallet.find_local_voucher_by_tx_id(&tx.t_id)
+                && matches!(local_inst.status, VoucherStatus::Quarantined { .. }) {
                     conflict_role = ConflictRole::Victim;
                     break;
                 }
-            }
         }
         
         // 4. Verification

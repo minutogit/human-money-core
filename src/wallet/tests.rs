@@ -102,8 +102,8 @@ mod internal_logic {
                 privacy_guard_hash: String::new(),
 };
         
-        // resolve_conflict_offline is pub(super), hence directly testable here.
-        crate::wallet::conflict_handler::resolve_conflict_offline(&mut store, &[fp_early, fp_late]);
+        // resolve_conflict_offline is pub(crate), hence directly testable here.
+        crate::wallet::conflicts::resolve_conflict_offline(&mut store, &[fp_early, fp_late]);
         
         assert!(matches!(store.vouchers["local_early"].status, VoucherStatus::Active), "early must win");
         assert!(matches!(store.vouchers["local_late"].status, VoucherStatus::Quarantined { .. }), "late must lose");
@@ -181,7 +181,7 @@ mod internal_logic {
                 },
             );
 
-            crate::wallet::conflict_handler::resolve_conflict_offline(
+            crate::wallet::conflicts::resolve_conflict_offline(
                 &mut store,
                 &[fingerprint_of(&tx_early), fingerprint_of(&tx_late)],
             );
@@ -237,7 +237,7 @@ mod internal_logic {
                 },
             );
 
-            crate::wallet::conflict_handler::resolve_conflict_offline(
+            crate::wallet::conflicts::resolve_conflict_offline(
                 &mut store,
                 &[fingerprint_of(&tx_early), fingerprint_of(&tx_late)],
             );
@@ -265,7 +265,6 @@ mod internal_logic {
     /// proof_id-keyed dedup/immunity, UI consistency and forensics.
     #[test]
     fn test_attribution_is_deterministic_for_three_member_buckets() {
-        use crate::archive::file_archive::NoOpArchive;
         use crate::models::conflict::{KnownFingerprints, TransactionFingerprint};
         use crate::models::voucher::TrapData;
         use crate::services::conflict_manager;
@@ -290,7 +289,7 @@ mod internal_logic {
         let ds_tag = {
             let prev = bs58::decode(&prev_hash_b58).into_vec().unwrap();
             let eph = bs58::decode(&eph_b58).into_vec().unwrap();
-            crate::services::crypto_utils::get_hash_from_slices(&[&prev, &eph])
+            crate::services::crypto::get_hash_from_slices(&[&prev, &eph])
         };
         let eph_bytes: [u8; 32] = bs58::decode(&eph_b58).into_vec().unwrap().try_into().unwrap();
 
@@ -319,7 +318,7 @@ mod internal_logic {
             deletable_at: "2099-01-01T00:00:00Z".to_string(),
             ..Default::default()
         };
-        let fps = vec![mk_fp(t_a, &trap_a), mk_fp(t_b, &trap_b), mk_fp(t_c, &junk_trap)];
+        let fps = [mk_fp(t_a, &trap_a), mk_fp(t_b, &trap_b), mk_fp(t_c, &junk_trap)];
 
         let mut known = KnownFingerprints::default();
         known
@@ -332,7 +331,7 @@ mod internal_logic {
         let expected_point =
             trap_manager::extract_sst_identity(&ds_tag, &eph_bytes, &fps[0], &fps[1]).unwrap();
         let pk_bytes = expected_point.compress().to_bytes();
-        let expected_did = crate::services::crypto_utils::create_user_id(
+        let expected_did = crate::services::crypto::create_user_id(
             &ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes).unwrap(),
             None,
         )
@@ -350,9 +349,8 @@ mod internal_logic {
                 .verifiable_conflicts
                 .get(&ds_tag)
                 .expect("bucket must classify as verifiable conflict");
-            let noop = NoOpArchive;
             let proof = wallet
-                .verify_and_create_proof(&identity.identity, bucket, &noop)
+                .verify_and_create_proof(&identity.identity, bucket, None)
                 .expect("attribution must not error")
                 .expect("soft proof must be created");
             observed.push(proof.offender_id);

@@ -8,12 +8,12 @@ use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::models::{
     conflict::{CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, ProofStore},
     profile::{BundleMetadataStore, UserIdentity, UserProfile, VoucherStore},
+    voucher::NewVoucherData,
 };
-use crate::services::crypto_utils::create_user_id;
-use crate::services::voucher_manager::NewVoucherData;
-use crate::services::{voucher_manager, voucher_validation};
-use crate::services::seal_manager::SealManager;
-use crate::storage::{AuthMethod, Storage, StorageError};
+use crate::models::seal::WalletSeal;
+use crate::services::crypto::create_user_id;
+use crate::services::voucher_validation;
+use crate::storage::{AuthMethod, FileStorage, StorageError};
 use crate::wallet::Wallet;
 use crate::wallet::instance::{ValidationFailureReason, VoucherStatus};
 
@@ -55,7 +55,7 @@ impl Wallet {
         local_instance_id: String,
     ) -> Result<(Self, UserIdentity), VoucherCoreError> {
         let (public_key, signing_key) =
-            crate::services::crypto_utils::derive_ed25519_keypair(mnemonic_phrase, passphrase, language)?;
+            crate::services::crypto::derive_ed25519_keypair(mnemonic_phrase, passphrase, language)?;
 
         let user_id = create_user_id(&public_key, user_prefix)
             .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
@@ -109,8 +109,8 @@ impl Wallet {
 
     /// Loads an existing wallet from a `Storage` backend.
     /// Returns the wallet and the decrypted UserIdentity.
-    pub fn load<S: Storage>(
-        storage: &S,
+    pub fn load(
+        storage: &FileStorage,
         auth: &AuthMethod,
         local_instance_id: String,
     ) -> Result<(Self, UserIdentity), VoucherCoreError> {
@@ -123,11 +123,11 @@ impl Wallet {
             );
         }
 
-        let bundle_meta_store = storage.load_bundle_metadata(&identity.user_id, auth)?;
-        let known_fingerprints = storage.load_known_fingerprints(&identity.user_id, auth)?;
-        let own_fingerprints = storage.load_own_fingerprints(&identity.user_id, auth)?;
-        let proof_store = storage.load_proofs(&identity.user_id, auth)?;
-        let fingerprint_metadata = storage.load_fingerprint_metadata(&identity.user_id, auth)?;
+        let bundle_meta_store = storage.load_bundle_metadata(auth)?;
+        let known_fingerprints = storage.load_known_fingerprints(auth)?;
+        let own_fingerprints = storage.load_own_fingerprints(auth)?;
+        let proof_store = storage.load_proofs(auth)?;
+        let fingerprint_metadata = storage.load_fingerprint_metadata(auth)?;
 
         // Security check to ensure that the decrypted identity
         // matches the profile data.
@@ -157,26 +157,25 @@ impl Wallet {
         let expired_local_ids: Vec<(String, String, crate::models::wallet_event::EventBffData)> = {
             let mut expired = Vec::new();
             for instance in wallet.voucher_store.vouchers.values() {
-                if matches!(instance.status, VoucherStatus::Active | VoucherStatus::Incomplete { .. }) {
-                    if let Ok(valid_until) = chrono::DateTime::parse_from_rfc3339(&instance.voucher.valid_until) {
-                        if now > valid_until.with_timezone(&chrono::Utc) {
-                            let bff_data = crate::models::wallet_event::EventBffData {
-                                display_currency: crate::wallet::format_bff_name(
-                                    instance.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&instance.voucher.nominal_value.unit),
-                                    instance.voucher.non_redeemable_test_voucher,
-                                ),
-                                amount: instance.voucher.nominal_value.amount.clone(),
-                                is_test_voucher: instance.voucher.non_redeemable_test_voucher,
-                                counterparty_id: None,
-                                counterparty_name: None,
-                            };
-                            expired.push((
-                                instance.local_instance_id.clone(),
-                                instance.voucher.voucher_id.clone(),
-                                bff_data,
-                            ));
-                        }
-                    }
+                if matches!(instance.status, VoucherStatus::Active | VoucherStatus::Incomplete { .. })
+                    && let Ok(valid_until) = chrono::DateTime::parse_from_rfc3339(&instance.voucher.valid_until)
+                    && now > valid_until.with_timezone(&chrono::Utc)
+                {
+                    let bff_data = crate::models::wallet_event::EventBffData {
+                        display_currency: crate::wallet::format_bff_name(
+                            instance.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&instance.voucher.nominal_value.unit),
+                            instance.voucher.non_redeemable_test_voucher,
+                        ),
+                        amount: instance.voucher.nominal_value.amount.clone(),
+                        is_test_voucher: instance.voucher.non_redeemable_test_voucher,
+                        counterparty_id: None,
+                        counterparty_name: None,
+                    };
+                    expired.push((
+                        instance.local_instance_id.clone(),
+                        instance.voucher.voucher_id.clone(),
+                        bff_data,
+                    ));
                 }
             }
             expired
@@ -258,9 +257,9 @@ impl Wallet {
     /// fingerprint stores are saved. Finally `pending_events`
     /// are appended to the event log. Only if ALL operations succeed
     /// is `self.pending_events.clear()` called.
-    pub fn save<S: Storage>(
+    pub fn save(
         &mut self,
-        storage: &mut S,
+        storage: &mut FileStorage,
         identity: &UserIdentity,
         auth: &AuthMethod,
     ) -> Result<(), StorageError> {
@@ -275,15 +274,15 @@ impl Wallet {
         self.loaded_generation = new_generation;
 
         storage.save_wallet(&self.profile, &self.voucher_store, identity, auth)?;
-        storage.save_bundle_metadata(&identity.user_id, auth, &self.bundle_meta_store)?;
-        storage.save_known_fingerprints(&identity.user_id, auth, &self.known_fingerprints)?;
-        storage.save_own_fingerprints(&identity.user_id, auth, &self.own_fingerprints)?;
-        storage.save_proofs(&identity.user_id, auth, &self.proof_store)?;
-        storage.save_fingerprint_metadata(&identity.user_id, auth, &self.fingerprint_metadata)?;
+        storage.save_bundle_metadata(auth, &self.bundle_meta_store)?;
+        storage.save_known_fingerprints(auth, &self.known_fingerprints)?;
+        storage.save_own_fingerprints(auth, &self.own_fingerprints)?;
+        storage.save_proofs(auth, &self.proof_store)?;
+        storage.save_fingerprint_metadata(auth, &self.fingerprint_metadata)?;
 
         // Finally: Persist events. Only clear on complete success.
         if !self.pending_events.is_empty() {
-            storage.append_events(&identity.user_id, auth, &self.pending_events)?;
+            storage.append_events(auth, &self.pending_events)?;
             self.pending_events.clear();
         }
 
@@ -291,8 +290,8 @@ impl Wallet {
     }
 
     /// Resets the password for a wallet in a `Storage` backend.
-    pub fn reset_password<S: Storage>(
-        storage: &mut S,
+    pub fn reset_password(
+        storage: &mut FileStorage,
         identity: &UserIdentity,
         new_password: &str,
     ) -> Result<(), StorageError> {
@@ -321,11 +320,11 @@ impl Wallet {
         standard_hash: &str,
         data: NewVoucherData,
     ) -> Result<crate::models::voucher::Voucher, VoucherCoreError> {
-        let new_voucher = voucher_manager::create_voucher(
-            data,
+        let new_voucher = crate::models::voucher::Voucher::create(
+            identity,
             verified_standard,
             standard_hash,
-            &identity.signing_key,
+            data,
         )?;
 
         // CORRECT STATE MANAGEMENT LOGIC:
@@ -399,25 +398,26 @@ impl Wallet {
 
     /// Forces binding of the wallet to the current device (handover).
     /// Increments the epoch and sets the new instance_id in the seal.
-    pub fn force_device_handover<S: Storage>(
+    pub fn force_device_handover(
         &mut self,
-        storage: &mut S,
+        storage: &mut FileStorage,
         identity: &UserIdentity,
         auth: &AuthMethod,
     ) -> Result<crate::models::seal::WalletSeal, VoucherCoreError> {
         // 1. Load old seal
-        let record = storage.load_seal(&identity.user_id, auth)
+        let record = storage
+            .load_seal(auth)
             .map_err(VoucherCoreError::Storage)?
-            .ok_or_else(|| VoucherCoreError::RequiresSealRecovery)?;
+            .ok_or(VoucherCoreError::RequiresSealRecovery)?;
 
         // 2. Create new seal with increased epoch and new instance_id
-        // We use SealManager::recover_seal_epoch for this, since it does exactly that (Epoch + 1)
+        // We use WalletSeal::recover_epoch for this, since it does exactly that (Epoch + 1)
         let state_hash = {
             let canonical = crate::services::utils::to_canonical_json(&self.own_fingerprints)?;
-            crate::services::crypto_utils::get_hash(canonical.as_bytes())
+            crate::services::crypto::get_hash(canonical.as_bytes())
         };
 
-        let new_seal = SealManager::recover_seal_epoch(
+        let new_seal = WalletSeal::recover_epoch(
             Some(&record.seal),
             &identity.user_id,
             identity,
@@ -432,7 +432,7 @@ impl Wallet {
             is_locked_due_to_fork: false,
         };
 
-        storage.save_seal(&identity.user_id, auth, &new_record)
+        storage.save_seal(auth, &new_record)
             .map_err(VoucherCoreError::Storage)?;
 
         Ok(new_seal)

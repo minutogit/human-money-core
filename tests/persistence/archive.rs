@@ -5,11 +5,11 @@
 //! Originally in `tests/test_archive.rs`.
 
 use human_money_core::{
+    NewVoucherData,
     VoucherStatus,
     archive::file_archive::FileVoucherArchive,
-    archive::VoucherArchive,
     models::voucher::ValueDefinition,
-    services::voucher_manager,
+    
     wallet::Wallet,
 };
 use tempfile::tempdir;
@@ -43,7 +43,7 @@ fn test_voucher_archiving_on_full_spend() {
             abbreviation: Some("".to_string()),
             description: Some("".to_string()),
         };
-        let voucher_data = voucher_manager::NewVoucherData {
+        let voucher_data = NewVoucherData {
             nominal_value,
             creator_profile: human_money_core::models::profile::PublicProfile {
                 id: Some(alice_identity.user_id.clone()),
@@ -53,7 +53,7 @@ fn test_voucher_archiving_on_full_spend() {
             ..Default::default()
         };
 
-        voucher_manager::create_voucher(
+        human_money_core::models::voucher::Voucher::create_with_key(
             voucher_data,
             standard,
             standard_hash,
@@ -92,7 +92,7 @@ fn test_voucher_archiving_on_full_spend() {
 
     let human_money_core::wallet::CreateBundleResult { bundle_bytes, .. } = alice_wallet
         .execute_multi_transfer_and_bundle(
-            &alice_identity,
+            alice_identity,
             &standards,
             request,
             Some(&archive), // The archive backend is passed.
@@ -104,7 +104,7 @@ fn test_voucher_archiving_on_full_spend() {
     let transferred_voucher_state = {
         // To get the transferred voucher state, we need to open the bundle
         let bundle_result = human_money_core::services::bundle_processor::open_and_verify_bundle(
-            &bob_identity,
+            bob_identity,
             &bundle_bytes,
         )
         .unwrap();

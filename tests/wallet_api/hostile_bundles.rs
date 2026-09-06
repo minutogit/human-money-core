@@ -9,7 +9,7 @@ use human_money_core::{
     UserIdentity,
     app_service::AppService,
     models::{profile::PublicProfile, voucher::ValueDefinition},
-    services::voucher_manager::NewVoucherData,
+    NewVoucherData,
     test_utils::{
         ACTORS, FREETALER_STANDARD, create_test_bundle, generate_signed_standard_toml,
         setup_service_with_profile,
@@ -40,7 +40,7 @@ fn setup_test_environment(
         .login(&bob_profile.folder_name, PASSWORD, false, "test-id".to_string())
         .unwrap();
     bob_service.unlock_session(PASSWORD, 60).unwrap();
-    let bob_id = bob_service.get_user_id().unwrap();
+    let bob_id = bob_service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     ((alice_service, alice_identity), (bob_service, bob_id))
 }
@@ -63,7 +63,7 @@ fn setup_sender_recipient(
     let (mut service_recipient, _) =
         setup_service_with_profile(dir_recipient.path(), recipient, "Recipient", "pwd");
     service_recipient.unlock_session("pwd", 60).unwrap();
-    let id_recipient = service_recipient.get_user_id().unwrap();
+    let id_recipient = service_recipient.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     (
         service_sender,
@@ -86,7 +86,7 @@ fn test_rejection_of_broken_transaction_chain() {
             &freetaler_toml,
             NewVoucherData {
                 creator_profile: PublicProfile {
-                    id: Some(service_sender.get_user_id().unwrap()),
+                    id: Some(service_sender.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
                     ..Default::default()
                 },
                 nominal_value: ValueDefinition {
@@ -102,7 +102,7 @@ fn test_rejection_of_broken_transaction_chain() {
     // --- Test modification ---
     // 1. Create a valid transfer transaction from Alice to Bob.
     //    We must use the `VoucherStandardDefinition` object (not the TOML string).
-    let valid_tx = human_money_core::services::voucher_manager::create_transaction(
+    let valid_tx = human_money_core::models::voucher::Transaction::create(
         &voucher,
         &FREETALER_STANDARD.0, // Object from test_utils
         &identity_sender.user_id,
@@ -125,7 +125,7 @@ fn test_rejection_of_broken_transaction_chain() {
     // 3. IMPORTANT: Thanks to signature bypass, we no longer need to calculate
     //    a cryptographic signature. We only need to update t_id so structural
     //    integrity checks (t_id == hash(content)) pass.
-    broken_tx.t_id = human_money_core::crypto_utils::get_hash(
+    broken_tx.t_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&broken_tx).unwrap(),
     );
 
@@ -153,7 +153,7 @@ fn test_rejection_of_broken_transaction_chain() {
     );
     assert!(
         service_recipient
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .is_empty()
     );
@@ -178,7 +178,7 @@ fn test_rejection_of_inconsistent_split_math() {
             &freetaler_toml, // Create a voucher with 100
             NewVoucherData {
                 creator_profile: PublicProfile {
-                    id: Some(service_sender.get_user_id().unwrap()),
+                    id: Some(service_sender.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
                     ..Default::default()
                 },
                 nominal_value: ValueDefinition {
@@ -191,7 +191,7 @@ fn test_rejection_of_inconsistent_split_math() {
         )
         .unwrap();
 
-    let prev_tx_hash = human_money_core::services::crypto_utils::get_hash(
+    let prev_tx_hash = human_money_core::services::crypto::get_hash(
         human_money_core::services::utils::to_canonical_json(voucher.transactions.last().unwrap())
             .unwrap(),
     );
@@ -213,15 +213,15 @@ fn test_rejection_of_inconsistent_split_math() {
         ..Default::default()
     };
     let payload_bytes = serde_json::to_vec(&payload).unwrap();
-    let recipient_pubkey = human_money_core::services::crypto_utils::get_pubkey_from_user_id(&id_recipient).unwrap();
-    tx2.privacy_guard = Some(human_money_core::services::crypto_utils::encrypt_recipient_payload(
+    let recipient_pubkey = human_money_core::services::crypto::get_pubkey_from_user_id(&id_recipient).unwrap();
+    tx2.privacy_guard = Some(human_money_core::services::crypto::encrypt_recipient_payload(
         &payload_bytes,
         &recipient_pubkey,
         &id_recipient,
     ).unwrap());
 
     // 3. IMPORTANT: Thanks to signature bypass, we only update t_id.
-    tx2.t_id = human_money_core::crypto_utils::get_hash(
+    tx2.t_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&tx2).unwrap(),
     );
     voucher.transactions.push(tx2);
@@ -267,7 +267,7 @@ fn test_rejection_of_self_received_bundle() {
             &freetaler_toml,
             NewVoucherData {
                 creator_profile: PublicProfile {
-                    id: Some(service_sender.get_user_id().unwrap()),
+                    id: Some(service_sender.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
                     ..Default::default()
                 },
                 nominal_value: ValueDefinition {
@@ -281,7 +281,9 @@ fn test_rejection_of_self_received_bundle() {
         .unwrap();
 
     // FIX for E0609: local_instance_id must be retrieved from summaries.
-    let summaries = service_sender.get_voucher_summaries(None, None, None).unwrap();
+    let summaries = service_sender
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
     let local_id = summaries
         .first()
         .expect("Wallet should have one voucher summary after creation")
@@ -321,7 +323,9 @@ fn test_rejection_of_self_received_bundle() {
 
     // Ensure that the original voucher (now with remaining amount)
     // remained in 'Active' status and no new voucher was created.
-    let summaries = service_sender.get_voucher_summaries(None, None, None).unwrap();
+    let summaries = service_sender
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].status, VoucherStatus::Active);
     assert_eq!(summaries[0].current_amount, "50.00"); // Remaining amount after split
@@ -332,7 +336,7 @@ fn test_rejection_of_self_received_bundle() {
     assert!(result_recipient.is_ok());
     assert_eq!(
         service_recipient
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .len(),
         1
@@ -359,7 +363,7 @@ fn test_rejection_of_identical_bundle_replay() {
             &freetaler_toml,
             NewVoucherData {
                 creator_profile: PublicProfile {
-                    id: Some(service_sender.get_user_id().unwrap()),
+                    id: Some(service_sender.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
                     ..Default::default()
                 },
                 nominal_value: ValueDefinition {
@@ -372,7 +376,9 @@ fn test_rejection_of_identical_bundle_replay() {
         )
         .unwrap();
 
-    let summaries = service_sender.get_voucher_summaries(None, None, None).unwrap();
+    let summaries = service_sender
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
     let local_id = summaries.first().unwrap().local_instance_id.clone();
 
     // Sender creates a bundle for recipient
@@ -400,7 +406,7 @@ fn test_rejection_of_identical_bundle_replay() {
     assert!(result_first.is_ok());
     assert_eq!(
         service_recipient
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .len(),
         1
@@ -421,7 +427,7 @@ fn test_rejection_of_identical_bundle_replay() {
     // Wallet state must not have changed
     assert_eq!(
         service_recipient
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .len(),
         1
@@ -448,7 +454,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
             &freetaler_toml,
             NewVoucherData {
                 creator_profile: PublicProfile {
-                    id: Some(service_sender.get_user_id().unwrap()),
+                    id: Some(service_sender.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
                     ..Default::default()
                 },
                 nominal_value: ValueDefinition {
@@ -460,7 +466,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
             Some("pwd"),
         )
         .unwrap();
-    let (voucher_a_sent, _) = human_money_core::services::voucher_manager::create_transaction(
+    let (voucher_a_sent, _) = human_money_core::models::voucher::Transaction::create(
         &voucher_a,
         &FREETALER_STANDARD.0,
         &identity_sender.user_id,
@@ -495,7 +501,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
     assert!(result_first.is_ok());
     assert_eq!(
         service_recipient
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .len(),
         1
@@ -515,7 +521,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
     );
     assert_eq!(
         service_recipient
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .len(),
         1
@@ -555,7 +561,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
         "pwd_bob",
     );
     service_recipient_pc.unlock_session("pwd_bob", 60).unwrap();
-    let id_recipient_pc = service_recipient_pc.get_user_id().unwrap();
+    let id_recipient_pc = service_recipient_pc.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     // Wallet 2: Mobile
     let dir_recipient_mobil = tempdir().unwrap();
@@ -568,14 +574,14 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
     service_recipient_mobil
         .unlock_session("pwd_bob", 60)
         .unwrap();
-    let id_recipient_mobil = service_recipient_mobil.get_user_id().unwrap();
+    let id_recipient_mobil = service_recipient_mobil.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     // Sanity Check: Ensure public keys are identical,
     // but full User IDs (addresses) differ.
-    let pk_pc = human_money_core::services::crypto_utils::get_pubkey_from_user_id(&id_recipient_pc)
+    let pk_pc = human_money_core::services::crypto::get_pubkey_from_user_id(&id_recipient_pc)
         .unwrap();
     let pk_mobil =
-        human_money_core::services::crypto_utils::get_pubkey_from_user_id(&id_recipient_mobil)
+        human_money_core::services::crypto::get_pubkey_from_user_id(&id_recipient_mobil)
             .unwrap();
     assert_eq!(
         pk_pc, pk_mobil,
@@ -594,7 +600,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
             &freetaler_toml,
             NewVoucherData {
                 creator_profile: PublicProfile {
-                    id: Some(service_sender.get_user_id().unwrap()),
+                    id: Some(service_sender.with_wallet(|w| w.get_user_id().to_string()).unwrap()),
                     ..Default::default()
                 },
                 nominal_value: ValueDefinition {
@@ -607,7 +613,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
         )
         .unwrap();
     let local_id_sender = service_sender
-        .get_voucher_summaries(None, None, None)
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
         .unwrap()
         .first()
         .unwrap()
@@ -655,7 +661,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
     // The PC wallet must remain empty
     assert!(
         service_recipient_pc
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .is_empty()
     );
@@ -672,7 +678,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
     assert!(result_mobil_receive.is_ok());
     assert_eq!(
         service_recipient_mobil
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .len(),
         1

@@ -26,6 +26,12 @@ pub struct MockL2Node {
     server_key: SigningKey,
 }
 
+impl Default for MockL2Node {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockL2Node {
     pub fn new() -> Self {
         Self {
@@ -119,7 +125,7 @@ impl MockL2Node {
 
         // 3. Locator search (Find Last Common Ancestor for sync)
         for prefix in &req.locator_prefixes {
-            for (ds_tag, _entry) in voucher_locks {
+            for ds_tag in voucher_locks.keys() {
                 if ds_tag.starts_with(prefix) {
                     return self.wrap_and_sign(L2Verdict::MissingLocks {
                         sync_point: prefix.clone(),

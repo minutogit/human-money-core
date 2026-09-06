@@ -3,9 +3,9 @@
 
 use human_money_core::error::{ValidationError, VoucherCoreError};
 use human_money_core::models::voucher::{Transaction, Voucher};
-use human_money_core::services::crypto_utils::get_hash;
+use human_money_core::services::crypto::get_hash;
 use human_money_core::services::utils::get_current_timestamp;
-use human_money_core::services::voucher_manager::{self};
+use human_money_core::{self};
 use human_money_core::services::voucher_validation;
 use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD};
 use human_money_core::to_canonical_json;
@@ -43,7 +43,7 @@ fn create_privacy_test_voucher(
     standard_no_sig.signature = None;
     let new_std_hash = get_hash(to_canonical_json(&standard_no_sig.immutable).unwrap());
 
-    let voucher = voucher_manager::create_voucher(
+    let voucher = human_money_core::models::voucher::Voucher::create_with_key(
         data,
         &standard,
         &new_std_hash,
@@ -94,7 +94,7 @@ fn test_privacy_mode_public_success() {
     // CHECK: Can we make `validate_privacy_mode` public for testing? Or just use full valid vouchers?
     // Creating full valid vouchers is better.
 
-    // To create valid vouchers easily, we should use `voucher_manager::create_transaction`?
+    // To create valid vouchers easily, we should use `human_money_core::models::voucher::Transaction::create`?
     // `create_transaction` enforces logical consistency, but maybe not the privacy rule itself during creation yet?
     // The instructions said: "Update create_transaction to accept privacy_mode ... Handle sender_id visibility".
     // So if we use `create_transaction` with the right mode (if it supports it), it should produce valid tx.

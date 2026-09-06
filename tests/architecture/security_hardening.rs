@@ -39,7 +39,7 @@ fn test_privacy_guard_tampering() {
     // If signature check is first, that's fine.
     // If we use bypass, we check if decryption fails.
 
-    let result = validate_voucher_against_standard(&voucher, &standard);
+    let result = validate_voucher_against_standard(&voucher, standard);
 
     // V3 protocol note: the privacy guard is intentionally EXCLUDED from the
     // t_id preimage (it is AEAD-protected and verified at recipient
@@ -47,7 +47,7 @@ fn test_privacy_guard_tampering() {
     // detect tampering; the cryptographic guarantee lives in the authenticated
     // encryption. Assert exactly that guarantee:
     let recipient = ACTORS.bob.identity.clone();
-    let decrypt_result = human_money_core::services::crypto_utils::decrypt_recipient_payload(
+    let decrypt_result = human_money_core::services::crypto::decrypt_recipient_payload(
         voucher
             .transactions
             .last()

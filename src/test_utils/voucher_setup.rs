@@ -1,11 +1,13 @@
 use crate::models::profile::PublicProfile;
 use crate::models::signature::DetachedSignature;
-use crate::models::voucher::{Collateral, Transaction, ValueDefinition, Voucher, VoucherSignature};
+use crate::models::voucher::{
+    Collateral, NewVoucherData, Transaction, TransactionSecrets, ValueDefinition, Voucher,
+    VoucherSignature,
+};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::models::conflict::TransactionFingerprint;
-use crate::services::crypto_utils::{self, get_hash, get_hash_from_slices, sign_ed25519};
+use crate::services::crypto::{self, get_hash, get_hash_from_slices, sign_ed25519};
 use crate::services::utils::{get_timestamp, to_canonical_json};
-use crate::services::voucher_manager::{create_transaction, NewVoucherData};
 use super::{ACTORS};
 use crate::{UserIdentity, VoucherCoreError};
 use ed25519_dalek::SigningKey;
@@ -17,7 +19,7 @@ pub fn setup_voucher_with_one_tx() -> (
     &'static UserIdentity,
     &'static UserIdentity,
     Voucher,
-    crate::services::voucher_manager::TransactionSecrets,
+    TransactionSecrets,
 ) {
     let (standard, standard_hash) = (
         &super::standards::FREETALER_STANDARD.0,
@@ -39,7 +41,7 @@ pub fn setup_voucher_with_one_tx() -> (
         ..Default::default()
     };
 
-    let initial_voucher = crate::services::voucher_manager::create_voucher(
+    let initial_voucher = Voucher::create_with_key(
         voucher_data,
         standard,
         standard_hash,
@@ -48,8 +50,7 @@ pub fn setup_voucher_with_one_tx() -> (
     .unwrap();
 
     let holder_key = derive_holder_key(&initial_voucher, &creator.signing_key);
-    let (voucher_after_tx1, secrets) = create_transaction(
-        &initial_voucher,
+    let (voucher_after_tx1, secrets) = initial_voucher.create_transaction(
         standard,
         &creator.user_id,
         &creator.signing_key,
@@ -70,6 +71,7 @@ pub fn setup_voucher_with_one_tx() -> (
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_transaction_with_auto_decrypt(
     voucher: &Voucher,
     standard: &VoucherStandardDefinition,
@@ -80,8 +82,7 @@ pub fn create_transaction_with_auto_decrypt(
     _recipient_permanent_key: &SigningKey,
     amount: &str,
 ) -> Result<(Voucher, SigningKey), VoucherCoreError> {
-    let (new_voucher, secrets) = create_transaction(
-        voucher,
+    let (new_voucher, secrets) = voucher.create_transaction(
         standard,
         sender_id,
         sender_permanent_key,
@@ -190,13 +191,13 @@ pub fn create_voucher_for_manipulation(
         )
     });
     let mut valid_until_dt =
-        crate::services::voucher_manager::add_iso8601_duration(creation_dt.into(), duration_str)
+        crate::services::utils::add_iso8601_duration(creation_dt.into(), duration_str)
             .expect("Failed to calculate validity in test helper");
 
-    if let Some(rule) = &standard.mutable.app_config.round_up_validity_to {
-        if let Ok(rounded) = crate::services::voucher_manager::date_utils::round_up_date(valid_until_dt, rule) {
-            valid_until_dt = rounded;
-        }
+    if let Some(rule) = &standard.mutable.app_config.round_up_validity_to
+        && let Ok(rounded) = crate::services::utils::round_up_date(valid_until_dt, rule)
+    {
+        valid_until_dt = rounded;
     }
 
     let valid_until = valid_until_dt.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
@@ -253,16 +254,16 @@ pub fn create_voucher_for_manipulation(
     };
 
     let voucher_json = to_canonical_json(&voucher).unwrap();
-    let voucher_hash = crypto_utils::get_hash(voucher_json);
+    let voucher_hash = crypto::get_hash(voucher_json);
     voucher.voucher_id = voucher_hash.clone();
 
     let prefix = voucher
         .creator_profile
         .id
         .as_ref()
-        .and_then(|id| crypto_utils::get_prefix_from_user_id(id));
+        .and_then(|id| crypto::get_prefix_from_user_id(id));
 
-    let (genesis_secret, genesis_public) = crypto_utils::derive_ephemeral_key_pair(
+    let (genesis_secret, genesis_public) = crypto::derive_ephemeral_key_pair(
         signing_key,
         &nonce_bytes,
         "genesis",
@@ -272,9 +273,9 @@ pub fn create_voucher_for_manipulation(
     let genesis_pub_str = bs58::encode(genesis_public.to_bytes()).into_string();
 
     let (_, holder_public) =
-        crypto_utils::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "holder", prefix)
+        crypto::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "holder", prefix)
             .expect("Failed to derive holder key");
-    let holder_anchor_hash = crypto_utils::get_hash(holder_public.to_bytes());
+    let holder_anchor_hash = crypto::get_hash(holder_public.to_bytes());
 
     let prev_hash = {
         let v_id_bytes = bs58::decode(&voucher.voucher_id)
@@ -325,7 +326,7 @@ pub fn create_voucher_for_manipulation(
     ]);
 
     let digital_signature =
-        crypto_utils::sign_ed25519(signing_key, creator_sig_obj.signature_id.as_bytes());
+        crypto::sign_ed25519(signing_key, creator_sig_obj.signature_id.as_bytes());
     creator_sig_obj.signature = bs58::encode(digital_signature.to_bytes()).into_string();
 
     voucher.signatures.push(creator_sig_obj);
@@ -508,11 +509,11 @@ pub fn resign_transaction_ext(
     );
 
     let proof_key = l2_signer_key.unwrap_or(signer_key);
-    let l2_sig = crypto_utils::sign_ed25519(proof_key, &payload_hash);
+    let l2_sig = crypto::sign_ed25519(proof_key, &payload_hash);
     tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 
     if tx.sender_id.is_some() {
-        let identity_sig = crypto_utils::sign_ed25519(signer_key, &t_id_raw);
+        let identity_sig = crypto::sign_ed25519(signer_key, &t_id_raw);
         tx.sender_identity_signature = Some(bs58::encode(identity_sig.to_bytes()).into_string());
     }
 
@@ -528,9 +529,9 @@ pub fn attach_privacy_guard(tx: &mut Transaction, recipient_id: &str, sender_id:
         ..Default::default()
     };
     let payload_bytes = serde_json::to_vec(&payload).unwrap();
-    let recipient_pubkey = crypto_utils::get_pubkey_from_user_id(recipient_id).unwrap();
+    let recipient_pubkey = crypto::get_pubkey_from_user_id(recipient_id).unwrap();
 
-    tx.privacy_guard = Some(crypto_utils::encrypt_recipient_payload(
+    tx.privacy_guard = Some(crypto::encrypt_recipient_payload(
         &payload_bytes,
         &recipient_pubkey,
         recipient_id,
@@ -547,7 +548,7 @@ pub fn resign_transaction_with_privacy(
 ) -> Transaction {
     if tx.recipient_id == crate::models::voucher::ANONYMOUS_ID && tx.privacy_guard.is_none() {
         let sender_id = tx.sender_id.clone().unwrap_or_else(|| {
-            crypto_utils::create_user_id(&signer_key.verifying_key(), Some("test")).unwrap()
+            crypto::create_user_id(&signer_key.verifying_key(), Some("test")).unwrap()
         });
         attach_privacy_guard(&mut tx, recipient_id, &sender_id);
     }
@@ -565,9 +566,9 @@ pub fn derive_holder_key(
         .creator_profile
         .id
         .as_ref()
-        .and_then(|id| crypto_utils::get_prefix_from_user_id(id));
+        .and_then(|id| crypto::get_prefix_from_user_id(id));
 
-    let (holder_key, _) = crypto_utils::derive_ephemeral_key_pair(
+    let (holder_key, _) = crypto::derive_ephemeral_key_pair(
         creator_signing_key,
         &nonce_arr,
         "holder",
@@ -623,7 +624,7 @@ pub fn make_signed_fingerprint(
         None,
         "",
     );
-    let sig = crypto_utils::sign_ed25519(&eph_key, &payload_hash);
+    let sig = crypto::sign_ed25519(&eph_key, &payload_hash);
 
     TransactionFingerprint {
         ds_tag: ds_tag.to_string(),
@@ -644,6 +645,7 @@ pub fn make_signed_fingerprint(
 #[allow(dead_code)]
 pub fn sign_fingerprint_in_place(fp: &mut TransactionFingerprint) {
     use crate::services::l2_gateway::calculate_l2_payload_hash_raw;
+    use crate::services::conflict_manager::is_init_fingerprint;
     use rand::RngCore;
 
     let mut seed = [0u8; 32];
@@ -662,10 +664,17 @@ pub fn sign_fingerprint_in_place(fp: &mut TransactionFingerprint) {
         .try_into()
         .unwrap();
 
-    // Sign over exactly what verify_fingerprint_signature will recompute:
-    // the fingerprint's own voucher-id and guard-commitment fields (with the
-    // canonical "none" placeholder for genesis-classified entries).
-    let effective_voucher_id = if fp.layer2_voucher_id.is_empty() {
+    let (challenge_tag, deletable_at) = if is_init_fingerprint(fp) {
+        (fp.t_id.clone(), Some(fp.deletable_at.as_str()))
+    } else {
+        (fp.ds_tag.clone(), None)
+    };
+
+    // Genesis fingerprints signed the canonical "none" placeholder for the
+    // voucher-id field; spends bind fp.layer2_voucher_id verbatim.
+    let effective_voucher_id = if fp.layer2_voucher_id.is_empty()
+        && is_init_fingerprint(fp)
+    {
         crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER.to_string()
     } else {
         fp.layer2_voucher_id.clone()
@@ -673,16 +682,16 @@ pub fn sign_fingerprint_in_place(fp: &mut TransactionFingerprint) {
 
     let payload_hash = calculate_l2_payload_hash_raw(
         &effective_voucher_id,
-        &fp.ds_tag,
+        &challenge_tag,
         &t_id_bytes,
         &eph_pub,
         &fp.trap_r,
         &fp.trap_s,
         fp.encrypted_timestamp,
-        None,
+        deletable_at,
         &fp.privacy_guard_hash,
     );
-    let sig = crypto_utils::sign_ed25519(&eph_key, &payload_hash);
+    let sig = crypto::sign_ed25519(&eph_key, &payload_hash);
     fp.layer2_signature = bs58::encode(sig.to_bytes()).into_string();
     fp.sender_ephemeral_pub = bs58::encode(eph_pub).into_string();
 }

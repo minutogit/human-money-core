@@ -22,7 +22,8 @@
 use human_money_core::app_service::AppService;
 use human_money_core::models::secure_container::{ContainerConfig, PrivacyMode};
 use human_money_core::models::voucher::ValueDefinition;
-use human_money_core::{NewVoucherData, VoucherStatus, verify_and_parse_standard};
+use human_money_core::models::voucher_standard_definition::VoucherStandardDefinition;
+use human_money_core::{NewVoucherData, VoucherStatus};
 use human_money_core::MnemonicLanguage;
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -48,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     service_creator.create_profile(
         "Creator",
         &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
-        Some("Test".into()),
+        Some("Test"),
         Some("creator"),
         password,
         MnemonicLanguage::English,
@@ -57,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     service_g1.create_profile(
         "Guarantor 1",
         &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
-        Some("Test".into()),
+        Some("Test"),
         Some("g1"),
         password,
         MnemonicLanguage::English,
@@ -66,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     service_g2.create_profile(
         "Guarantor 2",
         &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
-        Some("Test".into()),
+        Some("Test"),
         Some("g2"),
         password,
         MnemonicLanguage::English,
@@ -75,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     service_recipient.create_profile(
         "Recipient",
         &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
-        Some("Test".into()),
+        Some("Test"),
         Some("rcp"),
         password,
         MnemonicLanguage::English,
@@ -84,15 +85,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     service_charlie.create_profile(
         "Charlie",
         &AppService::generate_mnemonic(12, MnemonicLanguage::English)?,
-        Some("Test".into()),
+        Some("Test"),
         Some("charlie"),
         password,
         MnemonicLanguage::English,
         "example-id".to_string(),
     )?;
 
-    let g1_id = service_g1.get_user_id()?;
-    let g2_id = service_g2.get_user_id()?;
+    let g1_id = service_g1.with_wallet(|w| w.get_user_id().to_string())?;
+    let g2_id = service_g2.with_wallet(|w| w.get_user_id().to_string())?;
 
     // Create full Address structure for Guarantor 1
     let g1_address = human_money_core::models::voucher::Address {
@@ -182,16 +183,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         wallet.profile.url = g2_profile.url.clone();
     }
 
-    let creator_id = service_creator.get_user_id()?;
-    let g1_id = service_g1.get_user_id()?;
-    let g2_id = service_g2.get_user_id()?;
-    let recipient_id = service_recipient.get_user_id()?;
-    let charlie_id = service_charlie.get_user_id()?;
+    let creator_id = service_creator.with_wallet(|w| w.get_user_id().to_string())?;
+    let g1_id = service_g1.with_wallet(|w| w.get_user_id().to_string())?;
+    let g2_id = service_g2.with_wallet(|w| w.get_user_id().to_string())?;
+    let recipient_id = service_recipient.with_wallet(|w| w.get_user_id().to_string())?;
+    let charlie_id = service_charlie.with_wallet(|w| w.get_user_id().to_string())?;
     println!("\n✅ Profile für Ersteller, 2 Bürgen und Empfänger erstellt.");
 
     // Load Minuto standard
     let standard_toml = std::fs::read_to_string("voucher_standards/minuto_v1/standard.toml")?;
-    let (standard, _) = verify_and_parse_standard(&standard_toml)?;
+    let (standard, _) = VoucherStandardDefinition::from_toml(&standard_toml)?;
 
     // --- 2. Voucher creation by creator ---
     println!("\n--- SCHRITT 2: Ersteller legt einen neuen (unvollständigen) Gutschein an ---");
@@ -241,7 +242,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         service_creator.create_new_voucher(&standard_toml, voucher_data, None)?;
 
     let summary = service_creator
-        .get_voucher_summaries(None, None, None)?
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))?
         .pop()
         .unwrap();
     let local_id = summary.local_instance_id;
@@ -277,7 +278,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None,
         Some(password),
     )?;
-    let details_after_g1 = service_creator.get_voucher_details(&local_id)?;
+    let details_after_g1 = service_creator.with_wallet(|w| w.get_voucher_details(&local_id))??;
     println!(
         "     -> Status nach 1. Signatur: {:?}",
         details_after_g1.status
@@ -310,7 +311,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- 4. Activation of voucher ---
     println!("\n--- SCHRITT 4: Gutschein wird automatisch aktiviert ---");
-    let final_details = service_creator.get_voucher_details(&local_id)?;
+    let final_details = service_creator.with_wallet(|w| w.get_voucher_details(&local_id))??;
     println!(
         "✅ Gutschein ist nach Erhalt der 2. Signatur vollständig und wurde automatisch aktiviert."
     );
@@ -343,8 +344,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n--- SCHRITT 6: Empfänger erhält das Bundle und Kontostände werden geprüft ---");
     service_recipient.receive_bundle(&transfer_bundle, &standards_map, None, Some(password), false)?;
 
-    let balance_creator = service_creator.get_total_balance_by_currency()?;
-    let balance_recipient = service_recipient.get_total_balance_by_currency()?;
+    let balance_creator = service_creator.with_wallet_and_identity(|w, id| w.get_total_balance_by_currency(Some(id)))?;
+    let balance_recipient = service_recipient.with_wallet_and_identity(|w, id| w.get_total_balance_by_currency(Some(id)))?;
 
     println!("   -> Kontostand Ersteller: {:?}", balance_creator);
     println!("   -> Kontostand Empfänger: {:?}", balance_recipient);
@@ -368,7 +369,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Find local_id of voucher in wallet of first recipient
     let recipient_summary = service_recipient
-        .get_voucher_summaries(None, None, None)?
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))?
         .pop()
         .unwrap();
     let recipient_local_id = recipient_summary.local_instance_id;
@@ -401,8 +402,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Verify final balances
-    let balance_recipient_after_send = service_recipient.get_total_balance_by_currency()?;
-    let balance_charlie = service_charlie.get_total_balance_by_currency()?;
+    let balance_recipient_after_send = service_recipient.with_wallet_and_identity(|w, id| w.get_total_balance_by_currency(Some(id)))?;
+    let balance_charlie = service_charlie.with_wallet_and_identity(|w, id| w.get_total_balance_by_currency(Some(id)))?;
     println!(
         "   -> Kontostand Empfänger (jetzt Sender): {:?}",
         balance_recipient_after_send
@@ -428,11 +429,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- 8. Final raw data output ---
     println!("\n--- SCHRITT 8: Finale Rohdaten-Ausgabe des Gutscheins bei Charlie ---");
     let charlie_summary = service_charlie
-        .get_voucher_summaries(None, None, None)?
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))?
         .pop()
         .unwrap();
     let charlie_voucher_details =
-        service_charlie.get_voucher_details(&charlie_summary.local_instance_id)?;
+        service_charlie.with_wallet(|w| w.get_voucher_details(&charlie_summary.local_instance_id))??;
     println!(
         "{}",
         serde_json::to_string_pretty(&charlie_voucher_details.voucher)?

@@ -5,9 +5,8 @@
 //! and browser-side CEL expression syntax validation.
 
 use human_money_core::{
-    crypto_utils::{self, get_hash},
+    crypto::{self, get_hash},
     models::voucher_standard_definition::{SignatureBlock, VoucherStandardDefinition},
-    services::standard_manager,
     to_canonical_json, MnemonicLanguage,
 };
 use serde::{Deserialize, Serialize};
@@ -143,14 +142,14 @@ pub fn safe_validate_cel(expr: &str) -> Result<(), String> {
 /// Generates a new BIP-39 mnemonic phrase (12 or 24 words).
 #[wasm_bindgen]
 pub fn generate_mnemonic(word_count: u32) -> Result<String, JsError> {
-    crypto_utils::generate_mnemonic(word_count as usize, MnemonicLanguage::English)
+    crypto::generate_mnemonic(word_count as usize, MnemonicLanguage::English)
         .map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Validates a BIP-39 mnemonic phrase in English.
 #[wasm_bindgen]
 pub fn validate_mnemonic(phrase: &str) -> Result<bool, JsError> {
-    match crypto_utils::validate_mnemonic_phrase(phrase, MnemonicLanguage::English) {
+    match crypto::validate_mnemonic_phrase(phrase, MnemonicLanguage::English) {
         Ok(()) => Ok(true),
         Err(e) => Err(JsError::new(&e)),
     }
@@ -165,10 +164,10 @@ pub fn derive_issuer_id(
 ) -> Result<String, JsError> {
     let pref = prefix.unwrap_or_else(|| "0".to_string());
     let pass = passphrase.as_deref().filter(|p| !p.is_empty());
-    let (public_key, _) = crypto_utils::derive_ed25519_keypair(mnemonic, pass, MnemonicLanguage::English)
+    let (public_key, _) = crypto::derive_ed25519_keypair(mnemonic, pass, MnemonicLanguage::English)
         .map_err(|e| JsError::new(&e.to_string()))?;
 
-    crypto_utils::create_user_id(&public_key, Some(&pref))
+    crypto::create_user_id(&public_key, Some(&pref))
         .map_err(|e| JsError::new(&e.to_string()))
 }
 
@@ -262,7 +261,7 @@ pub fn parse_and_diagnose_standard(raw_input: &str) -> Result<String, JsError> {
         // 4. Check Signature if present
         let is_signed = standard.signature.is_some();
         let (signature_valid, issuer_id) = if let Some(ref sig_block) = standard.signature {
-            let is_valid = standard_manager::verify_and_parse_standard(&clean_toml).is_ok();
+            let is_valid = VoucherStandardDefinition::from_toml(&clean_toml).is_ok();
             (Some(is_valid), Some(sig_block.issuer_id.clone()))
         } else {
             (None, None)
@@ -303,7 +302,7 @@ pub fn parse_and_diagnose_standard(raw_input: &str) -> Result<String, JsError> {
             allow_partial_transfers: standard.immutable.features.allow_partial_transfers,
             balances_are_summable: standard.immutable.features.balances_are_summable,
             amount_decimal_places: standard.immutable.features.amount_decimal_places,
-            privacy_mode: serde_json::to_value(&standard.immutable.features.privacy_mode)
+            privacy_mode: serde_json::to_value(standard.immutable.features.privacy_mode)
                 .ok()
                 .and_then(|v| v.as_str().map(|s| s.to_string()))
                 .unwrap_or_else(|| "flexible".to_string()),
@@ -384,10 +383,10 @@ pub fn sign_standard(
     // 2. Validate mnemonic and derive Ed25519 keypair
     let pref = prefix.unwrap_or_else(|| "0".to_string());
     let pass = passphrase.as_deref().filter(|p| !p.is_empty());
-    let (public_key, signing_key) = crypto_utils::derive_ed25519_keypair(mnemonic, pass, MnemonicLanguage::English)
+    let (public_key, signing_key) = crypto::derive_ed25519_keypair(mnemonic, pass, MnemonicLanguage::English)
         .map_err(|e| JsError::new(&format!("Key derivation error: {}", e)))?;
 
-    let issuer_id = crypto_utils::create_user_id(&public_key, Some(&pref))
+    let issuer_id = crypto::create_user_id(&public_key, Some(&pref))
         .map_err(|e| JsError::new(&format!("Issuer ID generation error: {}", e)))?;
 
     // 3. Clear existing signature block for canonical hash calculation
@@ -401,7 +400,7 @@ pub fn sign_standard(
     let hash_to_sign = get_hash(canonical_json_all.as_bytes());
 
     // 6. Produce Ed25519 signature
-    let signature = crypto_utils::sign_ed25519(&signing_key, hash_to_sign.as_bytes());
+    let signature = crypto::sign_ed25519(&signing_key, hash_to_sign.as_bytes());
     let signature_b58 = bs58::encode(signature.to_bytes()).into_string();
 
     // 7. Attach signature block
@@ -434,7 +433,7 @@ pub fn sign_standard(
 /// Verifies a signed standard TOML string and returns logic_hash and issuer details.
 #[wasm_bindgen]
 pub fn verify_standard(toml_content: &str) -> Result<String, JsError> {
-    let (standard, logic_hash) = standard_manager::verify_and_parse_standard(toml_content)
+    let (standard, logic_hash) = VoucherStandardDefinition::from_toml(toml_content)
         .map_err(|e| JsError::new(&format!("Standard verification failed: {}", e)))?;
 
     let sig_block = standard.signature.ok_or_else(|| {

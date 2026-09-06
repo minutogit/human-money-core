@@ -1,5 +1,5 @@
 use crate::models::voucher_standard_definition::{SignatureBlock, VoucherStandardDefinition};
-use crate::services::crypto_utils::{get_hash, sign_ed25519};
+use crate::services::crypto::{get_hash, sign_ed25519};
 use crate::services::utils::to_canonical_json;
 use super::{ACTORS, TEST_ISSUER};
 use ed25519_dalek::Signer;
@@ -61,21 +61,20 @@ lazy_static! {
         let correct_issuer_id = ACTORS.issuer.user_id.clone();
         let correct_charlie_id = ACTORS.charlie.user_id.clone();
 
-        if let Some(toml::Value::Table(validation)) = standard_value.get_mut("validation") {
-            if let Some(toml::Value::Array(sig_rules)) = validation.get_mut("required_signatures") {
-                for rule_value in sig_rules.iter_mut() {
-                    if let Some(rule) = rule_value.as_table_mut() {
-                        if let Some(toml::Value::String(desc)) = rule.get("role_description") {
-                            if desc == "Official stamp from the authority" {
-                                let new_allowed_ids = toml::Value::Array(vec![
-                                    toml::Value::String(correct_issuer_id.clone()),
-                                    toml::Value::String(correct_charlie_id.clone()),
-                                ]);
-                                rule.insert("allowed_signer_ids".to_string(), new_allowed_ids);
-                                break;
-                            }
-                        }
-                    }
+        if let Some(toml::Value::Table(validation)) = standard_value.get_mut("validation")
+            && let Some(toml::Value::Array(sig_rules)) = validation.get_mut("required_signatures")
+        {
+            for rule_value in sig_rules.iter_mut() {
+                if let Some(rule) = rule_value.as_table_mut()
+                    && let Some(toml::Value::String(desc)) = rule.get("role_description")
+                    && desc == "Official stamp from the authority"
+                {
+                    let new_allowed_ids = toml::Value::Array(vec![
+                        toml::Value::String(correct_issuer_id.clone()),
+                        toml::Value::String(correct_charlie_id.clone()),
+                    ]);
+                    rule.insert("allowed_signer_ids".to_string(), new_allowed_ids);
+                    break;
                 }
             }
         }

@@ -10,14 +10,15 @@
 
 use human_money_core::models::profile::UserIdentity;
 use human_money_core::models::voucher::{Address, Collateral, ValueDefinition};
-use human_money_core::services::crypto_utils;
+use human_money_core::models::voucher_standard_definition::VoucherStandardDefinition;
+use human_money_core::services::crypto;
 use human_money_core::wallet::Wallet;
-use human_money_core::{NewVoucherData, VoucherStatus, verify_and_parse_standard};
+use human_money_core::{NewVoucherData, Voucher, VoucherStatus};
 
 /// Helper function to create a deterministic UserIdentity for tests.
 fn create_test_identity(seed: &str, prefix: &str) -> UserIdentity {
-    let (public_key, signing_key) = crypto_utils::generate_ed25519_keypair_for_tests(Some(seed));
-    let user_id = crypto_utils::create_user_id(&public_key, Some(prefix)).unwrap();
+    let (public_key, signing_key) = crypto::generate_ed25519_keypair_for_tests(Some(seed));
+    let user_id = crypto::create_user_id(&public_key, Some(prefix)).unwrap();
     UserIdentity {
         signing_key,
         public_key,
@@ -39,9 +40,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         alice_identity.user_id, bob_identity.user_id
     );
 
-    // Load valid standard for the voucher
-    let standard_toml = std::fs::read_to_string("voucher_standards/freetaler_v1/standard.toml")?;
-    let (standard, standard_hash) = verify_and_parse_standard(&standard_toml)?;
+    // Load Minuto Standard definition (TOML)
+    let standard_toml = std::fs::read_to_string("voucher_standards/minuto_v1/standard.toml")?;
+    let (standard, standard_hash) = VoucherStandardDefinition::from_toml(&standard_toml)?;
     println!(
         "✅ Standard '{}' verifiziert und geladen.",
         standard.immutable.identity.name
@@ -68,11 +69,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         },
     };
-    let initial_voucher = human_money_core::create_voucher(
-        voucher_data,
+    let initial_voucher = Voucher::create(
+        &alice_identity,
         &standard,
         &standard_hash,
-        &alice_identity.signing_key)?;
+        voucher_data)?;
     let local_id = Wallet::calculate_local_instance_id(&initial_voucher, &alice_identity.user_id)?;
     alice_wallet.add_voucher_instance(local_id, initial_voucher, VoucherStatus::Active);
     println!("✅ Initialen Gutschein erstellt und zu Alices Wallet hinzugefügt.");
@@ -110,7 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &alice_identity,
         &standards_map,
         request,
-        None::<&dyn human_money_core::archive::VoucherArchive>, // No archive
+        None, // No archive
     )?;
 
     println!("✅ Transaktion erfolgreich durchgeführt. Wallet-Zustand wurde aktualisiert.");

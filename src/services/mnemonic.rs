@@ -82,6 +82,7 @@ impl fmt::Display for MnemonicLanguage {
 
 /// The German BIP-39 wordlist (custom addition).
 /// Source: https://github.com/real-life-org/web-of-trust/blob/main/packages/wot-core/src/wordlists/german-positive.ts
+#[allow(clippy::large_const_arrays)]
 pub const GERMAN_WORDLIST: [&str; 2048] = [
   "abbau", "abbild", "abbruch", "abdruck", "abend", "abfall", "abflug", "abgas", "abgrund", "abitur",
   "abkommen", "ablauf", "ablehnen", "abluft", "abpfiff", "abreise", "abriss", "absage", "abschied", "abseits",
@@ -298,7 +299,7 @@ impl MnemonicProcessor {
     /// Returns the wordlist for a given language.
     pub fn get_wordlist(language: MnemonicLanguage) -> Vec<&'static str> {
         if let Some(bip39_lang) = language.to_bip39_language() {
-            bip39_lang.word_list().iter().copied().collect()
+            bip39_lang.word_list().to_vec()
         } else if language == MnemonicLanguage::German {
             GERMAN_WORDLIST.to_vec()
         } else {
@@ -395,7 +396,7 @@ impl MnemonicProcessor {
             }
         }
         for i in (0..checksum_bits).rev() {
-            bits.push(((checksum_byte >> (8 - checksum_bits + i)) & 1) as u8);
+            bits.push((checksum_byte >> (8 - checksum_bits + i)) & 1);
         }
 
         // 3. Split into 11-bit chunks and map to words

@@ -42,15 +42,14 @@ use human_money_core::models::voucher::{Voucher, VoucherSignature};
 use human_money_core::models::voucher_standard_definition::{
     PrivacyMode, VoucherStandardDefinition,
 };
-use human_money_core::services::crypto_identity::create_user_id;
-use human_money_core::services::crypto_keys::generate_ed25519_keypair_for_tests;
-use human_money_core::services::crypto_utils::{
+use human_money_core::services::crypto::identity::create_user_id;
+use human_money_core::services::crypto::keys::generate_ed25519_keypair_for_tests;
+use human_money_core::services::crypto::{
     encode_base64, get_hash, sign_ed25519, verify_ed25519,
 };
 use human_money_core::services::jws_profile_service::{
     export_profile_as_jws, verify_and_import_jws_profile,
 };
-use human_money_core::services::secure_container_manager::create_secure_container;
 use human_money_core::services::utils::to_canonical_json;
 use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD};
 use human_money_core::wallet::Wallet;
@@ -285,9 +284,9 @@ fn sa06_02_received_bundle_content_must_match_signed_bundle_id() {
     let original_container: SecureContainer =
         serde_json::from_slice(&bundle_bytes).expect("parse alice's container");
     let payload = serde_json::to_vec(&poisoned).unwrap();
-    let mut attack_container = create_secure_container(
+    let mut attack_container = SecureContainer::seal(
         bob,
-        ContainerConfig::TargetDid(
+        &ContainerConfig::TargetDid(
             charlie.user_id.clone(),
             human_money_core::models::secure_container::PrivacyMode::TrialDecryption,
         ),
@@ -1004,7 +1003,7 @@ fn sa06_09_signing_paths_must_rebind_container_integrity_id() {
         "sa0609_guarantor",
         "correct horse battery staple",
     );
-    let receiver_did = guarantor_app.get_user_id().expect("receiver did");
+    let receiver_did = guarantor_app.with_wallet(|w| w.get_user_id().to_string()).expect("receiver did");
 
     let (mut alice_wallet, request_local_id) =
         funded_wallet(alice, "100", &flexible_def);
@@ -1045,9 +1044,9 @@ fn sa06_09_signing_paths_must_rebind_container_integrity_id() {
         transactions: Vec::new(),
         ..Default::default()
     };
-    let mut attack_container = create_secure_container(
+    let mut attack_container = SecureContainer::seal(
         &mallory,
-        ContainerConfig::TargetDid(
+        &ContainerConfig::TargetDid(
             receiver_did.clone(),
             human_money_core::models::secure_container::PrivacyMode::TrialDecryption,
         ),
@@ -1262,7 +1261,7 @@ fn sa06_10_received_display_name_must_be_sanitized_and_bounded() {
     // the persistent event history.
     let name = received_event.bff_data.counterparty_name.as_ref();
     assert!(
-        name.map_or(false, |n| n.chars().count() <= 64),
+        name.is_some_and(|n| n.chars().count() <= 64),
         "HMSEC-SA06-10 VIOLATION: attacker-controlled display name entered \
          the trusted event feed unbounded ({} chars).",
         name.map(|n| n.chars().count()).unwrap_or(0)
@@ -1270,7 +1269,7 @@ fn sa06_10_received_display_name_must_be_sanitized_and_bounded() {
 
     // SECURE INVARIANT 2: no control / invisible / direction-manipulating
     // characters survive into the UI-facing field.
-    let has_forbidden_chars = name.map_or(false, |n| {
+    let has_forbidden_chars = name.is_some_and(|n| {
         n.chars().any(|c| {
             c.is_control()
                 || matches!(c as u32,
@@ -1510,7 +1509,7 @@ fn sa06_11_placeholder_shard_spend_must_fail_reception_validation() {
             spend.deletable_at.as_deref(),
             guard_commitment.as_str(),
         );
-        let l2_sig = human_money_core::services::crypto_utils::sign_ed25519(
+        let l2_sig = human_money_core::services::crypto::sign_ed25519(
             &holder_key,
             &payload_hash,
         );
@@ -1566,7 +1565,7 @@ fn build_sa06_soft_proof(eph_seed: u8, seed_suffix: &str, reporter_identity: &Us
     human_money_core::models::conflict::ProofOfDoubleSpend
 {
     use human_money_core::models::voucher::{Transaction, TrapData};
-    use human_money_core::services::crypto_utils::get_hash_from_slices;
+    use human_money_core::services::crypto::get_hash_from_slices;
 
     let prev_hash = get_hash(format!("sa06-fork-{seed_suffix}"));
     let prev_bytes = bs58::decode(&prev_hash).into_vec().expect("fork base58");
@@ -1859,7 +1858,7 @@ fn sa06_13_suspected_identity_must_be_bound_or_neutralized_on_import() {
 #[test]
 fn sa06_14_l2_lock_request_anchors_must_be_absent_or_digest_bound() {
     use human_money_core::models::voucher::{Transaction, TrapData};
-    use human_money_core::services::crypto_utils::get_hash_from_slices;
+    use human_money_core::services::crypto::get_hash_from_slices;
     use human_money_core::services::l2_gateway::{
         calculate_l2_payload_hash, generate_lock_request,
     };
@@ -2089,7 +2088,7 @@ fn bs58_encode_helper(bytes: &[u8]) -> String {    bs58::encode(bytes).into_stri
 }
 
 fn bs58_decode_helper(s: &str) -> Vec<u8> {
-    // Envelope signatures are Base64url (see crypto_utils::encode_base64).
+    // Envelope signatures are Base64url (see crypto::encode_base64).
     use base64::Engine;
     base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(s)

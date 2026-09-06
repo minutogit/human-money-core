@@ -13,7 +13,7 @@ use crate::models::conflict::{
 };
 use crate::models::profile::{UserIdentity, VoucherStore};
 use crate::models::voucher::{Transaction, Voucher};
-use crate::services::crypto_utils::{
+use crate::services::crypto::{
     get_hash, get_hash_from_slices, sign_ed25519, verify_ed25519,
 };
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
@@ -31,6 +31,10 @@ use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat};
 /// would silently skip them and double-spends of such forks could never
 /// reach remote victims.
 pub const VOID_SPEND_SHARD_MARKER: &str = "invalid";
+
+/// Maximum number of foreign fingerprints admitted per `ds_tag` bucket (DoS prevention).
+/// Symmetric to the outbound cap `MAX_FINGERPRINTS_TO_SEND = 150`.
+pub const MAX_FOREIGN_BUCKET_CAP: usize = 150;
 
 /// Creates a single, anonymized fingerprint for a given transaction.
 /// Contains the logic for anonymizing the `valid_until` timestamp.
@@ -74,7 +78,29 @@ pub fn create_fingerprint_for_transaction(
     // can authenticate the fingerprint and later extract identities on
     // collision. Only for 'init' (which has no trap) do we calculate the tag
     // manually and bind the canonical "none" placeholders.
-    let (tag, trap_r, trap_s) = if let Some(trap) = &transaction.trap_data {
+    let (tag, trap_r, trap_s) = if transaction.t_type == "init" {
+        // SECURITY (WH4-01-202): Genesis/init transactions NEVER carry spend traps.
+        // Even if crafted trap_data was embedded, init fingerprints always bind
+        // the canonical "none" placeholders and derive the fallback tag from
+        // prev_hash and sender_ephemeral_pub.
+        let prev_hash_bytes = bs58::decode(&transaction.prev_hash)
+            .into_vec()
+            .map_err(|_| VoucherCoreError::Generic("Invalid prev_hash format".to_string()))?;
+        let ephem_key_bytes = if let Some(s) = &transaction.sender_ephemeral_pub {
+            bs58::decode(s).into_vec().map_err(|_| {
+                VoucherCoreError::Generic("Invalid sender_ephemeral_pub format".to_string())
+            })?
+        } else {
+            Vec::new()
+        };
+
+        let fallback_tag = get_hash_from_slices(&[&prev_hash_bytes, &ephem_key_bytes]);
+        (
+            fallback_tag,
+            crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER.to_string(),
+            crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER.to_string(),
+        )
+    } else if let Some(trap) = &transaction.trap_data {
         // SECURITY (HMSEC-SA06-11): a transaction WITH trap_data claims to be
         // a spend. If its shards are empty or carry the canonical genesis
         // placeholder, the SST attribution channel is switched off by format
@@ -233,7 +259,7 @@ pub fn verify_fingerprint_signature(fp: &TransactionFingerprint) -> bool {
         &fp.privacy_guard_hash,
     );
 
-    crate::services::crypto_utils::verify_ed25519(&verifying_key, &payload_hash, &signature)
+    crate::services::crypto::verify_ed25519(&verifying_key, &payload_hash, &signature)
 }
 
 /// Canonical marker for genesis ('init') fingerprints, which carry no trap
@@ -455,7 +481,7 @@ pub fn check_for_double_spend(
 ///
 /// # Security (AUDIT-01-F10)
 /// The offender_id is CANONICALIZED before hashing, exactly like
-/// [`crate::services::crypto_identity::get_pubkey_from_user_id`] parses it:
+/// [`crate::services::crypto::get_pubkey_from_user_id`] parses it:
 /// all whitespace is stripped and the LAST `@did:key:z` marker wins.
 /// Otherwise render variants of the same logical identity derive different
 /// proof_ids and the import immunity/dedup rule (keyed on proof_id) can be
@@ -491,7 +517,7 @@ pub fn derive_proof_id(
 /// identity key referenced by `reporter_id`. Without this gate anyone could
 /// fabricate proofs to quarantine arbitrary vouchers remotely.
 pub fn verify_reporter_signature(proof: &ProofOfDoubleSpend) -> Result<(), VoucherCoreError> {
-    let reporter_pk = crate::services::crypto_identity::get_pubkey_from_user_id(&proof.reporter_id)
+    let reporter_pk = crate::services::crypto::get_pubkey_from_user_id(&proof.reporter_id)
         .map_err(|_| {
             VoucherCoreError::Generic(format!(
                 "Cannot import proof: reporter_id '{}' is not a valid DID identity.",
@@ -604,13 +630,12 @@ pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherC
         }
 
         let recomputed_ds_tag = get_hash_from_slices(&[&prev_hash_bytes, &eph_pub_bytes]);
-        if let Some(trap) = &tx.trap_data {
-            if trap.ds_tag != recomputed_ds_tag {
+        if let Some(trap) = &tx.trap_data
+            && trap.ds_tag != recomputed_ds_tag {
                 return Err(VoucherCoreError::Generic(
                     "Cannot import proof: trap_data.ds_tag does not match recomputed input tag.".to_string(),
                 ));
             }
-        }
         ds_tags.insert(recomputed_ds_tag);
     }
 
@@ -869,15 +894,39 @@ pub fn import_foreign_fingerprints(
                 .foreign_fingerprints
                 .entry(fp.ds_tag.clone())
                 .or_default();
-            // Dedupe on the evidence identity (t_id), NOT whole-struct
-            // equality: the locally assigned retention deadline differs per
-            // import session, so struct equality would accumulate duplicates.
-            if !entry.iter().any(|e| e.t_id == fp.t_id) {
-                entry.push(fp);
-                new_count += 1;
-            } else {
+            // SECURITY (WH4-01-203): Bounded adversarial ingestion. Enforce bucket cap.
+            if entry.len() >= MAX_FOREIGN_BUCKET_CAP {
                 rejected_count += 1;
+                continue;
             }
+            // Dedupe: identical evidence (same t_id AND all signature-bound
+            // fields) is a replay — drop it. A same-t_id entry with DIVERGENT
+            // signature-bound fields (trap shards, encrypted timestamp,
+            // layer2_signature, privacy_guard_hash) is equivocation / guard-
+            // equivocation evidence (HMSEC-SA04-08) and MUST be retained so
+            // `has_equivocation` in `check_for_double_spend` can observe it.
+            // `deletable_at` is excluded: it is the locally assigned uniform
+            // retention deadline and legitimately differs per import session.
+            let is_exact_duplicate = entry.iter().any(|e| {
+                e.t_id == fp.t_id
+                    && e.trap_r == fp.trap_r
+                    && e.trap_s == fp.trap_s
+                    && e.encrypted_timestamp == fp.encrypted_timestamp
+                    && e.layer2_signature == fp.layer2_signature
+                    && e.privacy_guard_hash == fp.privacy_guard_hash
+            });
+            if is_exact_duplicate {
+                rejected_count += 1;
+                continue;
+            }
+            let is_equivocation = entry.iter().any(|e| e.t_id == fp.t_id);
+            if is_equivocation {
+                // Equivocation evidence shares the bucket but proves fraud via
+                // the has_equivocation gate — admit it even if the t_id is
+                // already present (counts toward the bucket cap already checked).
+            }
+            entry.push(fp);
+            new_count += 1;
         }
     }
     known_fingerprints

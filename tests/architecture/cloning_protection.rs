@@ -41,7 +41,7 @@ fn test_wallet_cloning_protection_and_handover() {
 
     // Wallet on device B is now ready to use
     assert!(service_b.is_wallet_unlocked());
-    let id_b = service_b.get_user_id().unwrap();
+    let id_b = service_b.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     assert_eq!(id_b, alice.user_id);
 
     // 4. Back to device A: Device A should now be locked (since epoch was incremented on B)
@@ -82,12 +82,11 @@ fn test_legacy_wallet_migration() {
     
     // Check if the nonce was incremented (migration now uses update_seal)
     {
-        use human_money_core::storage::Storage;
         let unlocked = service_new.get_unlocked_mut_for_test();
-        let (_wallet, identity) = (unlocked.0, unlocked.1);
+        let (_wallet, _identity) = (unlocked.0, unlocked.1);
         let auth = human_money_core::storage::AuthMethod::Password(password);
         let storage = human_money_core::storage::file_storage::FileStorage::new(dir.path().join(&folder_name));
-        let seal_record = storage.load_seal(&identity.user_id, &auth).unwrap().unwrap();
+        let seal_record = storage.load_seal(&auth).unwrap().unwrap();
         
         // Initial seal in create_profile (Legacy) had nonce 1 (Initial 0 + update after profile creation).
         // Migration via update_seal should now have nonce 2.

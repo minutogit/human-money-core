@@ -335,13 +335,13 @@ mod security_audit_module_01 {
     use ed25519_dalek::SigningKey;
     use human_money_core::models::conflict::{ProofOfDoubleSpend, TransactionFingerprint};
     use human_money_core::models::profile::PublicProfile;
-    use human_money_core::models::voucher::{Transaction, TrapData, ValueDefinition};
+    use human_money_core::models::voucher::{TrapData, ValueDefinition};
     use human_money_core::services::conflict_manager::derive_proof_id;
-    use human_money_core::services::crypto_utils::{
+    use human_money_core::services::crypto::{
         ed25519_pk_to_curve_point, get_hash_from_slices, sign_ed25519,
     };
     use human_money_core::services::trap_manager::{self, TrapWitness};
-    use human_money_core::services::voucher_manager::NewVoucherData;
+    use human_money_core::NewVoucherData;
     use human_money_core::test_utils::{
         ACTORS, FREETALER_STANDARD, generate_signed_standard_toml, setup_service_with_profile,
     };
@@ -450,8 +450,8 @@ mod security_audit_module_01 {
         let (mut hacker, _) =
             setup_service_with_profile(dir.path(), &ACTORS.hacker, "H1", PASSWORD);
 
-        let id_alice = alice.get_user_id().unwrap();
-        let id_victim = victim.get_user_id().unwrap();
+        let id_alice = alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+        let id_victim = victim.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
         // Alice creates a voucher and fully transfers it to the victim.
         alice
@@ -475,7 +475,9 @@ mod security_audit_module_01 {
                 Some(PASSWORD),
             )
             .expect("voucher creation failed");
-        let summaries = alice.get_voucher_summaries(None, None, None).unwrap();
+        let summaries = alice
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap();
         assert!(!summaries.is_empty(), "alice must hold a voucher");
         let local_id = summaries[0].local_instance_id.clone();
 
@@ -508,7 +510,9 @@ mod security_audit_module_01 {
             .receive_bundle(&result.bundle_bytes, &standards_map, None, Some(PASSWORD), false)
             .expect("victim must accept the honest transfer");
 
-        let victim_summaries = victim.get_voucher_summaries(None, None, None).unwrap();
+        let victim_summaries = victim
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap();
         assert_eq!(victim_summaries.len(), 1, "victim holds exactly one voucher");
         assert_eq!(
             victim_summaries[0].status,
@@ -572,7 +576,9 @@ mod security_audit_module_01 {
 
         // SECURE INVARIANT (Soll-Verhalten): the victim's voucher must NOT be
         // quarantined by unauthenticated gossip data.
-        let status_after = victim.get_voucher_summaries(None, None, None).unwrap()[0]
+        let status_after = victim
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap()[0]
             .status
             .clone();
         assert_eq!(
@@ -643,7 +649,7 @@ mod security_audit_module_01 {
         let shared_eph = random_b58_32(); // single input anchor => single ds_tag
 
         let make_tx = |t_id: String| {
-            let mut tx = Transaction::default();
+            let mut tx = human_money_core::models::voucher::Transaction::default();
             tx.t_id = t_id;
             tx.prev_hash = fork_point.clone();
             tx.sender_ephemeral_pub = Some(shared_eph.clone());
@@ -730,7 +736,7 @@ mod security_audit_module_01 {
             trap_manager::generate_sst_trap(&sk, &ds_tag, &eph_bytes, &t_id_b).unwrap();
 
         let make_tx = |t_type: &str, t_id: String, trap: Option<TrapData>| {
-            let mut tx = Transaction::default();
+            let mut tx = human_money_core::models::voucher::Transaction::default();
             tx.t_type = t_type.to_string();
             tx.t_id = t_id;
             tx.prev_hash = prev_hash_b58.clone();
@@ -784,7 +790,7 @@ mod security_audit_module_01 {
             build_honest_sst_forks(&attacker_sk, &ctrl_prev, &ctrl_eph);
 
         let make_ctrl_tx = |t_id: String, trap: TrapData| {
-            let mut tx = Transaction::default();
+            let mut tx = human_money_core::models::voucher::Transaction::default();
             tx.t_id = t_id;
             tx.prev_hash = ctrl_prev.clone();
             tx.sender_ephemeral_pub = Some(ctrl_eph.clone());
@@ -866,7 +872,7 @@ mod security_audit_module_01 {
         ]
         .into_iter()
         .map(|(_amount, t_id, trap_r, trap_s)| {
-            let mut tx = Transaction::default();
+            let mut tx = human_money_core::models::voucher::Transaction::default();
             tx.t_id = t_id;
             tx.prev_hash = atk_prev.clone();
             tx.sender_ephemeral_pub = Some(atk_eph.clone());
@@ -957,7 +963,7 @@ mod security_audit_module_01 {
 
         let (mut victim, _) =
             setup_service_with_profile(dir.path(), &ACTORS.charlie, "V10", PASSWORD);
-        let victim_did = victim.get_user_id().unwrap();
+        let victim_did = victim.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
         // Victim holds one active voucher; the init transaction is the anchor.
         victim
@@ -1037,7 +1043,7 @@ mod security_audit_module_01 {
             .unlock_session(PASSWORD, 300)
             .unwrap();
         victim
-            .receive_bundle(&poison_bundle, &standards_map_for(&standard_def, &standard_toml), None, Some(PASSWORD), false)
+            .receive_bundle(&poison_bundle, &standards_map_for(standard_def, &standard_toml), None, Some(PASSWORD), false)
             .expect("processing a fingerprint-only bundle must succeed");
 
         // SECURE INVARIANT (Soll-Verhalten): unverified gossip must never
@@ -1183,8 +1189,8 @@ mod security_audit_module_01 {
         let (mut hacker, _) =
             setup_service_with_profile(dir.path(), &ACTORS.hacker, "H12", PASSWORD);
 
-        let id_alice = alice.get_user_id().unwrap();
-        let id_victim = victim.get_user_id().unwrap();
+        let id_alice = alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+        let id_victim = victim.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
         // Alice issues two vouchers and transfers BOTH to the victim in one
         // bundle -> the victim holds two independent ACTIVE voucher instances.
@@ -1210,7 +1216,7 @@ mod security_audit_module_01 {
                 .unwrap_or_else(|e| panic!("voucher creation {i} failed: {e}"));
         }
         let sources = alice
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .into_iter()
             .map(|s| SourceTransfer {
@@ -1287,7 +1293,7 @@ mod security_audit_module_01 {
         assert_eq!(imported, 2, "attack precondition: both entries admitted");
 
         let statuses_before: Vec<bool> = victim
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .iter()
             .map(|s| s.status == human_money_core::VoucherStatus::Active)
@@ -1303,7 +1309,9 @@ mod security_audit_module_01 {
 
         // SECURE INVARIANT (Soll-Verhalten): content-incoherent buckets must
         // never mutate voucher states — BOTH instances stay Active...
-        let summaries_after = victim.get_voucher_summaries(None, None, None).unwrap();
+        let summaries_after = victim
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap();
         for s in &summaries_after {
             assert_eq!(
                 s.status,
@@ -1343,7 +1351,7 @@ mod security_audit_module_01 {
     #[test]
     fn f12_guardless_transfer_with_poisoned_trap_shards_must_be_rejected() {
         use human_money_core::models::voucher_standard_definition::PrivacyMode;
-        use human_money_core::services::crypto_utils::{get_hash};
+        use human_money_core::services::crypto::{get_hash};
         use human_money_core::services::conflict_manager::encrypt_transaction_timestamp;
         use human_money_core::services::utils::to_canonical_json;
         use human_money_core::test_utils::create_custom_standard;
@@ -1366,8 +1374,8 @@ mod security_audit_module_01 {
             setup_service_with_profile(dir.path(), &ACTORS.alice, "A13", PASSWORD);
         let (mut victim, _) =
             setup_service_with_profile(dir.path(), &ACTORS.charlie, "V13", PASSWORD);
-        let id_alice = alice.get_user_id().unwrap();
-        let id_victim = victim.get_user_id().unwrap();
+        let id_alice = alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+        let id_victim = victim.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
         // --- Control: honest public-mode transfer is accepted. --------------
         alice.unlock_session(PASSWORD, 300).unwrap();
@@ -1396,7 +1404,9 @@ mod security_audit_module_01 {
             aw.voucher_store.vouchers.values().next().unwrap().voucher.clone()
         };
         let input_key = derive_holder_key(&init_voucher, &ACTORS.alice.identity.signing_key);
-        let local_id = alice.get_voucher_summaries(None, None, None).unwrap()[0]
+        let local_id = alice
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap()[0]
             .local_instance_id
             .clone();
         let request = MultiTransferRequest {
@@ -1414,7 +1424,9 @@ mod security_audit_module_01 {
             .receive_bundle(&honest.bundle_bytes, &standards_map, None, Some(PASSWORD), false)
             .expect("CONTROL: honest transfer with witness-carrying guard accepted");
         assert_eq!(
-            victim.get_voucher_summaries(None, None, None).unwrap()[0].status,
+            victim
+                .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+                .unwrap()[0].status,
             human_money_core::VoucherStatus::Active,
             "control precondition"
         );
@@ -1568,7 +1580,7 @@ mod security_audit_module_01 {
         .expect("honest pair must extract");
         assert_eq!(extracted, offender_point);
         let offender_did =
-            human_money_core::services::crypto_utils::create_user_id(
+            human_money_core::services::crypto::create_user_id(
                 &offender_sk.verifying_key(),
                 None,
             )
@@ -1588,7 +1600,7 @@ mod security_audit_module_01 {
         };
 
         let make_tx = |t_id: String, trap: TrapData| {
-            let mut tx = Transaction::default();
+            let mut tx = human_money_core::models::voucher::Transaction::default();
             tx.t_id = t_id;
             tx.prev_hash = prev_hash_b58.clone();
             tx.sender_ephemeral_pub = Some(eph_b58.clone());
@@ -1674,7 +1686,9 @@ mod security_audit_module_01 {
             setup_service_with_profile(dir.path(), &ACTORS.hacker, "H14", PASSWORD);
 
         assert_eq!(
-            victim.get_voucher_summaries(None, None, None).unwrap()[0].status,
+            victim
+                .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+                .unwrap()[0].status,
             human_money_core::VoucherStatus::Active,
             "precondition: local branch is active"
         );
@@ -1701,7 +1715,9 @@ mod security_audit_module_01 {
         // SECURE INVARIANT (Soll-Verhalten): a decrypted timestamp of 1970
         // (+1 microsecond-scale) is implausible for a genuine transaction —
         // the candidate must be discarded and the honest branch stays Active.
-        let status_after = victim.get_voucher_summaries(None, None, None).unwrap()[0]
+        let status_after = victim
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap()[0]
             .status
             .clone();
         assert_eq!(
@@ -1853,8 +1869,8 @@ mod security_audit_module_01 {
         let (mut victim, _) =
             setup_service_with_profile(dir.path(), &ACTORS.charlie, "V", PASSWORD);
 
-        let id_alice = alice.get_user_id().unwrap();
-        let id_victim = victim.get_user_id().unwrap();
+        let id_alice = alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+        let id_victim = victim.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
         alice.unlock_session(PASSWORD, 300).unwrap();
         alice
@@ -1896,7 +1912,9 @@ mod security_audit_module_01 {
             standard_toml.clone(),
         );
 
-        let local_id = alice.get_voucher_summaries(None, None, None).unwrap()[0]
+        let local_id = alice
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap()[0]
             .local_instance_id
             .clone();
         let request = MultiTransferRequest {
@@ -1970,7 +1988,9 @@ mod security_audit_module_01 {
             setup_service_with_profile(dir.path(), &ACTORS.hacker, "H", PASSWORD);
 
         assert_eq!(
-            victim.get_voucher_summaries(None, None, None).unwrap()[0].status,
+            victim
+                .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+                .unwrap()[0].status,
             human_money_core::VoucherStatus::Active,
             "precondition: local branch is active"
         );
@@ -1996,7 +2016,9 @@ mod security_audit_module_01 {
 
         send_gossip(&mut victim, &mut hacker, &id_victim, vec![poison_fp], &standards_map);
 
-        let status_after = victim.get_voucher_summaries(None, None, None).unwrap()[0]
+        let status_after = victim
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap()[0]
             .status
             .clone();
         assert_eq!(
@@ -2036,7 +2058,9 @@ mod security_audit_module_01 {
 
         send_gossip(&mut victim, &mut hacker, &id_victim, vec![forged_fp], &standards_map);
 
-        let status_after = victim.get_voucher_summaries(None, None, None).unwrap()[0]
+        let status_after = victim
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap()[0]
             .status
             .clone();
         assert_eq!(
@@ -2142,7 +2166,9 @@ mod security_audit_module_01 {
 
         send_gossip(&mut victim, &mut hacker, &id_victim, vec![late_sibling], &standards_map);
 
-        let status_after = victim.get_voucher_summaries(None, None, None).unwrap()[0]
+        let status_after = victim
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap()[0]
             .status
             .clone();
         assert_eq!(
@@ -2197,7 +2223,7 @@ mod security_audit_module_01 {
             2000,
         );
 
-        let id_witness = witness.get_user_id().unwrap();
+        let id_witness = witness.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         send_gossip(&mut witness, &mut hacker, &id_witness, vec![fp_a, fp_b], &standards_map);
 
         // The witness auto-created a Gossip Soft Proof from placeholders.
@@ -2262,7 +2288,7 @@ mod security_audit_module_01 {
             make_v3_foreign_fp(&input_key, &tag, &[3u8; 32], "u_x", "V_x", 10),
             make_v3_foreign_fp(&input_key, &tag, &[4u8; 32], "u_y", "V_y", 20),
         ];
-        let id_witness = witness.get_user_id().unwrap();
+        let id_witness = witness.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         send_gossip(&mut witness, &mut hacker, &id_witness, fps, &HashMap::new());
 
         let mut proof = {
@@ -2306,7 +2332,7 @@ mod security_audit_module_01 {
         );
 
         let (mut alice, _) = setup_service_with_profile(dir.path(), &ACTORS.alice, "A", PASSWORD);
-        let id_alice = alice.get_user_id().unwrap();
+        let id_alice = alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         alice.unlock_session(PASSWORD, 300).unwrap();
         alice
             .create_new_voucher(
@@ -2367,7 +2393,7 @@ mod security_audit_module_01 {
 
         let (mut victim, _) =
             setup_service_with_profile(dir.path(), &ACTORS.charlie, "V", PASSWORD);
-        let id_victim = victim.get_user_id().unwrap();
+        let id_victim = victim.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         send_gossip(&mut victim, &mut hacker, &id_victim, vec![init_fp], &standards_map);
 
         let (vw, _) = victim.get_unlocked_mut_for_test();
@@ -2401,7 +2427,7 @@ mod security_audit_module_01 {
     fn test_sst_zero_knowledge_no_p_pre_registry_mining() {
         use curve25519_dalek::edwards::CompressedEdwardsY;
         use curve25519_dalek::scalar::Scalar;
-        use human_money_core::services::crypto_utils::get_secret_scalar;
+        use human_money_core::services::crypto::get_secret_scalar;
         use human_money_core::services::trap_manager::{
             compute_tau, hash_to_scalar,
         };
@@ -2519,7 +2545,7 @@ mod security_audit_module_01 {
         let offender_sk = fresh_key();
         let offender_point = identity_point_of(&offender_sk);
         let expected_did =
-            human_money_core::services::crypto_utils::create_user_id(
+            human_money_core::services::crypto::create_user_id(
                 &offender_sk.verifying_key(),
                 None,
             )
@@ -2580,7 +2606,7 @@ mod security_audit_module_01 {
                 2000,
             ),
         ];
-        let id_witness = witness.get_user_id().unwrap();
+        let id_witness = witness.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         send_gossip(&mut witness, &mut hacker, &id_witness, signed_fps, &standards_map);
 
         let proof = {

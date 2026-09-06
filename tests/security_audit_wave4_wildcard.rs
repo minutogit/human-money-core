@@ -22,17 +22,15 @@ use std::collections::HashMap;
 
 use human_money_core::app_service::{AppService, ProfileInfo};
 use human_money_core::models::profile::PublicProfile;
-use human_money_core::models::secure_container::{ContainerConfig, PayloadType, PrivacyMode};
+use human_money_core::models::secure_container::{ContainerConfig, PayloadType, PrivacyMode, SecureContainer};
 use human_money_core::models::signature::DetachedSignature;
 use human_money_core::models::voucher::{Transaction, TrapData, ValueDefinition, Voucher, VoucherSignature};
-use human_money_core::services::crypto_utils::{
+use human_money_core::services::crypto::{
     derive_ephemeral_key_pair, get_hash, get_prefix_from_user_id,
 };
 use human_money_core::services::mnemonic::MnemonicLanguage;
-use human_money_core::services::secure_container_manager::create_secure_container;
-use human_money_core::services::signature_manager::complete_and_sign_detached_signature;
 use human_money_core::services::utils::to_canonical_json;
-use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::NewVoucherData;
 use human_money_core::test_utils::{
     create_voucher_for_manipulation, generate_signed_standard_toml, resign_transaction_ext,
     setup_service_with_profile, ACTORS, FREETALER_STANDARD,
@@ -87,9 +85,9 @@ fn attacker_minted_voucher(attacker: &UserIdentity) -> Voucher {
 /// addressed to the victim (the exact transport used by the real workflow).
 fn wrap_voucher_for_signing(attacker: &UserIdentity, victim_did: &str, voucher: &Voucher) -> Vec<u8> {
     let payload = to_canonical_json(voucher).expect("canonical json of voucher");
-    let container = create_secure_container(
+    let container = SecureContainer::seal(
         attacker,
-        ContainerConfig::TargetDid(victim_did.to_string(), PrivacyMode::TrialDecryption),
+        &ContainerConfig::TargetDid(victim_did.to_string(), PrivacyMode::TrialDecryption),
         payload.as_bytes(),
         PayloadType::VoucherForSigning,
     )
@@ -201,7 +199,7 @@ fn w4_wc_001_poisoned_endorsed_voucher_must_not_brick_login() {
         setup_service_with_profile(dir.path(), &ACTORS.bob, "W4-WC001-Victim", PASSWORD);
     // NOTE: containers must address the PERSISTED profile identity
     // (production KDF), not a possibly fast-derived actor identity.
-    let victim_did = service.get_user_id().expect("victim user id");
+    let victim_did = service.with_wallet(|w| w.get_user_id().to_string()).expect("victim user id");
 
     let mut hostile = attacker_minted_voucher(&ACTORS.alice.identity);
     hostile.valid_until = "not-a-date".to_string();
@@ -239,7 +237,7 @@ fn w4_wc_001_poisoned_endorsed_voucher_must_not_brick_mnemonic_recovery() {
     let dir = tempdir().expect("tempdir");
     let (mut service, profile) =
         setup_service_with_profile(dir.path(), &ACTORS.alice, "W4-WC001-Recover", PASSWORD);
-    let victim_did = service.get_user_id().expect("victim user id");
+    let victim_did = service.with_wallet(|w| w.get_user_id().to_string()).expect("victim user id");
 
     let mut hostile = attacker_minted_voucher(&ACTORS.bob.identity);
     hostile.valid_until = "not-a-date".to_string();
@@ -328,7 +326,7 @@ fn w4_wc_002_endorsed_voucher_must_not_pollute_own_fingerprints_at_load_rebuild(
     let dir = tempdir().expect("tempdir");
     let (mut service, profile) =
         setup_service_with_profile(dir.path(), &ACTORS.victim, "W4-WC002-Victim", PASSWORD);
-    let victim_did = service.get_user_id().expect("victim user id");
+    let victim_did = service.with_wallet(|w| w.get_user_id().to_string()).expect("victim user id");
 
     let attacker = &ACTORS.charlie.identity;
 
@@ -462,7 +460,7 @@ fn stage1_store_phantom_as_endorsed(
     let dir = tempdir().expect("tempdir");
     let (mut service, profile) =
         setup_service_with_profile(dir.path(), &ACTORS.david, "W4-WC003-Victim", PASSWORD);
-    let victim_did = service.get_user_id().expect("victim user id");
+    let victim_did = service.with_wallet(|w| w.get_user_id().to_string()).expect("victim user id");
 
     // Colluding attackers with DISTINCT identities: bob mints the voucher,
     // alice later supplies the detached signature (identical identities would
@@ -508,19 +506,19 @@ fn stage2_attach_attacker_signature_raw(
         ..Default::default()
     });
     let init_t_id = &phantom.transactions[0].t_id;
-    let signed_sig = complete_and_sign_detached_signature(
-        sig_data,
-        attacker,
-        None,
-        &phantom.voucher_id,
-        init_t_id,
-    )
-    .expect("honest detached signature creation");
+    let signed_sig = sig_data
+        .complete_and_sign(
+            attacker,
+            None,
+            &phantom.voucher_id,
+            init_t_id,
+        )
+        .expect("honest detached signature creation");
 
     let payload = to_canonical_json(&signed_sig).expect("canonical signature json");
-    let container = create_secure_container(
+    let container = SecureContainer::seal(
         attacker,
-        ContainerConfig::TargetDid(victim_did.to_string(), PrivacyMode::TrialDecryption),
+        &ContainerConfig::TargetDid(victim_did.to_string(), PrivacyMode::TrialDecryption),
         payload.as_bytes(),
         PayloadType::DetachedSignature,
     )

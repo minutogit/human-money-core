@@ -230,7 +230,7 @@ pub fn calculate_layer2_voucher_id(transaction: &Transaction) -> Result<String, 
 pub fn privacy_guard_commitment(privacy_guard: Option<&str>) -> String {
     match privacy_guard {
         Some(guard) if !guard.is_empty() => {
-            crate::services::crypto_utils::get_hash(guard.as_bytes())
+            crate::services::crypto::get_hash(guard.as_bytes())
         }
         _ => String::new(),
     }
@@ -246,7 +246,7 @@ pub fn privacy_guard_commitment(privacy_guard: Option<&str>) -> String {
 /// 3. the gossip fingerprint (instant-proof ingress gate + SST collision input).
 ///
 /// All fields are bound with length prefixes via
-/// [`crate::services::crypto_utils::get_raw_hash_from_slices`], which fixes
+/// [`crate::services::crypto::get_raw_hash_from_slices`], which fixes
 /// legacy **AUDIT-01-F03** (unprefixed string concatenation) and makes every
 /// field malleability-proof: any bit change in `trap_r`, `trap_s`,
 /// `encrypted_timestamp`, `deletable_at` or the privacy-guard commitment
@@ -302,6 +302,7 @@ pub fn calculate_l2_payload_hash(req: &L2LockRequest) -> [u8; 32] {
 ///
 /// Signers and verifiers MUST agree on this exact serialization; it is the
 /// single source of truth for L1 chain validation, L2 locks and gossip.
+#[allow(clippy::too_many_arguments)]
 pub fn calculate_l2_payload_hash_raw(
     layer2_voucher_id: &str,
     challenge_ds_tag: &str,
@@ -313,7 +314,7 @@ pub fn calculate_l2_payload_hash_raw(
     deletable_at: Option<&str>,
     privacy_guard_commitment: &str,
 ) -> [u8; 32] {
-    crate::services::crypto_utils::get_raw_hash_from_slices(&[
+    crate::services::crypto::get_raw_hash_from_slices(&[
         HMC_TX_AUTH_V3_DOMAIN,
         layer2_voucher_id.as_bytes(),
         challenge_ds_tag.as_bytes(),

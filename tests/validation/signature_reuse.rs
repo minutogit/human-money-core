@@ -1,6 +1,5 @@
-use human_money_core::services::crypto_utils::get_hash;
+use human_money_core::services::crypto::get_hash;
 use human_money_core::services::utils::to_canonical_json;
-use human_money_core::services::voucher_manager::create_voucher;
 use human_money_core::services::voucher_validation::validate_voucher_against_standard;
 use human_money_core::set_signature_bypass;
 use human_money_core::test_utils::{
@@ -23,7 +22,7 @@ fn test_prevent_signature_reuse_in_init() {
     };
     let voucher_data1 = create_minuto_voucher_data(creator.clone());
 
-    let mut voucher1 = create_voucher(
+    let mut voucher1 = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data1,
         &standard,
         &standard_hash,
@@ -65,7 +64,7 @@ fn test_prevent_signature_reuse_in_init() {
     // Recalculate Sender Identity Signature
     let t_id_raw = bs58::decode(&bad_tx.t_id).into_vec().unwrap();
     let identity_sig_bytes =
-        human_money_core::services::crypto_utils::sign_ed25519(&identity.signing_key, &t_id_raw);
+        human_money_core::services::crypto::sign_ed25519(&identity.signing_key, &t_id_raw);
     bad_tx.sender_identity_signature =
         Some(bs58::encode(identity_sig_bytes.to_bytes()).into_string());
 
@@ -73,7 +72,7 @@ fn test_prevent_signature_reuse_in_init() {
     let nonce_bytes = bs58::decode(&voucher2.voucher_nonce).into_vec().unwrap();
     let creator_prefix = identity.user_id.split(':').next().unwrap();
     let (genesis_secret, genesis_pub) =
-        human_money_core::services::crypto_utils::derive_ephemeral_key_pair(
+        human_money_core::services::crypto::derive_ephemeral_key_pair(
             &identity.signing_key,
             &nonce_bytes,
             "genesis",
@@ -122,7 +121,7 @@ fn test_prevent_signature_reuse_in_init() {
         ),
     );
     let l2_sig_bytes =
-        human_money_core::services::crypto_utils::sign_ed25519(&genesis_secret, &payload_hash);
+        human_money_core::services::crypto::sign_ed25519(&genesis_secret, &payload_hash);
     bad_tx.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
 
     // Replace the init tx in voucher2
@@ -158,7 +157,7 @@ fn test_reject_same_key_different_prefix() {
     };
     let voucher_data = create_minuto_voucher_data(creator.clone());
 
-    let mut voucher = create_voucher(
+    let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         &standard,
         &standard_hash,
@@ -178,7 +177,7 @@ fn test_reject_same_key_different_prefix() {
     // (canonical) prefix. The alias is grammatically valid per validate_user_id,
     // so rejection MUST come from raw-pubkey deduplication, not grammar checks.
     let mut fake_g2 = identity.clone();
-    fake_g2.identity.user_id = human_money_core::services::crypto_utils::create_user_id(
+    fake_g2.identity.user_id = human_money_core::services::crypto::create_user_id(
         &fake_g2.identity.public_key,
         Some("private-fake"),
     )
@@ -217,7 +216,7 @@ fn test_reject_two_guarantors_same_key() {
     };
     let voucher_data = create_minuto_voucher_data(creator.clone());
 
-    let mut voucher = create_voucher(
+    let mut voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         &standard,
         &standard_hash,
@@ -238,7 +237,7 @@ fn test_reject_two_guarantors_same_key() {
     // is grammatically valid per validate_user_id, so rejection MUST come from
     // raw-pubkey deduplication, not grammar checks.
     let mut fake_g2 = g1.clone();
-    fake_g2.identity.user_id = human_money_core::services::crypto_utils::create_user_id(
+    fake_g2.identity.user_id = human_money_core::services::crypto::create_user_id(
         &fake_g2.identity.public_key,
         Some("private-fake"),
     )

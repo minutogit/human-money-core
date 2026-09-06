@@ -24,7 +24,7 @@ fn test_valid_until_matches_creation_date() {
     // To pass only the first check, we can patch the standard so min_duration = 0.
     let mut modified_std = standard.clone();
     modified_std.immutable.issuance.issuance_minimum_validity_duration = "".to_string();
-    let mod_std_hash = human_money_core::crypto_utils::get_hash(
+    let mod_std_hash = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&modified_std.immutable).unwrap()
     );
     
@@ -35,7 +35,7 @@ fn test_valid_until_matches_creation_date() {
     voucher_to_hash.voucher_id = "".to_string();
     voucher_to_hash.transactions.clear();
     voucher_to_hash.signatures.clear();
-    voucher.voucher_id = human_money_core::crypto_utils::get_hash(
+    voucher.voucher_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&voucher_to_hash).unwrap()
     );
 
@@ -48,7 +48,7 @@ fn test_valid_until_matches_creation_date() {
         tx_to_hash.t_id = "".to_string();
         tx_to_hash.layer2_signature = None;
         tx_to_hash.sender_identity_signature = None;
-        voucher.transactions[0].t_id = human_money_core::crypto_utils::get_hash(
+        voucher.transactions[0].t_id = human_money_core::crypto::get_hash(
             human_money_core::to_canonical_json(&tx_to_hash).unwrap()
         );
     }
@@ -92,8 +92,8 @@ fn test_signature_count_limits() {
     let (standard, _, _, _, mut voucher, _) = setup_voucher_with_one_tx();
 
     // In FreeTaler standard max_sigs is e.g. 0. If we add an additional signature:
-    let (vk, _) = human_money_core::crypto_utils::generate_ed25519_keypair_for_tests(Some("dummy"));
-    let dummy_id = human_money_core::crypto_utils::create_user_id(&vk, Some("dummy")).unwrap();
+    let (vk, _) = human_money_core::crypto::generate_ed25519_keypair_for_tests(Some("dummy"));
+    let dummy_id = human_money_core::crypto::create_user_id(&vk, Some("dummy")).unwrap();
 
     let dummy_sig = human_money_core::models::voucher::VoucherSignature {
         voucher_id: "".to_string(),
@@ -143,7 +143,7 @@ fn test_transaction_amount_precision() {
     voucher.transactions[1].t_id = "".to_string();
     voucher.transactions[1].layer2_signature = None;
     voucher.transactions[1].sender_identity_signature = None;
-    voucher.transactions[1].t_id = human_money_core::crypto_utils::get_hash(
+    voucher.transactions[1].t_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&voucher.transactions[1]).unwrap()
     );
     // Bypass requires fields to be present and validly formatted
@@ -172,7 +172,7 @@ fn test_transaction_amount_precision() {
     voucher.transactions[1].t_id = "".to_string();
     voucher.transactions[1].layer2_signature = None;
     voucher.transactions[1].sender_identity_signature = None;
-    voucher.transactions[1].t_id = human_money_core::crypto_utils::get_hash(
+    voucher.transactions[1].t_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&voucher.transactions[1]).unwrap()
     );
     // Signature bypass is used, so we don't need real signatures
@@ -192,8 +192,7 @@ fn test_transaction_amount_precision() {
 fn test_transaction_monotonic_time() {
     let (standard, _, _, _, voucher, secrets) = setup_voucher_with_one_tx();
     
-    use human_money_core::create_transaction;
-
+    
     // Create a second transaction
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
@@ -202,7 +201,7 @@ fn test_transaction_monotonic_time() {
     let bob_signing_key = ed25519_dalek::SigningKey::from_bytes(seed_bytes.as_slice().try_into().unwrap());
 
     // Create a valid subsequent transfer
-    let (mut next_voucher, _next_secrets) = create_transaction(
+    let (mut next_voucher, _next_secrets) = human_money_core::models::voucher::Transaction::create(
         &voucher,
         standard,
         &bob.user_id,
@@ -253,7 +252,7 @@ fn test_p2pkh_recipient_match() {
     tx1.recipient_id = alice.user_id.clone();
     tx1.receiver_ephemeral_pub_hash = Some("hash123".to_string()); // Expected hash
     tx1.t_id = "".to_string();
-    tx1.t_id = human_money_core::crypto_utils::get_hash(
+    tx1.t_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&tx1).unwrap()
     );
     tx1.layer2_signature = old_l2.clone();
@@ -265,7 +264,7 @@ fn test_p2pkh_recipient_match() {
     tx2.layer2_signature = None;
     tx2.sender_identity_signature = None;
     tx2.t_id = "".to_string();
-    tx2.prev_hash = human_money_core::crypto_utils::get_hash(
+    tx2.prev_hash = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&tx1).unwrap()
     );
     tx2.t_type = "transfer".to_string();
@@ -277,7 +276,7 @@ fn test_p2pkh_recipient_match() {
     // tx2 sender ephemeral pub is manipulated so the hash does NOT match hash123.
     tx2.sender_ephemeral_pub = Some("11111111111111111111111111111111".to_string());
     
-    tx2.t_id = human_money_core::crypto_utils::get_hash(
+    tx2.t_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&tx2).unwrap()
     );
     tx2.layer2_signature = old_l2;
@@ -312,15 +311,14 @@ fn test_p2pkh_change_output_verification() {
     let old_id = voucher.transactions[0].sender_identity_signature.clone();
     
     // Modify tx1: Alice sends to Bob, but keeps change
-    use human_money_core::create_transaction;
-    
+        
     let alice = &human_money_core::test_utils::ACTORS.alice;
     let bob = &human_money_core::test_utils::ACTORS.bob;
 
     let seed_bytes = bs58::decode(&_secrets.recipient_seed).into_vec().unwrap();
     let bob_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(seed_bytes.as_slice().try_into().unwrap());
 
-    let (voucher, _secrets) = create_transaction(
+    let (voucher, _secrets) = human_money_core::models::voucher::Transaction::create(
         &voucher,
         standard,
         &bob.user_id,
@@ -340,7 +338,7 @@ fn test_p2pkh_change_output_verification() {
     tx1.receiver_ephemeral_pub_hash = Some("hashBob".to_string());
     tx1.change_ephemeral_pub_hash = Some("hashChangeAlice".to_string()); // Expected hash for change
     tx1.t_id = "".to_string();
-    tx1.t_id = human_money_core::crypto_utils::get_hash(
+    tx1.t_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&tx1).unwrap()
     );
     tx1.layer2_signature = old_l2.clone();
@@ -354,7 +352,7 @@ fn test_p2pkh_change_output_verification() {
     tx2.sender_identity_signature = None;
     tx2.sender_remaining_amount = None;
     tx2.t_id = "".to_string();
-    tx2.prev_hash = human_money_core::crypto_utils::get_hash(
+    tx2.prev_hash = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&tx1).unwrap()
     );
     tx2.t_type = "transfer".to_string();
@@ -367,7 +365,7 @@ fn test_p2pkh_change_output_verification() {
     // tx2 sender ephemeral pub is manipulated so the hash does NOT match "hashChangeAlice" or "hashBob"
     tx2.sender_ephemeral_pub = Some("11111111111111111111111111111111".to_string());
     
-    tx2.t_id = human_money_core::crypto_utils::get_hash(
+    tx2.t_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&tx2).unwrap()
     );
     tx2.layer2_signature = old_l2;
@@ -404,7 +402,7 @@ fn test_p2pkh_recipient_id_fallback() {
     tx2.layer2_signature = None;
     tx2.sender_identity_signature = None;
     tx2.t_id = "".to_string();
-    tx2.prev_hash = human_money_core::crypto_utils::get_hash(
+    tx2.prev_hash = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&bad_voucher.transactions[0]).unwrap()
     );
     tx2.t_type = "transfer".to_string();
@@ -415,7 +413,7 @@ fn test_p2pkh_recipient_id_fallback() {
     tx2.recipient_id = "Dave".to_string();
     tx2.sender_ephemeral_pub = Some("11111111111111111111111111111111".to_string());
     
-    tx2.t_id = human_money_core::crypto_utils::get_hash(
+    tx2.t_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&tx2).unwrap()
     );
     tx2.layer2_signature = Some("dummy".to_string());
@@ -450,7 +448,7 @@ fn test_p2pkh_sender_id_fallback() {
     tx2.layer2_signature = None;
     tx2.sender_identity_signature = None;
     tx2.t_id = "".to_string();
-    tx2.prev_hash = human_money_core::crypto_utils::get_hash(
+    tx2.prev_hash = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&bad_voucher.transactions[0]).unwrap()
     );
     tx2.t_type = "transfer".to_string();
@@ -460,7 +458,7 @@ fn test_p2pkh_sender_id_fallback() {
     tx2.recipient_id = "Dave".to_string();
     tx2.sender_ephemeral_pub = Some("11111111111111111111111111111111".to_string());
     
-    tx2.t_id = human_money_core::crypto_utils::get_hash(
+    tx2.t_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&tx2).unwrap()
     );
     tx2.layer2_signature = Some("dummy".to_string());
@@ -486,7 +484,7 @@ fn test_p2pkh_hash_fallback_match() {
     tx2.layer2_signature = None;
     tx2.sender_identity_signature = None;
     tx2.t_id = "".to_string();
-    tx2.prev_hash = human_money_core::crypto_utils::get_hash(
+    tx2.prev_hash = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&bad_voucher.transactions[0]).unwrap()
     );
     tx2.t_type = "transfer".to_string();
@@ -496,7 +494,7 @@ fn test_p2pkh_hash_fallback_match() {
     tx2.recipient_id = "Dave".to_string();
     tx2.sender_ephemeral_pub = Some("11111111111111111111111111111111".to_string()); // Wrong hash
     
-    tx2.t_id = human_money_core::crypto_utils::get_hash(
+    tx2.t_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&tx2).unwrap()
     );
     tx2.layer2_signature = Some("dummy".to_string());
@@ -518,13 +516,12 @@ fn test_trap_data_privacy_validation() {
     let (standard, _, _, _, voucher, secrets) = human_money_core::test_utils::setup_voucher_with_one_tx();
     
     // Attach TrapData to a transfer with @ (email leak). Init is skipped for TrapData!
-    use human_money_core::create_transaction;
-    let alice = &ACTORS.alice;
+        let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
     let seed_bytes = bs58::decode(&secrets.recipient_seed).into_vec().unwrap();
     let bob_signing_key = ed25519_dalek::SigningKey::from_bytes(seed_bytes.as_slice().try_into().unwrap());
     
-    let (mut next_voucher, _) = create_transaction(
+    let (mut next_voucher, _) = human_money_core::models::voucher::Transaction::create(
         &voucher,
         standard,
         &bob.user_id,
@@ -569,7 +566,7 @@ fn test_balance_attribution_logic() {
     let bob_signing_key = ed25519_dalek::SigningKey::from_bytes(seed_bytes.as_slice().try_into().unwrap());
 
     // Create transfer (real & valid)
-    let (next_voucher, _) = human_money_core::create_transaction(
+    let (next_voucher, _) = human_money_core::Transaction::create(
         &voucher,
         standard,
         &bob.user_id,
@@ -606,7 +603,7 @@ fn test_init_transaction_party_rules() {
     bad_voucher.transactions[0].layer2_signature = None;
     bad_voucher.transactions[0].sender_identity_signature = None;
     bad_voucher.transactions[0].t_id = "".to_string();
-    bad_voucher.transactions[0].t_id = human_money_core::crypto_utils::get_hash(
+    bad_voucher.transactions[0].t_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&bad_voucher.transactions[0]).unwrap()
     );
     bad_voucher.transactions[0].layer2_signature = old_l2;
@@ -652,7 +649,7 @@ fn test_p2pkh_identity_match_isolation() {
     voucher.transactions[1].sender_identity_signature = None;
     let stored_trap1 = voucher.transactions[1].trap_data.take();
     let stored_guard1 = voucher.transactions[1].privacy_guard.take();
-    voucher.transactions[1].t_id = human_money_core::crypto_utils::get_hash(
+    voucher.transactions[1].t_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&voucher.transactions[1]).unwrap()
     );
     voucher.transactions[1].trap_data = stored_trap1;
@@ -660,7 +657,7 @@ fn test_p2pkh_identity_match_isolation() {
 
     // V3 protocol: chain LINKAGE still uses the full canonical JSON hash of
     // the previous transaction (including its restored trap shards).
-    let tx1_chain_hash = human_money_core::crypto_utils::get_hash(
+    let tx1_chain_hash = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&voucher.transactions[1]).unwrap(),
     );
 
@@ -680,7 +677,7 @@ fn test_p2pkh_identity_match_isolation() {
     // V3 protocol: the t_id preimage excludes trap_data and privacy_guard.
     let stored_trap2 = tx2.trap_data.take();
     let stored_guard2 = tx2.privacy_guard.take();
-    tx2.t_id = human_money_core::crypto_utils::get_hash(
+    tx2.t_id = human_money_core::crypto::get_hash(
         human_money_core::to_canonical_json(&tx2).unwrap()
     );
     tx2.trap_data = stored_trap2;
@@ -696,13 +693,10 @@ fn test_p2pkh_identity_match_isolation() {
     // Mutant: at line 642 == becomes !=. Then ID-match does NOT apply.
     // Since hash-match also does NOT apply (due to sabotage) -> Error.
     if let Err(e) = res {
-         match e {
-             human_money_core::error::VoucherCoreError::Validation(human_money_core::error::ValidationError::InvalidTransaction(msg)) => {
-                 if msg.contains("Transaction chain broken") {
-                     panic!("ID-Match fallback failed when hash-linkage was broken.");
-                 }
-             },
-             _ => {} 
+         if let human_money_core::error::VoucherCoreError::Validation(human_money_core::error::ValidationError::InvalidTransaction(msg)) = e {
+             if msg.contains("Transaction chain broken") {
+                 panic!("ID-Match fallback failed when hash-linkage was broken.");
+             }
          }
     }
 }

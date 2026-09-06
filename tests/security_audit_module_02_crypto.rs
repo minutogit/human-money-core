@@ -143,15 +143,14 @@ use human_money_core::services::trap_manager::{
     compute_sst_challenge, compute_trap_message_mu, compute_tau, extract_sst_identity,
     generate_sst_trap, hash_to_scalar, verify_sst_witness, TrapWitness,
 };
-use human_money_core::services::crypto_constants::HKDF_X25519_EXCHANGE_LABEL;
-use human_money_core::services::crypto_utils::{
+use human_money_core::services::crypto::constants::HKDF_X25519_EXCHANGE_LABEL;
+use human_money_core::services::crypto::{
     create_user_id, decrypt_recipient_payload, ed25519_pub_to_x25519, encrypt_data,
     encrypt_recipient_payload, encode_base64, generate_ed25519_keypair_for_tests,
     get_hash_from_slices, get_hash, sign_ed25519, validate_user_id, verify_ed25519,
 };
-use human_money_core::services::seal_manager::SealManager;
 use human_money_core::services::voucher_validation::verify_signatures;
-use human_money_core::{to_canonical_json, Transaction, Voucher, VoucherSignature, SealSyncState};
+use human_money_core::{to_canonical_json, Transaction, Voucher, VoucherSignature, SealSyncState, WalletSeal};
 use sha2::Sha256;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
@@ -267,7 +266,7 @@ mod security_audit_module_02 {
             "Precondition broken: test alias unexpectedly passes validate_user_id"
         );
         // ...but which the lenient parser still resolves to the attacker's key.
-        assert!(human_money_core::services::crypto_utils::get_pubkey_from_user_id(
+        assert!(human_money_core::services::crypto::get_pubkey_from_user_id(
             &malformed_signer_id
         )
         .is_ok());
@@ -491,7 +490,7 @@ mod security_audit_module_02 {
         let identity = audit_02_05_identity("audit-02-05-seal");
 
         // Common genesis: both devices start from the same base seal (nonce 0).
-        let base = SealManager::create_initial_seal(
+        let base = WalletSeal::create_initial(
             &identity.user_id,
             &identity,
             &get_hash("audit-02-05-base-state"),
@@ -500,8 +499,7 @@ mod security_audit_module_02 {
         .expect("Base seal creation must succeed");
 
         // Local branch: one honest transaction -> nonce 1.
-        let local = SealManager::update_seal(
-            &base,
+        let local = base.update(
             &identity,
             &get_hash("audit-02-05-local-state"),
             "device_a",
@@ -509,16 +507,14 @@ mod security_audit_module_02 {
         .expect("Local seal update must succeed");
 
         // Remote branch: five honest transactions from the SAME base -> nonce 5.
-        let mut remote = SealManager::update_seal(
-            &base,
+        let mut remote = base.update(
             &identity,
             &get_hash("audit-02-05-remote-state-1"),
             "device_b",
         )
         .expect("Remote seal update must succeed");
         for i in 2..=5 {
-            remote = SealManager::update_seal(
-                &remote,
+            remote = remote.update(
                 &identity,
                 &get_hash(format!("audit-02-05-remote-state-{}", i)),
                 "device_b",
@@ -530,13 +526,13 @@ mod security_audit_module_02 {
         assert_eq!(remote.payload.tx_nonce, 5);
         assert_ne!(
             remote.payload.prev_seal_hash,
-            SealManager::compute_seal_hash(&local).expect("Seal hash must compute"),
+            local.compute_hash().expect("Seal hash must compute"),
             "Precondition broken: chains unexpectedly link up"
         );
 
         // --- SOLL-VERHALTEN: an unverifiable divergent chain MUST be a fork ---
         assert_eq!(
-            SealManager::compare_seals(&local, &remote),
+            WalletSeal::compare_seals(&local, &remote),
             SealSyncState::ForkDetected,
             "SECURITY VIOLATION HMC-SEC-02-05: compare_seals resolved a divergent \
              chain at nonce distance > +1 as 'newer' instead of ForkDetected. The \
@@ -553,7 +549,7 @@ mod security_audit_module_02 {
     fn audit_02_05_control_direct_successor_divergence_must_be_fork() {
         let identity = audit_02_05_identity("audit-02-05-seal-control");
 
-        let local = SealManager::create_initial_seal(
+        let local = WalletSeal::create_initial(
             &identity.user_id,
             &identity,
             &get_hash("audit-02-05-control-local"),
@@ -562,15 +558,14 @@ mod security_audit_module_02 {
         .expect("Local base seal creation must succeed");
 
         // Divergent sibling genesis on another device, advanced by one step.
-        let sibling_base = SealManager::create_initial_seal(
+        let sibling_base = WalletSeal::create_initial(
             &identity.user_id,
             &identity,
             &get_hash("audit-02-05-control-sibling"),
             "device_b",
         )
         .expect("Sibling base seal creation must succeed");
-        let remote = SealManager::update_seal(
-            &sibling_base,
+        let remote = sibling_base.update(
             &identity,
             &get_hash("audit-02-05-control-remote"),
             "device_b",
@@ -579,7 +574,7 @@ mod security_audit_module_02 {
 
         assert_eq!(remote.payload.tx_nonce, local.payload.tx_nonce + 1);
         assert_eq!(
-            SealManager::compare_seals(&local, &remote),
+            WalletSeal::compare_seals(&local, &remote),
             SealSyncState::ForkDetected,
             "Direct-successor divergence must keep triggering ForkDetected."
         );
@@ -620,7 +615,7 @@ mod security_audit_module_02 {
         // Documented aliasing effect of form A on the UNPATCHED code path basis:
         // get_prefix_from_user_id treats it as a root-equivalent identity.
         assert_eq!(
-            human_money_core::services::crypto_identity::get_prefix_from_user_id(&empty_prefix_form),
+            human_money_core::services::crypto::identity::get_prefix_from_user_id(&empty_prefix_form),
             None,
             "Precondition: the empty-prefix form resolves as a root alias"
         );
@@ -717,15 +712,15 @@ mod security_audit_module_02 {
 
         // Symmetry: sender and receiver must derive identical context strings.
         assert_eq!(
-            human_money_core::services::crypto_utils::build_hkdf_info(&x_a, &x_b, "sai:one"),
-            human_money_core::services::crypto_utils::build_hkdf_info(&x_b, &x_a, "sai:one"),
+            human_money_core::services::crypto::build_hkdf_info(&x_a, &x_b, "sai:one"),
+            human_money_core::services::crypto::build_hkdf_info(&x_b, &x_a, "sai:one"),
             "REGRESSION HMC-SEC-02-07b: build_hkdf_info lost argument-order symmetry"
         );
         // Sensitivity: different SAI contexts MUST produce different info strings,
         // otherwise keys derived for one account alias are reused across SAIs.
         assert_ne!(
-            human_money_core::services::crypto_utils::build_hkdf_info(&x_a, &x_b, "sai:one"),
-            human_money_core::services::crypto_utils::build_hkdf_info(&x_a, &x_b, "sai:two"),
+            human_money_core::services::crypto::build_hkdf_info(&x_a, &x_b, "sai:one"),
+            human_money_core::services::crypto::build_hkdf_info(&x_a, &x_b, "sai:two"),
             "REGRESSION HMC-SEC-02-07b: build_hkdf_info ignored the recipient_id \
              (SAI-binding removed)"
         );
@@ -750,7 +745,7 @@ mod security_audit_module_02 {
         // --- (c) Short-hash index logic pinned against a reference computation ---
         let user_id = "audit-context:some-checksum@did:key:zAudit0207Peer";
         let short_hash =
-            human_money_core::services::crypto_utils::get_short_hash_from_user_id(user_id);
+            human_money_core::services::crypto::get_short_hash_from_user_id(user_id);
 
         // Reference: SHA3-256 -> Base58 string -> decode -> LAST 4 bytes.
         let mut hasher = sha3::Sha3_256::new();
@@ -848,7 +843,7 @@ mod security_audit_module_02 {
     /// offender identity through autonomous SST extraction.
     #[test]
     fn audit_02_08_offline_fabricated_junk_collision_must_not_yield_usable_offender_identity() {
-        use human_money_core::services::crypto_utils::get_hash;
+        use human_money_core::services::crypto::get_hash;
 
     let (_payer_pk, payer_sk) =
         generate_ed25519_keypair_for_tests(Some("audit-02-08-junk-spender"));
@@ -875,12 +870,10 @@ mod security_audit_module_02 {
             if let Some(point) = CompressedEdwardsY::from_slice(&candidate)
                 .expect("32 bytes are a valid encoding length")
                 .decompress()
-            {
-                if !point.is_torsion_free() {
+                && !point.is_torsion_free() {
                     junk_point = Some((point, bs58::encode(candidate).into_string()));
                     break;
                 }
-            }
         }
         let (junk_r_point, junk_r_b58) =
             junk_point.expect("Precondition broken: no torsion-carrying test point found");
@@ -958,7 +951,7 @@ mod security_audit_module_02 {
     #[test]
     #[ignore = "pending architectural/protocol decision - see report"]
     fn audit_02_08_schnorr_valid_offline_line_passes_l1_witness_and_poisons_attribution() {
-        use human_money_core::services::crypto_utils::{get_hash, get_secret_scalar};
+        use human_money_core::services::crypto::{get_hash, get_secret_scalar};
 
         let (payer_pk, payer_sk) =
             generate_ed25519_keypair_for_tests(Some("audit-02-08-schnorr-spender"));
@@ -1090,12 +1083,12 @@ mod security_audit_module_02 {
             create_fingerprint_for_transaction, encrypt_transaction_timestamp,
             is_init_fingerprint,
         };
-        use human_money_core::services::crypto_identity::get_prefix_from_user_id;
-        use human_money_core::services::crypto_keys::derive_ephemeral_key_pair;
+        use human_money_core::services::crypto::identity::get_prefix_from_user_id;
+        use human_money_core::services::crypto::keys::derive_ephemeral_key_pair;
         use human_money_core::services::l2_gateway::{
             calculate_l2_payload_hash_raw, extract_layer2_voucher_id, privacy_guard_commitment,
         };
-        use human_money_core::services::voucher_manager::NewVoucherData;
+        use human_money_core::NewVoucherData;
         use human_money_core::test_utils::{
             generate_signed_standard_toml, setup_service_with_profile, ACTORS, FREETALER_STANDARD,
         };
@@ -1117,8 +1110,8 @@ mod security_audit_module_02 {
         let (mut bob, _) =
             setup_service_with_profile(dir.path(), &ACTORS.charlie, "B9", PASSWORD);
 
-        let id_alice = alice.get_user_id().expect("alice id");
-        let id_bob = bob.get_user_id().expect("bob id");
+        let id_alice = alice.with_wallet(|w| w.get_user_id().to_string()).expect("alice id");
+        let id_bob = bob.with_wallet(|w| w.get_user_id().to_string()).expect("bob id");
 
         alice.unlock_session(PASSWORD, 300).expect("unlock alice");
         alice
@@ -1140,7 +1133,9 @@ mod security_audit_module_02 {
             )
             .expect("voucher creation failed");
 
-        let summaries = alice.get_voucher_summaries(None, None, None).expect("summaries");
+        let summaries = alice
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .expect("summaries");
         let local_id = summaries[0].local_instance_id.clone();
 
         let mut standards_map = HashMap::new();
@@ -1234,7 +1229,7 @@ mod security_audit_module_02 {
             &ACTORS.alice.identity.signing_key,
             &nonce_bytes,
             "holder",
-            prefix.as_deref(),
+            prefix,
         )
         .expect("input anchor derivation");
         assert_eq!(
@@ -1353,15 +1348,14 @@ mod security_audit_module_02 {
     #[test]
     fn audit_02_10_small_order_did_key_identities_must_be_rejected_by_key_resolution() {
         use human_money_core::models::secure_container::{
-            ContainerConfig, PayloadType, PrivacyMode,
+            ContainerConfig, PayloadType, PrivacyMode, SecureContainer,
         };
-        use human_money_core::services::crypto_symmetric::{
+        use human_money_core::services::crypto::symmetric::{
             decrypt_data, decrypt_data_with_aad,
         };
-        use human_money_core::services::crypto_utils::{
+        use human_money_core::services::crypto::{
             decode_base64, ed25519_pub_to_x25519,
         };
-        use human_money_core::services::secure_container_manager::create_secure_container;
 
         // Order-2 Edwards point (0,-1): y = p-1, encoding [0xec, 0xff*30, 0x7f].
         let mut order2_bytes = [0xffu8; 32];
@@ -1391,7 +1385,7 @@ mod security_audit_module_02 {
             let malicious_did = format!("did:key:z{}", bs58::encode(&mc).into_string());
 
             // --- SOLL-VERHALTEN: the identity firewall MUST reject it ---
-            match human_money_core::services::crypto_utils::get_pubkey_from_user_id(
+            match human_money_core::services::crypto::get_pubkey_from_user_id(
                 &malicious_did,
             ) {
                 Err(_) => {
@@ -1431,9 +1425,9 @@ mod security_audit_module_02 {
         let malicious_did = format!("did:key:z{}", bs58::encode(&mc).into_string());
         let secret_payload = br#"{"financial_bundle":"TOP SECRET transfer data"}"#;
 
-        match create_secure_container(
+        match SecureContainer::seal(
             &victim_identity,
-            ContainerConfig::TargetDid(malicious_did.clone(), PrivacyMode::CleartextRouting),
+            &ContainerConfig::TargetDid(malicious_did.clone(), PrivacyMode::CleartextRouting),
             secret_payload,
             PayloadType::TransactionBundle,
         ) {
@@ -1544,7 +1538,7 @@ mod security_audit_module_02 {
         use human_money_core::models::layer2_api::{
             L2LockEntry, L2ResponseEnvelope, L2Verdict,
         };
-        use human_money_core::services::crypto_utils::get_hash_from_slices;
+        use human_money_core::services::crypto::get_hash_from_slices;
         use human_money_core::services::l2_gateway::{
             calculate_l2_payload_hash_raw, process_l2_verdict, VerdictAction,
         };
@@ -1566,7 +1560,7 @@ mod security_audit_module_02 {
         });
         let spender_pk = spender_sk.verifying_key().to_bytes();
         let t_id_bytes: [u8; 32] =
-            human_money_core::services::crypto_utils::get_raw_hash_from_slices(&[
+            human_money_core::services::crypto::get_raw_hash_from_slices(&[
                 b"audit-02-11-tid",
             ]);
         let ds_tag = get_hash_from_slices(&[b"audit-02-11", b"prev-hash-input"]);

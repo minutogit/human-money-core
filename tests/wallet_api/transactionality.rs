@@ -20,7 +20,7 @@ use human_money_core::{
         secure_container::{ContainerConfig, PrivacyMode, SecureContainer},
         voucher::ValueDefinition,
     },
-    services::{crypto_utils, voucher_manager::NewVoucherData},
+    services::crypto, NewVoucherData,
     test_utils::{ACTORS, FREETALER_STANDARD, create_custom_standard, generate_signed_standard_toml},
 };
 
@@ -33,7 +33,7 @@ fn create_mock_proof_of_double_spend(
     verdict: Option<human_money_core::models::conflict::Layer2Verdict>,
 ) -> ProofOfDoubleSpend {
     ProofOfDoubleSpend {
-        proof_id: crypto_utils::get_hash(offender_id),
+        proof_id: crypto::get_hash(offender_id),
         offender_id: offender_id.to_string(),
         suspected_identity: None,
         conflicting_transactions: vec![],
@@ -72,7 +72,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
     let flexible_toml =
         toml::to_string(&flexible_standard).expect("Failed to serialize flexible standard");
 
-    let user_id = service.get_user_id().unwrap();
+    let user_id = service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     service
         .create_new_voucher(
@@ -92,13 +92,15 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
         )
         .unwrap();
 
-    let voucher_id = service.get_voucher_summaries(None, None, None).unwrap()[0]
+    let voucher_id = service
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
     let recipient = &ACTORS.recipient1;
     let (service_recipient, _) =
         test_utils::setup_service_with_profile(dir.path(), recipient, "Recipient", "pwd");
-    let id_recipient = service_recipient.get_user_id().unwrap();
+    let id_recipient = service_recipient.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: id_recipient.clone(),
@@ -151,7 +153,9 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
     // The `create_transfer_bundle` operation is not atomic. The state in memory
     // is modified (the 100 voucher is replaced by a 60 voucher), but not rolled back
     // after the save failure. The following assertion would thus fail.
-    let summaries_after = service.get_voucher_summaries(None, None, None).unwrap();
+    let summaries_after = service
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
     assert_eq!(
         summaries_after.len(),
         1,
@@ -190,8 +194,8 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
     let flexible_toml =
         toml::to_string(&flexible_standard).expect("Failed to serialize flexible standard");
 
-    let id_sender = service_sender.get_user_id().unwrap();
-    let id_recipient = service_recipient.get_user_id().unwrap();
+    let id_sender = service_sender.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+    let id_recipient = service_recipient.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     // FIX: Use explicit voucher data instead of Default::default() to avoid panic.
     service_sender
@@ -211,7 +215,9 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
             Some("pwd"),
         )
         .unwrap();
-    let voucher_id = service_sender.get_voucher_summaries(None, None, None).unwrap()[0]
+    let voucher_id = service_sender
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
     let request = human_money_core::wallet::MultiTransferRequest {
@@ -260,7 +266,9 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         error_msg
     );
 
-    let summaries_after = service_recipient.get_voucher_summaries(None, None, None).unwrap();
+    let summaries_after = service_recipient
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
     assert!(
         summaries_after.is_empty(),
         "Recipient's wallet should remain empty after a failed receive"
@@ -281,7 +289,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
         "Creator",
         correct_password,
     );
-    let id_creator = service_creator.get_user_id().unwrap();
+    let id_creator = service_creator.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let (freetaler_standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
@@ -292,7 +300,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let dir_signer = tempdir().unwrap();
     let (mut service_signer, _) =
         test_utils::setup_service_with_profile(dir_signer.path(), signer, "Signer", "pwd");
-    let id_signer = service_signer.get_user_id().unwrap();
+    let id_signer = service_signer.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     // Create voucher -> Status: Active (since no guarantors are required)
     // FIX: Use explicit voucher data instead of Default::default() to avoid panic.
@@ -318,10 +326,12 @@ fn test_attach_signature_is_transactional_on_save_failure() {
         )
         .unwrap();
 
-    let local_id = service_creator.get_voucher_summaries(None, None, None).unwrap()[0]
+    let local_id = service_creator
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
-    let details_before = service_creator.get_voucher_details(&local_id).unwrap();
+    let details_before = service_creator.with_wallet(|w| w.get_voucher_details(&local_id).unwrap()).unwrap();
     // FIX: After refactoring, the voucher already contains
     // the creator's signature (role: "creator") upon creation.
     //
@@ -339,8 +349,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let (_, signer_identity_ref) = service_signer.get_unlocked_mut_for_test();
     let signer_identity = signer_identity_ref.clone();
     let request_container: SecureContainer = serde_json::from_slice(&bundle_req).unwrap();
-    let payload = human_money_core::services::secure_container_manager::open_secure_container(
-        &request_container,
+    let payload = request_container.open(
         &signer_identity,
         None,
     )
@@ -373,7 +382,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
         .process_and_attach_signature(&detached_sig1, &freetaler_toml, None, Some(correct_password))
         .expect("First signature attachment failed. The utility logic should now be correct.");
 
-    let details_mid = service_creator.get_voucher_details(&local_id).unwrap();
+    let details_mid = service_creator.with_wallet(|w| w.get_voucher_details(&local_id).unwrap()).unwrap();
     assert_eq!(
         details_mid.voucher.signatures.len(),
         2, // creator + sig 1
@@ -392,8 +401,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     let (_, signer_identity_ref2) = service_signer.get_unlocked_mut_for_test();
     let signer_identity2 = signer_identity_ref2.clone();
     let request_container2: SecureContainer = serde_json::from_slice(&bundle_req2).unwrap();
-    let payload2 = human_money_core::services::secure_container_manager::open_secure_container(
-        &request_container2,
+    let payload2 = request_container2.open(
         &signer_identity2,
         None,
     )
@@ -428,7 +436,7 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     // 3. ASSERT: Operation fails, state remains unchanged.
     assert!(result.is_err(), "Signature attachment should fail");
 
-    let details_after = service_creator.get_voucher_details(&local_id).unwrap();
+    let details_after = service_creator.with_wallet(|w| w.get_voucher_details(&local_id).unwrap()).unwrap();
     assert_eq!(
         details_after.voucher.signatures.len(),
         2, // creator + sig 1
@@ -458,7 +466,7 @@ fn test_import_endorsement_is_transactional_on_save_failure() {
     );
     let (mut service_victim, _) =
         test_utils::setup_service_with_profile(dir_victim.path(), victim, "Victim", "pwd");
-    let id_victim = service_victim.get_user_id().unwrap();
+    let id_victim = service_victim.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     // Manually add proof and save via another operation
     let proof = create_mock_proof_of_double_spend("offender-xyz", &id_victim, None, None);
@@ -539,14 +547,14 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         test_utils::setup_service_with_profile(dir_alice.path(), alice, "Alice", "pwd");
     let (mut service_david, _) =
         test_utils::setup_service_with_profile(dir_david.path(), david, "David", correct_password);
-    let id_david = service_david.get_user_id().unwrap();
+    let id_david = service_david.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     let freetaler_toml = generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
     let mut standards_map = HashMap::new();
     standards_map.insert(FREETALER_STANDARD.0.immutable.identity.uuid.clone(), freetaler_toml.clone());
 
     // FIX: Use explicit voucher data instead of Default::default() to avoid panic.
-    let id_alice = service_alice.get_user_id().unwrap();
+    let id_alice = service_alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     let identity_alice = alice.identity.clone();
     let voucher_v1 = service_alice
         .create_new_voucher(
@@ -568,7 +576,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
 
     // Create two conflicting transactions from V1
     let prev_tx = voucher_v1.transactions.last().unwrap();
-    let prev_tx_hash = human_money_core::services::crypto_utils::get_hash(
+    let prev_tx_hash = human_money_core::services::crypto::get_hash(
         human_money_core::services::utils::to_canonical_json(prev_tx).unwrap(),
     );
     // FIX: Timestamps must be guaranteed to be after voucher creation.
@@ -649,7 +657,7 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         .unwrap();
     assert_eq!(
         service_david
-            .get_voucher_summaries(None, None, None)
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
             .unwrap()
             .len(),
         1
@@ -666,7 +674,9 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         "Receive should fail on conflict + save error"
     );
 
-    let summaries_after = service_david.get_voucher_summaries(None, None, None).unwrap();
+    let summaries_after = service_david
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
     assert_eq!(
         summaries_after.len(),
         1,
@@ -708,8 +718,8 @@ fn test_balances_are_summable_behavior() {
         "pwd",
     );
 
-    let user_id = service.get_user_id().unwrap();
-    let sender_id = service_sender.get_user_id().unwrap();
+    let user_id = service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+    let sender_id = service_sender.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     // 1. Create summable standard (balances_are_summable = true)
     let (summable_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
@@ -773,7 +783,9 @@ fn test_balances_are_summable_behavior() {
     }
 
     // 4. Sender transfers all vouchers to Recipient
-    let source_vouchers = service_sender.get_voucher_summaries(None, None, None).unwrap();
+    let source_vouchers = service_sender
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
     let sources = source_vouchers.into_iter().map(|s| human_money_core::wallet::SourceTransfer {
         local_instance_id: s.local_instance_id,
         amount_to_send: s.current_amount,

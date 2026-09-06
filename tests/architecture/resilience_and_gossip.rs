@@ -11,7 +11,7 @@ mod tests {
     use human_money_core::app_service::{AppService, ProfileInfo};
     use human_money_core::models::conflict::{FingerprintMetadata, TransactionFingerprint};
     use human_money_core::services::bundle_processor;
-    use human_money_core::services::voucher_manager::NewVoucherData;
+    use human_money_core::NewVoucherData;
     use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD};
     use std::collections::HashMap;
     use tempfile::{TempDir, tempdir};
@@ -371,7 +371,9 @@ mod tests {
             )
             .unwrap()
             .voucher_id;
-        let local_id = alice_service.get_voucher_summaries(None, None, None).unwrap()[0]
+        let local_id = alice_service
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap()[0]
             .local_instance_id
             .clone();
 
@@ -383,7 +385,7 @@ mod tests {
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
-        let bob_id = bob_service.get_user_id().unwrap();
+        let bob_id = bob_service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         bob_service.logout();
         let bundle1 = {
             let request = human_money_core::wallet::MultiTransferRequest {
@@ -427,7 +429,9 @@ mod tests {
         bob_service
             .receive_bundle(&bundle1, &standards, None, Some("password"), false)
             .unwrap();
-        let bob_local_id = bob_service.get_voucher_summaries(None, None, None).unwrap()[0]
+        let bob_local_id = bob_service
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap()[0]
             .local_instance_id
             .clone();
 
@@ -436,7 +440,7 @@ mod tests {
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
-        let alice_id = alice_service.get_user_id().unwrap();
+        let alice_id = alice_service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         alice_service.logout();
 
         let request = human_money_core::wallet::MultiTransferRequest {
@@ -586,7 +590,7 @@ mod tests {
         // We use storage cleanup to force a save of metadata.
         bob_service.run_storage_cleanup().unwrap();
 
-        let bob_id = bob_service.get_user_id().unwrap();
+        let bob_id = bob_service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
         // Log out Bob
         bob_service.logout();
@@ -675,7 +679,7 @@ mod tests {
                 .local_history
                 .insert(fp_key.clone(), vec![fingerprint.clone()]);
         }
-        let bob_id = bob_service.get_user_id().unwrap();
+        let bob_id = bob_service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
         // Log in Alice and create bundle
         alice_service
@@ -736,7 +740,9 @@ mod tests {
                 Some(PASSWORD),
             )
             .unwrap();
-        let local_id = alice_service.get_voucher_summaries(None, None, None).unwrap()[0]
+        let local_id = alice_service
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap()[0]
             .local_instance_id
             .clone();
         let init_tx_fp_key = alice_service
@@ -751,7 +757,7 @@ mod tests {
         let bob_id = ACTORS.bob.user_id.clone(); // Use known ID
 
         // NEW: Calculate expected short hash for assertion
-        let bob_short_hash = human_money_core::crypto_utils::get_short_hash_from_user_id(&bob_id);
+        let bob_short_hash = human_money_core::crypto::get_short_hash_from_user_id(&bob_id);
 
         let request = human_money_core::wallet::MultiTransferRequest {
             recipient_id: bob_id.clone(),
@@ -845,7 +851,7 @@ mod tests {
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
-        let bob_id = bob_service.get_user_id().unwrap();
+        let bob_id = bob_service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         bob_service.logout();
 
         let (fingerprints_to_send, depths_to_send) =
@@ -878,7 +884,7 @@ mod tests {
         assert_eq!(selected.len(), 5);
         let depths: Vec<i8> = selected
             .iter()
-            .map(|fp| bundle.fingerprint_depths.get(&fp.ds_tag).unwrap().clone())
+            .map(|fp| *bundle.fingerprint_depths.get(&fp.ds_tag).unwrap())
             .collect();
         assert_eq!(depths.iter().filter(|&&d| d == 0).count(), 2);
         assert_eq!(depths.iter().filter(|&&d| d == 1).count(), 2);
@@ -906,7 +912,7 @@ mod tests {
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
-        let bob_id = bob_service.get_user_id().unwrap();
+        let bob_id = bob_service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         bob_service.logout();
 
         // Log in Alice
@@ -932,7 +938,7 @@ mod tests {
             ..Default::default()
         };
         meta.known_by_peers
-            .insert(human_money_core::crypto_utils::get_short_hash_from_user_id(
+            .insert(human_money_core::crypto::get_short_hash_from_user_id(
                 &bob_id,
             ));
         wallet.fingerprint_metadata.insert(key.clone(), meta);
@@ -1027,7 +1033,7 @@ mod tests {
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
-        let bob_id = bob_service.get_user_id().unwrap();
+        let bob_id = bob_service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         bob_service.logout();
 
         let (fingerprints_to_send, depths_to_send) =

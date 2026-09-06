@@ -7,9 +7,9 @@ use self::test_utils::{ACTORS, MINUTO_STANDARD, create_voucher_for_manipulation}
 use super::test_utils;
 use human_money_core::error::ValidationError;
 use human_money_core::models::voucher::{ValueDefinition, Voucher, VoucherSignature};
-use human_money_core::services::crypto_utils::{get_hash, get_hash_from_slices, sign_ed25519};
+use human_money_core::services::crypto::{get_hash, get_hash_from_slices, sign_ed25519};
 use human_money_core::services::utils::get_current_timestamp;
-use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::NewVoucherData;
 use human_money_core::{VoucherCoreError, to_canonical_json, validate_voucher_against_standard};
 
 #[cfg(test)]

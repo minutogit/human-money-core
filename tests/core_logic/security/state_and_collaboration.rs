@@ -5,17 +5,17 @@
 use self::test_utils::{ACTORS, FREETALER_STANDARD, setup_in_memory_wallet, create_custom_standard};
 use super::test_utils;
 use ed25519_dalek::SigningKey;
-use human_money_core::crypto_utils;
+use human_money_core::crypto;
 use human_money_core::models::voucher::{Collateral, ValueDefinition, Voucher, VoucherSignature};
-use human_money_core::services::crypto_utils::{
+use human_money_core::services::crypto::{
     create_user_id, get_hash_from_slices, sign_ed25519,
 };
 use human_money_core::services::utils::get_current_timestamp;
-use human_money_core::services::voucher_manager::NewVoucherData;
-use human_money_core::services::voucher_manager::get_spendable_balance;
+use human_money_core::NewVoucherData;
+
 use human_money_core::wallet::Wallet;
 use human_money_core::{UserIdentity, VoucherStatus};
-use human_money_core::{create_transaction, create_voucher, to_canonical_json};
+use human_money_core::to_canonical_json;
 use rust_decimal_macros::dec;
 
 // ===================================================================================
@@ -35,7 +35,7 @@ fn setup_test_wallet(identity: &UserIdentity) -> Wallet {
 /// **NEW STUB:** Creates a test creator for the new tests.
 fn setup_creator() -> (SigningKey, human_money_core::models::profile::PublicProfile) {
     let (public_key, signing_key) =
-        crypto_utils::generate_ed25519_keypair_for_tests(Some("creator_stub"));
+        crypto::generate_ed25519_keypair_for_tests(Some("creator_stub"));
     let user_id = create_user_id(&public_key, Some("cs")).unwrap();
     let creator = human_money_core::models::profile::PublicProfile {
         id: Some(user_id),
@@ -92,7 +92,7 @@ fn test_wallet_state_management_on_split() {
     let standard = &standard_obj;
     let standard_hash = &standard_hash_val;
 
-    let initial_voucher = create_voucher(
+    let initial_voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         standard,
         standard_hash,
@@ -138,7 +138,7 @@ fn test_wallet_state_management_on_split() {
         bundle_bytes: bundle_to_b,
         ..
     } = wallet_a
-        .execute_multi_transfer_and_bundle(&a_identity, &standards, request, None)
+        .execute_multi_transfer_and_bundle(a_identity, &standards, request, None)
         .unwrap();
 
     // CORRECTION: The map must contain the standard being processed.
@@ -148,7 +148,7 @@ fn test_wallet_state_management_on_split() {
         standard.clone(),
     );
     wallet_b
-        .process_encrypted_transaction_bundle(&b_identity, &bundle_to_b, None, &standards_for_bob)
+        .process_encrypted_transaction_bundle(b_identity, &bundle_to_b, None, &standards_for_bob)
         .unwrap();
 
     // 4. Verification (Wallet A)
@@ -177,7 +177,7 @@ fn test_wallet_state_management_on_split() {
     assert_eq!(remainder_instance.status, VoucherStatus::Active);
 
     let remainder_balance =
-        get_spendable_balance(&remainder_instance.voucher, &a_identity.user_id, standard, None).unwrap();
+        remainder_instance.voucher.spendable_balance_for_user( &a_identity.user_id, standard, None).unwrap();
     assert_eq!(remainder_balance, dec!(60));
 
     // 5. Verification (Wallet B)
@@ -190,7 +190,7 @@ fn test_wallet_state_management_on_split() {
     assert_eq!(received_instance.status, VoucherStatus::Active);
 
     let received_balance =
-        get_spendable_balance(&received_instance.voucher, &b_identity.user_id, standard, None).unwrap();
+        received_instance.voucher.spendable_balance_for_user( &b_identity.user_id, standard, None).unwrap();
     assert_eq!(received_balance, dec!(40));
 }
 
@@ -218,7 +218,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
     let standard = &standard_obj;
     let standard_hash = &standard_hash_val;
 
-    let initial_voucher = create_voucher(
+    let initial_voucher = human_money_core::models::voucher::Voucher::create_with_key(
         voucher_data,
         standard,
         standard_hash,
@@ -227,7 +227,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
 
     let holder_key =
         self::test_utils::derive_holder_key(&initial_voucher, &eve_identity.signing_key);
-    let (voucher_for_alice, _) = create_transaction(
+    let (voucher_for_alice, _) = human_money_core::models::voucher::Transaction::create(
         &initial_voucher,
         standard,
         &eve_identity.user_id,
@@ -238,7 +238,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
         None,
     )
     .unwrap();
-    let (voucher_for_bob, _) = create_transaction(
+    let (voucher_for_bob, _) = human_money_core::models::voucher::Transaction::create(
         &initial_voucher,
         standard,
         &eve_identity.user_id,
@@ -253,7 +253,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
     // Eve bundles and sends the vouchers
     let (bundle_to_alice, _header) = eve_wallet
         .create_and_encrypt_transaction_bundle(
-            &eve_identity,
+            eve_identity,
             vec![voucher_for_alice],
             &a_identity.user_id,
             None,
@@ -264,7 +264,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
         .unwrap();
     let (bundle_to_bob, _header) = eve_wallet
         .create_and_encrypt_transaction_bundle(
-            &eve_identity,
+            eve_identity,
             vec![voucher_for_bob],
             &b_identity.user_id,
             None,
@@ -282,10 +282,10 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
     );
 
     alice_wallet
-        .process_encrypted_transaction_bundle(&a_identity, &bundle_to_alice, None, &standards_map)
+        .process_encrypted_transaction_bundle(a_identity, &bundle_to_alice, None, &standards_map)
         .unwrap();
     bob_wallet
-        .process_encrypted_transaction_bundle(&b_identity, &bundle_to_bob, None, &standards_map)
+        .process_encrypted_transaction_bundle(b_identity, &bundle_to_bob, None, &standards_map)
         .unwrap();
 
     // 3. Act 2 (Exchange)
@@ -369,7 +369,7 @@ fn test_serialization_roundtrip_with_special_chars() {
     let standard_hash = &standard_hash_val;
 
     let mut original_voucher =
-        create_voucher(voucher_data, standard, standard_hash, &signing_key).unwrap();
+        human_money_core::models::voucher::Voucher::create_with_key(voucher_data, standard, standard_hash, &signing_key).unwrap();
 
     // Make the voucher more complex
     let g1_identity = &ACTORS.guarantor1;
@@ -435,10 +435,10 @@ fn test_serialization_roundtrip_with_special_chars() {
     original_voucher.signatures.push(sig_obj);
 
     let holder_key = self::test_utils::derive_holder_key(&original_voucher, &signing_key);
-    let (ov, _) = create_transaction(
+    let (ov, _) = human_money_core::models::voucher::Transaction::create(
         &original_voucher,
         standard,
-        &original_voucher.creator_profile.id.as_ref().unwrap(),
+        original_voucher.creator_profile.id.as_ref().unwrap(),
         &signing_key,
         &holder_key,
         &human_money_core::test_utils::ACTORS.bob.user_id, // Valid DID

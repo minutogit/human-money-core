@@ -13,9 +13,9 @@
 //! services/voucher_validation/chain.rs) reached through bundle ingestion.
 
 use ed25519_dalek::SigningKey;
-use human_money_core::archive::{ArchiveError, VoucherArchive};
+use human_money_core::archive::FileVoucherArchive;
 use human_money_core::models::voucher::{Transaction, TrapData, ValueDefinition, Voucher};
-use human_money_core::services::crypto_utils::{
+use human_money_core::services::crypto::{
     create_user_id, get_hash, get_hash_from_slices,
 };
 use human_money_core::services::l2_gateway::calculate_layer2_voucher_id;
@@ -37,7 +37,6 @@ use rand::RngCore;
 use human_money_core::{VoucherCoreError};
 use std::collections::HashMap;
 use std::panic::{catch_unwind, set_hook, take_hook, AssertUnwindSafe};
-use std::sync::{Arc, Mutex};
 
 /// rust_decimal supports at most 96-bit mantissa values; this literal is
 /// exactly `Decimal::MAX`. It parses successfully and passes every existing
@@ -351,51 +350,6 @@ fn craft_voucher_with_overflowing_split() -> Voucher {
 //                 operation returns Err (atomicity invariant). FAILS on
 //                 unpatched code (the ghost entry from source #1 is observed).
 // =============================================================================
-#[derive(Default, Clone)]
-struct RecordingArchive {
-    archived: Arc<Mutex<Vec<(String, String, usize)>>>,
-}
-
-impl RecordingArchive {
-    fn recorded_count(&self) -> usize {
-        self.archived.lock().expect("poisoned mutex").len()
-    }
-}
-
-impl VoucherArchive for RecordingArchive {
-    fn archive_voucher(
-        &self,
-        voucher: &Voucher,
-        owner_id: &str,
-        _standard: &human_money_core::VoucherStandardDefinition,
-    ) -> Result<(), ArchiveError> {
-        self.archived
-            .lock()
-            .expect("poisoned mutex")
-            .push((
-                voucher.voucher_id.clone(),
-                owner_id.to_string(),
-                voucher.transactions.len(),
-            ));
-        Ok(())
-    }
-
-    fn get_archived_voucher(&self, _voucher_id: &str) -> Result<Voucher, ArchiveError> {
-        Err(ArchiveError::NotFound)
-    }
-
-    fn find_transaction_by_id(
-        &self,
-        _t_id: &str,
-    ) -> Result<Option<(Voucher, Transaction)>, ArchiveError> {
-        Err(ArchiveError::NotFound)
-    }
-
-    fn find_voucher_by_tx_id(&self, _t_id: &str) -> Result<Option<Voucher>, ArchiveError> {
-        Err(ArchiveError::NotFound)
-    }
-}
-
 #[test]
 fn sa04_03_aborted_multi_transfer_must_leave_archive_untouched() {
     let (mut sender_wallet, sender_identity) =
@@ -449,7 +403,8 @@ fn sa04_03_aborted_multi_transfer_must_leave_archive_untouched() {
     let mut definitions = HashMap::new();
     definitions.insert(standard.immutable.identity.uuid.clone(), standard.clone());
 
-    let archive = RecordingArchive::default();
+    let archive_dir = tempfile::tempdir().expect("tempdir creation failed");
+    let archive = FileVoucherArchive::new_secure(archive_dir.path(), "audit-test-pw");
 
     let result = sender_wallet.execute_multi_transfer_and_bundle(
         &sender_identity,
@@ -480,8 +435,9 @@ fn sa04_03_aborted_multi_transfer_must_leave_archive_untouched() {
 
     // SECURE INVARIANT (Soll-Verhalten): if the overall operation failed, the
     // forensic archive must not contain ANY record of it (atomicity).
+    let count = std::fs::read_dir(archive_dir.path()).expect("read archive dir").count();
     assert_eq!(
-        archive.recorded_count(),
+        count,
         0,
         "HMSEC-SA04-03 VIOLATION: archive received ghost entries for a transfer \
          that was rolled back. Archive writes escape the temp-wallet transaction \
@@ -852,16 +808,13 @@ fn sa04_06_forged_bundle_and_foreign_container_signatures_must_fail_end_to_end()
         ContainerConfig, PayloadType, PrivacyMode, SecureContainer,
     };
     use human_money_core::services::bundle_processor::open_and_verify_bundle;
-    use human_money_core::services::secure_container_manager::{
-        create_secure_container, open_secure_container,
-    };
 
     let alice = &human_money_core::test_utils::ACTORS.alice.identity;
     let bob = &human_money_core::test_utils::ACTORS.bob.identity;
 
     // Attacker key material (independent of sender and receiver).
     let mallory_keys =
-        human_money_core::services::crypto_utils::generate_ed25519_keypair_for_tests(
+        human_money_core::services::crypto::generate_ed25519_keypair_for_tests(
             Some("sa04-06-mallory-seed"),
         );
     let mallory = human_money_core::models::profile::UserIdentity {
@@ -906,7 +859,7 @@ fn sa04_06_forged_bundle_and_foreign_container_signatures_must_fail_end_to_end()
     // thief) decrypts the payload addressed to Bob.
     let original_container: SecureContainer =
         serde_json::from_slice(&bundle_bytes).expect("parse alice's container");
-    let authentic_payload = open_secure_container(&original_container, bob, None)
+    let authentic_payload = original_container.open(bob, None)
         .expect("recipient-shaped payload must decrypt");
     let mut bundle: TransactionBundle =
         serde_json::from_slice(&authentic_payload).expect("parse alice's bundle");
@@ -926,9 +879,9 @@ fn sa04_06_forged_bundle_and_foreign_container_signatures_must_fail_end_to_end()
 
     let forged_bytes = {
         let forged_payload = serde_json::to_vec(&bundle).expect("serialize forged bundle");
-        let mut c = create_secure_container(
+        let mut c = SecureContainer::seal(
             &mallory,
-            ContainerConfig::TargetDid(bob.user_id.clone(), PrivacyMode::TrialDecryption),
+            &ContainerConfig::TargetDid(bob.user_id.clone(), PrivacyMode::TrialDecryption),
             &forged_payload,
             PayloadType::TransactionBundle,
         )
@@ -961,9 +914,9 @@ fn sa04_06_forged_bundle_and_foreign_container_signatures_must_fail_end_to_end()
     // envelope signature check (verified against the CLAIMED sender from the
     // decrypted bundle, i.e. Alice) can reject the foreign wrapper.
     let attack_bytes = {
-        let attack_container = create_secure_container(
+        let attack_container = SecureContainer::seal(
             &mallory,
-            ContainerConfig::TargetDid(bob.user_id.clone(), PrivacyMode::TrialDecryption),
+            &ContainerConfig::TargetDid(bob.user_id.clone(), PrivacyMode::TrialDecryption),
             &authentic_payload,
             PayloadType::TransactionBundle,
         )
@@ -992,8 +945,8 @@ fn sa04_06_forged_bundle_and_foreign_container_signatures_must_fail_end_to_end()
 // CWE:           CWE-1339 (Implicit Conversion / Silent Rounding), target of
 //                a potential Conservation-of-Value breach (CWE-682)
 // Target:        src/services/decimal_utils.rs :: format_for_storage (~46-48);
-//                consumers: services/voucher_manager/creation.rs:243,
-//                services/voucher_manager/transaction.rs:90+197
+//                consumers: services/voucher_math/creation.rs:243,
+//                services/voucher_math/transaction.rs:90+197
 // Threat Model:  `format_for_storage` uses `format!("{:.places}")`, which
 //                SILENTLY ROUNDS (including rounding UP, e.g. remainder
 //                0.006 -> "0.01" at places=2). If any route ever fed it an
@@ -1024,7 +977,7 @@ fn sa04_06_forged_bundle_and_foreign_container_signatures_must_fail_end_to_end()
 // =============================================================================
 #[test]
 fn sa04_07_storage_formatting_is_exact_within_validated_precision_domain() {
-    use human_money_core::services::decimal_utils::format_for_storage;
+    use human_money_core::models::voucher::ValueDefinition;
     use rust_decimal::Decimal;
     use std::str::FromStr;
 
@@ -1042,11 +995,16 @@ fn sa04_07_storage_formatting_is_exact_within_validated_precision_domain() {
     ];
     for (value_str, places) in exact_cases {
         let value = Decimal::from_str(value_str).expect("parse test decimal");
-        let stored = format_for_storage(&value, places);
+        let val_def = ValueDefinition {
+            unit: "MIN".to_string(),
+            amount: format!("{:.1$}", Decimal::ZERO, places as usize),
+            ..Default::default()
+        };
+        let stored = val_def.format_amount(&value);
         assert_eq!(
             Decimal::from_str(&stored).expect("storage string must re-parse"),
             value,
-            "HMSEC-SA04-07 VIOLATION: format_for_storage silently altered the \
+            "HMSEC-SA04-07 VIOLATION: format_amount silently altered the \
              value {} at places={} into '{}' - canonical storage formatting \
              must be exact within the validated precision domain.",
             value_str,
@@ -1661,7 +1619,7 @@ fn sa04_10_make_foreign_fp(
         None,
         "",
     );
-    let sig = human_money_core::services::crypto_utils::sign_ed25519(signer, &payload_hash);
+    let sig = human_money_core::services::crypto::sign_ed25519(signer, &payload_hash);
     TransactionFingerprint {
         ds_tag: ds_tag.to_string(),
         trap_r: trap_r.to_string(),
@@ -1679,7 +1637,7 @@ fn sa04_10_make_foreign_fp(
 #[test]
 fn sa04_10_fingerprint_ingress_must_bind_to_local_input_context() {
     use human_money_core::models::profile::PublicProfile;
-    use human_money_core::services::voucher_manager::NewVoucherData;
+    use human_money_core::NewVoucherData;
 
     let dir = tempfile::tempdir().unwrap();
     let password = "audit-password";
@@ -1699,8 +1657,8 @@ fn sa04_10_fingerprint_ingress_must_bind_to_local_input_context() {
     let (mut hacker, _) =
         setup_service_with_profile(dir.path(), &human_money_core::test_utils::ACTORS.hacker, "H16", password);
 
-    let id_alice = alice.get_user_id().unwrap();
-    let id_victim = victim.get_user_id().unwrap();
+    let id_alice = alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+    let id_victim = victim.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     // Honest baseline: Alice issues a voucher and transfers it fully to the
     // victim, who holds one ACTIVE branch with a publicly visible input tag.
@@ -1723,7 +1681,9 @@ fn sa04_10_fingerprint_ingress_must_bind_to_local_input_context() {
             Some(password),
         )
         .expect("voucher creation failed");
-    let local_id = alice.get_voucher_summaries(None, None, None).unwrap()[0]
+    let local_id = alice
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
     let result = alice
@@ -1812,7 +1772,9 @@ fn sa04_10_fingerprint_ingress_must_bind_to_local_input_context() {
     // LOCALLY KNOWN input tag must be bound to the locally revealed input
     // key - third-party junk must be dropped at ingress (or at minimum never
     // persist under D_H), and no junk conflict record may be created.
-    let status_after = victim.get_voucher_summaries(None, None, None).unwrap()[0]
+    let status_after = victim
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .status
         .clone();
     assert_eq!(

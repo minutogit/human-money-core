@@ -4,7 +4,7 @@
 use human_money_core::error::{ValidationError, VoucherCoreError};
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::models::voucher::ValueDefinition;
-use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::NewVoucherData;
 use human_money_core::services::voucher_validation::validate_voucher_against_standard;
 use human_money_core::test_utils::{
     create_custom_standard, create_female_guarantor_signature, create_male_guarantor_signature,
@@ -37,7 +37,7 @@ fn test_validation_accepts_valid_voucher_with_rounded_max_duration_yearly() {
     };
 
     // 1. Create the voucher with 5-year base duration
-    let mut voucher = human_money_core::create_voucher(
+    let mut voucher = human_money_core::Voucher::create_with_key(
         voucher_data,
         &custom_standard,
         &standard_hash,
@@ -89,7 +89,7 @@ fn test_validation_accepts_quarterly_and_half_year_rounding() {
             ..Default::default()
         };
 
-        let mut voucher = human_money_core::create_voucher(
+        let mut voucher = human_money_core::Voucher::create_with_key(
             voucher_data,
             &custom_standard,
             &standard_hash,
@@ -135,7 +135,7 @@ fn test_validation_rejects_voucher_exceeding_rounded_max_duration() {
         ..Default::default()
     };
 
-    let mut voucher = human_money_core::create_voucher(
+    let mut voucher = human_money_core::Voucher::create_with_key(
         voucher_data,
         &custom_standard,
         &standard_hash,
@@ -154,7 +154,7 @@ fn test_validation_rejects_voucher_exceeding_rounded_max_duration() {
     let original_valid_until_dt =
         chrono::DateTime::parse_from_rfc3339(&voucher.valid_until).unwrap();
     let exceeded_valid_until_dt =
-        human_money_core::services::voucher_manager::add_iso8601_duration(original_valid_until_dt.into(), "P1Y")
+        human_money_core::services::utils::add_iso8601_duration(original_valid_until_dt.into(), "P1Y")
             .unwrap();
     voucher.valid_until = exceeded_valid_until_dt.to_rfc3339();
 

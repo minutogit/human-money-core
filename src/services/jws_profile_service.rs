@@ -6,7 +6,7 @@
 
 use crate::error::VoucherCoreError;
 use crate::models::profile::PublicProfile;
-use crate::services::crypto_utils::{decode_base64, encode_base64, sign_ed25519, verify_ed25519};
+use crate::services::crypto::{decode_base64, encode_base64, sign_ed25519, verify_ed25519};
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey as EdPublicKey};
 use serde::{Deserialize, Serialize};
 
@@ -50,12 +50,12 @@ pub fn export_profile_as_jws(
     // 1. Create and serialize header
     let header = JwsHeader::default();
     let header_json = serde_json::to_string(&header)
-        .map_err(VoucherCoreError::Json)?;
+        .map_err(VoucherCoreError::from)?;
     let header_b64 = encode_base64(header_json.as_bytes());
 
     // 2. Serialize payload (the profile)
     let payload_json = serde_json::to_string(profile)
-        .map_err(VoucherCoreError::Json)?;
+        .map_err(VoucherCoreError::from)?;
     let payload_b64 = encode_base64(payload_json.as_bytes());
 
     // 3. Create message to sign: header.payload
@@ -97,7 +97,7 @@ pub fn verify_and_import_jws_profile(
     // 2. Decode header
     let header_bytes = decode_base64(header_b64)?;
     let header: JwsHeader = serde_json::from_slice(&header_bytes)
-        .map_err(VoucherCoreError::Json)?;
+        .map_err(VoucherCoreError::from)?;
 
     // Validate algorithm
     if header.alg != "EdDSA" {
@@ -121,7 +121,7 @@ pub fn verify_and_import_jws_profile(
     // 3. Decode payload (profile)
     let payload_bytes = decode_base64(payload_b64)?;
     let profile: PublicProfile = serde_json::from_slice(&payload_bytes)
-        .map_err(VoucherCoreError::Json)?;
+        .map_err(VoucherCoreError::from)?;
 
     // 4. Extract did:key from profile (if present) or from signature verification
     let did_key = profile.id.clone().ok_or_else(|| {
@@ -151,7 +151,7 @@ pub fn verify_and_import_jws_profile(
 
 /// Extracts an Ed25519 public key from a did:key URI.
 ///
-/// Delegates to the canonical parser `crypto_identity::get_pubkey_from_user_id`:
+/// Delegates to the canonical parser `crypto::get_pubkey_from_user_id`:
 ///
 /// * It enforces the EXACT multicodec length (34 bytes), rejecting
 ///   trailing-garbage aliases such as `did:key:z<valid-key><extra>` that map
@@ -167,14 +167,14 @@ pub fn verify_and_import_jws_profile(
 /// # Returns
 /// The EdPublicKey or an error.
 fn extract_pubkey_from_did_key(did_key: &str) -> Result<EdPublicKey, VoucherCoreError> {
-    crate::services::crypto_identity::get_pubkey_from_user_id(did_key)
-        .map_err(VoucherCoreError::KeyOrId)
+    crate::services::crypto::get_pubkey_from_user_id(did_key)
+        .map_err(VoucherCoreError::from)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::crypto_keys::generate_ed25519_keypair_for_tests;
+    use crate::services::crypto::generate_ed25519_keypair_for_tests;
 
     #[test]
     fn test_jws_roundtrip() {

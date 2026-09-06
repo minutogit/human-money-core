@@ -503,8 +503,8 @@ impl DynamicPolicyEngine {
                     }
                     let amt = Self::eval_and_check_ast(&call.args[0], env, depth + 1, iter_budget)?;
                     let places = Self::eval_and_check_ast(&call.args[1], env, depth + 1, iter_budget)?;
-                    if let (JsonValue::String(s), JsonValue::Number(n)) = (amt, places) {
-                        if let Some(p) = n.as_i64() {
+                    if let (JsonValue::String(s), JsonValue::Number(n)) = (amt, places)
+                        && let Some(p) = n.as_i64() {
                             if !(0..=18).contains(&p) {
                                 return Ok(JsonValue::Bool(false));
                             }
@@ -512,7 +512,6 @@ impl DynamicPolicyEngine {
                                 return Ok(JsonValue::Bool(dec.scale() <= p as u32));
                             }
                         }
-                    }
                     Ok(JsonValue::Bool(false))
                 } else {
                     if let Some(target) = &call.target {

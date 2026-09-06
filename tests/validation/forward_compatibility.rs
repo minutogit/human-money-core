@@ -6,11 +6,11 @@
 
 use human_money_core::error::StandardDefinitionError;
 use human_money_core::error::ValidationError;
-use human_money_core::services::standard_manager;
+use human_money_core::models::voucher_standard_definition::VoucherStandardDefinition;
 use human_money_core::services::utils::to_canonical_json;
 use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD};
 use human_money_core::{
-    NewVoucherData, ValueDefinition, Voucher, VoucherCoreError, from_json,
+    NewVoucherData, ValueDefinition, Voucher, VoucherCoreError,
     validate_voucher_against_standard,
 };
 use serde_json::json;
@@ -67,7 +67,7 @@ mod compatibility_scenarios {
             );
         let json_with_extra_fields = serde_json::to_string(&voucher_as_value).unwrap();
 
-        let deserialized_voucher: Voucher = from_json(&json_with_extra_fields).unwrap();
+        let deserialized_voucher: Voucher = Voucher::from_json_str(&json_with_extra_fields).unwrap();
         assert_eq!(valid_voucher, deserialized_voucher);
 
         let validation_result =
@@ -122,16 +122,16 @@ mod compatibility_scenarios {
             serde_json::from_value(serde_json::Value::Object(init_transaction.clone())).unwrap();
         temp_tx.t_id = "".to_string();
         temp_tx.layer2_signature = Some("".to_string());
-        let new_tid = human_money_core::services::crypto_utils::get_hash(
+        let new_tid = human_money_core::services::crypto::get_hash(
             to_canonical_json(&temp_tx).unwrap(),
         );
         init_transaction.insert("t_id".to_string(), json!(new_tid));
 
         let signature_payload = json!({ "prev_hash": &temp_tx.prev_hash, "sender_id": &temp_tx.sender_id, "t_id": new_tid });
-        let signature_payload_hash = human_money_core::services::crypto_utils::get_hash(
+        let signature_payload_hash = human_money_core::services::crypto::get_hash(
             to_canonical_json(&signature_payload).unwrap(),
         );
-        let new_signature = human_money_core::services::crypto_utils::sign_ed25519(
+        let new_signature = human_money_core::services::crypto::sign_ed25519(
             &identity.signing_key,
             signature_payload_hash.as_bytes(),
         );
@@ -141,7 +141,7 @@ mod compatibility_scenarios {
         );
 
         let manipulated_json = serde_json::to_string(&voucher_as_value).unwrap();
-        let deserialized_voucher: Voucher = from_json(&manipulated_json).unwrap();
+        let deserialized_voucher: Voucher = Voucher::from_json_str(&manipulated_json).unwrap();
 
         let validation_result =
             validate_voucher_against_standard(&deserialized_voucher, freetaler_standard);
@@ -191,7 +191,7 @@ mod compatibility_scenarios {
         let toml_str_with_invalid_sig = toml::to_string(&standard_struct).unwrap();
 
         // 4. Verification must fail now due to invalid signature.
-        let result = standard_manager::verify_and_parse_standard(&toml_str_with_invalid_sig);
+        let result = VoucherStandardDefinition::from_toml(&toml_str_with_invalid_sig);
         assert!(matches!(
             result.unwrap_err(),
             VoucherCoreError::Standard(StandardDefinitionError::InvalidSignature)

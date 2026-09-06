@@ -13,7 +13,7 @@ use human_money_core::models::layer2_api::{
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::models::voucher::ValueDefinition;
 
-use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::NewVoucherData;
 use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD, create_custom_standard};
 use std::collections::{HashMap, HashSet};
 use tempfile::tempdir;
@@ -28,6 +28,12 @@ pub struct MockL2Node {
     pub spendable_outputs: HashSet<[u8; 32]>,
     /// Server keypair for signatures
     pub signing_key: SigningKey,
+}
+
+impl Default for MockL2Node {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MockL2Node {
@@ -147,7 +153,7 @@ impl MockL2Node {
 
         // 3. Logarithmic Locators
         for prefix in &req.locator_prefixes {
-            for (ds_tag, _entry) in voucher_locks {
+            for ds_tag in voucher_locks.keys() {
                 if ds_tag.starts_with(prefix) {
                     let verdict = L2Verdict::MissingLocks {
                         sync_point: prefix.clone(),
@@ -172,7 +178,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let password = "password123";
     let (mut app, _) =
         test_utils::setup_service_with_profile(dir.path(), &ACTORS.test_user, "Alice", password);
-    let user_id = app.get_user_id()?;
+    let user_id = app.with_wallet(|w| w.get_user_id().to_string())?;
     let bob_id = test_utils::ACTORS.david.identity.user_id.clone();
 
     // Load standard
@@ -211,7 +217,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(password),
     )?;
 
-    let voucher_id = app.get_voucher_summaries(None, None, None)?[0]
+    let voucher_id = app
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))?[0]
         .local_instance_id
         .clone();
     let req_genesis = app.generate_l2_lock_request(&voucher_id)?;
@@ -240,11 +247,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Find the new instance (change)
     let v_id_1 = app
-        .get_voucher_summaries(
-            None,
-            Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
-            None,
-        )?
+        .with_wallet_and_identity(|w, id| {
+            w.list_vouchers(
+                Some(id),
+                None,
+                Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+                None,
+            )
+        })?
         .iter()
         .find(|s| s.current_amount == "90.0000")
         .map(|s| s.local_instance_id.clone())
@@ -275,11 +285,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.create_transfer_bundle(request2, &standards_toml, None, Some(password))?;
 
     let v_id_2 = app
-        .get_voucher_summaries(
-            None,
-            Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
-            None,
-        )?
+        .with_wallet_and_identity(|w, id| {
+            w.list_vouchers(
+                Some(id),
+                None,
+                Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+                None,
+            )
+        })?
         .iter()
         .find(|s| s.current_amount == "85.0000")
         .map(|s| s.local_instance_id.clone())
@@ -307,7 +320,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\x1b[1;36m               CHAIN OF AUTHORITY ANALYSIS            \x1b[0m");
     println!("\x1b[1;36m======================================================\x1b[0m");
 
-    let details = app.get_voucher_details(&v_id_2)?;
+    let details = app.with_wallet(|w| w.get_voucher_details(&v_id_2))??;
     let voucher = &details.voucher;
 
     println!("\n\x1b[1;37mZusammenfassung der Verkettung (Lokal vs. L2):\x1b[0m\n");
@@ -325,7 +338,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  ├─ Autorität:     \x1b[1;32mInitialer Gutschein (Kein Vorbesitzer)\x1b[0m");
         } else if let Some(sep) = &tx.sender_ephemeral_pub {
             let sep_bytes = bs58::decode(sep).into_vec()?;
-            let sep_hash = human_money_core::services::crypto_utils::get_hash(&sep_bytes);
+            let sep_hash = human_money_core::services::crypto::get_hash(&sep_bytes);
 
             let match_found = active_anchors.contains(&sep_hash);
             let status_indicator = if match_found {
@@ -401,7 +414,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("     └─ Keine neuen Private-Anker erzeugt.");
         }
 
-        println!("");
+        println!();
     }
 
     println!("\x1b[1;37mErklärung der 'Chain of Authority' (CoA):\x1b[0m");
@@ -554,7 +567,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let p = 0.01_f64;
         (-n * p.ln() / (2.0_f64.ln().powi(2))).ceil() as usize
     } else { 0 };
-    let bloom_bytes = (bloom_bits + 7) / 8;
+    let bloom_bytes = bloom_bits.div_ceil(8);
 
     println!("  \x1b[1;37m┌─ Lock-Datenbank (HashMap)\x1b[0m");
     println!("  │    Gespeicherte Voucher-IDs:     {:>4}", server.locks.len());

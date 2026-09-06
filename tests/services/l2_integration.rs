@@ -5,7 +5,7 @@ use human_money_core::models::layer2_api::{
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::models::voucher::ValueDefinition;
 
-use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::NewVoucherData;
 use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD, create_custom_standard};
 use human_money_core::wallet::instance::VoucherStatus;
 use std::collections::HashMap;
@@ -25,6 +25,12 @@ pub struct MockL2Node {
     spendable_outputs: HashSet<[u8; 32]>,
     // Private key of the L2 server for signing verdicts
     server_key: SigningKey,
+}
+
+impl Default for MockL2Node {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MockL2Node {
@@ -179,7 +185,7 @@ impl MockL2Node {
         // 3. Logarithmic Locators (LCA Search)
         // We search for the first prefix we know
         for prefix in &req.locator_prefixes {
-            for (ds_tag, _entry) in voucher_locks {
+            for ds_tag in voucher_locks.keys() {
                 if ds_tag.starts_with(prefix) {
                     let verdict = L2Verdict::MissingLocks {
                         sync_point: prefix.clone(),
@@ -207,7 +213,7 @@ fn test_l2_double_spend_quarantine() {
     // Setup Service
     let (mut app, _) =
         test_utils::setup_service_with_profile(dir.path(), test_user, "Alice", correct_password);
-    let user_id = app.get_user_id().unwrap();
+    let user_id = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
         s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
@@ -232,7 +238,9 @@ fn test_l2_double_spend_quarantine() {
     )
     .unwrap();
 
-    let voucher_id = app.get_voucher_summaries(None, None, None).unwrap()[0]
+    let voucher_id = app
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
 
@@ -280,11 +288,14 @@ fn test_l2_double_spend_quarantine() {
     // Fetch new voucher_id (wallet often creates new instances for split)
     // For simplicity, take the last modified instance that is still active
     let summaries_after_tx1 = app
-        .get_voucher_summaries(
-            None,
-            Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
-            None,
-        )
+        .with_wallet_and_identity(|w, id| {
+            w.list_vouchers(
+                Some(id),
+                None,
+                Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+                None,
+            )
+        })
         .unwrap();
     let voucher_id_tx1 = summaries_after_tx1
         .last()
@@ -324,11 +335,14 @@ fn test_l2_double_spend_quarantine() {
         .unwrap();
 
     let summaries_after_tx2 = app
-        .get_voucher_summaries(
-            None,
-            Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
-            None,
-        )
+        .with_wallet_and_identity(|w, id| {
+            w.list_vouchers(
+                Some(id),
+                None,
+                Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+                None,
+            )
+        })
         .unwrap();
     let voucher_id_tx2 = summaries_after_tx2
         .last()
@@ -357,7 +371,7 @@ fn test_l2_double_spend_quarantine() {
         .unwrap();
 
     // 7. Final check
-    let final_details = app.get_voucher_details(&voucher_id_tx2).unwrap();
+    let final_details = app.with_wallet(|w| w.get_voucher_details(&voucher_id_tx2).unwrap()).unwrap();
     assert!(matches!(
         final_details.status,
         VoucherStatus::Quarantined { .. }
@@ -374,7 +388,7 @@ fn test_l2_signature_payload_manipulation() {
     // Setup Service
     let (mut app, _) =
         test_utils::setup_service_with_profile(dir.path(), test_user, "Alice", correct_password);
-    let user_id = app.get_user_id().unwrap();
+    let user_id = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
         s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
@@ -399,7 +413,9 @@ fn test_l2_signature_payload_manipulation() {
     )
     .unwrap();
 
-    let voucher_id = app.get_voucher_summaries(None, None, None).unwrap()[0]
+    let voucher_id = app
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
 
@@ -439,11 +455,14 @@ fn test_l2_signature_payload_manipulation() {
         .unwrap();
 
     let summaries_after_tx1 = app
-        .get_voucher_summaries(
-            None,
-            Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
-            None,
-        )
+        .with_wallet_and_identity(|w, id| {
+            w.list_vouchers(
+                Some(id),
+                None,
+                Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+                None,
+            )
+        })
         .unwrap();
     let voucher_id_tx1 = summaries_after_tx1
         .last()
@@ -496,7 +515,7 @@ fn test_l2_fake_double_spend_protection() {
     // Setup Service
     let (mut app, _) =
         test_utils::setup_service_with_profile(dir.path(), test_user, "Alice", correct_password);
-    let user_id = app.get_user_id().unwrap();
+    let user_id = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
         s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
@@ -521,7 +540,9 @@ fn test_l2_fake_double_spend_protection() {
     )
     .unwrap();
 
-    let voucher_id = app.get_voucher_summaries(None, None, None).unwrap()[0]
+    let voucher_id = app
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
 
@@ -559,11 +580,14 @@ fn test_l2_fake_double_spend_protection() {
         .unwrap();
 
     let summaries_after_tx1 = app
-        .get_voucher_summaries(
-            None,
-            Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
-            None,
-        )
+        .with_wallet_and_identity(|w, id| {
+            w.list_vouchers(
+                Some(id),
+                None,
+                Some(&[human_money_core::wallet::instance::VoucherStatus::Active]),
+                None,
+            )
+        })
         .unwrap();
     let voucher_id_tx1 = summaries_after_tx1
         .last()
@@ -625,7 +649,7 @@ fn test_l2_fake_double_spend_protection() {
 
     // Check status -> must remain Active
     assert!(matches!(
-        app.get_voucher_details(&voucher_id_tx1).unwrap().status,
+        app.with_wallet(|w| w.get_voucher_details(&voucher_id_tx1).unwrap()).unwrap().status,
         VoucherStatus::Active
     ));
 
@@ -683,7 +707,7 @@ fn test_l2_fake_double_spend_protection() {
 
     // Check status -> must remain Active
     assert!(matches!(
-        app.get_voucher_details(&voucher_id_tx1).unwrap().status,
+        app.with_wallet(|w| w.get_voucher_details(&voucher_id_tx1).unwrap()).unwrap().status,
         VoucherStatus::Active
     ));
 }
@@ -698,7 +722,7 @@ fn test_l2_voucher_id_mixup_protection() {
     // Setup Service
     let (mut app, _) =
         test_utils::setup_service_with_profile(dir.path(), test_user, "Alice", correct_password);
-    let user_id = app.get_user_id().unwrap();
+    let user_id = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
         s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
@@ -723,7 +747,9 @@ fn test_l2_voucher_id_mixup_protection() {
     )
     .unwrap();
 
-    let summaries = app.get_voucher_summaries(None, None, None).unwrap();
+    let summaries = app
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
     let voucher_id = summaries[0].local_instance_id.clone();
 
     let mut mock_l2 = MockL2Node::new();
@@ -808,7 +834,7 @@ fn test_l2_voucher_id_mixup_protection() {
 
     // Check status -> must remain Active
     assert!(matches!(
-        app.get_voucher_details(&voucher_id).unwrap().status,
+        app.with_wallet(|w| w.get_voucher_details(&voucher_id).unwrap()).unwrap().status,
         VoucherStatus::Active
     ));
 }

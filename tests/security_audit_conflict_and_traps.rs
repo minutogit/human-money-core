@@ -30,11 +30,11 @@ use human_money_core::models::conflict::{ProofOfDoubleSpend, TransactionFingerpr
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::models::voucher::ValueDefinition;
 use human_money_core::models::voucher_standard_definition::{PrivacyMode, VoucherStandardDefinition};
-use human_money_core::services::crypto_utils::ed25519_pk_to_curve_point;
+use human_money_core::services::crypto::ed25519_pk_to_curve_point;
 use human_money_core::services::trap_manager::{
     extract_sst_identity, generate_sst_trap, verify_stored_trap_shards_against_identity,
 };
-use human_money_core::services::voucher_manager::{create_transaction, create_voucher, NewVoucherData};
+use human_money_core::NewVoucherData;
 use human_money_core::services::voucher_validation::validate_voucher_against_standard;
 use human_money_core::services::conflict_manager::{
     check_for_double_spend, create_fingerprint_for_transaction,
@@ -60,7 +60,7 @@ fn fresh_voucher(standard: &VoucherStandardDefinition, standard_hash: &str) -> V
         validity_duration: Some("P4Y".to_string()),
         ..Default::default()
     };
-    create_voucher(data, standard, standard_hash, &ACTORS.alice.identity.signing_key).unwrap()
+    human_money_core::models::voucher::Voucher::create_with_key(data, standard, standard_hash, &ACTORS.alice.identity.signing_key).unwrap()
 }
 
 /// Spends the FULL remaining balance from the genesis holder key to `recipient`.
@@ -73,7 +73,7 @@ fn spend_full(
     recipient: &UserIdentity,
     privacy: Option<bool>,
 ) -> Voucher {
-    create_transaction(
+    human_money_core::models::voucher::Transaction::create(
         base,
         standard,
         &ACTORS.alice.user_id,
@@ -481,13 +481,13 @@ fn audit_5_forged_proof_import_is_rejected_and_victim_stays_active() {
     ));
 
     // --- Attacker fabricates a "proof" --------------------------------------
-    let mut fake_winner = Transaction::default();
+    let mut fake_winner = human_money_core::models::voucher::Transaction::default();
     fake_winner.t_id = "FAKE_WINNING_TX_ID".to_string();
     fake_winner.prev_hash = "NOT_EVEN_VALID_BASE58".to_string();
     fake_winner.t_type = "transfer".to_string();
     fake_winner.t_time = "1970-01-01T00:00:00Z".to_string(); // wins the race
 
-    let mut fake_loser = Transaction::default();
+    let mut fake_loser = human_money_core::models::voucher::Transaction::default();
     fake_loser.t_id = victim_tx_t_id.clone();
     fake_loser.prev_hash = "ALSO_INVALID".to_string();
     fake_loser.t_time = "2026-01-01T00:00:00Z".to_string();

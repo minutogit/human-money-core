@@ -19,7 +19,7 @@
 use human_money_core::app_service::AppService;
 use human_money_core::models::profile::PublicProfile;
 use human_money_core::models::voucher::ValueDefinition;
-use human_money_core::services::voucher_manager::NewVoucherData;
+use human_money_core::NewVoucherData;
 use human_money_core::MnemonicLanguage;
 use std::collections::HashMap;
 use std::fs;
@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "example-id".to_string(),
     )?;
     service_alice.unlock_session(password, 60)?;
-    let alice_id = service_alice.get_user_id()?;
+    let alice_id = service_alice.with_wallet(|w| w.get_user_id().to_string())?;
 
     let mut service_bob = AppService::new(dir_bob.path())?;
     service_bob.create_profile(
@@ -93,14 +93,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "example-id".to_string(),
     )?;
     service_bob.unlock_session(password, 60)?;
-    let bob_id = service_bob.get_user_id()?;
+    let bob_id = service_bob.with_wallet(|w| w.get_user_id().to_string())?;
 
     // 2. Create Voucher (FreeTaler Standard)
     let standard_toml = std::fs::read_to_string("voucher_standards/freetaler_v1/standard.toml")?;
     let mut standards_map = HashMap::new();
     // We need to parse to get UUID
     let (std_def, _) =
-        human_money_core::services::standard_manager::verify_and_parse_standard(&standard_toml)?;
+        human_money_core::VoucherStandardDefinition::from_toml(&standard_toml)?;
     standards_map.insert(std_def.immutable.identity.uuid.clone(), standard_toml.clone());
 
     let voucher_id;
@@ -119,7 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         service_creator.login(&profile.folder_name, password, false, "example-id".to_string())?;
         service_creator.unlock_session(password, 60)?; // Safe now
 
-        let creator_id = service_creator.get_user_id()?;
+        let creator_id = service_creator.with_wallet(|w| w.get_user_id().to_string())?;
 
         let creator_profile = PublicProfile {
             id: Some(creator_id.clone()),
@@ -141,7 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             service_creator.create_new_voucher(&standard_toml, voucher_data, None)?;
         voucher_id = voucher.voucher_id.clone();
 
-        let summaries = service_creator.get_voucher_summaries(None, None, None)?;
+        let summaries = service_creator.with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))?;
         let summary = summaries.first().expect("Creator should have voucher");
         local_instance_id = summary.local_instance_id.clone();
 
@@ -196,9 +196,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
 
         // Get the voucher from Alice to see the transaction
-        let alice_summaries = service_alice.get_voucher_summaries(None, None, None)?;
+        let alice_summaries = service_alice.with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))?;
         let alice_summary = alice_summaries.first().unwrap();
-        let alice_details = service_alice.get_voucher_details(&alice_summary.local_instance_id)?;
+        let alice_details = service_alice.with_wallet(|w| w.get_voucher_details(&alice_summary.local_instance_id))??;
         let tx = alice_details.voucher.transactions.last().unwrap();
         tx1_json = serde_json::to_string_pretty(tx)?;
         println!("✅ Transaction 1 successful.");
@@ -225,7 +225,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         service_creator.unlock_session(password, 60)?;
 
         // Check if voucher is "back"
-        let summaries = service_creator.get_voucher_summaries(None, None, None)?;
+        let summaries = service_creator.with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))?;
         println!(
             "   Creator wallet has {} vouchers (should be 1).",
             summaries.len()
@@ -259,9 +259,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             false,
         )?;
 
-        let bob_summaries = service_bob.get_voucher_summaries(None, None, None)?;
+        let bob_summaries = service_bob.with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))?;
         let bob_summary = bob_summaries.first().unwrap();
-        let bob_details = service_bob.get_voucher_details(&bob_summary.local_instance_id)?;
+        let bob_details = service_bob.with_wallet(|w| w.get_voucher_details(&bob_summary.local_instance_id))??;
         let tx = bob_details.voucher.transactions.last().unwrap();
         tx2_json = serde_json::to_string_pretty(tx)?;
         println!("✅ Transaction 2 successful (locally).");

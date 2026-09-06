@@ -5,29 +5,29 @@
 //! (List-Conflicts, Get-Proof, Add-Resolution, Cleanup).
 
 use human_money_core::test_utils::ACTORS;
-use human_money_core::models::voucher::Transaction;
 use human_money_core::models::conflict::ProofOfDoubleSpend;
-use human_money_core::services::crypto_utils;
+use human_money_core::services::crypto;
 use human_money_core::test_utils::setup_in_memory_wallet;
 use chrono::{Utc, Duration};
 use bs58;
 use tempfile::tempdir;
 use human_money_core::app_service::AppService;
 use human_money_core::MnemonicLanguage;
-use human_money_core::{Voucher, Wallet, VoucherInstance, VoucherStatus};
+use human_money_core::{
+    Transaction,Voucher, Wallet, VoucherInstance, VoucherStatus};
 
 fn create_mock_proof(offender_id: &str) -> ProofOfDoubleSpend {
     let reporter = &ACTORS.victim;
     let fork_point_prev_hash = "fork_hash_123".to_string();
-    let proof_id = crypto_utils::get_hash(format!("{}{}", offender_id, fork_point_prev_hash));
-    let signature = crypto_utils::sign_ed25519(&reporter.signing_key, proof_id.as_bytes());
+    let proof_id = crypto::get_hash(format!("{}{}", offender_id, fork_point_prev_hash));
+    let signature = crypto::sign_ed25519(&reporter.signing_key, proof_id.as_bytes());
 
     ProofOfDoubleSpend {
         proof_id,
         offender_id: offender_id.to_string(),
         suspected_identity: None,
         fork_point_prev_hash,
-        conflicting_transactions: vec![Transaction::default(), Transaction::default()],
+        conflicting_transactions: vec![human_money_core::models::voucher::Transaction::default(), human_money_core::models::voucher::Transaction::default()],
         deletable_at: (Utc::now() + Duration::days(90)).to_rfc3339(),
         reporter_id: reporter.user_id.clone(),
         report_timestamp: Utc::now().to_rfc3339(),
@@ -174,7 +174,7 @@ fn test_endorsement_replay_onto_foreign_proof_is_rejected() {
     // offender stays KnownOffender.
     let b_state = wallet.get_proof_of_double_spend(&proof_b.proof_id).unwrap();
     assert!(
-        b_state.resolutions.as_ref().map_or(true, |v| v.is_empty()),
+        b_state.resolutions.as_ref().is_none_or(|v| v.is_empty()),
         "replayed endorsement leaked into proof B's resolutions"
     );
     assert!(
@@ -263,9 +263,9 @@ fn test_get_proof_id_for_voucher_all_heuristics() {
     let local_id = "test_voucher_instance";
 
     // Helper to generate a base voucher
-    let mut voucher = Voucher::default();
+    let mut voucher = human_money_core::models::voucher::Voucher::default();
     voucher.voucher_id = "v123".to_string();
-    voucher.transactions = vec![Transaction::default()];
+    voucher.transactions = vec![human_money_core::models::voucher::Transaction::default()];
     
     // Helper to clear proofs and voucher store
     let reset_wallet = |w: &mut Wallet, v: Voucher| {

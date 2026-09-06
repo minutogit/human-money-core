@@ -3,16 +3,12 @@
 //! An implementation of the `Storage` trait that stores data in multiple encrypted
 //! files in the file system.
 
-use super::{AuthMethod, Storage, StorageError};
+use super::{AuthMethod, StorageError};
 use crate::models::conflict::CanonicalMetadataStore;
 use crate::models::conflict::{KnownFingerprints, OwnFingerprints, ProofStore};
 use crate::models::storage_integrity::INTEGRITY_FILE_NAME;
 use crate::models::profile::{BundleMetadataStore, UserIdentity, UserProfile, VoucherStore};
-mod crypto_utils {
-    pub use crate::services::crypto_keys::derive_ed25519_keypair;
-    pub use crate::services::crypto_symmetric::{decrypt_data, encrypt_data};
-    pub use crate::services::crypto_utils::{get_hash, get_hash_from_slices};
-}
+use crate::services::crypto;
 #[cfg(not(any(test, feature = "test-utils")))]
 use argon2::Argon2;
 use base64::{Engine as _, engine::general_purpose};
@@ -237,19 +233,17 @@ impl FileStorage {
             .try_into()
             .map_err(|_| StorageError::InvalidFormat("Invalid file key length".to_string()))
     }
-}
 
-impl Storage for FileStorage {
-    fn derive_key_for_session(&self, password: &str) -> Result<[u8; 32], StorageError> {
+    pub fn derive_key_for_session(&self, password: &str) -> Result<[u8; 32], StorageError> {
         let profile_container = self.load_profile_container()?;
         derive_key_from_password(password, &profile_container.password_kdf_salt)
     }
 
-    fn profile_exists(&self) -> bool {
+    pub fn profile_exists(&self) -> bool {
         self.user_storage_path.join(PROFILE_FILE_NAME).exists()
     }
 
-    fn load_wallet(
+    pub fn load_wallet(
         &self,
         auth: &AuthMethod,
     ) -> Result<(UserProfile, VoucherStore, UserIdentity), StorageError> {
@@ -275,7 +269,7 @@ impl Storage for FileStorage {
 
         // Decrypt the payload containing the profile and private key.
         let payload_bytes =
-            crypto_utils::decrypt_data(&file_key, &profile_container.encrypted_profile_payload)
+            crypto::decrypt_data(&file_key, &profile_container.encrypted_profile_payload)
                 .map_err(|e| {
                     StorageError::InvalidFormat(format!("Failed to decrypt profile payload: {}", e))
                 })?;
@@ -312,18 +306,19 @@ impl Storage for FileStorage {
             })?;
             let actual_hash = derive_store_binding_hash(&file_key, &store_container_bytes);
             if actual_hash != *expected_hash {
-                return Err(StorageError::StateConflict(format!(
+                return Err(StorageError::StateConflict(
                     "vouchers.enc does not match the store generation bound in \
                      profile.enc (possible rollback or torn write); refusing to \
                      load stale wallet state"
-                )));
+                        .to_string(),
+                ));
             }
 
             let store_container: VoucherStorageContainer =
                 serde_json::from_slice(&store_container_bytes)
                     .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
             let store_bytes =
-                crypto_utils::decrypt_data(&file_key, &store_container.encrypted_store_payload)
+                crypto::decrypt_data(&file_key, &store_container.encrypted_store_payload)
                     .map_err(|e| {
                         StorageError::InvalidFormat(format!("Failed to decrypt store: {}", e))
                     })?;
@@ -358,7 +353,7 @@ impl Storage for FileStorage {
         Ok((payload.profile, store, identity))
     }
 
-    fn save_wallet(
+    pub fn save_wallet(
         &mut self,
         profile: &UserProfile,
         store: &VoucherStore,
@@ -392,31 +387,33 @@ impl Storage for FileStorage {
                 // mnemonic wrap is NOT a second factor for this path (the
                 // password unwrap alone recovers the file key), so the guard
                 // belongs in core, not at the host.
-                AuthMethod::Password(p) if p.is_empty() => {
-                    return Err(StorageError::Generic(
-                        "Refusing to create a wallet under an EMPTY password \
-                         (zero-entropy key material)."
-                            .to_string(),
-                    ));
+                AuthMethod::Password(p) => {
+                    if p.is_empty() {
+                        return Err(StorageError::Generic(
+                            "Refusing to create a wallet under an EMPTY password \
+                             (zero-entropy key material)."
+                                .to_string(),
+                        ));
+                    }
+                    derive_key_from_password(p, &pw_salt)?
                 }
-                AuthMethod::Password(p) => derive_key_from_password(p, &pw_salt)?,
                 _ => {
                     return Err(StorageError::Generic(
                         "Only Password auth supported for initial save".to_string(),
                     ));
                 }
             };
-            let pw_wrapped_key = crypto_utils::encrypt_data(&password_key, &file_key)
+            let pw_wrapped_key = crypto::encrypt_data(&password_key, &file_key)
                 .map_err(|e| StorageError::Generic(e.to_string()))?;
 
             let mut mn_salt = [0u8; SALT_SIZE];
             OsRng.fill_bytes(&mut mn_salt);
             let mnemonic_key = derive_key_from_signing_key(&identity.signing_key, &mn_salt)?;
-            let mn_wrapped_key = crypto_utils::encrypt_data(&mnemonic_key, &file_key)
+            let mn_wrapped_key = crypto::encrypt_data(&mnemonic_key, &file_key)
                 .map_err(|e| StorageError::Generic(e.to_string()))?;
 
             let profile_payload =
-                crypto_utils::encrypt_data(&file_key, &serde_json::to_vec(&payload).unwrap())
+                crypto::encrypt_data(&file_key, &serde_json::to_vec(&payload).unwrap())
                     .map_err(|e| StorageError::Generic(e.to_string()))?;
 
             profile_container = ProfileStorageContainer {
@@ -442,14 +439,14 @@ impl Storage for FileStorage {
                 .map_err(|_| StorageError::InvalidFormat("Invalid file key".to_string()))?;
 
             existing_container.encrypted_profile_payload =
-                crypto_utils::encrypt_data(&file_key, &serde_json::to_vec(&payload).unwrap())
+                crypto::encrypt_data(&file_key, &serde_json::to_vec(&payload).unwrap())
                     .map_err(|e| StorageError::Generic(e.to_string()))?;
             profile_container = existing_container;
         }
 
         // Save the VoucherStore.
         let store_payload =
-            crypto_utils::encrypt_data(&file_key, &serde_json::to_vec(store).unwrap())
+            crypto::encrypt_data(&file_key, &serde_json::to_vec(store).unwrap())
                 .map_err(|e| StorageError::Generic(e.to_string()))?;
         let store_container = VoucherStorageContainer {
             encrypted_store_payload: store_payload,
@@ -483,7 +480,7 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    fn reset_password(
+    pub fn reset_password(
         &mut self,
         identity: &UserIdentity,
         new_password: &str,
@@ -510,13 +507,13 @@ impl Storage for FileStorage {
         let mnemonic_key =
             derive_key_from_signing_key(&identity.signing_key, &container.mnemonic_kdf_salt)?;
         let file_key =
-            crypto_utils::decrypt_data(&mnemonic_key, &container.mnemonic_wrapped_key_with_nonce)
+            crypto::decrypt_data(&mnemonic_key, &container.mnemonic_wrapped_key_with_nonce)
                 .map_err(|_| StorageError::AuthenticationFailed)?;
 
         let mut new_pw_salt = [0u8; SALT_SIZE];
         OsRng.fill_bytes(&mut new_pw_salt);
         let new_password_key = derive_key_from_password(new_password, &new_pw_salt)?;
-        let new_pw_wrapped_key = crypto_utils::encrypt_data(&new_password_key, &file_key)
+        let new_pw_wrapped_key = crypto::encrypt_data(&new_password_key, &file_key)
             .map_err(|e| StorageError::Generic(e.to_string()))?;
 
         container.password_kdf_salt = new_pw_salt;
@@ -531,9 +528,8 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    fn load_known_fingerprints(
+    pub fn load_known_fingerprints(
         &self,
-        _user_id: &str,
         auth: &AuthMethod,
     ) -> Result<KnownFingerprints, StorageError> {
         let fingerprint_path = self.user_storage_path.join(KNOWN_FINGERPRINTS_FILE_NAME);
@@ -549,7 +545,7 @@ impl Storage for FileStorage {
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
         let store_bytes =
-            crypto_utils::decrypt_data(&file_key, &fingerprint_container.encrypted_store_payload)
+            crypto::decrypt_data(&file_key, &fingerprint_container.encrypted_store_payload)
                 .map_err(|e| {
                 StorageError::InvalidFormat(format!("Failed to decrypt known fingerprints: {}", e))
             })?;
@@ -560,9 +556,8 @@ impl Storage for FileStorage {
         serde_json::from_slice(&store_bytes).map_err(|e| StorageError::InvalidFormat(e.to_string()))
     }
 
-    fn save_known_fingerprints(
+    pub fn save_known_fingerprints(
         &mut self,
-        _user_id: &str,
         auth: &AuthMethod,
         fingerprints: &KnownFingerprints,
     ) -> Result<(), StorageError> {
@@ -571,7 +566,7 @@ impl Storage for FileStorage {
         let file_key = self.get_master_key_from_auth(auth)?;
 
         let store_payload =
-            crypto_utils::encrypt_data(&file_key, &serde_json::to_vec(fingerprints).unwrap())
+            crypto::encrypt_data(&file_key, &serde_json::to_vec(fingerprints).unwrap())
                 .map_err(|e| StorageError::Generic(e.to_string()))?;
         let store_container = KnownFingerprintsContainer {
             encrypted_store_payload: store_payload,
@@ -589,9 +584,8 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    fn load_own_fingerprints(
+    pub fn load_own_fingerprints(
         &self,
-        _user_id: &str,
         auth: &AuthMethod,
     ) -> Result<OwnFingerprints, StorageError> {
         let fingerprint_path = self.user_storage_path.join(OWN_FINGERPRINTS_FILE_NAME);
@@ -607,7 +601,7 @@ impl Storage for FileStorage {
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
         let store_bytes =
-            crypto_utils::decrypt_data(&file_key, &fingerprint_container.encrypted_store_payload)
+            crypto::decrypt_data(&file_key, &fingerprint_container.encrypted_store_payload)
                 .map_err(|e| {
                 StorageError::InvalidFormat(format!("Failed to decrypt own fingerprints: {}", e))
             })?;
@@ -618,9 +612,8 @@ impl Storage for FileStorage {
         serde_json::from_slice(&store_bytes).map_err(|e| StorageError::InvalidFormat(e.to_string()))
     }
 
-    fn save_own_fingerprints(
+    pub fn save_own_fingerprints(
         &mut self,
-        _user_id: &str,
         auth: &AuthMethod,
         fingerprints: &OwnFingerprints,
     ) -> Result<(), StorageError> {
@@ -629,7 +622,7 @@ impl Storage for FileStorage {
         let file_key = self.get_master_key_from_auth(auth)?;
 
         let store_payload =
-            crypto_utils::encrypt_data(&file_key, &serde_json::to_vec(fingerprints).unwrap())
+            crypto::encrypt_data(&file_key, &serde_json::to_vec(fingerprints).unwrap())
                 .map_err(|e| StorageError::Generic(e.to_string()))?;
         let store_container = OwnFingerprintsContainer {
             encrypted_store_payload: store_payload,
@@ -647,9 +640,8 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    fn load_bundle_metadata(
+    pub fn load_bundle_metadata(
         &self,
-        _user_id: &str,
         auth: &AuthMethod,
     ) -> Result<BundleMetadataStore, StorageError> {
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
@@ -678,7 +670,7 @@ impl Storage for FileStorage {
             .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
         let store_bytes =
-            crypto_utils::decrypt_data(&file_key, &meta_container.encrypted_store_payload)
+            crypto::decrypt_data(&file_key, &meta_container.encrypted_store_payload)
                 .map_err(|e| {
                     StorageError::InvalidFormat(format!("Failed to decrypt bundle metadata: {}", e))
                 })?;
@@ -686,9 +678,8 @@ impl Storage for FileStorage {
         serde_json::from_slice(&store_bytes).map_err(|e| StorageError::InvalidFormat(e.to_string()))
     }
 
-    fn save_bundle_metadata(
+    pub fn save_bundle_metadata(
         &mut self,
-        _user_id: &str,
         auth: &AuthMethod,
         metadata: &BundleMetadataStore,
     ) -> Result<(), StorageError> {
@@ -711,7 +702,7 @@ impl Storage for FileStorage {
             .map_err(|_| StorageError::InvalidFormat("Invalid file key length".to_string()))?;
 
         let store_payload =
-            crypto_utils::encrypt_data(&file_key, &serde_json::to_vec(metadata).unwrap())
+            crypto::encrypt_data(&file_key, &serde_json::to_vec(metadata).unwrap())
                 .map_err(|e| StorageError::Generic(e.to_string()))?;
         let store_container = BundleMetadataContainer {
             encrypted_store_payload: store_payload,
@@ -729,7 +720,7 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    fn load_proofs(&self, _user_id: &str, auth: &AuthMethod) -> Result<ProofStore, StorageError> {
+    pub fn load_proofs(&self, auth: &AuthMethod) -> Result<ProofStore, StorageError> {
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
         let proof_path = self.user_storage_path.join(PROOF_STORE_FILE_NAME);
 
@@ -756,7 +747,7 @@ impl Storage for FileStorage {
             .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
         let store_bytes =
-            crypto_utils::decrypt_data(&file_key, &proof_container.encrypted_store_payload)
+            crypto::decrypt_data(&file_key, &proof_container.encrypted_store_payload)
                 .map_err(|e| {
                     StorageError::InvalidFormat(format!("Failed to decrypt proof store: {}", e))
                 })?;
@@ -764,9 +755,8 @@ impl Storage for FileStorage {
         serde_json::from_slice(&store_bytes).map_err(|e| StorageError::InvalidFormat(e.to_string()))
     }
 
-    fn save_proofs(
+    pub fn save_proofs(
         &mut self,
-        _user_id: &str,
         auth: &AuthMethod,
         proof_store: &ProofStore,
     ) -> Result<(), StorageError> {
@@ -796,7 +786,7 @@ impl Storage for FileStorage {
         }
 
         let store_payload =
-            crypto_utils::encrypt_data(&file_key, &serde_json::to_vec(proof_store).unwrap())
+            crypto::encrypt_data(&file_key, &serde_json::to_vec(proof_store).unwrap())
                 .map_err(|e| StorageError::Generic(e.to_string()))?;
         let store_container = ProofStorageContainer {
             encrypted_store_payload: store_payload,
@@ -814,9 +804,8 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    fn load_fingerprint_metadata(
+    pub fn load_fingerprint_metadata(
         &self,
-        _user_id: &str,
         auth: &AuthMethod,
     ) -> Result<CanonicalMetadataStore, StorageError> {
         let metadata_path = self.user_storage_path.join(FINGERPRINT_METADATA_FILE_NAME);
@@ -832,7 +821,7 @@ impl Storage for FileStorage {
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
         let store_bytes =
-            crypto_utils::decrypt_data(&file_key, &metadata_container.encrypted_store_payload)
+            crypto::decrypt_data(&file_key, &metadata_container.encrypted_store_payload)
                 .map_err(|e| {
                     StorageError::InvalidFormat(format!(
                         "Failed to decrypt fingerprint metadata: {}",
@@ -843,9 +832,8 @@ impl Storage for FileStorage {
         serde_json::from_slice(&store_bytes).map_err(|e| StorageError::InvalidFormat(e.to_string()))
     }
 
-    fn save_fingerprint_metadata(
+    pub fn save_fingerprint_metadata(
         &mut self,
-        _user_id: &str,
         auth: &AuthMethod,
         metadata: &CanonicalMetadataStore,
     ) -> Result<(), StorageError> {
@@ -862,7 +850,7 @@ impl Storage for FileStorage {
         }
 
         let store_payload =
-            crypto_utils::encrypt_data(&file_key, &serde_json::to_vec(metadata).unwrap())
+            crypto::encrypt_data(&file_key, &serde_json::to_vec(metadata).unwrap())
                 .map_err(|e| StorageError::Generic(e.to_string()))?;
         let store_container = FingerprintMetadataContainer {
             encrypted_store_payload: store_payload,
@@ -881,9 +869,8 @@ impl Storage for FileStorage {
     }
 
     /// Stores an arbitrary, named data block encrypted.
-    fn save_arbitrary_data(
+    pub fn save_arbitrary_data(
         &mut self,
-        _user_id: &str,
         auth: &AuthMethod,
         name: &str,
         data: &[u8],
@@ -907,18 +894,17 @@ impl Storage for FileStorage {
             .join(format!("generic_{}.enc.tmp", name));
 
         // 3. Encrypt the data and save it atomically (tmp file + rename).
-        let ciphertext = crypto_utils::encrypt_data(&master_key, data)
+        let ciphertext = crypto::encrypt_data(&master_key, data)
             .map_err(|e| StorageError::Generic(e.to_string()))?;
-        fs::write(&tmp_path, ciphertext).map_err(StorageError::Io)?;
-        fs::rename(&tmp_path, &path).map_err(StorageError::Io)?;
+        fs::write(&tmp_path, ciphertext).map_err(StorageError::from)?;
+        fs::rename(&tmp_path, &path).map_err(StorageError::from)?;
 
         Ok(())
     }
 
     /// Loads any named and encrypted data block.
-    fn load_arbitrary_data(
+    pub fn load_arbitrary_data(
         &self,
-        _user_id: &str,
         auth: &AuthMethod,
         name: &str,
     ) -> Result<Vec<u8>, StorageError> {
@@ -942,18 +928,18 @@ impl Storage for FileStorage {
         }
 
         // 3. Read and decrypt the data.
-        let ciphertext = fs::read(&path).map_err(StorageError::Io)?;
-        crypto_utils::decrypt_data(&master_key, &ciphertext)
+        let ciphertext = fs::read(&path).map_err(StorageError::from)?;
+        crypto::decrypt_data(&master_key, &ciphertext)
             .map_err(|_| StorageError::AuthenticationFailed)
     }
 
-    fn test_session_key(&self, session_key: &[u8; 32]) -> Result<(), StorageError> {
+    pub fn test_session_key(&self, session_key: &[u8; 32]) -> Result<(), StorageError> {
         // Load the profile container
         let profile_container = self.load_profile_container()?;
 
         // Try to decrypt the encrypted file key with the given session key
         // This will fail if the session key was not derived with the correct password
-        let _decrypted = crypto_utils::decrypt_data(
+        let _decrypted = crypto::decrypt_data(
             session_key,
             &profile_container.password_wrapped_key_with_nonce,
         )
@@ -964,7 +950,7 @@ impl Storage for FileStorage {
 
     // --- Lock Logic Implementation ---
 
-    fn lock(&self) -> Result<bool, StorageError> {
+    pub fn lock(&self) -> Result<bool, StorageError> {
         // Ensure the directory exists.
         fs::create_dir_all(&self.user_storage_path)?;
 
@@ -1014,7 +1000,7 @@ impl Storage for FileStorage {
         Ok(true)
     }
 
-    fn unlock(&self) -> Result<(), StorageError> {
+    pub fn unlock(&self) -> Result<(), StorageError> {
         if self.lock_file_path.exists() {
             // SECURITY: Never remove a lock owned by ANOTHER LIVE process.
             // `unlock` is reachable through `AppService::logout`; without this
@@ -1023,18 +1009,17 @@ impl Storage for FileStorage {
             // (dead PID) and unparseable content are still cleaned up, so
             // crash recovery keeps working.
             #[cfg(not(target_arch = "wasm32"))]
-            if let Ok(pid_str) = fs::read_to_string(&self.lock_file_path) {
-                if let Ok(pid_val) = pid_str.trim().parse::<u32>() {
-                    if pid_val != std::process::id() {
-                        let mut s = System::new();
-                        s.refresh_processes();
-                        if s.process(Pid::from_u32(pid_val)).is_some() {
-                            return Err(StorageError::LockFailed(format!(
-                                "Refusing to release wallet lock held by another live process (PID: {}).",
-                                pid_val
-                            )));
-                        }
-                    }
+            if let Ok(pid_str) = fs::read_to_string(&self.lock_file_path)
+                && let Ok(pid_val) = pid_str.trim().parse::<u32>()
+                && pid_val != std::process::id()
+            {
+                let mut s = System::new();
+                s.refresh_processes();
+                if s.process(Pid::from_u32(pid_val)).is_some() {
+                    return Err(StorageError::LockFailed(format!(
+                        "Refusing to release wallet lock held by another live process (PID: {}).",
+                        pid_val
+                    )));
                 }
             }
             fs::remove_file(&self.lock_file_path)?;
@@ -1043,11 +1028,11 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    fn get_lock_file_path(&self) -> &std::path::PathBuf {
+    pub fn get_lock_file_path(&self) -> &std::path::PathBuf {
         &self.lock_file_path
     }
 
-    fn read_generation(&self) -> Result<u64, StorageError> {
+    pub fn read_generation(&self) -> Result<u64, StorageError> {
         let path = self.user_storage_path.join(".wallet.generation");
         if !path.exists() {
             return Ok(0);
@@ -1059,7 +1044,7 @@ impl Storage for FileStorage {
         Ok(gen_count)
     }
 
-    fn write_generation(&mut self, expected: u64, new: u64) -> Result<(), StorageError> {
+    pub fn write_generation(&mut self, expected: u64, new: u64) -> Result<(), StorageError> {
         fs::create_dir_all(&self.user_storage_path)?;
         let path = self.user_storage_path.join(".wallet.generation");
         let current = self.read_generation()?;
@@ -1076,9 +1061,8 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    fn save_seal(
+    pub fn save_seal(
         &mut self,
-        _user_id: &str,
         auth: &AuthMethod,
         record: &crate::models::seal::LocalSealRecord,
     ) -> Result<(), StorageError> {
@@ -1086,7 +1070,7 @@ impl Storage for FileStorage {
         let file_key = self.get_master_key_from_auth(auth)?;
 
         let store_payload =
-            crypto_utils::encrypt_data(&file_key, &serde_json::to_vec(record).unwrap())
+            crypto::encrypt_data(&file_key, &serde_json::to_vec(record).unwrap())
                 .map_err(|e| StorageError::Generic(e.to_string()))?;
         let store_container = SealStorageContainer {
             encrypted_store_payload: store_payload,
@@ -1104,9 +1088,8 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    fn load_seal(
+    pub fn load_seal(
         &self,
-        _user_id: &str,
         auth: &AuthMethod,
     ) -> Result<Option<crate::models::seal::LocalSealRecord>, StorageError> {
         let seal_path = self.user_storage_path.join(SEAL_FILE_NAME);
@@ -1122,7 +1105,7 @@ impl Storage for FileStorage {
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
         let store_bytes =
-            crypto_utils::decrypt_data(&file_key, &seal_container.encrypted_store_payload)
+            crypto::decrypt_data(&file_key, &seal_container.encrypted_store_payload)
                 .map_err(|e| {
                     StorageError::InvalidFormat(format!("Failed to decrypt seal: {}", e))
                 })?;
@@ -1133,7 +1116,7 @@ impl Storage for FileStorage {
         Ok(Some(record))
     }
 
-    fn get_item_hash(&self, name: &str) -> Result<String, StorageError> {
+    pub fn get_item_hash(&self, name: &str) -> Result<String, StorageError> {
         // Boundary discipline (HMSEC-SA05-11): reject hostile names before any
         // path construction. Unlike `save_arbitrary_data` (flat files), this
         // method legitimately accepts wallet-relative sub-path names
@@ -1147,12 +1130,11 @@ impl Storage for FileStorage {
             return Err(StorageError::NotFound);
         }
         let bytes = fs::read(path)?;
-        Ok(crypto_utils::get_hash(&bytes))
+        Ok(crypto::get_hash(&bytes))
     }
 
-    fn save_integrity(
+    pub fn save_integrity(
         &mut self,
-        _user_id: &str,
         record: &crate::models::storage_integrity::LocalIntegrityRecord,
     ) -> Result<(), StorageError> {
         let path = self.user_storage_path.join(INTEGRITY_FILE_NAME);
@@ -1169,9 +1151,8 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    fn load_integrity(
+    pub fn load_integrity(
         &self,
-        _user_id: &str,
     ) -> Result<Option<crate::models::storage_integrity::LocalIntegrityRecord>, StorageError> {
         let path = self.user_storage_path.join(INTEGRITY_FILE_NAME);
         if !path.exists() {
@@ -1185,18 +1166,18 @@ impl Storage for FileStorage {
         Ok(Some(record))
     }
 
-    fn get_all_item_hashes(&self) -> Result<std::collections::HashMap<String, String>, StorageError> {
+    pub fn get_all_item_hashes(&self) -> Result<std::collections::HashMap<String, String>, StorageError> {
         let mut hashes = std::collections::HashMap::new();
         
-        let entries = fs::read_dir(&self.user_storage_path).map_err(StorageError::Io)?;
+        let entries = fs::read_dir(&self.user_storage_path).map_err(StorageError::from)?;
         // Scan main directory
         for entry in entries {
-            let entry = entry.map_err(StorageError::Io)?;
+            let entry = entry.map_err(StorageError::from)?;
             let file_name = entry.file_name();
             let name_str = file_name.to_string_lossy();
 
             // Ignore directories
-            if entry.file_type().map_err(StorageError::Io)?.is_dir() {
+            if entry.file_type().map_err(StorageError::from)?.is_dir() {
                 continue;
             }
 
@@ -1228,10 +1209,10 @@ impl Storage for FileStorage {
         // Scan events subdirectory
         let events_dir = self.user_storage_path.join(EVENTS_DIR_NAME);
         if events_dir.exists() && events_dir.is_dir() {
-            let event_entries = fs::read_dir(&events_dir).map_err(StorageError::Io)?;
+            let event_entries = fs::read_dir(&events_dir).map_err(StorageError::from)?;
             for entry in event_entries {
-                let entry = entry.map_err(StorageError::Io)?;
-                if entry.file_type().map_err(StorageError::Io)?.is_file() {
+                let entry = entry.map_err(StorageError::from)?;
+                if entry.file_type().map_err(StorageError::from)?.is_file() {
                     let file_name = entry.file_name();
                     let name_str = file_name.to_string_lossy();
                     if name_str.ends_with(".json.enc") {
@@ -1247,9 +1228,8 @@ impl Storage for FileStorage {
         Ok(hashes)
     }
 
-    fn append_events(
+    pub fn append_events(
         &mut self,
-        _user_id: &str,
         auth: &AuthMethod,
         events: &[crate::models::wallet_event::WalletEvent],
     ) -> Result<(), StorageError> {
@@ -1265,7 +1245,7 @@ impl Storage for FileStorage {
             let container_bytes = fs::read(&legacy_path)?;
             let container: EventsStorageContainer = serde_json::from_slice(&container_bytes)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-            let decrypted = crypto_utils::decrypt_data(&file_key, &container.encrypted_store_payload)
+            let decrypted = crypto::decrypt_data(&file_key, &container.encrypted_store_payload)
                 .map_err(|e| {
                     StorageError::InvalidFormat(format!("Failed to decrypt legacy events: {}", e))
                 })?;
@@ -1289,7 +1269,7 @@ impl Storage for FileStorage {
                     let c_bytes = fs::read(&chunk_path)?;
                     let c_container: EventsStorageContainer = serde_json::from_slice(&c_bytes)
                         .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-                    let c_decrypted = crypto_utils::decrypt_data(&file_key, &c_container.encrypted_store_payload)
+                    let c_decrypted = crypto::decrypt_data(&file_key, &c_container.encrypted_store_payload)
                         .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
                     serde_json::from_slice(&c_decrypted)
                         .map_err(|e| StorageError::InvalidFormat(e.to_string()))?
@@ -1308,7 +1288,7 @@ impl Storage for FileStorage {
                 
                 let e_bytes = serde_json::to_vec(&merged)
                     .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-                let e_payload = crypto_utils::encrypt_data(&file_key, &e_bytes)
+                let e_payload = crypto::encrypt_data(&file_key, &e_bytes)
                     .map_err(|e| StorageError::Generic(e.to_string()))?;
                 let e_container = EventsStorageContainer { encrypted_store_payload: e_payload };
                 let e_container_bytes = serde_json::to_vec(&e_container)
@@ -1339,7 +1319,7 @@ impl Storage for FileStorage {
                 let c_bytes = fs::read(&chunk_path)?;
                 let c_container: EventsStorageContainer = serde_json::from_slice(&c_bytes)
                     .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-                let c_decrypted = crypto_utils::decrypt_data(&file_key, &c_container.encrypted_store_payload)
+                let c_decrypted = crypto::decrypt_data(&file_key, &c_container.encrypted_store_payload)
                     .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
                 serde_json::from_slice(&c_decrypted)
                     .map_err(|e| StorageError::InvalidFormat(e.to_string()))?
@@ -1356,7 +1336,7 @@ impl Storage for FileStorage {
 
             let e_bytes = serde_json::to_vec(&all_m_events)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-            let e_payload = crypto_utils::encrypt_data(&file_key, &e_bytes)
+            let e_payload = crypto::encrypt_data(&file_key, &e_bytes)
                 .map_err(|e| StorageError::Generic(e.to_string()))?;
             let e_container = EventsStorageContainer { encrypted_store_payload: e_payload };
             let e_container_bytes = serde_json::to_vec(&e_container)
@@ -1370,9 +1350,8 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    fn load_events(
+    pub fn load_events(
         &self,
-        _user_id: &str,
         auth: &AuthMethod,
         offset: usize,
         limit: usize,
@@ -1386,9 +1365,9 @@ impl Storage for FileStorage {
         let events_dir = self.user_storage_path.join(EVENTS_DIR_NAME);
         let mut chunks = Vec::new();
         if events_dir.exists() && events_dir.is_dir() {
-            let entries = fs::read_dir(&events_dir).map_err(StorageError::Io)?;
+            let entries = fs::read_dir(&events_dir).map_err(StorageError::from)?;
             for entry in entries {
-                let entry = entry.map_err(StorageError::Io)?;
+                let entry = entry.map_err(StorageError::from)?;
                 let name = entry.file_name().to_string_lossy().into_owned();
                 if name.ends_with(".json.enc") && !name.ends_with(".tmp") {
                     chunks.push(name);
@@ -1407,7 +1386,7 @@ impl Storage for FileStorage {
             let c_bytes = fs::read(&chunk_path)?;
             let c_container: EventsStorageContainer = serde_json::from_slice(&c_bytes)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-            let c_decrypted = crypto_utils::decrypt_data(&file_key, &c_container.encrypted_store_payload)
+            let c_decrypted = crypto::decrypt_data(&file_key, &c_container.encrypted_store_payload)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
             let mut m_events: Vec<crate::models::wallet_event::WalletEvent> = serde_json::from_slice(&c_decrypted)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
@@ -1437,7 +1416,7 @@ impl Storage for FileStorage {
                 let l_bytes = fs::read(&legacy_path)?;
                 let l_container: EventsStorageContainer = serde_json::from_slice(&l_bytes)
                     .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-                let l_decrypted = crypto_utils::decrypt_data(&file_key, &l_container.encrypted_store_payload)
+                let l_decrypted = crypto::decrypt_data(&file_key, &l_container.encrypted_store_payload)
                     .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
                 let mut l_events: Vec<crate::models::wallet_event::WalletEvent> = serde_json::from_slice(&l_decrypted)
                     .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
@@ -1515,10 +1494,10 @@ fn contains_legacy_trap_data(value: &serde_json::Value) -> bool {
     const LEGACY_TRAP_KEYS: [&str; 3] = ["u", "blinded_id", "proof"];
     match value {
         serde_json::Value::Object(map) => {
-            if let Some(trap) = map.get("trap_data").and_then(|v| v.as_object()) {
-                if LEGACY_TRAP_KEYS.iter().any(|k| trap.contains_key(*k)) {
-                    return true;
-                }
+            if let Some(trap) = map.get("trap_data").and_then(|v| v.as_object())
+                && LEGACY_TRAP_KEYS.iter().any(|k| trap.contains_key(*k))
+            {
+                return true;
             }
             map.values().any(contains_legacy_trap_data)
         }
@@ -1586,7 +1565,7 @@ fn gate_legacy_fingerprint_schema(store_bytes: &[u8]) -> Result<(), StorageError
 /// fixed 32-byte key length rules out concatenation ambiguity (SHA3 is not
 /// susceptible to length-extension anyway).
 fn derive_store_binding_hash(file_key: &[u8; KEY_SIZE], store_container_bytes: &[u8]) -> String {
-    crypto_utils::get_hash_from_slices(&[file_key.as_slice(), store_container_bytes])
+    crypto::get_hash_from_slices(&[file_key.as_slice(), store_container_bytes])
 }
 
 /// Decrypts the master file key (`file_key`) based on the authentication method.
@@ -1597,27 +1576,27 @@ fn get_file_key(
     match auth {
         AuthMethod::Password(password) => {
             let password_key = derive_key_from_password(password, &container.password_kdf_salt)?;
-            crypto_utils::decrypt_data(&password_key, &container.password_wrapped_key_with_nonce)
+            crypto::decrypt_data(&password_key, &container.password_wrapped_key_with_nonce)
                 .map_err(|_| StorageError::AuthenticationFailed)
         }
         AuthMethod::SessionKey(session_key) => {
-            crypto_utils::decrypt_data(session_key, &container.password_wrapped_key_with_nonce)
+            crypto::decrypt_data(session_key, &container.password_wrapped_key_with_nonce)
                 .map_err(|_| StorageError::AuthenticationFailed)
         }
         AuthMethod::Mnemonic(mnemonic, passphrase, language) => {
-            let (_, signing_key) = crypto_utils::derive_ed25519_keypair(mnemonic, *passphrase, *language)
+            let (_, signing_key) = crypto::derive_ed25519_keypair(mnemonic, *passphrase, *language)
                 .map_err(|e| {
                     StorageError::Generic(format!("Key derivation from mnemonic failed: {}", e))
                 })?;
             let mnemonic_key =
                 derive_key_from_signing_key(&signing_key, &container.mnemonic_kdf_salt)?;
-            crypto_utils::decrypt_data(&mnemonic_key, &container.mnemonic_wrapped_key_with_nonce)
+            crypto::decrypt_data(&mnemonic_key, &container.mnemonic_wrapped_key_with_nonce)
                 .map_err(|_| StorageError::AuthenticationFailed)
         }
         AuthMethod::RecoveryIdentity(identity) => {
             let mnemonic_key =
                 derive_key_from_signing_key(&identity.signing_key, &container.mnemonic_kdf_salt)?;
-            crypto_utils::decrypt_data(&mnemonic_key, &container.mnemonic_wrapped_key_with_nonce)
+            crypto::decrypt_data(&mnemonic_key, &container.mnemonic_wrapped_key_with_nonce)
                 .map_err(|_| StorageError::AuthenticationFailed)
         }
     }

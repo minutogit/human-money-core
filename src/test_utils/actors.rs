@@ -1,5 +1,5 @@
 use crate::services::mnemonic::MnemonicLanguage;
-use crate::services::crypto_utils::{self, create_user_id};
+use crate::services::crypto::{self, create_user_id};
 use crate::UserIdentity;
 use std::ops::Deref;
 
@@ -28,7 +28,7 @@ pub fn user_from_mnemonic_slow(
     passphrase: Option<&'static str>,
     prefix: Option<&'static str>,
 ) -> TestUser {
-    let (public_key, signing_key) = crypto_utils::derive_ed25519_keypair(mnemonic, passphrase, MnemonicLanguage::English)
+    let (public_key, signing_key) = crypto::derive_ed25519_keypair(mnemonic, passphrase, MnemonicLanguage::English)
         .expect("Failed to derive keypair from test mnemonic");
 
     let user_id = create_user_id(&public_key, prefix).unwrap();
@@ -51,7 +51,7 @@ pub fn user_from_mnemonic_slow(
 /// Keeps most tests performant. Ignores passphrases.
 pub fn user_from_mnemonic_fast(mnemonic: &str, prefix: Option<&'static str>) -> TestUser {
     let (public_key, signing_key) =
-        crypto_utils::generate_ed25519_keypair_for_tests(Some(mnemonic));
+        crypto::generate_ed25519_keypair_for_tests(Some(mnemonic));
 
     let user_id = create_user_id(&public_key, prefix).unwrap();
 
@@ -137,6 +137,6 @@ pub fn init_actors() -> TestActors {
 
 #[allow(dead_code)]
 pub fn generate_valid_mnemonic() -> String {
-    crypto_utils::generate_mnemonic(12, MnemonicLanguage::English)
+    crypto::generate_mnemonic(12, MnemonicLanguage::English)
         .expect("Test mnemonic generation should not fail")
 }

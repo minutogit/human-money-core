@@ -11,15 +11,11 @@ use crate::error::VoucherCoreError;
 use crate::models::conflict::TransactionFingerprint;
 use crate::models::profile::{TransactionBundle, UserIdentity};
 use crate::models::secure_container::{
-    EncryptionType, PayloadType, PrivacyMode, SecureContainer,
+    ContainerConfig, EncryptionType, PayloadType, PrivacyMode, SecureContainer,
 };
 use crate::models::voucher::Voucher;
-use crate::services::crypto_identity::get_pubkey_from_user_id;
-use crate::services::crypto_utils::{
-    decode_base64, get_hash, sign_ed25519, verify_ed25519,
-};
-use crate::services::secure_container_manager::{
-    create_secure_container, open_secure_container, ContainerManagerError,
+use crate::services::crypto::{
+    decode_base64, get_hash, get_pubkey_from_user_id, sign_ed25519, verify_ed25519,
 };
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
 use std::collections::HashMap;
@@ -59,9 +55,9 @@ pub fn create_and_encrypt_bundle(
     bundle.sender_signature = bs58::encode(signature.to_bytes()).into_string();
     let signed_bundle_bytes = serde_json::to_vec(&bundle)?;
 
-    let mut secure_container = create_secure_container(
+    let mut secure_container = SecureContainer::seal(
         identity,
-        crate::models::secure_container::ContainerConfig::TargetDid(recipient_id.to_string(), PrivacyMode::TrialDecryption),
+        &ContainerConfig::TargetDid(recipient_id.to_string(), PrivacyMode::TrialDecryption),
         &signed_bundle_bytes,
         PayloadType::TransactionBundle, // content type
     )?;
@@ -128,7 +124,7 @@ pub fn open_and_verify_bundle(
     // without this gate a hand-crafted `EncryptionType::None` container is
     // processed end-to-end by the wallet (CWE-311).
     if container.et == EncryptionType::None {
-        return Err(ContainerManagerError::PlaintextNotAllowedForFinancialPayload.into());
+        return Err(VoucherCoreError::PlaintextNotAllowedForFinancialPayload);
     }
 
     // HMC-SEC-06-01: Recompute the container integrity ID from the received
@@ -136,15 +132,9 @@ pub fn open_and_verify_bundle(
     // Both `i` and `signature` are excluded exactly as during creation.
     // Without this rebinding, any observer of a legitimate
     // `(i, signature)` pair can graft it onto different container content.
-    let mut container_for_hash = container.clone();
-    container_for_hash.i = String::new();
-    container_for_hash.signature = String::new();
-    let expected_i = get_hash(to_canonical_json(&container_for_hash)?);
-    if container.i != expected_i {
-        return Err(ValidationError::InvalidContainerSignature.into());
-    }
+    container.verify_integrity()?;
 
-    let decrypted_bundle_bytes = open_secure_container(&container, identity, None)?;
+    let decrypted_bundle_bytes = container.open(identity, None)?;
     let bundle: TransactionBundle = serde_json::from_slice(&decrypted_bundle_bytes)?;
 
     // HMC-SEC-06-01 (bundle level): Recompute `bundle_id` from the received
@@ -214,23 +204,23 @@ fn verify_bundle_signature(bundle: &TransactionBundle) -> Result<(), VoucherCore
 mod tests {
     use super::*;
     use crate::models::secure_container::ContainerConfig;
-    use crate::services::crypto_utils::generate_ed25519_keypair_for_tests;
+    use crate::services::crypto::{create_user_id, encode_base64, generate_ed25519_keypair_for_tests};
 
     #[test]
     fn test_verify_container_signature_invalid() {
         let (pub_key1, sign_key1) = generate_ed25519_keypair_for_tests(None);
         let id1 = crate::models::profile::UserIdentity {
-            user_id: crate::services::crypto_utils::create_user_id(&pub_key1, Some("test")).unwrap(),
+            user_id: create_user_id(&pub_key1, Some("test")).unwrap(),
             signing_key: sign_key1,
             public_key: pub_key1,
         };
 
         let (pub_key2, _sign_key2) = generate_ed25519_keypair_for_tests(None);
-        let id2_str = crate::services::crypto_utils::create_user_id(&pub_key2, Some("test2")).unwrap();
+        let id2_str = create_user_id(&pub_key2, Some("test2")).unwrap();
 
-        let mut container = create_secure_container(
+        let mut container = SecureContainer::seal(
             &id1,
-            ContainerConfig::TargetDid(id2_str, PrivacyMode::TrialDecryption),
+            &ContainerConfig::TargetDid(id2_str, PrivacyMode::TrialDecryption),
             b"test_payload",
             PayloadType::TransactionBundle,
         )
@@ -239,7 +229,7 @@ mod tests {
         // Mutate signature
         let mut sig_bytes = decode_base64(&container.signature).unwrap();
         sig_bytes[0] ^= 0xFF; // Flip bits
-        container.signature = crate::services::crypto_utils::encode_base64(&sig_bytes);
+        container.signature = encode_base64(&sig_bytes);
 
         let result = verify_container_signature(&mut container, &id1.user_id);
         assert!(result.is_err());
@@ -252,7 +242,7 @@ mod tests {
     #[test]
     fn test_verify_bundle_signature_invalid() {
         let (pub_key, sign_key) = generate_ed25519_keypair_for_tests(None);
-        let user_id = crate::services::crypto_utils::create_user_id(&pub_key, Some("test")).unwrap();
+        let user_id = create_user_id(&pub_key, Some("test")).unwrap();
 
         let mut bundle = TransactionBundle {
             bundle_id: "test".to_string(),

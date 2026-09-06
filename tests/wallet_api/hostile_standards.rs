@@ -6,7 +6,7 @@
 
 use human_money_core::{
     models::{profile::PublicProfile, voucher::ValueDefinition},
-    services::voucher_manager::NewVoucherData,
+    NewVoucherData,
     test_utils::{self, ACTORS, FREETALER_STANDARD, create_custom_standard},
 };
 use tempfile::tempdir;
@@ -17,11 +17,10 @@ use tempfile::tempdir;
 fn test_disallowed_transaction_type() {
     // 1. ARRANGE: Create standard that prohibits "split"
     let (hostile_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
-        if true {
-            if true {
+        if true
+            && true {
                 s.immutable.features.allow_partial_transfers = false;
             }
-        }
     });
     let hostile_standard_toml = toml::to_string(&hostile_standard).unwrap();
 
@@ -29,7 +28,7 @@ fn test_disallowed_transaction_type() {
     let password = "password";
     let (mut service, _) =
         test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Test User", password);
-    let user_id = service.get_user_id().unwrap();
+    let user_id = service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     let voucher = service
         .create_new_voucher(
@@ -48,7 +47,9 @@ fn test_disallowed_transaction_type() {
             Some(password),
         )
         .unwrap();
-    let local_id = service.get_voucher_summaries(None, None, None).unwrap()[0]
+    let local_id = service
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap()[0]
         .local_instance_id
         .clone();
     assert_eq!(
@@ -92,11 +93,10 @@ fn test_disallowed_transaction_type() {
 fn test_violation_of_max_creation_validity() {
     // 1. ARRANGE: Create standard with maximum validity of 1 year
     let (hostile_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
-        if true {
-            if true {
+        if true
+            && true {
                 s.immutable.issuance.validity_duration_range = vec!["P0M".to_string(), "P1Y".to_string()];
             }
-        }
     });
     let hostile_standard_toml = toml::to_string(&hostile_standard).unwrap();
 
@@ -104,7 +104,7 @@ fn test_violation_of_max_creation_validity() {
     let password = "password";
     let (mut service, _) =
         test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Test User", password);
-    let user_id = service.get_user_id().unwrap();
+    let user_id = service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     // 2. ACT: Attempt to create a voucher with validity of 2 years
     let result = service.create_new_voucher(
