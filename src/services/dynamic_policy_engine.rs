@@ -37,12 +37,43 @@ const MAX_RULE_NESTING_DEPTH: usize = 8;
 /// Maximum recursion depth of the project-owned strict AST pre-check.
 const MAX_AST_RECURSION_DEPTH: usize = 512;
 
-/// Maximum total comprehension iterations per rule evaluation. The engine
-/// clones the entire environment per iteration (`loop_env = env.clone()`),
-/// making cost O(n²) in the iterated array size. Real-world standards
-/// comprehend over tiny lists (signature roles); 1_000 is far above any
-/// legitimate use while capping quadratic blowup.
+/// Maximum total comprehension iterations per rule evaluation.
+/// Real-world standards comprehend over tiny lists (signature roles);
+/// 1_000 is far above any legitimate use while capping quadratic blowup.
 const MAX_COMPREHENSION_ITERATIONS: usize = 1_000;
+
+/// Lightweight, zero-heap lexical environment for AST pre-checks.
+/// Eliminates HashMap allocations and cloning of voucher/transaction trees.
+enum AstEnv<'a> {
+    Root {
+        voucher: &'a JsonValue,
+        transaction: Option<&'a JsonValue>,
+    },
+    Scope {
+        parent: &'a AstEnv<'a>,
+        var_name: &'a str,
+        var_value: &'a JsonValue,
+    },
+}
+
+impl<'a> AstEnv<'a> {
+    fn get(&self, name: &str) -> Option<&'a JsonValue> {
+        match self {
+            AstEnv::Root { voucher, transaction } => match name {
+                "Voucher" => Some(voucher),
+                "Transaction" => *transaction,
+                _ => None,
+            },
+            AstEnv::Scope { parent, var_name, var_value } => {
+                if *var_name == name {
+                    Some(var_value)
+                } else {
+                    parent.get(name)
+                }
+            }
+        }
+    }
+}
 
 /// The policy engine evaluates CEL rules against a given state
 pub struct DynamicPolicyEngine;
@@ -67,11 +98,10 @@ impl DynamicPolicyEngine {
             .parse(expression)
             .map_err(|e| PolicyEngineError::CompilationError(format!("{:?}", e)))?;
 
-        let mut env: HashMap<String, JsonValue> = HashMap::new();
-        env.insert("Voucher".to_string(), voucher_state.clone());
-        if let Some(t_state) = transaction_state {
-            env.insert("Transaction".to_string(), t_state.clone());
-        }
+        let env = AstEnv::Root {
+            voucher: voucher_state,
+            transaction: transaction_state,
+        };
 
         // Run AST strict pre-check (validates missing keys, OOB indices,
         // short-circuit paths) under a hard comprehension-iteration budget.
@@ -104,24 +134,25 @@ impl DynamicPolicyEngine {
     }
 
     /// AUDIT-M03-005: cheap static budget scan over the raw expression string,
-    /// executed BEFORE `Program::compile`. Bounds expression length and
-    /// structural bracket nesting so that neither the third-party parser nor
-    /// the interpreter can recurse into an uncatchable stack overflow.
+    /// executed in a single pass BEFORE `Program::compile`. Bounds expression
+    /// length and structural bracket nesting so that neither the third-party
+    /// parser nor the interpreter can recurse into an uncatchable stack overflow.
     /// String literals are skipped (quote-aware, with escape handling) to
-    /// avoid false rejections; worst-case over-counting still only fails
-    /// closed.
+    /// avoid false rejections; worst-case over-counting still only fails closed.
     fn check_expression_budget(expression: &str) -> Result<(), PolicyEngineError> {
-        if expression.chars().count() > MAX_RULE_EXPRESSION_CHARS {
-            return Err(PolicyEngineError::CompilationError(format!(
-                "Rule expression exceeds maximum length of {MAX_RULE_EXPRESSION_CHARS} characters"
-            )));
-        }
-
+        let mut char_count = 0;
         let mut depth: usize = 0;
         let mut open_quote: Option<char> = None;
         let mut escaped = false;
 
         for ch in expression.chars() {
+            char_count += 1;
+            if char_count > MAX_RULE_EXPRESSION_CHARS {
+                return Err(PolicyEngineError::CompilationError(format!(
+                    "Rule expression exceeds maximum length of {MAX_RULE_EXPRESSION_CHARS} characters"
+                )));
+            }
+
             if let Some(q) = open_quote {
                 if escaped {
                     escaped = false;
@@ -132,6 +163,7 @@ impl DynamicPolicyEngine {
                 }
                 continue;
             }
+
             match ch {
                 '\'' | '"' => open_quote = Some(ch),
                 '(' | '[' | '{' => {
@@ -152,13 +184,16 @@ impl DynamicPolicyEngine {
     }
 
     /// Evaluates the parsed AST strictly against JSON environment to enforce fail-closed semantics
-    /// for missing keys and out-of-bounds indices.
+    /// for missing keys, out-of-bounds indices, unsupported operations, and resource budgets.
     fn eval_and_check_ast(
         ided_expr: &cel_parser::ast::IdedExpr,
-        env: &HashMap<String, JsonValue>,
+        env: &AstEnv,
         depth: usize,
         iter_budget: &mut usize,
     ) -> Result<JsonValue, PolicyEngineError> {
+        use cel_parser::ast::{EntryExpr, Expr};
+        use cel_parser::reference::Val;
+
         // AUDIT-M03-005 defense-in-depth: bound our own recursion regardless of
         // what the parser accepted.
         if depth > MAX_AST_RECURSION_DEPTH {
@@ -166,8 +201,6 @@ impl DynamicPolicyEngine {
                 "AST recursion depth exceeds evaluation budget ({MAX_AST_RECURSION_DEPTH})"
             )));
         }
-        use cel_parser::ast::{EntryExpr, Expr};
-        use cel_parser::reference::Val;
 
         match &ided_expr.expr {
             Expr::Unspecified => Ok(JsonValue::Null),
@@ -194,8 +227,7 @@ impl DynamicPolicyEngine {
                     Ok(val.clone())
                 } else {
                     Err(PolicyEngineError::EvaluationError(format!(
-                        "NoSuchKey(\"{}\")",
-                        name
+                        "NoSuchKey(\"{name}\")"
                     )))
                 }
             }
@@ -229,7 +261,6 @@ impl DynamicPolicyEngine {
             Expr::Call(call) => {
                 let func_name = call.func_name.as_str();
 
-                // Bracket indexing: _[_]
                 if func_name == "_[_]" {
                     if call.args.len() != 2 {
                         return Err(PolicyEngineError::CompilationError(
@@ -246,8 +277,7 @@ impl DynamicPolicyEngine {
                                     Ok(v.clone())
                                 } else {
                                     Err(PolicyEngineError::EvaluationError(format!(
-                                        "NoSuchKey(\"{}\")",
-                                        k
+                                        "NoSuchKey(\"{k}\")"
                                     )))
                                 }
                             }
@@ -256,86 +286,28 @@ impl DynamicPolicyEngine {
                             )),
                         },
                         JsonValue::Array(arr) => {
-                            let idx = match idx_val {
-                                JsonValue::Number(n) => {
-                                    if let Some(i) = n.as_i64() {
-                                        if i < 0 {
-                                            return Err(PolicyEngineError::EvaluationError(format!(
-                                                "IndexOutOfBounds({})",
-                                                i
-                                            )));
-                                        }
-                                        i as usize
-                                    } else if let Some(u) = n.as_u64() {
-                                        u as usize
-                                    } else {
-                                        return Err(PolicyEngineError::CompilationError(
-                                            "Array index must be an integer".into(),
-                                        ));
-                                    }
-                                }
-                                _ => {
-                                    return Err(PolicyEngineError::CompilationError(
-                                        "Array index must be an integer".into(),
-                                    ))
-                                }
-                            };
-
+                            let idx = Self::parse_container_index(&idx_val, "Array")?;
                             if idx < arr.len() {
                                 Ok(arr[idx].clone())
                             } else {
                                 Err(PolicyEngineError::EvaluationError(format!(
-                                    "IndexOutOfBounds({})",
-                                    idx
+                                    "IndexOutOfBounds({idx})"
                                 )))
                             }
                         }
                         JsonValue::String(s) => {
-                            let idx = match idx_val {
-                                JsonValue::Number(n) => {
-                                    if let Some(i) = n.as_i64() {
-                                        if i < 0 {
-                                            return Err(PolicyEngineError::EvaluationError(format!(
-                                                "IndexOutOfBounds({})",
-                                                i
-                                            )));
-                                        }
-                                        i as usize
-                                    } else if let Some(u) = n.as_u64() {
-                                        u as usize
-                                    } else {
-                                        return Err(PolicyEngineError::CompilationError(
-                                            "String index must be an integer".into(),
-                                        ));
-                                    }
-                                }
-                                _ => {
-                                    return Err(PolicyEngineError::CompilationError(
-                                        "String index must be an integer".into(),
-                                    ))
-                                }
-                            };
+                            let idx = Self::parse_container_index(&idx_val, "String")?;
 
                             // SECURITY (AUDIT-W4-CEL-103): exact fail-closed
-                            // contract for string indexing. The third-party
-                            // interpreter slices BYTES (`str::get(idx..idx+1)`)
-                            // and coalesces out-of-range AND misaligned
-                            // (non-char-boundary) AND multibyte accesses to
-                            // `Null` — which makes negated positional rules
-                            // vacuously true. The previous pre-check modeled
-                            // CHAR indices and fabricated '\0' via
-                            // `unwrap_or('\0')`, so the verdict depended on
-                            // which evaluator won. Indexing is now defined
-                            // ONLY for in-range ASCII positions; anything else
-                            // fails closed.
+                            // contract for string indexing. Indexing is defined
+                            // ONLY for in-range ASCII positions; anything else fails closed.
                             if idx >= s.len()
                                 || !s.is_char_boundary(idx)
                                 || !s.as_bytes()[idx].is_ascii()
                             {
                                 return Err(PolicyEngineError::EvaluationError(format!(
-                                    "StringIndexUndefined({}): string indexing is only \
-                                     defined for in-range single-byte character positions",
-                                    idx
+                                    "StringIndexUndefined({idx}): string indexing is only \
+                                     defined for in-range single-byte character positions"
                                 )));
                             }
                             Ok(JsonValue::String(
@@ -436,16 +408,6 @@ impl DynamicPolicyEngine {
                     func_name,
                     "_<_" | "_<=_" | "_>_" | "_>=_"
                 ) {
-                    // AUDIT-M03-003 fail-closed guard: cel-interpreter compares two
-                    // strings LEXICOGRAPHICALLY ("15" < "9" -> true), which lets
-                    // magnitude limits over string-typed decimal amounts pass for
-                    // violating values. Ordering is only delegated to the
-                    // interpreter when BOTH operands are JSON numbers; every other
-                    // combination (notably decimal strings) is rejected here.
-                    // This intentionally leaves amount serialization (String)
-                    // untouched; authors must use domain-aware helpers such as
-                    // `check_decimals` or exact membership (`in [...]`) instead of
-                    // raw ordering over string amounts.
                     if call.args.len() != 2 {
                         return Err(PolicyEngineError::CompilationError(
                             "Invalid ordering operator args length".into(),
@@ -489,12 +451,13 @@ impl DynamicPolicyEngine {
                             "size requires an argument".into(),
                         ));
                     };
-                    match target {
-                        JsonValue::Array(arr) => Ok(JsonValue::Number((arr.len() as i64).into())),
-                        JsonValue::String(s) => Ok(JsonValue::Number((s.len() as i64).into())),
-                        JsonValue::Object(map) => Ok(JsonValue::Number((map.len() as i64).into())),
-                        _ => Ok(JsonValue::Number(0.into())),
-                    }
+                    let len = match target {
+                        JsonValue::Array(arr) => arr.len() as i64,
+                        JsonValue::String(s) => s.len() as i64,
+                        JsonValue::Object(map) => map.len() as i64,
+                        _ => 0,
+                    };
+                    Ok(JsonValue::Number(len.into()))
                 } else if func_name == "check_decimals" {
                     if call.args.len() != 2 {
                         return Err(PolicyEngineError::CompilationError(
@@ -505,10 +468,7 @@ impl DynamicPolicyEngine {
                     let places = Self::eval_and_check_ast(&call.args[1], env, depth + 1, iter_budget)?;
                     if let (JsonValue::String(s), JsonValue::Number(n)) = (amt, places)
                         && let Some(p) = n.as_i64() {
-                            if !(0..=18).contains(&p) {
-                                return Ok(JsonValue::Bool(false));
-                            }
-                            if let Ok(dec) = Decimal::from_str(&s) {
+                            if (0..=18).contains(&p) && let Ok(dec) = Decimal::from_str(&s) {
                                 return Ok(JsonValue::Bool(dec.scale() <= p as u32));
                             }
                         }
@@ -524,14 +484,14 @@ impl DynamicPolicyEngine {
                 }
             }
             Expr::List(list) => {
-                let mut elements = Vec::new();
+                let mut elements = Vec::with_capacity(list.elements.len());
                 for elem in &list.elements {
                     elements.push(Self::eval_and_check_ast(elem, env, depth + 1, iter_budget)?);
                 }
                 Ok(JsonValue::Array(elements))
             }
             Expr::Map(map) => {
-                let mut obj = serde_json::Map::new();
+                let mut obj = serde_json::Map::with_capacity(map.entries.len());
                 for entry in &map.entries {
                     if let EntryExpr::MapEntry(me) = &entry.expr {
                         let key_val = Self::eval_and_check_ast(&me.key, env, depth + 1, iter_budget)?;
@@ -543,7 +503,8 @@ impl DynamicPolicyEngine {
                 }
                 Ok(JsonValue::Object(obj))
             }
-            Expr::Comprehension(comp) => {                let range_val = Self::eval_and_check_ast(&comp.iter_range, env, depth + 1, iter_budget)?;
+            Expr::Comprehension(comp) => {
+                let range_val = Self::eval_and_check_ast(&comp.iter_range, env, depth + 1, iter_budget)?;
                 // AUDIT-M03-007 / AUDIT-M03-008: cel-interpreter 0.10.0 supports
                 // ONLY List and Map ranges: every other range type ends in an
                 // uncatchable `todo!()` panic (objects.rs), and Map ranges
@@ -554,26 +515,6 @@ impl DynamicPolicyEngine {
                 // interpreter. Legitimate rules comprehend over arrays.
                 let arr = match range_val {
                     JsonValue::Array(arr) => arr,
-                    JsonValue::Null => {
-                        return Err(PolicyEngineError::EvaluationError(
-                            "cannot iterate non-array comprehension range (got null)".into(),
-                        ));
-                    }
-                    JsonValue::Bool(_) => {
-                        return Err(PolicyEngineError::EvaluationError(
-                            "cannot iterate non-array comprehension range (got boolean)".into(),
-                        ));
-                    }
-                    JsonValue::Number(_) => {
-                        return Err(PolicyEngineError::EvaluationError(
-                            "cannot iterate non-array comprehension range (got number)".into(),
-                        ));
-                    }
-                    JsonValue::String(_) => {
-                        return Err(PolicyEngineError::EvaluationError(
-                            "cannot iterate non-array comprehension range (got string)".into(),
-                        ));
-                    }
                     JsonValue::Object(_) => {
                         return Err(PolicyEngineError::EvaluationError(
                             "cannot iterate non-array comprehension range (map ranges are \
@@ -581,21 +522,40 @@ impl DynamicPolicyEngine {
                                 .into(),
                         ));
                     }
+                    other => {
+                        let type_name = match other {
+                            JsonValue::Null => "null",
+                            JsonValue::Bool(_) => "boolean",
+                            JsonValue::Number(_) => "number",
+                            JsonValue::String(_) => "string",
+                            _ => "unknown",
+                        };
+                        return Err(PolicyEngineError::EvaluationError(format!(
+                            "cannot iterate non-array comprehension range (got {type_name})"
+                        )));
+                    }
                 };
+
                 let mut accu = Self::eval_and_check_ast(&comp.accu_init, env, depth + 1, iter_budget)?;
-                for item in arr {
-                    // AUDIT-M03-005: the whole environment (including the
-                    // iterated state) is cloned per iteration -> O(n²).
-                    // Enforce a hard total-iteration budget.
+                for item in &arr {
+                    // AUDIT-M03-005: Enforce a hard total-iteration budget.
                     if *iter_budget == 0 {
                         return Err(PolicyEngineError::EvaluationError(
                             "CEL comprehension iteration budget exceeded".into(),
                         ));
                     }
                     *iter_budget -= 1;
-                    let mut loop_env = env.clone();
-                    loop_env.insert(comp.iter_var.clone(), item);
-                    loop_env.insert(comp.accu_var.clone(), accu.clone());
+
+                    let env_iter = AstEnv::Scope {
+                        parent: env,
+                        var_name: &comp.iter_var,
+                        var_value: item,
+                    };
+                    let loop_env = AstEnv::Scope {
+                        parent: &env_iter,
+                        var_name: &comp.accu_var,
+                        var_value: &accu,
+                    };
 
                     let cond = Self::eval_and_check_ast(&comp.loop_cond, &loop_env, depth + 1, iter_budget)?;
                     if cond == JsonValue::Bool(false) {
@@ -604,8 +564,12 @@ impl DynamicPolicyEngine {
 
                     accu = Self::eval_and_check_ast(&comp.loop_step, &loop_env, depth + 1, iter_budget)?;
                 }
-                let mut final_env = env.clone();
-                final_env.insert(comp.accu_var.clone(), accu);
+
+                let final_env = AstEnv::Scope {
+                    parent: env,
+                    var_name: &comp.accu_var,
+                    var_value: &accu,
+                };
                 Self::eval_and_check_ast(&comp.result, &final_env, depth + 1, iter_budget)
             }
             // SECURITY (AUDIT-W4-CEL-101): message/struct literals (`T{...}`)
@@ -617,6 +581,31 @@ impl DynamicPolicyEngine {
             Expr::Struct(_) => Err(PolicyEngineError::EvaluationError(
                 "Message/struct literals are not supported by the policy engine".into(),
             )),
+        }
+    }
+
+    /// Helper to parse integer index from a JsonValue for array/string indexing.
+    fn parse_container_index(val: &JsonValue, container_type: &str) -> Result<usize, PolicyEngineError> {
+        match val {
+            JsonValue::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    if i < 0 {
+                        return Err(PolicyEngineError::EvaluationError(format!(
+                            "IndexOutOfBounds({i})"
+                        )));
+                    }
+                    Ok(i as usize)
+                } else if let Some(u) = n.as_u64() {
+                    Ok(u as usize)
+                } else {
+                    Err(PolicyEngineError::CompilationError(format!(
+                        "{container_type} index must be an integer"
+                    )))
+                }
+            }
+            _ => Err(PolicyEngineError::CompilationError(format!(
+                "{container_type} index must be an integer"
+            ))),
         }
     }
 

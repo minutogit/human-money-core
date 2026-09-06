@@ -280,9 +280,7 @@ pub struct Voucher {
 impl ValueDefinition {
     /// Validates that the scale/precision of `amount` does not exceed the allowed decimal places of this value.
     pub fn validate_precision(&self, amount: &Decimal) -> Result<(), VoucherCoreError> {
-        let allowed = Decimal::from_str(&self.amount)
-            .map(|d| d.scale())
-            .unwrap_or(0);
+        let allowed = Decimal::from_str(&self.amount)?.scale();
         if amount.scale() > allowed {
             Err(VoucherCoreError::AmountPrecisionExceeded {
                 allowed,
@@ -457,11 +455,11 @@ impl Voucher {
             prev_hash: {
                 let voucher_id_bytes = bs58::decode(&temp_voucher.voucher_id)
                     .into_vec()
-                    .map_err(|_| VoucherCoreError::Generic("Invalid voucher_id format".to_string()))?;
+                    .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid voucher_id format".to_string()))?;
                 let nonce_bytes = bs58::decode(&temp_voucher.voucher_nonce)
                     .into_vec()
                     .map_err(|_| {
-                        VoucherCoreError::Generic("Invalid voucher_nonce format".to_string())
+                        VoucherCoreError::InvalidHashFormat("Invalid voucher_nonce format".to_string())
                     })?;
                 crate::services::crypto::get_hash_from_slices(&[&voucher_id_bytes, &nonce_bytes])
             },
@@ -983,29 +981,33 @@ impl Voucher {
                 holder_match = true;
             }
 
+            // SECURITY (AUDIT-00-WILDCARD-13): If amount parsing fails, return Decimal::MIN
+            // as a sentinel rather than Decimal::ZERO to prevent forensic masking where
+            // corrupted/malformed transactions would be silently displayed as empty/unfunded.
             if holder_match {
-                Decimal::from_str(&last_tx.amount).unwrap_or(Decimal::ZERO)
+                Decimal::from_str(&last_tx.amount).unwrap_or(Decimal::MIN)
             } else if change_match {
                 last_tx.sender_remaining_amount
                     .as_deref()
                     .and_then(|a| Decimal::from_str(a).ok())
-                    .unwrap_or(Decimal::ZERO)
+                    .unwrap_or(Decimal::MIN)
             } else {
                 // Fallback to DID check (Public mode)
                 if last_tx.recipient_id == id.user_id {
-                    Decimal::from_str(&last_tx.amount).unwrap_or(Decimal::ZERO)
+                    Decimal::from_str(&last_tx.amount).unwrap_or(Decimal::MIN)
                 } else if last_tx.sender_id.as_deref() == Some(&id.user_id) {
                     last_tx.sender_remaining_amount
                         .as_deref()
                         .and_then(|a| Decimal::from_str(a).ok())
-                        .unwrap_or(Decimal::ZERO)
+                        .unwrap_or(Decimal::MIN)
                 } else {
                     Decimal::ZERO
                 }
             }
         } else {
-            // No identity provided: return amount of last transaction
-            Decimal::from_str(&last_tx.amount).unwrap_or(Decimal::ZERO)
+            // No identity provided: return amount of last transaction.
+            // SECURITY (AUDIT-00-WILDCARD-13): Fail-closed with Decimal::MIN on malformed amount strings.
+            Decimal::from_str(&last_tx.amount).unwrap_or(Decimal::MIN)
         }
     }
 
@@ -1130,6 +1132,15 @@ mod tests {
         assert!(val_def.validate_precision(&dec!(50.5)).is_ok());
         assert!(val_def.validate_precision(&dec!(50)).is_ok());
         assert!(val_def.validate_precision(&dec!(50.001)).is_err());
+
+        // Malformed definition amount fails closed (H-02-01)
+        let malformed_val_def = ValueDefinition {
+            unit: "MIN".to_string(),
+            amount: "invalid-num".to_string(),
+            abbreviation: None,
+            description: None,
+        };
+        assert!(malformed_val_def.validate_precision(&dec!(50.00)).is_err());
 
         // Formatting checks
         assert_eq!(val_def.format_amount(&dec!(50)), "50.00");

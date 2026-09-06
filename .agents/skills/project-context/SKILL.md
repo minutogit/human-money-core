@@ -158,16 +158,15 @@ Diese Definitionen werden als externe **TOML-Dateien** (z.B. aus einem `voucher_
       "sender_id": "STRING, optional", // Identität des Senders (Layer 1 - Public Mode)
       "sender_identity_signature": "STRING, optional", // Soziale Signatur (Layer 1 - Public Mode)
       "recipient_id": "STRING", // Empfänger-ID (did:key oder "Anonym")
-      "amount": "STRING", // Übertragener Teilbetrag
+      "amount": "STRING", // Übertragener Teilbedrag
       "sender_remaining_amount": "STRING, optional", // Restguthaben beim Sender (nur bei Teilung)
       "sender_ephemeral_pub": "STRING, optional", // Reveal des Stealth-Keys (Preimage für prev_hash Check)
       "change_ephemeral_pub_hash": "STRING, optional", // Neuer Anker für das Wechselgeld des Senders
       "privacy_guard": "STRING, optional", // Verschlüsselter RecipientPayload (nur für Empfänger lesbar)
-      "trap_data": { // Mathematische Falle bei Double-Spending (Identity Trap)
-        "ds_tag": "STRING", // Deterministsicher Fingerprint des Inputs
-        "u": "STRING", // Challenge-Scalar für den ZKP
-        "blinded_id": "STRING", // Identitäts-Punkt V = m*U + ID
-        "proof": "STRING" // Schnorr-Beweis über Wissen von m
+      "trap_data": { // Mathematische Falle bei Double-Spending (V3 Shared-Signature Trap)
+        "ds_tag": "STRING", // Deterministischer Fingerprint des Inputs
+        "trap_r": "STRING", // Shard R_i = R_sig + tau_i * M_R (Base58, 32 Byte, komprimierter Edwards-Punkt)
+        "trap_s": "STRING" // Shard s_i = s_sig + tau_i * m_s mod q (Base58, 32 Byte, kanonischer Skalar)
       },
       "layer2_signature": "STRING, optional" // Technische Signatur (Layer 2)
     }
@@ -205,15 +204,15 @@ Die Transaktionskette folgt einem **Commitment-Reveal-Schema (Hybrid P2PKH)**, d
 #### Sicherheit durch BLAKE3:
 Da ruhende Guthaben nur als BLAKE3-Hashes (`receiver_ephemeral_pub_hash`) vorliegen, bieten sie Schutz vor zukünftigen Preimage-Angriffen durch Quantencomputer. Die Identität bleibt verborgen, bis das Guthaben ausgegeben wird.
 
-### Double-Spending-Erkennung (Die Falle)
+### Double-Spending-Erkennung (Die Falle) — V3 Shared-Signature Trap (SST)
 
-Ein Betrugsversuch wird durch eine mathematische Falle (**Identity Trap**) basierend auf Schnorr Non-Interactive Zero-Knowledge Proofs (NIZK) erkannt.
+Ein Betrugsversuch wird durch die **V3 Shared-Signature Trap (SST)** unter Domain-Tag `HMC_TX_AUTH_V3` erkannt — eine deterministische Schnorr-Falle mit **autonomer did:key-Deanonymisierung ohne Framing-Möglichkeit** (EUF-CMA).
 
-- **Double-Spend Tag (`ds_tag`):** Ein deterministischer Identifier des Inputs: `ds_tag = hash(prev_hash + sender_ephemeral_pub)`. Die Berechnung ist nun präfix-unabhängig, um konsistente Erkennung über alle Privacy-Modi hinweg zu garantieren. Kollidiert dieser Tag bei unterschiedlichen `t_id`s, liegt ein Double-Spend vor.
+- **Double-Spend Tag (`ds_tag`):** Ein deterministischer Identifier des Inputs: `ds_tag = hash(prev_hash || sender_ephemeral_pub)` (SHA3-256, längenpräfixiert via `get_hash_from_slices`, präfix-unabhängig). Kollidiert dieser Tag bei unterschiedlichen `t_id`s, liegt ein Double-Spend vor.
 - **Mathematisches Hardening:** Die Hash-Berechnungen wurden auf **SHA3-256** (für allgemeine Daten) standardisiert und zentralisiert. Durch die Nutzung von `get_hash_from_slices` wird Malleability verhindert (Längenpräfixe für Segmente). Für interne kryptographische Primitive (HKDF, PBKDF2) wird weiterhin die SHA2-Familie genutzt.
-- **The Trap:** Innerhalb der `trap_data` wird eine Relation $V = m \cdot U + ID$ genutzt. Wer denselben Input zweimal ausgibt, muss aufgrund der deterministischen Ableitung von $m$ (via HKDF) zwangsläufig seine Identität ($ID$) offenbaren. Ein Trap-Replay-Schutz verhindert die missbräuchliche Wiederverwendung von Trap-Beweisen.
-- **Anonymisierte Analyse:** Auf Layer 2 werden nur Fingerprints ausgetauscht. Ein Server sieht keine Klartext-IDs oder Beträge, sondern nur den `ds_tag` und verschlüsselte Zeitstempel.
-- **Beweis:** Ein Double-Spend-Beweis (`ProofOfDoubleSpend`) kombiniert die kollidierenden Transaktionen und ermöglicht die mathematische Extraktion der Täter-ID.
+- **The Trap (V3 SST):** Jede Spend-Transaktion trägt in `trap_data` nur einen **Shard** `TrapData { ds_tag, trap_r, trap_s }` einer einzigen deterministischen Schnorr-Signatur $\sigma = (R_{sig}, s_{sig})$ über $\mu = H(\text{"HMC\_TRAP\_SIG\_V1"} \| ds\_tag \| E)$. $R_i = R_{sig} + \tau_i \cdot M_R$ (komprimierter Edwards-Punkt, Base58), $s_i = s_{sig} + \tau_i \cdot m_s \pmod q$ (kanonischer Skalar, Base58), mit $\tau_i = H(\text{"HMC\_TAU\_V1"} \| ds\_tag \| t\_id_i) \pmod q$. Die Masken $M_R = \text{hash\_to\_curve}(\text{"HMC\_MASK\_R\_V1"} \| x \| E \| ds\_tag)$ und $m_s = H(\text{"HMC\_MASK\_S\_V1"} \| x \| E \| ds\_tag)$ leiten sich ausschließlich aus dem langfristigen Schlüssel $x$ ab. V2-Felder (`u`, `blinded_id`, `proof`) existieren nicht mehr und werden beim Laden hart abgewiesen (`InvalidFormat`). Genesis-Transaktionen tragen keine `trap_data` (`trap_r/s = "none"` im Fingerprint). **Einzel-Shard-Anonymität:** Ein einzelner Shard verbirgt den Signierer informationstheoretisch (4 Unbekannte vs. 3 Gleichungen) — kein Register-Mining möglich. **Kollisions-Enttarnung:** Zwei kollidierende Shards ($\tau_1 \neq \tau_2$) erlauben lineare Rekonstruktion $M_R = (R_1 - R_2) / (\tau_1 - \tau_2)$, $m_s = (s_1 - s_2) / (\tau_1 - \tau_2)$ und Extraktion $\hat{X} = (\hat{s} \cdot G - \hat{R}) \cdot c^{-1}$ — der `did:key` des Täters. Framing erfordert Schnorr-Fälschung (EUF-CMA-unmöglich); degenerierte Fälle ($\tau$-Gleichheit, identische Shards, $c=0$, neutrales Element) werden als Firewall abgewiesen. Der private Zeuge $W = (R_{sig}, s_{sig}, M_R, m_s)$ reist verschlüsselt im `RecipientPayload` und wird via `verify_sst_witness` bei Übergabe geprüft.
+- **Anonymisierte Analyse:** Auf Layer 2 werden nur Fingerprints ausgetauscht. Ein Server sieht keine Klartext-IDs oder Beträge, sondern nur den `ds_tag`, `trap_r/s`-Shards und verschlüsselte Zeitstempel. Fingerprints sind **selbstauthentifizierend**: `layer2_signature` über `HMC_TX_AUTH_V3` ist allein aus Fingerprint-Daten verifizierbar.
+- **Beweis:** Ein Double-Spend-Beweis (`ProofOfDoubleSpend`) kombiniert die kollidierenden Transaktionen/Fingerprints und ermöglicht via `extract_sst_identity` / `verify_stored_trap_shards_against_identity` die mathematische Extraktion der Täter-`did:key`.
 
 #### Erkennung ohne Layer-2-Server (durch Pfad-Vereinigung)
 
@@ -721,12 +720,12 @@ Dieses Modul kapselt die gesamte Geschäftslogik zur Erkennung, Verifizierung un
 
 ### `src/services/trap_manager` Modul
 
-Implementiert die "Mathematische Falle" (Identity Trap) gemäß Spezifikation.
+Implementiert die **V3 Shared-Signature Trap (SST)** unter `HMC_TX_AUTH_V3` gemäß Spezifikation.
 
-- `pub fn derive_m(...)`: Leitet den geheimen Slope $m$ via HKDF ab (gebunden an `prev_hash` und `prefix`).
-- `pub fn generate_trap(...)`: Erzeugt `TrapData` (Blinded ID, ZKP) für eine Transaktion.
-- `pub fn verify_trap(...)`: Verifiziert die mathematische Korrektest von Trap-Daten und ZKP.
-- `pub fn hash_to_scalar(...)`: Deterministische Abbildung von Daten auf einen Skalar (SHA-512).
+- `pub fn generate_sst_trap(...)`: Erzeugt `TrapData { ds_tag, trap_r, trap_s }`-Shards $R_i = R_{sig} + \tau_i \cdot M_R$, $s_i = s_{sig} + \tau_i \cdot m_s$ für eine Spend-Transaktion (deterministische Schnorr-Signatur über `HMC_TRAP_SIG_V1`).
+- `pub fn extract_sst_identity(...)` / `pub fn verify_stored_trap_shards_against_identity(...)`: Rekonstruieren aus zwei kollidierenden Shards via $\tau_i = H(\text{"HMC\_TAU\_V1"} \| ds\_tag \| t\_id)$ linear die Masken und extrahieren den Täter-`did:key` ($\hat{X} = (\hat{s} \cdot G - \hat{R}) \cdot c^{-1}$); EUF-CMA-sicher, kein Framing.
+- `pub fn verify_sst_witness(...)`: Prüft L1 bei Übergabe den privaten Zeugen $W=(R_{sig}, s_{sig}, M_R, m_s)$ aus dem `RecipientPayload` auf Signatur- und Shard-Konsistenz (Fail-closed).
+- `pub fn hash_to_scalar(...)` / `pub fn hash_to_curve(...)`: Deterministische Abbildungen für $\tau$, $m_s$, $M_R$ (SHA-512 / SHA3).
 
 ### `services::crypto_utils` Modul
 

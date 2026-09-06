@@ -3,7 +3,10 @@
 //! Defines the core data structures for managing
 //! voucher instances within the wallet.
 
+use crate::error::VoucherCoreError;
 use crate::models::voucher::Voucher;
+use crate::services::crypto::get_hash;
+use crate::wallet::Wallet;
 use serde::{Deserialize, Serialize};
 
 /// Captures the exact, user-remediable reason why a voucher
@@ -64,5 +67,109 @@ pub struct VoucherInstance {
     // The seed is re-derived from Voucher + Identity on demand.
     // #[serde(default, skip_serializing_if = "Option::is_none")]
     // pub current_secret_seed: Option<String>,
+}
+
+impl Wallet {
+    pub fn add_voucher_instance(
+        &mut self,
+        local_id: String,
+        voucher: Voucher,
+        status: VoucherStatus,
+    ) {
+        let instance = VoucherInstance {
+            voucher,
+            status,
+            local_instance_id: local_id.clone(),
+        };
+        self.voucher_store.vouchers.insert(local_id, instance);
+    }
+
+    pub fn get_voucher_instance(&self, local_instance_id: &str) -> Option<&VoucherInstance> {
+        self.voucher_store.vouchers.get(local_instance_id)
+    }
+
+    pub fn update_voucher_status(&mut self, local_instance_id: &str, new_status: VoucherStatus) {
+        let event_info = if let Some(instance) = self.voucher_store.vouchers.get_mut(local_instance_id) {
+            let old_status = std::mem::replace(&mut instance.status, new_status.clone());
+
+            // Event logging on important status changes
+            let event_type = match (&old_status, &new_status) {
+                // From Incomplete to Active
+                (VoucherStatus::Incomplete { .. }, VoucherStatus::Active) => {
+                    Some(crate::models::wallet_event::WalletEventType::VoucherActivated)
+                }
+                // Freshly quarantined (unless already quarantined before)
+                (_, VoucherStatus::Quarantined { .. })
+                    if !matches!(old_status, VoucherStatus::Quarantined { .. }) =>
+                {
+                    Some(crate::models::wallet_event::WalletEventType::VoucherQuarantined)
+                }
+                _ => None,
+            };
+
+            if let Some(et) = event_type {
+                let voucher = &instance.voucher;
+                let bff_data = crate::models::wallet_event::EventBffData {
+                    display_currency: crate::wallet::format_bff_name(
+                        voucher.nominal_value.abbreviation.as_deref().unwrap_or(&voucher.nominal_value.unit),
+                        voucher.non_redeemable_test_voucher,
+                    ),
+                    amount: voucher.nominal_value.amount.clone(),
+                    is_test_voucher: voucher.non_redeemable_test_voucher,
+                    counterparty_id: None,
+                    counterparty_name: None,
+                };
+                Some((et, voucher.voucher_id.clone(), bff_data))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some((et, voucher_id, bff_data)) = event_info {
+            self.emit_event(
+                et,
+                local_instance_id,
+                &voucher_id,
+                bff_data,
+            );
+        }
+    }
+
+    /// Computes a deterministic, local ID for a voucher instance.
+    pub fn calculate_local_instance_id(
+        voucher: &Voucher,
+        profile_owner_id: &str,
+    ) -> Result<String, VoucherCoreError> {
+        let mut defining_transaction_id: Option<String> = None;
+
+        // The defining transaction is simply the last one in which the user
+        // appears as sender or recipient.
+        // NOTE: In Privacy Mode, recipient_id="anonymous". We accept this
+        // as a match for the current profile owner (profile_owner_id), since
+        // actual receipt authorization was already verified during bundle decryption.
+        for tx in voucher.transactions.iter().rev() {
+            if tx.recipient_id == profile_owner_id
+                || tx.recipient_id == crate::models::voucher::ANONYMOUS_ID
+                || tx.sender_id.as_deref() == Some(profile_owner_id)
+            {
+                defining_transaction_id = Some(tx.t_id.clone());
+                break;
+            }
+        }
+
+        if let Some(t_id) = defining_transaction_id {
+            Ok(get_hash(format!(
+                "{}{}{}",
+                voucher.voucher_id, t_id, profile_owner_id
+            )))
+        } else {
+            Err(VoucherCoreError::VoucherOwnershipNotFound(format!(
+                "User '{}' has no ownership history for voucher '{}'",
+                profile_owner_id, voucher.voucher_id
+            )))
+        }
+    }
 }
 

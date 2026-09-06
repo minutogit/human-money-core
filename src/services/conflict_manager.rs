@@ -45,7 +45,7 @@ pub fn create_fingerprint_for_transaction(
     // 1. Anonymize the `valid_until` timestamp by rounding to the end of the month.
     let valid_until_rounded = {
         let parsed_date = DateTime::parse_from_rfc3339(&voucher.valid_until).map_err(|e| {
-            VoucherCoreError::Generic(format!("Failed to parse valid_until: {}", e))
+            VoucherCoreError::InvalidTimestamp(format!("Failed to parse valid_until: {}", e))
         })?;
 
         let year = parsed_date.year();
@@ -57,16 +57,16 @@ pub fn create_fingerprint_for_transaction(
             NaiveDate::from_ymd_opt(year, month + 1, 1)
         }
         .ok_or_else(|| {
-            VoucherCoreError::Generic("Failed to calculate next month's date".to_string())
+            VoucherCoreError::InvalidTimestamp("Failed to calculate next month's date".to_string())
         })?;
 
         let last_day_of_month = first_of_next_month.pred_opt().ok_or_else(|| {
-            VoucherCoreError::Generic("Failed to get last day of month".to_string())
+            VoucherCoreError::InvalidTimestamp("Failed to get last day of month".to_string())
         })?;
         let end_of_month_dt = last_day_of_month
             .and_hms_micro_opt(23, 59, 59, 999999)
             .ok_or_else(|| {
-                VoucherCoreError::Generic("Failed to set time for end of month".to_string())
+                VoucherCoreError::InvalidTimestamp("Failed to set time for end of month".to_string())
             })?
             .and_utc();
         end_of_month_dt.to_rfc3339_opts(SecondsFormat::Micros, true)
@@ -85,10 +85,10 @@ pub fn create_fingerprint_for_transaction(
         // prev_hash and sender_ephemeral_pub.
         let prev_hash_bytes = bs58::decode(&transaction.prev_hash)
             .into_vec()
-            .map_err(|_| VoucherCoreError::Generic("Invalid prev_hash format".to_string()))?;
+            .map_err(|_| VoucherCoreError::Fingerprint("Invalid prev_hash format".to_string()))?;
         let ephem_key_bytes = if let Some(s) = &transaction.sender_ephemeral_pub {
             bs58::decode(s).into_vec().map_err(|_| {
-                VoucherCoreError::Generic("Invalid sender_ephemeral_pub format".to_string())
+                VoucherCoreError::Fingerprint("Invalid sender_ephemeral_pub format".to_string())
             })?
         } else {
             Vec::new()
@@ -131,10 +131,10 @@ pub fn create_fingerprint_for_transaction(
         // SECURITY FIX: Use raw bytes for concatenation
         let prev_hash_bytes = bs58::decode(&transaction.prev_hash)
             .into_vec()
-            .map_err(|_| VoucherCoreError::Generic("Invalid prev_hash format".to_string()))?;
+            .map_err(|_| VoucherCoreError::Fingerprint("Invalid prev_hash format".to_string()))?;
         let ephem_key_bytes = if let Some(s) = &transaction.sender_ephemeral_pub {
             bs58::decode(s).into_vec().map_err(|_| {
-                VoucherCoreError::Generic("Invalid sender_ephemeral_pub format".to_string())
+                VoucherCoreError::Fingerprint("Invalid sender_ephemeral_pub format".to_string())
             })?
         } else {
             Vec::new()
@@ -494,7 +494,7 @@ pub fn derive_proof_id(
     let offender_pk_bytes = if let Some(pos) = sanitized.rfind("@did:key:z") {
         bs58::decode(&sanitized[pos + 10..])
             .into_vec()
-            .map_err(|_| VoucherCoreError::Generic("Invalid offender_id did format".to_string()))?
+            .map_err(|_| VoucherCoreError::ProofImport("Invalid offender_id did format".to_string()))?
     } else {
         // Fallback for anonymous offenders (Gossip soft proofs):
         // If there is no DID format, use the hash of the offender_id string
@@ -505,7 +505,7 @@ pub fn derive_proof_id(
     };
 
     let fork_prev_hash_bytes = bs58::decode(fork_point_prev_hash).into_vec().map_err(|_| {
-        VoucherCoreError::Generic("Invalid fork_point_prev_hash format".to_string())
+        VoucherCoreError::ProofImport("Invalid fork_point_prev_hash format".to_string())
     })?;
 
     Ok(get_hash_from_slices(&[&offender_pk_bytes, &fork_prev_hash_bytes]))
@@ -519,7 +519,7 @@ pub fn derive_proof_id(
 pub fn verify_reporter_signature(proof: &ProofOfDoubleSpend) -> Result<(), VoucherCoreError> {
     let reporter_pk = crate::services::crypto::get_pubkey_from_user_id(&proof.reporter_id)
         .map_err(|_| {
-            VoucherCoreError::Generic(format!(
+            VoucherCoreError::ProofImport(format!(
                 "Cannot import proof: reporter_id '{}' is not a valid DID identity.",
                 proof.reporter_id
             ))
@@ -527,14 +527,14 @@ pub fn verify_reporter_signature(proof: &ProofOfDoubleSpend) -> Result<(), Vouch
     let sig_bytes = bs58::decode(&proof.reporter_signature)
         .into_vec()
         .map_err(|e| {
-            VoucherCoreError::Generic(format!("Cannot import proof: invalid reporter_signature encoding: {}", e))
+            VoucherCoreError::ProofImport(format!("Cannot import proof: invalid reporter_signature encoding: {}", e))
         })?;
     let signature = ed25519_dalek::Signature::from_bytes(sig_bytes.as_slice().try_into().map_err(|_| {
-        VoucherCoreError::Generic("Cannot import proof: invalid reporter_signature length.".to_string())
+        VoucherCoreError::ProofImport("Cannot import proof: invalid reporter_signature length.".to_string())
     })?);
 
     if !verify_ed25519(&reporter_pk, proof.proof_id.as_bytes(), &signature) {
-        return Err(VoucherCoreError::Generic(
+        return Err(VoucherCoreError::ProofImport(
             "Cannot import proof: reporter_signature does not verify over proof_id.".to_string(),
         ));
     }
@@ -552,7 +552,7 @@ pub fn verify_reporter_signature(proof: &ProofOfDoubleSpend) -> Result<(), Vouch
 pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherCoreError> {
     let txs = &proof.conflicting_transactions;
     if txs.len() < 2 {
-        return Err(VoucherCoreError::Generic(format!(
+        return Err(VoucherCoreError::ProofImport(format!(
             "Cannot import proof: expected at least 2 conflicting transactions, found {}.",
             txs.len()
         )));
@@ -563,12 +563,12 @@ pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherC
 
     for tx in txs {
         if !seen_t_ids.insert(&tx.t_id) {
-            return Err(VoucherCoreError::Generic(
+            return Err(VoucherCoreError::ProofImport(
                 "Cannot import proof: duplicate t_id among conflicting transactions.".to_string(),
             ));
         }
         if tx.prev_hash != proof.fork_point_prev_hash {
-            return Err(VoucherCoreError::Generic(
+            return Err(VoucherCoreError::ProofImport(
                 "Cannot import proof: conflicting transactions do not share the fork point prev_hash.".to_string(),
             ));
         }
@@ -582,19 +582,19 @@ pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherC
         // == claimed ds_tag and a well-formed revealed ephemeral key.
         if tx.t_type == "gossip_soft_placeholder" {
             let trap = tx.trap_data.as_ref().ok_or_else(|| {
-                VoucherCoreError::Generic(
+                VoucherCoreError::ProofImport(
                     "Cannot import proof: gossip soft placeholder missing trap_data.".to_string(),
                 )
             })?;
             if trap.ds_tag != proof.fork_point_prev_hash {
-                return Err(VoucherCoreError::Generic(
+                return Err(VoucherCoreError::ProofImport(
                     "Cannot import proof: gossip soft placeholder ds_tag does not match the fork point.".to_string(),
                 ));
             }
             // The claimed tag participates in the single-collision invariant.
             ds_tags.insert(trap.ds_tag.clone());
             let eph_pub_raw = tx.sender_ephemeral_pub.as_ref().ok_or_else(|| {
-                VoucherCoreError::Generic(
+                VoucherCoreError::ProofImport(
                     "Cannot import proof: gossip soft placeholder missing sender_ephemeral_pub.".to_string(),
                 )
             })?;
@@ -603,7 +603,7 @@ pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherC
                 .map(|v| v.len() == 32)
                 .unwrap_or(false);
             if !eph_ok {
-                return Err(VoucherCoreError::Generic(
+                return Err(VoucherCoreError::ProofImport(
                     "Cannot import proof: gossip soft placeholder sender_ephemeral_pub must be 32 bytes.".to_string(),
                 ));
             }
@@ -611,20 +611,20 @@ pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherC
         }
 
         let prev_hash_bytes = bs58::decode(&tx.prev_hash).into_vec().map_err(|_| {
-            VoucherCoreError::Generic("Cannot import proof: invalid prev_hash encoding.".to_string())
+            VoucherCoreError::ProofImport("Cannot import proof: invalid prev_hash encoding.".to_string())
         })?;
         let eph_pub_raw = tx.sender_ephemeral_pub.as_ref().ok_or_else(|| {
-            VoucherCoreError::Generic(
+            VoucherCoreError::ProofImport(
                 "Cannot import proof: conflicting transaction missing sender_ephemeral_pub.".to_string(),
             )
         })?;
         let eph_pub_bytes = bs58::decode(eph_pub_raw).into_vec().map_err(|_| {
-            VoucherCoreError::Generic(
+            VoucherCoreError::ProofImport(
                 "Cannot import proof: invalid sender_ephemeral_pub encoding.".to_string(),
             )
         })?;
         if eph_pub_bytes.len() != 32 {
-            return Err(VoucherCoreError::Generic(
+            return Err(VoucherCoreError::ProofImport(
                 "Cannot import proof: sender_ephemeral_pub must be 32 bytes.".to_string(),
             ));
         }
@@ -632,7 +632,7 @@ pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherC
         let recomputed_ds_tag = get_hash_from_slices(&[&prev_hash_bytes, &eph_pub_bytes]);
         if let Some(trap) = &tx.trap_data
             && trap.ds_tag != recomputed_ds_tag {
-                return Err(VoucherCoreError::Generic(
+                return Err(VoucherCoreError::ProofImport(
                     "Cannot import proof: trap_data.ds_tag does not match recomputed input tag.".to_string(),
                 ));
             }
@@ -640,7 +640,7 @@ pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherC
     }
 
     if ds_tags.len() != 1 {
-        return Err(VoucherCoreError::Generic(
+        return Err(VoucherCoreError::ProofImport(
             "Cannot import proof: transactions do not collide on a single ds_tag.".to_string(),
         ));
     }
@@ -954,30 +954,30 @@ pub fn import_foreign_fingerprints(
 pub fn encrypt_transaction_timestamp(transaction: &Transaction) -> Result<u128, VoucherCoreError> {
     // a. Parse timestamp and convert to nanoseconds (u128).
     let nanos = DateTime::parse_from_rfc3339(&transaction.t_time)
-        .map_err(|e| VoucherCoreError::Generic(format!("Failed to parse timestamp: {}", e)))?
+        .map_err(|e| VoucherCoreError::InvalidTimestamp(format!("Failed to parse timestamp: {}", e)))?
         .timestamp_nanos_opt()
         .ok_or_else(|| {
-            VoucherCoreError::Generic("Invalid timestamp for nanosecond conversion".to_string())
+            VoucherCoreError::InvalidTimestamp("Invalid timestamp for nanosecond conversion".to_string())
         })? as u128;
 
     // b. Derive key (u128) from the hash of prev_hash and t_id.
     // SECURITY FIX: Use raw bytes for key derivation hash
     let prev_hash_bytes = bs58::decode(&transaction.prev_hash)
         .into_vec()
-        .map_err(|_| VoucherCoreError::Generic("Invalid prev_hash format".to_string()))?;
+        .map_err(|_| VoucherCoreError::Fingerprint("Invalid prev_hash format".to_string()))?;
     let t_id_bytes = bs58::decode(&transaction.t_id)
         .into_vec()
-        .map_err(|_| VoucherCoreError::Generic("Invalid t_id format".to_string()))?;
+        .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id format".to_string()))?;
 
     let key_hash_b58 = get_hash_from_slices(&[&prev_hash_bytes, &t_id_bytes]);
     let key_hash_bytes = bs58::decode(key_hash_b58).into_vec().map_err(|_| {
-        VoucherCoreError::Generic("Failed to decode base58 hash for key derivation".to_string())
+        VoucherCoreError::Fingerprint("Failed to decode base58 hash for key derivation".to_string())
     })?;
 
     // We take the first 16 bytes (128 bits) of the hash as the key.
     let key_bytes: [u8; 16] = key_hash_bytes[..16]
         .try_into()
-        .map_err(|_| VoucherCoreError::Generic("Hash too short for key derivation".to_string()))?;
+        .map_err(|_| VoucherCoreError::Fingerprint("Hash too short for key derivation".to_string()))?;
     let key = u128::from_le_bytes(key_bytes);
 
     // c. Encrypt timestamp via XOR and return it.
@@ -1001,19 +1001,19 @@ pub fn decrypt_transaction_timestamp(
     // SECURITY FIX: Use raw bytes for key derivation hash (identical to encryption)
     let prev_hash_bytes = bs58::decode(&transaction.prev_hash)
         .into_vec()
-        .map_err(|_| VoucherCoreError::Generic("Invalid prev_hash format".to_string()))?;
+        .map_err(|_| VoucherCoreError::Fingerprint("Invalid prev_hash format".to_string()))?;
     let t_id_bytes = bs58::decode(&transaction.t_id)
         .into_vec()
-        .map_err(|_| VoucherCoreError::Generic("Invalid t_id format".to_string()))?;
+        .map_err(|_| VoucherCoreError::InvalidHashFormat("Invalid t_id format".to_string()))?;
 
     let key_hash_b58 = get_hash_from_slices(&[&prev_hash_bytes, &t_id_bytes]);
     let key_hash_bytes = bs58::decode(key_hash_b58).into_vec().map_err(|_| {
-        VoucherCoreError::Generic("Failed to decode base58 hash for key derivation".to_string())
+        VoucherCoreError::Fingerprint("Failed to decode base58 hash for key derivation".to_string())
     })?;
 
     let key_bytes: [u8; 16] = key_hash_bytes[..16]
         .try_into()
-        .map_err(|_| VoucherCoreError::Generic("Hash too short for key derivation".to_string()))?;
+        .map_err(|_| VoucherCoreError::Fingerprint("Hash too short for key derivation".to_string()))?;
     let key = u128::from_le_bytes(key_bytes);
 
     Ok(encrypted_nanos ^ key)

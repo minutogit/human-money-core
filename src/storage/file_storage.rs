@@ -15,7 +15,7 @@ use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::SigningKey;
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use std::{fs, io::Write, path::PathBuf};
+use std::{fs, io::Write, path::{Path, PathBuf}};
 
 #[cfg(not(target_arch = "wasm32"))]
 use sysinfo::{Pid, System};
@@ -129,61 +129,29 @@ struct ProfilePayload {
     signing_key_bytes: Vec<u8>,
 }
 
-/// Container for the encrypted voucher store.
+/// Generic container for any encrypted store payload (consolidated from 8 identical containers).
 #[derive(Serialize, Deserialize)]
-struct VoucherStorageContainer {
+struct EncryptedStorageContainer {
     #[serde(with = "base64_serde")]
     encrypted_store_payload: Vec<u8>,
 }
 
-/// Container for the encrypted bundle metadata.
-#[derive(Serialize, Deserialize)]
-struct BundleMetadataContainer {
-    #[serde(with = "base64_serde")]
-    encrypted_store_payload: Vec<u8>,
-}
-
-/// Container for the `KnownFingerprints` store.
-#[derive(Serialize, Deserialize)]
-struct KnownFingerprintsContainer {
-    #[serde(with = "base64_serde")]
-    encrypted_store_payload: Vec<u8>,
-}
-
-/// Container for the `OwnFingerprints` store.
-#[derive(Serialize, Deserialize)]
-struct OwnFingerprintsContainer {
-    #[serde(with = "base64_serde")]
-    encrypted_store_payload: Vec<u8>,
-}
-
-/// Container for the encrypted proof store.
-#[derive(Serialize, Deserialize)]
-struct ProofStorageContainer {
-    #[serde(with = "base64_serde")]
-    encrypted_store_payload: Vec<u8>,
-}
-
-/// Container for the `CanonicalMetadataStore`.
-#[derive(Serialize, Deserialize)]
-struct FingerprintMetadataContainer {
-    #[serde(with = "base64_serde")]
-    encrypted_store_payload: Vec<u8>,
-}
-
-/// Container for the encrypted `LocalSealRecord`.
-#[derive(Serialize, Deserialize)]
-struct SealStorageContainer {
-    #[serde(with = "base64_serde")]
-    encrypted_store_payload: Vec<u8>,
-}
-
-/// Container for the encrypted wallet event log.
-#[derive(Serialize, Deserialize)]
-struct EventsStorageContainer {
-    #[serde(with = "base64_serde")]
-    encrypted_store_payload: Vec<u8>,
-}
+// Type aliases for readability at call sites (all identical to the generic container).
+type VoucherStorageContainer = EncryptedStorageContainer;
+#[allow(dead_code)]
+type BundleMetadataContainer = EncryptedStorageContainer;
+#[allow(dead_code)]
+type KnownFingerprintsContainer = EncryptedStorageContainer;
+#[allow(dead_code)]
+type OwnFingerprintsContainer = EncryptedStorageContainer;
+#[allow(dead_code)]
+type ProofStorageContainer = EncryptedStorageContainer;
+#[allow(dead_code)]
+type FingerprintMetadataContainer = EncryptedStorageContainer;
+#[allow(dead_code)]
+type SealStorageContainer = EncryptedStorageContainer;
+#[allow(dead_code)]
+type EventsStorageContainer = EncryptedStorageContainer;
 
 // --- FileStorage Implementation ---
 
@@ -232,6 +200,82 @@ impl FileStorage {
         file_key_bytes
             .try_into()
             .map_err(|_| StorageError::InvalidFormat("Invalid file key length".to_string()))
+    }
+
+    /// Atomic write helper: writes `data` to `relative_path` via tmp-file + rename.
+    fn write_atomic(
+        &self,
+        relative_path: impl AsRef<Path>,
+        data: &[u8],
+    ) -> Result<(), StorageError> {
+        let dest = self.user_storage_path.join(relative_path.as_ref());
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let tmp = PathBuf::from(format!("{}.tmp", dest.display()));
+        fs::write(&tmp, data)?;
+        fs::rename(&tmp, &dest)?;
+        Ok(())
+    }
+
+    /// Generic helper: loads, decrypts and deserializes an encrypted payload.
+    /// Returns `Ok(None)` if the file does not exist (caller maps to default).
+    /// Preserves schema gates for fingerprint stores.
+    fn load_encrypted_payload<T>(
+        &self,
+        relative_path: impl AsRef<Path>,
+        auth: &AuthMethod,
+    ) -> Result<Option<T>, StorageError>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        let abs_path = self.user_storage_path.join(relative_path.as_ref());
+        if !abs_path.exists() {
+            return Ok(None);
+        }
+        let file_key = self.get_master_key_from_auth(auth)?;
+        let container_bytes = fs::read(&abs_path)?;
+        let container: EncryptedStorageContainer = serde_json::from_slice(&container_bytes)
+            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+        let plain = crypto::decrypt_data(&file_key, &container.encrypted_store_payload)
+            .map_err(|e| {
+                StorageError::InvalidFormat(format!(
+                    "Failed to decrypt {}: {}",
+                    relative_path.as_ref().display(),
+                    e
+                ))
+            })?;
+        // Schema gates for fingerprint stores (HMSEC-SA05-08)
+        let rel_str = relative_path.as_ref().to_string_lossy();
+        if rel_str == KNOWN_FINGERPRINTS_FILE_NAME || rel_str == OWN_FINGERPRINTS_FILE_NAME {
+            gate_legacy_fingerprint_schema(&plain)?;
+        }
+        let value =
+            serde_json::from_slice(&plain).map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+        Ok(Some(value))
+    }
+
+    /// Generic helper: encrypts and atomically persists a payload.
+    fn save_encrypted_payload<T>(
+        &mut self,
+        relative_path: impl AsRef<Path>,
+        auth: &AuthMethod,
+        value: &T,
+    ) -> Result<(), StorageError>
+    where
+        T: Serialize,
+    {
+        let file_key = self.get_master_key_from_auth(auth)?;
+        let plain = serde_json::to_vec(value)
+            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+        let encrypted = crypto::encrypt_data(&file_key, &plain)
+            .map_err(|e| StorageError::Generic(e.to_string()))?;
+        let container = EncryptedStorageContainer {
+            encrypted_store_payload: encrypted,
+        };
+        let data = serde_json::to_vec(&container)
+            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+        self.write_atomic(relative_path, &data)
     }
 
     pub fn derive_key_for_session(&self, password: &str) -> Result<[u8; 32], StorageError> {
@@ -362,7 +406,6 @@ impl FileStorage {
     ) -> Result<(), StorageError> {
         fs::create_dir_all(&self.user_storage_path)?; // Creates the folder if not present
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
-        let store_path = self.user_storage_path.join(VOUCHER_STORE_FILE_NAME);
 
         let file_key: [u8; KEY_SIZE];
         let mut profile_container: ProfileStorageContainer;
@@ -413,7 +456,8 @@ impl FileStorage {
                 .map_err(|e| StorageError::Generic(e.to_string()))?;
 
             let profile_payload =
-                crypto::encrypt_data(&file_key, &serde_json::to_vec(&payload).unwrap())
+                crypto::encrypt_data(&file_key, &serde_json::to_vec(&payload)
+                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?)
                     .map_err(|e| StorageError::Generic(e.to_string()))?;
 
             profile_container = ProfileStorageContainer {
@@ -439,14 +483,16 @@ impl FileStorage {
                 .map_err(|_| StorageError::InvalidFormat("Invalid file key".to_string()))?;
 
             existing_container.encrypted_profile_payload =
-                crypto::encrypt_data(&file_key, &serde_json::to_vec(&payload).unwrap())
+                crypto::encrypt_data(&file_key, &serde_json::to_vec(&payload)
+                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?)
                     .map_err(|e| StorageError::Generic(e.to_string()))?;
             profile_container = existing_container;
         }
 
         // Save the VoucherStore.
         let store_payload =
-            crypto::encrypt_data(&file_key, &serde_json::to_vec(store).unwrap())
+            crypto::encrypt_data(&file_key, &serde_json::to_vec(store)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?)
                 .map_err(|e| StorageError::Generic(e.to_string()))?;
         let store_container = VoucherStorageContainer {
             encrypted_store_payload: store_payload,
@@ -456,26 +502,17 @@ impl FileStorage {
         // generation (HMSEC-SA05-04/-07): the commitment is keyed under the
         // secret file key so a local attacker cannot recompute it over stale
         // bytes; a rolled-back or torn-written vouchers.enc is rejected on load.
-        let store_container_bytes = serde_json::to_vec(&store_container).unwrap();
+        let store_container_bytes = serde_json::to_vec(&store_container)
+            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
         profile_container.store_binding_hash =
             Some(derive_store_binding_hash(&file_key, &store_container_bytes));
 
-        // Atomic write via temporary files.
-        let profile_tmp_path = self
-            .user_storage_path
-            .join(format!("{}.tmp", PROFILE_FILE_NAME));
-        let store_tmp_path = self
-            .user_storage_path
-            .join(format!("{}.tmp", VOUCHER_STORE_FILE_NAME));
-
-        fs::write(
-            &profile_tmp_path,
-            serde_json::to_vec(&profile_container).unwrap(),
+        self.write_atomic(
+            PROFILE_FILE_NAME,
+            &serde_json::to_vec(&profile_container)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?,
         )?;
-        fs::write(&store_tmp_path, &store_container_bytes)?;
-
-        fs::rename(&profile_tmp_path, &profile_path)?;
-        fs::rename(&store_tmp_path, &store_path)?;
+        self.write_atomic(VOUCHER_STORE_FILE_NAME, &store_container_bytes)?;
 
         Ok(())
     }
@@ -519,11 +556,11 @@ impl FileStorage {
         container.password_kdf_salt = new_pw_salt;
         container.password_wrapped_key_with_nonce = new_pw_wrapped_key;
 
-        let profile_tmp_path = self
-            .user_storage_path
-            .join(format!("{}.tmp", PROFILE_FILE_NAME));
-        fs::write(&profile_tmp_path, serde_json::to_vec(&container).unwrap())?;
-        fs::rename(&profile_tmp_path, &profile_path)?;
+        self.write_atomic(
+            PROFILE_FILE_NAME,
+            &serde_json::to_vec(&container)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?,
+        )?;
 
         Ok(())
     }
@@ -532,28 +569,9 @@ impl FileStorage {
         &self,
         auth: &AuthMethod,
     ) -> Result<KnownFingerprints, StorageError> {
-        let fingerprint_path = self.user_storage_path.join(KNOWN_FINGERPRINTS_FILE_NAME);
-        if !fingerprint_path.exists() {
-            return Ok(KnownFingerprints::default());
-        }
-
-        let file_key = self.get_master_key_from_auth(auth)?;
-
-        let fingerprint_container_bytes = fs::read(fingerprint_path)?;
-        let fingerprint_container: KnownFingerprintsContainer =
-            serde_json::from_slice(&fingerprint_container_bytes)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-        let store_bytes =
-            crypto::decrypt_data(&file_key, &fingerprint_container.encrypted_store_payload)
-                .map_err(|e| {
-                StorageError::InvalidFormat(format!("Failed to decrypt known fingerprints: {}", e))
-            })?;
-
-        // Schema gate (HMSEC-SA05-08): reject legacy-shaped stores loudly.
-        gate_legacy_fingerprint_schema(&store_bytes)?;
-
-        serde_json::from_slice(&store_bytes).map_err(|e| StorageError::InvalidFormat(e.to_string()))
+        Ok(self
+            .load_encrypted_payload::<KnownFingerprints>(KNOWN_FINGERPRINTS_FILE_NAME, auth)?
+            .unwrap_or_default())
     }
 
     pub fn save_known_fingerprints(
@@ -561,55 +579,16 @@ impl FileStorage {
         auth: &AuthMethod,
         fingerprints: &KnownFingerprints,
     ) -> Result<(), StorageError> {
-        let fingerprint_path = self.user_storage_path.join(KNOWN_FINGERPRINTS_FILE_NAME);
-
-        let file_key = self.get_master_key_from_auth(auth)?;
-
-        let store_payload =
-            crypto::encrypt_data(&file_key, &serde_json::to_vec(fingerprints).unwrap())
-                .map_err(|e| StorageError::Generic(e.to_string()))?;
-        let store_container = KnownFingerprintsContainer {
-            encrypted_store_payload: store_payload,
-        };
-
-        let store_tmp_path = self
-            .user_storage_path
-            .join(format!("{}.tmp", KNOWN_FINGERPRINTS_FILE_NAME));
-        fs::write(
-            &store_tmp_path,
-            serde_json::to_vec(&store_container).unwrap(),
-        )?;
-        fs::rename(&store_tmp_path, &fingerprint_path)?;
-
-        Ok(())
+        self.save_encrypted_payload(KNOWN_FINGERPRINTS_FILE_NAME, auth, fingerprints)
     }
 
     pub fn load_own_fingerprints(
         &self,
         auth: &AuthMethod,
     ) -> Result<OwnFingerprints, StorageError> {
-        let fingerprint_path = self.user_storage_path.join(OWN_FINGERPRINTS_FILE_NAME);
-        if !fingerprint_path.exists() {
-            return Ok(OwnFingerprints::default());
-        }
-
-        let file_key = self.get_master_key_from_auth(auth)?;
-
-        let fingerprint_container_bytes = fs::read(fingerprint_path)?;
-        let fingerprint_container: OwnFingerprintsContainer =
-            serde_json::from_slice(&fingerprint_container_bytes)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-        let store_bytes =
-            crypto::decrypt_data(&file_key, &fingerprint_container.encrypted_store_payload)
-                .map_err(|e| {
-                StorageError::InvalidFormat(format!("Failed to decrypt own fingerprints: {}", e))
-            })?;
-
-        // Schema gate (HMSEC-SA05-08): reject legacy-shaped stores loudly.
-        gate_legacy_fingerprint_schema(&store_bytes)?;
-
-        serde_json::from_slice(&store_bytes).map_err(|e| StorageError::InvalidFormat(e.to_string()))
+        Ok(self
+            .load_encrypted_payload::<OwnFingerprints>(OWN_FINGERPRINTS_FILE_NAME, auth)?
+            .unwrap_or_default())
     }
 
     pub fn save_own_fingerprints(
@@ -617,65 +596,22 @@ impl FileStorage {
         auth: &AuthMethod,
         fingerprints: &OwnFingerprints,
     ) -> Result<(), StorageError> {
-        let fingerprint_path = self.user_storage_path.join(OWN_FINGERPRINTS_FILE_NAME);
-
-        let file_key = self.get_master_key_from_auth(auth)?;
-
-        let store_payload =
-            crypto::encrypt_data(&file_key, &serde_json::to_vec(fingerprints).unwrap())
-                .map_err(|e| StorageError::Generic(e.to_string()))?;
-        let store_container = OwnFingerprintsContainer {
-            encrypted_store_payload: store_payload,
-        };
-
-        let store_tmp_path = self
-            .user_storage_path
-            .join(format!("{}.tmp", OWN_FINGERPRINTS_FILE_NAME));
-        fs::write(
-            &store_tmp_path,
-            serde_json::to_vec(&store_container).unwrap(),
-        )?;
-        fs::rename(&store_tmp_path, &fingerprint_path)?;
-
-        Ok(())
+        self.save_encrypted_payload(OWN_FINGERPRINTS_FILE_NAME, auth, fingerprints)
     }
 
     pub fn load_bundle_metadata(
         &self,
         auth: &AuthMethod,
     ) -> Result<BundleMetadataStore, StorageError> {
-        let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
         let meta_path = self.user_storage_path.join(BUNDLE_META_FILE_NAME);
-
-        if !profile_path.exists() {
-            return Err(StorageError::NotFound);
-        }
-
         if !meta_path.exists() {
+            // Preserve NotFound when profile is missing (original checked profile first).
+            self.get_master_key_from_auth(auth)?;
             return Ok(BundleMetadataStore::default());
         }
-
-        let profile_container_bytes = fs::read(&profile_path)?;
-        let profile_container: ProfileStorageContainer =
-            serde_json::from_slice(&profile_container_bytes)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-        let file_key_bytes = get_file_key(auth, &profile_container)?;
-        let file_key: [u8; KEY_SIZE] = file_key_bytes
-            .try_into()
-            .map_err(|_| StorageError::InvalidFormat("Invalid file key length".to_string()))?;
-
-        let meta_container_bytes = fs::read(meta_path)?;
-        let meta_container: BundleMetadataContainer = serde_json::from_slice(&meta_container_bytes)
-            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-        let store_bytes =
-            crypto::decrypt_data(&file_key, &meta_container.encrypted_store_payload)
-                .map_err(|e| {
-                    StorageError::InvalidFormat(format!("Failed to decrypt bundle metadata: {}", e))
-                })?;
-
-        serde_json::from_slice(&store_bytes).map_err(|e| StorageError::InvalidFormat(e.to_string()))
+        Ok(self
+            .load_encrypted_payload::<BundleMetadataStore>(BUNDLE_META_FILE_NAME, auth)?
+            .unwrap_or_default())
     }
 
     pub fn save_bundle_metadata(
@@ -683,76 +619,18 @@ impl FileStorage {
         auth: &AuthMethod,
         metadata: &BundleMetadataStore,
     ) -> Result<(), StorageError> {
-        let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
-        let meta_path = self.user_storage_path.join(BUNDLE_META_FILE_NAME);
-
-        if !profile_path.exists() {
-            return Err(StorageError::NotFound);
-        }
-
-        let profile_container_bytes = fs::read(profile_path)?;
-        let profile_container: ProfileStorageContainer =
-            serde_json::from_slice(&profile_container_bytes)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-        let file_key_bytes = get_file_key(auth, &profile_container)?;
-
-        let file_key: [u8; KEY_SIZE] = file_key_bytes
-            .try_into()
-            .map_err(|_| StorageError::InvalidFormat("Invalid file key length".to_string()))?;
-
-        let store_payload =
-            crypto::encrypt_data(&file_key, &serde_json::to_vec(metadata).unwrap())
-                .map_err(|e| StorageError::Generic(e.to_string()))?;
-        let store_container = BundleMetadataContainer {
-            encrypted_store_payload: store_payload,
-        };
-
-        let store_tmp_path = self
-            .user_storage_path
-            .join(format!("{}.tmp", BUNDLE_META_FILE_NAME));
-        fs::write(
-            &store_tmp_path,
-            serde_json::to_vec(&store_container).unwrap(),
-        )?;
-        fs::rename(&store_tmp_path, &meta_path)?;
-
-        Ok(())
+        self.save_encrypted_payload(BUNDLE_META_FILE_NAME, auth, metadata)
     }
 
     pub fn load_proofs(&self, auth: &AuthMethod) -> Result<ProofStore, StorageError> {
-        let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
         let proof_path = self.user_storage_path.join(PROOF_STORE_FILE_NAME);
-
-        if !profile_path.exists() {
-            return Err(StorageError::NotFound);
-        }
-
         if !proof_path.exists() {
+            self.get_master_key_from_auth(auth)?;
             return Ok(ProofStore::default());
         }
-
-        let profile_container_bytes = fs::read(&profile_path)?;
-        let profile_container: ProfileStorageContainer =
-            serde_json::from_slice(&profile_container_bytes)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-        let file_key_bytes = get_file_key(auth, &profile_container)?;
-        let file_key: [u8; KEY_SIZE] = file_key_bytes
-            .try_into()
-            .map_err(|_| StorageError::InvalidFormat("Invalid file key length".to_string()))?;
-
-        let proof_container_bytes = fs::read(proof_path)?;
-        let proof_container: ProofStorageContainer = serde_json::from_slice(&proof_container_bytes)
-            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-        let store_bytes =
-            crypto::decrypt_data(&file_key, &proof_container.encrypted_store_payload)
-                .map_err(|e| {
-                    StorageError::InvalidFormat(format!("Failed to decrypt proof store: {}", e))
-                })?;
-
-        serde_json::from_slice(&store_bytes).map_err(|e| StorageError::InvalidFormat(e.to_string()))
+        Ok(self
+            .load_encrypted_payload::<ProofStore>(PROOF_STORE_FILE_NAME, auth)?
+            .unwrap_or_default())
     }
 
     pub fn save_proofs(
@@ -760,76 +638,27 @@ impl FileStorage {
         auth: &AuthMethod,
         proof_store: &ProofStore,
     ) -> Result<(), StorageError> {
-        let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
-        let proof_path = self.user_storage_path.join(PROOF_STORE_FILE_NAME);
-
-        if !profile_path.exists() {
-            return Err(StorageError::NotFound);
-        }
-
-        let profile_container_bytes = fs::read(profile_path)?;
-        let profile_container: ProfileStorageContainer =
-            serde_json::from_slice(&profile_container_bytes)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-        let file_key_bytes = get_file_key(auth, &profile_container)?;
-
-        let file_key: [u8; KEY_SIZE] = file_key_bytes
-            .try_into()
-            .map_err(|_| StorageError::InvalidFormat("Invalid file key length".to_string()))?;
-
         if proof_store.proofs.is_empty() {
+            self.get_master_key_from_auth(auth)?;
+            let proof_path = self.user_storage_path.join(PROOF_STORE_FILE_NAME);
             if proof_path.exists() {
                 fs::remove_file(proof_path)?;
             }
             return Ok(());
         }
-
-        let store_payload =
-            crypto::encrypt_data(&file_key, &serde_json::to_vec(proof_store).unwrap())
-                .map_err(|e| StorageError::Generic(e.to_string()))?;
-        let store_container = ProofStorageContainer {
-            encrypted_store_payload: store_payload,
-        };
-
-        let store_tmp_path = self
-            .user_storage_path
-            .join(format!("{}.tmp", PROOF_STORE_FILE_NAME));
-        fs::write(
-            &store_tmp_path,
-            serde_json::to_vec(&store_container).unwrap(),
-        )?;
-        fs::rename(&store_tmp_path, &proof_path)?;
-
-        Ok(())
+        self.save_encrypted_payload(PROOF_STORE_FILE_NAME, auth, proof_store)
     }
 
     pub fn load_fingerprint_metadata(
         &self,
         auth: &AuthMethod,
     ) -> Result<CanonicalMetadataStore, StorageError> {
-        let metadata_path = self.user_storage_path.join(FINGERPRINT_METADATA_FILE_NAME);
-        if !metadata_path.exists() {
-            return Ok(CanonicalMetadataStore::default());
-        }
-
-        let file_key = self.get_master_key_from_auth(auth)?;
-
-        let metadata_container_bytes = fs::read(metadata_path)?;
-        let metadata_container: FingerprintMetadataContainer =
-            serde_json::from_slice(&metadata_container_bytes)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-        let store_bytes =
-            crypto::decrypt_data(&file_key, &metadata_container.encrypted_store_payload)
-                .map_err(|e| {
-                    StorageError::InvalidFormat(format!(
-                        "Failed to decrypt fingerprint metadata: {}",
-                        e
-                    ))
-                })?;
-
-        serde_json::from_slice(&store_bytes).map_err(|e| StorageError::InvalidFormat(e.to_string()))
+        Ok(self
+            .load_encrypted_payload::<CanonicalMetadataStore>(
+                FINGERPRINT_METADATA_FILE_NAME,
+                auth,
+            )?
+            .unwrap_or_default())
     }
 
     pub fn save_fingerprint_metadata(
@@ -837,35 +666,15 @@ impl FileStorage {
         auth: &AuthMethod,
         metadata: &CanonicalMetadataStore,
     ) -> Result<(), StorageError> {
-        let metadata_path = self.user_storage_path.join(FINGERPRINT_METADATA_FILE_NAME);
-
-        let file_key = self.get_master_key_from_auth(auth)?;
-
-        // If the store is empty, we delete the file if it exists.
         if metadata.is_empty() {
+            self.get_master_key_from_auth(auth)?;
+            let metadata_path = self.user_storage_path.join(FINGERPRINT_METADATA_FILE_NAME);
             if metadata_path.exists() {
                 fs::remove_file(metadata_path)?;
             }
             return Ok(());
         }
-
-        let store_payload =
-            crypto::encrypt_data(&file_key, &serde_json::to_vec(metadata).unwrap())
-                .map_err(|e| StorageError::Generic(e.to_string()))?;
-        let store_container = FingerprintMetadataContainer {
-            encrypted_store_payload: store_payload,
-        };
-
-        let store_tmp_path = self
-            .user_storage_path
-            .join(format!("{}.tmp", FINGERPRINT_METADATA_FILE_NAME));
-        fs::write(
-            &store_tmp_path,
-            serde_json::to_vec(&store_container).unwrap(),
-        )?;
-        fs::rename(&store_tmp_path, &metadata_path)?;
-
-        Ok(())
+        self.save_encrypted_payload(FINGERPRINT_METADATA_FILE_NAME, auth, metadata)
     }
 
     /// Stores an arbitrary, named data block encrypted.
@@ -884,20 +693,10 @@ impl FileStorage {
         // 1. Get the master key used for all operations of this wallet.
         let master_key = self.get_master_key_from_auth(auth)?;
 
-        // 2. Create a secure file path (isolated in the profile folder).
-        // We do not use the user_hash in the file name to avoid privacy leaks.
-        let path = self
-            .user_storage_path
-            .join(format!("generic_{}.enc", name));
-        let tmp_path = self
-            .user_storage_path
-            .join(format!("generic_{}.enc.tmp", name));
-
-        // 3. Encrypt the data and save it atomically (tmp file + rename).
+        // 2. Encrypt and atomically persist via write_atomic.
         let ciphertext = crypto::encrypt_data(&master_key, data)
             .map_err(|e| StorageError::Generic(e.to_string()))?;
-        fs::write(&tmp_path, ciphertext).map_err(StorageError::from)?;
-        fs::rename(&tmp_path, &path).map_err(StorageError::from)?;
+        self.write_atomic(format!("generic_{}.enc", name), &ciphertext)?;
 
         Ok(())
     }
@@ -955,52 +754,100 @@ impl FileStorage {
         fs::create_dir_all(&self.user_storage_path)?;
 
         let current_pid = std::process::id();
+        let pid_str = current_pid.to_string();
 
-        if self.lock_file_path.exists() {
-            let pid_str = fs::read_to_string(&self.lock_file_path).map_err(|e| {
-                StorageError::Generic(format!("Konnte Lock-Datei nicht lesen: {}", e))
-            })?;
-
-            let pid_val = pid_str.trim().parse::<u32>().map_err(|_| {
-                StorageError::Generic(format!("Ungültige PID in Lock-Datei: {}", pid_str))
-            })?;
-
-            // --- RE-ENTRANCY CHECK ---
-            // If the PID in the file is OURS, we already have the lock. All good.
-            if pid_val == current_pid {
-                return Ok(false);
+        // --- Atomic lock acquisition (TOCTOU-free) ---
+        // Use create_new() which atomically creates the file and fails if it
+        // already exists (O_CREAT | O_EXCL). No separate exists() check needed,
+        // eliminating the TOCTOU race window.
+        match fs::File::create_new(&self.lock_file_path) {
+            Ok(mut file) => {
+                // File was created atomically -> we have the exclusive lock.
+                file.write_all(pid_str.as_bytes())?;
+                Ok(true)
             }
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    // Lock file already exists -> another process created it first.
+                    // Read the existing PID and apply the same checks as before.
+                    let pid_result = fs::read_to_string(&self.lock_file_path)
+                        .map(|s| s.trim().parse::<u32>());
+                    let pid_val = match pid_result {
+                        Ok(v) => v.unwrap_or(0),
+                        Err(_) => {
+                            // Unparseable content -> treat as stale, re-acquire.
+                            // First remove the bad lock file, then create fresh.
+                            let _ = fs::remove_file(&self.lock_file_path);
+                            let mut file = fs::File::create(&self.lock_file_path)
+                                .map_err(|e| {
+                                    StorageError::Generic(format!(
+                                        "Konnte Lock-Datei nach Bereinigung nicht erstellen: {}",
+                                        e
+                                    ))
+                                })?;
+                            file.write_all(pid_str.as_bytes())?;
+                            return Ok(true);
+                        }
+                    };
 
-            // Check if the process is still running
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let mut s = System::new();
-                s.refresh_processes();
+                    // --- RE-ENTRANCY CHECK ---
+                    // If the PID in the file is OURS, we already have the lock. All good.
+                    if pid_val == current_pid {
+                        return Ok(false);
+                    }
 
-                if s.process(Pid::from_u32(pid_val)).is_some() {
-                    // Process still running -> Error!
-                    return Err(StorageError::LockFailed(format!(
-                        "Wallet wird bereits von einem anderen Prozess (PID: {}) verwendet.",
-                        pid_val
-                    )));
+                    // Check if the process is still running
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let mut s = System::new();
+                        s.refresh_processes();
+
+                        if s.process(Pid::from_u32(pid_val)).is_some() {
+                            // Process still running -> Error! Another live process holds the lock.
+                            return Err(StorageError::LockFailed(format!(
+                                "Wallet wird bereits von einem anderen Prozess (PID: {}) verwendet.",
+                                pid_val
+                            )));
+                        } else {
+                            // Process dead -> Stale Lock
+                            eprintln!(
+                                "Veraltete Sperre (Stale Lock) von PID {} gefunden und entfernt.",
+                                pid_val
+                            );
+                            // Remove stale lock and create fresh one.
+                            let _ = fs::remove_file(&self.lock_file_path);
+                            let mut file = fs::File::create(&self.lock_file_path)
+                                .map_err(|e| {
+                                    StorageError::Generic(format!(
+                                        "Konnte Lock-Datei nach Bereinigung nicht erstellen: {}",
+                                        e
+                                    ))
+                                })?;
+                            file.write_all(pid_str.as_bytes())?;
+                            return Ok(true);
+                        }
+                    }
+                    // If we reached here without returning, the lock is in an indeterminate
+                    // state; try to re-acquire atomically.
+                    let mut file = fs::File::create(&self.lock_file_path)
+                        .map_err(|e| {
+                            StorageError::Generic(format!(
+                                "Konnte Lock-Datei nicht erstellen: {}",
+                                e
+                            ))
+                        })?;
+                    file.write_all(pid_str.as_bytes())?;
+                    Ok(true)
                 } else {
-                    // Process dead -> Stale Lock
-                    eprintln!(
-                        "Veraltete Sperre (Stale Lock) von PID {} gefunden und entfernt.",
-                        pid_val
-                    );
+                    // Other I/O error
+                    Err(StorageError::Generic(format!(
+                        "Fehler beim Erstellen der Lock-Datei: {}",
+                        e
+                    )))
                 }
             }
         }
-
-        // Acquire lock: Write own PID into lock file.
-        let mut file = fs::File::create(&self.lock_file_path)?;
-        file.write_all(current_pid.to_string().as_bytes())?;
-
-        Ok(true)
-    }
-
-    pub fn unlock(&self) -> Result<(), StorageError> {
+    }    pub fn unlock(&self) -> Result<(), StorageError> {
         if self.lock_file_path.exists() {
             // SECURITY: Never remove a lock owned by ANOTHER LIVE process.
             // `unlock` is reachable through `AppService::logout`; without this
@@ -1046,7 +893,6 @@ impl FileStorage {
 
     pub fn write_generation(&mut self, expected: u64, new: u64) -> Result<(), StorageError> {
         fs::create_dir_all(&self.user_storage_path)?;
-        let path = self.user_storage_path.join(".wallet.generation");
         let current = self.read_generation()?;
         if current != expected {
             return Err(StorageError::StateConflict(format!(
@@ -1054,11 +900,7 @@ impl FileStorage {
                 expected, current
             )));
         }
-
-        let tmp_path = self.user_storage_path.join(".wallet.generation.tmp");
-        fs::write(&tmp_path, new.to_string())?;
-        fs::rename(&tmp_path, &path)?;
-        Ok(())
+        self.write_atomic(".wallet.generation", new.to_string().as_bytes())
     }
 
     pub fn save_seal(
@@ -1066,54 +908,14 @@ impl FileStorage {
         auth: &AuthMethod,
         record: &crate::models::seal::LocalSealRecord,
     ) -> Result<(), StorageError> {
-        let seal_path = self.user_storage_path.join(SEAL_FILE_NAME);
-        let file_key = self.get_master_key_from_auth(auth)?;
-
-        let store_payload =
-            crypto::encrypt_data(&file_key, &serde_json::to_vec(record).unwrap())
-                .map_err(|e| StorageError::Generic(e.to_string()))?;
-        let store_container = SealStorageContainer {
-            encrypted_store_payload: store_payload,
-        };
-
-        let store_tmp_path = self
-            .user_storage_path
-            .join(format!("{}.tmp", SEAL_FILE_NAME));
-        fs::write(
-            &store_tmp_path,
-            serde_json::to_vec(&store_container).unwrap(),
-        )?;
-        fs::rename(&store_tmp_path, &seal_path)?;
-
-        Ok(())
+        self.save_encrypted_payload(SEAL_FILE_NAME, auth, record)
     }
 
     pub fn load_seal(
         &self,
         auth: &AuthMethod,
     ) -> Result<Option<crate::models::seal::LocalSealRecord>, StorageError> {
-        let seal_path = self.user_storage_path.join(SEAL_FILE_NAME);
-        if !seal_path.exists() {
-            return Ok(None);
-        }
-
-        let file_key = self.get_master_key_from_auth(auth)?;
-
-        let seal_container_bytes = fs::read(seal_path)?;
-        let seal_container: SealStorageContainer =
-            serde_json::from_slice(&seal_container_bytes)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-        let store_bytes =
-            crypto::decrypt_data(&file_key, &seal_container.encrypted_store_payload)
-                .map_err(|e| {
-                    StorageError::InvalidFormat(format!("Failed to decrypt seal: {}", e))
-                })?;
-
-        let record: crate::models::seal::LocalSealRecord = serde_json::from_slice(&store_bytes)
-            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-        Ok(Some(record))
+        self.load_encrypted_payload::<crate::models::seal::LocalSealRecord>(SEAL_FILE_NAME, auth)
     }
 
     pub fn get_item_hash(&self, name: &str) -> Result<String, StorageError> {
@@ -1137,18 +939,9 @@ impl FileStorage {
         &mut self,
         record: &crate::models::storage_integrity::LocalIntegrityRecord,
     ) -> Result<(), StorageError> {
-        let path = self.user_storage_path.join(INTEGRITY_FILE_NAME);
-        let tmp_path = self
-            .user_storage_path
-            .join(format!("{}.tmp", INTEGRITY_FILE_NAME));
-
         let json = serde_json::to_vec_pretty(record)
             .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-        fs::write(&tmp_path, json)?;
-        fs::rename(&tmp_path, &path)?;
-
-        Ok(())
+        self.write_atomic(INTEGRITY_FILE_NAME, &json)
     }
 
     pub fn load_integrity(
@@ -1293,10 +1086,10 @@ impl FileStorage {
                 let e_container = EventsStorageContainer { encrypted_store_payload: e_payload };
                 let e_container_bytes = serde_json::to_vec(&e_container)
                     .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-                let tmp_path = events_dir.join(format!("{}.json.enc.tmp", month));
-                fs::write(&tmp_path, e_container_bytes)?;
-                fs::rename(&tmp_path, &chunk_path)?;
+                self.write_atomic(
+                    format!("{}/{}.json.enc", EVENTS_DIR_NAME, month),
+                    &e_container_bytes,
+                )?;
             }
 
             // Completion of migration
@@ -1342,9 +1135,10 @@ impl FileStorage {
             let e_container_bytes = serde_json::to_vec(&e_container)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
-            let tmp_path = events_dir.join(format!("{}.json.enc.tmp", month));
-            fs::write(&tmp_path, e_container_bytes)?;
-            fs::rename(&tmp_path, &chunk_path)?;
+            self.write_atomic(
+                format!("{}/{}.json.enc", EVENTS_DIR_NAME, month),
+                &e_container_bytes,
+            )?;
         }
 
         Ok(())

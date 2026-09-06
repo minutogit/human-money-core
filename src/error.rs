@@ -1,6 +1,6 @@
-//! # src/error.rs
+//! # `src/error.rs`
 //!
-//! Defines the central error type for the entire human_money_core library.
+//! Defines the central error type for the entire `human_money_core` library.
 //! Uses `thiserror` for easy creation of meaningful errors
 //! and automatic conversion of subordinate error types.
 

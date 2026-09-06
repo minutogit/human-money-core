@@ -1,4 +1,4 @@
-//! # human_money_core
+//! # `human_money_core`
 //!
 //! Core library of a decentralized, trust-based electronic voucher payment system.
 //! Provides data structures and stateless services for creating, managing and
@@ -32,7 +32,7 @@
 //! ## Safety fuses
 //!
 //! `test-utils` enables a thread-local signature bypass for integration tests and is
-//! forbidden in release builds (compile_error). `cargo check --target wasm32-unknown-unknown`
+//! forbidden in release builds (`compile_error`). `cargo check --target wasm32-unknown-unknown`
 //! and `cargo check --manifest-path bindings/wasm/Cargo.toml` must stay green.
 
 // Declare main modules of the library and make them public.

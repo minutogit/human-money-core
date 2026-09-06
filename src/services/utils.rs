@@ -1,6 +1,8 @@
-//! # src/services/utils.rs
+//! # `src/services/utils.rs`
 //!
-//! Contains general helper functions, e.g. for timestamps and canonical serialization.
+//! General, stateless helpers for canonical JSON (RFC 8785) and UTC timestamp
+//! arithmetic. Private helpers handle leap-year clamping and period rounding;
+//! public API is pure and `wasm32`-compatible (no file I/O, no network).
 
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Timelike, Utc};
 use serde::Serialize;
@@ -47,11 +49,17 @@ fn try_ymd_hms_with_nanos(
 
 /// Adds `years` to `dt` while clamping an invalid day (e.g. Feb 29 → Feb 28)
 /// and preserving the original nanoseconds.
-fn add_years_clamped(dt: DateTime<Utc>, years: i32) -> DateTime<Utc> {
+///
+/// SECURITY (AUDIT-00-WILDCARD-14): Fails closed with `InvalidValidityDuration` on year/chrono
+/// overflow instead of falling back to `Utc::now` which would distort validity/firewall checks.
+fn try_add_years_clamped(dt: DateTime<Utc>, years: i32) -> Result<DateTime<Utc>, crate::error::VoucherCoreError> {
     if years == 0 {
-        return dt;
+        return Ok(dt);
     }
-    let new_year = dt.year() + years;
+    let new_year = dt
+        .year()
+        .checked_add(years)
+        .ok_or_else(|| crate::error::VoucherCoreError::InvalidValidityDuration("Year overflow".to_string()))?;
     let nanos = dt.nanosecond();
 
     if let Some(candidate) = try_ymd_hms_with_nanos(
@@ -63,7 +71,7 @@ fn add_years_clamped(dt: DateTime<Utc>, years: i32) -> DateTime<Utc> {
         dt.second(),
         nanos,
     ) {
-        return candidate;
+        return Ok(candidate);
     }
 
     let last_day = days_in_month(new_year, dt.month());
@@ -77,7 +85,7 @@ fn add_years_clamped(dt: DateTime<Utc>, years: i32) -> DateTime<Utc> {
         dt.second(),
         nanos,
     )
-    .unwrap_or_else(Utc::now)
+    .ok_or_else(|| crate::error::VoucherCoreError::InvalidValidityDuration("Date out of range".to_string()))
 }
 
 /// Returns the last nanosecond before `year/month/1 00:00:00`.
@@ -155,7 +163,9 @@ pub fn get_timestamp(years_to_add: i32, end_of_year: bool) -> String {
     let mut dt = Utc::now();
 
     if years_to_add != 0 {
-        dt = add_years_clamped(dt, years_to_add);
+        if let Ok(new_dt) = try_add_years_clamped(dt, years_to_add) {
+            dt = new_dt;
+        }
     }
 
     if end_of_year {
@@ -171,11 +181,24 @@ pub fn get_timestamp(years_to_add: i32, end_of_year: bool) -> String {
     dt.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
 }
 
+/// Returns the current UTC timestamp as an RFC 3339 string with microsecond precision.
+///
+/// In production (`not(any(test, feature = "test-utils"))`) this is a thin
+/// wrapper around [`get_timestamp`] with `years_to_add = 0` and `end_of_year = false`.
+/// With `test` or `test-utils` enabled it returns the thread-local mock time
+/// if set (see [`set_mock_time`]), otherwise falls back to the real clock.
+/// This indirection keeps time-dependent validation deterministic in tests
+/// without affecting cryptographic stability.
 #[cfg(not(any(test, feature = "test-utils")))]
 pub fn get_current_timestamp() -> String {
     get_timestamp(0, false)
 }
 
+/// Returns the current UTC timestamp as an RFC 3339 string with microsecond precision.
+///
+/// Thread-local mock aware: when a mock is set via [`set_mock_time`] the
+/// mocked value is returned, otherwise the live clock (`get_timestamp(0, false)`)
+/// is used. Production builds use the non-mock overload above.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn get_current_timestamp() -> String {
     MOCK_TIME.with(|time| {
@@ -189,9 +212,14 @@ pub fn get_current_timestamp() -> String {
 
 #[cfg(any(test, feature = "test-utils"))]
 thread_local! {
+    /// Thread-local override for [`get_current_timestamp`] in tests.
     static MOCK_TIME: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
+/// Overrides the thread-local time returned by [`get_current_timestamp`] in tests.
+///
+/// Pass `Some(rfc3339)` to freeze time for the current thread, or `None` to
+/// restore the live clock. Only available with `test` or `feature = "test-utils"`.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn set_mock_time(time: Option<String>) {
     MOCK_TIME.with(|t| *t.borrow_mut() = time);
@@ -273,7 +301,12 @@ pub fn add_iso8601_duration(
         VoucherCoreError::VoucherManagerGeneric(format!("Invalid number in duration: {}", duration_str))
     })?;
     match unit {
-        "Y" => Ok(add_years_clamped(start_date, value as i32)),
+        "Y" => {
+            let years_i32 = i32::try_from(value).map_err(|_| {
+                VoucherCoreError::InvalidValidityDuration(format!("Year value too large: {}", value))
+            })?;
+            try_add_years_clamped(start_date, years_i32)
+        }
         "M" => {
             let current_month0 = start_date.month0();
             let total_months0 = current_month0 + value;

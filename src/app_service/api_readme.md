@@ -235,6 +235,18 @@ These helper functions can be called at any time, even when the service is `Lock
 
 ---
 
+## Cryptographic Protocol (V3 SST)
+
+All transaction authorization and gossip proofs use the **V3 Shared-Signature Trap (SST)** under domain tag **`HMC_TX_AUTH_V3`**.
+
+*   **Double-spend tag:** `ds_tag = hash(prev_hash || sender_ephemeral_pub)` (SHA3, length-prefixed). The tag is bound exclusively to the revealed one-time key (`sender_ephemeral_pub`), prefix-independent. Different composite DIDs sharing the same underlying `did:key` still yield distinct tags because the ephemeral keys are HKDF-derived per prefix.
+*   **On-chain trap (`TrapData`):** `ds_tag`, `trap_r` (= `R_i = R_sig + tau_i * M_R`, compressed Edwards point, Base58), `trap_s` (= `s_i = s_sig + tau_i * m_s` mod q, canonical scalar, Base58). V2 fields `u`, `blinded_id`, `proof` are obsolete and hard-rejected on load. Genesis transactions carry no `trap_data`; fingerprints use the canonical placeholder `"none"` / `"none"`.
+*   **Fingerprint (`TransactionFingerprint`):** `ds_tag`, `t_id`, `encrypted_timestamp`, `layer2_signature`, `sender_ephemeral_pub`, `deletable_at`, **`trap_r` / `trap_s`**, `layer2_voucher_id` (hex for spends, `"none"` for genesis), `privacy_guard_hash`. The embedded `layer2_signature` is verified via `HMC_TX_AUTH_V3` at gossip ingress, turning fingerprints into self-authenticating instant proofs.
+*   **Digest `HMC_TX_AUTH_V3` (length-prefixed via `get_raw_hash_from_slices`):** `HMC_TX_AUTH_V3 || layer2_voucher_id || challenge_ds_tag (t_id for genesis, ds_tag for spends) || t_id || sender_ephemeral_pub || trap_r || trap_s || encrypted_timestamp (LE u128) || deletable_at || privacy_guard_hash`. Any bit change invalidates the signature.
+*   **Autonomous deanonymization:** A single shard is information-theoretically anonymous (4 unknowns). Two colliding shards (same `ds_tag`, distinct `t_id` → distinct `tau = H("HMC_TAU_V1" || ds_tag || t_id)`) linearly reconstruct `(R_sig, s_sig)` and the offender's public key `did:key` (`X_hat = (s_hat*G - R_hat)/c`). Framing an innocent party requires an EUF-CMA Schnorr forgery. Degenerate cases (identical `tau`, identical shards, non-canonical scalars, zero challenge, neutral element, torsion) are firewall-rejected. L1 handover carries the private witness `W = (R_sig, s_sig, M_R, m_s)` in `RecipientPayload` for immediate `verify_sst_witness` checks (fraud prevention, R5).
+
+---
+
 ## Security Checklist for App Developers
 
 To ensure the safety of user funds and prevent accidental wallet cloning, app developers **MUST** follow these rules:

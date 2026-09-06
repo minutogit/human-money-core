@@ -5,9 +5,11 @@
 
 use super::types::format_bff_name;
 use super::{AggregatedBalance, AssetClass, VoucherDetails, VoucherSummary, Wallet};
+use crate::archive::FileVoucherArchive;
 use crate::error::VoucherCoreError;
+use crate::models::voucher::{Transaction, Voucher};
 use crate::services::jws_profile_service::export_profile_as_jws;
-use crate::wallet::instance::VoucherStatus;
+use crate::wallet::instance::{VoucherInstance, VoucherStatus};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::Zero;
 use std::collections::HashMap;
@@ -368,8 +370,8 @@ impl Wallet {
                             voucher.voucher_standard.name.clone(),
                         )
                     });
-                    // Add amount to the first element of the tuple (the Decimal value).
-                    entry.0 += amount;
+                    // Use saturating_add to avoid panic on overflow (AUDIT-00-WILDCARD-10)
+                    entry.0 = entry.0.saturating_add(amount);
                 }
             }
         }
@@ -555,6 +557,67 @@ impl Wallet {
         }
 
         Ok(result)
+    }
+
+    /// Searches for a transaction by its ID (`t_id`), first in the active
+    /// `voucher_store` and then in the `FileVoucherArchive` (if provided).
+    pub(super) fn find_transaction_in_stores(
+        &self,
+        t_id: &str,
+        archive: Option<&FileVoucherArchive>,
+    ) -> Result<Option<Transaction>, VoucherCoreError> {
+        // Search active store first
+        for instance in self.voucher_store.vouchers.values() {
+            if let Some(tx) = instance
+                .voucher
+                .transactions
+                .iter()
+                .find(|t| t.t_id == t_id)
+            {
+                return Ok(Some(tx.clone()));
+            }
+        }
+
+        // Then search archive if provided
+        if let Some(archive) = archive {
+            let result = archive.find_transaction_by_id(t_id)?;
+            return Ok(result.map(|(_, tx)| tx));
+        }
+
+        Ok(None)
+    }
+
+    /// Searches for a voucher by a contained transaction ID (`t_id`).
+    /// Searches first the active `voucher_store` and then the `FileVoucherArchive` (if provided).
+    pub(super) fn find_voucher_for_transaction(
+        &self,
+        t_id: &str,
+        archive: Option<&FileVoucherArchive>,
+    ) -> Result<Option<Voucher>, VoucherCoreError> {
+        // Search active store first
+        for instance in self.voucher_store.vouchers.values() {
+            if instance.voucher.transactions.iter().any(|t| t.t_id == t_id) {
+                return Ok(Some(instance.voucher.clone()));
+            }
+        }
+
+        // Then search archive if provided
+        if let Some(archive) = archive {
+            return Ok(archive.find_voucher_by_tx_id(t_id)?);
+        }
+
+        Ok(None)
+    }
+
+    /// Finds the local ID and status of a voucher by a contained transaction ID.
+    pub(super) fn find_local_voucher_by_tx_id(&self, tx_id: &str) -> Option<&VoucherInstance> {
+        self.voucher_store.vouchers.values().find(|instance| {
+            instance
+                .voucher
+                .transactions
+                .iter()
+                .any(|tx| tx.t_id == tx_id)
+        })
     }
 }
 

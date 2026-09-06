@@ -24,6 +24,10 @@
 //! | AUDIT-00-WILDCARD-07  | WH3-00-903 | High     | conflict_manager/conflict_handler::scan_and_rebuild_fingerprints |
 //! | AUDIT-00-WILDCARD-08  | WH3-00-904 | Medium   | app_service/l2_facade.rs::process_l2_response (Instant overflow residue) |
 //! | AUDIT-00-WILDCARD-09  | WH3-00-905 | Medium   | app_service/l2_facade.rs (quarantine write outside transactional discipline) |
+//! | AUDIT-00-WILDCARD-10  | GN-00-10   | Medium   | wallet/queries.rs::get_total_balance_by_currency (unchecked Decimal +=) |
+//! | AUDIT-00-WILDCARD-11  | GN-00-11   | Low      | storage/file_storage.rs (serde_json::to_vec().unwrap() panics) |
+//! | AUDIT-00-WILDCARD-13  | GN-00-13   | Medium   | models/voucher.rs::spendable_balance (unwrap_or(ZERO) masking) |
+//! | AUDIT-00-WILDCARD-14  | GN-00-14   | Low      | services/utils.rs::add_years_clamped (fallback to Utc::now) |
 
 use human_money_core::app_service::{AppFacadeError, AppService};
 use human_money_core::models::profile::PublicProfile;
@@ -1457,5 +1461,262 @@ fn wildcard_09_l2_quarantine_write_must_respect_rollback_discipline() {
          transactional discipline (generation marker moved from \
          {generation_ram}).",
         outcome.map(|_| "Ok").map_err(|e| e.to_string())
+    );
+}
+
+// =============================================================================
+// General Adversarial Wildcard — Fail-First Tests (2026-08-29)
+// Scope: docs/security/ai-audits/00_general_adversarial_wildcard.md
+// Report: docs/security/ai-audits/reports/00_general_adversarial_wildcard_report.md
+// =============================================================================
+
+///
+/// Finding-ID: AUDIT-00-WILDCARD-10
+/// Severity: MEDIUM
+/// CWE-Classification: CWE-190 (Integer Overflow) / CWE-248 (Uncaught Exception)
+/// Target Location: src/wallet/queries.rs:374 (`entry.0 += amount`)
+/// Threat Model & Exploitation: Attacker crafts high-value vouchers whose per-AssetClass
+///   aggregated sum exceeds Decimal::MAX. `get_total_balance_by_currency` uses unchecked
+///   `+=` (plain Decimal Add) and panics deterministically on every dashboard render,
+///   bricking the wallet UI. The write path (`TransferSummary::checked_add`) already
+///   fixed the same class; the read path was missed.
+/// Impact Analysis: Uncatchable panic / wasm trap on every balance view; no fund loss,
+///   but permanent liveness DoS until manual store surgery.
+/// Root Cause: Defense-in-depth inconsistency — checked arithmetic on consensus write path
+///   but unchecked `+=` on derived view path.
+/// Remediation Strategy: `checked_add` with graceful degradation (skip asset class /
+///   surface BalanceOverflow) or `saturating_add` with UI indicator.
+/// Test Semantics (Fail-First): Aggregation over two MAX-valued Active vouchers MUST NOT panic.
+///
+#[test]
+fn wildcard_10_balance_aggregation_must_be_panic_free() {
+    use human_money_core::models::voucher::{Voucher, VoucherStandard, ValueDefinition};
+    use human_money_core::models::profile::PublicProfile;
+    use human_money_core::wallet::instance::{VoucherInstance, VoucherStatus};
+    use human_money_core::wallet::Wallet;
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
+
+    // Construct a minimal wallet with two Active vouchers whose amounts sum beyond Decimal::MAX.
+    // Decimal::MAX = 79_228_162_514_264_373_935_439_503_335 (scale 0).
+    // Two copies overflow plain `+=`.
+    let max_str = "79228162514264337593543950335";
+    let _ = Decimal::from_str(max_str).expect("MAX must parse");
+
+    // Build wallet via new_from_mnemonic helper to get a valid profile, then inject vouchers.
+    let (mut wallet, _) = human_money_core::wallet::Wallet::new_from_mnemonic(
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        None,
+        Some("test"),
+        human_money_core::MnemonicLanguage::English,
+        "test-id".to_string(),
+    )
+    .expect("wallet creation");
+
+    // Helper to build a voucher with controlled last-transaction amount
+    let make_voucher = |vid: &str, amount: &str| -> Voucher {
+        let mut v = Voucher::default();
+        v.voucher_id = vid.to_string();
+        v.voucher_standard = VoucherStandard {
+            name: "Freetaler".to_string(),
+            uuid: "00000000-0000-0000-0000-000000000001".to_string(),
+            standard_definition_hash: "test".to_string(),
+        };
+        v.nominal_value = ValueDefinition {
+            unit: "MIN".to_string(),
+            amount: amount.to_string(),
+            abbreviation: Some("MIN".to_string()),
+            description: None,
+        };
+        v.creator_profile = PublicProfile {
+            id: Some(wallet.get_user_id().to_string()),
+            ..Default::default()
+        };
+        v.transactions = vec![human_money_core::models::voucher::Transaction {
+            t_id: format!("t_{vid}"),
+            t_type: "init".to_string(),
+            t_time: "2026-01-01T00:00:00Z".to_string(),
+            prev_hash: "prev".to_string(),
+            receiver_ephemeral_pub_hash: None,
+            sender_id: Some(wallet.get_user_id().to_string()),
+            sender_identity_signature: None,
+            recipient_id: wallet.get_user_id().to_string(),
+            amount: amount.to_string(),
+            sender_remaining_amount: None,
+            sender_ephemeral_pub: None,
+            change_ephemeral_pub_hash: None,
+            privacy_guard: None,
+            trap_data: None,
+            layer2_signature: None,
+            deletable_at: None,
+        }];
+        v
+    };
+
+    let v1 = make_voucher("vid-10-a", max_str);
+    let v2 = make_voucher("vid-10-b", max_str);
+    // Use deterministic local_instance_ids so aggregation buckets collide on same AssetClass
+    wallet
+        .voucher_store
+        .vouchers
+        .insert("lid-10-a".to_string(), VoucherInstance {
+            local_instance_id: "lid-10-a".to_string(),
+            voucher: v1,
+            status: VoucherStatus::Active,
+        });
+    wallet
+        .voucher_store
+        .vouchers
+        .insert("lid-10-b".to_string(), VoucherInstance {
+            local_instance_id: "lid-10-b".to_string(),
+            voucher: v2,
+            status: VoucherStatus::Active,
+        });
+
+    // Soll-Verhalten: must not panic. Unpatched code panics at `entry.0 += amount`.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wallet.get_total_balance_by_currency(None)
+    }));
+    assert!(
+        result.is_ok(),
+        "AUDIT-00-WILDCARD-10 VIOLATION: get_total_balance_by_currency panicked on overflow \
+         (Decimal::MAX + Decimal::MAX via unchecked `+=`). The view layer must use \
+         checked_add / saturating_add and degrade gracefully instead of aborting the host. \
+         Panic payload: {:?}",
+        result.err()
+    );
+}
+
+///
+/// Finding-ID: AUDIT-00-WILDCARD-11
+/// Severity: LOW
+/// CWE-Classification: CWE-248 (Uncaught Exception) / CWE-754
+/// Target Location: src/storage/file_storage.rs:269,275,457,483,490,500,506,554
+/// Threat Model & Exploitation: Every `save_encrypted_payload` / `save_wallet` path
+///   serializes with `serde_json::to_vec(...).unwrap()`. Today the shapes are infallible,
+///   but the `Result<StorageError>` contract promises fail-closed behavior; a future
+///   struct evolution (custom Serialize returning Err, Decimal NaN) would turn a storage
+///   error into an uncatchable process abort.
+/// Impact Analysis: Future regression → process abort during any wallet save.
+/// Root Cause: `unwrap()` where `?` with `StorageError::InvalidFormat` was intended.
+/// Remediation Strategy: `serde_json::to_vec(value).map_err(|e| StorageError::InvalidFormat(e.to_string()))?`
+/// Test Semantics (Fail-First): The storage layer's Result contract must be upheld;
+///   this test documents the invariant by inspecting the source for remaining `unwrap()` on `to_vec`.
+///   It fails on unpatched code (unwrap still present) and passes after replacement with `?`.
+///
+#[test]
+fn wildcard_11_serialization_must_be_fail_closed() {
+    let src = std::fs::read_to_string("src/storage/file_storage.rs")
+        .expect("can read file_storage.rs");
+    // Count `serde_json::to_vec` sites that still use `.unwrap()`
+    let offending: Vec<_> = src
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.contains("serde_json::to_vec") && line.contains("unwrap()"))
+        .map(|(idx, line)| format!("L{}: {}", idx + 1, line.trim()))
+        .collect();
+    assert!(
+        offending.is_empty(),
+        "AUDIT-00-WILDCARD-11 VIOLATION: {} `serde_json::to_vec(...).unwrap()` sites remain in \
+         src/storage/file_storage.rs — they must be replaced with `?` mapping to \
+         StorageError::InvalidFormat to honor fail-closed persistence. Offending lines:\n{}",
+        offending.len(),
+        offending.join("\n")
+    );
+}
+
+///
+/// Finding-ID: AUDIT-00-WILDCARD-13
+/// Severity: MEDIUM
+/// CWE-Classification: CWE-252 (Unchecked Return Value) / CWE-393
+/// Target Location: src/models/voucher.rs:986-1004 (`spendable_balance` `unwrap_or(ZERO)`)
+/// Threat Model & Exploitation: `Voucher::spendable_balance` silently maps any
+///   `Decimal::from_str` failure on `last_tx.amount` / `sender_remaining_amount` to
+///   `Decimal::ZERO` via `unwrap_or`. A tampered or legacy-invalid amount (e.g. "NaN")
+///   is displayed as unfunded (0) instead of surfacing as a validation error,
+///   masking corruption / forensic evidence.
+/// Impact Analysis: Soft fund disappearance — user sees 0 balance for a voucher that
+///   should be flagged InvalidTransaction / Incomplete; forensic masking.
+/// Root Cause: Convenience fallback in read model diverging from consensus `from_str()?`.
+/// Remediation Strategy: Propagate Err (or mark voucher Incomplete { BusinessRule }) instead of ZERO.
+/// Test Semantics (Fail-First): A voucher with last_tx.amount="NaN" must NOT report spendable 0
+///   via silent coercion; the read path must surface an error or non-zero sentinel.
+///
+#[test]
+fn wildcard_13_malformed_amount_must_not_be_masked_as_zero() {
+    use human_money_core::models::voucher::{Voucher, VoucherStandard, ValueDefinition, Transaction, TrapData};
+    use human_money_core::models::profile::PublicProfile;
+    use rust_decimal::Decimal;
+    // Build a minimal voucher whose last amount is malformed
+    let mut v = Voucher::default();
+    v.voucher_id = "vid-13".to_string();
+    v.voucher_standard = VoucherStandard {
+        name: "Freetaler".to_string(),
+        uuid: "00000000-0000-0000-0000-000000000001".to_string(),
+        standard_definition_hash: "test".to_string(),
+    };
+    v.nominal_value = ValueDefinition {
+        unit: "MIN".to_string(),
+        amount: "100.00".to_string(),
+        abbreviation: Some("MIN".to_string()),
+        description: None,
+    };
+    v.creator_profile = PublicProfile::default();
+    v.transactions = vec![Transaction {
+        t_id: "t13".to_string(),
+        t_type: "init".to_string(),
+        t_time: "2026-01-01T00:00:00Z".to_string(),
+        prev_hash: "prev".to_string(),
+        receiver_ephemeral_pub_hash: None,
+        sender_id: Some("did:key:zTest".to_string()),
+        sender_identity_signature: None,
+        recipient_id: "did:key:zTest".to_string(),
+        amount: "NaN".to_string(), // malformed — must not be masked as 0
+        sender_remaining_amount: None,
+        sender_ephemeral_pub: None,
+        change_ephemeral_pub_hash: None,
+        privacy_guard: None,
+        trap_data: None,
+        layer2_signature: None,
+        deletable_at: None,
+    }];
+    // Invoke the read-model method under test. On unpatched code this returns ZERO.
+    let bal = v.spendable_balance(None, None);
+    assert_ne!(
+        bal,
+        Decimal::ZERO,
+        "AUDIT-00-WILDCARD-13 VIOLATION: spendable_balance masked malformed amount \"NaN\" as ZERO \
+         via `unwrap_or`. The read model must NOT silently coerce parse failures; it must \
+         propagate an error or mark the voucher non-spendable. Got ZERO — forensic masking."
+    );
+}
+
+///
+/// Finding-ID: AUDIT-00-WILDCARD-14
+/// Severity: LOW
+/// CWE-Classification: CWE-682 (Incorrect Calculation) / CWE-754
+/// Target Location: src/services/utils.rs:82 (`add_years_clamped` fallback to `Utc::now`)
+/// Threat Model & Exploitation: `add_years_clamped` falls back to `Utc::now` when
+///   `try_ymd_hms_with_nanos` returns None for an out-of-chrono-range year
+///   (e.g. P9999Y from a compromised standard). This silently substitutes wall-clock
+///   time for the intended end date, corrupting validity-window and issuance-firewall
+///   calculations instead of failing closed.
+/// Impact Analysis: Duration / validity drift; firewall bypass for impossible durations.
+/// Root Cause: Defensive `unwrap_or_else(Utc::now)` masking invalid-year inputs.
+/// Remediation Strategy: Return `VoucherCoreError::InvalidValidityDuration` Err.
+/// Test Semantics (Fail-First): An out-of-range year addition must NOT return Utc::now.
+///   This is a source-level invariant (fallback to `now` must be removed).
+///
+#[test]
+fn wildcard_14_add_years_out_of_range_must_be_fail_closed() {
+    let src = std::fs::read_to_string("src/services/utils.rs")
+        .expect("can read services/utils.rs");
+    let has_now_fallback = src.contains("unwrap_or_else(Utc::now)");
+    assert!(
+        !has_now_fallback,
+        "AUDIT-00-WILDCARD-14 VIOLATION: src/services/utils.rs still contains \
+         `unwrap_or_else(Utc::now)` in `add_years_clamped` — an out-of-range year \
+         (e.g. +300k years) silently becomes `now` instead of returning \
+         `InvalidValidityDuration`. Replace with `ok_or(VoucherCoreError::InvalidValidityDuration)`."
     );
 }
