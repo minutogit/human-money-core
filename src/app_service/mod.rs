@@ -55,12 +55,11 @@
 //! ```
 
 use crate::models::profile::UserIdentity;
-use crate::services::{bundle_processor, crypto};
+use crate::services::crypto;
 use crate::services::crypto::constants::ARGON2_PROFILE_FOLDER_SALT;
 use crate::storage::FileStorage;
 use crate::wallet::Wallet;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -72,6 +71,7 @@ pub use crate::error::Error as AppFacadeError;
 // Each file contains `impl AppService` blocks for its specific domain.
 pub mod conflicts;
 pub mod lifecycle;
+pub mod orchestrator;
 pub mod storage_ops;
 pub mod transactions;
 
@@ -169,37 +169,7 @@ impl AppService {
             .unwrap_or_else(|_| crypto::get_hash(secret_string.as_bytes()))
     }
 
-    /// Validates all vouchers within an encrypted bundle.
-    /// This method is called by the `transactions` handler before processing a bundle
-    /// and therefore remains centrally available here.
-    fn validate_vouchers_in_bundle(
-        identity: &UserIdentity,
-        bundle_data: &[u8],
-        standard_definitions_toml: &HashMap<String, String>,
-    ) -> Result<(), crate::Error> {
-        let bundle = bundle_processor::open_and_verify_bundle(identity, bundle_data)?;
 
-        for voucher in &bundle.vouchers {
-            let standard_uuid = &voucher.voucher_standard.uuid;
-            let standard_toml = standard_definitions_toml
-                .get(standard_uuid)
-                .ok_or_else(|| {
-                    crate::Error::ValidationFailed(format!(
-                        "Required standard definition for UUID '{}' not provided.",
-                        standard_uuid
-                    ))
-                })?;
-
-            let (verified_standard, _) =
-                crate::models::voucher_standard_definition::VoucherStandardDefinition::from_toml(standard_toml)?;
-
-            crate::services::voucher_validation::validate_voucher_against_standard(
-                voucher,
-                &verified_standard,
-            )?;
-        }
-        Ok(())
-    }
 
 
     /// Resolves the authentication method (password or session key).
@@ -215,16 +185,12 @@ impl AppService {
                     // Panic-free deadline check: elapsed() cannot overflow, unlike
                     // `last_activity + session_duration` for host-supplied durations.
                     if cache.last_activity.elapsed() > cache.session_duration {
-                        Err(crate::Error::Generic(
-                            "Session timed out. Please provide password.".to_string(),
-                        ))
+                        Err(crate::Error::App(crate::error::AppError::SessionExpired { reason: "Session timed out. Please provide password.".to_string() }))
                     } else {
                         Ok(crate::storage::AuthMethod::SessionKey(cache.session_key))
                     }
                 }
-                None => Err(crate::Error::Generic(
-                    "Password required. Please use 'unlock_session'.".to_string(),
-                )),
+                None => Err(crate::Error::App(crate::error::AppError::SessionNotActive { reason: "Password required. Please use 'unlock_session'.".to_string() })),
             },
         }
     }
@@ -352,221 +318,26 @@ impl AppService {
             &crate::storage::AuthMethod,
         ) -> TransactionOutcome<R, crate::Error>,
     {
-        // 1. Check fork-lock
-        self.check_fork_lock(password)?;
-
-        // 2. Unpack state (temporarily replace with Locked)
-        let old_state = std::mem::replace(&mut self.state, AppState::Locked);
-
-        match old_state {
-            AppState::Unlocked {
-                mut storage,
-                wallet,
-                identity,
-                session_cache,
-            } => {
-                // 3. Request file-lock (RAII)
-                let _lock =
-                    crate::storage::WalletLockGuard::new(&storage).map_err(crate::Error::from)?;
-
-                // 4. Resolve authentication
-                let auth = match Self::resolve_auth_method(password, &session_cache) {
-                    Ok(a) => a,
-                    Err(e) => {
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        };
-                        return Err(e);
-                    }
-                };
-
-                // NEW: Check if our RAM state is up to date (Reload-Before-Write)
-                let mut current_wallet = wallet;
-                let disk_generation = match storage.read_generation() {
-                    Ok(gen_val) => gen_val,
-                    Err(e) => {
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet: current_wallet,
-                            identity,
-                            session_cache,
-                        };
-                        return Err(crate::Error::from(e));
-                    }
-                };
-
-                if disk_generation != current_wallet.loaded_generation {
-                    let local_instance_id = current_wallet.local_instance_id.clone();
-                    match Wallet::load(&storage, &auth, local_instance_id) {
-                        Ok((fresh_wallet, _)) => {
-                            // SECURITY GATE: the reloaded state was written by
-                            // an external party. Only trust it if the current
-                            // seal covers it -- otherwise this command would
-                            // silently operate on (potentially resurrected)
-                            // rolled-back state.
-                            if let Err(gate_err) =
-                                Self::verify_state_matches_seal(&storage, &auth, &fresh_wallet)
-                            {
-                                self.state = AppState::Unlocked {
-                                    storage,
-                                    wallet: current_wallet,
-                                    identity,
-                                    session_cache,
-                                };
-                                return Err(gate_err);
-                            }
-                            current_wallet = fresh_wallet;
-                        }
-                        Err(e) => {
-                            self.state = AppState::Unlocked {
-                                storage,
-                                wallet: current_wallet,
-                                identity,
-                                session_cache,
-                            };
-                            return Err(crate::Error::ValidationFailed(format!("Failed to reload wallet: {}", e)));
-                        }
-                    }
-                }
-
-                // 5. Establish atomicity (cloning)
-                let mut temp_wallet = current_wallet.clone();
-
-                // 6. Execute closure
-                let outcome = f(&mut temp_wallet, &identity, &mut storage, &auth);
-
-                // 7. Evaluate outcome
-                match outcome {
-                    TransactionOutcome::Commit(res) => {
-                        if let Err(e) = temp_wallet.save(&mut storage, &identity, &auth) {
-                            self.state = AppState::Unlocked {
-                                storage,
-                                wallet: current_wallet,
-                                identity,
-                                session_cache,
-                            };
-                            return Err(crate::Error::from(e));
-                        }
-                        // Advance the cryptographic seal BEFORE publishing the
-                        // new state. If this fails, the data files are already
-                        // durably persisted while the seal still anchors the
-                        // PRE-transaction state; returning Err now would brick
-                        // the next login (state-hash gate in
-                        // `verify_seal_on_login`). Compensate by restoring the
-                        // pre-transaction data so disk matches the untouched
-                        // (tmp+rename-atomic) seal again: Err => no commit.
-                        if let Err(seal_err) =
-                            Self::persist_seal_for_wallet_state(&mut storage, &identity, &auth, &temp_wallet)
-                        {
-                            let restored_wallet = Self::compensate_failed_seal_phase(
-                                &mut storage,
-                                &current_wallet,
-                                &identity,
-                                &auth,
-                            );
-                            self.state = AppState::Unlocked {
-                                storage,
-                                wallet: restored_wallet,
-                                identity,
-                                session_cache,
-                            };
-                            return Err(seal_err);
-                        }
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet: temp_wallet,
-                            identity,
-                            session_cache,
-                        };
-                        Ok(res)
-                    }
-                    TransactionOutcome::CommitAndReturnError(err) => {
-                        if let Err(e) = temp_wallet.save(&mut storage, &identity, &auth) {
-                            self.state = AppState::Unlocked {
-                                storage,
-                                wallet: current_wallet,
-                                identity,
-                                session_cache,
-                            };
-                            return Err(crate::Error::from(e));
-                        }
-                        // Same seal-first/compensate contract as the Commit arm:
-                        // a failed seal update must never leave persisted data
-                        // stranded next to a stale seal.
-                        if let Err(seal_err) =
-                            Self::persist_seal_for_wallet_state(&mut storage, &identity, &auth, &temp_wallet)
-                        {
-                            let restored_wallet = Self::compensate_failed_seal_phase(
-                                &mut storage,
-                                &current_wallet,
-                                &identity,
-                                &auth,
-                            );
-                            self.state = AppState::Unlocked {
-                                storage,
-                                wallet: restored_wallet,
-                                identity,
-                                session_cache,
-                            };
-                            return Err(seal_err);
-                        }
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet: temp_wallet,
-                            identity,
-                            session_cache,
-                        };
-                        Err(err)
-                    }
-                    TransactionOutcome::Rollback(err) => {
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet: current_wallet,
-                            identity,
-                            session_cache,
-                        };
-                        Err(err)
-                    }
-                }
-            }
-            AppState::Locked => Err(crate::Error::WalletLocked),
-        }
+        crate::app_service::orchestrator::TransactionOrchestrator::execute(self, password, f)
     }
 
-    /// Compensates a half-committed transaction whose seal update failed
-    /// AFTER the wallet data files were durably persisted.
+    /// Delegates to [`crate::storage::seal_service::SealService::compensate_failed_seal_phase`].
     ///
-    /// Re-persists the PRE-transaction wallet state (with the generation
-    /// counter aligned to the value the aborted commit wrote) so that the
-    /// on-disk data matches the untouched seal again. `save_seal` writes via
-    /// tmp+rename, therefore a failed seal update always leaves the previous,
-    /// fully intact seal behind - restoring the matching data re-establishes
-    /// the invariant checked by `verify_seal_on_login` and keeps the wallet
-    /// loginable.
-    ///
-    /// Best effort: if the compensating write itself fails (active I/O
-    /// breakdown), the divergence remains and the next login will require
-    /// recovery - nothing more can be done at this point.
-    fn compensate_failed_seal_phase(
+    /// Kept for internal call-site compatibility; the canonical implementation
+    /// now lives in `SealService`.
+    #[allow(dead_code)]
+    pub(crate) fn compensate_failed_seal_phase(
         storage: &mut FileStorage,
         pre_tx_wallet: &Wallet,
         identity: &UserIdentity,
         auth: &crate::storage::AuthMethod<'_>,
     ) -> Wallet {
-        let mut rollback_wallet = pre_tx_wallet.clone();
-        if let Ok(disk_gen) = storage.read_generation() {
-            rollback_wallet.loaded_generation = disk_gen;
-        }
-        if let Err(e) = rollback_wallet.save(storage, identity, auth) {
-            eprintln!(
-                "Wallet seal compensation failed; manual recovery may be required: {}",
-                e
-            );
-        }
-        rollback_wallet
+        crate::storage::seal_service::SealService::compensate_failed_seal_phase(
+            storage,
+            pre_tx_wallet,
+            identity,
+            auth,
+        )
     }
 
     /// Checks the "Remember password" session, manages the timeout

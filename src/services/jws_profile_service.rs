@@ -85,9 +85,9 @@ pub fn verify_and_import_jws_profile(
     // 1. Split into three parts
     let parts: Vec<&str> = jws_compact.split('.').collect();
     if parts.len() != 3 {
-        return Err(VoucherCoreError::Generic(
+        return Err(crate::Error::Wallet(crate::error::WalletError::JwsError { reason: 
             "JWS must have exactly 3 parts separated by dots".to_string(),
-        ));
+         }));
     }
 
     let header_b64 = parts[0];
@@ -125,7 +125,7 @@ pub fn verify_and_import_jws_profile(
 
     // 4. Extract did:key from profile (if present) or from signature verification
     let did_key = profile.id.clone().ok_or_else(|| {
-        VoucherCoreError::Generic("Profile must contain an 'id' field (did:key)".to_string())
+        crate::Error::Wallet(crate::error::WalletError::JwsError { reason: "Profile must contain an 'id' field (did:key)".to_string() })
     })?;
 
     // 5. Decode signature

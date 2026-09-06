@@ -250,43 +250,27 @@ impl Wallet {
         Ok((wallet, identity))
     }
 
-    /// Saves the current wallet state in a `Storage` backend.
+    /// Saves the current wallet state via the atomic 2-phase commit in `FileStorage`.
     ///
-    /// **Important:** Order is critical for data safety.
-    /// First UserProfile, VoucherStore, BundleMetadataStore, and all
-    /// fingerprint stores are saved. Finally `pending_events`
-    /// are appended to the event log. Only if ALL operations succeed
-    /// is `self.pending_events.clear()` called.
+    /// This is a thin facade over `FileStorage::commit_wallet_atomic` to keep
+    /// the `Wallet` API ergonomic for tests and callers. The actual atomicity
+    /// (staging → generation bump → pending_events clear) lives entirely in
+    /// `FileStorage` as required by the decoupled architecture.
+    ///
+    /// **Decoupled persistence:** `Wallet` itself remains a pure in-memory
+    /// state machine; all I/O and cryptographic binding is owned by
+    /// `FileStorage::commit_wallet_atomic`:
+    /// 1. `vouchers.enc` bytes → `derive_store_binding_hash` → `profile.store_binding_hash`
+    /// 2. staging writes of all containers via `write_atomic`
+    /// 3. commit point `write_generation` only after all writes succeeded
+    /// 4. `pending_events` cleared only after durable commit
     pub fn save(
         &mut self,
         storage: &mut FileStorage,
         identity: &UserIdentity,
         auth: &AuthMethod,
     ) -> Result<(), StorageError> {
-        let current_generation = storage.read_generation()?;
-        if current_generation != self.loaded_generation {
-            return Err(StorageError::StateConflict(
-                "State was modified externally!".to_string(),
-            ));
-        }
-        let new_generation = current_generation + 1;
-        storage.write_generation(current_generation, new_generation)?;
-        self.loaded_generation = new_generation;
-
-        storage.save_wallet(&self.profile, &self.voucher_store, identity, auth)?;
-        storage.save_bundle_metadata(auth, &self.bundle_meta_store)?;
-        storage.save_known_fingerprints(auth, &self.known_fingerprints)?;
-        storage.save_own_fingerprints(auth, &self.own_fingerprints)?;
-        storage.save_proofs(auth, &self.proof_store)?;
-        storage.save_fingerprint_metadata(auth, &self.fingerprint_metadata)?;
-
-        // Finally: Persist events. Only clear on complete success.
-        if !self.pending_events.is_empty() {
-            storage.append_events(auth, &self.pending_events)?;
-            self.pending_events.clear();
-        }
-
-        Ok(())
+        storage.commit_wallet_atomic(self, identity, auth)
     }
 
     /// Resets the password for a wallet in a `Storage` backend.
@@ -396,45 +380,52 @@ impl Wallet {
         Ok(new_voucher)
     }
 
-    /// Forces binding of the wallet to the current device (handover).
-    /// Increments the epoch and sets the new instance_id in the seal.
+    /// Pure in-memory device handover: increments epoch and binds to `self.local_instance_id`.
+    ///
+    /// **Decoupled:** This method mutates only in-memory state and takes no
+    /// `&mut FileStorage`. Persistence (loading the old seal and saving the new
+    /// `LocalSealRecord`) is owned by the caller / `FileStorage`.
     pub fn force_device_handover(
-        &mut self,
-        storage: &mut FileStorage,
+        &self,
         identity: &UserIdentity,
-        auth: &AuthMethod,
+        old_seal: Option<&crate::models::seal::WalletSeal>,
     ) -> Result<crate::models::seal::WalletSeal, VoucherCoreError> {
-        // 1. Load old seal
-        let record = storage
-            .load_seal(auth)
-            .map_err(VoucherCoreError::Storage)?
-            .ok_or(VoucherCoreError::RequiresSealRecovery)?;
-
-        // 2. Create new seal with increased epoch and new instance_id
-        // We use WalletSeal::recover_epoch for this, since it does exactly that (Epoch + 1)
         let state_hash = {
             let canonical = crate::services::utils::to_canonical_json(&self.own_fingerprints)?;
             crate::services::crypto::get_hash(canonical.as_bytes())
         };
 
-        let new_seal = WalletSeal::recover_epoch(
-            Some(&record.seal),
+        WalletSeal::recover_epoch(
+            old_seal,
             &identity.user_id,
             identity,
             &state_hash,
             &self.local_instance_id,
-        )?;
+        )
+    }
 
-        // 3. Save
+    /// Legacy wrapper preserving the old `(&mut FileStorage, ..)` signature for
+    /// backward compatibility. Delegates to the pure `force_device_handover`
+    /// overload and performs I/O via `FileStorage`.
+    pub fn force_device_handover_with_storage(
+        &self,
+        storage: &mut FileStorage,
+        identity: &UserIdentity,
+        auth: &AuthMethod,
+    ) -> Result<crate::models::seal::WalletSeal, VoucherCoreError> {
+        let record = storage
+            .load_seal(auth)
+            .map_err(VoucherCoreError::Storage)?
+            .ok_or(VoucherCoreError::RequiresSealRecovery)?;
+        let new_seal = self.force_device_handover(identity, Some(&record.seal))?;
         let new_record = crate::models::seal::LocalSealRecord {
             seal: new_seal.clone(),
             sync_status: crate::models::seal::SyncStatus::PendingUpload,
             is_locked_due_to_fork: false,
         };
-
-        storage.save_seal(auth, &new_record)
+        storage
+            .save_seal(auth, &new_record)
             .map_err(VoucherCoreError::Storage)?;
-
         Ok(new_seal)
     }
 }

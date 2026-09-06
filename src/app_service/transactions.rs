@@ -5,7 +5,7 @@
 //! signature workflows (request/attach/remove) and endorsement import.
 //! Consolidates the former `command_handler.rs` and `app_signature_handler.rs`.
 
-use super::{AppService, AppState, TransactionOutcome};
+use super::{AppService, TransactionOutcome};
 use crate::archive::FileVoucherArchive;
 use crate::error::ValidationError;
 use crate::models::conflict::ResolutionEndorsement;
@@ -14,6 +14,7 @@ use crate::models::signature::DetachedSignature;
 use crate::models::voucher::{NewVoucherData, Voucher, VoucherSignature};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::services::voucher_validation;
+use crate::services::voucher_validation::StandardRegistry;
 use crate::wallet::instance::VoucherStatus;
 use crate::wallet::{CreateBundleResult, MultiTransferRequest, ProcessBundleResult};
 use crate::Error;
@@ -93,26 +94,22 @@ impl AppService {
         password: Option<&str>,
         force_accept_tolerance_bundle: bool,
     ) -> Result<ProcessBundleResult, Error> {
-        // --- EPOCH ZONE MODEL: Check against Pre-Epoch Bundles ---
-        self.check_bundle_against_epoch_zones(bundle_data, password, force_accept_tolerance_bundle)?;
-
-        // Parse TOML definitions
-        let mut verified_definitions = HashMap::new();
-        for (uuid, toml_content) in standard_definitions_toml {
-            let (def, _) = VoucherStandardDefinition::from_toml(toml_content)?;
-            verified_definitions.insert(uuid.clone(), def);
-        }
+        let registry = StandardRegistry::from_toml_map(standard_definitions_toml)?;
+        let epoch_info = self.get_epoch_info(password).ok().flatten();
+        let (epoch_start_time, epoch) = match epoch_info {
+            Some((start_time, ep)) => (Some(start_time), ep),
+            None => (None, 0),
+        };
 
         self.with_transactional_mut(password, |temp_wallet, identity, _, _| {
-            if let Err(e) = Self::validate_vouchers_in_bundle(identity, bundle_data, standard_definitions_toml) {
-                return TransactionOutcome::Rollback(e);
-            }
-
-            match temp_wallet.process_encrypted_transaction_bundle(
+            match temp_wallet.process_bundle_with_registry_inner(
                 identity,
                 bundle_data,
                 archive,
-                &verified_definitions,
+                &registry,
+                epoch_start_time.as_deref(),
+                epoch,
+                force_accept_tolerance_bundle,
             ) {
                 Ok(proc_result) => TransactionOutcome::Commit(proc_result),
                 Err(e) => TransactionOutcome::Rollback(e),
@@ -132,67 +129,6 @@ impl AppService {
                 Err(e) => TransactionOutcome::Rollback(e),
             }
         })
-    }
-
-    /// Internal helper to validate a bundle against epoch rollback zones.
-    fn check_bundle_against_epoch_zones(
-        &self,
-        bundle_data: &[u8],
-        password: Option<&str>,
-        force_accept: bool,
-    ) -> Result<(), Error> {
-        if let Ok(Some((epoch_start_time, epoch))) = self.get_epoch_info(password)
-            && epoch > 0 {
-                let max_tx_time = match &self.state {
-                    AppState::Unlocked { identity, .. } => {
-                        let bundle = crate::services::bundle_processor::open_and_verify_bundle(
-                            identity,
-                            bundle_data,
-                        )?;
-
-                        let mut max_dt: Option<chrono::DateTime<chrono::Utc>> = None;
-                        for voucher in &bundle.vouchers {
-                            if let Some(last_tx) = voucher.transactions.last()
-                                && let Ok(tx_dt) =
-                                    chrono::DateTime::parse_from_rfc3339(&last_tx.t_time)
-                                {
-                                    let tx_utc = tx_dt.with_timezone(&chrono::Utc);
-                                    match max_dt {
-                                        None => max_dt = Some(tx_utc),
-                                        Some(m) if tx_utc > m => max_dt = Some(tx_utc),
-                                        _ => {}
-                                    }
-                                }
-                        }
-                        max_dt
-                    }
-                    _ => None,
-                };
-
-                if let Some(bundle_max_dt) = max_tx_time
-                    && let Ok(epoch_dt) = chrono::DateTime::parse_from_rfc3339(&epoch_start_time) {
-                        let epoch_utc = epoch_dt.with_timezone(&chrono::Utc);
-
-                        if bundle_max_dt < epoch_utc {
-                            let delta = epoch_utc - bundle_max_dt;
-                            const ZONE_1_LIMIT_MINUTES: i64 = 15;
-                            const ZONE_2_LIMIT_HOURS: i64 = 24;
-                            const ZONE_3_LIMIT_DAYS: i64 = 28;
-
-                            if delta > chrono::Duration::days(ZONE_3_LIMIT_DAYS) {
-                                return Err(Error::BundlePredatesCurrentEpoch);
-                            } else if delta > chrono::Duration::hours(ZONE_2_LIMIT_HOURS) {
-                                if !force_accept {
-                                    return Err(Error::BundleInExtendedRecoveryToleranceZone);
-                                }
-                            } else if delta > chrono::Duration::minutes(ZONE_1_LIMIT_MINUTES)
-                                && !force_accept {
-                                    return Err(Error::BundleInRecoveryToleranceZone);
-                                }
-                        }
-                    }
-            }
-        Ok(())
     }
 
     // --- Signature Workflow (from app_signature_handler) ---
@@ -237,7 +173,9 @@ impl AppService {
                 container.c,
                 crate::models::secure_container::PayloadType::VoucherForSigning
             ) {
-                return Err(Error::ValidationFailed("Invalid payload type: expected VoucherForSigning".to_string()));
+                return Err(Error::App(
+                    crate::error::AppError::InvalidPayloadTypeVoucherForSigning,
+                ));
             }
 
             // HMSEC-SA06-09: Strict envelope validation BEFORE payload processing.

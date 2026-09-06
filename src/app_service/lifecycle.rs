@@ -11,7 +11,7 @@ use crate::models::storage_integrity::StorageIntegrityRecord;
 use crate::storage::{AuthMethod, FileStorage};
 use crate::wallet::Wallet;
 use crate::services::mnemonic::MnemonicLanguage;
-use crate::services::crypto::{generate_mnemonic, validate_mnemonic_phrase, get_hash};
+use crate::services::crypto::{generate_mnemonic, validate_mnemonic_phrase};
 use crate::Error;
 use std::fs;
 use std::path::Path;
@@ -137,10 +137,8 @@ impl AppService {
             .save(&mut storage, &identity, &AuthMethod::Password(password))?;
 
         // --- WALLET SEAL: Create initial seal (Epoch 0) ---
-        let state_hash = {
-            let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)?;
-            get_hash(canonical.as_bytes())
-        };
+        let state_hash =
+            crate::storage::seal_service::SealService::calculate_state_hash(&wallet.own_fingerprints)?;
         let initial_seal = WalletSeal::create_initial(
             &identity.user_id,
             &identity,
@@ -344,10 +342,8 @@ impl AppService {
                 .ok()
                 .flatten();
 
-            let current_state_hash = {
-                let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)?;
-                get_hash(canonical.as_bytes())
-            };
+            let current_state_hash =
+                crate::storage::seal_service::SealService::calculate_state_hash(&wallet.own_fingerprints)?;
 
             let recovered_seal = WalletSeal::recover_epoch(
                 existing_seal.as_ref().map(|r| &r.seal),
@@ -495,11 +491,23 @@ impl AppService {
         let auth = AuthMethod::Password(password);
 
         // 1. Load wallet
-        let (mut wallet, identity) = Wallet::load(&storage, &auth, local_instance_id)
+        let (wallet, identity) = Wallet::load(&storage, &auth, local_instance_id.clone())
             .map_err(|e| Error::Crypto(format!("Loading for handover failed: {}", e)))?;
 
-        // 2. Perform handover
-        let new_seal = wallet.force_device_handover(&mut storage, &identity, &auth)?;
+        // 2. Perform handover – pure in-memory, persistence owned by FileStorage
+        let old_record = storage
+            .load_seal(&auth)
+            .map_err(|e| Error::Crypto(format!("Loading seal for handover failed: {}", e)))?
+            .ok_or(Error::RequiresSealRecovery)?;
+        let new_seal = wallet.force_device_handover(&identity, Some(&old_record.seal))?;
+        let new_record = crate::models::seal::LocalSealRecord {
+            seal: new_seal.clone(),
+            sync_status: crate::models::seal::SyncStatus::PendingUpload,
+            is_locked_due_to_fork: false,
+        };
+        storage
+            .save_seal(&auth, &new_record)
+            .map_err(|e| Error::Crypto(format!("Saving new seal failed: {}", e)))?;
 
         // --- INTEGRITY UPDATE ---
         let item_hashes = storage.get_all_item_hashes()?;
@@ -540,11 +548,7 @@ impl AppService {
 
         for path in bad_paths {
             if path.exists() {
-                return Err(Error::Generic(
-                    "CRITICAL SECURITY VIOLATION: The App Developer has stored the 'instance_id' inside the application data directory. \
-                    This defeats the cloning protection! The instance_id MUST be stored securely in the OS Keyring or a separate isolated Config directory. \
-                    Execution halted to protect user funds.".to_string()
-                ));
+                return Err(crate::Error::App(crate::error::AppError::SecurityViolation { reason: "CRITICAL SECURITY VIOLATION: instance_id stored in wallet dir".to_string() }));
             }
         }
         Ok(())

@@ -1,40 +1,46 @@
 //! # src/storage/file_storage.rs
 //!
-//! An implementation of the `Storage` trait that stores data in multiple encrypted
-//! files in the file system.
+//! Concrete `FileStorage` facade — slim wrapper delegating to modular sub-stores.
+//!
+//! Streamline Phase-2 splits the former 1 500-line `FileStorage` into
+//! `key_manager`, `encrypted_store`, `event_store`, `lock` and `integrity`
+//! submodules. This file retains the public `FileStorage` API, the on-disk
+//! container schemas (`ProfileStorageContainer`, `EncryptedStorageContainer`)
+//! and the atomic-write / profile-container helpers. All behavioural code is
+//! delegated to the submodules, preserving 100 % binary compatibility and the
+//! exact `save_wallet` store-binding serialization order:
+//! `vouchers.enc` bytes → `HMAC-SHA3` → embedded in `profile.enc` → atomic writes.
 
 use super::{AuthMethod, StorageError};
 use crate::models::conflict::CanonicalMetadataStore;
 use crate::models::conflict::{KnownFingerprints, OwnFingerprints, ProofStore};
-use crate::models::storage_integrity::INTEGRITY_FILE_NAME;
 use crate::models::profile::{BundleMetadataStore, UserIdentity, UserProfile, VoucherStore};
 use crate::services::crypto;
-#[cfg(not(any(test, feature = "test-utils")))]
-use argon2::Argon2;
+use crate::storage::key_manager::{KEY_SIZE, SALT_SIZE};
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::SigningKey;
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use std::{fs, io::Write, path::{Path, PathBuf}};
+use std::{fs, path::{Path, PathBuf}};
 
-#[cfg(not(target_arch = "wasm32"))]
-use sysinfo::{Pid, System};
+// Re-export key-manager helpers for internal crate use (keeps import paths stable)
+use crate::storage::key_manager::{
+    derive_key_from_password, derive_key_from_signing_key, derive_store_binding_hash, get_file_key,
+};
 
 // --- Internal Constants and Structures ---
 
-const SALT_SIZE: usize = 16;
-const KEY_SIZE: usize = 32;
-const LOCK_FILE_NAME: &str = ".wallet.lock";
-const PROFILE_FILE_NAME: &str = "profile.enc";
-const VOUCHER_STORE_FILE_NAME: &str = "vouchers.enc";
-const BUNDLE_META_FILE_NAME: &str = "bundles.meta.enc";
-const KNOWN_FINGERPRINTS_FILE_NAME: &str = "known_fingerprints.enc";
-const PROOF_STORE_FILE_NAME: &str = "proofs.enc";
-const OWN_FINGERPRINTS_FILE_NAME: &str = "own_fingerprints.enc";
-const FINGERPRINT_METADATA_FILE_NAME: &str = "fingerprint_metadata.enc";
-const SEAL_FILE_NAME: &str = "seal.enc";
-const LEGACY_EVENTS_FILE_NAME: &str = "events.json.enc";
-const EVENTS_DIR_NAME: &str = "events";
+pub(crate) const LOCK_FILE_NAME: &str = ".wallet.lock";
+pub(crate) const PROFILE_FILE_NAME: &str = "profile.enc";
+pub(crate) const VOUCHER_STORE_FILE_NAME: &str = "vouchers.enc";
+pub(crate) const BUNDLE_META_FILE_NAME: &str = "bundles.meta.enc";
+pub(crate) const KNOWN_FINGERPRINTS_FILE_NAME: &str = "known_fingerprints.enc";
+pub(crate) const PROOF_STORE_FILE_NAME: &str = "proofs.enc";
+pub(crate) const OWN_FINGERPRINTS_FILE_NAME: &str = "own_fingerprints.enc";
+pub(crate) const FINGERPRINT_METADATA_FILE_NAME: &str = "fingerprint_metadata.enc";
+pub(crate) const SEAL_FILE_NAME: &str = "seal.enc";
+pub(crate) const LEGACY_EVENTS_FILE_NAME: &str = "events.json.enc";
+pub(crate) const EVENTS_DIR_NAME: &str = "events";
 
 /// Private module to encapsulate Serde logic for Base64 encoding of vectors.
 mod base64_serde {
@@ -92,66 +98,55 @@ mod base64_array_serde {
 
 /// Container for the encrypted user profile, including key-wrapping information.
 #[derive(Serialize, Deserialize)]
-struct ProfileStorageContainer {
+pub(crate) struct ProfileStorageContainer {
     #[serde(with = "base64_array_serde")]
-    password_kdf_salt: [u8; SALT_SIZE],
+    pub(crate) password_kdf_salt: [u8; SALT_SIZE],
     #[serde(with = "base64_serde")]
-    password_wrapped_key_with_nonce: Vec<u8>,
+    pub(crate) password_wrapped_key_with_nonce: Vec<u8>,
     #[serde(with = "base64_array_serde")]
-    mnemonic_kdf_salt: [u8; SALT_SIZE],
+    pub(crate) mnemonic_kdf_salt: [u8; SALT_SIZE],
     #[serde(with = "base64_serde")]
-    mnemonic_wrapped_key_with_nonce: Vec<u8>,
+    pub(crate) mnemonic_wrapped_key_with_nonce: Vec<u8>,
     #[serde(with = "base64_serde")]
-    encrypted_profile_payload: Vec<u8>,
+    pub(crate) encrypted_profile_payload: Vec<u8>,
     /// Crash-consistency binding (HMSEC-SA05-04/-07): keyed SHA3-256
     /// commitment over the exact serialized bytes of the
     /// `VoucherStorageContainer` written in the same `save_wallet` cycle,
-    /// mixed with the secret file key (`derive_store_binding_hash`). Because
-    /// the persistent file key never changes across saves, an older
-    /// (rolled-back) `vouchers.enc` still decrypts cleanly under AEAD alone;
-    /// this binding makes such generation mismatches detectable at load time.
-    ///
-    /// The value is AUTHENTICATED (keyed under the file key, which is only
-    /// recoverable with valid credentials) and MANDATORY for containers that
-    /// ship a `vouchers.enc`: a local attacker can neither strip the field
-    /// nor recompute it over stale bytes without the file key. Absence or
-    /// mismatch => `StateConflict` at load time. Legacy pre-hardening
-    /// containers therefore fail loudly instead of silently serving
-    /// possibly rolled-back state.
+    /// mixed with the secret file key (`derive_store_binding_hash`).
     #[serde(default)]
-    store_binding_hash: Option<String>,
+    pub(crate) store_binding_hash: Option<String>,
 }
 
 /// Bundles the profile and the private key for storage.
 #[derive(Serialize, Deserialize, Clone)]
-struct ProfilePayload {
-    profile: UserProfile,
-    signing_key_bytes: Vec<u8>,
+pub(crate) struct ProfilePayload {
+    pub(crate) profile: UserProfile,
+    pub(crate) signing_key_bytes: Vec<u8>,
 }
 
 /// Generic container for any encrypted store payload (consolidated from 8 identical containers).
 #[derive(Serialize, Deserialize)]
-struct EncryptedStorageContainer {
+pub(crate) struct EncryptedStorageContainer {
     #[serde(with = "base64_serde")]
-    encrypted_store_payload: Vec<u8>,
+    pub(crate) encrypted_store_payload: Vec<u8>,
 }
 
 // Type aliases for readability at call sites (all identical to the generic container).
-type VoucherStorageContainer = EncryptedStorageContainer;
+pub(crate) type VoucherStorageContainer = EncryptedStorageContainer;
 #[allow(dead_code)]
-type BundleMetadataContainer = EncryptedStorageContainer;
+pub(crate) type BundleMetadataContainer = EncryptedStorageContainer;
 #[allow(dead_code)]
-type KnownFingerprintsContainer = EncryptedStorageContainer;
+pub(crate) type KnownFingerprintsContainer = EncryptedStorageContainer;
 #[allow(dead_code)]
-type OwnFingerprintsContainer = EncryptedStorageContainer;
+pub(crate) type OwnFingerprintsContainer = EncryptedStorageContainer;
 #[allow(dead_code)]
-type ProofStorageContainer = EncryptedStorageContainer;
+pub(crate) type ProofStorageContainer = EncryptedStorageContainer;
 #[allow(dead_code)]
-type FingerprintMetadataContainer = EncryptedStorageContainer;
+pub(crate) type FingerprintMetadataContainer = EncryptedStorageContainer;
 #[allow(dead_code)]
-type SealStorageContainer = EncryptedStorageContainer;
+pub(crate) type SealStorageContainer = EncryptedStorageContainer;
 #[allow(dead_code)]
-type EventsStorageContainer = EncryptedStorageContainer;
+pub(crate) type EventsStorageContainer = EncryptedStorageContainer;
 
 // --- FileStorage Implementation ---
 
@@ -165,13 +160,6 @@ pub struct FileStorage {
 
 impl FileStorage {
     /// Creates a new `FileStorage` instance for a specific user directory.
-    ///
-    /// This method is now decoupled from the path name generation logic
-    /// and accepts the full path to the user directory directly.
-    ///
-    /// # Arguments
-    /// * `user_storage_path` - The full path to the directory where the
-    ///   encrypted wallet files of this profile are or should be stored.
     pub fn new(user_storage_path: impl Into<PathBuf>) -> Self {
         let path_buf = user_storage_path.into();
         FileStorage {
@@ -181,7 +169,7 @@ impl FileStorage {
     }
 
     /// Loads the `ProfileStorageContainer` to access the key metadata.
-    fn load_profile_container(&self) -> Result<ProfileStorageContainer, StorageError> {
+    pub(crate) fn load_profile_container(&self) -> Result<ProfileStorageContainer, StorageError> {
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
         if !profile_path.exists() {
             return Err(StorageError::NotFound);
@@ -192,8 +180,7 @@ impl FileStorage {
     }
 
     /// Fetches the master file key using any `AuthMethod`.
-    /// This logic is required by all `load_*` methods.
-    fn get_master_key_from_auth(&self, auth: &AuthMethod) -> Result<[u8; KEY_SIZE], StorageError> {
+    pub(crate) fn get_master_key_from_auth(&self, auth: &AuthMethod) -> Result<[u8; KEY_SIZE], StorageError> {
         let profile_container = self.load_profile_container()?;
         let file_key_bytes = get_file_key(auth, &profile_container)?;
 
@@ -203,7 +190,7 @@ impl FileStorage {
     }
 
     /// Atomic write helper: writes `data` to `relative_path` via tmp-file + rename.
-    fn write_atomic(
+    pub(crate) fn write_atomic(
         &self,
         relative_path: impl AsRef<Path>,
         data: &[u8],
@@ -219,8 +206,7 @@ impl FileStorage {
     }
 
     /// Generic helper: loads, decrypts and deserializes an encrypted payload.
-    /// Returns `Ok(None)` if the file does not exist (caller maps to default).
-    /// Preserves schema gates for fingerprint stores.
+    /// Delegates to `encrypted_store::load_encrypted_payload`.
     fn load_encrypted_payload<T>(
         &self,
         relative_path: impl AsRef<Path>,
@@ -229,33 +215,11 @@ impl FileStorage {
     where
         T: for<'de> Deserialize<'de>,
     {
-        let abs_path = self.user_storage_path.join(relative_path.as_ref());
-        if !abs_path.exists() {
-            return Ok(None);
-        }
-        let file_key = self.get_master_key_from_auth(auth)?;
-        let container_bytes = fs::read(&abs_path)?;
-        let container: EncryptedStorageContainer = serde_json::from_slice(&container_bytes)
-            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-        let plain = crypto::decrypt_data(&file_key, &container.encrypted_store_payload)
-            .map_err(|e| {
-                StorageError::InvalidFormat(format!(
-                    "Failed to decrypt {}: {}",
-                    relative_path.as_ref().display(),
-                    e
-                ))
-            })?;
-        // Schema gates for fingerprint stores (HMSEC-SA05-08)
-        let rel_str = relative_path.as_ref().to_string_lossy();
-        if rel_str == KNOWN_FINGERPRINTS_FILE_NAME || rel_str == OWN_FINGERPRINTS_FILE_NAME {
-            gate_legacy_fingerprint_schema(&plain)?;
-        }
-        let value =
-            serde_json::from_slice(&plain).map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-        Ok(Some(value))
+        crate::storage::encrypted_store::load_encrypted_payload(self, relative_path, auth)
     }
 
     /// Generic helper: encrypts and atomically persists a payload.
+    /// Delegates to `encrypted_store::save_encrypted_payload`.
     fn save_encrypted_payload<T>(
         &mut self,
         relative_path: impl AsRef<Path>,
@@ -265,17 +229,7 @@ impl FileStorage {
     where
         T: Serialize,
     {
-        let file_key = self.get_master_key_from_auth(auth)?;
-        let plain = serde_json::to_vec(value)
-            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-        let encrypted = crypto::encrypt_data(&file_key, &plain)
-            .map_err(|e| StorageError::Generic(e.to_string()))?;
-        let container = EncryptedStorageContainer {
-            encrypted_store_payload: encrypted,
-        };
-        let data = serde_json::to_vec(&container)
-            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-        self.write_atomic(relative_path, &data)
+        crate::storage::encrypted_store::save_encrypted_payload(self, relative_path, auth, value)
     }
 
     pub fn derive_key_for_session(&self, password: &str) -> Result<[u8; 32], StorageError> {
@@ -291,8 +245,6 @@ impl FileStorage {
         &self,
         auth: &AuthMethod,
     ) -> Result<(UserProfile, VoucherStore, UserIdentity), StorageError> {
-        // Ensure the directory exists before reading.
-        // Creation is the task of `save_wallet` or `create_profile`.
         if !self.user_storage_path.exists() {
             return Err(StorageError::NotFound);
         }
@@ -324,22 +276,6 @@ impl FileStorage {
         let store = if store_path.exists() {
             let store_container_bytes = fs::read(store_path)?;
 
-            // Authenticated cross-file generation binding (HMSEC-SA05-04/-07):
-            // the on-disk vouchers.enc MUST be exactly the generation written
-            // together with this profile, and the binding is a keyed commitment
-            // under the secret file key. An older record would decrypt fine
-            // under the same persistent file key, so AEAD alone cannot detect
-            // a rollback or torn multi-file write.
-            //
-            // Hardening (HMSEC-SA05-07): the check is MANDATORY — a missing
-            // binding is treated as tampering (field stripping), and the keyed
-            // derivation prevents recomputation over stale bytes. Profiles
-            // written by pre-hardening versions therefore fail loudly here;
-            // re-save them with a fixed version to migrate.
-            //
-            // Note: a *missing* vouchers.enc is deliberately still tolerated
-            // below (documented recovery-friendly design; detected separately by
-            // the signed Storage Integrity layer as MissingItems).
             let expected_hash = profile_container.store_binding_hash.as_ref().ok_or_else(|| {
                 StorageError::StateConflict(
                     "profile.enc does not carry an authenticated store_binding_hash \
@@ -367,9 +303,8 @@ impl FileStorage {
                         StorageError::InvalidFormat(format!("Failed to decrypt store: {}", e))
                     })?;
 
-            // Schema gate (HMSEC-SA05-08): reject legacy-shaped stores loudly
-            // instead of coercing them through serde field-drop.
-            gate_legacy_transaction_schema(&store_bytes)?;
+            // Schema gate (HMSEC-SA05-08)
+            crate::storage::encrypted_store::gate_legacy_transaction_schema(&store_bytes)?;
 
             serde_json::from_slice(&store_bytes)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?
@@ -404,7 +339,7 @@ impl FileStorage {
         identity: &UserIdentity,
         auth: &AuthMethod,
     ) -> Result<(), StorageError> {
-        fs::create_dir_all(&self.user_storage_path)?; // Creates the folder if not present
+        fs::create_dir_all(&self.user_storage_path)?;
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
 
         let file_key: [u8; KEY_SIZE];
@@ -424,41 +359,31 @@ impl FileStorage {
             let mut pw_salt = [0u8; SALT_SIZE];
             OsRng.fill_bytes(&mut pw_salt);
             let password_key = match auth {
-                // SECURITY (AUDIT-W4-STO-003, parity with HMSEC-SA05-10): an
-                // empty password derives a deterministic Argon2id("") key that
-                // anyone obtaining profile.enc can reconstruct offline. The
-                // mnemonic wrap is NOT a second factor for this path (the
-                // password unwrap alone recovers the file key), so the guard
-                // belongs in core, not at the host.
                 AuthMethod::Password(p) => {
                     if p.is_empty() {
-                        return Err(StorageError::Generic(
-                            "Refusing to create a wallet under an EMPTY password \
-                             (zero-entropy key material)."
-                                .to_string(),
-                        ));
+                        return Err(StorageError::EmptyPassword);
                     }
                     derive_key_from_password(p, &pw_salt)?
                 }
                 _ => {
-                    return Err(StorageError::Generic(
-                        "Only Password auth supported for initial save".to_string(),
-                    ));
+                    return Err(StorageError::InvalidAuthMethod {
+                        reason: "Only Password auth supported for initial save".to_string(),
+                    });
                 }
             };
             let pw_wrapped_key = crypto::encrypt_data(&password_key, &file_key)
-                .map_err(|e| StorageError::Generic(e.to_string()))?;
+                .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
 
             let mut mn_salt = [0u8; SALT_SIZE];
             OsRng.fill_bytes(&mut mn_salt);
             let mnemonic_key = derive_key_from_signing_key(&identity.signing_key, &mn_salt)?;
             let mn_wrapped_key = crypto::encrypt_data(&mnemonic_key, &file_key)
-                .map_err(|e| StorageError::Generic(e.to_string()))?;
+                .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
 
             let profile_payload =
                 crypto::encrypt_data(&file_key, &serde_json::to_vec(&payload)
                     .map_err(|e| StorageError::InvalidFormat(e.to_string()))?)
-                    .map_err(|e| StorageError::Generic(e.to_string()))?;
+                    .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
 
             profile_container = ProfileStorageContainer {
                 password_kdf_salt: pw_salt,
@@ -485,7 +410,7 @@ impl FileStorage {
             existing_container.encrypted_profile_payload =
                 crypto::encrypt_data(&file_key, &serde_json::to_vec(&payload)
                     .map_err(|e| StorageError::InvalidFormat(e.to_string()))?)
-                    .map_err(|e| StorageError::Generic(e.to_string()))?;
+                    .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
             profile_container = existing_container;
         }
 
@@ -493,7 +418,7 @@ impl FileStorage {
         let store_payload =
             crypto::encrypt_data(&file_key, &serde_json::to_vec(store)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?)
-                .map_err(|e| StorageError::Generic(e.to_string()))?;
+                .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
         let store_container = VoucherStorageContainer {
             encrypted_store_payload: store_payload,
         };
@@ -502,6 +427,8 @@ impl FileStorage {
         // generation (HMSEC-SA05-04/-07): the commitment is keyed under the
         // secret file key so a local attacker cannot recompute it over stale
         // bytes; a rolled-back or torn-written vouchers.enc is rejected on load.
+        // IMPORTANT: preserve exact serialization order (vouchers.enc bytes →
+        // HMAC → embed in profile.enc → atomic writes) for wire compatibility.
         let store_container_bytes = serde_json::to_vec(&store_container)
             .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
         profile_container.store_binding_hash =
@@ -522,15 +449,8 @@ impl FileStorage {
         identity: &UserIdentity,
         new_password: &str,
     ) -> Result<(), StorageError> {
-        // SECURITY (AUDIT-W4-STO-003, parity with HMSEC-SA05-10): reject
-        // zero-entropy credentials BEFORE any container rewrite (see the
-        // initial-save guard in `save_wallet`).
         if new_password.is_empty() {
-            return Err(StorageError::Generic(
-                "Refusing to reset a wallet password to EMPTY (zero-entropy \
-                 key material)."
-                    .to_string(),
-            ));
+            return Err(StorageError::EmptyPassword);
         }
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
         if !profile_path.exists() {
@@ -551,7 +471,7 @@ impl FileStorage {
         OsRng.fill_bytes(&mut new_pw_salt);
         let new_password_key = derive_key_from_password(new_password, &new_pw_salt)?;
         let new_pw_wrapped_key = crypto::encrypt_data(&new_password_key, &file_key)
-            .map_err(|e| StorageError::Generic(e.to_string()))?;
+            .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
 
         container.password_kdf_salt = new_pw_salt;
         container.password_wrapped_key_with_nonce = new_pw_wrapped_key;
@@ -684,18 +604,14 @@ impl FileStorage {
         name: &str,
         data: &[u8],
     ) -> Result<(), StorageError> {
-        // 0. Reject unsafe names before any path construction (path traversal
-        //    protection): separators and parent references must never reach the FS layer.
         if name.contains('/') || name.contains('\\') || name.contains("..") {
-            return Err(StorageError::Generic("Invalid data block name".to_string()));
+            return Err(StorageError::InvalidDataBlockName { name: name.to_string() });
         }
 
-        // 1. Get the master key used for all operations of this wallet.
         let master_key = self.get_master_key_from_auth(auth)?;
 
-        // 2. Encrypt and atomically persist via write_atomic.
         let ciphertext = crypto::encrypt_data(&master_key, data)
-            .map_err(|e| StorageError::Generic(e.to_string()))?;
+            .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
         self.write_atomic(format!("generic_{}.enc", name), &ciphertext)?;
 
         Ok(())
@@ -707,17 +623,12 @@ impl FileStorage {
         auth: &AuthMethod,
         name: &str,
     ) -> Result<Vec<u8>, StorageError> {
-        // 0. Reject unsafe names before any path construction, mirroring the
-        //    write-side convention exactly (sanitize-on-write-only asymmetry
-        //    would let reads escape the wallet directory; HMSEC-SA05-11).
         if name.contains('/') || name.contains('\\') || name.contains("..") {
-            return Err(StorageError::Generic("Invalid data block name".to_string()));
+            return Err(StorageError::InvalidDataBlockName { name: name.to_string() });
         }
 
-        // 1. Derive the master key from the authentication method.
         let master_key = self.get_master_key_from_auth(auth)?;
 
-        // 2. Construct the path where the data is expected.
         let path = self
             .user_storage_path
             .join(format!("generic_{}.enc", name));
@@ -726,18 +637,14 @@ impl FileStorage {
             return Err(StorageError::NotFound);
         }
 
-        // 3. Read and decrypt the data.
         let ciphertext = fs::read(&path).map_err(StorageError::from)?;
         crypto::decrypt_data(&master_key, &ciphertext)
             .map_err(|_| StorageError::AuthenticationFailed)
     }
 
     pub fn test_session_key(&self, session_key: &[u8; 32]) -> Result<(), StorageError> {
-        // Load the profile container
         let profile_container = self.load_profile_container()?;
 
-        // Try to decrypt the encrypted file key with the given session key
-        // This will fail if the session key was not derived with the correct password
         let _decrypted = crypto::decrypt_data(
             session_key,
             &profile_container.password_wrapped_key_with_nonce,
@@ -747,132 +654,14 @@ impl FileStorage {
         Ok(())
     }
 
-    // --- Lock Logic Implementation ---
+    // --- Lock Logic (delegated) ---
 
     pub fn lock(&self) -> Result<bool, StorageError> {
-        // Ensure the directory exists.
-        fs::create_dir_all(&self.user_storage_path)?;
+        crate::storage::lock::acquire_lock(self)
+    }
 
-        let current_pid = std::process::id();
-        let pid_str = current_pid.to_string();
-
-        // --- Atomic lock acquisition (TOCTOU-free) ---
-        // Use create_new() which atomically creates the file and fails if it
-        // already exists (O_CREAT | O_EXCL). No separate exists() check needed,
-        // eliminating the TOCTOU race window.
-        match fs::File::create_new(&self.lock_file_path) {
-            Ok(mut file) => {
-                // File was created atomically -> we have the exclusive lock.
-                file.write_all(pid_str.as_bytes())?;
-                Ok(true)
-            }
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::AlreadyExists {
-                    // Lock file already exists -> another process created it first.
-                    // Read the existing PID and apply the same checks as before.
-                    let pid_result = fs::read_to_string(&self.lock_file_path)
-                        .map(|s| s.trim().parse::<u32>());
-                    let pid_val = match pid_result {
-                        Ok(v) => v.unwrap_or(0),
-                        Err(_) => {
-                            // Unparseable content -> treat as stale, re-acquire.
-                            // First remove the bad lock file, then create fresh.
-                            let _ = fs::remove_file(&self.lock_file_path);
-                            let mut file = fs::File::create(&self.lock_file_path)
-                                .map_err(|e| {
-                                    StorageError::Generic(format!(
-                                        "Konnte Lock-Datei nach Bereinigung nicht erstellen: {}",
-                                        e
-                                    ))
-                                })?;
-                            file.write_all(pid_str.as_bytes())?;
-                            return Ok(true);
-                        }
-                    };
-
-                    // --- RE-ENTRANCY CHECK ---
-                    // If the PID in the file is OURS, we already have the lock. All good.
-                    if pid_val == current_pid {
-                        return Ok(false);
-                    }
-
-                    // Check if the process is still running
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        let mut s = System::new();
-                        s.refresh_processes();
-
-                        if s.process(Pid::from_u32(pid_val)).is_some() {
-                            // Process still running -> Error! Another live process holds the lock.
-                            return Err(StorageError::LockFailed(format!(
-                                "Wallet wird bereits von einem anderen Prozess (PID: {}) verwendet.",
-                                pid_val
-                            )));
-                        } else {
-                            // Process dead -> Stale Lock
-                            eprintln!(
-                                "Veraltete Sperre (Stale Lock) von PID {} gefunden und entfernt.",
-                                pid_val
-                            );
-                            // Remove stale lock and create fresh one.
-                            let _ = fs::remove_file(&self.lock_file_path);
-                            let mut file = fs::File::create(&self.lock_file_path)
-                                .map_err(|e| {
-                                    StorageError::Generic(format!(
-                                        "Konnte Lock-Datei nach Bereinigung nicht erstellen: {}",
-                                        e
-                                    ))
-                                })?;
-                            file.write_all(pid_str.as_bytes())?;
-                            return Ok(true);
-                        }
-                    }
-                    // If we reached here without returning, the lock is in an indeterminate
-                    // state; try to re-acquire atomically.
-                    let mut file = fs::File::create(&self.lock_file_path)
-                        .map_err(|e| {
-                            StorageError::Generic(format!(
-                                "Konnte Lock-Datei nicht erstellen: {}",
-                                e
-                            ))
-                        })?;
-                    file.write_all(pid_str.as_bytes())?;
-                    Ok(true)
-                } else {
-                    // Other I/O error
-                    Err(StorageError::Generic(format!(
-                        "Fehler beim Erstellen der Lock-Datei: {}",
-                        e
-                    )))
-                }
-            }
-        }
-    }    pub fn unlock(&self) -> Result<(), StorageError> {
-        if self.lock_file_path.exists() {
-            // SECURITY: Never remove a lock owned by ANOTHER LIVE process.
-            // `unlock` is reachable through `AppService::logout`; without this
-            // check one process could delete the lock of a concurrently
-            // running wallet instance and let a third writer in. Stale locks
-            // (dead PID) and unparseable content are still cleaned up, so
-            // crash recovery keeps working.
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Ok(pid_str) = fs::read_to_string(&self.lock_file_path)
-                && let Ok(pid_val) = pid_str.trim().parse::<u32>()
-                && pid_val != std::process::id()
-            {
-                let mut s = System::new();
-                s.refresh_processes();
-                if s.process(Pid::from_u32(pid_val)).is_some() {
-                    return Err(StorageError::LockFailed(format!(
-                        "Refusing to release wallet lock held by another live process (PID: {}).",
-                        pid_val
-                    )));
-                }
-            }
-            fs::remove_file(&self.lock_file_path)?;
-        }
-        // If the file does not exist, it is also "unlocked".
-        Ok(())
+    pub fn unlock(&self) -> Result<(), StorageError> {
+        crate::storage::lock::release_lock(self)
     }
 
     pub fn get_lock_file_path(&self) -> &std::path::PathBuf {
@@ -903,6 +692,224 @@ impl FileStorage {
         self.write_atomic(".wallet.generation", new.to_string().as_bytes())
     }
 
+    /// Atomically commits the entire wallet state (2-phase commit).
+    ///
+    /// **Phase 1 – Staging:** Encodes `vouchers.enc`, computes the keyed
+    /// `store_binding_hash` (SHA3-256 over `file_key || store_container_bytes`)
+    /// and embeds it byte-identically into `profile.enc`, then writes all
+    /// modified containers (`profile.enc`, `vouchers.enc`, `bundles.meta.enc`,
+    /// `known_fingerprints.enc`, `own_fingerprints.enc`, `proofs.enc`,
+    /// `fingerprint_metadata.enc` and `events`) via atomic tmp+rename.
+    ///
+    /// **Phase 2 – Commit:** Only after every container has been durably
+    /// staged the generation counter is bumped via `write_generation`. This
+    /// single file is the atomic commit point; a crash before it leaves the
+    /// previous consistent generation on disk, a crash after it leaves the
+    /// fully staged new generation – never a torn mix where generation is new
+    /// but data is old (or vice-versa).
+    ///
+    /// The `store_binding_hash` computation preserves exact byte identity with
+    /// the historical `save_wallet` implementation:
+    /// `vouchers.enc` bytes → `derive_store_binding_hash(file_key, bytes)` →
+    /// `profile.store_binding_hash`.
+    pub fn commit_wallet_atomic(
+        &mut self,
+        wallet: &mut crate::wallet::Wallet,
+        identity: &crate::models::profile::UserIdentity,
+        auth: &AuthMethod,
+    ) -> Result<(), StorageError> {
+        // --- Generation check (optimistic concurrency) ---
+        let current_generation = self.read_generation()?;
+        if current_generation != wallet.loaded_generation {
+            return Err(StorageError::StateConflict(
+                "State was modified externally!".to_string(),
+            ));
+        }
+        let new_generation = current_generation + 1;
+
+        fs::create_dir_all(&self.user_storage_path)?;
+        let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
+
+        let file_key: [u8; KEY_SIZE];
+        let mut profile_container: ProfileStorageContainer;
+
+        let payload = ProfilePayload {
+            profile: wallet.profile.clone(),
+            signing_key_bytes: identity.signing_key.to_bytes().to_vec(),
+        };
+
+        if !profile_path.exists() {
+            // Initial save: generate fresh file key and salts (identical to save_wallet)
+            let mut new_file_key = [0u8; KEY_SIZE];
+            OsRng.fill_bytes(&mut new_file_key);
+            file_key = new_file_key;
+
+            let mut pw_salt = [0u8; SALT_SIZE];
+            OsRng.fill_bytes(&mut pw_salt);
+            let password_key = match auth {
+                AuthMethod::Password(p) => {
+                    if p.is_empty() {
+                        return Err(StorageError::EmptyPassword);
+                    }
+                    derive_key_from_password(p, &pw_salt)?
+                }
+                _ => {
+                    return Err(StorageError::InvalidAuthMethod {
+                        reason: "Only Password auth supported for initial save".to_string(),
+                    })
+                }
+            };
+            let pw_wrapped = crypto::encrypt_data(&password_key, &file_key)
+                .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
+
+            let mut mn_salt = [0u8; SALT_SIZE];
+            OsRng.fill_bytes(&mut mn_salt);
+            let mnemonic_key = derive_key_from_signing_key(&identity.signing_key, &mn_salt)?;
+            let mn_wrapped = crypto::encrypt_data(&mnemonic_key, &file_key)
+                .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
+
+            let profile_payload =
+                crypto::encrypt_data(&file_key, &serde_json::to_vec(&payload)
+                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?)
+                    .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
+
+            profile_container = ProfileStorageContainer {
+                password_kdf_salt: pw_salt,
+                password_wrapped_key_with_nonce: pw_wrapped,
+                mnemonic_kdf_salt: mn_salt,
+                mnemonic_wrapped_key_with_nonce: mn_wrapped,
+                encrypted_profile_payload: profile_payload,
+                store_binding_hash: None,
+            };
+        } else {
+            // Update existing wallet
+            let existing_bytes = fs::read(&profile_path)?;
+            let mut existing: ProfileStorageContainer = serde_json::from_slice(&existing_bytes)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+            let decrypted = get_file_key(auth, &existing)?;
+            file_key = decrypted
+                .try_into()
+                .map_err(|_| StorageError::InvalidFormat("Invalid file key".to_string()))?;
+            existing.encrypted_profile_payload =
+                crypto::encrypt_data(&file_key, &serde_json::to_vec(&payload)
+                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?)
+                    .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
+            profile_container = existing;
+        }
+
+        // --- 1. Kryptographische Bindung: vouchers.enc -> SHA3 HMAC -> profile.store_binding_hash
+        let store_payload =
+            crypto::encrypt_data(&file_key, &serde_json::to_vec(&wallet.voucher_store)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?)
+                .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
+        let store_container = VoucherStorageContainer {
+            encrypted_store_payload: store_payload,
+        };
+        let store_container_bytes = serde_json::to_vec(&store_container)
+            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+        // Byte-identical binding as in save_wallet
+        profile_container.store_binding_hash =
+            Some(derive_store_binding_hash(&file_key, &store_container_bytes));
+
+        // --- 2. Staging: write all containers atomically via tmp+rename ---
+
+        // Profile + vouchers (binding already computed)
+        self.write_atomic(
+            PROFILE_FILE_NAME,
+            &serde_json::to_vec(&profile_container)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?,
+        )?;
+        self.write_atomic(VOUCHER_STORE_FILE_NAME, &store_container_bytes)?;
+
+        // Helper to stage an encrypted store with the same file_key
+        let stage_store = |this: &Self, rel: &str, plain_bytes: Vec<u8>| -> Result<(), StorageError> {
+            let enc = crypto::encrypt_data(&file_key, &plain_bytes)
+                .map_err(|e| StorageError::EncryptionFailed { reason: e.to_string() })?;
+            let container = EncryptedStorageContainer {
+                encrypted_store_payload: enc,
+            };
+            let data = serde_json::to_vec(&container)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+            this.write_atomic(rel, &data)
+        };
+
+        // Bundle metadata
+        stage_store(
+            self,
+            BUNDLE_META_FILE_NAME,
+            serde_json::to_vec(&wallet.bundle_meta_store)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?,
+        )?;
+        // Known fingerprints
+        stage_store(
+            self,
+            KNOWN_FINGERPRINTS_FILE_NAME,
+            serde_json::to_vec(&wallet.known_fingerprints)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?,
+        )?;
+        // Own fingerprints
+        stage_store(
+            self,
+            OWN_FINGERPRINTS_FILE_NAME,
+            serde_json::to_vec(&wallet.own_fingerprints)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?,
+        )?;
+        // Proofs (may be empty → delete file if present, matching save_proofs semantics)
+        if wallet.proof_store.proofs.is_empty() {
+            let proof_path = self.user_storage_path.join(PROOF_STORE_FILE_NAME);
+            if proof_path.exists() {
+                fs::remove_file(proof_path)?;
+            }
+        } else {
+            stage_store(
+                self,
+                PROOF_STORE_FILE_NAME,
+                serde_json::to_vec(&wallet.proof_store)
+                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?,
+            )?;
+        }
+        // Fingerprint metadata (may be empty → delete file if present)
+        if wallet.fingerprint_metadata.is_empty() {
+            let meta_path = self.user_storage_path.join(FINGERPRINT_METADATA_FILE_NAME);
+            if meta_path.exists() {
+                fs::remove_file(meta_path)?;
+            }
+        } else {
+            stage_store(
+                self,
+                FINGERPRINT_METADATA_FILE_NAME,
+                serde_json::to_vec(&wallet.fingerprint_metadata)
+                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?,
+            )?;
+        }
+
+        // Events: staging via append_events (uses same file_key now on disk)
+        if !wallet.pending_events.is_empty() {
+            self.append_events(auth, &wallet.pending_events)?;
+        }
+
+        // --- 3. Commit-Punkt: generation bump as atomic commit ---
+        self.write_generation(current_generation, new_generation)?;
+        wallet.loaded_generation = new_generation;
+
+        // --- 4. Clear pending_events after durable commit ---
+        if !wallet.pending_events.is_empty() {
+            wallet.pending_events.clear();
+        }
+
+        Ok(())
+    }
+
+    /// Alias for `commit_wallet_atomic` (spec names `save_wallet_transaction`).
+    pub fn save_wallet_transaction(
+        &mut self,
+        wallet: &mut crate::wallet::Wallet,
+        identity: &crate::models::profile::UserIdentity,
+        auth: &AuthMethod,
+    ) -> Result<(), StorageError> {
+        self.commit_wallet_atomic(wallet, identity, auth)
+    }
+
     pub fn save_seal(
         &mut self,
         auth: &AuthMethod,
@@ -919,20 +926,7 @@ impl FileStorage {
     }
 
     pub fn get_item_hash(&self, name: &str) -> Result<String, StorageError> {
-        // Boundary discipline (HMSEC-SA05-11): reject hostile names before any
-        // path construction. Unlike `save_arbitrary_data` (flat files), this
-        // method legitimately accepts wallet-relative sub-path names
-        // ("events/YYYY_MM.json.enc"), so validation is component-based:
-        // absolute paths must not REPLACE the wallet base and ".." components
-        // must not ESCAPE it.
-        validate_item_name(name)?;
-
-        let path = self.user_storage_path.join(name);
-        if !path.exists() {
-            return Err(StorageError::NotFound);
-        }
-        let bytes = fs::read(path)?;
-        Ok(crypto::get_hash(&bytes))
+        crate::storage::integrity::get_item_hash(self, name)
     }
 
     pub fn save_integrity(
@@ -941,13 +935,15 @@ impl FileStorage {
     ) -> Result<(), StorageError> {
         let json = serde_json::to_vec_pretty(record)
             .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-        self.write_atomic(INTEGRITY_FILE_NAME, &json)
+        self.write_atomic(crate::models::storage_integrity::INTEGRITY_FILE_NAME, &json)
     }
 
     pub fn load_integrity(
         &self,
     ) -> Result<Option<crate::models::storage_integrity::LocalIntegrityRecord>, StorageError> {
-        let path = self.user_storage_path.join(INTEGRITY_FILE_NAME);
+        let path = self
+            .user_storage_path
+            .join(crate::models::storage_integrity::INTEGRITY_FILE_NAME);
         if !path.exists() {
             return Ok(None);
         }
@@ -960,65 +956,7 @@ impl FileStorage {
     }
 
     pub fn get_all_item_hashes(&self) -> Result<std::collections::HashMap<String, String>, StorageError> {
-        let mut hashes = std::collections::HashMap::new();
-        
-        let entries = fs::read_dir(&self.user_storage_path).map_err(StorageError::from)?;
-        // Scan main directory
-        for entry in entries {
-            let entry = entry.map_err(StorageError::from)?;
-            let file_name = entry.file_name();
-            let name_str = file_name.to_string_lossy();
-
-            // Ignore directories
-            if entry.file_type().map_err(StorageError::from)?.is_dir() {
-                continue;
-            }
-
-            // Ignore the integrity file itself (avoid circular reference)
-            if name_str == INTEGRITY_FILE_NAME {
-                continue;
-            }
-
-            // Ignore hidden files (e.g. .lock)
-            if name_str.starts_with('.') {
-                continue;
-            }
-
-            // Ignore the session anchor (new and old, to avoid privacy leaks in integrity reports)
-            if name_str.starts_with("generic___storage_session_anchor") {
-                continue;
-            }
-
-            // Ignore seal files (these are already logically protected via the seal_hash in the IntegrityRecord)
-            if name_str == SEAL_FILE_NAME || (name_str.starts_with("seal_") && name_str.ends_with(".json")) {
-                continue;
-            }
-
-            if let Ok(hash) = self.get_item_hash(&name_str) {
-                hashes.insert(name_str.to_string(), hash);
-            }
-        }
-
-        // Scan events subdirectory
-        let events_dir = self.user_storage_path.join(EVENTS_DIR_NAME);
-        if events_dir.exists() && events_dir.is_dir() {
-            let event_entries = fs::read_dir(&events_dir).map_err(StorageError::from)?;
-            for entry in event_entries {
-                let entry = entry.map_err(StorageError::from)?;
-                if entry.file_type().map_err(StorageError::from)?.is_file() {
-                    let file_name = entry.file_name();
-                    let name_str = file_name.to_string_lossy();
-                    if name_str.ends_with(".json.enc") {
-                        let relative_path = format!("{}/{}", EVENTS_DIR_NAME, name_str);
-                        if let Ok(hash) = self.get_item_hash(&relative_path) {
-                            hashes.insert(relative_path, hash);
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(hashes)
+        crate::storage::integrity::get_all_item_hashes(self)
     }
 
     pub fn append_events(
@@ -1026,122 +964,7 @@ impl FileStorage {
         auth: &AuthMethod,
         events: &[crate::models::wallet_event::WalletEvent],
     ) -> Result<(), StorageError> {
-        if events.is_empty() {
-            return Ok(());
-        }
-
-        let file_key = self.get_master_key_from_auth(auth)?;
-
-        // 1. Lazy Migration
-        let legacy_path = self.user_storage_path.join(LEGACY_EVENTS_FILE_NAME);
-        if legacy_path.exists() {
-            let container_bytes = fs::read(&legacy_path)?;
-            let container: EventsStorageContainer = serde_json::from_slice(&container_bytes)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-            let decrypted = crypto::decrypt_data(&file_key, &container.encrypted_store_payload)
-                .map_err(|e| {
-                    StorageError::InvalidFormat(format!("Failed to decrypt legacy events: {}", e))
-                })?;
-            let legacy_events: Vec<crate::models::wallet_event::WalletEvent> = serde_json::from_slice(&decrypted)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-            // Group and write in chunks
-            let mut groups: std::collections::HashMap<String, Vec<crate::models::wallet_event::WalletEvent>> = std::collections::HashMap::new();
-            for ev in legacy_events {
-                let month = ev.timestamp.format("%Y_%m").to_string();
-                groups.entry(month).or_default().push(ev);
-            }
-
-            let events_dir = self.user_storage_path.join(EVENTS_DIR_NAME);
-            fs::create_dir_all(&events_dir)?;
-
-            for (month, m_events) in groups {
-                let chunk_path = events_dir.join(format!("{}.json.enc", month));
-                // Since we are migrating, we overwrite or append (if new chunks already existed)
-                let existing_events: Vec<crate::models::wallet_event::WalletEvent> = if chunk_path.exists() {
-                    let c_bytes = fs::read(&chunk_path)?;
-                    let c_container: EventsStorageContainer = serde_json::from_slice(&c_bytes)
-                        .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-                    let c_decrypted = crypto::decrypt_data(&file_key, &c_container.encrypted_store_payload)
-                        .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-                    serde_json::from_slice(&c_decrypted)
-                        .map_err(|e| StorageError::InvalidFormat(e.to_string()))?
-                } else {
-                    Vec::new()
-                };
-                
-                // Deduplication in O(N): Filter m_events to only append those
-                // that do not already exist in existing_events. Preserves strict order!
-                let existing_ids: std::collections::HashSet<String> = 
-                    existing_events.iter().map(|e| e.event_id.clone()).collect();
-                
-                let mut merged = existing_events;
-                let new_unique_events = m_events.into_iter().filter(|e| !existing_ids.contains(&e.event_id));
-                merged.extend(new_unique_events);
-                
-                let e_bytes = serde_json::to_vec(&merged)
-                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-                let e_payload = crypto::encrypt_data(&file_key, &e_bytes)
-                    .map_err(|e| StorageError::Generic(e.to_string()))?;
-                let e_container = EventsStorageContainer { encrypted_store_payload: e_payload };
-                let e_container_bytes = serde_json::to_vec(&e_container)
-                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-                self.write_atomic(
-                    format!("{}/{}.json.enc", EVENTS_DIR_NAME, month),
-                    &e_container_bytes,
-                )?;
-            }
-
-            // Completion of migration
-            fs::remove_file(&legacy_path)?;
-        }
-
-        // 2. Group and append new events
-        let mut groups: std::collections::HashMap<String, Vec<crate::models::wallet_event::WalletEvent>> = std::collections::HashMap::new();
-        for ev in events {
-            let month = ev.timestamp.format("%Y_%m").to_string();
-            groups.entry(month).or_default().push(ev.clone());
-        }
-
-        let events_dir = self.user_storage_path.join(EVENTS_DIR_NAME);
-        fs::create_dir_all(&events_dir)?;
-
-        for (month, m_events) in groups {
-            let chunk_path = events_dir.join(format!("{}.json.enc", month));
-            let mut all_m_events: Vec<crate::models::wallet_event::WalletEvent> = if chunk_path.exists() {
-                let c_bytes = fs::read(&chunk_path)?;
-                let c_container: EventsStorageContainer = serde_json::from_slice(&c_bytes)
-                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-                let c_decrypted = crypto::decrypt_data(&file_key, &c_container.encrypted_store_payload)
-                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-                serde_json::from_slice(&c_decrypted)
-                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?
-            } else {
-                Vec::new()
-            };
-
-            // Deduplication during regular append (protection against partial crashes)
-            let existing_ids: std::collections::HashSet<String> = 
-                all_m_events.iter().map(|e| e.event_id.clone()).collect();
-            
-            let new_unique_events = m_events.into_iter().filter(|e| !existing_ids.contains(&e.event_id));
-            all_m_events.extend(new_unique_events);
-
-            let e_bytes = serde_json::to_vec(&all_m_events)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-            let e_payload = crypto::encrypt_data(&file_key, &e_bytes)
-                .map_err(|e| StorageError::Generic(e.to_string()))?;
-            let e_container = EventsStorageContainer { encrypted_store_payload: e_payload };
-            let e_container_bytes = serde_json::to_vec(&e_container)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-            self.write_atomic(
-                format!("{}/{}.json.enc", EVENTS_DIR_NAME, month),
-                &e_container_bytes,
-            )?;
-        }
-
-        Ok(())
+        crate::storage::event_store::append_events(self, auth, events)
     }
 
     pub fn load_events(
@@ -1150,306 +973,6 @@ impl FileStorage {
         offset: usize,
         limit: usize,
     ) -> Result<Vec<crate::models::wallet_event::WalletEvent>, StorageError> {
-        let file_key = self.get_master_key_from_auth(auth)?;
-        let mut result = Vec::new();
-        let mut current_offset = offset;
-        let mut remaining_limit = limit;
-
-        // 1. List all chunks
-        let events_dir = self.user_storage_path.join(EVENTS_DIR_NAME);
-        let mut chunks = Vec::new();
-        if events_dir.exists() && events_dir.is_dir() {
-            let entries = fs::read_dir(&events_dir).map_err(StorageError::from)?;
-            for entry in entries {
-                let entry = entry.map_err(StorageError::from)?;
-                let name = entry.file_name().to_string_lossy().into_owned();
-                if name.ends_with(".json.enc") && !name.ends_with(".tmp") {
-                    chunks.push(name);
-                }
-            }
-        }
-
-        // Sort descending (newest first)
-        chunks.sort_by(|a, b| b.cmp(a));
-
-        // 2. Load chunks sequentially
-        for chunk_name in chunks {
-            if remaining_limit == 0 { break; }
-
-            let chunk_path = events_dir.join(chunk_name);
-            let c_bytes = fs::read(&chunk_path)?;
-            let c_container: EventsStorageContainer = serde_json::from_slice(&c_bytes)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-            let c_decrypted = crypto::decrypt_data(&file_key, &c_container.encrypted_store_payload)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-            let mut m_events: Vec<crate::models::wallet_event::WalletEvent> = serde_json::from_slice(&c_decrypted)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-            
-            // Inside a chunk, events are sorted in ascending order.
-            // Since we want the NEWEST first, we must reverse them or read from the back.
-            m_events.reverse();
-
-            let len = m_events.len();
-            if current_offset >= len {
-                current_offset -= len;
-                continue;
-            }
-
-            let to_take = std::cmp::min(remaining_limit, len - current_offset);
-            let page: Vec<_> = m_events.into_iter().skip(current_offset).take(to_take).collect();
-            
-            result.extend(page);
-            remaining_limit -= to_take;
-            current_offset = 0;
-        }
-
-        // 3. Legacy support (if migration has not run yet)
-        if remaining_limit > 0 {
-            let legacy_path = self.user_storage_path.join(LEGACY_EVENTS_FILE_NAME);
-            if legacy_path.exists() {
-                let l_bytes = fs::read(&legacy_path)?;
-                let l_container: EventsStorageContainer = serde_json::from_slice(&l_bytes)
-                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-                let l_decrypted = crypto::decrypt_data(&file_key, &l_container.encrypted_store_payload)
-                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-                let mut l_events: Vec<crate::models::wallet_event::WalletEvent> = serde_json::from_slice(&l_decrypted)
-                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-                
-                l_events.reverse();
-                
-                let len = l_events.len();
-                if current_offset < len {
-                    let to_take = std::cmp::min(remaining_limit, len - current_offset);
-                    let page: Vec<_> = l_events.into_iter().skip(current_offset).take(to_take).collect();
-                    result.extend(page);
-                }
-            }
-        }
-
-        Ok(result)
-    }
-}
-
-// --- Private Helper Functions ---
-
-/// Validates a wallet-relative item name against path traversal before any
-/// path construction (HMSEC-SA05-11). Absolute paths would REPLACE the wallet
-/// base directory via `Path::join`, backslashes and ".." components would
-/// ESCAPE it. Used by the read/hash side, which legitimately supports
-/// wallet-relative sub-paths (e.g. "events/YYYY_MM.json.enc").
-fn validate_item_name(name: &str) -> Result<(), StorageError> {
-    let candidate = std::path::Path::new(name);
-    if candidate.is_absolute()
-        || name.contains('\\')
-        || candidate
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        return Err(StorageError::Generic("Invalid item name".to_string()));
-    }
-    Ok(())
-}
-
-/// Schema gate for the voucher store (HMSEC-SA05-08, wallet-side complement).
-///
-/// The V2 -> V3 protocol change replaced `TrapData` fields
-/// (`u`/`blinded_id`/`proof`) with the SST shards (`trap_r`/`trap_s`).
-/// Deserializing a store written by a pre-V3 client silently DROPS those
-/// unknown fields (`serde` ignores unknown keys) and materializes empty
-/// shard placeholders — destroying identity-trap evidence and leaving
-/// stranded legacy chains indistinguishable from fresh state.
-///
-/// This gate scans the decrypted voucher-store payload BEFORE typed
-/// deserialization and hard-rejects any transaction whose `trap_data` still
-/// carries legacy V2 field names. The error is a recognizable protocol/schema
-/// gate: application layers may catch it to offer quarantine/migration flows;
-/// silently loading (and later re-writing lossily) is forbidden. Legacy
-/// stores remain byte-identical on disk until an explicit migration runs.
-fn gate_legacy_transaction_schema(store_bytes: &[u8]) -> Result<(), StorageError> {
-    let value: serde_json::Value = serde_json::from_slice(store_bytes)
-        .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-    if contains_legacy_trap_data(&value) {
-        return Err(StorageError::InvalidFormat(
-            "legacy V2 trap_data schema detected in voucher store (fields \
-             'u'/'blinded_id'/'proof' are not part of the current protocol). \
-             Loading would irreversibly degrade this forensic trap material \
-             via serde field-drop; refusing to load. Migrate explicitly instead."
-                .to_string(),
-        ));
-    }
-    Ok(())
-}
-
-/// Recursively searches for `trap_data` objects still carrying legacy V2
-/// field names (`u`, `blinded_id`, `proof`). Scoped to `trap_data` objects so
-/// unrelated structures can never trigger false positives.
-fn contains_legacy_trap_data(value: &serde_json::Value) -> bool {
-    const LEGACY_TRAP_KEYS: [&str; 3] = ["u", "blinded_id", "proof"];
-    match value {
-        serde_json::Value::Object(map) => {
-            if let Some(trap) = map.get("trap_data").and_then(|v| v.as_object())
-                && LEGACY_TRAP_KEYS.iter().any(|k| trap.contains_key(*k))
-            {
-                return true;
-            }
-            map.values().any(contains_legacy_trap_data)
-        }
-        serde_json::Value::Array(items) => items.iter().any(contains_legacy_trap_data),
-        _ => false,
-    }
-}
-
-/// Schema gate for fingerprint stores (HMSEC-SA05-08).
-///
-/// The V2 -> V3 protocol change replaced the fingerprint identity fields
-/// (`u`/`blinded_id`) with `sender_ephemeral_pub` + trap shards. Deserializing
-/// a V2-era store through the current schema silently DROPS the unknown
-/// fields and materializes empty-string V3 shards (`#[serde(default)]`),
-/// destroying forensic identity-reconstruction material; the next save would
-/// write the lossy shape back over the "complete and immutable" history.
-///
-/// This gate inspects the decrypted payload BEFORE typed deserialization and
-/// hard-rejects any entry still carrying legacy V2 identity material, so the
-/// data survives untouched on disk until an explicit migration upgrades it.
-/// Quarantine/migration handling is the responsibility of the calling
-/// application layer (the error message carries a matchable marker).
-fn gate_legacy_fingerprint_schema(store_bytes: &[u8]) -> Result<(), StorageError> {
-    const LEGACY_SCHEMA_MARKER: &str = "legacy V2 fingerprint schema";
-
-    let value: serde_json::Value = serde_json::from_slice(store_bytes)
-        .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-    let fingerprint_maps = [
-        "history",
-        "active_fingerprints",
-        "local_history",
-        "foreign_fingerprints",
-    ];
-    for map_key in fingerprint_maps {
-        if let Some(entries) = value.get(map_key).and_then(|m| m.as_object()) {
-            for fingerprint in entries
-                .values()
-                .filter_map(|v| v.as_array())
-                .flatten()
-            {
-                let has_legacy_identity_material =
-                    fingerprint.get("u").is_some() || fingerprint.get("blinded_id").is_some();
-                if has_legacy_identity_material {
-                    return Err(StorageError::InvalidFormat(format!(
-                        "{} detected (fields 'u'/'blinded_id' are not part of the \
-                         current schema). Loading would irreversibly degrade this \
-                         forensic trap material via serde field-drop; refusing to \
-                         load. Migrate explicitly instead.",
-                        LEGACY_SCHEMA_MARKER
-                    )));
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Derives the authenticated store binding commitment (HMSEC-SA05-04/-07).
-///
-/// SHA3-256 over the secret file key concatenated with the exact serialized
-/// `VoucherStorageContainer` bytes. Mixing in the file key makes the value a
-/// keyed commitment: an attacker with disk write access (but without the
-/// wallet credentials) cannot recompute it over a rolled-back store, and the
-/// fixed 32-byte key length rules out concatenation ambiguity (SHA3 is not
-/// susceptible to length-extension anyway).
-fn derive_store_binding_hash(file_key: &[u8; KEY_SIZE], store_container_bytes: &[u8]) -> String {
-    crypto::get_hash_from_slices(&[file_key.as_slice(), store_container_bytes])
-}
-
-/// Decrypts the master file key (`file_key`) based on the authentication method.
-fn get_file_key(
-    auth: &AuthMethod,
-    container: &ProfileStorageContainer,
-) -> Result<Vec<u8>, StorageError> {
-    match auth {
-        AuthMethod::Password(password) => {
-            let password_key = derive_key_from_password(password, &container.password_kdf_salt)?;
-            crypto::decrypt_data(&password_key, &container.password_wrapped_key_with_nonce)
-                .map_err(|_| StorageError::AuthenticationFailed)
-        }
-        AuthMethod::SessionKey(session_key) => {
-            crypto::decrypt_data(session_key, &container.password_wrapped_key_with_nonce)
-                .map_err(|_| StorageError::AuthenticationFailed)
-        }
-        AuthMethod::Mnemonic(mnemonic, passphrase, language) => {
-            let (_, signing_key) = crypto::derive_ed25519_keypair(mnemonic, *passphrase, *language)
-                .map_err(|e| {
-                    StorageError::Generic(format!("Key derivation from mnemonic failed: {}", e))
-                })?;
-            let mnemonic_key =
-                derive_key_from_signing_key(&signing_key, &container.mnemonic_kdf_salt)?;
-            crypto::decrypt_data(&mnemonic_key, &container.mnemonic_wrapped_key_with_nonce)
-                .map_err(|_| StorageError::AuthenticationFailed)
-        }
-        AuthMethod::RecoveryIdentity(identity) => {
-            let mnemonic_key =
-                derive_key_from_signing_key(&identity.signing_key, &container.mnemonic_kdf_salt)?;
-            crypto::decrypt_data(&mnemonic_key, &container.mnemonic_wrapped_key_with_nonce)
-                .map_err(|_| StorageError::AuthenticationFailed)
-        }
-    }
-}
-
-/// Helper to get Argon2 instance with appropriate parameters for the environment.
-#[cfg(not(any(test, feature = "test-utils")))]
-fn get_argon2() -> Argon2<'static> {
-    Argon2::default()
-}
-
-/// Derives a cryptographic key from a password and salt.
-fn derive_key_from_password(
-    password: &str,
-    salt: &[u8; SALT_SIZE],
-) -> Result<[u8; KEY_SIZE], StorageError> {
-    #[cfg(any(test, feature = "test-utils"))]
-    {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(password.as_bytes());
-        hasher.update(salt);
-        let result = hasher.finalize();
-        let mut key = [0u8; KEY_SIZE];
-        key.copy_from_slice(&result[..KEY_SIZE]);
-        Ok(key)
-    }
-    #[cfg(not(any(test, feature = "test-utils")))]
-    {
-        let mut key = [0u8; KEY_SIZE];
-        get_argon2()
-            .hash_password_into(password.as_bytes(), salt, &mut key)
-            .map_err(|e| StorageError::Generic(format!("Password key derivation failed: {}", e)))?;
-        Ok(key)
-    }
-}
-
-/// Derives a cryptographic key from the private key of the identity.
-fn derive_key_from_signing_key(
-    signing_key: &SigningKey,
-    salt: &[u8; SALT_SIZE],
-) -> Result<[u8; KEY_SIZE], StorageError> {
-    #[cfg(any(test, feature = "test-utils"))]
-    {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(signing_key.to_bytes());
-        hasher.update(salt);
-        let result = hasher.finalize();
-        let mut key = [0u8; KEY_SIZE];
-        key.copy_from_slice(&result[..KEY_SIZE]);
-        Ok(key)
-    }
-    #[cfg(not(any(test, feature = "test-utils")))]
-    {
-        let mut key = [0u8; KEY_SIZE];
-        get_argon2()
-            .hash_password_into(signing_key.to_bytes().as_ref(), salt, &mut key)
-            .map_err(|e| StorageError::Generic(format!("Identity key derivation failed: {}", e)))?;
-        Ok(key)
+        crate::storage::event_store::load_events(self, auth, offset, limit)
     }
 }

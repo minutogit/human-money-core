@@ -66,7 +66,7 @@ pub fn generate_lock_request(
     // SECURITY: Fail closed on malformed data. Silent zero-filling would
     // create lock requests that cannot be verified server-side.
     let sender_ephemeral_pub_str = transaction.sender_ephemeral_pub.as_deref().ok_or_else(|| {
-        VoucherCoreError::Generic("Missing sender_ephemeral_pub for L2 lock request".to_string())
+        crate::Error::Wallet(crate::error::WalletError::MissingSenderEphemeralPub)
     })?;
     let decoded_sep = bs58::decode(sender_ephemeral_pub_str).into_vec().map_err(|_| {
         VoucherCoreError::InvalidHashFormat("Invalid base58 for sender_ephemeral_pub".to_string())
@@ -92,7 +92,7 @@ pub fn generate_lock_request(
 
     // SECURITY: Fail closed on malformed signatures as well.
     let layer2_sig_str = transaction.layer2_signature.as_deref().ok_or_else(|| {
-        VoucherCoreError::Generic("Missing layer2_signature for L2 lock request".to_string())
+        crate::Error::Wallet(crate::error::WalletError::MissingLayer2Signature)
     })?;
     let decoded_sig = bs58::decode(layer2_sig_str).into_vec().map_err(|_| {
         VoucherCoreError::InvalidHashFormat("Invalid base58 for layer2_signature".to_string())
@@ -161,9 +161,7 @@ pub const TRAP_NONE_PLACEHOLDER: &str = "none";
 /// Calculates the layer2_voucher_id from a genesis transaction.
 pub fn calculate_layer2_voucher_id(transaction: &Transaction) -> Result<String, VoucherCoreError> {
     if transaction.t_type != "init" {
-        return Err(VoucherCoreError::Generic(
-            "Only init transactions can define a voucher id".to_string(),
-        ));
+        return Err(crate::Error::Wallet(crate::error::WalletError::OnlyInitTransactionsAllowed));
     }
 
     let mut t_id = [0u8; 32];
@@ -346,9 +344,7 @@ pub fn extract_layer2_voucher_id(
     voucher: &crate::models::voucher::Voucher,
 ) -> Result<String, VoucherCoreError> {
     if voucher.transactions.is_empty() {
-        return Err(VoucherCoreError::Generic(
-            "Voucher has no transactions".to_string(),
-        ));
+        return Err(crate::Error::Wallet(crate::error::WalletError::MissingTransactions));
     }
     calculate_layer2_voucher_id(&voucher.transactions[0])
 }
@@ -368,7 +364,7 @@ pub fn process_l2_verdict(
 
     // 1. Verify server authenticity
     let server_key = VerifyingKey::from_bytes(server_pubkey)
-        .map_err(|_| VoucherCoreError::ValidationFailed("Invalid server public key".to_string()))?;
+        .map_err(|_| VoucherCoreError::Validation(crate::error::ValidationError::InvalidServerPublicKey))?;
     let server_sig = Signature::from_bytes(&envelope.server_signature);
 
     let verdict_serialized = serde_json::to_vec(&envelope.verdict).map_err(|e| {
@@ -391,8 +387,8 @@ pub fn process_l2_verdict(
     let server_sig_valid = server_key.verify(&verdict_hash, &server_sig).is_ok();
 
     if !server_sig_valid {
-        return Err(VoucherCoreError::ValidationFailed(
-            "Server-Signatur ist ungültig (Authentizität fehlgeschlagen)".to_string(),
+        return Err(VoucherCoreError::Validation(
+            crate::error::ValidationError::ServerSignatureInvalid,
         ));
     }
 
@@ -402,17 +398,19 @@ pub fn process_l2_verdict(
         L2Verdict::Verified { lock_entry } => {
             // 0. Verify voucher ID match
             if lock_entry.layer2_voucher_id != expected_voucher_id {
-                return Err(VoucherCoreError::ValidationFailed(format!(
-                    "Voucher ID Mix-up erkannt: L2-Server meldet Beweis für einen anderen Gutschein ({} != {})",
-                    lock_entry.layer2_voucher_id, expected_voucher_id
-                )));
+                return Err(VoucherCoreError::Validation(
+                    crate::error::ValidationError::VoucherIdMixup {
+                        found: lock_entry.layer2_voucher_id.clone(),
+                        expected: expected_voucher_id.to_string(),
+                    },
+                ));
             }
 
             // 1. Verify L2 signature mathematically (Proof of Truth)
             let ephem_key =
                 VerifyingKey::from_bytes(&lock_entry.sender_ephemeral_pub).map_err(|_| {
-                    VoucherCoreError::ValidationFailed(
-                        "Invalid ephemeral key in lock entry".to_string(),
+                    VoucherCoreError::Validation(
+                        crate::error::ValidationError::InvalidEphemeralKeyInLockEntry,
                     )
                 })?;
             let signature = Signature::from_bytes(&lock_entry.layer2_signature);
@@ -451,8 +449,8 @@ pub fn process_l2_verdict(
             let signature_valid = ephem_key.verify(&payload_hash, &signature).is_ok();
 
             if !signature_valid {
-                return Err(VoucherCoreError::ValidationFailed(
-                    "Kryptografischer Beweis des L2-Servers ist ungültig".to_string(),
+                return Err(VoucherCoreError::Validation(
+                    crate::error::ValidationError::InvalidL2Proof,
                 ));
             }
 
@@ -460,10 +458,12 @@ pub fn process_l2_verdict(
             if let Some(expected) = expected_ephemeral_pub {
                 let actual_bs58 = bs58::encode(&lock_entry.sender_ephemeral_pub).into_string();
                 if actual_bs58 != expected {
-                    return Err(VoucherCoreError::ValidationFailed(format!(
-                        "Gefälschter Beweis erkannt: L2-Server meldet Double-Spend mit einem fremden Key ({} != {})",
-                        actual_bs58, expected
-                    )));
+                    return Err(VoucherCoreError::Validation(
+                        crate::error::ValidationError::ForeignKeyProof {
+                            actual: actual_bs58,
+                            expected: expected.to_string(),
+                        },
+                    ));
                 }
             }
 
@@ -490,10 +490,9 @@ pub fn process_l2_verdict(
             // Fallback for older implementations
             Ok(VerdictAction::ConfirmLocal)
         }
-        L2Verdict::Rejected { reason } => Err(VoucherCoreError::ValidationFailed(format!(
-            "L2 server rejected request: {}",
-            reason
-        ))),
+        L2Verdict::Rejected { reason } => Err(VoucherCoreError::Validation(
+            crate::error::ValidationError::L2Rejected { reason },
+        )),
     }
 }
 

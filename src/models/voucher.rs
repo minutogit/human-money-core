@@ -336,7 +336,7 @@ impl Voucher {
         let nonce_bytes = rand::thread_rng().r#gen::<[u8; 16]>();
         let nonce = bs58::encode(nonce_bytes).into_string();
         let creation_dt = chrono::DateTime::parse_from_rfc3339(&creation_date_str)
-            .map_err(|e| VoucherCoreError::Generic(format!("Failed to parse creation date: {}", e)))?
+            .map_err(|e| crate::Error::Wallet(crate::error::WalletError::InvalidCreationDate { reason: format!("Failed to parse creation date: {}", e) }))?
             .with_timezone(&chrono::Utc);
 
         let duration_str = data
@@ -348,9 +348,9 @@ impl Voucher {
                 .default_validity_duration
                 .as_deref())
             .ok_or_else(|| {
-                VoucherCoreError::VoucherManagerGeneric(
+                crate::Error::Wallet(crate::error::WalletError::InvalidDuration { reason: 
                     "No validity duration specified and no default found in standard.".to_string(),
-                )
+                 })
             })?;
 
         let initial_valid_until_dt = crate::services::utils::add_iso8601_duration(creation_dt, duration_str)?;
@@ -442,7 +442,7 @@ impl Voucher {
             .creator_profile
             .id
             .as_ref()
-            .ok_or_else(|| VoucherCoreError::VoucherManagerGeneric("Creator profile must have an ID".to_string()))?
+            .ok_or_else(|| crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: "Creator profile must have an ID".to_string() }))?
             .clone();
 
         let voucher_json_for_signing = crate::services::utils::to_canonical_json(&temp_voucher)?;
@@ -614,9 +614,9 @@ impl Voucher {
         }
 
         if amount_to_send <= Decimal::ZERO {
-            return Err(VoucherCoreError::VoucherManagerGeneric(
+            return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                 "Transaction amount must be positive.".to_string(),
-            ));
+             }));
         }
         if amount_to_send > spendable_balance {
             return Err(VoucherCoreError::InsufficientFunds {
@@ -662,20 +662,20 @@ impl Voucher {
             }
             crate::models::voucher_standard_definition::PrivacyMode::Public => {
                 if use_privacy_mode.unwrap_or(false) {
-                    return Err(VoucherCoreError::VoucherManagerGeneric(
+                    return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                         "Cannot use privacy mode on a public standard".to_string(),
-                    ));
+                     }));
                 }
                 let recipient_is_did = recipient_id.starts_with("did:") || recipient_id.contains("@did:");
                 if !recipient_is_did {
-                    return Err(VoucherCoreError::VoucherManagerGeneric(
+                    return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                         "Public mode requires DID recipient.".to_string(),
-                    ));
+                     }));
                 }
                 if sender_id == ANONYMOUS_ID {
-                    return Err(VoucherCoreError::VoucherManagerGeneric(
+                    return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                         "Public mode forbids anonymous sender.".to_string(),
-                    ));
+                     }));
                 }
                 (Some(sender_id.to_string()), recipient_id.to_string())
             }
@@ -891,11 +891,11 @@ impl Voucher {
 
         let now_str = crate::services::utils::get_current_timestamp();
         let now = chrono::DateTime::parse_from_rfc3339(&now_str)
-            .map_err(|e| VoucherCoreError::Generic(format!("Failed to parse now date: {}", e)))?
+            .map_err(|e| crate::Error::Wallet(crate::error::WalletError::InvalidVoucherDate { field: "now".to_string(), reason: format!("Failed to parse now date: {}", e) }))?
             .with_timezone(&chrono::Utc);
 
         let valid_until_dt = chrono::DateTime::parse_from_rfc3339(&self.valid_until)
-            .map_err(|e| VoucherCoreError::Generic(format!("Failed to parse voucher valid_until date: {}", e)))?
+            .map_err(|e| crate::Error::Wallet(crate::error::WalletError::InvalidVoucherDate { field: "valid_until".to_string(), reason: format!("Failed to parse voucher valid_until date: {}", e) }))?
             .with_timezone(&chrono::Utc);
 
         let required_end_dt = crate::services::utils::add_iso8601_duration(now, min_duration_str)?;

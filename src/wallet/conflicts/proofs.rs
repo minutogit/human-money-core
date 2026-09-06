@@ -25,7 +25,7 @@ impl Wallet {
             .map(|entry| {
                 let proof = &entry.proof;
                 ProofOfDoubleSpendSummary {
-                    proof_id: proof.proof_id.clone(),
+                    proof_id: proof.proof_id.to_string(),
                     offender_id: proof.offender_id.clone(),
                     fork_point_prev_hash: proof.fork_point_prev_hash.clone(),
                     report_timestamp: proof.report_timestamp.clone(),
@@ -58,7 +58,7 @@ impl Wallet {
             .get(proof_id)
             .map(|entry| entry.proof.clone())
             .ok_or_else(|| {
-                VoucherCoreError::Generic(format!("Proof with ID '{}' not found.", proof_id))
+                crate::Error::Wallet(crate::error::WalletError::ProofNotFound { proof_id: proof_id.to_string() })
             })
     }
 
@@ -77,7 +77,7 @@ impl Wallet {
             });
             if has_tx_match {
                 log::info!("  ✅ Match 1 (t_id) found!");
-                return Some(proof.proof_id.clone());
+                return Some(proof.proof_id.to_string());
             }
 
             // Match 2: DS-Tag match (Very robust)
@@ -89,7 +89,7 @@ impl Wallet {
             });
             if has_ds_tag_match {
                 log::info!("  ✅ Match 2 (ds_tag) found!");
-                return Some(proof.proof_id.clone());
+                return Some(proof.proof_id.to_string());
             }
 
             // Match 3: Deep Fork Point match (Scans entire chain)
@@ -101,7 +101,7 @@ impl Wallet {
             });
             if has_deep_fork_match || has_any_history_match {
                 log::info!("  ✅ Match 3 (fork_point) found!");
-                return Some(proof.proof_id.clone());
+                return Some(proof.proof_id.to_string());
             }
 
             // Match 4: Fork-point & DS-Tag linkage (restricted - not blind offender match)
@@ -121,7 +121,7 @@ impl Wallet {
             let has_fork_point_or_ds_tag_match = fork_point_match || ds_tag_match;
             if has_fork_point_or_ds_tag_match {
                 log::info!("  ✅ Match 4 (fork-point/ds_tag) found!");
-                return Some(proof.proof_id.clone());
+                return Some(proof.proof_id.to_string());
             }
 
             // Match 5: Recipient match (Targeted at the victim)
@@ -131,7 +131,7 @@ impl Wallet {
             });
             if has_recipient_match {
                 log::info!("  ✅ Match 5 (recipient_id) found!");
-                return Some(proof.proof_id.clone());
+                return Some(proof.proof_id.to_string());
             }
         }
 
@@ -157,10 +157,7 @@ impl Wallet {
     ) -> Result<ResolutionEndorsement, VoucherCoreError> {
         // Ensure that the proof exists before creating an endorsement.
         if !self.proof_store.proofs.contains_key(proof_id) {
-            return Err(VoucherCoreError::Generic(format!(
-                "Cannot create endorsement: Proof with ID '{}' not found.",
-                proof_id
-            )));
+            return Err(crate::Error::Wallet(crate::error::WalletError::ProofNotFound { proof_id: proof_id.to_string() }));
         }
         conflict_manager::create_and_sign_resolution_endorsement(proof_id, identity, notes)
     }
@@ -202,9 +199,9 @@ impl Wallet {
             }))?,
         );
         if endorsement.endorsement_id != expected_endorsement_id {
-            return Err(VoucherCoreError::Generic(
+            return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                 "Cannot add endorsement: endorsement_id does not match canonical hash of endorsement fields".to_string(),
-            ));
+             }));
         }
 
         // --- Signature gate: victim_signature over endorsement_id ---
@@ -212,24 +209,24 @@ impl Wallet {
             &endorsement.victim_id,
         )
         .map_err(|_| {
-            VoucherCoreError::Generic(format!(
+            crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: format!(
                 "Cannot add endorsement: victim_id '{}' is not a resolvable DID identity.",
                 endorsement.victim_id
-            ))
+            ) })
         })?;
         let sig_bytes = bs58::decode(&endorsement.victim_signature)
             .into_vec()
             .map_err(|e| {
-                VoucherCoreError::Generic(format!(
+                crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: format!(
                     "Cannot add endorsement: invalid victim_signature encoding: {}",
                     e
-                ))
+                ) })
             })?;
         let signature = ed25519_dalek::Signature::from_bytes(
             sig_bytes.as_slice().try_into().map_err(|_| {
-                VoucherCoreError::Generic(
+                crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                     "Cannot add endorsement: invalid victim_signature length.".to_string(),
-                )
+                 })
             })?,
         );
         if !crate::services::crypto::verify_ed25519(
@@ -237,11 +234,11 @@ impl Wallet {
             endorsement.endorsement_id.as_bytes(),
             &signature,
         ) {
-            return Err(VoucherCoreError::Generic(
+            return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                 "Cannot add endorsement: victim_signature does not verify over \
                  endorsement_id for the claimed victim identity."
                     .to_string(),
-            ));
+             }));
         }
 
         let entry = self
@@ -249,10 +246,7 @@ impl Wallet {
             .proofs
             .get_mut(&endorsement.proof_id)
             .ok_or_else(|| {
-                VoucherCoreError::Generic(format!(
-                    "Cannot add endorsement: Proof with ID '{}' not found.",
-                    endorsement.proof_id
-                ))
+                crate::Error::Wallet(crate::error::WalletError::ProofNotFound { proof_id: endorsement.proof_id.clone() })
             })?;
         let resolutions = entry.proof.resolutions.get_or_insert_with(Vec::new);
         if !resolutions
@@ -273,7 +267,7 @@ impl Wallet {
         note: Option<String>,
     ) -> Result<(), VoucherCoreError> {
         let entry = self.proof_store.proofs.get_mut(proof_id).ok_or_else(|| {
-            VoucherCoreError::Generic(format!("Proof with ID '{}' not found.", proof_id))
+            crate::Error::Wallet(crate::error::WalletError::ProofNotFound { proof_id: proof_id.to_string() })
         })?;
         entry.local_override = value;
         entry.local_note = note;

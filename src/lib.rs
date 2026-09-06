@@ -35,6 +35,8 @@
 //! forbidden in release builds (`compile_error`). `cargo check --target wasm32-unknown-unknown`
 //! and `cargo check --manifest-path bindings/wasm/Cargo.toml` must stay green.
 
+#![allow(clippy::unnecessary_lazy_evaluations, clippy::needless_return)]
+
 // Declare main modules of the library and make them public.
 pub mod app_service;
 pub mod archive;

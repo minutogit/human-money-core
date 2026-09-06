@@ -7,12 +7,12 @@
 //! and `data_encryption.rs`.
 
 use super::{AppService, AppState};
+use crate::app_service::orchestrator::TransactionOrchestrator;
 use crate::models::profile::UserIdentity;
 use crate::models::seal::{LocalSealRecord, SealSyncState, SyncStatus, WalletSeal};
 use crate::models::secure_container::{ContainerConfig, PayloadType, SecureContainer};
 use crate::models::storage_integrity::StorageIntegrityRecord;
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
-use crate::services::crypto::get_hash;
 use crate::storage::{AuthMethod, FileStorage, WalletLockGuard};
 use crate::Error;
 use std::fs;
@@ -81,7 +81,7 @@ impl AppService {
                 // 1. Load current seal (base point for the integrity record)
                 let record = storage
                     .load_seal(&auth)?
-                    .ok_or_else(|| Error::ValidationFailed("No seal found. Cannot repair integrity without seal.".to_string()))?;
+                    .ok_or_else(|| Error::App(crate::error::AppError::MissingSealForIntegrityRepair))?;
 
                 // 2. Read current hashes from disk
                 let hashes = storage.get_all_item_hashes()?;
@@ -121,7 +121,7 @@ impl AppService {
 
                 match record {
                     Some(r) => Ok(r.sync_status),
-                    None => Err(Error::ValidationFailed("No seal found. Recovery may be required.".to_string())),
+                    None => Err(Error::App(crate::error::AppError::MissingSealForRecovery)),
                 }
             }
             AppState::Locked => Err(Error::WalletLocked),
@@ -158,237 +158,87 @@ impl AppService {
     }
 
     /// Acknowledges the successful upload of a seal to the server.
+    ///
+    /// Standardized via [`TransactionOrchestrator`] with [`MutationScope::SealMetadataOnly`]:
+    /// only `storage.save_seal` is performed without a wallet generation bump,
+    /// under the same fork-lock, file-lock and seal-gate discipline as all
+    /// other mutating commands.
     pub fn acknowledge_seal_sync(
         &mut self,
         uploaded_seal_hash: &str,
         password: Option<&str>,
     ) -> Result<(), Error> {
-        let current_state = std::mem::replace(&mut self.state, AppState::Locked);
-
-        let (result, new_state) = match current_state {
-            AppState::Unlocked {
-                mut storage,
-                wallet,
-                identity,
-                session_cache,
-            } => {
-                let auth_method = match Self::resolve_auth_method(password, &session_cache) {
-                    Ok(a) => a,
-                    Err(e) => {
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        };
-                        return Err(e);
+        let uploaded = uploaded_seal_hash.to_string();
+        TransactionOrchestrator::execute_seal_only(self, password, |storage, auth, _wallet, _identity| {
+            let record_opt = storage.load_seal(auth)?;
+            match record_opt {
+                Some(mut record) => {
+                    let current_hash = record.seal.compute_hash()?;
+                    if current_hash != uploaded {
+                        return Err(Error::SealSyncRaceCondition);
                     }
-                };
-
-                let record_opt = match storage
-                    .load_seal(&auth_method) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            self.state = AppState::Unlocked {
-                                storage,
-                                wallet,
-                                identity,
-                                session_cache,
-                            };
-                            return Err(Error::from(e));
-                        }
-                    };
-
-                match record_opt {
-                    Some(mut record) => {
-                        let current_hash = match record.seal.compute_hash() {
-                            Ok(h) => h,
-                            Err(e) => {
-                                self.state = AppState::Unlocked {
-                                    storage,
-                                    wallet,
-                                    identity,
-                                    session_cache,
-                                };
-                                return Err(e);
-                            }
-                        };
-
-                        if current_hash != uploaded_seal_hash {
-                            (
-                                Err(Error::SealSyncRaceCondition),
-                                AppState::Unlocked {
-                                    storage,
-                                    wallet,
-                                    identity,
-                                    session_cache,
-                                },
-                            )
-                        } else {
-                            record.sync_status = SyncStatus::Synced;
-                            match storage.save_seal(&auth_method, &record) {
-                                Ok(_) => {
-                                    (
-                                        Ok(()),
-                                        AppState::Unlocked {
-                                            storage,
-                                            wallet,
-                                            identity,
-                                            session_cache,
-                                        },
-                                    )
-                                }
-                                Err(e) => (
-                                    Err(Error::from(e)),
-                                    AppState::Unlocked {
-                                        storage,
-                                        wallet,
-                                        identity,
-                                        session_cache,
-                                    },
-                                ),
-                            }
-                        }
-                    }
-                    None => (
-                        Err(Error::RequiresSealRecovery),
-                        AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        },
-                    ),
+                    record.sync_status = SyncStatus::Synced;
+                    storage.save_seal(auth, &record)?;
+                    Ok(())
                 }
+                None => Err(Error::RequiresSealRecovery),
             }
-            AppState::Locked => (
-                Err(Error::WalletLocked),
-                AppState::Locked,
-            ),
-        };
-
-        self.state = new_state;
-        result
+        })
     }
 
     // --- C) Remote Sync Check & Hard Lock ---
 
     /// Compares a seal downloaded from the server with the local seal.
+    ///
+    /// Standardized via [`TransactionOrchestrator`] with [`MutationScope::SealMetadataOnly`]:
+    /// only `storage.save_seal` is performed when a fork is detected, without
+    /// a wallet generation bump, under the same fork-lock and file-lock discipline.
     pub fn compare_remote_seal(
         &mut self,
         remote_seal_bytes: &[u8],
         password: Option<&str>,
     ) -> Result<SealSyncState, Error> {
-        let current_state = std::mem::replace(&mut self.state, AppState::Locked);
+        let remote_bytes = remote_seal_bytes.to_vec();
+        TransactionOrchestrator::execute_seal_only(self, password, |storage, auth, wallet, identity| {
+            let remote_seal: WalletSeal = serde_json::from_slice(&remote_bytes)?;
 
-        let (result, new_state) = match current_state {
-            AppState::Unlocked {
-                mut storage,
-                wallet,
-                identity,
-                session_cache,
-            } => {
-                let auth_method = match Self::resolve_auth_method(password, &session_cache) {
-                    Ok(a) => a,
-                    Err(e) => {
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        };
-                        return Err(e);
-                    }
-                };
-
-                let remote_seal: WalletSeal = match serde_json::from_slice(remote_seal_bytes) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        };
-                        return Err(Error::from(e));
-                    }
-                };
-
-                match remote_seal.verify_integrity(
-                    &identity.user_id,
-                    &identity.user_id,
-                    &wallet.local_instance_id,
-                ) {
-                    Ok(crate::models::seal::SealValidationResult::Valid) => {},
-                    Ok(crate::models::seal::SealValidationResult::LegacyValid) => {},
-                    Ok(crate::models::seal::SealValidationResult::DeviceMismatch { .. }) => {
-                        // Remote seal from other device is OK for comparison (indicator for fork check)
-                    },
-                    Ok(other) => {
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        };
-                        return Err(Error::ValidationFailed(format!("Remote seal integrity check failed: {:?}", other)));
-                    },
-                    Err(e) => {
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        };
-                        return Err(e);
-                    }
+            match remote_seal.verify_integrity(
+                &identity.user_id,
+                &identity.user_id,
+                &wallet.local_instance_id,
+            ) {
+                Ok(crate::models::seal::SealValidationResult::Valid) => {},
+                Ok(crate::models::seal::SealValidationResult::LegacyValid) => {},
+                Ok(crate::models::seal::SealValidationResult::DeviceMismatch { .. }) => {
+                    // Remote seal from other device is OK for comparison (indicator for fork check)
+                },
+                Ok(other) => {
+                    return Err(Error::App(
+                        crate::error::AppError::RemoteSealIntegrityFailed {
+                            details: format!("{:?}", other),
+                        },
+                    ));
                 }
-
-                let record = match storage.load_seal(&auth_method) {
-                    Ok(Some(r)) => r,
-                    Ok(None) => {
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        };
-                        return Err(Error::ValidationFailed("No local seal found. Recovery required.".to_string()));
-                    }
-                    Err(e) => {
-                        self.state = AppState::Unlocked {
-                            storage,
-                            wallet,
-                            identity,
-                            session_cache,
-                        };
-                        return Err(Error::from(e));
-                    }
-                };
-
-                let sync_state = record.seal.compare_with(&remote_seal);
-
-                if sync_state == SealSyncState::ForkDetected {
-                    let mut locked_record = record;
-                    locked_record.is_locked_due_to_fork = true;
-                    let _ = storage.save_seal(&auth_method, &locked_record);
-                }
-
-                (
-                    Ok(sync_state),
-                    AppState::Unlocked {
-                        storage,
-                        wallet,
-                        identity,
-                        session_cache,
-                    },
-                )
+                Err(e) => return Err(e),
             }
-            AppState::Locked => (Err(Error::WalletLocked), AppState::Locked),
-        };
 
-        self.state = new_state;
-        result
+            let record = match storage.load_seal(auth)? {
+                Some(r) => r,
+                None => {
+                    return Err(Error::App(crate::error::AppError::MissingLocalSeal))
+                }
+            };
+
+            let sync_state = record.seal.compare_with(&remote_seal);
+
+            if sync_state == SealSyncState::ForkDetected {
+                let mut locked_record = record;
+                locked_record.is_locked_due_to_fork = true;
+                let _ = storage.save_seal(auth, &locked_record);
+            }
+
+            Ok(sync_state)
+        })
     }
 
     // --- Internal helper methods (Seal) ---
@@ -447,21 +297,22 @@ impl AppService {
                         with the same Seed Phrase but a DIFFERENT 'User Prefix', then transfer vouchers between them.",
                         expected, actual
                     );
-                    return Err(Error::ValidationFailed(err_msg));
+                    return Err(Error::App(crate::error::AppError::DeviceMismatch {
+                        message: err_msg,
+                    }));
                 }
                 other => {
-                    return Err(Error::ValidationFailed(format!("Seal integrity check failed: {:?}", other)));
+                    return Err(Error::App(crate::error::AppError::SealIntegrityFailed {
+                        details: format!("{:?}", other),
+                    }));
                 }
             }
 
             // Load the RAW own_fingerprints store directly from storage
-            let raw_own_fingerprints = storage
-                .load_own_fingerprints(&auth)?;
+            let raw_own_fingerprints = storage.load_own_fingerprints(&auth)?;
 
-            let current_state_hash = {
-                let canonical = crate::services::utils::to_canonical_json(&raw_own_fingerprints)?;
-                get_hash(canonical.as_bytes())
-            };
+            let current_state_hash =
+                crate::storage::seal_service::SealService::calculate_state_hash(&raw_own_fingerprints)?;
 
             if record.seal.payload.state_hash != current_state_hash {
                 return Err(Error::StateRollbackDetected);
@@ -483,10 +334,8 @@ impl AppService {
 
         // Only migrate if necessary (legacy binding or no seal present)
         if needs_legacy_binding || seal_record.is_none() {
-            let state_hash = {
-                let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)?;
-                get_hash(canonical.as_bytes())
-            };
+            let state_hash =
+                crate::storage::seal_service::SealService::calculate_state_hash(&wallet.own_fingerprints)?;
 
             let migrated_seal = if needs_legacy_binding {
                 if let Some(existing_record) = seal_record {
@@ -588,23 +437,15 @@ impl AppService {
 
     /// Verifies that a freshly loaded wallet state is covered by the current
     /// cryptographic seal before it may be operated on.
+    ///
+    /// Delegates to [`crate::storage::seal_service::SealService::verify_state_matches_seal`].
+    #[allow(dead_code)]
     pub(crate) fn verify_state_matches_seal(
         storage: &FileStorage,
         auth: &crate::storage::AuthMethod<'_>,
         wallet: &crate::wallet::Wallet,
     ) -> Result<(), Error> {
-        let record_opt = storage
-            .load_seal(auth)?;
-
-        if let Some(record) = record_opt {
-            let canonical = crate::services::utils::to_canonical_json(&wallet.own_fingerprints)?;
-            let current_state_hash = get_hash(canonical.as_bytes());
-
-            if record.seal.payload.state_hash != current_state_hash {
-                return Err(Error::StateRollbackDetected);
-            }
-        }
-        Ok(())
+        crate::storage::seal_service::SealService::verify_state_matches_seal(storage, auth, wallet)
     }
 
     pub(crate) fn update_seal_after_state_change(
@@ -620,7 +461,9 @@ impl AppService {
                 ..
             } => {
                 let auth = Self::resolve_auth_method(password, session_cache)?;
-                Self::persist_seal_for_wallet_state(storage, identity, &auth, wallet)
+                crate::storage::seal_service::SealService::persist_seal_for_wallet_state(
+                    storage, identity, &auth, wallet,
+                )
             }
             AppState::Locked => Err(Error::WalletLocked),
         }
@@ -628,67 +471,18 @@ impl AppService {
 
     /// Persists the WalletSeal and the Integrity Record for the given wallet
     /// state without touching the AppService's in-memory state.
+    ///
+    /// Delegates to [`crate::storage::seal_service::SealService::persist_seal_for_wallet_state`].
+    #[allow(dead_code)]
     pub(crate) fn persist_seal_for_wallet_state(
         storage: &mut FileStorage,
         identity: &crate::models::profile::UserIdentity,
         auth: &crate::storage::AuthMethod<'_>,
         wallet: &crate::wallet::Wallet,
     ) -> Result<(), Error> {
-        let record_opt = storage
-            .load_seal(auth)?;
-
-        let current_state_hash = {
-            let canonical =
-                crate::services::utils::to_canonical_json(&wallet.own_fingerprints)?;
-            get_hash(canonical.as_bytes())
-        };
-
-        let updated_seal = match record_opt {
-            Some(mut record) => {
-                let seal = record.seal.update(
-                    identity,
-                    &current_state_hash,
-                    &wallet.local_instance_id,
-                )?;
-
-                record.seal = seal.clone();
-                record.sync_status = SyncStatus::PendingUpload;
-
-                storage
-                    .save_seal(auth, &record)?;
-                seal
-            }
-            None => {
-                let seal = WalletSeal::create_initial(
-                    &identity.user_id,
-                    identity,
-                    &current_state_hash,
-                    &wallet.local_instance_id,
-                )?;
-
-                let new_record = crate::models::seal::LocalSealRecord {
-                    seal: seal.clone(),
-                    sync_status: SyncStatus::PendingUpload,
-                    is_locked_due_to_fork: false,
-                };
-                storage
-                    .save_seal(auth, &new_record)?;
-                seal
-            }
-        };
-
-        // --- INTEGRITY UPDATE ---
-        let item_hashes = storage.get_all_item_hashes()?;
-        let integrity_record = StorageIntegrityRecord::create_record(
-            identity,
-            &updated_seal,
-            item_hashes,
-        )?;
-
-        storage
-            .save_integrity(&integrity_record)?;
-
-        Ok(())
+        crate::storage::seal_service::SealService::persist_seal_for_wallet_state(
+            storage, identity, auth, wallet,
+        )
     }
 
     // --- Standard Container Handler (from standard_container_handler) ---
@@ -726,8 +520,8 @@ impl AppService {
         let toml_str = match serde_json::from_slice::<SecureContainer>(container_bytes) {
             Ok(container) => {
                 if container.c != PayloadType::VoucherStandardDefinition {
-                    return Err(Error::ValidationFailed(
-                        "Invalid payload type: expected VoucherStandardDefinition".to_string(),
+                    return Err(Error::App(
+                        crate::error::AppError::InvalidPayloadTypeVoucherStandardDefinition,
                     ));
                 }
 
@@ -739,12 +533,18 @@ impl AppService {
 
                 let payload_bytes = container.open(identity, password)?;
 
-                String::from_utf8(payload_bytes)
-                    .map_err(|e| Error::ValidationFailed(format!("Invalid UTF-8 in container payload: {}", e)))?
+                String::from_utf8(payload_bytes).map_err(|e| {
+                    Error::App(crate::error::AppError::InvalidUtf8InContainerPayload {
+                        reason: e.to_string(),
+                    })
+                })?
             }
             Err(_) => {
-                String::from_utf8(container_bytes.to_vec())
-                    .map_err(|e| Error::ValidationFailed(format!("Invalid UTF-8 in standard file: {}", e)))?
+                String::from_utf8(container_bytes.to_vec()).map_err(|e| {
+                    Error::App(crate::error::AppError::InvalidUtf8InStandardFile {
+                        reason: e.to_string(),
+                    })
+                })?
             }
         };
 
@@ -762,8 +562,8 @@ impl AppService {
         let toml_str = match serde_json::from_slice::<SecureContainer>(container_bytes) {
             Ok(container) => {
                 if container.c != PayloadType::VoucherStandardDefinition {
-                    return Err(Error::ValidationFailed(
-                        "Invalid payload type: expected VoucherStandardDefinition".to_string(),
+                    return Err(Error::App(
+                        crate::error::AppError::InvalidPayloadTypeVoucherStandardDefinition,
                     ));
                 }
 
@@ -775,12 +575,18 @@ impl AppService {
 
                 let payload_bytes = container.open(identity, password)?;
 
-                String::from_utf8(payload_bytes)
-                    .map_err(|e| Error::ValidationFailed(format!("Invalid UTF-8 in container payload: {}", e)))?
+                String::from_utf8(payload_bytes).map_err(|e| {
+                    Error::App(crate::error::AppError::InvalidUtf8InContainerPayload {
+                        reason: e.to_string(),
+                    })
+                })?
             }
             Err(_) => {
-                String::from_utf8(container_bytes.to_vec())
-                    .map_err(|e| Error::ValidationFailed(format!("Invalid UTF-8 in standard file: {}", e)))?
+                String::from_utf8(container_bytes.to_vec()).map_err(|e| {
+                    Error::App(crate::error::AppError::InvalidUtf8InStandardFile {
+                        reason: e.to_string(),
+                    })
+                })?
             }
         };
 
@@ -792,10 +598,9 @@ impl AppService {
             || standard_uuid.contains('\\')
             || standard_uuid.contains("..")
         {
-            return Err(Error::ValidationFailed(format!(
-                "Invalid standard uuid '{}': path separators and traversal tokens are not permitted.",
-                standard_uuid
-            )));
+            return Err(Error::App(crate::error::AppError::InvalidStandardUuid {
+                uuid: standard_uuid,
+            }));
         }
 
         let standard_folder = target_dir.join(&standard_uuid);
@@ -812,11 +617,9 @@ impl AppService {
                 ))
             })?;
             if existing_content != toml_str {
-                return Err(Error::ValidationFailed(format!(
-                    "Conflict: a different standard is already installed under uuid '{}'. \
-                     Refusing to overwrite it silently.",
-                    standard_uuid
-                )));
+                return Err(Error::App(crate::error::AppError::StandardAlreadyInstalled {
+                    uuid: standard_uuid.clone(),
+                }));
             }
             return Ok(standard_uuid);
         }
@@ -842,8 +645,8 @@ impl AppService {
             || standard_id.contains('\\')
             || standard_id.contains("..")
         {
-            return Err(Error::ValidationFailed(
-                "Invalid standard ID for deletion.".to_string(),
+            return Err(Error::App(
+                crate::error::AppError::InvalidStandardIdForDeletion,
             ));
         }
 
@@ -877,10 +680,9 @@ impl AppService {
         );
 
         if !matching_vouchers.is_empty() {
-            return Err(Error::ValidationFailed(format!(
-                "Standard cannot be deleted because it is still in use by {} voucher(s).",
-                matching_vouchers.len()
-            )));
+            return Err(Error::App(crate::error::AppError::StandardInUse {
+                count: matching_vouchers.len(),
+            }));
         }
 
         // 5. Delete directory
@@ -1093,11 +895,12 @@ signature = "5aomSjj76rEb4VVjhAd6p6qvmU79wkkTpj84AnY3D9p8xRDNfxBqKL4EbEHTKfPevgg
 
         let result = app.inspect_voucher_standard_container(&bytes, None);
         assert!(result.is_err());
-        if let Err(Error::ValidationFailed(msg)) = result {
-            assert!(msg.contains("Invalid payload type"));
-        } else {
-            panic!("Expected ValidationFailed for invalid payload type");
-        }
+        let err_str = result.unwrap_err().to_string();
+        assert!(
+            err_str.contains("Invalid payload type"),
+            "Expected error containing 'Invalid payload type', got: {}",
+            err_str
+        );
 
         #[cfg(feature = "test-utils")]
         crate::set_signature_bypass(false);
@@ -1188,11 +991,12 @@ signature = "5aomSjj76rEb4VVjhAd6p6qvmU79wkkTpj84AnY3D9p8xRDNfxBqKL4EbEHTKfPevgg
 
         let result = app.delete_voucher_standard(&uuid, &target_standards_dir);
         assert!(result.is_err());
-        if let Err(Error::ValidationFailed(msg)) = result {
-            assert!(msg.contains("still in use"));
-        } else {
-            panic!("Expected ValidationFailed containing 'still in use'");
-        }
+        let err_str = result.unwrap_err().to_string();
+        assert!(
+            err_str.contains("still in use"),
+            "Expected error containing 'still in use', got: {}",
+            err_str
+        );
 
         assert!(target_standards_dir.join(&uuid).exists());
 
@@ -1233,11 +1037,12 @@ signature = "5aomSjj76rEb4VVjhAd6p6qvmU79wkkTpj84AnY3D9p8xRDNfxBqKL4EbEHTKfPevgg
 
         let result = app.delete_voucher_standard("minuto_v1", &target_standards_dir);
         assert!(result.is_err());
-        if let Err(Error::ValidationFailed(msg)) = result {
-            assert!(msg.contains("still in use"));
-        } else {
-            panic!("Expected ValidationFailed containing 'still in use'");
-        }
+        let err_str = result.unwrap_err().to_string();
+        assert!(
+            err_str.contains("still in use"),
+            "Expected error containing 'still in use', got: {}",
+            err_str
+        );
 
         assert!(custom_folder.exists());
 
@@ -1272,7 +1077,12 @@ signature = "5aomSjj76rEb4VVjhAd6p6qvmU79wkkTpj84AnY3D9p8xRDNfxBqKL4EbEHTKfPevgg
         let target_standards_dir = temp_dir.join("voucher_standards");
 
         let result = app.delete_voucher_standard("../other_dir", &target_standards_dir);
-        assert!(matches!(result, Err(Error::ValidationFailed(_))));
+        let err_str = result.unwrap_err().to_string();
+        assert!(
+            err_str.contains("Invalid standard ID"),
+            "Expected error containing 'Invalid standard ID', got: {}",
+            err_str
+        );
     }
 
     #[test]

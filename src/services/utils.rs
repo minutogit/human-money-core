@@ -110,7 +110,7 @@ fn next_month(year: i32, month: u32) -> (i32, u32) {
 fn parse_rfc3339_utc(s: &str) -> Result<DateTime<Utc>, crate::error::VoucherCoreError> {
     DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
-        .map_err(|e| crate::error::VoucherCoreError::Generic(format!("Failed to parse timestamp: {}", e)))
+        .map_err(|e| crate::Error::Wallet(crate::error::WalletError::InvalidTimestamp { reason: format!("Failed to parse timestamp: {}", e) }))
 }
 
 /// Formats a duration in seconds as `"Xh Ym Zs"`.
@@ -248,7 +248,7 @@ pub fn verify_not_far_in_future(
 
     let now_str = get_current_timestamp();
     let now = parse_rfc3339_utc(&now_str)
-        .map_err(|e| crate::error::VoucherCoreError::Generic(format!("Failed to parse now: {}", e)))?;
+        .map_err(|e| crate::Error::Wallet(crate::error::WalletError::InvalidTimestamp { reason: format!("Failed to parse now: {}", e) }))?;
 
     let ts = parse_rfc3339_utc(timestamp_iso)?;
 
@@ -291,14 +291,14 @@ pub fn add_iso8601_duration(
     use crate::error::VoucherCoreError;
 
     if !duration_str.starts_with('P') || duration_str.len() < 3 {
-        return Err(VoucherCoreError::VoucherManagerGeneric(format!(
+        return Err(crate::Error::Wallet(crate::error::WalletError::InvalidDuration { reason: format!(
             "Invalid ISO 8601 duration format: {}",
             duration_str
-        )));
+        ) }));
     }
     let (value_str, unit) = duration_str.split_at(duration_str.len() - 1);
     let value: u32 = value_str[1..].parse().map_err(|_| {
-        VoucherCoreError::VoucherManagerGeneric(format!("Invalid number in duration: {}", duration_str))
+        crate::Error::Wallet(crate::error::WalletError::InvalidDuration { reason: format!("Invalid number in duration: {}", duration_str) })
     })?;
     match unit {
         "Y" => {
@@ -330,10 +330,10 @@ pub fn add_iso8601_duration(
                 .expect("valid nanosecond"))
         }
         "D" => Ok(start_date + chrono::Duration::days(i64::from(value))),
-        _ => Err(VoucherCoreError::VoucherManagerGeneric(format!(
+        _ => Err(crate::Error::Wallet(crate::error::WalletError::InvalidDuration { reason: format!(
             "Unsupported duration unit in: {}",
             duration_str
-        ))),
+        ) })),
     }
 }
 
@@ -349,8 +349,6 @@ pub fn round_up_date(
     date: DateTime<Utc>,
     rounding_str: &str,
 ) -> Result<DateTime<Utc>, crate::error::VoucherCoreError> {
-    use crate::error::VoucherCoreError;
-
     match rounding_str {
         "P1D" => Ok(date
             .with_hour(23)
@@ -376,10 +374,10 @@ pub fn round_up_date(
             Ok(last_ns_before(y, m))
         }
         "P1Y" => Ok(last_ns_before(date.year() + 1, 1)),
-        _ => Err(VoucherCoreError::VoucherManagerGeneric(format!(
+        _ => Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: format!(
             "Unsupported rounding unit: {}. Supported units are: P1D, P1M, P3M, P6M, P1Y",
             rounding_str
-        ))),
+        ) })),
     }
 }
 

@@ -1302,7 +1302,7 @@ fn sa05_11_arbitrary_data_read_paths_must_enforce_name_sanitization() {
     // names before any path construction.
     let save_reject = storage.save_arbitrary_data(&auth, "../outside", b"x");
     assert!(
-        matches!(save_reject, Err(StorageError::Generic(_))),
+        matches!(save_reject, Err(StorageError::InvalidDataBlockName { .. }) | Err(StorageError::InvalidItemName { .. }) | Err(StorageError::InvariantViolation { .. })),
         "test setup: save_arbitrary_data must reject traversal names (existing convention)"
     );
 
@@ -1311,13 +1311,13 @@ fn sa05_11_arbitrary_data_read_paths_must_enforce_name_sanitization() {
     let absolute_outside = outside_file.to_string_lossy().into_owned();
     for hostile_name in [absolute_outside, "../../outside_secret.txt".to_string()] {
         match storage.get_item_hash(&hostile_name) {
-            Err(StorageError::Generic(_)) => {}
+            Err(StorageError::InvalidItemName { .. }) | Err(StorageError::InvariantViolation { .. }) => {}
             other => panic!(
                 "HMSEC-SA05-11 VIOLATION: get_item_hash accepted hostile item name \
                  {:?} — raw join() lets absolute paths REPLACE the wallet base and \
                  relative traversals ESCAPE it, turning the method into a hash \
                  oracle over arbitrary process-readable files. Expected the save-\
-                 side rejection (Err(Generic)), got {:?} (CWE-22/CWE-23).",
+                 side rejection (Err(InvalidItemName)), got {:?} (CWE-22/CWE-23).",
                 hostile_name,
                 other
                     .map(|h| format!("Ok(<sha3:{}...>)", h.chars().take(8).collect::<String>()))
@@ -1329,11 +1329,11 @@ fn sa05_11_arbitrary_data_read_paths_must_enforce_name_sanitization() {
     // as the write side — NotFound would leak path-resolution semantics rather
     // than rejecting the hostile name itself.
     match storage.load_arbitrary_data(&auth, "../outside") {
-        Err(StorageError::Generic(_)) => {}
+        Err(StorageError::InvalidDataBlockName { .. }) | Err(StorageError::InvalidItemName { .. }) | Err(StorageError::InvariantViolation { .. }) => {}
         other => panic!(
             "HMSEC-SA05-11 VIOLATION: load_arbitrary_data does not enforce the name \
              validation that save_arbitrary_data applies (sanitize-on-write-only \
-             asymmetry). Expected Err(Generic) for '../outside', got {:?} \
+             asymmetry). Expected Err(InvalidDataBlockName) for '../outside', got {:?} \
              (CWE-22/CWE-23).",
             other.map(|bytes| format!("Ok(<{} bytes>)", bytes.len()))
         ),

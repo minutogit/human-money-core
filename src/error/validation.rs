@@ -1,15 +1,10 @@
-//! # `src/error.rs`
+//! # src/error/validation.rs
 //!
-//! Defines the central error type for the entire `human_money_core` library.
-//! Uses `thiserror` for easy creation of meaningful errors
-//! and automatic conversion of subordinate error types.
+//! Validation and standard-definition errors.
+//! Extracted from `error.rs` (Streamline Phase 3) to isolate
+//! schema and cryptographic validation concerns.
 
-use crate::wallet::instance::VoucherStatus;
-use crate::{
-    services::crypto::{GetPubkeyError, SymmetricEncryptionError},
-    storage::StorageError,
-};
-use rust_decimal::Decimal;
+use crate::services::crypto::GetPubkeyError;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -357,6 +352,186 @@ pub enum ValidationError {
     /// The prefix must not contain two consecutive hyphens.
     #[error("Prefix contains consecutive separators (- or :)")]
     PrefixHasConsecutiveSeparators,
+
+    // --- Phase 4: Typed transaction / chain errors (replacing InvalidTransaction(String) ad-hoc) ---
+
+    /// Init transaction must always have a sender_id (creator).
+    #[error("Init transaction must always have a sender_id (creator).")]
+    MissingInitSenderId,
+
+    /// Transaction has recipient_id with leading/trailing whitespace (obfuscation attempt).
+    #[error("Transaction {t_id} has recipient_id with leading/trailing whitespace (obfuscation attempt).")]
+    RecipientWhitespace { t_id: String },
+
+    /// Transaction has non-DID recipient in public mode.
+    #[error("Transaction {t_id} has non-DID recipient in 'public' mode.")]
+    NonDidRecipientInPublicMode { t_id: String },
+
+    /// Transaction list is empty.
+    #[error("Transaction list is empty.")]
+    EmptyTransactionList,
+
+    /// Invalid voucher_nonce format.
+    #[error("Invalid voucher_nonce format")]
+    InvalidVoucherNonceFormat,
+
+    /// Invalid voucher_id format.
+    #[error("Invalid voucher_id format")]
+    InvalidVoucherIdFormat,
+
+    /// Initial transaction has invalid prev_hash.
+    #[error("Initial transaction has invalid prev_hash.")]
+    InvalidInitialPrevHash,
+
+    /// Initial (init) transaction must not contain non-trivial trap_data.
+    #[error("Initial ('init') transaction must not contain non-trivial trap_data.")]
+    NonTrivialTrapInInit,
+
+    /// Transaction chain broken: prev_hash does not match hash of previous transaction.
+    #[error("Transaction chain broken: prev_hash does not match hash of previous transaction.")]
+    BrokenTransactionChain,
+
+    /// P2PKH chain broken: sender_ephemeral_pub does not match any previous anchor.
+    #[error("P2PKH chain broken: sender_ephemeral_pub does not match any previous anchor.")]
+    BrokenP2pkhChain,
+
+    /// A transfer transaction must not have a sender_remaining_amount.
+    #[error("A 'transfer' transaction must not have a sender_remaining_amount.")]
+    TransferWithRemainingAmount,
+
+    /// Split transaction must commit DISTINCT anchors for the receiver and change outputs.
+    #[error("Split transaction must commit DISTINCT anchors for the receiver and change outputs (anchor overlap detected).")]
+    SplitAnchorOverlap,
+
+    /// Split transaction must have a sender_remaining_amount.
+    #[error("Split transaction must have a sender_remaining_amount.")]
+    SplitMissingRemainingAmount,
+
+    /// Impossible split: sent amount plus remaining amount overflows max representable value.
+    #[error("Impossible split: sent amount ({sent}) plus remaining amount ({remaining}) overflows the maximum representable value.")]
+    SplitAmountOverflow { sent: String, remaining: String },
+
+    /// Invalid split balance: previous balance does not equal sent + remaining.
+    #[error("Invalid split balance: previous balance ({previous}) does not equal sent amount ({sent}) + remaining amount ({remaining}).")]
+    InvalidSplitBalance {
+        previous: String,
+        sent: String,
+        remaining: String,
+    },
+
+    /// First transaction must be of type init.
+    #[error("First transaction must be of type 'init'.")]
+    FirstTransactionNotInit,
+
+    /// Found subsequent transaction with invalid type init.
+    #[error("Found subsequent transaction with invalid type 'init'.")]
+    SubsequentInitTransaction,
+
+    /// Sender and recipient cannot be the same in a non-init transaction.
+    #[error("Sender and recipient cannot be the same in a non-init transaction.")]
+    SenderEqualsRecipient,
+
+    /// Transaction of type split must have a sender_remaining_amount.
+    #[error("Transaction of type 'split' must have a sender_remaining_amount.")]
+    SplitRequiresRemainingAmount,
+
+    /// Transaction of type transfer must not have a sender_remaining_amount.
+    #[error("Transaction of type 'transfer' must not have a sender_remaining_amount.")]
+    TransferForbidsRemainingAmount,
+
+    /// Unknown transaction type.
+    #[error("Unknown transaction type: {t_type}")]
+    UnknownTransactionType { t_type: String },
+
+    /// Missing trap_data for non-init transaction.
+    #[error("Missing trap_data for non-init transaction")]
+    MissingTrapDataForNonInit,
+
+    /// Invalid layer2_signature (Technical Proof).
+    #[error("Invalid layer2_signature (Technical Proof)")]
+    InvalidLayer2Signature,
+
+    /// Missing sender_ephemeral_pub for L2 signature.
+    #[error("Missing sender_ephemeral_pub for L2 signature")]
+    MissingSenderEphemeralPubForL2,
+
+    /// Missing layer2_signature.
+    #[error("Missing layer2_signature")]
+    MissingLayer2Signature,
+
+    /// Missing sender_identity_signature for public sender.
+    #[error("Missing sender_identity_signature for public sender")]
+    MissingSenderIdentitySignature,
+
+    /// Invalid sender_identity_signature.
+    #[error("Invalid sender_identity_signature")]
+    InvalidSenderIdentitySignature,
+
+    /// Voucher has no transactions.
+    #[error("Voucher has no transactions")]
+    VoucherHasNoTransactions,
+
+    /// Received voucher has no transactions.
+    #[error("Received voucher has no transactions.")]
+    ReceivedVoucherHasNoTransactions,
+
+    /// Voucher must have at least one (init) transaction.
+    #[error("Voucher must have at least one (init) transaction.")]
+    VoucherMustHaveInitTransaction,
+
+    /// Payment rejected: transaction carries an SST trap shard but no privacy guard (R5).
+    #[error("Payment rejected: transaction carries an SST trap shard but no privacy guard with the private witness (R5 fail-closed handover enforcement).")]
+    TrapWithoutPrivacyGuard,
+
+    /// Payment rejected: transaction carries a trap shard but private SST witness is incomplete.
+    #[error("Payment rejected: transaction carries a trap shard but the private SST witness (trap_r_sig/trap_s_sig/trap_m_r/trap_m_s) is incomplete.")]
+    IncompleteSstWitness,
+
+    /// Payment rejected: missing sender_ephemeral_pub for SST witness check.
+    #[error("Payment rejected: missing sender_ephemeral_pub for SST witness check.")]
+    MissingSenderEphemeralPubForSst,
+
+    /// Payment rejected: invalid sender_ephemeral_pub encoding.
+    #[error("Payment rejected: invalid sender_ephemeral_pub encoding.")]
+    InvalidSenderEphemeralPubEncoding,
+
+    /// Payment rejected: sender_ephemeral_pub must be 32 bytes.
+    #[error("Payment rejected: sender_ephemeral_pub must be 32 bytes.")]
+    SenderEphemeralPubWrongLength,
+
+    /// Payment rejected: SST trap witness verification failed.
+    #[error("Payment rejected: SST trap witness verification failed ({reason}).")]
+    SstWitnessVerificationFailed { reason: String },
+
+    // --- Phase 4: Typed L2 gateway errors (replacing Error::ValidationFailed ad-hoc) ---
+
+    /// Invalid server public key.
+    #[error("Invalid server public key")]
+    InvalidServerPublicKey,
+
+    /// Server signature is invalid (authenticity failed).
+    #[error("Server-Signatur ist ungültig (Authentizität fehlgeschlagen)")]
+    ServerSignatureInvalid,
+
+    /// Voucher ID mix-up: L2 server reports proof for a different voucher.
+    #[error("Voucher ID Mix-up erkannt: L2-Server meldet Beweis für einen anderen Gutschein ({found} != {expected})")]
+    VoucherIdMixup { found: String, expected: String },
+
+    /// Invalid ephemeral key in lock entry.
+    #[error("Invalid ephemeral key in lock entry")]
+    InvalidEphemeralKeyInLockEntry,
+
+    /// Cryptographic proof of L2 server is invalid.
+    #[error("Kryptografischer Beweis des L2-Servers ist ungültig")]
+    InvalidL2Proof,
+
+    /// Foreign key proof: L2 server reports double-spend with foreign key.
+    #[error("Gefälschter Beweis erkannt: L2-Server meldet Double-Spend mit einem fremden Key ({actual} != {expected})")]
+    ForeignKeyProof { actual: String, expected: String },
+
+    /// L2 server rejected request.
+    #[error("L2 server rejected request: {reason}")]
+    L2Rejected { reason: String },
 }
 
 impl From<GetPubkeyError> for ValidationError {
@@ -370,356 +545,3 @@ impl From<serde_json::Error> for ValidationError {
         ValidationError::Json(err.to_string())
     }
 }
-
-/// The central error type for all operations in the `human_money_core` library.
-#[derive(Error, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "type", content = "payload", rename_all = "camelCase")]
-pub enum Error {
-    // --- Validation & Verification Errors ---
-
-    /// Error wrapper for schema and logic validation errors.
-    #[error("Validation Error: {0}")]
-    Validation(#[from] ValidationError),
-
-    /// General validation failure wrapper.
-    #[error("Validation failed: {0}")]
-    ValidationFailed(String),
-
-    /// Cryptographic signature metadata mismatch.
-    #[error("Mismatched signature data: {0}")]
-    MismatchedSignatureData(String),
-
-    /// The hash format of a given string is invalid.
-    #[error("Invalid hash format: {0}")]
-    InvalidHashFormat(String),
-
-    // --- Transaction & Bundle Lifecycle Errors ---
-
-    /// The transaction bundle has already been processed and rejected previously.
-    #[error("Bundle has already been processed and was rejected. Bundle ID: {bundle_id}")]
-    BundleAlreadyProcessed { bundle_id: String },
-
-    /// The transaction fingerprint is already registered, indicating a potential replay attack.
-    #[error(
-        "Transaction fingerprint is already known, indicating a potential replay attack. Fingerprint Hash: {fingerprint_hash}"
-    )]
-    TransactionFingerprintAlreadyKnown { fingerprint_hash: String },
-
-    /// The transaction bundle was sent to this wallet but is intended for another recipient.
-    #[error(
-        "Bundle Recipient Mismatch: This bundle was not intended for this wallet. Expected recipient: {expected}, but last transaction was for: {found}"
-    )]
-    BundleRecipientMismatch { expected: String, found: String },
-
-    /// An offline double-spend attempt was detected and blocked.
-    #[error(
-        "Double spend attempt blocked for voucher {local_instance_id}: A transaction has already been issued from this voucher state."
-    )]
-    DoubleSpendAttemptBlocked { local_instance_id: String },
-
-    /// The transaction is missing the required identity trap data.
-    #[error("Missing trap data in transaction")]
-    MissingTrapData,
-
-    /// Error deserializing transaction or protocol payload.
-    #[error("L2 Payload Deserialization Error: {0}")]
-    DeserializationError(String),
-
-    // --- Voucher Lifecycle Errors ---
-
-    /// The voucher is quarantined and cannot be transferred or used due to conflicts.
-    #[error("Action aborted: The voucher is quarantined due to a detected double-spend conflict.")]
-    VoucherInQuarantine,
-
-    /// The requested voucher instance is not present in local storage.
-    #[error("Voucher with local instance ID '{0}' not found in wallet. It may have been fully spent, deleted, or transferred.")]
-    VoucherNotFound(String),
-
-    /// The operation requires an active voucher, but the voucher status is not active.
-    #[error("Action requires an active voucher, but its status is {0:?}.")]
-    VoucherNotActive(VoucherStatus),
-
-    /// Verification of the wallet's ownership of the voucher failed.
-    #[error("Ownership validation failed: {0}")]
-    VoucherOwnershipNotFound(String),
-
-    /// The operation can only be performed by the creator of the voucher.
-    #[error("Only the creator of the voucher can remove signatures.")]
-    NotTheCreator,
-
-    /// Signatures cannot be removed because the voucher has already been spent or circulated.
-    #[error("Cannot remove signatures from a voucher that is already in circulation (has more than one transaction).")]
-    VoucherAlreadyInCirculation,
-
-    /// The creator's signature is mandatory and cannot be removed.
-    #[error("Cannot remove the creator's signature from a voucher.")]
-    CannotRemoveCreatorSignature,
-
-    /// Signatures can only be removed while the voucher is in draft/incomplete status.
-    #[error("Signatures can only be removed while the voucher is in status 'Incomplete'. Current status: {0:?}")]
-    SignatureRemovalRequiresIncomplete(VoucherStatus),
-
-    /// The voucher is locked until the specified timestamp.
-    #[error("Voucher is locked until '{until}'. Current time: '{now}'. Remaining wait: {wait_duration}.")]
-    VoucherLockedUntil {
-        until: String,
-        now: String,
-        wait_duration: String,
-    },
-
-    // --- Security Seal & Rollback Guard Errors ---
-
-    /// The local security seal (seal.json) is missing. Normal startup and transactions
-    /// are not allowed. The user must start the recovery flow.
-    #[error("Security Alert: No local security seal found. Recovery is required to re-anchor the wallet.")]
-    RequiresSealRecovery,
-
-    /// The state_hash in the seal does not match the loaded OwnFingerprints store.
-    /// Local storage was tampered with, corrupted, or reset via an old backup.
-    #[error("Critical Error: Wallet state manipulation or outdated backup detected. The local transaction data does not match the security seal.")]
-    StateRollbackDetected,
-
-    /// The hash chain of the remote seal does not match the local seal,
-    /// indicating a serious multi-device conflict.
-    #[error("Sync Conflict: The hash chain of the remote seal does not align with the local seal, indicating a multi-device fork.")]
-    SealForkDetected,
-
-    /// A fork was detected and the wallet is now persistently locked.
-    /// No transactions can be received or sent.
-    /// Only `recover_wallet_and_set_new_password` can lift this lock.
-    #[error("Security Lockdown: Wallet is locked due to a detected fork in the transaction history. Recovery required.")]
-    WalletLockedDueToFork,
-
-    /// Zone 2: Bundle timestamp is 5 minutes to 24 hours before the epoch_start_time.
-    /// Potential double-spend trap. Requires explicit user confirmation.
-    #[error("Warning: This transaction occurred shortly before the recent wallet recovery. Confirm with force_accept_tolerance_bundle.")]
-    BundleInRecoveryToleranceZone,
-
-    /// Zone 3: Bundle timestamp is 24 hours to 28 days before the epoch_start_time.
-    /// High risk of serious double-spending. Requires critical user confirmation.
-    #[error("CRITICAL WARNING: This transaction is up to 4 weeks old relative to the last recovery. High double-spend risk.")]
-    BundleInExtendedRecoveryToleranceZone,
-
-    /// Zone 4: Bundle timestamp is older than 28 days before the epoch_start_time.
-    /// Hard rejection. No bypass possible.
-    #[error("Transaction Rejected: This transaction is too old relative to the last wallet recovery date. Permanently rejected.")]
-    BundlePredatesCurrentEpoch,
-
-    /// Race condition protection: The acknowledge_seal_sync was called with a hash
-    /// that no longer matches the latest local seal (new transaction during upload).
-    #[error("Seal sync race condition: A new transaction occurred during the upload. The acknowledgement is outdated.")]
-    SealSyncRaceCondition,
-
-    // --- Cryptographic & Key Errors ---
-
-    /// Symmetric encryption or decryption (e.g. ChaCha20) failed.
-    #[error("Symmetric Encryption Error: {0}")]
-    SymmetricEncryption(#[from] SymmetricEncryptionError),
-
-    /// Failed to retrieve or parse a public key from a user identity.
-    #[error("User ID or Key Error: {0}")]
-    KeyOrId(String),
-
-    /// General cryptographic error.
-    #[error("Cryptography error: {0}")]
-    Crypto(String),
-
-    /// Trap derivation failed or produced invalid scalar parameters.
-    #[error("Invalid trap derivation: {0}")]
-    InvalidTrapDerivation(String),
-
-    /// Base58 encoding/decoding failed.
-    #[error("Base58 decode error: {0}")]
-    Bs58Decode(String),
-
-    /// Base64 encoding/decoding failed.
-    #[error("Base64 decode error: {0}")]
-    Base64(String),
-
-    /// Underlying Ed25519 signature algorithm error.
-    #[error("Ed25519 crypto error: {0}")]
-    Ed25519(String),
-
-    // --- Secure Container Errors ---
-
-    /// The current user is not in the list of recipients for this container.
-    #[error("The current user is not in the list of recipients for this container.")]
-    NotAnIntendedRecipient,
-
-    /// Key derivation for container key encryption failed.
-    #[error("Failed to derive key for key encryption: {0}")]
-    KeyDerivationError(String),
-
-    /// Security violation: Plaintext encryption is not allowed for financial payloads.
-    #[error("Security violation: Plaintext encryption is not allowed for financial payloads (TransactionBundle).")]
-    PlaintextNotAllowedForFinancialPayload,
-
-    /// Password required for symmetric encryption.
-    #[error("Password required for symmetric encryption.")]
-    PasswordRequired,
-
-    /// Invalid encryption configuration.
-    #[error("Invalid encryption configuration.")]
-    InvalidEncryptionConfig,
-
-    // --- Voucher Manager / Business Logic Errors (flattened) ---
-
-    /// Insufficient funds for the transaction.
-    #[error("Insufficient funds: Available: {available}, Needed: {needed}")]
-    InsufficientFunds { available: Decimal, needed: Decimal },
-
-    /// Amount precision exceeds the limit allowed by the standard.
-    #[error("Amount precision exceeds standard limit. Allowed: {allowed}, Found: {found}")]
-    AmountPrecisionExceeded { allowed: u32, found: u32 },
-
-    /// A template value from the standard is invalid.
-    #[error("Invalid template value from standard: {0}")]
-    InvalidTemplateValue(String),
-
-    /// The specified validity duration does not meet the standard's requirements.
-    #[error("Invalid validity duration: {0}")]
-    InvalidValidityDuration(String),
-
-    /// The voucher does not allow partial transfers according to its standard.
-    #[error("Voucher does not allow partial transfers according to its standard.")]
-    VoucherPartialTransferNotAllowed,
-
-    /// Generic voucher manager error.
-    #[error("Voucher Manager Error: {0}")]
-    VoucherManagerGeneric(String),
-
-    // --- Session & Profile Errors (flattened from AppService layer) ---
-
-    /// The requested profile folder or metadata could not be found.
-    #[error("Profile not found: {0}")]
-    ProfileNotFound(String),
-
-    /// A profile already exists.
-    #[error("Profile already exists: {0}")]
-    ProfileAlreadyExists(String),
-
-    /// An active session has expired.
-    #[error("{0}")]
-    SessionExpired(String),
-
-    /// No session is currently active.
-    #[error("Session not active: {0}")]
-    SessionNotActive(String),
-
-    // --- System Errors ---
-
-    /// Underlying storage (file system, database) error.
-    #[error("Storage Error: {0}")]
-    Storage(#[from] StorageError),
-
-    /// Standard definition validation or loading error.
-    #[error("Standard Definition Error: {0}")]
-    Standard(#[from] StandardDefinitionError),
-
-    /// JSON serialization/deserialization error.
-    #[error("JSON Processing Error: {0}")]
-    Json(String),
-
-    /// TOML parsing or serialization error.
-    #[error("TOML Deserialization Error: {0}")]
-    Toml(String),
-
-    /// Decimal number processing or parsing error.
-    #[error("Amount Conversion Error: {0}")]
-    AmountConversion(String),
-
-    /// System I/O error.
-    #[error("I/O error: {0}")]
-    Io(String),
-
-    /// Generic error string for unclassified conditions.
-    #[error("Generic error: {0}")]
-    Generic(String),
-
-    /// Payload type inside the secure container is invalid or unrecognized.
-    #[error("Invalid payload type in secure container.")]
-    InvalidPayloadType,
-
-    /// The wallet is currently locked, preventing state changes.
-    #[error("Wallet is locked.")]
-    WalletLocked,
-
-    /// The requested feature is not implemented.
-    #[error("Feature not implemented yet: {0}")]
-    NotImplemented(String),
-
-    // --- Fingerprint & Proof specific typed errors (reduce Generic usage) ---
-
-    /// Fingerprint creation or verification failed.
-    #[error("Fingerprint error: {0}")]
-    Fingerprint(String),
-
-    /// Proof import or verification failed.
-    #[error("Proof import error: {0}")]
-    ProofImport(String),
-
-    /// Timestamp parsing or validation failed.
-    #[error("Invalid timestamp: {0}")]
-    InvalidTimestamp(String),
-}
-
-/// Backward compatibility alias for the central error type.
-pub type VoucherCoreError = Error;
-
-/// Backward compatibility alias for the AppService facade error type.
-pub type AppFacadeError = Error;
-
-impl From<GetPubkeyError> for Error {
-    fn from(err: GetPubkeyError) -> Self {
-        Error::KeyOrId(err.to_string())
-    }
-}
-
-impl From<bs58::decode::Error> for Error {
-    fn from(err: bs58::decode::Error) -> Self {
-        Error::Bs58Decode(err.to_string())
-    }
-}
-
-impl From<ed25519_dalek::ed25519::Error> for Error {
-    fn from(err: ed25519_dalek::ed25519::Error) -> Self {
-        Error::Ed25519(err.to_string())
-    }
-}
-
-impl From<serde_json::Error> for Error {
-    fn from(err: serde_json::Error) -> Self {
-        Error::Json(err.to_string())
-    }
-}
-
-impl From<toml::de::Error> for Error {
-    fn from(err: toml::de::Error) -> Self {
-        Error::Toml(err.to_string())
-    }
-}
-
-impl From<rust_decimal::Error> for Error {
-    fn from(err: rust_decimal::Error) -> Self {
-        Error::AmountConversion(err.to_string())
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Self {
-        Error::Io(err.to_string())
-    }
-}
-
-impl From<base64::DecodeError> for Error {
-    fn from(err: base64::DecodeError) -> Self {
-        Error::Base64(err.to_string())
-    }
-}
-
-impl From<std::string::FromUtf8Error> for Error {
-    fn from(err: std::string::FromUtf8Error) -> Self {
-        Error::DeserializationError(err.to_string())
-    }
-}
-

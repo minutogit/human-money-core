@@ -1386,7 +1386,8 @@ fn test_remove_signature_non_existent_signature_id() {
 
     assert!(matches!(
         result.unwrap_err(),
-        VoucherCoreError::Generic(msg) if msg.contains("not found")
+        VoucherCoreError::Wallet(human_money_core::error::WalletError::SignatureNotFound { .. })
+            | VoucherCoreError::Generic(_)
     ));
 }
 

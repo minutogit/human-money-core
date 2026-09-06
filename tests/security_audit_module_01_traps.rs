@@ -2765,4 +2765,55 @@ mod security_audit_module_01 {
         // The honest subset still verifies (guard precision check).
         assert!(trap_manager::verify_sst_shards_consistency(&[&fa, &fb], &expected_x, &ds_tag, &eph_bytes).is_ok());
     }
+
+// AUDIT-01-F15: derive_proof_id must canonicalize whitespace-prefix dids
+//==========================================================================
+
+#[test]
+fn f15_derive_proof_id_canonicalizes_whitespace_did_key_marker() {
+    // Whitespace-prefixed did:key must canonicalize identically after strip.
+    let fork = get_hash_from_slices(&[b"audit-f15-fork"]);
+
+    let did = "did:key:zQmjnmQWCU3eJQFjPu3eVvqf4RqazjSmC6xdW";
+    let did_canonical = derive_proof_id(did, &fork).unwrap();
+
+    // Leading whitespace.
+    assert_eq!(
+        derive_proof_id(&format!(" {}", did), &fork).unwrap(),
+        did_canonical,
+        "AUDIT-01-F15: leading whitespace must be stripped before 
+         @did:key:z marker detection"
+    );
+    // Trailing whitespace.
+    assert_eq!(
+        derive_proof_id(&format!("{} ", did), &fork).unwrap(),
+        did_canonical,
+        "AUDIT-01-F15: trailing whitespace must be stripped before 
+         @did:key:z marker detection"
+    );
+    // Internal whitespace (between characters) must be stripped.
+    assert_eq!(
+        derive_proof_id(&format!(" {} ", did), &fork).unwrap(),
+        did_canonical,
+        "AUDIT-01-F15: internal whitespace must be stripped before 
+         @did:key:z marker detection"
+    );
+    // Mixed newlines/tabs must be stripped.
+    assert_eq!(
+        derive_proof_id(&format!("	{}
+", did), &fork).unwrap(),
+        did_canonical,
+        "AUDIT-01-F15: mixed whitespace must be stripped before 
+         @did:key:z marker detection"
+    );
+
+    // Anonymous fallback: offender_id with no @did:key:z marker uses hash.
+    let anon = derive_proof_id("anonymous", &fork).unwrap();
+    let anon_again = derive_proof_id("anonymous", &fork).unwrap();
+    assert_eq!(anon, anon_again, "AUDIT-01-F15: anonymous proof_id must be deterministic");
+
+    // Whitespace around anonymous must also be deterministic.
+    let anon_ws = derive_proof_id(" anonymous ", &fork).unwrap();
+    assert_eq!(anon, anon_ws, "AUDIT-01-F15: anonymous with whitespace must hash identically");
+}
 }

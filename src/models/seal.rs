@@ -145,10 +145,10 @@ impl WalletSeal {
     ) -> Result<SealValidationResult, VoucherCoreError> {
         // 1. Check version
         if self.payload.version != 1 {
-            return Err(VoucherCoreError::Generic(format!(
+            return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: format!(
                 "Unsupported seal version: {}. Expected: 1",
                 self.payload.version
-            )));
+            ) }));
         }
 
         // 2. Check user ID

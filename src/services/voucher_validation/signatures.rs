@@ -19,9 +19,7 @@ pub fn verify_signatures(
         .first()
         .map(|tx| tx.t_id.as_str())
         .ok_or_else(|| {
-            VoucherCoreError::Validation(ValidationError::InvalidTransaction(
-                "Voucher must have at least one (init) transaction.".to_string(),
-            ))
+            VoucherCoreError::Validation(ValidationError::VoucherMustHaveInitTransaction)
         })?;
 
     let allowed_roles = standard.immutable.issuance.allowed_signature_roles.as_slice();

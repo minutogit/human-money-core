@@ -145,10 +145,10 @@ impl Wallet {
             &proof.fork_point_prev_hash,
         )?;
         if expected_proof_id != proof.proof_id {
-            return Err(VoucherCoreError::Generic(
+            return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                 "Cannot import proof: proof_id is inconsistent with offender/fork-point data."
                     .to_string(),
-            ));
+             }));
         }
 
         // --- SECURITY GATE 3b (AUDIT-01-F05): attribution-consistency check ---
@@ -177,10 +177,10 @@ impl Wallet {
                     .ok()
                     .and_then(|c| c.decompress())
                     .ok_or_else(|| {
-                        VoucherCoreError::Generic(
+                        crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                             "Cannot import proof: offender identity point is not a valid curve point."
                                 .to_string(),
-                        )
+                         })
                     })?;
                 // V3 SST (AUDIT-01-F05): EUF-CMA-bound attribution, no prefix
                 // ambiguity. The colliding shards must reconstruct a valid Schnorr
@@ -198,10 +198,10 @@ impl Wallet {
                     Err(e) => last_err = Some(e),
                 }
                 if !verified {
-                    return Err(VoucherCoreError::Generic(format!(
+                    return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: format!(
                         "Cannot import proof: did:key offender claim failed trap-proof verification ({}).",
                         last_err.map(|e| e.to_string()).unwrap_or_default()
-                    )));
+                    ) }));
                 }
             } else if let Some(claimed_eph) = proof.offender_id.strip_prefix("ephemeral:") {
                 // SECURITY GATE 3c (AUDIT-W4-TRAP-201): ephemeral attribution gate.
@@ -212,56 +212,54 @@ impl Wallet {
                 let eph_pub_bytes = bs58::decode(claimed_eph)
                     .into_vec()
                     .map_err(|_| {
-                        VoucherCoreError::Generic(
+                        crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                             "Cannot import proof: invalid ephemeral pubkey encoding in offender_id.".to_string(),
-                        )
+                         })
                     })?;
             if eph_pub_bytes.len() != 32 {
-                return Err(VoucherCoreError::Generic(
+                return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                     "Cannot import proof: ephemeral pubkey in offender_id must be 32 bytes.".to_string(),
-                ));
+                 }));
             }
             let ephem_key = ed25519_dalek::VerifyingKey::from_bytes(
                 eph_pub_bytes.as_slice().try_into().unwrap(),
             )
             .map_err(|_| {
-                VoucherCoreError::Generic(
+                crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                     "Cannot import proof: invalid ephemeral pubkey in offender_id.".to_string(),
-                )
+                 })
             })?;
 
             for tx in &proof.conflicting_transactions {
                 if tx.sender_ephemeral_pub.as_deref() != Some(claimed_eph) {
-                    return Err(VoucherCoreError::Generic(
+                    return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                         "Cannot import proof: conflicting transaction sender_ephemeral_pub does not match claimed ephemeral offender.".to_string(),
-                    ));
+                     }));
                 }
                 let sig_str = tx.layer2_signature.as_ref().ok_or_else(|| {
-                    VoucherCoreError::Generic(
-                        "Cannot import proof: conflicting transaction missing layer2_signature under claimed ephemeral offender.".to_string(),
-                    )
+                    crate::Error::Wallet(crate::error::WalletError::MissingLayer2Signature)
                 })?;
                 let sig_bytes = bs58::decode(sig_str).into_vec().map_err(|_| {
-                    VoucherCoreError::Generic(
+                    crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                         "Cannot import proof: invalid layer2_signature encoding.".to_string(),
-                    )
+                     })
                 })?;
                 let signature = ed25519_dalek::Signature::from_bytes(
                     sig_bytes.as_slice().try_into().map_err(|_| {
-                        VoucherCoreError::Generic(
+                        crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                             "Cannot import proof: invalid layer2_signature length.".to_string(),
-                        )
+                         })
                     })?,
                 );
                 let t_id_bytes = bs58::decode(&tx.t_id).into_vec().map_err(|_| {
-                    VoucherCoreError::Generic(
+                    crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                         "Cannot import proof: invalid t_id encoding.".to_string(),
-                    )
+                     })
                 })?;
                 let t_id_32: [u8; 32] = t_id_bytes.as_slice().try_into().map_err(|_| {
-                    VoucherCoreError::Generic(
+                    crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                         "Cannot import proof: t_id must be 32 bytes.".to_string(),
-                    )
+                     })
                 })?;
                 let ephem_pub_32: [u8; 32] = eph_pub_bytes.as_slice().try_into().unwrap();
 
@@ -310,9 +308,9 @@ impl Wallet {
                 });
 
                 if !valid {
-                    return Err(VoucherCoreError::Generic(
+                    return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                         "Cannot import proof: conflicting transaction failed layer2_signature verification under claimed ephemeral offender.".to_string(),
-                    ));
+                     }));
                 }
             }
         }
@@ -340,9 +338,9 @@ impl Wallet {
                     if crate::services::voucher_validation::verify_transaction_integrity_and_signature(tx, vid).is_err() {
                         // A locally verifiable transaction that fails its
                         // integrity/L2 checks proves tampering -> hard reject.
-                        return Err(VoucherCoreError::Generic(
+                        return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
                             "Cannot import proof: conflicting transaction failed integrity/L2-signature verification.".to_string(),
-                        ));
+                         }));
                     }
                 }
                 VerificationOutcome::FullyVerified
@@ -459,7 +457,7 @@ impl Wallet {
             conflict_role,
         };
 
-        self.proof_store.proofs.insert(entry.proof.proof_id.clone(), entry);
+        self.proof_store.proofs.insert(entry.proof.proof_id.to_string(), entry);
         Ok(())
     }
 
@@ -807,9 +805,7 @@ impl Wallet {
     ) -> Result<(), VoucherCoreError> {
         for voucher in vouchers {
             let last_tx = voucher.transactions.last().ok_or_else(|| {
-                VoucherCoreError::Validation(ValidationError::InvalidTransaction(
-                    "Received voucher has no transactions.".to_string(),
-                ))
+                VoucherCoreError::Validation(ValidationError::ReceivedVoucherHasNoTransactions)
             })?;
 
             // Calculate the relevant fingerprint (the "collision ID")

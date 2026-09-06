@@ -2,6 +2,7 @@ mod identity;
 mod rules;
 mod chain;
 mod signatures;
+pub mod pipeline;
 
 use crate::error::{ValidationError, VoucherCoreError};
 use crate::models::voucher::Voucher;
@@ -11,6 +12,7 @@ pub use identity::*;
 pub use rules::*;
 pub use chain::*;
 pub use signatures::*;
+pub use pipeline::{StandardRegistry, ValidationPipeline};
 
 /// Main function for validating a voucher against its standard.
 /// This is the central orchestrator that invokes all subordinate validation steps.

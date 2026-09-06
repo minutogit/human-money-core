@@ -160,18 +160,10 @@ impl FileVoucherArchive {
         // equally degenerate. Both are rejected BEFORE any bytes touch disk.
         match &self.key_source {
             ArchiveKeySource::Password(password) if password.is_empty() => {
-                return Err(StorageError::Generic(
-                    "Refusing to seal archive records under an EMPTY password \
-                     (zero-entropy key material)."
-                        .to_string(),
-                ));
+                return Err(StorageError::EmptyPassword);
             }
             ArchiveKeySource::RawKey(key) if key.iter().all(|&b| b == 0) => {
-                return Err(StorageError::Generic(
-                    "Refusing to seal archive records under a degenerate \
-                     all-zero key."
-                        .to_string(),
-                ));
+                return Err(StorageError::InvariantViolation { message: "Refusing to seal archive records under a degenerate all-zero key.".to_string() });
             }
             _ => {}
         }
@@ -179,7 +171,7 @@ impl FileVoucherArchive {
         match &self.key_source {
             ArchiveKeySource::Password(password) => {
                 let (ciphertext, salt) = encrypt_symmetric_password(plaintext, password)
-                    .map_err(|e| StorageError::Generic(format!("Archive encryption failed: {}", e)))?;
+                    .map_err(|e| StorageError::EncryptionFailed { reason: format!("Archive encryption failed: {}", e) })?;
                 Ok(serde_json::json!({
                     "format": FORMAT_ID,
                     "kdf": KDF_PBKDF2_SHA512,
@@ -189,7 +181,7 @@ impl FileVoucherArchive {
             }
             ArchiveKeySource::RawKey(key) => {
                 let ciphertext = encrypt_data(key, plaintext)
-                    .map_err(|e| StorageError::Generic(format!("Archive encryption failed: {}", e)))?;
+                    .map_err(|e| StorageError::EncryptionFailed { reason: format!("Archive encryption failed: {}", e) })?;
                 Ok(serde_json::json!({
                     "format": FORMAT_ID,
                     "kdf": KDF_RAW,
@@ -592,7 +584,7 @@ impl FileVoucherArchive {
     ) -> Result<(), StorageError> {
         // Each state is uniquely identified by the ID of the last transaction.
         let last_tx = voucher.transactions.last().ok_or_else(|| {
-            StorageError::Generic("Cannot archive voucher with no transactions.".to_string())
+            StorageError::InvariantViolation { message: "Cannot archive voucher with no transactions.".to_string() }
         })?;
 
         // Create a subdirectory for each voucher to group the states.

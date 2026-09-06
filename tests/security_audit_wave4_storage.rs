@@ -514,13 +514,13 @@ fn wh4_05_003_file_storage_must_reject_empty_passwords_at_save_and_reset() {
     let save_result =
         storage_a.save_wallet(&profile, &empty_store, alice, &AuthMethod::Password(""));
     assert!(
-        matches!(save_result, Err(StorageError::Generic(_))),
+        matches!(save_result, Err(StorageError::EmptyPassword) | Err(StorageError::InvariantViolation { .. })),
         "AUDIT-W4-STO-604 VIOLATION (a): FileStorage::save_wallet accepted an \
          EMPTY password for the initial wallet save and wrapped the master \
          file key under KDF(\"\", salt) — a deterministic credential anyone \
          with profile.enc (cloud sync, stolen backup) can reconstruct \
          offline, decrypting the full wallet incl. the raw signing key. Zero-\
-         entropy credentials must be rejected with StorageError::Generic \
+         entropy credentials must be rejected with StorageError::EmptyPassword \
          before persistence (CWE-521/CWE-1392); got {:?}.",
         save_result.map(|_| "Ok(())".to_string())
     );
@@ -543,12 +543,12 @@ fn wh4_05_003_file_storage_must_reject_empty_passwords_at_save_and_reset() {
 
     let reset_result = storage_b.reset_password(alice, "");
     assert!(
-        matches!(reset_result, Err(StorageError::Generic(_))),
+        matches!(reset_result, Err(StorageError::EmptyPassword) | Err(StorageError::InvariantViolation { .. })),
         "AUDIT-W4-STO-604 VIOLATION (b): FileStorage::reset_password accepted \
          an EMPTY new password and rewrapped the master file key under \
          KDF(\"\", new_salt), downgrading an existing protected wallet to a \
          deterministic offline-reconstructable credential. Zero-entropy \
-         credentials must be rejected with StorageError::Generic without any \
+         credentials must be rejected with StorageError::EmptyPassword without any \
          rewrite (CWE-521/CWE-1392); got {:?}.",
         reset_result.map(|_| "Ok(())".to_string())
     );

@@ -6,17 +6,25 @@
 //! (requesting, creating, processing signatures).
 //! This module consolidates the former `transaction_handler.rs` and
 //! `signature_handler.rs` into a single coherent domain.
+//!
+//! **Decoupled persistence (Phase 2):** All methods in this module are
+//! pure in-memory state machines. They mutate only `Wallet` fields
+//! (`voucher_store`, `*_fingerprints`, `pending_events`, …) and take
+//! **no** `&mut FileStorage`. Durable 2-phase commit (staging →
+//! `store_binding_hash` → `write_generation`) is owned exclusively by
+//! `FileStorage::commit_wallet_atomic` / `save_wallet_transaction`.
 
 use super::types::{CreateBundleResult, MultiTransferRequest, ProcessBundleResult};
 use crate::archive::FileVoucherArchive;
 use crate::error::{ValidationError, VoucherCoreError};
-use crate::models::profile::{TransactionBundle, TransactionBundleHeader, TransactionDirection, UserIdentity};
+use crate::models::profile::{TransactionBundleHeader, TransactionDirection, UserIdentity};
 use crate::models::secure_container::{ContainerConfig, PayloadType, SecureContainer};
 use crate::models::signature::DetachedSignature;
 use crate::models::voucher::Voucher;
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::services::crypto::get_hash;
 use crate::services::utils::to_canonical_json;
+use crate::services::voucher_validation::{StandardRegistry, ValidationPipeline};
 use crate::services::{bundle_processor, conflict_manager};
 use crate::wallet::Wallet;
 use crate::wallet::instance::VoucherStatus;
@@ -91,229 +99,6 @@ fn derive_deterministic_change_key(
     hkdf.expand(info.as_bytes(), &mut change_seed)
         .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
     Ok(SigningKey::from_bytes(&change_seed))
-}
-
-/// Validates incoming voucher security invariants:
-///
-/// - timestamps (max transaction time + per-signature future check)
-/// - recipient match (including ANONYMOUS_ID with mandatory successful
-///   privacy-guard decryption; on failure returns
-///   `BundleRecipientMismatch { expected: own_user_id, found: "anonymous_but_payload_decryption_failed" }`)
-/// - privacy-guard integrity and SST Trap Witnesses (R5 fail-closed)
-///
-/// All checks are hard-rejects before any state mutation.
-fn verify_incoming_voucher_security(
-    bundle: &TransactionBundle,
-    identity: &UserIdentity,
-) -> Result<(), VoucherCoreError> {
-    let own_user_id = &identity.user_id;
-
-    // 1. Check timestamps (Hard Reject) – max transaction time
-    let mut max_tx_dt: Option<chrono::DateTime<chrono::Utc>> = None;
-    let mut max_tx_time = String::new();
-    let mut max_tx_id = String::new();
-
-    for voucher in &bundle.vouchers {
-        if let Some(last_tx) = voucher.transactions.last() {
-            let tx_dt = chrono::DateTime::parse_from_rfc3339(&last_tx.t_time)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .map_err(|e| {
-                    VoucherCoreError::Generic(format!("Failed to parse transaction time: {}", e))
-                })?;
-
-            match max_tx_dt {
-                None => {
-                    max_tx_dt = Some(tx_dt);
-                    max_tx_time = last_tx.t_time.clone();
-                    max_tx_id = last_tx.t_id.clone();
-                }
-                Some(m_dt) if tx_dt > m_dt => {
-                    max_tx_dt = Some(tx_dt);
-                    max_tx_time = last_tx.t_time.clone();
-                    max_tx_id = last_tx.t_id.clone();
-                }
-                _ => {}
-            }
-        }
-    }
-
-    if !max_tx_time.is_empty() {
-        crate::services::utils::verify_not_far_in_future(
-            &max_tx_time,
-            "Transaction",
-            &max_tx_id,
-        )?;
-    }
-
-    // Also check signatures individually (Hard Reject)
-    for voucher in &bundle.vouchers {
-        for sig in &voucher.signatures {
-            crate::services::utils::verify_not_far_in_future(
-                &sig.signature_time,
-                "Signature",
-                &sig.signature_id,
-            )?;
-        }
-    }
-
-    // 2. Check recipient + privacy-guard + R5 trap witness
-    for voucher in &bundle.vouchers {
-        let last_tx = voucher.transactions.last().ok_or_else(|| {
-            VoucherCoreError::Validation(ValidationError::InvalidTransaction(
-                "Received voucher has no transactions.".to_string(),
-            ))
-        })?;
-
-        // Security fuse: Does the recipient match our wallet?
-        if last_tx.recipient_id != *own_user_id
-            && last_tx.recipient_id != crate::models::voucher::ANONYMOUS_ID
-        {
-            return Err(VoucherCoreError::BundleRecipientMismatch {
-                expected: own_user_id.clone(),
-                found: last_tx.recipient_id.clone(),
-            });
-        }
-
-        // If anonymous, enforce successful decryption of the Privacy Guard
-        if last_tx.recipient_id == crate::models::voucher::ANONYMOUS_ID {
-            let owns_voucher = if let Some(guard_base64) = &last_tx.privacy_guard {
-                crate::services::crypto::decrypt_recipient_payload(
-                    guard_base64,
-                    &identity.signing_key,
-                    &identity.user_id,
-                )
-                .is_ok()
-            } else {
-                false
-            };
-
-            if !owns_voucher {
-                return Err(VoucherCoreError::BundleRecipientMismatch {
-                    expected: own_user_id.clone(),
-                    found: "anonymous_but_payload_decryption_failed".to_string(),
-                });
-            }
-        }
-
-        // SECURITY (AUDIT-01-F12): R5 witness enforcement is keyed on
-        // TRAP DATA PRESENCE, never on privacy-guard presence.
-        if last_tx.trap_data.is_some() && last_tx.privacy_guard.is_none() {
-            return Err(VoucherCoreError::Validation(
-                ValidationError::InvalidTransaction(
-                    "Payment rejected: transaction carries an SST trap shard \
-                     but no privacy guard with the private witness (R5 \
-                     fail-closed handover enforcement)."
-                        .to_string(),
-                ),
-            ));
-        }
-
-        if let Some(guard_base64) = &last_tx.privacy_guard {
-            // STRICT INGESTION: If a privacy_guard is present, it MUST be
-            // successfully decrypted and parsed.
-            let decrypted_payload_bytes =
-                crate::services::crypto::decrypt_recipient_payload(
-                    guard_base64,
-                    &identity.signing_key,
-                    &identity.user_id,
-                )
-                .map_err(|e| {
-                    VoucherCoreError::Validation(
-                        ValidationError::PrivacyGuardDecryptionFailed(format!(
-                            "Decryption failed: {}",
-                            e
-                        )),
-                    )
-                })?;
-
-            let payload = serde_json::from_slice::<
-                crate::models::voucher::RecipientPayload,
-            >(&decrypted_payload_bytes)
-                .map_err(|e| {
-                    VoucherCoreError::Validation(
-                        ValidationError::PrivacyGuardDecryptionFailed(format!(
-                            "JSON parsing failed: {}",
-                            e
-                        )),
-                    )
-                })?;
-
-            // SECURITY CHECK: Does the declared sender in the guard match the actual signer?
-            if payload.sender_permanent_did != bundle.sender_id {
-                return Err(ValidationError::MismatchedPrivacySenderId {
-                    declared: payload.sender_permanent_did,
-                    actual: bundle.sender_id.clone(),
-                }
-                .into());
-            }
-
-            // V3 Protocol (SST/R5): the private trap witness W = (R_sig, s_sig, M_R, m_s)
-            // travels in the encrypted RecipientPayload. Fail-closed enforcement: if the
-            // transaction carries a trap shard, ALL witness components MUST be present and
-            // cryptographically verify against the declared payer DID.
-            if let Some(trap) = &last_tx.trap_data {
-                let missing_witness = || {
-                    ValidationError::InvalidTransaction(
-                        "Payment rejected: transaction carries a trap shard but the \
-                         private SST witness (trap_r_sig/trap_s_sig/trap_m_r/trap_m_s) \
-                         is incomplete."
-                            .to_string(),
-                    )
-                };
-                let witness = crate::services::trap_manager::TrapWitness {
-                    r_sig: payload.trap_r_sig.clone().ok_or_else(missing_witness)?,
-                    s_sig: payload.trap_s_sig.clone().ok_or_else(missing_witness)?,
-                    m_r: payload.trap_m_r.clone().ok_or_else(missing_witness)?,
-                    m_s: payload.trap_m_s.clone().ok_or_else(missing_witness)?,
-                };
-                let eph_pub_bytes: [u8; 32] = bs58::decode(
-                    last_tx.sender_ephemeral_pub.as_deref().ok_or_else(|| {
-                        ValidationError::InvalidTransaction(
-                            "Payment rejected: missing sender_ephemeral_pub for SST \
-                             witness check."
-                                .to_string(),
-                        )
-                    })?,
-                )
-                .into_vec()
-                .map_err(|_| {
-                    ValidationError::InvalidTransaction(
-                        "Payment rejected: invalid sender_ephemeral_pub encoding."
-                            .to_string(),
-                    )
-                })?
-                .try_into()
-                .map_err(|_| {
-                    ValidationError::InvalidTransaction(
-                        "Payment rejected: sender_ephemeral_pub must be 32 bytes."
-                            .to_string(),
-                    )
-                })?;
-
-                crate::services::trap_manager::verify_sst_witness(
-                    &witness,
-                    trap,
-                    &payload.sender_permanent_did,
-                    &trap.ds_tag,
-                    &eph_pub_bytes,
-                    &last_tx.t_id,
-                )
-                .map_err(|e| {
-                    ValidationError::InvalidTransaction(format!(
-                        "Payment rejected: SST trap witness verification failed ({}).",
-                        e
-                    ))
-                })?;
-            }
-
-            // Check target_prefix (simple validation) – allow but log
-            if !identity.user_id.starts_with(&payload.target_prefix) {
-                // For now we allow it if we could decrypt it, but we log it.
-            }
-        }
-    }
-
-    Ok(())
 }
 
 impl Wallet {
@@ -393,12 +178,41 @@ impl Wallet {
 
     /// Inner implementation of [`Wallet::process_encrypted_transaction_bundle`]
     /// running on `&mut self`; wrapped for atomic rollback by the public method.
+    /// Uses [`StandardRegistry`] + [`ValidationPipeline`] for the linear 4-step
+    /// audited validation, reusing the single `open_and_verify_bundle` result.
     fn process_encrypted_transaction_bundle_inner(
         &mut self,
         identity: &UserIdentity,
         container_bytes: &[u8],
         archive: Option<&FileVoucherArchive>,
         standard_definitions: &HashMap<String, VoucherStandardDefinition>,
+    ) -> Result<ProcessBundleResult, VoucherCoreError> {
+        // Build registry once from the already-verified map (no re-parsing, no re-verification).
+        let registry = StandardRegistry::from_verified_ref(standard_definitions);
+        self.process_bundle_with_registry_inner(
+            identity,
+            container_bytes,
+            archive,
+            &registry,
+            None,
+            0,
+            false,
+        )
+    }
+
+    /// Registry-aware inner that performs a single `open_and_verify_bundle`
+    /// and delegates to [`ValidationPipeline::validate_incoming_bundle`] for the
+    /// 4-step linearized validation (reusing the decrypted bundle).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn process_bundle_with_registry_inner(
+        &mut self,
+        identity: &UserIdentity,
+        container_bytes: &[u8],
+        archive: Option<&FileVoucherArchive>,
+        registry: &StandardRegistry,
+        epoch_start_time: Option<&str>,
+        epoch: u32,
+        force_accept: bool,
     ) -> Result<ProcessBundleResult, VoucherCoreError> {
         let mut bundle = bundle_processor::open_and_verify_bundle(identity, container_bytes)?;
 
@@ -438,6 +252,19 @@ impl Wallet {
             });
         }
 
+        // --- LINEAR VALIDATION PIPELINE (Phase 1) ---
+        // Centralized 4-step audited validation reusing the single decrypted bundle
+        // and the cached registry (no repeated TOML parsing, no repeated standard
+        // signature verification per uuid, no second bundle decryption).
+        ValidationPipeline::validate_incoming_bundle(
+            &bundle,
+            identity,
+            registry,
+            epoch_start_time,
+            epoch,
+            force_accept,
+        )?;
+
         // --- LAYER 2: FINGERPRINT REPLAY PROTECTION ---
         // Rejects a NEW bundle containing vouchers whose latest transaction
         // (fingerprint) is already known. Prevents modified replay attacks.
@@ -457,38 +284,6 @@ impl Wallet {
         let mut involved_vouchers = Vec::new();
         let mut involved_vouchers_details = Vec::new();
 
-        // --- VALIDATION PASS (Phase 1) ---
-        // Validates every voucher against its standard without mutating state.
-        // This isolates all potentially failing checks before ingestion.
-        // Caches validated standards to eliminate duplicate `standard_definitions.get()` lookups.
-        // Performed BEFORE privacy-guard/witness checks so that structural/standard
-        // errors (InvalidVoucherHash, InsufficientFunds, etc.) retain precedence
-        // over witness-incomplete errors for tampered bundles (preserves existing
-        // security-test expectations and original loop ordering).
-        let mut validated_standards: HashMap<String, VoucherStandardDefinition> = HashMap::new();
-        for voucher in &bundle.vouchers {
-            let standard_uuid = &voucher.voucher_standard.uuid;
-            let standard = standard_definitions.get(standard_uuid).ok_or_else(|| {
-                VoucherCoreError::Generic(format!(
-                    "Standard definition not found for UUID: {}",
-                    standard_uuid
-                ))
-            })?;
-            crate::services::voucher_validation::validate_voucher_against_standard(
-                voucher, standard,
-            )?;
-            // Cache a clone for the ingestion pass to avoid a second lookup on `standard_definitions`.
-            validated_standards.insert(standard_uuid.clone(), standard.clone());
-        }
-
-        // --- ADDITIONAL SECURITY CHECK (de-nested) ---
-        // Validates timestamps, recipient match (incl. anonymous decrypt), privacy-guard
-        // integrity and SST trap witnesses (R5 fail-closed) in a single helper.
-        // Placed AFTER standard validation to preserve original error precedence
-        // (standard validation before witness), but still BEFORE any state mutation.
-        verify_incoming_voucher_security(&bundle, identity)?;
-        // --- End of security check ---
-
         // Header must be created before consuming `bundle.vouchers` (into_iter moves the vec).
         let header = bundle.to_header(TransactionDirection::Received);
 
@@ -507,12 +302,12 @@ impl Wallet {
             involved_vouchers.push(local_id.clone());
 
             let standard_uuid = &voucher.voucher_standard.uuid;
-            let standard = validated_standards.get(standard_uuid).expect(
-                "Standard must have been validated and cached in validation pass; missing entry is a logic error",
+            let standard = registry.get(standard_uuid).expect(
+                "Standard must have been validated and cached in registry; missing entry is a logic error",
             );
 
             let last_tx = voucher.transactions.last().ok_or_else(|| {
-                VoucherCoreError::Generic("Received voucher has no transactions.".to_string())
+                crate::Error::Wallet(crate::error::WalletError::MissingTransactions)
             })?;
 
             let display_currency = super::format_bff_name(
@@ -528,20 +323,15 @@ impl Wallet {
                     .or_insert_with(|| "0.0".to_string());
 
                 let val1 = Decimal::from_str(current_sum).map_err(|e| {
-                    VoucherCoreError::Generic(format!("Invalid decimal amount in summary: {}", e))
+                    crate::Error::Wallet(crate::error::WalletError::InvalidAmount { reason: format!("Invalid decimal amount in summary: {}", e) })
                 })?;
                 let val2 = Decimal::from_str(&last_tx.amount).map_err(|e| {
-                    VoucherCoreError::Generic(format!(
-                        "Invalid decimal amount in transaction: {}",
-                        e
-                    ))
+                    crate::Error::Wallet(crate::error::WalletError::InvalidAmount { reason: format!("Invalid decimal amount in transaction: {}", e) })
                 })?;
 
                 // SECURITY (HMC-SEC-04-01): checked_add to avoid panic on overflow.
                 let new_sum = val1.checked_add(val2).ok_or_else(|| {
-                    VoucherCoreError::Generic(
-                        "Amount overflow while aggregating received voucher amounts.".to_string(),
-                    )
+                    crate::Error::Wallet(crate::error::WalletError::AmountOverflow { details: "Amount overflow while aggregating received voucher amounts.".to_string() })
                 })?;
                 *current_sum = new_sum.to_string();
             } else {
@@ -858,7 +648,7 @@ impl Wallet {
         let voucher_to_spend = instance.voucher.clone();
 
         let last_tx = voucher_to_spend.transactions.last().ok_or_else(|| {
-            VoucherCoreError::Generic("Cannot spend voucher with no transactions.".to_string())
+            crate::Error::Wallet(crate::error::WalletError::MissingTransactions)
         })?;
         let prev_hash = get_hash(to_canonical_json(last_tx)?);
 
@@ -1024,10 +814,7 @@ impl Wallet {
             let standard_uuid = instance.voucher.voucher_standard.uuid.clone();
             let standard_definition =
                 standard_definitions.get(&standard_uuid).ok_or_else(|| {
-                    VoucherCoreError::Generic(format!(
-                        "Standard with UUID '{}' not found in provided definitions.",
-                        standard_uuid
-                    ))
+                    crate::Error::Wallet(crate::error::WalletError::StandardNotFound { uuid: standard_uuid.clone() })
                 })?;
 
             // NEW: Create InvolvedVoucherInfo for the source (BEFORE the transfer)
@@ -1160,9 +947,7 @@ impl Wallet {
         identity: &UserIdentity,
     ) -> Result<SigningKey, VoucherCoreError> {
         let last_tx = voucher.transactions.last().ok_or_else(|| {
-            VoucherCoreError::Generic(
-                "Cannot rederive seed: Voucher has no transactions.".to_string(),
-            )
+            crate::Error::Wallet(crate::error::WalletError::MissingTransactions)
         })?;
 
         // 1. Check if we are the SENDER (change) via crypto matching
@@ -1203,7 +988,7 @@ impl Wallet {
         if last_tx.t_type == "init" && last_tx.sender_id.as_ref() == Some(&identity.user_id) {
             let nonce_bytes = bs58::decode(&voucher.voucher_nonce)
                 .into_vec()
-                .map_err(|_| VoucherCoreError::Generic("Invalid nonce".to_string()))?;
+                .map_err(|_| crate::Error::Wallet(crate::error::WalletError::InvalidNonce { reason: "Invalid nonce".to_string() }))?;
 
             let sender_id_prefix = crate::services::crypto::get_prefix_from_user_id(&identity.user_id);
 
@@ -1216,9 +1001,7 @@ impl Wallet {
             return Ok(holder_secret);
         }
 
-        Err(VoucherCoreError::Generic(
-            "Could not rederive secret seed: No valid ownership strategy found (neither Change nor Receiver hash matches).".to_string(),
-        ))
+        Err(crate::Error::Wallet(crate::error::WalletError::SeedDerivationFailed { reason: "Could not rederive secret seed: No valid ownership strategy found (neither Change nor Receiver hash matches).".to_string() }))
     }
 
     /// Extracts the sender identity (DID) from a transaction.
@@ -1328,9 +1111,7 @@ impl Wallet {
             .transactions
             .first()
             .ok_or_else(|| {
-                VoucherCoreError::Validation(ValidationError::InvalidTransaction(
-                    "Voucher has no transactions".to_string(),
-                ))
+                VoucherCoreError::Validation(ValidationError::VoucherHasNoTransactions)
             })?
             .t_id;
 
@@ -1408,9 +1189,7 @@ impl Wallet {
             .transactions
             .first()
             .ok_or_else(|| {
-                VoucherCoreError::Validation(ValidationError::InvalidTransaction(
-                    "Voucher has no transactions".to_string(),
-                ))
+                VoucherCoreError::Validation(ValidationError::VoucherHasNoTransactions)
             })?
             .t_id;
         signature.validate(init_t_id)?;
@@ -1504,7 +1283,7 @@ impl Wallet {
             .creator_profile
             .id
             .as_ref()
-            .ok_or_else(|| VoucherCoreError::Generic("Creator profile has no ID".to_string()))?;
+            .ok_or_else(|| crate::Error::Wallet(crate::error::WalletError::MissingCreatorId))?;
         if &identity.user_id != creator_id {
             return Err(VoucherCoreError::NotTheCreator);
         }
@@ -1516,10 +1295,7 @@ impl Wallet {
             .iter()
             .find(|sig| sig.signature_id == signature_id)
             .ok_or_else(|| {
-                VoucherCoreError::Generic(format!(
-                    "Signature with ID {} not found",
-                    signature_id
-                ))
+                crate::Error::Wallet(crate::error::WalletError::SignatureNotFound { signature_id: signature_id.to_string() })
             })?;
 
         if signature_to_remove.role == "creator" {

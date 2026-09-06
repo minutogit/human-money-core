@@ -579,7 +579,13 @@ fn api_wallet_transfer_invalid_amount() {
 
     let result_negative =
         alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None);
-    assert!(matches!(result_negative, Err(VoucherCoreError::VoucherManagerGeneric(_)) | Err(VoucherCoreError::AmountPrecisionExceeded { .. })));
+    assert!(matches!(
+        result_negative,
+        Err(VoucherCoreError::VoucherManagerGeneric(_))
+            | Err(VoucherCoreError::AmountPrecisionExceeded { .. })
+            | Err(VoucherCoreError::Wallet(human_money_core::error::WalletError::InvalidAmount { .. }))
+            | Err(VoucherCoreError::Wallet(human_money_core::error::WalletError::InvariantViolation { .. }))
+    ));
 
     let request = human_money_core::wallet::MultiTransferRequest {
         recipient_id: bob.identity.user_id.clone(),
