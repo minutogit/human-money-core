@@ -107,6 +107,9 @@ impl AppService {
                     return Err(Error::App(crate::error::AppError::ContainerDoesNotContainDoubleSpendProof));
                 }
 
+                // Verify container integrity (header signature and payload binding)
+                container.verify_integrity().map_err(Error::from)?;
+
                 // Wallet identity is required to open the container
                 let decrypted_payload = container.open(
                     identity,

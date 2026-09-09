@@ -311,6 +311,11 @@ impl FileStorage {
             serde_json::from_slice(&store_bytes)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?
         } else {
+            // ARCHITECTURAL DESIGN REQUIREMENT (HMSEC-SA05-04 / tests/persistence/file_storage.rs):
+            // Tolerant load when `vouchers.enc` is missing is an intentional, documented
+            // design requirement (recovery-friendly empty-store default). Deletion/loss of
+            // files is detected and reported by the signed Storage Integrity layer
+            // (IntegrityReport::MissingItems) rather than bricking load_wallet.
             VoucherStore::default()
         };
 

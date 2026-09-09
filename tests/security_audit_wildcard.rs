@@ -28,6 +28,10 @@
 //! | AUDIT-00-WILDCARD-11  | GN-00-11   | Low      | storage/file_storage.rs (serde_json::to_vec().unwrap() panics) |
 //! | AUDIT-00-WILDCARD-13  | GN-00-13   | Medium   | models/voucher.rs::spendable_balance (unwrap_or(ZERO) masking) |
 //! | AUDIT-00-WILDCARD-14  | GN-00-14   | Low      | services/utils.rs::add_years_clamped (fallback to Utc::now) |
+//! | AUDIT-00-WILDCARD-15  | GN-00-15   | High     | services/l2_gateway.rs::process_l2_verdict (L2 409 Conflict Proof-of-Truth) |
+//! | AUDIT-00-WILDCARD-16  | GN-00-16   | High     | services/l2_gateway.rs::process_l2_verdict (QuorumCertificate lock_id replay) |
+//! | AUDIT-00-WILDCARD-17  | GN-00-17   | [INTENT] | storage/file_storage.rs::load_wallet (tolerant load missing vouchers.enc - HMSEC-SA05-04) |
+//! | AUDIT-00-WILDCARD-18  | GN-00-18   | Medium   | app_service/conflicts.rs::import_proof_from_container (missing verify_integrity) |
 
 use human_money_core::app_service::{AppFacadeError, AppService};
 use human_money_core::models::profile::PublicProfile;
@@ -1721,3 +1725,400 @@ fn wildcard_14_add_years_out_of_range_must_be_fail_closed() {
          `InvalidValidityDuration`. Replace with `ok_or(VoucherCoreError::InvalidValidityDuration)`."
     );
 }
+
+///
+/// Finding-ID: AUDIT-00-WILDCARD-15
+/// Severity: HIGH
+/// CWE-Classification: CWE-345 / CWE-693 / CWE-284
+/// Target Location: src/services/l2_gateway.rs:519-522 (`L2Verdict::Conflict`)
+/// Threat Model & Exploitation: An L2 server returns `L2Verdict::Conflict { existing_lock }`.
+///   `process_l2_verdict` blindly returns `Ok(VerdictAction::TriggerQuarantine(server_t_id))`
+///   without verifying that `existing_lock` carries a mathematically valid `layer2_signature`
+///   over the canonical payload hash (Proof of Truth), and without verifying that
+///   `existing_lock.layer2_voucher_id` matches the expected voucher ID. Furthermore, if
+///   `existing_lock.t_id == local_t_id` (e.g. upon an idempotent retry or re-query where the
+///   server returns 409 with the client's own lock), the client self-quarantines its own
+///   legitimate voucher.
+/// Impact Analysis: Remote DoS / unverified quarantine of any voucher by an unauthenticated
+///   or rogue server, and self-quarantine of legitimate transactions on network retries.
+/// Root Cause: `Conflict` variant trusted the server's word without cryptographic verification.
+/// Remediation Strategy: Verify `existing_lock` with the same cryptographic discipline as
+///   `Verified` (Proof of Truth via `verify_lock_entry_proof`), and if `existing_lock.t_id == local_t_id`,
+///   confirm rather than quarantine.
+/// Test Semantics (Fail-First):
+///   Part A: Unsigned/bogus existing_lock must be rejected with an Err, not TriggerQuarantine.
+///   Part B: existing_lock with t_id == local_t_id must NOT trigger quarantine.
+///   Fails on unpatched code: both return Ok(TriggerQuarantine).
+///
+#[test]
+fn wildcard_15_l2_conflict_must_require_proof_of_truth_and_distinct_tid() {
+    use human_money_core::models::layer2_api::{L2LockEntry, L2ResponseEnvelope, L2Verdict};
+    use human_money_core::services::l2_gateway::{process_l2_verdict, VerdictAction};
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let server_sk = SigningKey::from_bytes(&[1u8; 32]);
+    let server_pk = server_sk.verifying_key();
+    let client_sk = SigningKey::from_bytes(&[2u8; 32]);
+    let client_pk = client_sk.verifying_key();
+
+    let local_t_id = [3u8; 32];
+    let local_t_id_b58 = bs58::encode(local_t_id).into_string();
+    let challenge_ds_tag = "ds_tag_wildcard_15".to_string();
+    let voucher_id = "0102030405060708090a0b0c0d0e0f10".to_string();
+
+    // --- Sub-case A: Bogus/Unsigned existing_lock (Proof of Truth bypass) ---
+    let bogus_foreign_t_id = [4u8; 32];
+    let bogus_lock = L2LockEntry {
+        layer2_voucher_id: voucher_id.clone(),
+        t_id: bogus_foreign_t_id,
+        sender_ephemeral_pub: *client_pk.as_bytes(),
+        receiver_ephemeral_pub_hash: None,
+        change_ephemeral_pub_hash: None,
+        layer2_signature: [0u8; 64], // INVALID / unauthenticated signature
+        trap_r: Some("none".to_string()),
+        trap_s: Some("none".to_string()),
+        encrypted_timestamp: 0,
+        deletable_at: None,
+        privacy_guard: None,
+    };
+    let verdict_a = L2Verdict::Conflict { existing_lock: bogus_lock };
+    let verdict_bytes_a = serde_json::to_vec(&verdict_a).unwrap();
+    let v_hash_a = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&verdict_bytes_a);
+        hasher.finalize()
+    };
+    let env_a = L2ResponseEnvelope {
+        verdict: verdict_a,
+        server_signature: server_sk.sign(&v_hash_a).to_bytes(),
+        quorum_certificate: None,
+    };
+    let env_bytes_a = serde_json::to_vec(&env_a).unwrap();
+
+    let result_a = process_l2_verdict(
+        &env_bytes_a,
+        server_pk.as_bytes(),
+        &local_t_id_b58,
+        &challenge_ds_tag,
+        Some(&bs58::encode(client_pk.as_bytes()).into_string()),
+        &voucher_id,
+    );
+
+    // SECURE INVARIANT: An unauthenticated existing_lock must NOT be accepted to quarantine the voucher!
+    assert!(
+        result_a.is_err(),
+        "AUDIT-00-WILDCARD-15 VIOLATION (Sub-case A): process_l2_verdict accepted a Conflict \
+         verdict with an INVALID/zeroed layer2_signature (Proof of Truth bypassed!) and returned {:?}. \
+         Expected Err(Validation(InvalidL2Proof)).",
+        result_a.ok()
+    );
+
+    // --- Sub-case B: existing_lock with t_id == local_t_id (Idempotent Retry) ---
+    // Even if honestly signed, a conflict with one's OWN t_id is an already-anchored transaction,
+    // NOT a double-spend!
+    let payload_hash_b = human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw(
+        human_money_core::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
+        &challenge_ds_tag,
+        &local_t_id,
+        client_pk.as_bytes(),
+        "none",
+        "none",
+        0,
+        None,
+        "",
+    );
+    let honest_sig_b = client_sk.sign(&payload_hash_b);
+    let own_lock = L2LockEntry {
+        layer2_voucher_id: voucher_id.clone(),
+        t_id: local_t_id, // SAME t_id!
+        sender_ephemeral_pub: *client_pk.as_bytes(),
+        receiver_ephemeral_pub_hash: None,
+        change_ephemeral_pub_hash: None,
+        layer2_signature: honest_sig_b.to_bytes(),
+        trap_r: Some("none".to_string()),
+        trap_s: Some("none".to_string()),
+        encrypted_timestamp: 0,
+        deletable_at: None,
+        privacy_guard: None,
+    };
+    let verdict_b = L2Verdict::Conflict { existing_lock: own_lock };
+    let verdict_bytes_b = serde_json::to_vec(&verdict_b).unwrap();
+    let v_hash_b = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&verdict_bytes_b);
+        hasher.finalize()
+    };
+    let env_b = L2ResponseEnvelope {
+        verdict: verdict_b,
+        server_signature: server_sk.sign(&v_hash_b).to_bytes(),
+        quorum_certificate: None,
+    };
+    let env_bytes_b = serde_json::to_vec(&env_b).unwrap();
+
+    let result_b = process_l2_verdict(
+        &env_bytes_b,
+        server_pk.as_bytes(),
+        &local_t_id_b58,
+        &challenge_ds_tag,
+        Some(&bs58::encode(client_pk.as_bytes()).into_string()),
+        &voucher_id,
+    ).expect("process_l2_verdict on own lock must not fail verification");
+
+    // SECURE INVARIANT: An existing_lock with own t_id must NEVER trigger quarantine!
+    assert_ne!(
+        result_b,
+        VerdictAction::TriggerQuarantine(local_t_id_b58.clone()),
+        "AUDIT-00-WILDCARD-15 VIOLATION (Sub-case B): process_l2_verdict returned TriggerQuarantine \
+         for its OWN transaction (existing_lock.t_id == local_t_id). A network retry or 409 on an \
+         already-anchored lock would permanently brick the user's active voucher!"
+    );
+}
+
+///
+/// Finding-ID: AUDIT-00-WILDCARD-16
+/// Severity: HIGH
+/// CWE-Classification: CWE-294 / CWE-345
+/// Target Location: src/services/l2_gateway.rs:486-515 (`quorum_certificate` evaluation)
+/// Threat Model & Exploitation: When an L2 response includes a `QuorumCertificateDto`,
+///   `process_l2_verdict` evaluates `verify_quorum_plausibility` but NEVER binds
+///   `certificate.lock_id` to the transaction being verified (`lock_entry.t_id`). An
+///   attacker or rogue coordinator can replay a QuorumCertificate issued for ANY transaction
+///   in the shard to falsely upgrade a different, unconfirmed transaction to `ConfirmFinal`.
+/// Impact Analysis: False finality / settlement bypass: transactions are marked finalized
+///   without actual quorum approval.
+/// Root Cause: Missing equality check between `certificate.lock_id` and the lock entry's `t_id`.
+/// Remediation Strategy: Enforce that `certificate.lock_id` matches `lock_entry.t_id`
+///   (Hex case-insensitive or Base58); fail closed otherwise.
+/// Test Semantics (Fail-First): A Verified response carrying a valid QuorumCertificate whose
+///   `lock_id` belongs to a DIFFERENT lock must NOT return `VerdictAction::ConfirmFinal`.
+///   Fails on unpatched code: returns `ConfirmFinal` because `lock_id` is completely ignored.
+///
+#[test]
+fn wildcard_16_quorum_certificate_must_bind_lock_id() {
+    use human_money_core::models::layer2_api::{AttestationDto, L2LockEntry, L2ResponseEnvelope, L2Verdict, QuorumCertificateDto};
+    use human_money_core::services::l2_gateway::{calculate_l2_payload_hash_raw, process_l2_verdict, VerdictAction};
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let server_sk = SigningKey::from_bytes(&[1u8; 32]);
+    let server_pk = server_sk.verifying_key();
+    let client_sk = SigningKey::from_bytes(&[2u8; 32]);
+    let client_pk = client_sk.verifying_key();
+
+    let t_id = [3u8; 32];
+    let challenge_ds_tag = "ds_tag_wildcard_16".to_string();
+    let voucher_id = "0102030405060708090a0b0c0d0e0f10".to_string();
+    let shard_id = u16::from_be_bytes([t_id[0], t_id[1]]);
+
+    let payload_hash = calculate_l2_payload_hash_raw(
+        "none",
+        &challenge_ds_tag,
+        &t_id,
+        client_pk.as_bytes(),
+        "none",
+        "none",
+        0,
+        None,
+        "",
+    );
+    let client_sig = client_sk.sign(&payload_hash);
+
+    let lock_entry = L2LockEntry {
+        layer2_voucher_id: voucher_id.clone(),
+        t_id,
+        sender_ephemeral_pub: *client_pk.as_bytes(),
+        receiver_ephemeral_pub_hash: None,
+        change_ephemeral_pub_hash: None,
+        layer2_signature: client_sig.to_bytes(),
+        trap_r: Some("none".to_string()),
+        trap_s: Some("none".to_string()),
+        encrypted_timestamp: 0,
+        deletable_at: None,
+        privacy_guard: None,
+    };
+
+    // Foreign lock_id that belongs to an entirely different transaction
+    let foreign_lock_id = "deadbeefcafebabe000000000000000000000000000000000000000000000000".to_string();
+
+    let cert_unbound = QuorumCertificateDto {
+        lock_id: foreign_lock_id.clone(),
+        shard_id,
+        status: 1, // FINAL
+        active_nodes_count: 20,
+        signer_count: 14,
+        signatures: (1..=14).map(|nid| AttestationDto {
+            lock_id: foreign_lock_id.clone(),
+            parent_lock: "none".to_string(),
+            node_id: nid,
+            timestamp: 1000,
+            signature: "sig".to_string(),
+        }).collect(),
+    };
+
+    let verdict = L2Verdict::Verified { lock_entry };
+    let verdict_bytes = serde_json::to_vec(&verdict).unwrap();
+    let v_hash = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&verdict_bytes);
+        hasher.finalize()
+    };
+    let env = L2ResponseEnvelope {
+        verdict,
+        server_signature: server_sk.sign(&v_hash).to_bytes(),
+        quorum_certificate: Some(cert_unbound.clone()),
+    };
+    let env_bytes = serde_json::to_vec(&env).unwrap();
+
+    let action = process_l2_verdict(
+        &env_bytes,
+        server_pk.as_bytes(),
+        &bs58::encode(t_id).into_string(),
+        &challenge_ds_tag,
+        Some(&bs58::encode(client_pk.as_bytes()).into_string()),
+        &voucher_id,
+    );
+
+    // SECURE INVARIANT: An unbound QuorumCertificate (lock_id != lock_entry.t_id)
+    // MUST NOT be accepted to grant ConfirmFinal!
+    match action {
+        Ok(VerdictAction::ConfirmFinal { certificate }) => {
+            panic!(
+                "AUDIT-00-WILDCARD-16 VIOLATION: process_l2_verdict granted ConfirmFinal with a \
+                 QuorumCertificate whose lock_id (\"{}\") does NOT match the transaction t_id! \
+                 Expected rejection or refusal of ConfirmFinal. Certificate: {:?}",
+                certificate.lock_id, certificate
+            );
+        }
+        _ => {
+            // Expected Soll-Verhalten: rejected or not upgraded to ConfirmFinal
+        }
+    }
+}
+
+///
+/// Finding-ID: AUDIT-00-WILDCARD-17
+/// Triage Classification: [INTENTIONAL DESIGN REQUIREMENT] (Outcome B per DESIGN_INTENT_TRIAGE.md / HMSEC-SA05-04)
+/// Target Location: src/storage/file_storage.rs:278-315 (`FileStorage::load_wallet`)
+/// Rationale & Architectural Invariant:
+///   In Module 05 audit (HMSEC-SA05-04), the triage team explicitly decided:
+///   - Rollback of `vouchers.enc` to a previous generation is a CONFIRMED VULNERABILITY (fixed via `store_binding_hash`).
+///   - Tolerant load of a missing `vouchers.enc` is an INTENTIONAL DESIGN REQUIREMENT for recovery-friendly
+///     first-load semantics (`tests/persistence/file_storage.rs::test_load_with_missing_voucher_store`, `tests/README.md`).
+///   - Deletion of `vouchers.enc` is detected and flagged by the signed Storage Integrity layer (`IntegrityReport::MissingItems`),
+///     NOT by hard-bricking `load_wallet` into an unrecoverable `StateConflict`.
+/// Invariant Test: Asserts that loading a wallet with a missing `vouchers.enc` succeeds gracefully with an empty store.
+///
+#[test]
+fn wildcard_17_missing_vouchers_file_tolerant_load_is_intentional_design_requirement() {
+    use human_money_core::storage::{AuthMethod, FileStorage};
+
+    let (mut service, profile, dir) = setup_unlocked_with_voucher("Wildcard Missing Vouchers");
+    service.logout();
+
+    let profile_dir = dir.path().join(&profile.folder_name);
+    let vouchers_path = profile_dir.join("vouchers.enc");
+    assert!(vouchers_path.exists(), "test setup: vouchers.enc must exist");
+
+    // Remove vouchers.enc while profile.enc still carries the store_binding_hash
+    std::fs::remove_file(&vouchers_path).expect("failed to remove vouchers.enc");
+
+    let storage = FileStorage::new(&profile_dir);
+    let auth = AuthMethod::Password(PASSWORD);
+    let load_result = storage.load_wallet(&auth);
+
+    // SECURE ARCHITECTURAL INVARIANT: load_wallet must tolerate missing vouchers.enc
+    // and degrade to the empty store default as documented in HMSEC-SA05-04!
+    match load_result {
+        Ok((_, store, _)) => {
+            assert!(
+                store.vouchers.is_empty(),
+                "Expected empty store on missing vouchers.enc"
+            );
+        }
+        Err(other) => {
+            panic!(
+                "ARCHITECTURAL INVARIANT VIOLATION: load_wallet failed with {:?} on missing vouchers.enc. \
+                 Tolerant load is an intentional design requirement per HMSEC-SA05-04.",
+                other
+            );
+        }
+    }
+}
+
+///
+/// Finding-ID: AUDIT-00-WILDCARD-18
+/// Severity: MEDIUM
+/// CWE-Classification: CWE-345 / CWE-354
+/// Target Location: src/app_service/conflicts.rs:100-125 (`import_proof_from_container`)
+/// Threat Model & Exploitation: `import_proof_from_container` parses `SecureContainer` and calls
+///   `open()` without calling `container.verify_integrity()?`. An attacker can tamper with
+///   the container's outer metadata/header ID `i` without detection. Every other container
+///   ingestion path in the codebase enforces `container.verify_integrity()?`.
+/// Impact Analysis: Container malleability / integrity check bypass on proof exchange transport.
+/// Root Cause: Omission of `container.verify_integrity()?` in `import_proof_from_container`.
+/// Remediation Strategy: Add `container.verify_integrity().map_err(Error::from)?;` before `open()`.
+/// Test Semantics (Fail-First): A proof container with tampered integrity ID `i` must be rejected
+///   with InvalidContainerSignature before processing the payload.
+///   Fails on unpatched code: passes container opening and fails later at payload parsing.
+///
+#[test]
+fn wildcard_18_import_proof_from_container_must_verify_container_integrity() {
+    use human_money_core::error::{Error, ValidationError};
+    use human_money_core::models::conflict::ProofOfDoubleSpend;
+    use human_money_core::models::secure_container::{ContainerConfig, PayloadType, PrivacyMode, SecureContainer};
+    use human_money_core::services::utils::to_canonical_json;
+
+    let dir = tempdir().expect("tempdir");
+    let (mut service, _profile) =
+        setup_service_with_profile(dir.path(), &ACTORS.victim, "W18-ProofIntegrity", PASSWORD);
+    let victim_did = service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+
+    let dummy_proof = ProofOfDoubleSpend {
+        proof_id: "test_proof_id".to_string(),
+        offender_id: "did:key:zOffender".to_string(),
+        suspected_identity: None,
+        fork_point_prev_hash: "prev_hash".to_string(),
+        conflicting_transactions: vec![],
+        deletable_at: "2099-01-01T00:00:00Z".to_string(),
+        reporter_id: "did:key:zReporter".to_string(),
+        report_timestamp: "2026-01-01T00:00:00Z".to_string(),
+        reporter_signature: "sig".to_string(),
+        affected_voucher_name: None,
+        voucher_standard_uuid: None,
+        resolutions: None,
+        layer2_verdict: None,
+        non_redeemable_test_voucher: false,
+    };
+    let payload = to_canonical_json(&dummy_proof).unwrap();
+
+    let mut container = SecureContainer::seal(
+        &ACTORS.alice.identity,
+        &ContainerConfig::TargetDid(victim_did, PrivacyMode::TrialDecryption),
+        payload.as_bytes(),
+        PayloadType::ProofOfDoubleSpend,
+    ).expect("seal container");
+
+    // Tamper with the container integrity ID `i`
+    container.i = "tampered_integrity_hash_12345".to_string();
+    let tampered_bytes = serde_json::to_vec(&container).unwrap();
+
+    let result = service.import_proof_from_container(&tampered_bytes, Some(PASSWORD));
+
+    // SECURE INVARIANT: Container with tampered integrity hash must be rejected by verify_integrity()!
+    match result {
+        Err(Error::Validation(ValidationError::InvalidContainerSignature)) => {
+            // Expected Soll-Verhalten: container integrity verification caught the tampered header
+        }
+        other => {
+            panic!(
+                "AUDIT-00-WILDCARD-18 VIOLATION: import_proof_from_container accepted a SecureContainer \
+                 with a tampered integrity hash `i`! Expected Err(Validation(InvalidContainerSignature)), \
+                 got: {:?}",
+                other
+            );
+        }
+    }
+}
+
