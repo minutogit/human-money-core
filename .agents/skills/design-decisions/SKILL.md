@@ -89,6 +89,10 @@ Dieses Dokument hält die grundlegenden Design-Entscheidungen der `human_money_c
 - **t_id-Präbild-Änderung (V3):** `trap_data` UND `privacy_guard` sind aus dem kanonischen `t_id`-Präbild entfernt. Begründung: Zirkularität $\tau_i(t\_id) \leftrightarrow t\_id(trap)$; Authentifizierung der Shards erfolgt separat über die V3-`layer2_signature` (Digest bindet `trap_r`/`trap_s`), der Privacy Guard ist AEAD-geschützt und wird beim Empfänger strikt entschlüsselungsverifiziert. Die Kettenverknüpfung (`prev_hash`) bleibt weiterhin Hash über das volle kanonische JSON inklusive Trap/Guard.
 - **Breaking Change:** Alle V2-Signaturen/Fingerprints/Locks sind ungültig; `TrapData` heißt nun `{ds_tag, trap_r, trap_s}`, `TransactionFingerprint` ebenso (`u`/`blinded_id` entfallen); `L2LockRequest`/`L2LockEntry` nutzen `trap_r`/`trap_s` unter Domain-Tag `HMC_TX_AUTH_V3`. Der Test `f07_trap_anchoring_framing_arbitrary_slope_must_be_rejected` ist ent-ignoriert und als dauerhafte grüne Invariante in der Suite.
 
+**L2 Gateway Conflict Idempotency & Mathematical Proof of Truth:**
+- **Entscheidung:** Konfliktverdicts von Layer-2-Gateways erfordern zwingend eine mathematische Signaturprüfung (`proof_of_truth`). Stimmt die im Konflikt nachgewiesene Transaktions-ID mit der lokal versuchten Transaktion überein, wird der Aufruf als idempotenter Retry mit `Ok(L2SubmissionStatus::Verified)` quittiert, statt eine Quarantäne auszulösen.
+- **Begründung:** Verhindert Fehlalarme und blockierte Guthaben bei Netzwerk-Timeouts und Verbindungsabbrüchen während der Quorum-Zertifikat-Einholung.
+
 ## 6. WASM & Cross-Platform Kompilierung
 
 **Target-Gating für OS-abhängige Dependencies:**

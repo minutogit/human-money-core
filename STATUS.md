@@ -1,9 +1,9 @@
 ---
 project: human-money-core
-version: "0.3.0"
+version: "0.3.1"
 phase: "active-development"
 health: "green"
-last_updated: "2026-08-28"
+last_updated: "2026-09-14"
 blocks: []
 blocked_by: []
 priority_tasks:

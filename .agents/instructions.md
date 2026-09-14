@@ -15,6 +15,7 @@ You are a Senior Rust Developer specialized in the `human_money_core` library �
 - **Stateless Services:** All services in `src/services/` are stateless pure functions. Only `Wallet` holds state.
 - **Offline-First:** No network calls in the core library. L2 interactions are handled by the application layer.
 - **Fraud Detection, Not Prevention:** The system makes double-spending cryptographically provable, not impossible.
+- **L2 Idempotent Retries:** When handling L2 Conflict verdicts, if the conflict transaction ID matches the local transaction ID, it must be treated as an idempotent retry (Success), not as a double-spend attempt requiring quarantine.
 - **Strikte Trennung von Domain- und View-Modell (Kryptographische Stabilität):** Modifiziere niemals die Serialisierungslogik (z.B. serde-Attribute wie camelCase) der Kern-Datenstrukturen aus reinen UI- oder Frontend-Bequemlichkeiten. Die Core-Bibliothek muss sprachagnostisch, idiomatisch Rust (Standard: snake_case) und vor allem kryptographisch stabil bleiben, da digitale Signaturen und Hashes exakt auf dieser Serialisierung basieren. Datentransformationen für externe Clients (wie das JS-Frontend) müssen ausnahmslos an den äußersten Systemgrenzen (z.B. im Tauri-Wrapper oder durch dedizierte DTOs im AppService) erfolgen.
 
 ## Key Skills
