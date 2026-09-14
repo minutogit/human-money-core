@@ -13,6 +13,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
+pub use crate::wallet::instance::VoucherInstance;
+
 /// Helper structure bundling all necessary data for creating a new voucher.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct NewVoucherData {

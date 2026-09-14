@@ -1,8 +1,30 @@
 use crate::error::VoucherCoreError;
-use crate::models::layer2_api::{L2AuthPayload, L2LockRequest, L2ResponseEnvelope, L2Verdict, QuorumCertificateDto};
+use crate::models::layer2_api::{
+    L2AuthPayload, L2LockEntry, L2LockRequest, L2ResponseEnvelope, L2StatusQuery, L2Verdict,
+    QuorumCertificateDto,
+};
+use crate::models::profile::UserIdentity;
 use crate::models::voucher::Transaction;
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
+
+/// Defines the synchronization verdict of a state anchor against Layer 2.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnchorSyncVerdict {
+    /// L2 tip is free/unspent and matches local state anchor.
+    Synchronized,
+    /// Local is ahead of L2 due to offline transactions.
+    PendingLeapLock { sync_point: String },
+    /// L2 has a lock on local tip -> local state is behind (rollback detected).
+    RollbackDetected {
+        remote_t_id: [u8; 32],
+        lock_entry: L2LockEntry,
+    },
+    /// Conflicting lock entry exists on the challenged tag.
+    ForkConflict { foreign_entry: L2LockEntry },
+    /// Unknown voucher / initial state -> Genesis lock required.
+    GenesisRequired,
+}
 
 /// Defines the action that AppService should perform after evaluating the verdict.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -642,6 +664,237 @@ pub fn generate_locator_prefixes(voucher: &crate::models::voucher::Voucher) -> V
     }
 
     prefixes
+}
+
+// --- State Anchor (Virtual Voucher) Gateway Operations ---
+
+/// Builds an L2LockRequest for the genesis anchor of a wallet state anchor.
+pub fn build_anchor_genesis_lock(
+    identity: &UserIdentity,
+    epoch: u64,
+    state_hash: &[u8; 32],
+    deletable_at: Option<String>,
+) -> Result<L2LockRequest, VoucherCoreError> {
+    let anchor_id = crate::models::seal::derive_l2_anchor_id(identity, epoch);
+    let (step_key, step_pub) =
+        crate::models::seal::derive_anchor_step_key(&identity.signing_key, epoch, 0);
+    let step_pub_bytes = step_pub.to_bytes();
+    let state_hash_bs58 = bs58::encode(state_hash).into_string();
+
+    let del = deletable_at.unwrap_or_else(|| {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        (now_ms + 2 * 365 * 24 * 3600 * 1000).to_string()
+    });
+
+    let payload_hash = calculate_l2_payload_hash_raw(
+        TRAP_NONE_PLACEHOLDER,
+        &state_hash_bs58,
+        state_hash,
+        &step_pub_bytes,
+        TRAP_NONE_PLACEHOLDER,
+        TRAP_NONE_PLACEHOLDER,
+        0,
+        Some(&del),
+        "",
+    );
+    let sig = step_key.sign(&payload_hash);
+
+    Ok(L2LockRequest {
+        auth: L2AuthPayload {
+            ephemeral_pubkey: step_pub_bytes,
+            auth_signature: None,
+        },
+        layer2_voucher_id: anchor_id,
+        ds_tag: None,
+        transaction_hash: *state_hash,
+        is_genesis: true,
+        sender_ephemeral_pub: step_pub_bytes,
+        receiver_ephemeral_pub_hash: None,
+        change_ephemeral_pub_hash: None,
+        layer2_signature: sig.to_bytes(),
+        trap_r: Some(TRAP_NONE_PLACEHOLDER.into()),
+        trap_s: Some(TRAP_NONE_PLACEHOLDER.into()),
+        encrypted_timestamp: 0,
+        deletable_at: Some(del),
+        privacy_guard: None,
+    })
+}
+
+/// Builds an L2LockRequest for a fast-forward leap-lock transition from an unspent L2 tag to a target state hash.
+pub fn build_anchor_leap_lock(
+    identity: &UserIdentity,
+    epoch: u64,
+    current_tx_nonce: u64,
+    ds_tag: &str,
+    target_state_hash: &[u8; 32],
+) -> Result<L2LockRequest, VoucherCoreError> {
+    let anchor_id = crate::models::seal::derive_l2_anchor_id(identity, epoch);
+    let (step_key, step_pub) =
+        crate::models::seal::derive_anchor_step_key(&identity.signing_key, epoch, current_tx_nonce);
+    let step_pub_bytes = step_pub.to_bytes();
+
+    let payload_hash = calculate_l2_payload_hash_raw(
+        &anchor_id,
+        ds_tag,
+        target_state_hash,
+        &step_pub_bytes,
+        TRAP_NONE_PLACEHOLDER,
+        TRAP_NONE_PLACEHOLDER,
+        0,
+        None,
+        "",
+    );
+    let sig = step_key.sign(&payload_hash);
+
+    Ok(L2LockRequest {
+        auth: L2AuthPayload {
+            ephemeral_pubkey: step_pub_bytes,
+            auth_signature: None,
+        },
+        layer2_voucher_id: anchor_id,
+        ds_tag: Some(ds_tag.to_string()),
+        transaction_hash: *target_state_hash,
+        is_genesis: false,
+        sender_ephemeral_pub: step_pub_bytes,
+        receiver_ephemeral_pub_hash: None,
+        change_ephemeral_pub_hash: None,
+        layer2_signature: sig.to_bytes(),
+        trap_r: Some(TRAP_NONE_PLACEHOLDER.into()),
+        trap_s: Some(TRAP_NONE_PLACEHOLDER.into()),
+        encrypted_timestamp: 0,
+        deletable_at: None,
+        privacy_guard: None,
+    })
+}
+
+/// Builds an L2StatusQuery for state anchor synchronization.
+pub fn build_anchor_status_query(
+    identity: &UserIdentity,
+    epoch: u64,
+    challenge_ds_tag: &str,
+    locator_prefixes: Vec<String>,
+    read_quorum: u8,
+) -> Result<L2StatusQuery, VoucherCoreError> {
+    let anchor_id = crate::models::seal::derive_l2_anchor_id(identity, epoch);
+    let (_sk, pk) =
+        crate::models::seal::derive_anchor_step_key(&identity.signing_key, epoch, 0);
+
+    Ok(L2StatusQuery {
+        auth: L2AuthPayload {
+            ephemeral_pubkey: pk.to_bytes(),
+            auth_signature: None,
+        },
+        layer2_voucher_id: anchor_id,
+        challenge_ds_tag: challenge_ds_tag.to_string(),
+        locator_prefixes,
+        read_quorum,
+    })
+}
+
+/// Evaluates a single L2Verdict response against the local wallet state.
+pub fn evaluate_anchor_verdict(
+    verdict: &L2Verdict,
+    local_t_id: &[u8; 32],
+    local_tag: &str,
+) -> AnchorSyncVerdict {
+    match verdict {
+        L2Verdict::Verified { lock_entry } => {
+            if &lock_entry.t_id == local_t_id {
+                AnchorSyncVerdict::Synchronized
+            } else {
+                AnchorSyncVerdict::RollbackDetected {
+                    remote_t_id: lock_entry.t_id,
+                    lock_entry: lock_entry.clone(),
+                }
+            }
+        }
+        L2Verdict::Conflict { existing_lock } => {
+            if &existing_lock.t_id == local_t_id {
+                AnchorSyncVerdict::Synchronized
+            } else {
+                AnchorSyncVerdict::ForkConflict {
+                    foreign_entry: existing_lock.clone(),
+                }
+            }
+        }
+        L2Verdict::MissingLocks { sync_point } => {
+            if sync_point == local_tag {
+                AnchorSyncVerdict::Synchronized
+            } else {
+                AnchorSyncVerdict::PendingLeapLock {
+                    sync_point: sync_point.clone(),
+                }
+            }
+        }
+        L2Verdict::UnknownVoucher => AnchorSyncVerdict::GenesisRequired,
+        L2Verdict::Ok { .. } => AnchorSyncVerdict::Synchronized,
+        L2Verdict::Rejected { .. } => AnchorSyncVerdict::GenesisRequired,
+    }
+}
+
+/// Calculates the fault-tolerant read quorum based on shard node count $N$.
+pub fn calculate_read_quorum(total_nodes: usize) -> u8 {
+    match total_nodes {
+        0 | 1 => 1,
+        2 | 3 => 2,
+        n => (n / 2 + 1) as u8,
+    }
+}
+
+/// Evaluates multi-node responses with CFT majority-quorum rules and asymmetric rollback protection.
+pub fn evaluate_multi_node_anchor_verdicts(
+    verdicts: &[L2Verdict],
+    local_t_id: &[u8; 32],
+    local_tag: &str,
+    total_nodes: usize,
+) -> AnchorSyncVerdict {
+    // Asymmetric rule: an authenticated lock proof beats any MissingLocks response!
+    for v in verdicts {
+        let single = evaluate_anchor_verdict(v, local_t_id, local_tag);
+        if matches!(
+            single,
+            AnchorSyncVerdict::RollbackDetected { .. } | AnchorSyncVerdict::ForkConflict { .. }
+        ) {
+            return single;
+        }
+    }
+
+    let required_q = calculate_read_quorum(total_nodes) as usize;
+    let mut syncd_count = 0;
+    let mut leap_count = 0;
+    let mut last_leap_point = String::new();
+    let mut unknown_count = 0;
+
+    for v in verdicts {
+        match evaluate_anchor_verdict(v, local_t_id, local_tag) {
+            AnchorSyncVerdict::Synchronized => syncd_count += 1,
+            AnchorSyncVerdict::PendingLeapLock { sync_point } => {
+                leap_count += 1;
+                last_leap_point = sync_point;
+            }
+            AnchorSyncVerdict::GenesisRequired => unknown_count += 1,
+            _ => {}
+        }
+    }
+
+    if syncd_count >= required_q {
+        AnchorSyncVerdict::Synchronized
+    } else if leap_count >= required_q {
+        AnchorSyncVerdict::PendingLeapLock {
+            sync_point: last_leap_point,
+        }
+    } else if unknown_count >= required_q {
+        AnchorSyncVerdict::GenesisRequired
+    } else if syncd_count + leap_count >= required_q && syncd_count > 0 {
+        AnchorSyncVerdict::Synchronized
+    } else if let Some(first) = verdicts.first() {
+        evaluate_anchor_verdict(first, local_t_id, local_tag)
+    } else {
+        AnchorSyncVerdict::GenesisRequired
+    }
 }
 
 #[cfg(test)]

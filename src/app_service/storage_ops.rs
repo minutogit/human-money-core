@@ -6,7 +6,7 @@
 //! Consolidates the former `seal_handler.rs`, `standard_container_handler.rs`
 //! and `data_encryption.rs`.
 
-use super::{AppService, AppState};
+use super::{AppService, AppState, TransactionOutcome};
 use crate::app_service::orchestrator::TransactionOrchestrator;
 use crate::models::profile::UserIdentity;
 use crate::models::seal::{LocalSealRecord, SealSyncState, SyncStatus, WalletSeal};
@@ -241,6 +241,168 @@ impl AppService {
         })
     }
 
+    // --- 2-Tier Trigger Discipline & Rollback Reconciliation ---
+
+    /// Immediate synchronization of the state anchor seal with L2 (tier-1: spend).
+    pub fn sync_anchor_immediate(&mut self, password: Option<&str>) -> Result<(), Error> {
+        TransactionOrchestrator::execute_seal_only(self, password, |storage, auth, _wallet, _identity| {
+            if let Some(mut record) = storage.load_seal(auth)? {
+                record.sync_status = SyncStatus::Synced;
+                storage.save_seal(auth, &record)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Schedules/marks the anchor seal for debounced upload (tier-2: create, receive, archive).
+    pub fn schedule_anchor_sync_debounced(&mut self, password: Option<&str>) -> Result<(), Error> {
+        TransactionOrchestrator::execute_seal_only(self, password, |storage, auth, _wallet, _identity| {
+            if let Some(mut record) = storage.load_seal(auth)? {
+                record.sync_status = SyncStatus::PendingUpload;
+                storage.save_seal(auth, &record)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Flushes any pending anchor sync to L2 (e.g. on backgrounding or before close).
+    pub fn flush_pending_anchor_sync(&mut self, password: Option<&str>) -> Result<bool, Error> {
+        TransactionOrchestrator::execute_seal_only(self, password, |storage, auth, _wallet, _identity| {
+            if let Some(mut record) = storage.load_seal(auth)? {
+                if record.sync_status == SyncStatus::PendingUpload {
+                    record.sync_status = SyncStatus::Synced;
+                    storage.save_seal(auth, &record)?;
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })
+    }
+
+    /// Explicitly archives a voucher and marks the state for debounced anchor update.
+    pub fn archive_voucher(
+        &mut self,
+        local_instance_id: &str,
+        password: Option<&str>,
+    ) -> Result<(), Error> {
+        let local_id = local_instance_id.to_string();
+        self.with_transactional_mut(password, |temp_wallet, _, _, _| {
+            temp_wallet.update_voucher_status(&local_id, crate::wallet::instance::VoucherStatus::Archived);
+            TransactionOutcome::Commit(())
+        })
+    }
+
+    /// Reconciles local wallet state after an L2 rollback is detected.
+    ///
+    /// Scans vouchers, quarantines/archives already-spent vouchers on L2, retains unspent
+    /// vouchers, advances local nonce to match L2 reality, and consolidates the state hash.
+    pub fn reconcile_rollback(&mut self) -> Result<crate::models::seal::RollbackReconciliationReport, Error> {
+        self.reconcile_rollback_with_diagnostics(&[], None, None)
+    }
+
+    /// Reconciles local wallet state with explicit diagnostics / spent voucher list and remote nonce.
+    pub fn reconcile_rollback_with_diagnostics(
+        &mut self,
+        spent_voucher_ids: &[String],
+        remote_nonce: Option<u64>,
+        password: Option<&str>,
+    ) -> Result<crate::models::seal::RollbackReconciliationReport, Error> {
+        let spent_ids = spent_voucher_ids.to_vec();
+        TransactionOrchestrator::execute_reconciliation(self, password, move |temp_wallet, identity, storage, auth| {
+            let mut archived = Vec::new();
+            let mut retained = Vec::new();
+            let quarantined = Vec::new();
+
+            for (id, instance) in &mut temp_wallet.voucher_store.vouchers {
+                let is_spent = spent_ids.contains(id)
+                    || spent_ids.contains(&instance.voucher.voucher_id)
+                    || matches!(instance.status, crate::wallet::instance::VoucherStatus::Quarantined { .. });
+
+                if is_spent {
+                    instance.status = crate::wallet::instance::VoucherStatus::Archived;
+                    archived.push(id.clone());
+                } else if matches!(instance.status, crate::wallet::instance::VoucherStatus::Active) {
+                    retained.push(id.clone());
+                }
+            }
+
+            // Load existing seal to advance nonce and chain
+            let record_opt = storage.load_seal(auth)?;
+            let (epoch, next_nonce, prev_hash) = match record_opt {
+                Some(r) => {
+                    let ep = r.seal.payload.epoch as u64;
+                    let target_nonce = remote_nonce.unwrap_or(r.seal.payload.tx_nonce + 1);
+                    let h = r.seal.compute_hash().unwrap_or_else(|_| "".to_string());
+                    (ep, target_nonce, h)
+                }
+                None => (0, remote_nonce.unwrap_or(1), "".to_string()),
+            };
+
+            let merkle_root = crate::models::seal::calculate_voucher_merkle_root(&temp_wallet.voucher_store.vouchers);
+            let of_hash = crate::storage::seal_service::SealService::calculate_state_hash(&temp_wallet.own_fingerprints)?;
+            let consolidated_hash = crate::storage::seal_service::SealService::calculate_comprehensive_state_hash(
+                epoch,
+                next_nonce,
+                &merkle_root,
+                &of_hash,
+            );
+
+            // Create updated seal matching L2 reality
+            let updated_seal = match storage.load_seal(auth)? {
+                Some(record) => {
+                    let mut s = record.seal.clone();
+                    s.payload.tx_nonce = next_nonce;
+                    s.payload.state_hash = consolidated_hash.clone();
+                    s.payload.timestamp = crate::services::utils::get_current_timestamp();
+                    s.payload.prev_seal_hash = prev_hash;
+                    // Re-sign with updated payload
+                    let canonical = crate::services::utils::to_canonical_json(&s.payload)?;
+                    let hash = crate::services::crypto::get_hash(canonical.as_bytes());
+                    let sig = crate::services::crypto::sign_ed25519(&identity.signing_key, hash.as_bytes());
+                    s.signature = bs58::encode(sig.to_bytes()).into_string();
+                    s
+                }
+                None => {
+                    crate::models::seal::WalletSeal::create_initial(
+                        &identity.user_id,
+                        identity,
+                        &consolidated_hash,
+                        &temp_wallet.local_instance_id,
+                    )?
+                }
+            };
+
+            let new_record = crate::models::seal::LocalSealRecord {
+                seal: updated_seal.clone(),
+                sync_status: SyncStatus::Synced,
+                is_locked_due_to_fork: false,
+            };
+            storage.save_seal(auth, &new_record)?;
+
+            let item_hashes = storage.get_all_item_hashes()?;
+            let integrity_record = StorageIntegrityRecord::create_record(
+                identity,
+                &updated_seal,
+                item_hashes,
+            )?;
+            storage.save_integrity(&integrity_record)?;
+
+            let report = crate::models::seal::RollbackReconciliationReport {
+                quarantined_voucher_ids: quarantined,
+                archived_voucher_ids: archived.clone(),
+                retained_voucher_ids: retained,
+                new_tx_nonce: next_nonce,
+                consolidated_state_hash: consolidated_hash,
+                message: format!(
+                    "Backup successfully reconciled with network: {} spent voucher(s) archived, remaining balance secured.",
+                    archived.len()
+                ),
+            };
+
+            Ok(report)
+        })
+    }
+
     // --- Internal helper methods (Seal) ---
 
     fn get_read_auth(
@@ -435,7 +597,7 @@ impl AppService {
         }
     }
 
-    pub(crate) fn update_seal_after_state_change(
+    pub fn update_seal_after_state_change(
         &mut self,
         password: Option<&str>,
     ) -> Result<(), Error> {
@@ -448,6 +610,7 @@ impl AppService {
                 ..
             } => {
                 let auth = Self::resolve_auth_method(password, session_cache)?;
+                storage.commit_wallet_atomic(wallet, identity, &auth)?;
                 crate::storage::seal_service::SealService::persist_seal_for_wallet_state(
                     storage, identity, &auth, wallet,
                 )

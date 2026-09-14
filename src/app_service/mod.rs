@@ -401,5 +401,16 @@ impl AppService {
             _ => panic!("Service must be unlocked for this test helper"),
         }
     }
+
+    /// A helper method only for tests to get immutable access to the internal wallet and identity.
+    #[doc(hidden)]
+    pub fn get_unlocked_for_test(&self) -> (&Wallet, &UserIdentity) {
+        match &self.state {
+            AppState::Unlocked {
+                wallet, identity, ..
+            } => (wallet, identity),
+            _ => panic!("Service must be unlocked for this test helper"),
+        }
+    }
 }
 

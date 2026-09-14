@@ -724,6 +724,7 @@ async fn cmd_query(url: &str, voucher_id: &str) {
         layer2_voucher_id: voucher_id.to_string(),
         challenge_ds_tag: challenge_ds_tag.clone(),
         locator_prefixes: vec![],
+        read_quorum: 1,
     };
 
     println!("[ MANUAL | query ]");
@@ -917,6 +918,7 @@ async fn run_compliance_test(url: &str, _server_pubkey: Option<&str>) {
         layer2_voucher_id: v_id.clone(),
         challenge_ds_tag: genesis_t_id.clone(),
         locator_prefixes: vec![],
+        read_quorum: 1,
     };
 
     let res = client
@@ -983,6 +985,7 @@ async fn run_compliance_test(url: &str, _server_pubkey: Option<&str>) {
         layer2_voucher_id: unknown_req.layer2_voucher_id.clone(),
         challenge_ds_tag: "abcde".to_string(),
         locator_prefixes: vec![],
+        read_quorum: 1,
     };
 
     let res = client
@@ -1121,6 +1124,7 @@ async fn run_stress_test(url: &str, rate: u32, connections: u32) {
                     layer2_voucher_id: v_id,
                     challenge_ds_tag: bs58::encode(&req.transaction_hash).into_string(),
                     locator_prefixes: vec![],
+                    read_quorum: 1,
                 };
                 client_clone
                     .post(format!("{}/status", u))
@@ -1373,6 +1377,7 @@ async fn cmd_sync(url: &str, voucher_id: &str) {
         layer2_voucher_id: voucher_id.to_string(),
         challenge_ds_tag: challenge_ds_tag.clone(),
         locator_prefixes: locator_prefixes.clone(),
+        read_quorum: 1,
     };
 
     println!("[ MANUAL | sync ]");

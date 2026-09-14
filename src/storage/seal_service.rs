@@ -33,14 +33,37 @@ impl SealService {
         Ok(get_hash(canonical.as_bytes()))
     }
 
+    /// Calculates the comprehensive Blake3 state hash binding
+    /// `(epoch, tx_nonce, voucher_merkle_root, own_fingerprints_hash)`.
+    ///
+    /// Formula:
+    /// `Blake3("HMC_WALLET_STATE_V1" || epoch || tx_nonce || voucher_merkle_root || own_fingerprints_hash)`
+    ///
+    /// Ensures strict time-insensitivity: expired vouchers remain in the active
+    /// Merkle root until an explicit archive/cleanup mutation occurs.
+    pub fn calculate_comprehensive_state_hash(
+        epoch: u64,
+        tx_nonce: u64,
+        voucher_merkle_root: &str,
+        own_fingerprints_hash: &str,
+    ) -> String {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"HMC_WALLET_STATE_V1");
+        hasher.update(&epoch.to_le_bytes());
+        hasher.update(&tx_nonce.to_le_bytes());
+        hasher.update(voucher_merkle_root.as_bytes());
+        hasher.update(own_fingerprints_hash.as_bytes());
+        hex::encode(hasher.finalize().as_bytes())
+    }
+
     /// Verifies that a freshly loaded wallet state is covered by the current
     /// cryptographic seal before it may be operated on.
     ///
     /// If no seal exists (legacy wallet before seal migration) the check is
     /// skipped and `Ok(())` is returned. Otherwise the current state hash
-    /// (via [`Self::calculate_state_hash`]) is compared against
-    /// `seal.payload.state_hash`; a mismatch is treated as a rollback attack
-    /// and returns [`Error::StateRollbackDetected`].
+    /// (via [`Self::calculate_state_hash`] or [`Self::calculate_comprehensive_state_hash`])
+    /// is compared against `seal.payload.state_hash`; a mismatch is treated as
+    /// a rollback attack and returns [`Error::StateRollbackDetected`].
     pub fn verify_state_matches_seal(
         storage: &FileStorage,
         auth: &AuthMethod<'_>,
@@ -51,9 +74,24 @@ impl SealService {
         if let Some(record) = record_opt {
             let current_state_hash = Self::calculate_state_hash(&wallet.own_fingerprints)?;
 
-            if record.seal.payload.state_hash != current_state_hash {
-                return Err(Error::StateRollbackDetected);
+            if record.seal.payload.state_hash == current_state_hash {
+                return Ok(());
             }
+
+            // Check comprehensive state hash
+            let merkle_root = crate::models::seal::calculate_voucher_merkle_root(&wallet.voucher_store.vouchers);
+            let comp_hash = Self::calculate_comprehensive_state_hash(
+                record.seal.payload.epoch as u64,
+                record.seal.payload.tx_nonce,
+                &merkle_root,
+                &current_state_hash,
+            );
+
+            if record.seal.payload.state_hash == comp_hash {
+                return Ok(());
+            }
+
+            return Err(Error::StateRollbackDetected);
         }
         Ok(())
     }

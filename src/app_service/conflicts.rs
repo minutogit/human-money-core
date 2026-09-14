@@ -226,6 +226,7 @@ impl AppService {
             layer2_voucher_id,
             challenge_ds_tag,
             locator_prefixes,
+            read_quorum: 1,
         };
 
         serde_json::to_vec(&query).map_err(Error::from)

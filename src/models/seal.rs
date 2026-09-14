@@ -14,6 +14,7 @@
 //!   synchronized.
 
 use serde::{Deserialize, Serialize};
+use ed25519_dalek::{SigningKey, VerifyingKey as EdPublicKey};
 use crate::error::VoucherCoreError;
 use crate::models::profile::UserIdentity;
 use crate::services::crypto::{get_hash, get_pubkey_from_user_id, sign_ed25519, verify_ed25519};
@@ -471,6 +472,95 @@ pub enum SealValidationResult {
     /// The device ID (instance_id) in the seal does not match the current host.
     /// Indicator of a cloned wallet.
     DeviceMismatch { expected: String, actual: String },
+}
+
+// --- Deterministic Key Derivation & Anchor Tree Functions ---
+
+/// Derives the Layer 2 anchor ID (virtual voucher ID) deterministically from the
+/// master signing key and epoch.
+pub fn derive_l2_anchor_id(identity: &UserIdentity, epoch: u64) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"HMC_ANCHOR_ID_V1");
+    hasher.update(&identity.signing_key.to_bytes());
+    hasher.update(&epoch.to_le_bytes());
+    hex::encode(hasher.finalize().as_bytes())
+}
+
+/// Derives the ephemeral step key pair for an anchor step without storing any keys on disk.
+pub fn derive_anchor_step_key(
+    master_key: &SigningKey,
+    epoch: u64,
+    tx_nonce: u64,
+) -> (SigningKey, EdPublicKey) {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"HMC_ANCHOR_STEP_KEY_V1");
+    hasher.update(&epoch.to_le_bytes());
+    hasher.update(&tx_nonce.to_le_bytes());
+    let k_seed = hasher.finalize();
+    crate::services::crypto::derive_ephemeral_key_pair(
+        master_key,
+        k_seed.as_bytes(),
+        "anchor_step",
+        None,
+    )
+    .expect("HKDF expansion for 32 bytes never fails")
+}
+
+/// Derives the deterministic challenge/DS tag for an anchor step from the previous
+/// seal hash and current transaction nonce.
+pub fn derive_anchor_step_tag(prev_seal_hash: &str, tx_nonce: u64) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"HMC_ANCHOR_STEP_TAG_V1");
+    hasher.update(prev_seal_hash.as_bytes());
+    hasher.update(&tx_nonce.to_le_bytes());
+    bs58::encode(hasher.finalize().as_bytes()).into_string()
+}
+
+/// Calculates the Merkle root of all active (non-archived) vouchers in the wallet.
+///
+/// Hashes `(voucher_id || current_leaf_hash)` for each non-archived voucher,
+/// sorts them lexicographically, and hashes them with the count.
+pub fn calculate_voucher_merkle_root(
+    vouchers: &std::collections::HashMap<String, crate::models::voucher::VoucherInstance>,
+) -> String {
+    let mut leaf_hashes: Vec<[u8; 32]> = Vec::new();
+    for instance in vouchers.values() {
+        if matches!(instance.status, crate::wallet::instance::VoucherStatus::Archived) {
+            continue;
+        }
+        let voucher_id = &instance.voucher.voucher_id;
+        let leaf_tx_hash = instance
+            .voucher
+            .transactions
+            .last()
+            .map(|t| t.t_id.as_str())
+            .unwrap_or("");
+        let mut h = blake3::Hasher::new();
+        h.update(voucher_id.as_bytes());
+        h.update(leaf_tx_hash.as_bytes());
+        leaf_hashes.push(*h.finalize().as_bytes());
+    }
+
+    leaf_hashes.sort();
+
+    let mut root_hasher = blake3::Hasher::new();
+    let count = leaf_hashes.len() as u64;
+    root_hasher.update(&count.to_le_bytes());
+    for h in leaf_hashes {
+        root_hasher.update(&h);
+    }
+    hex::encode(root_hasher.finalize().as_bytes())
+}
+
+/// Summary report after automated rollback reconciliation against Layer 2 network state.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RollbackReconciliationReport {
+    pub quarantined_voucher_ids: Vec<String>,
+    pub archived_voucher_ids: Vec<String>,
+    pub retained_voucher_ids: Vec<String>,
+    pub new_tx_nonce: u64,
+    pub consolidated_state_hash: String,
+    pub message: String,
 }
 
 #[cfg(test)]

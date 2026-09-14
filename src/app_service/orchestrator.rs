@@ -20,6 +20,9 @@ pub enum ReloadPolicy {
     /// Always reload from disk (unconditional), even if generations match.
     /// Required for L2 verdicts where the generation marker alone is forgeable.
     Always,
+    /// Unconditionally reload from disk for rollback reconciliation, bypassing the seal gate
+    /// check since the seal was out-of-sync or from a restored backup that is now being reconciled.
+    ReconcileReload,
 }
 
 pub(crate) struct TxPreamble<'a> {
@@ -143,23 +146,25 @@ impl TransactionOrchestrator {
                             }
                         }
                     }
-                    ReloadPolicy::Always => true,
+                    ReloadPolicy::Always | ReloadPolicy::ReconcileReload => true,
                 };
 
                 if should_reload {
                     let local_instance_id = current_wallet.local_instance_id.clone();
                     match Wallet::load(&storage, &auth, local_instance_id) {
                         Ok((mut fresh_wallet, _)) => {
-                            if let Err(gate_err) =
-                                SealService::verify_state_matches_seal(&storage, &auth, &fresh_wallet)
-                            {
-                                service.state = AppState::Unlocked {
-                                    storage,
-                                    wallet: current_wallet,
-                                    identity,
-                                    session_cache,
-                                };
-                                return Err(gate_err);
+                            if policy != ReloadPolicy::ReconcileReload {
+                                if let Err(gate_err) =
+                                    SealService::verify_state_matches_seal(&storage, &auth, &fresh_wallet)
+                                {
+                                    service.state = AppState::Unlocked {
+                                        storage,
+                                        wallet: current_wallet,
+                                        identity,
+                                        session_cache,
+                                    };
+                                    return Err(gate_err);
+                                }
                             }
                             StateMergeHook::apply(&current_wallet, &mut fresh_wallet);
                             current_wallet = fresh_wallet;
@@ -172,7 +177,7 @@ impl TransactionOrchestrator {
                                 session_cache,
                             };
                             match policy {
-                                ReloadPolicy::Always => {
+                                ReloadPolicy::Always | ReloadPolicy::ReconcileReload => {
                                     return Err(crate::Error::App(
                                         crate::error::AppError::ReloadFailedBeforeL2Write {
                                             reason: e.to_string(),
@@ -433,5 +438,61 @@ impl TransactionOrchestrator {
         }
     }
 
+    /// Executes a reconciliation transaction where the closure updates both the
+    /// wallet state and the cryptographic seal explicitly to match network reality.
+    pub(crate) fn execute_reconciliation<F, R>(
+        service: &mut AppService,
+        password: Option<&str>,
+        f: F,
+    ) -> Result<R, crate::Error>
+    where
+        F: FnOnce(
+            &mut Wallet,
+            &crate::models::profile::UserIdentity,
+            &mut crate::storage::FileStorage,
+            &crate::storage::AuthMethod,
+        ) -> Result<R, crate::Error>,
+    {
+        let TxPreamble {
+            mut storage,
+            wallet: current_wallet,
+            identity,
+            auth,
+            _guard,
+            session_cache,
+        } = Self::prepare(service, password, ReloadPolicy::ReconcileReload)?;
 
+        let mut temp_wallet = current_wallet.clone();
+        let res = f(&mut temp_wallet, &identity, &mut storage, &auth);
+
+        match res {
+            Ok(val) => {
+                if let Err(e) = storage.commit_wallet_atomic(&mut temp_wallet, &identity, &auth) {
+                    service.state = AppState::Unlocked {
+                        storage,
+                        wallet: current_wallet,
+                        identity,
+                        session_cache,
+                    };
+                    return Err(crate::Error::from(e));
+                }
+                service.state = AppState::Unlocked {
+                    storage,
+                    wallet: temp_wallet,
+                    identity,
+                    session_cache,
+                };
+                Ok(val)
+            }
+            Err(e) => {
+                service.state = AppState::Unlocked {
+                    storage,
+                    wallet: current_wallet,
+                    identity,
+                    session_cache,
+                };
+                Err(e)
+            }
+        }
+    }
 }

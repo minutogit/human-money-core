@@ -234,7 +234,7 @@ pub struct L2LockRequest {
 
 /// Data structure for a single lock entry on Layer 2.
 /// Serves as cryptographic proof for the state of a tag.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct L2LockEntry {
     pub layer2_voucher_id: String,
     #[serde(with = "crate::models::layer2_api::base58_32")]
@@ -267,6 +267,10 @@ pub struct L2LockEntry {
     pub privacy_guard: Option<String>,
 }
 
+fn default_read_quorum() -> u8 {
+    1
+}
+
 /// Request: Query the state of a voucher and reconcile transaction history.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct L2StatusQuery {
@@ -276,6 +280,8 @@ pub struct L2StatusQuery {
     pub challenge_ds_tag: String,
     /// Exponentially thinned list of ancestor prefixes (10 characters Base58) for LCA search.
     pub locator_prefixes: Vec<String>,
+    #[serde(default = "default_read_quorum")]
+    pub read_quorum: u8,
 }
 
 /// Request: Batch upload of multiple transactions for synchronization.

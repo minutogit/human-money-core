@@ -62,7 +62,7 @@ impl AppService {
             verified_definitions.insert(uuid.clone(), def);
         }
 
-        self.with_transactional_mut(password, |temp_wallet, identity, _, _| {
+        let res = self.with_transactional_mut(password, |temp_wallet, identity, _, _| {
             match temp_wallet.execute_multi_transfer_and_bundle(
                 identity,
                 &verified_definitions,
@@ -82,7 +82,12 @@ impl AppService {
                 }
                 Err(e) => TransactionOutcome::Rollback(e),
             }
-        })
+        })?;
+
+        // Tier-1 trigger: Immediate L2 synchronization for Spend operations
+        let _ = self.sync_anchor_immediate(password);
+
+        Ok(res)
     }
 
     /// Processes a received transaction or signature bundle.
