@@ -59,8 +59,10 @@ pub use models::voucher::{
     Address, Collateral, NewVoucherData, Transaction, TransactionSecrets, ValueDefinition, Voucher,
     VoucherSignature, VoucherStandard,
 };
+pub use models::discovery::{BootstrapNodeEntry, BootstrapSeedFile, CustomServerEntry};
 pub use models::voucher_standard_definition::VoucherStandardDefinition;
 pub use models::wallet_event::{EventBffData, WalletEvent, WalletEventType};
+pub use services::latency_router::{PeerLatencyInfo, compute_median_latency, update_ema_latency};
 pub use wallet::instance::{ValidationFailureReason, VoucherInstance, VoucherStatus};
 
 // Wallet & Storage Facades

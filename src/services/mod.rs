@@ -5,6 +5,7 @@ pub mod crypto;
 pub mod dynamic_policy_engine;
 pub mod jws_profile_service;
 pub mod l2_gateway;
+pub mod latency_router;
 pub mod mnemonic;
 pub mod trap_manager;
 pub mod trust_provider;

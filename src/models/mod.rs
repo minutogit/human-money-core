@@ -1,4 +1,5 @@
 pub mod conflict;
+pub mod discovery;
 pub mod layer2_api;
 pub mod storage_integrity;
 pub mod profile;
