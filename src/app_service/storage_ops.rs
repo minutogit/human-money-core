@@ -279,6 +279,50 @@ impl AppService {
         })
     }
 
+    /// Prepares an L2StatusQuery for state anchor synchronization.
+    /// Returns (query, local_t_id, challenge_ds_tag).
+    pub fn prepare_anchor_status_query(&self) -> Result<(crate::models::layer2_api::L2StatusQuery, [u8; 32], String), Error> {
+        match &self.state {
+            AppState::Unlocked {
+                storage,
+                identity,
+                session_cache,
+                ..
+            } => {
+                let auth = self.get_read_auth(session_cache)?;
+                let record = storage.load_seal(&auth)?.ok_or(Error::App(crate::error::AppError::MissingLocalSeal))?;
+                let epoch = record.seal.payload.epoch as u64;
+                let tx_nonce = record.seal.payload.tx_nonce;
+                let prev_hash = &record.seal.payload.prev_seal_hash;
+                let current_tag = crate::models::seal::derive_anchor_step_tag(prev_hash, tx_nonce);
+
+                let mut local_t_id = [0u8; 32];
+                if let Ok(bytes) = hex::decode(&record.seal.payload.state_hash) {
+                    if bytes.len() == 32 {
+                        local_t_id.copy_from_slice(&bytes);
+                    }
+                } else if let Ok(bytes) = bs58::decode(&record.seal.payload.state_hash).into_vec() {
+                    if bytes.len() == 32 {
+                        local_t_id.copy_from_slice(&bytes);
+                    }
+                } else {
+                    let h = blake3::hash(record.seal.payload.state_hash.as_bytes());
+                    local_t_id = *h.as_bytes();
+                }
+
+                let query = crate::services::l2_gateway::build_anchor_status_query(
+                    identity,
+                    epoch,
+                    &current_tag,
+                    vec![],
+                    1,
+                )?;
+                Ok((query, local_t_id, current_tag))
+            }
+            AppState::Locked => Err(Error::WalletLocked),
+        }
+    }
+
     /// Explicitly archives a voucher and marks the state for debounced anchor update.
     pub fn archive_voucher(
         &mut self,
