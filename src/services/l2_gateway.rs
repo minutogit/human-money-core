@@ -1,7 +1,7 @@
 use crate::error::VoucherCoreError;
 use crate::models::layer2_api::{
-    L2AuthPayload, L2LockEntry, L2LockRequest, L2ResponseEnvelope, L2StatusQuery, L2Verdict,
-    QuorumCertificateDto,
+    L2AuthPayload, L2ChainLockRequest, L2LockEntry, L2LockRequest, L2ResponseEnvelope,
+    L2StatusQuery, L2Verdict, QuorumCertificateDto,
 };
 use crate::models::profile::UserIdentity;
 use crate::models::voucher::Transaction;
@@ -897,6 +897,112 @@ pub fn evaluate_multi_node_anchor_verdicts(
     }
 }
 
+/// Builds an atomic `L2ChainLockRequest` that bundles all not-yet-anchored
+/// voucher steps together with an optional genesis lock.
+///
+/// - If `sync_point` is `None` or `"genesis"` the chain starts at index 0
+///   (genesis lock) — included if the voucher is not yet anchored on L2.
+/// - Otherwise all transactions strictly *after* the transaction identified by
+///   `sync_point` up to and including the transaction referenced by
+///   `target_spend_req` are collected.
+///
+/// `sync_point` may be a full `t_id`, a full `ds_tag`, or a 10-character
+/// prefix (as emitted by [`L2Verdict::MissingLocks`]); it is resolved in that
+/// order. `target_spend_req` itself is reused verbatim as the final chain
+/// element so callers can preserve their pre-signed payload; preceding elements
+/// are freshly derived via [`generate_lock_request`].
+pub fn build_voucher_lock_chain(
+    voucher: &crate::models::voucher::Voucher,
+    sync_point: Option<&str>,
+    target_spend_req: L2LockRequest,
+) -> Result<L2ChainLockRequest, VoucherCoreError> {
+    if voucher.transactions.is_empty() {
+        return Err(crate::Error::Wallet(crate::error::WalletError::MissingTransactions));
+    }
+
+    let expected_voucher_id = extract_layer2_voucher_id(voucher)?;
+
+    // Locate the target transaction index by matching transaction_hash.
+    let target_idx = voucher
+        .transactions
+        .iter()
+        .position(|tx| {
+            crate::services::crypto::decode_bs58_fixed::<32>(&tx.t_id, "t_id")
+                .map(|b| b == target_spend_req.transaction_hash)
+                .unwrap_or(false)
+        })
+        .ok_or_else(|| {
+            VoucherCoreError::Validation(crate::error::ValidationError::InvalidTransaction(
+                "target transaction not found in voucher".to_string(),
+            ))
+        })?;
+
+    let start_idx = match sync_point {
+        None => 0,
+        Some(s) if s == "genesis" => 0,
+        Some(sp) => {
+            let sync_idx = voucher.transactions.iter().position(|tx| {
+                if tx.t_id == sp {
+                    return true;
+                }
+                if let Some(td) = &tx.trap_data {
+                    if td.ds_tag == sp {
+                        return true;
+                    }
+                    if td.ds_tag.starts_with(sp) || tx.t_id.starts_with(sp) {
+                        return true;
+                    }
+                } else if tx.t_id.starts_with(sp) {
+                    return true;
+                }
+                false
+            });
+            match sync_idx {
+                Some(idx) => idx + 1,
+                None => {
+                    return Err(VoucherCoreError::Validation(
+                        crate::error::ValidationError::InvalidTransaction(format!(
+                            "sync_point '{}' not found in voucher chain",
+                            sp
+                        )),
+                    ))
+                }
+            }
+        }
+    };
+
+    if start_idx > target_idx {
+        return Err(VoucherCoreError::Validation(
+            crate::error::ValidationError::InvalidTransaction(format!(
+                "sync_point is beyond target transaction (start {} > target {})",
+                start_idx, target_idx
+            )),
+        ));
+    }
+
+    let mut chain = Vec::with_capacity(target_idx - start_idx + 1);
+    for idx in start_idx..=target_idx {
+        if idx == target_idx {
+            chain.push(target_spend_req.clone());
+        } else {
+            let tx = &voucher.transactions[idx];
+            let sender_str = tx.sender_ephemeral_pub.as_deref().ok_or_else(|| {
+                crate::Error::Wallet(crate::error::WalletError::MissingSenderEphemeralPub)
+            })?;
+            let sender_bytes =
+                crate::services::crypto::decode_bs58_fixed::<32>(sender_str, "sender_ephemeral_pub")?;
+            let req = generate_lock_request(&expected_voucher_id, tx, &sender_bytes)?;
+            chain.push(req);
+        }
+    }
+
+    Ok(L2ChainLockRequest {
+        auth: target_spend_req.auth.clone(),
+        layer2_voucher_id: expected_voucher_id,
+        chain,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1197,5 +1303,204 @@ mod tests {
             &voucher_id,
         ).unwrap();
         assert_eq!(action3, VerdictAction::ConfirmProvisional { certificate: Some(cert_prov) });
+    }
+
+    #[test]
+    fn test_l2_chain_lock_request_serde() {
+        use crate::models::layer2_api::{L2AuthPayload, L2ChainLockRequest, L2LockRequest};
+        let mut rng = rand::thread_rng();
+        let sk1 = ed25519_dalek::SigningKey::generate(&mut rng);
+        let pk1 = sk1.verifying_key().to_bytes();
+        let sk2 = ed25519_dalek::SigningKey::generate(&mut rng);
+        let pk2 = sk2.verifying_key().to_bytes();
+
+        let auth_top = L2AuthPayload {
+            ephemeral_pubkey: pk1,
+            auth_signature: None,
+        };
+        let t_id = [0x11u8; 32];
+        let sig = [0x22u8; 64];
+        let lock1 = L2LockRequest {
+            auth: L2AuthPayload {
+                ephemeral_pubkey: pk1,
+                auth_signature: None,
+            },
+            layer2_voucher_id: "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234".to_string(),
+            ds_tag: None,
+            transaction_hash: t_id,
+            is_genesis: true,
+            sender_ephemeral_pub: pk1,
+            receiver_ephemeral_pub_hash: None,
+            change_ephemeral_pub_hash: None,
+            layer2_signature: sig,
+            trap_r: Some(TRAP_NONE_PLACEHOLDER.to_string()),
+            trap_s: Some(TRAP_NONE_PLACEHOLDER.to_string()),
+            encrypted_timestamp: 12345,
+            deletable_at: Some("2026-01-01T00:00:00Z".to_string()),
+            privacy_guard: None,
+        };
+        let lock2 = L2LockRequest {
+            auth: L2AuthPayload {
+                ephemeral_pubkey: pk2,
+                auth_signature: None,
+            },
+            layer2_voucher_id: lock1.layer2_voucher_id.clone(),
+            ds_tag: Some("some_ds_tag".to_string()),
+            transaction_hash: [0x33u8; 32],
+            is_genesis: false,
+            sender_ephemeral_pub: pk2,
+            receiver_ephemeral_pub_hash: None,
+            change_ephemeral_pub_hash: None,
+            layer2_signature: sig,
+            trap_r: Some("trapR".to_string()),
+            trap_s: Some("trapS".to_string()),
+            encrypted_timestamp: 999,
+            deletable_at: None,
+            privacy_guard: Some("guard".to_string()),
+        };
+        let chain_req = L2ChainLockRequest {
+            auth: auth_top.clone(),
+            layer2_voucher_id: lock1.layer2_voucher_id.clone(),
+            chain: vec![lock1.clone(), lock2.clone()],
+        };
+        let json = serde_json::to_string(&chain_req).expect("serialize chain req");
+        let de: L2ChainLockRequest = serde_json::from_str(&json).expect("deserialize chain req");
+        assert_eq!(de.layer2_voucher_id, chain_req.layer2_voucher_id);
+        assert_eq!(de.chain.len(), 2);
+        assert_eq!(de.auth.ephemeral_pubkey, auth_top.ephemeral_pubkey);
+        assert_eq!(de.chain[0].transaction_hash, lock1.transaction_hash);
+        assert_eq!(de.chain[1].transaction_hash, lock2.transaction_hash);
+        // Roundtrip determinism
+        let json2 = serde_json::to_string(&de).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn test_build_voucher_lock_chain_genesis_variants() {
+        use crate::test_utils::{ACTORS, FREETALER_STANDARD};
+        use crate::test_utils::voucher_setup::{create_transaction_with_auto_decrypt, setup_voucher_with_one_tx};
+
+        let (standard, _hash, _creator, _recipient, voucher1, secrets1) = setup_voucher_with_one_tx();
+        // Build second tx: bob -> charlie
+        let bob = &ACTORS.bob.identity;
+        let charlie = &ACTORS.charlie.identity;
+        let seed_bytes = bs58::decode(&secrets1.recipient_seed)
+            .into_vec()
+            .expect("decode seed");
+        let seed_arr: [u8; 32] = seed_bytes.try_into().expect("32 bytes");
+        let bob_eph = ed25519_dalek::SigningKey::from_bytes(&seed_arr);
+        let (voucher2, _next_seed) = create_transaction_with_auto_decrypt(
+            &voucher1,
+            standard,
+            &bob.user_id,
+            &bob.signing_key,
+            &bob_eph,
+            &charlie.user_id,
+            &charlie.signing_key,
+            "10.00",
+        )
+        .expect("second tx");
+
+        assert_eq!(voucher2.transactions.len(), 3);
+        let layer2_id = extract_layer2_voucher_id(&voucher2).unwrap();
+
+        // Generate target request for last tx (bob->charlie)
+        let last_tx = voucher2.transactions.last().unwrap();
+        let last_sender_str = last_tx.sender_ephemeral_pub.as_deref().unwrap();
+        let last_sender_bytes =
+            crate::services::crypto::decode_bs58_fixed::<32>(last_sender_str, "sender_pub").unwrap();
+        let target_req = generate_lock_request(&layer2_id, last_tx, &last_sender_bytes).unwrap();
+
+        // Case A: sync_point None -> genesis inclusive chain of length 3
+        let chain_none = build_voucher_lock_chain(&voucher2, None, target_req.clone()).unwrap();
+        assert_eq!(chain_none.chain.len(), 3);
+        assert!(chain_none.chain[0].is_genesis);
+        assert_eq!(chain_none.chain[2].transaction_hash, target_req.transaction_hash);
+        assert_eq!(chain_none.layer2_voucher_id, layer2_id);
+
+        // Case B: sync_point "genesis" -> also starts at 0
+        let chain_genesis = build_voucher_lock_chain(&voucher2, Some("genesis"), target_req.clone()).unwrap();
+        assert_eq!(chain_genesis.chain.len(), 3);
+        assert!(chain_genesis.chain[0].is_genesis);
+
+        // Case C: sync_point = t_id of genesis -> chain after genesis (len 2)
+        let genesis_tid = voucher2.transactions[0].t_id.clone();
+        let chain_after_genesis =
+            build_voucher_lock_chain(&voucher2, Some(&genesis_tid), target_req.clone()).unwrap();
+        assert_eq!(chain_after_genesis.chain.len(), 2);
+        assert!(!chain_after_genesis.chain[0].is_genesis);
+        // first element should correspond to tx1
+        let tx1_hash = crate::services::crypto::decode_bs58_fixed::<32>(&voucher2.transactions[1].t_id, "t_id").unwrap();
+        assert_eq!(chain_after_genesis.chain[0].transaction_hash, tx1_hash);
+
+        // Case D: sync_point = ds_tag of first spend -> only last tx
+        let tx1_ds = voucher2.transactions[1].trap_data.as_ref().unwrap().ds_tag.clone();
+        let chain_after_tx1 = build_voucher_lock_chain(&voucher2, Some(&tx1_ds), target_req.clone()).unwrap();
+        assert_eq!(chain_after_tx1.chain.len(), 1);
+        assert_eq!(chain_after_tx1.chain[0].transaction_hash, target_req.transaction_hash);
+
+        // Case E: sync_point prefix (10 chars) of genesis t_id
+        let genesis_prefix: String = genesis_tid.chars().take(10).collect();
+        let chain_prefix = build_voucher_lock_chain(&voucher2, Some(&genesis_prefix), target_req.clone()).unwrap();
+        assert_eq!(chain_prefix.chain.len(), 2);
+
+        // Serde roundtrip of built chain
+        let json = serde_json::to_string(&chain_none).unwrap();
+        let de: crate::models::layer2_api::L2ChainLockRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.chain.len(), 3);
+    }
+
+    #[test]
+    fn test_build_voucher_lock_chain_error_cases() {
+        use crate::test_utils::{ACTORS, FREETALER_STANDARD};
+        use crate::test_utils::voucher_setup::{create_transaction_with_auto_decrypt, setup_voucher_with_one_tx};
+
+        let (standard, _hash, _creator, _recipient, voucher1, secrets1) = setup_voucher_with_one_tx();
+        let bob = &ACTORS.bob.identity;
+        let charlie = &ACTORS.charlie.identity;
+        let seed_bytes = bs58::decode(&secrets1.recipient_seed).into_vec().unwrap();
+        let seed_arr: [u8; 32] = seed_bytes.try_into().unwrap();
+        let bob_eph = ed25519_dalek::SigningKey::from_bytes(&seed_arr);
+        let (voucher2, _) = create_transaction_with_auto_decrypt(
+            &voucher1,
+            standard,
+            &bob.user_id,
+            &bob.signing_key,
+            &bob_eph,
+            &charlie.user_id,
+            &charlie.signing_key,
+            "10.00",
+        )
+        .unwrap();
+        let layer2_id = extract_layer2_voucher_id(&voucher2).unwrap();
+        let last_tx = voucher2.transactions.last().unwrap();
+        let last_sender_bytes = crate::services::crypto::decode_bs58_fixed::<32>(
+            last_tx.sender_ephemeral_pub.as_deref().unwrap(),
+            "sender_pub",
+        )
+        .unwrap();
+        let target_req = generate_lock_request(&layer2_id, last_tx, &last_sender_bytes).unwrap();
+
+        // Unknown sync_point
+        let err = build_voucher_lock_chain(&voucher2, Some("nonexistent_sync_point"), target_req.clone()).unwrap_err();
+        assert!(format!("{:?}", err).contains("sync_point"));
+
+        // sync beyond target (use last tx's t_id as sync)
+        let last_tid = last_tx.t_id.clone();
+        let err2 = build_voucher_lock_chain(&voucher2, Some(&last_tid), target_req.clone()).unwrap_err();
+        assert!(format!("{:?}", err2).contains("beyond"));
+
+        // target not in voucher
+        let fake_target = L2LockRequest {
+            transaction_hash: [0xFFu8; 32],
+            ..target_req.clone()
+        };
+        let err3 = build_voucher_lock_chain(&voucher2, None, fake_target).unwrap_err();
+        assert!(format!("{:?}", err3).contains("target"));
+
+        // empty voucher
+        let empty_voucher = crate::models::voucher::Voucher::default();
+        let err4 = build_voucher_lock_chain(&empty_voucher, None, target_req).unwrap_err();
+        assert!(format!("{:?}", err4).contains("MissingTransactions") || format!("{:?}", err4).contains("transactions"));
     }
 }

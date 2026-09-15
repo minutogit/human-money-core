@@ -292,6 +292,14 @@ pub struct L2BatchLockRequest {
     pub locks: Vec<L2LockRequest>,
 }
 
+/// Request: Atomic chain lock for offline steps bundled with genesis.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct L2ChainLockRequest {
+    pub auth: L2AuthPayload,
+    pub layer2_voucher_id: String,
+    pub chain: Vec<L2LockRequest>,
+}
+
 /// Response: The verdict of the L2 server regarding the state of a tag or the chain.
 /// Signed attestation from a consensus or ingress node.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
