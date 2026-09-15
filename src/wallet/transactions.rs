@@ -855,6 +855,14 @@ impl Wallet {
         // 4. **Commit:** If all operations were successful, replace the
         //    original wallet state with that of the temporary instance.
         *self = temp_wallet;
+        // 4b. **Routing memory update**: record corridor usage for each transferred standard
+        {
+            let now = chrono::Utc::now();
+            for voucher in &transferred_states {
+                let std_uuid = voucher.voucher_standard.uuid.clone();
+                self.routing_memory.record_transfer(&std_uuid, &request.recipient_id, &header.bundle_id, now);
+            }
+        }
 
         // 5. **Post-commit archiving (HMC-SEC-04-03):** Archive writes are
         //    side effects that cannot be rolled back with the wallet state,

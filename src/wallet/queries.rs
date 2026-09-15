@@ -619,5 +619,59 @@ impl Wallet {
                 .any(|tx| tx.t_id == tx_id)
         })
     }
+
+    /// Ranks all active vouchers for a transfer target using gravitational scoring.
+    ///
+    /// Deterministic scoring components:
+    /// - Bumerang +10000 (returning voucher to its previous sender)
+    /// - Eigen -2500 (self-issued penalty)
+    /// - Korridor 0..1000 (corridor weight from RoutingMemoryStore)
+    /// - Relativer FEFO AgeRatio*1000
+    /// - S_chain only for own
+    /// - S_fit Exact Match +300 / Split -100
+    ///
+    /// Returns ranked list sorted descending (deterministic tie-break by local_instance_id).
+    pub fn rank_vouchers(
+        &mut self,
+        target_amount: &str,
+        standard_uuid_filter: Option<&str>,
+        recipient_id: &str,
+    ) -> Result<Vec<crate::wallet::coin_selection::RankedVoucher>, VoucherCoreError> {
+        let target = Decimal::from_str(target_amount).map_err(|e| {
+            crate::error::VoucherCoreError::Wallet(crate::error::WalletError::InvalidAmount {
+                reason: format!("Invalid target amount '{}': {}", target_amount, e),
+            })
+        })?;
+        // Take mutable borrow of routing_memory via split borrow
+        let mut mem = std::mem::take(&mut self.routing_memory);
+        let ranked = crate::wallet::coin_selection::rank_vouchers(self, target, standard_uuid_filter, recipient_id, &mut mem);
+        self.routing_memory = mem;
+        Ok(ranked)
+    }
+
+    /// Prepares a gravitational transfer plan (3-stage: exact → subset-sum → greedy-split).
+    pub fn prepare_transfer(
+        &mut self,
+        target_amount: &str,
+        standard_uuid_filter: Option<&str>,
+        recipient_id: &str,
+    ) -> Result<crate::wallet::coin_selection::TransferPlan, VoucherCoreError> {
+        let target = Decimal::from_str(target_amount).map_err(|e| {
+            crate::error::VoucherCoreError::Wallet(crate::error::WalletError::InvalidAmount {
+                reason: format!("Invalid target amount '{}': {}", target_amount, e),
+            })
+        })?;
+        let mut mem = std::mem::take(&mut self.routing_memory);
+        let plan = crate::wallet::coin_selection::prepare_transfer(self, target, standard_uuid_filter, recipient_id, &mut mem)?;
+        self.routing_memory = mem;
+        Ok(plan)
+    }
+
+    /// Records a successful corridor usage (bundle deduplication + asymptotic reinforcement).
+    /// Should be called after a bundle is successfully sent/received.
+    pub fn record_corridor_transfer(&mut self, standard_uuid: &str, recipient_id: &str, bundle_id: &str) {
+        let now = chrono::Utc::now();
+        self.routing_memory.record_transfer(standard_uuid, recipient_id, bundle_id, now);
+    }
 }
 

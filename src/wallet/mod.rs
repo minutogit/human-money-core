@@ -8,6 +8,8 @@
 // Declares the `instance` module as a public part of the `wallet` module.
 pub mod instance;
 pub mod types;
+pub mod routing_memory;
+pub mod coin_selection;
 mod conflicts;
 mod lifecycle;
 mod queries;
@@ -51,6 +53,8 @@ pub struct Wallet {
     /// Central, canonical storage for dynamic metadata.
     /// Contains metadata for ALL fingerprints in the other stores.
     pub fingerprint_metadata: CanonicalMetadataStore,
+    /// Intelligent Layer-1 routing memory (corridor reinforcement, lazy decay, LRU).
+    pub routing_memory: crate::wallet::routing_memory::RoutingMemoryStore,
     /// Unique ID of the local device for clone protection.
     pub local_instance_id: String,
     /// In-RAM events that have not yet been persistently flushed to disk.

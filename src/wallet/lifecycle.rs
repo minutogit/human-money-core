@@ -90,6 +90,7 @@ impl Wallet {
         let own_fingerprints = OwnFingerprints::default();
         let proof_store = ProofStore::default();
         let fingerprint_metadata = CanonicalMetadataStore::default();
+        let routing_memory = crate::wallet::routing_memory::RoutingMemoryStore::default();
 
         let wallet = Wallet {
             profile,
@@ -99,6 +100,7 @@ impl Wallet {
             own_fingerprints,
             proof_store,
             fingerprint_metadata,
+            routing_memory,
             local_instance_id,
             pending_events: Vec::new(),
             loaded_generation: 0,
@@ -145,6 +147,7 @@ impl Wallet {
             own_fingerprints,
             proof_store,
             fingerprint_metadata,
+            routing_memory: crate::wallet::routing_memory::RoutingMemoryStore::default(),
             local_instance_id,
             pending_events: Vec::new(),
             loaded_generation,
