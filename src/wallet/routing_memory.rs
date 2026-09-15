@@ -51,20 +51,24 @@ impl CorridorEntry {
         }
     }
 
+    /// Calculate decayed weight without mutating.
+    pub fn decayed_weight(&self, now: DateTime<Utc>) -> u32 {
+        let elapsed_secs = (now - self.last_update).num_seconds().max(0) as f64;
+        if elapsed_secs <= 0.0 || self.weight == 0 {
+            return self.weight;
+        }
+        let days = elapsed_secs / 86_400.0;
+        let factor = 0.5_f64.powf(days / HALF_LIFE_DAYS);
+        let decayed = (self.weight as f64 * factor).round() as i64;
+        decayed.clamp(0, CORRIDOR_CAP as i64) as u32
+    }
+
     /// Apply lazy decay based on elapsed time since `last_update`.
     ///
     /// Decay formula: `weight' = weight * 0.5^(days / 365)`
     /// The `last_update` is advanced to `now` after decay.
     pub fn apply_lazy_decay(&mut self, now: DateTime<Utc>) {
-        let elapsed_secs = (now - self.last_update).num_seconds().max(0) as f64;
-        if elapsed_secs <= 0.0 || self.weight == 0 {
-            self.last_update = now;
-            return;
-        }
-        let days = elapsed_secs / 86_400.0;
-        let factor = 0.5_f64.powf(days / HALF_LIFE_DAYS);
-        let decayed = (self.weight as f64 * factor).round() as i64;
-        self.weight = decayed.clamp(0, CORRIDOR_CAP as i64) as u32;
+        self.weight = self.decayed_weight(now);
         self.last_update = now;
     }
 
@@ -111,19 +115,18 @@ impl RoutingMemoryStore {
         Self::default()
     }
 
-    /// Returns the current weight for a corridor (after applying lazy decay).
+    /// Returns the current weight for a corridor (calculating lazy decay purely on read).
     ///
     /// If the corridor does not exist, returns 0.
     pub fn get_weight(
-        &mut self,
+        &self,
         standard_uuid: &str,
         recipient_id: &str,
         now: DateTime<Utc>,
     ) -> u32 {
         let key = corridor_key(standard_uuid, recipient_id);
-        if let Some(entry) = self.corridors.get_mut(&key) {
-            entry.apply_lazy_decay(now);
-            entry.weight
+        if let Some(entry) = self.corridors.get(&key) {
+            entry.decayed_weight(now)
         } else {
             0
         }
@@ -135,8 +138,8 @@ impl RoutingMemoryStore {
         self.corridors.get(&key).map(|e| e.weight).unwrap_or(0)
     }
 
-    /// Peek weight with decay applied but without eviction logic (mutates last_update).
-    pub fn peek_weight_decayed(&mut self, standard_uuid: &str, recipient_id: &str) -> u32 {
+    /// Peek weight with decay applied.
+    pub fn peek_weight_decayed(&self, standard_uuid: &str, recipient_id: &str) -> u32 {
         self.get_weight(standard_uuid, recipient_id, Utc::now())
     }
 

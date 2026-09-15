@@ -632,7 +632,7 @@ impl Wallet {
     ///
     /// Returns ranked list sorted descending (deterministic tie-break by local_instance_id).
     pub fn rank_vouchers(
-        &mut self,
+        &self,
         target_amount: &str,
         standard_uuid_filter: Option<&str>,
         recipient_id: &str,
@@ -642,16 +642,13 @@ impl Wallet {
                 reason: format!("Invalid target amount '{}': {}", target_amount, e),
             })
         })?;
-        // Take mutable borrow of routing_memory via split borrow
-        let mut mem = std::mem::take(&mut self.routing_memory);
-        let ranked = crate::wallet::coin_selection::rank_vouchers(self, target, standard_uuid_filter, recipient_id, &mut mem);
-        self.routing_memory = mem;
+        let ranked = crate::wallet::coin_selection::rank_vouchers(self, target, standard_uuid_filter, recipient_id, &self.routing_memory);
         Ok(ranked)
     }
 
     /// Prepares a gravitational transfer plan (3-stage: exact → subset-sum → greedy-split).
     pub fn prepare_transfer(
-        &mut self,
+        &self,
         target_amount: &str,
         standard_uuid_filter: Option<&str>,
         recipient_id: &str,
@@ -661,9 +658,7 @@ impl Wallet {
                 reason: format!("Invalid target amount '{}': {}", target_amount, e),
             })
         })?;
-        let mut mem = std::mem::take(&mut self.routing_memory);
-        let plan = crate::wallet::coin_selection::prepare_transfer(self, target, standard_uuid_filter, recipient_id, &mut mem)?;
-        self.routing_memory = mem;
+        let plan = crate::wallet::coin_selection::prepare_transfer(self, target, standard_uuid_filter, recipient_id, &self.routing_memory)?;
         Ok(plan)
     }
 

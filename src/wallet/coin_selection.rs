@@ -173,7 +173,7 @@ pub fn rank_vouchers(
     target: Decimal,
     standard_uuid_filter: Option<&str>,
     recipient_id: &str,
-    routing_memory: &mut RoutingMemoryStore,
+    routing_memory: &RoutingMemoryStore,
 ) -> Vec<RankedVoucher> {
     rank_vouchers_internal(wallet, target, standard_uuid_filter, recipient_id, routing_memory, Utc::now())
 }
@@ -183,7 +183,7 @@ fn rank_vouchers_internal(
     target: Decimal,
     standard_uuid_filter: Option<&str>,
     recipient_id: &str,
-    routing_memory: &mut RoutingMemoryStore,
+    routing_memory: &RoutingMemoryStore,
     now: DateTime<Utc>,
 ) -> Vec<RankedVoucher> {
     // Collect ages for relative FEFO calculation.
@@ -331,7 +331,7 @@ pub fn prepare_transfer(
     target: Decimal,
     standard_uuid_filter: Option<&str>,
     recipient_id: &str,
-    routing_memory: &mut RoutingMemoryStore,
+    routing_memory: &RoutingMemoryStore,
 ) -> Result<TransferPlan, crate::error::VoucherCoreError> {
     if target <= Decimal::ZERO {
         return Err(crate::error::VoucherCoreError::Wallet(
