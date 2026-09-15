@@ -125,6 +125,8 @@ pub struct ImmutableFeatures {
     pub privacy_mode: PrivacyMode,
     /// Allowed transaction types for vouchers of this standard (e.g. `["init", "transfer", "split"]`).
     pub allowed_t_types: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_transfer_amount: Option<String>,
 }
 
 /// Rules for creating and issuing new vouchers (Issuance Firewall).

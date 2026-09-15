@@ -532,6 +532,18 @@ pub enum ValidationError {
     /// L2 server rejected request.
     #[error("L2 server rejected request: {reason}")]
     L2Rejected { reason: String },
+
+    #[error("Hop limit exceeded: depth {depth} exceeds maximum path depth {max}.")]
+    HopLimitExceeded { depth: usize, max: usize },
+
+    #[error("Split forbidden in consolidation zone: depth {depth} exceeds max split depth {max_split_depth}.")]
+    SplitForbiddenInConsolidationZone { depth: usize, max_split_depth: usize },
+
+    #[error("Issuer recirculation forbidden: issuer re-entry at depth {depth} exceeds threshold {threshold}.")]
+    IssuerRecirculationForbidden { depth: usize, threshold: usize },
+
+    #[error("Minimum transfer amount violated: amount {amount} is less than minimum allowed {min_allowed}.")]
+    MinTransferAmountViolated { amount: String, min_allowed: String },
 }
 
 impl From<GetPubkeyError> for ValidationError {

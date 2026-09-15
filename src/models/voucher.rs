@@ -37,6 +37,9 @@ pub struct TransactionSecrets {
 /// The ID used for anonymous participants in transactions.
 pub const ANONYMOUS_ID: &str = "anonymous";
 
+pub const MAX_PATH_DEPTH: usize = 1024;
+pub const CONSOLIDATION_ZONE_THRESHOLD: usize = 512;
+
 /// Defines the standard to which a voucher belongs.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct VoucherStandard {
@@ -321,6 +324,8 @@ impl ValueDefinition {
 }
 
 impl Voucher {
+    pub fn hop_depth(&self) -> usize { self.transactions.len().saturating_sub(1) }
+
     /// Creates a new `Voucher` using the given identity.
     pub fn create(
         identity: &UserIdentity,

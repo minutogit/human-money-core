@@ -145,6 +145,14 @@ pub fn verify_transactions(
         ));
     }
 
+    if voucher.hop_depth() > crate::models::voucher::MAX_PATH_DEPTH {
+        return Err(ValidationError::HopLimitExceeded {
+            depth: voucher.hop_depth(),
+            max: crate::models::voucher::MAX_PATH_DEPTH,
+        }
+        .into());
+    }
+
     let allowed_decimal_places = standard.immutable.features.amount_decimal_places as u32;
 
     for (i, tx) in voucher.transactions.iter().enumerate() {
@@ -185,6 +193,46 @@ pub fn verify_transactions(
 
     for (i, tx) in voucher.transactions.iter().enumerate().skip(1) {
         let prev_tx = &voucher.transactions[i - 1];
+
+        if i >= crate::models::voucher::CONSOLIDATION_ZONE_THRESHOLD {
+            if tx.t_type == "split" {
+                return Err(ValidationError::SplitForbiddenInConsolidationZone {
+                    depth: i,
+                    max_split_depth: crate::models::voucher::CONSOLIDATION_ZONE_THRESHOLD,
+                }
+                .into());
+            }
+            if tx.sender_id.as_deref() == voucher.creator_profile.id.as_deref() {
+                return Err(ValidationError::IssuerRecirculationForbidden {
+                    depth: i,
+                    threshold: crate::models::voucher::CONSOLIDATION_ZONE_THRESHOLD,
+                }
+                .into());
+            }
+        }
+        if let Some(min_str) = &standard.immutable.features.min_transfer_amount {
+            let min_amt = Decimal::from_str(min_str)?;
+            let amt = Decimal::from_str(&tx.amount)?;
+            if amt < min_amt {
+                return Err(ValidationError::MinTransferAmountViolated {
+                    amount: tx.amount.clone(),
+                    min_allowed: min_str.clone(),
+                }
+                .into());
+            }
+            if tx.t_type == "split" {
+                if let Some(rem) = &tx.sender_remaining_amount {
+                    let rem_amt = Decimal::from_str(rem)?;
+                    if rem_amt < min_amt {
+                        return Err(ValidationError::MinTransferAmountViolated {
+                            amount: rem.clone(),
+                            min_allowed: min_str.clone(),
+                        }
+                        .into());
+                    }
+                }
+            }
+        }
 
         verify_transaction_basics(tx, voucher, false)?;
         verify_transaction_integrity_and_signature(tx, &layer2_voucher_id)?;
