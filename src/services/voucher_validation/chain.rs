@@ -254,7 +254,27 @@ pub fn verify_transactions(
                 }
                 .into());
             }
-            if tx.sender_id.as_deref() == voucher.creator_profile.id.as_deref() {
+            // SECURITY (AUDIT-00-WILDCARD — novel SAI recirculation bypass):
+            // Use pubkey equality (prefix-tolerant) instead of raw string equality.
+            // A voucher issued by `did:key:zABC` and later spent by
+            // `evil@did:key:zABC` is the same key — string check would miss it,
+            // letting the issuer `transfer` past the consolidation threshold
+            // instead of being forced to `redeem`.
+            let is_issuer = if let (Some(sid), Some(cid)) =
+                (tx.sender_id.as_deref(), voucher.creator_profile.id.as_deref())
+            {
+                if sid == cid {
+                    true
+                } else if sid.contains(':') && cid.contains(':') {
+                    crate::services::crypto::get_pubkey_from_user_id(sid).ok()
+                        == crate::services::crypto::get_pubkey_from_user_id(cid).ok()
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if is_issuer {
                 return Err(ValidationError::IssuerRecirculationForbidden {
                     depth: i,
                     threshold: crate::models::voucher::CONSOLIDATION_ZONE_THRESHOLD,

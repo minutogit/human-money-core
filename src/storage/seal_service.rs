@@ -115,6 +115,13 @@ impl SealService {
         let record_opt = storage.load_seal(auth)?;
 
         let current_state_hash = Self::calculate_state_hash(&wallet.own_fingerprints)?;
+        // AUDIT-00-WILDCARD-26: verify_state_matches_seal already accepts BOTH
+        // narrow and comprehensive hashes (see above). A future migration to
+        // persist comprehensive (voucher Merkle root + epoch/nonce) would make
+        // rollback of received vouchers detectable. The comprehensive helper
+        // `calculate_comprehensive_state_hash` exists and is used in verify;
+        // persist migration is deferred to avoid breaking existing seals during
+        // this audit wave. The test wildcard_26 guards the verify side.
 
         let updated_seal = match record_opt {
             Some(mut record) => {

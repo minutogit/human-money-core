@@ -108,10 +108,25 @@ fn bundle_contains_anonymous_chain(bundle: &TransactionBundle) -> bool {
 ///
 /// # Returns
 /// The validated `TransactionBundle`.
+/// Maximum allowed SecureContainer size (256 KB) to prevent OOM on
+/// unauthenticated `from_slice` before integrity verification (AUDIT-00-WILDCARD-24).
+pub const MAX_CONTAINER_BYTES: usize = 256 * 1024;
+
 pub fn open_and_verify_bundle(
     identity: &UserIdentity,
     container_bytes: &[u8],
 ) -> Result<TransactionBundle, VoucherCoreError> {
+    // SECURITY (AUDIT-00-WILDCARD-24): Reject oversized containers before
+    // deserialization to prevent OOM DoS via unauthenticated from_slice.
+    if container_bytes.len() > MAX_CONTAINER_BYTES {
+        return Err(VoucherCoreError::Validation(
+            crate::error::ValidationError::InvalidTransaction(format!(
+                "Container exceeds maximum size ({} > {} bytes)",
+                container_bytes.len(),
+                MAX_CONTAINER_BYTES
+            )),
+        ));
+    }
     let mut container: SecureContainer = serde_json::from_slice(container_bytes)?;
 
     if container.c != PayloadType::TransactionBundle {

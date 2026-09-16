@@ -101,12 +101,24 @@ impl WalletSeal {
         let prev_seal_canonical = to_canonical_json(self)?;
         let prev_hash = get_hash(prev_seal_canonical.as_bytes());
 
+        // SECURITY (AUDIT-00-WILDCARD-22 / CWE-190): checked arithmetic — wrap
+        // at u64::MAX would silently produce nonce 0 without epoch bump,
+        // breaking monotonicity and hash-chain invariants.
+        let next_nonce = self.payload.tx_nonce.checked_add(1).ok_or_else(|| {
+            crate::error::VoucherCoreError::Validation(
+                crate::error::ValidationError::InvalidTransaction(
+                    "Seal tx_nonce overflow: counter at u64::MAX, wallet requires recovery"
+                        .to_string(),
+                ),
+            )
+        })?;
+
         let payload = SealPayload {
             version: self.payload.version,
             user_id: self.payload.user_id.clone(),
             epoch: self.payload.epoch,
             epoch_start_time: self.payload.epoch_start_time.clone(),
-            tx_nonce: self.payload.tx_nonce + 1,
+            tx_nonce: next_nonce,
             prev_seal_hash: prev_hash,
             state_hash: new_state_hash.to_string(),
             timestamp: get_current_timestamp(),
@@ -225,11 +237,20 @@ impl WalletSeal {
     ) -> Result<Self, VoucherCoreError> {
         let now = get_current_timestamp();
 
+        // SECURITY (AUDIT-00-WILDCARD-22 / CWE-190): checked epoch bump — wrap
+        // at u32::MAX would collide with genesis epoch 0.
         let (new_epoch, prev_hash) = match last_known_seal {
             Some(seal) => {
                 let seal_canonical = to_canonical_json(seal)?;
                 let hash = get_hash(seal_canonical.as_bytes());
-                (seal.payload.epoch + 1, hash)
+                let bumped = seal.payload.epoch.checked_add(1).ok_or_else(|| {
+                    crate::error::VoucherCoreError::Validation(
+                        crate::error::ValidationError::InvalidTransaction(
+                            "Seal epoch overflow: counter at u32::MAX".to_string(),
+                        ),
+                    )
+                })?;
+                (bumped, hash)
             }
             None => {
                 // Complete data loss: Start at Epoch 1 with genesis hash
@@ -307,30 +328,23 @@ impl WalletSeal {
         }
 
         // Same epoch: Nonce-based comparison with hash chain check
+        // SECURITY (AUDIT-00-WILDCARD-19 / Appendix 02-H2): gap>1 heuristic
+        // removed — nonce gaps >1 without a verifiable hash chain must be
+        // ForkDetected (fail-closed). The heuristic `gap>1 => Newer` bypassed
+        // fork detection for cloned wallets with divergent chains (distance ≥2)
+        // and let rolled-back state masquerade as newer.
         if local.payload.tx_nonce > remote.payload.tx_nonce {
-            // Local is further ahead. Check whether the chain leads back to remote.
-            // For direct succession (nonce + 1), prev_seal_hash == remote_hash must hold.
-            // For larger distances, we only check that the general direction matches.
             if local.payload.tx_nonce == remote.payload.tx_nonce + 1
                 && local.payload.prev_seal_hash == remote_hash
             {
                 return SealSyncState::LocalIsNewer;
             }
-            // For larger distances, the chain cannot be verified directly.
-            // We trust nonce ordering as long as epochs are equal.
-            // For strict security: ForkDetected on unknown prev_hash.
-            if local.payload.tx_nonce > remote.payload.tx_nonce + 1 {
-                // Cannot be directly verified -> LocalIsNewer as heuristic
-                return SealSyncState::LocalIsNewer;
-            }
+            // Gap >1 or mismatched prev_hash => ForkDetected (no heuristic trust)
             SealSyncState::ForkDetected
         } else if remote.payload.tx_nonce > local.payload.tx_nonce {
             if remote.payload.tx_nonce == local.payload.tx_nonce + 1
                 && remote.payload.prev_seal_hash == local_hash
             {
-                return SealSyncState::RemoteIsNewer;
-            }
-            if remote.payload.tx_nonce > local.payload.tx_nonce + 1 {
                 return SealSyncState::RemoteIsNewer;
             }
             SealSyncState::ForkDetected

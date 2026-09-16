@@ -100,9 +100,11 @@ pub(crate) fn acquire_lock(storage: &FileStorage) -> Result<bool, StorageError> 
                 let pid_val = match pid_result {
                     Ok(v) => v.unwrap_or(0),
                     Err(_) => {
-                        // Unparseable content -> treat as stale, re-acquire.
+                        // Unparseable content -> treat as stale, re-acquire atomically.
+                        // SECURITY (AUDIT-00-WILDCARD-23): Use create_new (O_EXCL)
+                        // loop instead of non-atomic create after remove.
                         let _ = fs::remove_file(storage.get_lock_file_path());
-                        let mut file = fs::File::create(storage.get_lock_file_path()).map_err(|e| {
+                        let mut file = fs::File::create_new(storage.get_lock_file_path()).map_err(|e| {
                             StorageError::LockAcquisitionFailed { reason: format!(
                                 "Konnte Lock-Datei nach Bereinigung nicht erstellen: {}",
                                 e
@@ -136,10 +138,10 @@ pub(crate) fn acquire_lock(storage: &FileStorage) -> Result<bool, StorageError> 
                             "Veraltete Sperre (Stale Lock) von PID {} gefunden und entfernt.",
                             pid_val
                         );
-                        // Remove stale lock and create fresh one.
+                        // Remove stale lock and re-acquire atomically (AUDIT-00-WILDCARD-23)
                         let _ = fs::remove_file(storage.get_lock_file_path());
                         let mut file =
-                            fs::File::create(storage.get_lock_file_path()).map_err(|e| {
+                            fs::File::create_new(storage.get_lock_file_path()).map_err(|e| {
                                 StorageError::LockAcquisitionFailed { reason: format!(
                                     "Konnte Lock-Datei nach Bereinigung nicht erstellen: {}",
                                     e

@@ -205,46 +205,11 @@ impl ValidationPipeline {
         epoch: u32,
         force_accept: bool,
     ) -> Result<(), VoucherCoreError> {
-        // Derive max transaction time across bundle
-        let mut max_tx_dt: Option<chrono::DateTime<chrono::Utc>> = None;
-        let mut max_tx_time = String::new();
-        let mut max_tx_id = String::new();
-
+        // Per-voucher future check (no bundle_max shortcut — see AUDIT-00-WILDCARD-21)
         for voucher in &bundle.vouchers {
             if let Some(last_tx) = voucher.transactions.last() {
-                let tx_dt = chrono::DateTime::parse_from_rfc3339(&last_tx.t_time)
-                    .map(|dt| dt.with_timezone(&chrono::Utc))
-                    .map_err(|e| {
-                        crate::Error::Wallet(
-                            crate::error::WalletError::InvalidTimestamp {
-                                reason: format!(
-                                    "Failed to parse transaction time: {}",
-                                    e
-                                ),
-                            },
-                        )
-                    })?;
-                match max_tx_dt {
-                    None => {
-                        max_tx_dt = Some(tx_dt);
-                        max_tx_time = last_tx.t_time.clone();
-                        max_tx_id = last_tx.t_id.clone();
-                    }
-                    Some(m) if tx_dt > m => {
-                        max_tx_dt = Some(tx_dt);
-                        max_tx_time = last_tx.t_time.clone();
-                        max_tx_id = last_tx.t_id.clone();
-                    }
-                    _ => {}
-                }
+                verify_not_far_in_future(&last_tx.t_time, "Transaction", &last_tx.t_id)?;
             }
-        }
-
-        if !max_tx_time.is_empty() {
-            verify_not_far_in_future(&max_tx_time, "Transaction", &max_tx_id)?;
-        }
-
-        for voucher in &bundle.vouchers {
             for sig in &voucher.signatures {
                 verify_not_far_in_future(
                     &sig.signature_time,
@@ -255,15 +220,45 @@ impl ValidationPipeline {
         }
 
         // Epoch-Zone (only when wallet has a non-genesis epoch)
+        // SECURITY (AUDIT-00-WILDCARD-21/23): fail-closed on malformed
+        // epoch_start_time — previously `if let Ok` silently disabled zone
+        // enforcement, allowing pre-epoch replays.
         if let Some(epoch_start) = epoch_start_time {
             if epoch > 0 {
-                if let Some(bundle_max_dt) = max_tx_dt {
-                    if let Ok(epoch_dt) =
-                        chrono::DateTime::parse_from_rfc3339(epoch_start)
-                    {
-                        let epoch_utc = epoch_dt.with_timezone(&chrono::Utc);
-                        if bundle_max_dt < epoch_utc {
-                            let delta = epoch_utc - bundle_max_dt;
+                // Per-voucher future check + epoch zone (no bundle_max shortcut)
+                for voucher in &bundle.vouchers {
+                    if let Some(last_tx) = voucher.transactions.last() {
+                        verify_not_far_in_future(
+                            &last_tx.t_time,
+                            "Transaction",
+                            &last_tx.t_id,
+                        )?;
+                        let tx_dt = chrono::DateTime::parse_from_rfc3339(&last_tx.t_time)
+                            .map(|dt| dt.with_timezone(&chrono::Utc))
+                            .map_err(|e| {
+                                crate::Error::Wallet(
+                                    crate::error::WalletError::InvalidTimestamp {
+                                        reason: format!(
+                                            "Failed to parse transaction time: {}",
+                                            e
+                                        ),
+                                    },
+                                )
+                            })?;
+                        let epoch_dt = chrono::DateTime::parse_from_rfc3339(epoch_start)
+                            .map(|dt| dt.with_timezone(&chrono::Utc))
+                            .map_err(|e| {
+                                crate::Error::Wallet(
+                                    crate::error::WalletError::InvalidTimestamp {
+                                        reason: format!(
+                                            "Malformed epoch_start_time '{}': {}",
+                                            epoch_start, e
+                                        ),
+                                    },
+                                )
+                            })?;
+                        if tx_dt < epoch_dt {
+                            let delta = epoch_dt - tx_dt;
                             const ZONE_1_LIMIT_MINUTES: i64 = 15;
                             const ZONE_2_LIMIT_HOURS: i64 = 24;
                             const ZONE_3_LIMIT_DAYS: i64 = 28;

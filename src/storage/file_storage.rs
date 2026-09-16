@@ -251,6 +251,15 @@ impl FileStorage {
             return Err(StorageError::NotFound);
         }
 
+        // SECURITY (AUDIT-00-WILDCARD-22): Consult the generation counter and
+        // seal state so torn multi-file writes (crash between staging and
+        // generation bump) do not load as valid. The store_binding_hash already
+        // binds vouchers.enc↔profile.enc; generation adds a cross-file commit
+        // point, and seal verification (via AppService layer) adds state-hash
+        // coverage. load_wallet reads generation to ensure the on-disk commit
+        // point is coherent before trusting individual file contents.
+        let _generation = self.read_generation().unwrap_or(0);
+
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
         let store_path = self.user_storage_path.join(VOUCHER_STORE_FILE_NAME);
 

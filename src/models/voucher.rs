@@ -709,18 +709,7 @@ impl Voucher {
             });
         }
 
-        let is_to_creator = if let Some(creator_id) = &self.creator_profile.id {
-            if recipient_id == creator_id {
-                true
-            } else if recipient_id.contains(':') && creator_id.contains(':') {
-                crate::services::crypto::get_pubkey_from_user_id(recipient_id).ok()
-                    == crate::services::crypto::get_pubkey_from_user_id(creator_id).ok()
-            } else {
-                false
-            }
-        } else {
-            false
-        };
+        let is_to_creator = self.is_to_creator(recipient_id);
 
         let in_consolidation_zone = self.hop_depth() >= crate::models::voucher::CONSOLIDATION_ZONE_THRESHOLD;
 
@@ -994,7 +983,11 @@ impl Voucher {
             Some(id) => id,
             None => return Ok(()),
         };
-        if sender_id != creator_id {
+        let is_creator = sender_id == creator_id || (
+            sender_id.contains(':') && creator_id.contains(':') &&
+            crate::services::crypto::get_pubkey_from_user_id(sender_id).ok() == crate::services::crypto::get_pubkey_from_user_id(creator_id).ok()
+        );
+        if !is_creator {
             return Ok(());
         }
 
@@ -1174,6 +1167,12 @@ impl Voucher {
     }
 
     /// Checks whether this voucher is expired relative to `current_time` (or now if `None`).
+    ///
+    /// SECURITY (AUDIT-00-WILDCARD-19): Malformed `valid_until` is treated as
+    /// expired (fail-closed). An unparseable timestamp must never be considered
+    /// "not expired" — otherwise an attacker can craft a voucher with
+    /// `valid_until = "not-a-date"` that lives forever, bypassing the expiry
+    /// sweep and UI gates.
     pub fn is_expired(&self, current_time: Option<&str>) -> bool {
         let now_dt = if let Some(ct) = current_time {
             chrono::DateTime::parse_from_rfc3339(ct)
@@ -1185,6 +1184,23 @@ impl Voucher {
 
         if let Ok(valid_until_dt) = chrono::DateTime::parse_from_rfc3339(&self.valid_until) {
             now_dt > valid_until_dt.with_timezone(&chrono::Utc)
+        } else {
+            // Fail-closed: unparseable valid_until => treat as expired
+            true
+        }
+    }
+
+    /// Checks if a recipient ID belongs to the voucher creator (prefix/SAI-tolerant).
+    pub fn is_to_creator(&self, recipient_id: &str) -> bool {
+        if let Some(creator_id) = &self.creator_profile.id {
+            if recipient_id == creator_id {
+                true
+            } else if recipient_id.contains(':') && creator_id.contains(':') {
+                crate::services::crypto::get_pubkey_from_user_id(recipient_id).ok()
+                    == crate::services::crypto::get_pubkey_from_user_id(creator_id).ok()
+            } else {
+                false
+            }
         } else {
             false
         }

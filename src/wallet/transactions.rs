@@ -612,24 +612,38 @@ impl Wallet {
             return Err(VoucherCoreError::VoucherNotActive(instance.status.clone()));
         }
 
-        // --- NEW: Lock for vouchers in the (near) future ---
+        // --- Lock for vouchers in the (near) future ---
+        // SECURITY (AUDIT-00-WILDCARD-20/21): Compare parsed instants, not raw
+        // RFC 3339 strings — lexicographic order diverges from chronological
+        // order when offsets differ (e.g. +14:00 vs Z). Also fail-closed on
+        // unparseable timestamps (no unwrap panic — attacker-controlled t_time
+        // must not abort the host process).
         if let Some(last_tx) = instance.voucher.transactions.last() {
             let now_str = crate::services::utils::get_current_timestamp();
-            if last_tx.t_time > now_str {
-                let now = chrono::DateTime::parse_from_rfc3339(&now_str).unwrap();
-                let until = chrono::DateTime::parse_from_rfc3339(&last_tx.t_time).unwrap();
-                let diff = until.signed_duration_since(now);
-                let wait_duration = format!(
-                    "{}h {}m {}s",
-                    diff.num_hours(),
-                    diff.num_minutes() % 60,
-                    diff.num_seconds() % 60
-                );
-                return Err(VoucherCoreError::VoucherLockedUntil {
-                    until: last_tx.t_time.clone(),
-                    now: now_str,
-                    wait_duration,
-                });
+            if let (Ok(last_dt), Ok(now_dt)) = (
+                crate::services::voucher_validation::parse_rfc3339_instant(
+                    &last_tx.t_time,
+                    "Transaction",
+                    &last_tx.t_id,
+                ),
+                chrono::DateTime::parse_from_rfc3339(&now_str),
+            ) {
+                let last_utc = last_dt.with_timezone(&chrono::Utc);
+                let now_utc = now_dt.with_timezone(&chrono::Utc);
+                if last_utc > now_utc {
+                    let diff = last_utc.signed_duration_since(now_utc);
+                    let wait_duration = format!(
+                        "{}h {}m {}s",
+                        diff.num_hours(),
+                        diff.num_minutes() % 60,
+                        diff.num_seconds() % 60
+                    );
+                    return Err(VoucherCoreError::VoucherLockedUntil {
+                        until: last_tx.t_time.clone(),
+                        now: now_str,
+                        wait_duration,
+                    });
+                }
             }
         }
 

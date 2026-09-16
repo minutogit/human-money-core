@@ -30,6 +30,10 @@ Dieses Dokument hält die grundlegenden Design-Entscheidungen der `human_money_c
 **Separated Account Identity (SAI):**
 - **Entscheidung:** Kombination aus einheitlichem Web of Trust und strikter Kontotrennung.
 - **Begründung:** Ein Nutzer hat einen Hauptschlüssel (Mnemonic), aber pro Kontext (Präfix oder Root) einen eigenen abgeleiteten Schlüssel (via HKDF). Dies verhindert Identitäts-Hopping und ermöglicht saubere Kontentrennung bei gleicher Identität.
+- **SAI Public-Key Invariante (Prefix-Toleranz in Validierung & Firewall):**
+  - **Entscheidung:** Identitäts- und Rollenprüfungen (z. B. Ersteller/Creator, Recirculation-Sperre in der Konsolidierungszone, `redeem`-Empfänger und Issuance-Firewall) basieren **stets auf dem zugrundeliegenden Ed25519 Public Key** (`get_pubkey_from_user_id` bzw. `Voucher::is_to_creator`), niemals auf reinem String-Vergleich (`==`).
+  - **Begründung:** Derselbe Ersteller/Nutzer agiert auf verschiedenen Geräten mit unterschiedlichen SAI-Präfixen (`creator-pc@did:key:zABC` vs. `creator-mobile@did:key:zABC`). Reiner String-Vergleich führte zu Umgehungen der Zirkulations-Firewalls und verhinderte legitime Rücktransfers/Redeems an Zweitgeräte.
+  - **Symmetrie:** Interne Gerätetransfers des Erstellers (`sender_pk == recipient_pk`) sind vom Mindest-Gültigkeitszeitraum befreit (Device Handover), während Ausgaben an Dritte (`sender_pk != recipient_pk`) selbst mit SAI-Präfix zwingend der Mindest-Gültigkeitsprüfung unterliegen.
 
 ## 3. Sicherheitsschichten
 
