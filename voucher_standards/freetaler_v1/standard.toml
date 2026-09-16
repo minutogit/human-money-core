@@ -29,7 +29,7 @@ amount_decimal_places = 2
 # (Enum: public, stealth, flexible) Privacy mode on L2
 privacy_mode = "flexible"
 # (Array[String]) Allowed transaction types
-allowed_t_types = ["init", "transfer", "split"]
+allowed_t_types = ["init", "transfer", "split", "redeem"]
 
 [immutable.issuance]
 # (Array[String]) Allowed total validity duration range [Min, Max] (ISO 8601)
@@ -72,9 +72,8 @@ en = "This voucher is technically usable immediately after signature by the issu
 de = "Dieser Gutschein ist sofort nach der Signatur durch den Aussteller technisch nutzbar. Weitere Signaturen (z. B. durch Bürgen oder Institutionen) sind möglich und im Web of Trust empfohlen, um die soziale Akzeptanz zu erhöhen, für dieses MVP aber nicht zwingend erforderlich."
 
 [signature]
-# The `did:key` of the issuer containing their public key.
-issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
+# The issuer `did:key` containing their public key.
+issuer_id = "0:7kX@did:key:z6Mkfd3mnXvq9vH3mETbYy5yBtefWpjpVNcxi63nFEjZH1td"
 
-# The final Base58-encoded Ed25519 signature of the canonical content (excluding this block).
-signature = "2s2TV9N8ex812gtcTHETNVsGku5sz4cH3v8h149yE7vEwyCZ39vCwpdfSG5AHV2QDvVvJMgmKQm7dGcJCqiDFads"
-
+# The final Base58-encoded Ed25519 signature of the canonicalized content (without this block).
+signature = "T4oFFLG7n651kLY5Vctk7sQgvcHaqEBtuS1W9hnN7fdxpsKRbPRJSEZsfMS8Vx4b6GNqpna3DwXVJ3QeUTK1thf"

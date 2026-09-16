@@ -42,8 +42,8 @@ balances_are_summable = true
 amount_decimal_places = 2
 # (String) Controls the privacy mode: "public", "stealth", or "flexible".
 privacy_mode = "flexible"
-# (Array of Strings) Allowed transaction types: "init", "transfer", "split".
-allowed_t_types = ["init", "transfer", "split"]
+# (Array[String]) Allowed transaction types for vouchers under this standard
+allowed_t_types = ["init", "transfer", "split", "redeem"]
 
 [immutable.issuance]
 # (Array of Strings) Allowed total validity duration range [Min, Max] in ISO 8601 format (e.g. ["P1Y", "P10Y"]).

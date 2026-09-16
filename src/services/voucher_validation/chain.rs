@@ -190,9 +190,61 @@ pub fn verify_transactions(
     let mut last_tx_time = init_tx.t_time.clone();
 
     let mut valid_previous_outputs = vec![Decimal::from_str(&init_tx.amount)?];
+    let mut redeem_depth: Option<usize> = None;
 
     for (i, tx) in voucher.transactions.iter().enumerate().skip(1) {
         let prev_tx = &voucher.transactions[i - 1];
+
+        if let Some(r_depth) = redeem_depth {
+            return Err(ValidationError::TransactionAfterRedeemForbidden {
+                depth: i,
+                redeem_depth: r_depth,
+            }
+            .into());
+        }
+        if tx.t_type == "redeem" {
+            redeem_depth = Some(i);
+        }
+
+        let is_to_creator = if let Some(creator_id) = &voucher.creator_profile.id {
+            if tx.recipient_id == *creator_id {
+                true
+            } else if tx.recipient_id.contains(':') && creator_id.contains(':') {
+                crate::services::crypto::get_pubkey_from_user_id(&tx.recipient_id).ok()
+                    == crate::services::crypto::get_pubkey_from_user_id(creator_id).ok()
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if is_to_creator && tx.t_type == "transfer" {
+            if i >= crate::models::voucher::CONSOLIDATION_ZONE_THRESHOLD {
+                return Err(ValidationError::RedeemRequiredInConsolidationZone {
+                    depth: i,
+                    threshold: crate::models::voucher::CONSOLIDATION_ZONE_THRESHOLD,
+                }
+                .into());
+            }
+
+            let min_duration_str = &standard.immutable.issuance.issuance_minimum_validity_duration;
+            if !min_duration_str.is_empty() {
+                let tx_time_dt = parse_rfc3339_instant(&tx.t_time, "Transaction", &tx.t_id)?
+                    .with_timezone(&chrono::Utc);
+                let min_required_dt = crate::services::utils::add_iso8601_duration(tx_time_dt, min_duration_str)?;
+                if let Ok(valid_until_parsed) = chrono::DateTime::parse_from_rfc3339(&voucher.valid_until) {
+                    let valid_until_dt = valid_until_parsed.with_timezone(&chrono::Utc);
+                    if valid_until_dt < min_required_dt {
+                        return Err(ValidationError::RedeemRequiredForExpiredIssuance {
+                            valid_until: voucher.valid_until.clone(),
+                            min_required: min_required_dt.to_rfc3339(),
+                        }
+                        .into());
+                    }
+                }
+            }
+        }
 
         if i >= crate::models::voucher::CONSOLIDATION_ZONE_THRESHOLD {
             if tx.t_type == "split" {
@@ -466,7 +518,7 @@ pub fn verify_transactions(
             .into());
         }
 
-        if tx.t_type == "transfer" && sender_balance_before_tx != amount_to_send {
+        if (tx.t_type == "transfer" || tx.t_type == "redeem") && sender_balance_before_tx != amount_to_send {
             return Err(ValidationError::FullTransferAmountMismatch {
                 expected: sender_balance_before_tx.to_string(),
                 found: amount_to_send.to_string(),
@@ -474,9 +526,9 @@ pub fn verify_transactions(
             .into());
         }
 
-        if tx.t_type == "transfer" && tx.sender_remaining_amount.is_some() {
+        if (tx.t_type == "transfer" || tx.t_type == "redeem") && tx.sender_remaining_amount.is_some() {
             return Err(ValidationError::InvalidTransaction(
-                "A 'transfer' transaction must not have a sender_remaining_amount.".to_string(),
+                format!("A '{}' transaction must not have a sender_remaining_amount.", tx.t_type),
             )
             .into());
         }
@@ -663,6 +715,29 @@ pub fn verify_transaction_basics(
                     .to_string(),
             )
             .into());
+        }
+    } else if tx.t_type == "redeem" {
+        if tx.sender_remaining_amount.is_some() {
+            return Err(ValidationError::InvalidTransaction(
+                "Transaction of type 'redeem' must not have a sender_remaining_amount."
+                    .to_string(),
+            )
+            .into());
+        }
+        if let Some(creator_id) = &voucher.creator_profile.id {
+            if tx.recipient_id != crate::models::voucher::ANONYMOUS_ID {
+                let is_creator = tx.recipient_id == *creator_id || (
+                    tx.recipient_id.contains(':') && creator_id.contains(':') &&
+                    crate::services::crypto::get_pubkey_from_user_id(&tx.recipient_id).ok() == crate::services::crypto::get_pubkey_from_user_id(creator_id).ok()
+                );
+                if !is_creator {
+                    return Err(ValidationError::InvalidRedeemRecipient {
+                        recipient: tx.recipient_id.clone(),
+                        creator: creator_id.clone(),
+                    }
+                    .into());
+                }
+            }
         }
     } else if !is_init {
         return Err(ValidationError::InvalidTransaction(format!(

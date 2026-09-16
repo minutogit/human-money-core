@@ -30,7 +30,7 @@ amount_decimal_places = 0
 privacy_mode = "flexible"
 
 # (Array[String]) Allowed transaction types
-allowed_t_types = ["init", "transfer", "split"]
+allowed_t_types = ["init", "transfer", "split", "redeem"]
 [immutable.issuance]
 # (Array[String]) Allowed total validity duration range [Min, Max] (ISO 8601)
 validity_duration_range = ["P1Y", "P10Y"]
@@ -83,9 +83,8 @@ de = "Gutschein-Nutzung nur für Mitspieler/innen."
 en = "Voucher use for participants only."
 
 [signature]
-# The `did:key` of the issuer containing their public key.
-issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
+# The issuer `did:key` containing their public key.
+issuer_id = "0:7kX@did:key:z6Mkfd3mnXvq9vH3mETbYy5yBtefWpjpVNcxi63nFEjZH1td"
 
-# The final Base58-encoded Ed25519 signature of the canonical content (excluding this block).
-signature = "5aomSjj76rEb4VVjhAd6p6qvmU79wkkTpj84AnY3D9p8xRDNfxBqKL4EbEHTKfPevggafJeJuzhgYV4rvhLgMs5m"
-
+# The final Base58-encoded Ed25519 signature of the canonicalized content (without this block).
+signature = "3vXgPaLAw8pDLGxk9SHQW1HmN1bqvSG9Bn2tUAp2i5twgHcZYBpqQWnP182EBfqqLoYhwvd8vdQ6ePshVCuc15Jr"

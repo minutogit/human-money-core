@@ -544,6 +544,18 @@ pub enum ValidationError {
 
     #[error("Minimum transfer amount violated: amount {amount} is less than minimum allowed {min_allowed}.")]
     MinTransferAmountViolated { amount: String, min_allowed: String },
+
+    #[error("Terminal state: Transaction at depth {depth} is forbidden because voucher was already redeemed at depth {redeem_depth}.")]
+    TransactionAfterRedeemForbidden { depth: usize, redeem_depth: usize },
+
+    #[error("Invalid redeem recipient: expected creator '{creator}', found '{recipient}'.")]
+    InvalidRedeemRecipient { recipient: String, creator: String },
+
+    #[error("Consolidation zone: Transaction at depth {depth} (threshold: {threshold}) to creator must be of type 'redeem'.")]
+    RedeemRequiredInConsolidationZone { depth: usize, threshold: usize },
+
+    #[error("Expired issuance: Transfer to creator with valid_until '{valid_until}' (min required: '{min_required}') must be of type 'redeem'.")]
+    RedeemRequiredForExpiredIssuance { valid_until: String, min_required: String },
 }
 
 impl From<GetPubkeyError> for ValidationError {

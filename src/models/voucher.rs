@@ -590,6 +590,54 @@ impl Voucher {
         Ok(temp_voucher)
     }
 
+    /// Creates a 'redeem' transaction transferring the full spendable balance back to the creator.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_redeem_transaction(
+        &self,
+        standard: &VoucherStandardDefinition,
+        sender_id: &str,
+        sender_permanent_key: &SigningKey,
+        sender_ephemeral_key: &SigningKey,
+        recipient_id: &str,
+        amount_to_send_str: &str,
+        use_privacy_mode: Option<bool>,
+    ) -> Result<(Voucher, TransactionSecrets), VoucherCoreError> {
+        self.create_transaction_internal(
+            standard,
+            sender_id,
+            sender_permanent_key,
+            sender_ephemeral_key,
+            recipient_id,
+            amount_to_send_str,
+            use_privacy_mode,
+            Some("redeem"),
+        )
+    }
+
+    /// Creates a 'transfer' transaction.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_transfer_transaction(
+        &self,
+        standard: &VoucherStandardDefinition,
+        sender_id: &str,
+        sender_permanent_key: &SigningKey,
+        sender_ephemeral_key: &SigningKey,
+        recipient_id: &str,
+        amount_to_send_str: &str,
+        use_privacy_mode: Option<bool>,
+    ) -> Result<(Voucher, TransactionSecrets), VoucherCoreError> {
+        self.create_transaction_internal(
+            standard,
+            sender_id,
+            sender_permanent_key,
+            sender_ephemeral_key,
+            recipient_id,
+            amount_to_send_str,
+            use_privacy_mode,
+            Some("transfer"),
+        )
+    }
+
     /// Creates a new transaction on this voucher.
     #[allow(clippy::too_many_arguments)]
     pub fn create_transaction(
@@ -601,6 +649,30 @@ impl Voucher {
         recipient_id: &str,
         amount_to_send_str: &str,
         use_privacy_mode: Option<bool>,
+    ) -> Result<(Voucher, TransactionSecrets), VoucherCoreError> {
+        self.create_transaction_internal(
+            standard,
+            sender_id,
+            sender_permanent_key,
+            sender_ephemeral_key,
+            recipient_id,
+            amount_to_send_str,
+            use_privacy_mode,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_transaction_internal(
+        &self,
+        standard: &VoucherStandardDefinition,
+        sender_id: &str,
+        sender_permanent_key: &SigningKey,
+        sender_ephemeral_key: &SigningKey,
+        recipient_id: &str,
+        amount_to_send_str: &str,
+        use_privacy_mode: Option<bool>,
+        explicit_t_type: Option<&str>,
     ) -> Result<(Voucher, TransactionSecrets), VoucherCoreError> {
         crate::services::voucher_validation::validate_voucher_against_standard(self, standard)?;
 
@@ -637,17 +709,82 @@ impl Voucher {
             });
         }
 
-        let (t_type, sender_remaining_amount) = if amount_to_send < spendable_balance {
-            if !standard.immutable.features.allow_partial_transfers {
-                return Err(VoucherCoreError::VoucherPartialTransferNotAllowed);
+        let is_to_creator = if let Some(creator_id) = &self.creator_profile.id {
+            if recipient_id == creator_id {
+                true
+            } else if recipient_id.contains(':') && creator_id.contains(':') {
+                crate::services::crypto::get_pubkey_from_user_id(recipient_id).ok()
+                    == crate::services::crypto::get_pubkey_from_user_id(creator_id).ok()
+            } else {
+                false
             }
-            let remaining = spendable_balance - amount_to_send;
-            (
-                "split".to_string(),
-                Some(format!("{:.1$}", remaining, decimal_places as usize)),
-            )
         } else {
-            ("transfer".to_string(), None)
+            false
+        };
+
+        let in_consolidation_zone = self.hop_depth() >= crate::models::voucher::CONSOLIDATION_ZONE_THRESHOLD;
+
+        let is_expired_issuance = if let Some(min_duration_str) = Some(&standard.immutable.issuance.issuance_minimum_validity_duration) {
+            if !min_duration_str.is_empty() {
+                let now_dt = chrono::Utc::now();
+                if let Ok(valid_until_dt) = chrono::DateTime::parse_from_rfc3339(&self.valid_until) {
+                    let valid_until_utc = valid_until_dt.with_timezone(&chrono::Utc);
+                    if let Ok(min_required_dt) = crate::services::utils::add_iso8601_duration(now_dt, min_duration_str) {
+                        valid_until_utc < min_required_dt
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        let auto_redeem = is_to_creator && (in_consolidation_zone || is_expired_issuance);
+
+        let (t_type, sender_remaining_amount) = match explicit_t_type {
+            Some("redeem") => {
+                if amount_to_send != spendable_balance {
+                    return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation {
+                        message: "Redeem transaction must consume the entire spendable balance.".to_string(),
+                    }));
+                }
+                ("redeem".to_string(), None)
+            }
+            Some("transfer") => {
+                if amount_to_send < spendable_balance {
+                    if !standard.immutable.features.allow_partial_transfers {
+                        return Err(VoucherCoreError::VoucherPartialTransferNotAllowed);
+                    }
+                    let remaining = spendable_balance - amount_to_send;
+                    (
+                        "split".to_string(),
+                        Some(format!("{:.1$}", remaining, decimal_places as usize)),
+                    )
+                } else {
+                    ("transfer".to_string(), None)
+                }
+            }
+            _ => {
+                if amount_to_send < spendable_balance {
+                    if !standard.immutable.features.allow_partial_transfers {
+                        return Err(VoucherCoreError::VoucherPartialTransferNotAllowed);
+                    }
+                    let remaining = spendable_balance - amount_to_send;
+                    (
+                        "split".to_string(),
+                        Some(format!("{:.1$}", remaining, decimal_places as usize)),
+                    )
+                } else if auto_redeem {
+                    ("redeem".to_string(), None)
+                } else {
+                    ("transfer".to_string(), None)
+                }
+            }
         };
 
         if !standard.immutable.features.allowed_t_types.contains(&t_type) {
@@ -916,6 +1053,10 @@ impl Voucher {
             None => return Decimal::ZERO,
         };
 
+        if txs.iter().any(|tx| tx.t_type == "redeem") {
+            return Decimal::ZERO;
+        }
+
         if let Some(id) = identity {
             let mut holder_match = false;
             let mut change_match = false;
@@ -998,6 +1139,10 @@ impl Voucher {
             Err(VoucherCoreError::Validation(_)) => (),
             Err(e) => return Err(e),
         };
+
+        if self.transactions.iter().any(|tx| tx.t_type == "redeem") {
+            return Ok(Decimal::ZERO);
+        }
 
         let last_tx = self.transactions.last().unwrap();
         let decimal_places = standard.immutable.features.amount_decimal_places as u32;

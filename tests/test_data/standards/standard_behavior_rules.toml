@@ -13,7 +13,7 @@ allow_partial_transfers = true
 balances_are_summable = true
 amount_decimal_places = 2
 privacy_mode = "public"
-allowed_t_types = ["init", "transfer", "split", "merge"]
+allowed_t_types = ["init", "transfer", "split", "merge", "redeem"]
 
 [immutable.issuance]
 validity_duration_range = ["P0M", "P5Y"]
@@ -34,9 +34,8 @@ default_validity_duration = "P1Y"
 descriptions = { en = "Behavior Rules Test" }
 
 [signature]
-# The `did:key` of the issuer containing their public key.
-issuer_id = "0:riw@did:key:z6Mki8QqVMb66hjtTwcceVXbZuSHTk61jqiprRvEhuotZmSA"
+# The issuer `did:key` containing their public key.
+issuer_id = "0:7kX@did:key:z6Mkfd3mnXvq9vH3mETbYy5yBtefWpjpVNcxi63nFEjZH1td"
 
 # The final Base58-encoded Ed25519 signature of the canonicalized content (without this block).
-signature = "2sFt1ufEAjXyZtNddZS1VRshJqTLpoyXmGfpS9QkBAtVYDWuX5be5JeBVeUghFgB7r7SMWC1KjtuqHXFQ8Lseuy3"
-
+signature = "53Eu4Tsb2d5KQC2G32fB216t9AEcFHGkn3M26tmxdBz6phQyg3HKUbNJge66x9NC62KMtedxidcLS1ocw4NAxrPX"
