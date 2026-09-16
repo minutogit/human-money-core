@@ -36,6 +36,15 @@ pub const VOID_SPEND_SHARD_MARKER: &str = "invalid";
 /// Symmetric to the outbound cap `MAX_FINGERPRINTS_TO_SEND = 150`.
 pub const MAX_FOREIGN_BUCKET_CAP: usize = 150;
 
+/// Maximum TOTAL number of foreign fingerprints retained across ALL `ds_tag` buckets.
+/// SECURITY (AUDIT-00-WILDCARD-19): the per-bucket cap (150) alone is insufficient:
+/// an attacker can generate an unbounded number of *distinct* `ds_tag`s (one
+/// fingerprint per bucket) and flood gossip with 10k+ distinct inputs, exhausting
+/// memory and making `check_for_double_spend` (HashSet+sort) CPU-bound. A global
+/// cap bounds the total map size regardless of the number of buckets; excess
+/// distinct tags are rejected until cleanup evicts expired entries.
+pub const MAX_TOTAL_FOREIGN_FINGERPRINTS: usize = 3000;
+
 /// Creates a single, anonymized fingerprint for a given transaction.
 /// Contains the logic for anonymizing the `valid_until` timestamp.
 pub fn create_fingerprint_for_transaction(
@@ -867,11 +876,22 @@ pub fn import_foreign_fingerprints(
             assign_local_retention_to_wire_entry(&mut fp);
             // SECURITY (AUDIT-01-F11): the bucket identity is ALWAYS the
             // fingerprint's own ds_tag — never the transport map key.
+            // SECURITY (WH4-01-203 + AUDIT-00-WILDCARD-19): check caps BEFORE
+            // borrowing the entry mutably, to avoid double-borrow and to
+            // enforce both per-bucket and global limits.
+            let total_foreign: usize = known_fingerprints
+                .foreign_fingerprints
+                .values()
+                .map(|v| v.len())
+                .sum();
+            if total_foreign >= MAX_TOTAL_FOREIGN_FINGERPRINTS {
+                rejected_count += 1;
+                continue;
+            }
             let entry = known_fingerprints
                 .foreign_fingerprints
                 .entry(fp.ds_tag.clone())
                 .or_default();
-            // SECURITY (WH4-01-203): Bounded adversarial ingestion. Enforce bucket cap.
             if entry.len() >= MAX_FOREIGN_BUCKET_CAP {
                 rejected_count += 1;
                 continue;

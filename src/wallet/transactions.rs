@@ -1195,17 +1195,51 @@ impl Wallet {
         let signature_obj = signature.into_inner();
 
         // Find a voucher that is expecting this signature
-        let target_instance = self
-            .voucher_store
-            .vouchers
-            .values_mut()
-            .find(|instance| instance.voucher.voucher_id == signature_obj.voucher_id)
-            .ok_or_else(|| {
-                VoucherCoreError::VoucherNotFound(format!(
+        // SECURITY (AUDIT-00-WILDCARD-21): voucher_id alone is NOT a unique
+        // instance key — after a split the same voucher_id exists twice
+        // (Archived change copy + Incomplete/Active spend copy) under different
+        // local_instance_ids. HashMap iteration order is randomized, so a
+        // naive `find(| voucher_id ==)` attaches to an arbitrary branch.
+        // Prefer the instance that can legally receive the signature
+        // (Incomplete > Active > others), and never attach to Archived.
+        let target_instance = {
+            let mut candidates: Vec<&mut crate::wallet::instance::VoucherInstance> = self
+                .voucher_store
+                .vouchers
+                .values_mut()
+                .filter(|instance| instance.voucher.voucher_id == signature_obj.voucher_id)
+                .collect();
+            if candidates.is_empty() {
+                return Err(VoucherCoreError::VoucherNotFound(format!(
                     "No voucher found matching signature's voucher_id: {}",
                     signature_obj.voucher_id
-                ))
-            })?;
+                )));
+            }
+            // Sort by status priority: Incomplete (0) < Active (1) < Endorsed (2) < others (3)
+            // then by local_instance_id for determinism.
+            candidates.sort_by(|a, b| {
+                let prio = |s: &VoucherStatus| match s {
+                    VoucherStatus::Incomplete { .. } => 0,
+                    VoucherStatus::Active => 1,
+                    VoucherStatus::Endorsed { .. } => 2,
+                    _ => 3,
+                };
+                prio(&a.status).cmp(&prio(&b.status))
+                    .then_with(|| a.local_instance_id.cmp(&b.local_instance_id))
+            });
+            // Reject if the best candidate is Archived/Expired/Quarantined
+            // — those statuses must not receive detached signatures.
+            let best = candidates.into_iter().next().unwrap();
+            if !matches!(
+                best.status,
+                VoucherStatus::Incomplete { .. }
+                    | VoucherStatus::Active
+                    | VoucherStatus::Endorsed { .. }
+            ) {
+                return Err(VoucherCoreError::VoucherNotActive(best.status.clone()));
+            }
+            best
+        };
 
         // (Optional, but recommended) Check if signature is already present
         if target_instance

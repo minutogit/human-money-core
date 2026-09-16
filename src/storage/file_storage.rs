@@ -450,12 +450,24 @@ impl FileStorage {
         profile_container.store_binding_hash =
             Some(derive_store_binding_hash(&file_key, &store_container_bytes));
 
+        // SECURITY (AUDIT-00-WILDCARD-20): crash-window ordering. Writing
+        // profile.enc (which embeds the new binding hash) BEFORE vouchers.enc
+        // leaves a window where a crash/power-loss yields new profile + old
+        // vouchers -> StateConflict brick on next load. Write vouchers FIRST
+        // so a crash after vouchers but before profile still yields old profile
+        // + new vouchers -> also StateConflict. Both orders brick without a
+        // WAL, but the generation counter as commit point makes the *second*
+        // file the atomic commit: we therefore stage vouchers first, then
+        // profile, so that the commit point (generation bump in
+        // commit_wallet_atomic) always follows the binding file. The helper
+        // itself is now ordered vouchers->profile to match the 2-phase commit
+        // staging discipline (all containers staged before generation bump).
+        self.write_atomic(VOUCHER_STORE_FILE_NAME, &store_container_bytes)?;
         self.write_atomic(
             PROFILE_FILE_NAME,
             &serde_json::to_vec(&profile_container)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?,
         )?;
-        self.write_atomic(VOUCHER_STORE_FILE_NAME, &store_container_bytes)?;
 
         Ok(file_key)
     }
