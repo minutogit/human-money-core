@@ -90,6 +90,83 @@ mod parsing_and_verification {
     }
 
     #[test]
+    fn test_fail_fast_validation_min_transfer_amount_valid() {
+        let mut standard = FREETALER_STANDARD.0.clone();
+        standard.immutable.features.amount_decimal_places = 2;
+        standard.immutable.features.min_transfer_amount = Some("0.50".to_string());
+        standard.signature = None;
+        let hash_to_sign = crypto::get_hash(utils::to_canonical_json(&standard).unwrap());
+        let sig = TEST_ISSUER.signing_key.sign(hash_to_sign.as_bytes());
+        standard.signature = Some(human_money_core::models::voucher_standard_definition::SignatureBlock {
+            issuer_id: TEST_ISSUER.user_id.clone(),
+            signature: bs58::encode(sig.to_bytes()).into_string(),
+        });
+        let toml_str = toml::to_string(&standard).unwrap();
+        let result = VoucherStandardDefinition::from_toml(&toml_str);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_fail_fast_validation_min_transfer_amount_invalid_number() {
+        let mut standard = FREETALER_STANDARD.0.clone();
+        standard.immutable.features.min_transfer_amount = Some("abc".to_string());
+        standard.signature = None;
+        let hash_to_sign = crypto::get_hash(utils::to_canonical_json(&standard).unwrap());
+        let sig = TEST_ISSUER.signing_key.sign(hash_to_sign.as_bytes());
+        standard.signature = Some(human_money_core::models::voucher_standard_definition::SignatureBlock {
+            issuer_id: TEST_ISSUER.user_id.clone(),
+            signature: bs58::encode(sig.to_bytes()).into_string(),
+        });
+        let toml_str = toml::to_string(&standard).unwrap();
+        let result = VoucherStandardDefinition::from_toml(&toml_str);
+        assert!(matches!(
+            result.unwrap_err(),
+            VoucherCoreError::Standard(StandardDefinitionError::InvalidMinTransferAmount(_))
+        ));
+    }
+
+    #[test]
+    fn test_fail_fast_validation_min_transfer_amount_zero_or_negative() {
+        for invalid_amt in &["0", "0.00", "-1.00"] {
+            let mut standard = FREETALER_STANDARD.0.clone();
+            standard.immutable.features.min_transfer_amount = Some(invalid_amt.to_string());
+            standard.signature = None;
+            let hash_to_sign = crypto::get_hash(utils::to_canonical_json(&standard).unwrap());
+            let sig = TEST_ISSUER.signing_key.sign(hash_to_sign.as_bytes());
+            standard.signature = Some(human_money_core::models::voucher_standard_definition::SignatureBlock {
+                issuer_id: TEST_ISSUER.user_id.clone(),
+                signature: bs58::encode(sig.to_bytes()).into_string(),
+            });
+            let toml_str = toml::to_string(&standard).unwrap();
+            let result = VoucherStandardDefinition::from_toml(&toml_str);
+            assert!(matches!(
+                result.unwrap_err(),
+                VoucherCoreError::Standard(StandardDefinitionError::InvalidMinTransferAmount(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn test_fail_fast_validation_min_transfer_amount_scale_exceeds_decimal_places() {
+        let mut standard = FREETALER_STANDARD.0.clone();
+        standard.immutable.features.amount_decimal_places = 2;
+        standard.immutable.features.min_transfer_amount = Some("0.001".to_string()); // scale 3 > 2
+        standard.signature = None;
+        let hash_to_sign = crypto::get_hash(utils::to_canonical_json(&standard).unwrap());
+        let sig = TEST_ISSUER.signing_key.sign(hash_to_sign.as_bytes());
+        standard.signature = Some(human_money_core::models::voucher_standard_definition::SignatureBlock {
+            issuer_id: TEST_ISSUER.user_id.clone(),
+            signature: bs58::encode(sig.to_bytes()).into_string(),
+        });
+        let toml_str = toml::to_string(&standard).unwrap();
+        let result = VoucherStandardDefinition::from_toml(&toml_str);
+        assert!(matches!(
+            result.unwrap_err(),
+            VoucherCoreError::Standard(StandardDefinitionError::InvalidMinTransferAmount(_))
+        ));
+    }
+
+    #[test]
     fn test_get_localized_text_when_direct_match_exists_then_returns_it() {
         let mut texts = std::collections::HashMap::new();
         texts.insert("de".to_string(), "Hallo".to_string());

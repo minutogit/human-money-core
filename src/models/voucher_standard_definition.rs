@@ -19,8 +19,10 @@ use crate::error::{StandardDefinitionError, VoucherCoreError};
 use crate::services::crypto::{get_hash, get_pubkey_from_user_id, verify_ed25519};
 use crate::services::utils::to_canonical_json;
 use ed25519_dalek::Signature;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 
 /// Defines a dynamic CEL (Common Expression Language) rule.
 ///
@@ -317,6 +319,34 @@ impl VoucherStandardDefinition {
             if expected_pk.to_bytes() != actual_pk.to_bytes() {
                 return Err(VoucherCoreError::Standard(
                     StandardDefinitionError::IssuerPinViolation,
+                ));
+            }
+        }
+
+        // Fail-Fast validation for min_transfer_amount (AUDIT-WC-EABA-02)
+        if let Some(min_str) = &standard.immutable.features.min_transfer_amount {
+            let min_val = Decimal::from_str(min_str).map_err(|e| {
+                VoucherCoreError::Standard(StandardDefinitionError::InvalidMinTransferAmount(
+                    format!("Cannot parse min_transfer_amount '{}': {}", min_str, e),
+                ))
+            })?;
+            if min_val <= Decimal::ZERO {
+                return Err(VoucherCoreError::Standard(
+                    StandardDefinitionError::InvalidMinTransferAmount(format!(
+                        "min_transfer_amount must be strictly positive (> 0), got '{}'",
+                        min_str
+                    )),
+                ));
+            }
+            let max_decimals = standard.immutable.features.amount_decimal_places as u32;
+            if min_val.scale() > max_decimals {
+                return Err(VoucherCoreError::Standard(
+                    StandardDefinitionError::InvalidMinTransferAmount(format!(
+                        "min_transfer_amount '{}' has {} decimal places, which exceeds allowed amount_decimal_places ({})",
+                        min_str,
+                        min_val.scale(),
+                        max_decimals
+                    )),
                 ));
             }
         }

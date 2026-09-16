@@ -941,22 +941,25 @@ pub fn build_voucher_lock_chain(
         None => 0,
         Some(s) if s == "genesis" => 0,
         Some(sp) => {
-            let sync_idx = voucher.transactions.iter().position(|tx| {
-                if tx.t_id == sp {
-                    return true;
-                }
-                if let Some(td) = &tx.trap_data {
-                    if td.ds_tag == sp {
-                        return true;
-                    }
-                    if td.ds_tag.starts_with(sp) || tx.t_id.starts_with(sp) {
-                        return true;
-                    }
-                } else if tx.t_id.starts_with(sp) {
-                    return true;
-                }
-                false
-            });
+            let sync_idx = voucher
+                .transactions
+                .iter()
+                .rposition(|tx| {
+                    tx.t_id == sp
+                        || tx
+                            .trap_data
+                            .as_ref()
+                            .is_some_and(|td| td.ds_tag == sp)
+                })
+                .or_else(|| {
+                    voucher.transactions.iter().rposition(|tx| {
+                        tx.t_id.starts_with(sp)
+                            || tx
+                                .trap_data
+                                .as_ref()
+                                .is_some_and(|td| td.ds_tag.starts_with(sp))
+                    })
+                });
             match sync_idx {
                 Some(idx) => idx + 1,
                 None => {
@@ -965,7 +968,7 @@ pub fn build_voucher_lock_chain(
                             "sync_point '{}' not found in voucher chain",
                             sp
                         )),
-                    ))
+                    ));
                 }
             }
         }
@@ -1377,7 +1380,7 @@ mod tests {
 
     #[test]
     fn test_build_voucher_lock_chain_genesis_variants() {
-        use crate::test_utils::{ACTORS, FREETALER_STANDARD};
+        use crate::test_utils::ACTORS;
         use crate::test_utils::voucher_setup::{create_transaction_with_auto_decrypt, setup_voucher_with_one_tx};
 
         let (standard, _hash, _creator, _recipient, voucher1, secrets1) = setup_voucher_with_one_tx();
@@ -1444,6 +1447,12 @@ mod tests {
         let chain_prefix = build_voucher_lock_chain(&voucher2, Some(&genesis_prefix), target_req.clone()).unwrap();
         assert_eq!(chain_prefix.chain.len(), 2);
 
+        // Case F: Exact match takes priority and rposition finds latest match
+        let tx1_tid = voucher2.transactions[1].t_id.clone();
+        let chain_tx1_exact = build_voucher_lock_chain(&voucher2, Some(&tx1_tid), target_req.clone()).unwrap();
+        assert_eq!(chain_tx1_exact.chain.len(), 1); // Only tx2 remains
+        assert_eq!(chain_tx1_exact.chain[0].transaction_hash, target_req.transaction_hash);
+
         // Serde roundtrip of built chain
         let json = serde_json::to_string(&chain_none).unwrap();
         let de: crate::models::layer2_api::L2ChainLockRequest = serde_json::from_str(&json).unwrap();
@@ -1452,7 +1461,7 @@ mod tests {
 
     #[test]
     fn test_build_voucher_lock_chain_error_cases() {
-        use crate::test_utils::{ACTORS, FREETALER_STANDARD};
+        use crate::test_utils::ACTORS;
         use crate::test_utils::voucher_setup::{create_transaction_with_auto_decrypt, setup_voucher_with_one_tx};
 
         let (standard, _hash, _creator, _recipient, voucher1, secrets1) = setup_voucher_with_one_tx();

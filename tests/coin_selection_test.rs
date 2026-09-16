@@ -46,6 +46,7 @@ fn make_voucher(
         tx.t_time = creation_date.to_string();
         tx.prev_hash = human_money_core::crypto::get_hash(t_id);
         tx.sender_id = Some(sender_id.to_string());
+        tx.sender_identity_signature = Some("dummy_sig".to_string());
         tx.recipient_id = "dummy".to_string();
         tx.amount = tx_amount.unwrap_or(amount).to_string();
         tx.receiver_ephemeral_pub_hash = Some("hash".to_string());
@@ -59,6 +60,7 @@ fn make_voucher(
         tx.t_time = creation_date.to_string();
         tx.prev_hash = human_money_core::crypto::get_hash("prev");
         tx.sender_id = Some(creator_id.to_string());
+        tx.sender_identity_signature = Some("dummy_sig".to_string());
         tx.recipient_id = creator_id.to_string();
         tx.amount = amount.to_string();
         v.transactions.push(tx);
@@ -135,6 +137,37 @@ fn test_bumerang_priority_dominates() {
     assert_eq!(ranked[1].breakdown.s_boomerang, 0);
     // Score difference >= 9000
     assert!(ranked[0].score - ranked[1].score >= 9_000);
+}
+
+#[test]
+fn test_unsigned_sender_id_does_not_get_boomerang_priority() {
+    human_money_core::set_signature_bypass(true);
+    let alice = &ACTORS.alice.identity;
+    let bob_id = ACTORS.bob.identity.user_id.clone();
+    let charlie_id = ACTORS.charlie.identity.user_id.clone();
+
+    let mut wallet = setup_in_memory_wallet(alice);
+    let std_uuid = "11111111-1111-1111-1111-111111111111";
+
+    // Voucher with unsigned sender_id = bob_id (unauthenticated / spoofed)
+    let mut v_spoofed = make_voucher(
+        "vid-spoofed",
+        std_uuid,
+        "Freetaler",
+        &charlie_id,
+        "50.00",
+        vec![("t-spoof", &bob_id, Some("50.00"))],
+        "2024-01-01T00:00:00.000000Z",
+    );
+    // Strip the sender_identity_signature
+    v_spoofed.transactions[0].sender_identity_signature = None;
+    insert_active(&mut wallet, "local-spoofed", v_spoofed);
+
+    let mem = RoutingMemoryStore::new();
+    let ranked = rank_vouchers(&wallet, dec!(10), Some(std_uuid), &bob_id, &mem);
+    assert_eq!(ranked.len(), 1);
+    // Must NOT receive boomerang score (+10000)
+    assert_eq!(ranked[0].breakdown.s_boomerang, 0);
 }
 
 // ---------------------------------------------------------------------------

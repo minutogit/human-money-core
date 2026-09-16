@@ -179,19 +179,20 @@ impl RoutingMemoryStore {
         self.record_transfer(standard_uuid, recipient_id, bundle_id, Utc::now())
     }
 
-    /// Ensure LRU capacity: if at cap and inserting new key would exceed, evict oldest.
-    fn ensure_capacity(&mut self, _now: DateTime<Utc>) {
+    /// Ensure capacity: if at cap and inserting new key would exceed, evict lowest weight entry.
+    /// Evicts decayed weight == 0 first, then lowest decayed weight, breaking ties with oldest last_update.
+    fn ensure_capacity(&mut self, now: DateTime<Utc>) {
         if self.corridors.len() < MAX_CORRIDORS {
             return;
         }
-        // Find LRU entry (smallest last_update)
-        if let Some(lru_key) = self
+        // Evict entry with lowest decayed weight at `now`; tie-break with oldest last_update
+        if let Some(evict_key) = self
             .corridors
             .iter()
-            .min_by_key(|(_, e)| e.last_update)
+            .min_by_key(|(_, e)| (e.decayed_weight(now), e.last_update))
             .map(|(k, _)| k.clone())
         {
-            self.corridors.remove(&lru_key);
+            self.corridors.remove(&evict_key);
         }
     }
 
@@ -309,5 +310,43 @@ mod tests {
         assert_eq!(store.len(), MAX_CORRIDORS);
         // The overflow key must be present
         assert!(store.get_weight_no_decay("uuid-overflow", "did:key:zBob") > 0);
+    }
+
+    #[test]
+    fn test_eviction_prefers_zero_weight_over_active_hot_corridors() {
+        let mut store = RoutingMemoryStore::new();
+        let t0 = fixed_time(0);
+        let t1 = fixed_time(100);
+
+        // Fill store with (MAX_CORRIDORS - 1) zero-weight corridors updated at t1
+        for i in 0..(MAX_CORRIDORS - 1) {
+            let key = format!("zero-weight-{}", i);
+            store.insert_for_test(&key, "did:key:zBob", CorridorEntry {
+                weight: 0,
+                seen_bundle_ids: HashSet::new(),
+                last_update: t1,
+            });
+        }
+
+        // Add 1 hot corridor with high weight updated at earlier t0 (old timestamp)
+        store.insert_for_test("hot-corridor", "did:key:zBob", CorridorEntry {
+            weight: 900,
+            seen_bundle_ids: HashSet::new(),
+            last_update: t0,
+        });
+
+        assert_eq!(store.len(), MAX_CORRIDORS);
+
+        // Now record transfer for a new corridor at t1.
+        // Under pure LRU (last_update), hot-corridor at t0 would have been evicted!
+        // Under weight-resilient eviction, a zero-weight corridor must be evicted instead.
+        store.record_transfer("new-corridor", "did:key:zBob", "bundle-new", t1);
+
+        assert_eq!(store.len(), MAX_CORRIDORS);
+        assert!(
+            store.corridors.contains_key("hot-corridor::did:key:zBob"),
+            "Hot corridor should NOT be evicted by spam of zero-weight entries"
+        );
+        assert!(store.corridors.contains_key("new-corridor::did:key:zBob"));
     }
 }

@@ -281,7 +281,10 @@ impl Wallet {
                 }
             } else {
                 // Case B: No guard present (Public Mode)
-                // Use plaintext tx.sender_id
+                // Use plaintext tx.sender_id ONLY if sender_identity_signature is present
+                if tx.sender_identity_signature.is_none() {
+                    continue;
+                }
                 match &tx.sender_id {
                     Some(sender) => sender.clone(),
                     None => continue, // No sender_id, skip this transaction

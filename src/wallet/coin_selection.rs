@@ -260,18 +260,34 @@ fn rank_vouchers_internal(
         let amount = Decimal::from_str(&amount_str).unwrap_or(Decimal::ZERO);
 
         // Boomerang: check if voucher's source sender == recipient_id
-        // We iterate transactions reverse to find actual source sender.
-        // Simplified: check if any tx sender_id == recipient_id or if privacy guard decrypt would yield it.
-        // Without identity we approximate: if the voucher was received from recipient (last tx sender == recipient)
-        // Use tx.sender_id if present.
-        let is_boomerang = inst
-            .voucher
-            .transactions
-            .iter()
-            .rev()
-            .find_map(|tx| tx.sender_id.clone())
-            .map(|sid| sid == recipient_id)
-            .unwrap_or(false);
+        // Cryptographic verification:
+        // - In public mode, only count sender_id if sender_identity_signature is present.
+        // - In stealth/flexible mode (privacy_guard present), do not award boomerang score without decrypted payload.
+        let is_boomerang = {
+            let mut found_boomerang = false;
+            for tx in inst.voucher.transactions.iter().rev() {
+                if tx.privacy_guard.is_some() {
+                    // Stealth / Flexible mode: without private keys to decrypt RecipientPayload,
+                    // we cannot verify the sender. Do NOT award boomerang score from unverified data.
+                    continue;
+                } else if tx.sender_identity_signature.is_some() {
+                    // Public mode with cryptographic signature
+                    if let Some(ref sid) = tx.sender_id {
+                        if sid == &wallet.profile.user_id {
+                            // Sent by ourselves -> continue searching backwards
+                            continue;
+                        } else if sid == recipient_id {
+                            found_boomerang = true;
+                            break;
+                        } else {
+                            // Another authenticated sender -> not a boomerang
+                            break;
+                        }
+                    }
+                }
+            }
+            found_boomerang
+        };
 
         // Eigen: creator == wallet owner?
         let is_eigen = inst
@@ -320,6 +336,9 @@ fn rank_vouchers_internal(
 // 3-Stage Selection
 // ---------------------------------------------------------------------------
 
+/// Maximum allowed DP states in subset-sum search to prevent DoS / high memory usage.
+pub const MAX_DP_STATES: usize = 2000;
+
 /// Prepare a transfer plan for a given target amount.
 ///
 /// Implements 3-stage logic:
@@ -351,8 +370,10 @@ pub fn prepare_transfer(
         ));
     }
 
-    // Quick insufficient funds check
-    let total_available: Decimal = ranked.iter().map(|r| r.amount).sum();
+    // Quick insufficient funds check (safe saturating summation)
+    let total_available: Decimal = ranked
+        .iter()
+        .fold(Decimal::ZERO, |acc, r| acc.saturating_add(r.amount));
     if total_available < target {
         return Err(crate::error::VoucherCoreError::InsufficientFunds {
             available: total_available,
@@ -404,13 +425,12 @@ pub fn prepare_transfer(
         if rv.amount >= remaining {
             // This voucher will be split (or exactly cover remaining)
             rv.reason = SelectionReason::Greedy;
-            acc += rv.amount; // Note: total_selected is sum of full voucher amounts before split logic;
-            // For plan we report total_selected as sum, but caller will split last to exact target.
+            acc = acc.saturating_add(rv.amount);
             selected.push(rv);
             break;
         } else {
             rv.reason = SelectionReason::Greedy;
-            acc += rv.amount;
+            acc = acc.saturating_add(rv.amount);
             selected.push(rv);
         }
     }
@@ -424,7 +444,9 @@ pub fn prepare_transfer(
     }
 
     // total_selected is sum of selected voucher amounts (before split)
-    let total_selected: Decimal = selected.iter().map(|r| r.amount).sum();
+    let total_selected: Decimal = selected
+        .iter()
+        .fold(Decimal::ZERO, |acc, r| acc.saturating_add(r.amount));
     let needs_split = total_selected > target;
 
     Ok(TransferPlan {
@@ -460,9 +482,17 @@ fn find_exact_subset(ranked: &[RankedVoucher], target: Decimal) -> Option<Vec<Ra
     dp.insert(Decimal::ZERO, (0, Vec::new()));
 
     for (idx, rv) in candidates.iter().enumerate() {
+        if dp.len() > MAX_DP_STATES {
+            // Early fallback to None -> Greedy on state explosion
+            return None;
+        }
+
         let mut new_entries: Vec<(Decimal, (i64, Vec<usize>))> = Vec::new();
         for (sum, (score_sum, subset)) in dp.iter() {
-            let new_sum = *sum + rv.amount;
+            let new_sum = match sum.checked_add(rv.amount) {
+                Some(s) => s,
+                None => continue,
+            };
             if new_sum > target {
                 continue;
             }
@@ -496,9 +526,14 @@ fn find_exact_subset(ranked: &[RankedVoucher], target: Decimal) -> Option<Vec<Ra
         for (sum, val) in new_entries {
             dp.insert(sum, val);
         }
+
+        if dp.len() > MAX_DP_STATES {
+            return None;
+        }
+
+        // Early exit as soon as target is reached with optimal candidates
         if dp.contains_key(&target) {
-            // Continue to see if even better scoreSubset exists? But we can early exit after full loop for optimal.
-            // Not breaking to allow better score with different combo that also hits target later.
+            break;
         }
     }
 
@@ -546,5 +581,61 @@ mod tests {
         let (s_split, _) = score_voucher(dec!(20), dec!(10), false, false, 0, 0.0, 0, "uuid", "r");
         assert!(s_exact > s_split);
         assert_eq!(s_exact - s_split, 400); // +300 vs -100
+    }
+
+    #[test]
+    fn test_find_exact_subset_early_exit() {
+        let ranked = vec![
+            RankedVoucher {
+                local_instance_id: "v1".to_string(),
+                score: 100,
+                breakdown: ScoreBreakdown::default(),
+                reason: SelectionReason::NotSelected,
+                amount: dec!(5),
+                standard_uuid: "std".to_string(),
+            },
+            RankedVoucher {
+                local_instance_id: "v2".to_string(),
+                score: 90,
+                breakdown: ScoreBreakdown::default(),
+                reason: SelectionReason::NotSelected,
+                amount: dec!(5),
+                standard_uuid: "std".to_string(),
+            },
+            RankedVoucher {
+                local_instance_id: "v3".to_string(),
+                score: 50,
+                breakdown: ScoreBreakdown::default(),
+                reason: SelectionReason::NotSelected,
+                amount: dec!(10),
+                standard_uuid: "std".to_string(),
+            },
+        ];
+        let subset = find_exact_subset(&ranked, dec!(10));
+        assert!(subset.is_some());
+        let s = subset.unwrap();
+        let total: Decimal = s.iter().fold(Decimal::ZERO, |acc, v| acc.saturating_add(v.amount));
+        assert_eq!(total, dec!(10));
+    }
+
+    #[test]
+    fn test_find_exact_subset_dp_cap_fallback() {
+        // If DP states explode beyond MAX_DP_STATES, find_exact_subset returns None safely
+        let mut ranked = Vec::new();
+        for i in 1..=20 {
+            // Power of 2 amounts to generate up to 2^20 distinct sums if unconstrained
+            ranked.push(RankedVoucher {
+                local_instance_id: format!("v{}", i),
+                score: 100 - i,
+                breakdown: ScoreBreakdown::default(),
+                reason: SelectionReason::NotSelected,
+                amount: Decimal::from(1i64 << (i - 1)),
+                standard_uuid: "std".to_string(),
+            });
+        }
+        // Very large target that encompasses all combinations
+        let result = find_exact_subset(&ranked, Decimal::from(10_000_000));
+        // With 20 items and unique sums, states would exceed 2000, so it must return None cleanly
+        assert!(result.is_none());
     }
 }

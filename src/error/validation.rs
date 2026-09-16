@@ -33,6 +33,9 @@ pub enum StandardDefinitionError {
     /// file was re-signed under a foreign key after installation).
     #[error("The standard definition was re-signed by a different issuer than the pinned one (issuer pin violation).")]
     IssuerPinViolation,
+    /// min_transfer_amount is invalid (non-positive, unparseable, or scale exceeds amount_decimal_places).
+    #[error("Invalid min_transfer_amount in standard definition: {0}")]
+    InvalidMinTransferAmount(String),
 }
 
 /// Defines the various errors that can occur during validation.

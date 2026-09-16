@@ -339,4 +339,28 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Cannot use privacy mode on a public standard"));
     }
+
+    #[test]
+    fn test_public_mode_without_sender_signature_ignored() {
+        let alice = &ACTORS.alice;
+        let bob = &ACTORS.bob;
+        let mut bob_wallet = setup_in_memory_wallet(&bob.identity);
+        let mut standards = HashMap::new();
+        let (public_std, _) = create_custom_standard(&MINUTO_STANDARD.0, |s| {
+            s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+        });
+        standards.insert(public_std.immutable.identity.uuid.clone(), public_std.clone());
+
+        let bob_local_id = add_voucher_to_wallet(&mut bob_wallet, &bob.identity, "100", &public_std, true).unwrap();
+
+        // Mutate the voucher in Bob's wallet to have an unsigned sender_id on the last tx
+        let instance = bob_wallet.voucher_store.vouchers.get_mut(&bob_local_id).unwrap();
+        let last_tx = instance.voucher.transactions.last_mut().unwrap();
+        last_tx.sender_id = Some(alice.identity.user_id.clone());
+        last_tx.sender_identity_signature = None; // Stripped signature!
+
+        // Since sender_identity_signature is None in public mode, get_voucher_source_sender must ignore it
+        let source_sender = bob_wallet.get_voucher_source_sender(&bob_local_id, &bob.identity).unwrap();
+        assert_eq!(source_sender, None);
+    }
 }
