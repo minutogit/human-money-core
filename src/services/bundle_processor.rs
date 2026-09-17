@@ -150,6 +150,12 @@ pub fn open_and_verify_bundle(
     container.verify_integrity()?;
 
     let decrypted_bundle_bytes = container.open(identity, None)?;
+    const MAX_DECRYPTED_BUNDLE_BYTES: usize = 1024 * 1024;
+    if decrypted_bundle_bytes.len() > MAX_DECRYPTED_BUNDLE_BYTES {
+        return Err(VoucherCoreError::InvalidPayload(
+            "Decrypted bundle exceeds maximum size".into(),
+        ));
+    }
     let bundle: TransactionBundle = serde_json::from_slice(&decrypted_bundle_bytes)?;
 
     // HMC-SEC-06-01 (bundle level): Recompute `bundle_id` from the received

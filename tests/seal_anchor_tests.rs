@@ -4,8 +4,9 @@ use human_money_core::models::seal::{
     derive_l2_anchor_id, SyncStatus,
 };
 use human_money_core::services::l2_gateway::{
-    build_anchor_leap_lock, calculate_read_quorum, evaluate_anchor_verdict,
-    evaluate_multi_node_anchor_verdicts, AnchorSyncVerdict,
+    build_anchor_leap_lock, build_anchor_status_query, calculate_l2_payload_hash_raw,
+    calculate_read_quorum, evaluate_anchor_verdict, evaluate_multi_node_anchor_verdicts,
+    AnchorSyncVerdict,
 };
 use human_money_core::storage::seal_service::SealService;
 use human_money_core::storage::AuthMethod;
@@ -340,4 +341,256 @@ fn test_two_tier_trigger_timing() {
     app.sync_anchor_immediate(Some(PASSWORD)).unwrap();
     let record3 = storage.load_seal(&auth).unwrap().unwrap();
     assert_eq!(record3.sync_status, SyncStatus::Synced);
+}
+
+/// 11. test_single_malicious_node_cannot_lock_wallet:
+/// A single malicious node reporting RollbackDetected/ForkConflict must be overruled by the honest quorum.
+#[test]
+fn test_single_malicious_node_cannot_lock_wallet() {
+    let local_t_id = [1u8; 32];
+    let local_tag = "tag_local";
+    let total_nodes = 3;
+    assert_eq!(calculate_read_quorum(total_nodes), 2);
+
+    // Helper to create a dummy lock entry with given t_id
+    fn dummy_entry(t_id: [u8; 32]) -> L2LockEntry {
+        L2LockEntry {
+            layer2_voucher_id: "test_anchor".to_string(),
+            t_id,
+            sender_ephemeral_pub: [0u8; 32],
+            receiver_ephemeral_pub_hash: None,
+            change_ephemeral_pub_hash: None,
+            layer2_signature: [0u8; 64],
+            trap_r: None,
+            trap_s: None,
+            encrypted_timestamp: 0,
+            deletable_at: None,
+            privacy_guard: None,
+        }
+    }
+
+    let remote_t_id = [99u8; 32];
+    let malicious_rollback = L2Verdict::Verified {
+        lock_entry: dummy_entry(remote_t_id),
+    };
+    let honest_sync = L2Verdict::MissingLocks {
+        sync_point: local_tag.to_string(),
+    };
+
+    // 2 honest synchronized vs 1 malicious rollback -> must be Synchronized
+    let res = evaluate_multi_node_anchor_verdicts(
+        &[honest_sync.clone(), honest_sync.clone(), malicious_rollback.clone()],
+        &local_t_id,
+        local_tag,
+        total_nodes,
+    );
+    assert_eq!(
+        res,
+        AnchorSyncVerdict::Synchronized,
+        "Single malicious rollback must be overruled by quorum 2 of 3"
+    );
+
+    // Same for ForkConflict
+    let malicious_fork = L2Verdict::Conflict {
+        existing_lock: dummy_entry(remote_t_id),
+    };
+    let res2 = evaluate_multi_node_anchor_verdicts(
+        &[honest_sync.clone(), honest_sync.clone(), malicious_fork],
+        &local_t_id,
+        local_tag,
+        total_nodes,
+    );
+    assert_eq!(
+        res2,
+        AnchorSyncVerdict::Synchronized,
+        "Single malicious fork must be overruled by quorum 2 of 3"
+    );
+
+    // With 5 nodes, 4 honest + 1 malicious -> still synchronized (quorum 3)
+    assert_eq!(calculate_read_quorum(5), 3);
+    let res3 = evaluate_multi_node_anchor_verdicts(
+        &[
+            honest_sync.clone(),
+            honest_sync.clone(),
+            honest_sync.clone(),
+            honest_sync.clone(),
+            malicious_rollback,
+        ],
+        &local_t_id,
+        local_tag,
+        5,
+    );
+    assert_eq!(res3, AnchorSyncVerdict::Synchronized);
+}
+
+/// 12. test_cryptographic_proof_of_rollback_detection:
+/// When quorum of nodes reports a conflicting lock, rollback is detected and the proof is cryptographically verifiable.
+#[test]
+fn test_cryptographic_proof_of_rollback_detection() {
+    use ed25519_dalek::{Signer, Verifier, VerifyingKey};
+
+    let identity = &ACTORS.alice.identity;
+    let epoch = 0u64;
+    let tx_nonce_for_lock = 5u64;
+    let local_t_id = [1u8; 32];
+    let local_tag = "tag_local";
+    let remote_t_id = [0xABu8; 32];
+    let ds_tag = "challenge_tag_for_proof";
+
+    // Derive anchor ID and step key that L2 would have used for the remote lock
+    let anchor_id = derive_l2_anchor_id(identity, epoch);
+    let (step_sk, step_pk) = derive_anchor_step_key(&identity.signing_key, epoch, tx_nonce_for_lock);
+    let step_pub_bytes = step_pk.to_bytes();
+
+    // Create payload hash exactly as L2 would sign it for an anchor leap lock (non-genesis)
+    let payload_hash = calculate_l2_payload_hash_raw(
+        &anchor_id,
+        ds_tag,
+        &remote_t_id,
+        &step_pub_bytes,
+        "none",
+        "none",
+        0,
+        None,
+        "",
+    );
+    let sig = step_sk.sign(&payload_hash);
+
+    // Verify that the signature is a valid cryptographic proof for this lock
+    let vk = VerifyingKey::from_bytes(&step_pub_bytes).expect("valid pubkey");
+    assert!(
+        vk.verify(&payload_hash, &sig).is_ok(),
+        "Lock signature must be cryptographically valid"
+    );
+
+    let lock_entry = L2LockEntry {
+        layer2_voucher_id: anchor_id.clone(),
+        t_id: remote_t_id,
+        sender_ephemeral_pub: step_pub_bytes,
+        receiver_ephemeral_pub_hash: None,
+        change_ephemeral_pub_hash: None,
+        layer2_signature: sig.to_bytes(),
+        trap_r: Some("none".to_string()),
+        trap_s: Some("none".to_string()),
+        encrypted_timestamp: 0,
+        deletable_at: None,
+        privacy_guard: None,
+    };
+
+    // Two nodes report the conflicting lock (quorum for N=3 is 2), one is synchronized
+    let honest_sync = L2Verdict::MissingLocks {
+        sync_point: local_tag.to_string(),
+    };
+    let rollback_verdict = L2Verdict::Verified {
+        lock_entry: lock_entry.clone(),
+    };
+    let result = evaluate_multi_node_anchor_verdicts(
+        &[rollback_verdict.clone(), rollback_verdict, honest_sync.clone()],
+        &local_t_id,
+        local_tag,
+        3,
+    );
+
+    match result {
+        AnchorSyncVerdict::RollbackDetected {
+            remote_t_id: found_t_id,
+            lock_entry: found_entry,
+        } => {
+            assert_eq!(found_t_id, remote_t_id);
+            assert_eq!(found_entry.t_id, remote_t_id);
+            // Re-verify cryptographic proof on the returned entry
+            let recomputed_hash = calculate_l2_payload_hash_raw(
+                &found_entry.layer2_voucher_id,
+                ds_tag,
+                &found_entry.t_id,
+                &found_entry.sender_ephemeral_pub,
+                found_entry.trap_r.as_deref().unwrap_or("none"),
+                found_entry.trap_s.as_deref().unwrap_or("none"),
+                found_entry.encrypted_timestamp,
+                found_entry.deletable_at.as_deref(),
+                found_entry.privacy_guard.as_deref().unwrap_or(""),
+            );
+            // For anchor leap locks, trap_r/trap_s are "none", privacy_guard is ""
+            // The lock used anchor_id as voucher_id, so recomputation must match
+            let recomputed_hash2 = calculate_l2_payload_hash_raw(
+                &anchor_id,
+                ds_tag,
+                &remote_t_id,
+                &step_pub_bytes,
+                "none",
+                "none",
+                0,
+                None,
+                "",
+            );
+            assert_eq!(recomputed_hash, recomputed_hash2);
+            let vk2 = VerifyingKey::from_bytes(&found_entry.sender_ephemeral_pub).unwrap();
+            let sig2 = ed25519_dalek::Signature::from_bytes(&found_entry.layer2_signature);
+            assert!(
+                vk2.verify(&recomputed_hash, &sig2).is_ok(),
+                "Returned lock entry must carry valid cryptographic proof"
+            );
+        }
+        other => panic!("Expected RollbackDetected with quorum 2 of 3, got {:?}", other),
+    }
+
+    // ForkConflict quorum as well
+    let fork_entry = lock_entry;
+    let fork_verdict = L2Verdict::Conflict {
+        existing_lock: fork_entry.clone(),
+    };
+    let result_fork = evaluate_multi_node_anchor_verdicts(
+        &[fork_verdict.clone(), fork_verdict, honest_sync.clone()],
+        &local_t_id,
+        local_tag,
+        3,
+    );
+    match result_fork {
+        AnchorSyncVerdict::ForkConflict { foreign_entry } => {
+            assert_eq!(foreign_entry.t_id, remote_t_id);
+        }
+        other => panic!("Expected ForkConflict with quorum 2 of 3, got {:?}", other),
+    }
+}
+
+/// 13. test_status_query_key_matches_step_nonce:
+/// build_anchor_status_query must derive the ephemeral key deterministically from (epoch, tx_nonce).
+#[test]
+fn test_status_query_key_matches_step_nonce() {
+    let identity = &ACTORS.alice.identity;
+    let epoch = 7u64;
+    let challenge = "challenge_tag_123";
+    let locator = vec!["loc1".to_string()];
+
+    for tx_nonce in [0u64, 1, 5, 42, 12345] {
+        let query = build_anchor_status_query(identity, epoch, tx_nonce, challenge, locator.clone(), 1)
+            .expect("build query should succeed");
+        let (_sk, expected_pk) = derive_anchor_step_key(&identity.signing_key, epoch, tx_nonce);
+        assert_eq!(
+            query.auth.ephemeral_pubkey,
+            expected_pk.to_bytes(),
+            "Status query key must match derived step key for nonce {}",
+            tx_nonce
+        );
+        assert_eq!(query.challenge_ds_tag, challenge);
+        assert_eq!(query.locator_prefixes, locator);
+        let expected_anchor_id = derive_l2_anchor_id(identity, epoch);
+        assert_eq!(query.layer2_voucher_id, expected_anchor_id);
+    }
+
+    // Different nonces must produce different keys
+    let q0 = build_anchor_status_query(identity, epoch, 0, challenge, vec![], 1).unwrap();
+    let q1 = build_anchor_status_query(identity, epoch, 1, challenge, vec![], 1).unwrap();
+    assert_ne!(
+        q0.auth.ephemeral_pubkey, q1.auth.ephemeral_pubkey,
+        "Different tx_nonce must yield different ephemeral keys"
+    );
+
+    // Different epoch must produce different key even with same nonce
+    let q_epoch0 = build_anchor_status_query(identity, 0, 10, challenge, vec![], 1).unwrap();
+    let q_epoch1 = build_anchor_status_query(identity, 1, 10, challenge, vec![], 1).unwrap();
+    assert_ne!(
+        q_epoch0.auth.ephemeral_pubkey, q_epoch1.auth.ephemeral_pubkey,
+        "Different epoch must yield different keys"
+    );
 }

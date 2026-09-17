@@ -2581,3 +2581,192 @@ fn wildcard_30_redeem_must_recognize_creator_with_different_sai_prefix() {
     assert!(spend_res.is_err(), "Issuance firewall must reject creator spending expired voucher to third party even with SAI alias");
 }
 
+// =============================================================================
+// AUDIT FIX — 2026-09-17: SST Torsion-Check, Pre-Deserialization Caps, ISO 8601 Safe Math
+// =============================================================================
+
+/// Audit remediation: verify_sst_witness must reject torsion-carrying points (m_r, r_sig).
+#[test]
+fn audit_fix_sst_torsion_witness_rejected() {
+    use human_money_core::services::trap_manager::{generate_sst_trap, verify_sst_witness};
+    use rand::RngCore;
+
+    let mut seed = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut seed);
+    let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
+    let vk = sk.verifying_key();
+    let mut mc = vec![0xed, 0x01];
+    mc.extend_from_slice(vk.as_bytes());
+    let payer_did = format!("did:key:z{}", bs58::encode(mc).into_string());
+
+    let ds_tag = {
+        let mut b = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut b);
+        bs58::encode(b).into_string()
+    };
+    let mut eph = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut eph);
+    let t_id = {
+        let mut b = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut b);
+        bs58::encode(b).into_string()
+    };
+
+    let (trap, witness) = generate_sst_trap(&sk, &ds_tag, &eph, &t_id).expect("trap gen");
+    // Honest witness must verify.
+    verify_sst_witness(&witness, &trap, &payer_did, &ds_tag, &eph, &t_id)
+        .expect("honest witness must verify");
+
+    // Torsion point: y = 0 compressed (small-order, not torsion-free)
+    let torsion_b58 = bs58::encode([0u8; 32]).into_string();
+    // y = p-1 (0, -1) compressed — also torsion
+    let mut y_p_minus_one = [0xFFu8; 32];
+    y_p_minus_one[0] = 0xEC;
+    y_p_minus_one[31] = 0x7F;
+    let torsion2_b58 = bs58::encode(y_p_minus_one).into_string();
+
+    // m_r torsion
+    let mut wit_torsion_mr = witness.clone();
+    wit_torsion_mr.m_r = torsion_b58.clone();
+    let err = verify_sst_witness(&wit_torsion_mr, &trap, &payer_did, &ds_tag, &eph, &t_id)
+        .expect_err("torsion m_r must be rejected");
+    assert!(
+        err.to_string().contains("torsion-free"),
+        "m_r torsion error must mention torsion-free, got: {}",
+        err
+    );
+
+    // r_sig torsion (use second torsion point)
+    let mut wit_torsion_rsig = witness.clone();
+    wit_torsion_rsig.r_sig = torsion2_b58.clone();
+    let err2 = verify_sst_witness(&wit_torsion_rsig, &trap, &payer_did, &ds_tag, &eph, &t_id)
+        .expect_err("torsion r_sig must be rejected");
+    assert!(
+        err2.to_string().contains("torsion-free"),
+        "r_sig torsion error must mention torsion-free, got: {}",
+        err2
+    );
+
+    // Both torsion
+    let mut wit_both = witness.clone();
+    wit_both.m_r = torsion_b58;
+    wit_both.r_sig = torsion2_b58;
+    assert!(
+        verify_sst_witness(&wit_both, &trap, &payer_did, &ds_tag, &eph, &t_id).is_err(),
+        "both torsion points must be rejected"
+    );
+}
+
+/// Audit remediation: import_foreign_fingerprints must reject >1MiB payload before deserialization.
+#[test]
+fn audit_fix_import_payload_size_cap() {
+    use human_money_core::models::conflict::KnownFingerprints;
+    let mut known = KnownFingerprints::default();
+    // 1 MiB + 1 byte
+    let oversized = vec![b'a'; 1024 * 1024 + 1];
+    let err = human_money_core::services::conflict_manager::import_foreign_fingerprints(
+        &mut known, &oversized,
+    )
+    .expect_err("oversized import must be rejected");
+    assert!(
+        err.to_string().contains("maximum size") || err.to_string().contains("Invalid payload"),
+        "import size error must mention maximum size, got: {}",
+        err
+    );
+    // Exactly 1 MiB should not be rejected by size gate (may fail JSON, but not size)
+    let exactly_1m = vec![b'a'; 1024 * 1024];
+    let res = human_money_core::services::conflict_manager::import_foreign_fingerprints(
+        &mut known, &exactly_1m,
+    );
+    // Should be JSON error, not InvalidPayload size error
+    if let Err(e) = res {
+        assert!(
+            !e.to_string().contains("exceeds maximum size"),
+            "exactly 1MiB must not trigger size cap, got: {}",
+            e
+        );
+    }
+}
+
+/// Audit remediation: open_and_verify_bundle must reject decrypted bundle >1MiB before deserialization.
+#[test]
+fn audit_fix_decrypted_bundle_size_cap() {
+    use human_money_core::models::secure_container::{ContainerConfig, PayloadType, PrivacyMode, SecureContainer};
+    use human_money_core::services::bundle_processor::open_and_verify_bundle;
+    use human_money_core::services::crypto::{create_user_id, generate_ed25519_keypair_for_tests};
+
+    let (pk_sender, sk_sender) = generate_ed25519_keypair_for_tests(Some("audit-bundle-sender"));
+    let (pk_recip, sk_recip) = generate_ed25519_keypair_for_tests(Some("audit-bundle-recip"));
+    let sender_id = create_user_id(&pk_sender, Some("sender")).unwrap();
+    let recip_id = create_user_id(&pk_recip, Some("recip")).unwrap();
+    let sender_identity = human_money_core::models::profile::UserIdentity {
+        user_id: sender_id.clone(),
+        signing_key: sk_sender,
+        public_key: pk_sender,
+    };
+    let recip_identity = human_money_core::models::profile::UserIdentity {
+        user_id: recip_id.clone(),
+        signing_key: sk_recip,
+        public_key: pk_recip,
+    };
+
+    // Create a SecureContainer encrypting >1MiB payload (raw bytes, not valid bundle JSON but size gate fires first)
+    let large_payload = vec![b'X'; 1024 * 1024 + 1];
+    let container = SecureContainer::seal(
+        &sender_identity,
+        &ContainerConfig::TargetDid(recip_id.clone(), PrivacyMode::TrialDecryption),
+        &large_payload,
+        PayloadType::TransactionBundle,
+    )
+    .expect("seal large payload");
+    let container_bytes = serde_json::to_vec(&container).unwrap();
+    let err = open_and_verify_bundle(&recip_identity, &container_bytes)
+        .expect_err("oversized decrypted bundle must be rejected");
+    assert!(
+        err.to_string().contains("maximum size") || err.to_string().contains("Decrypted bundle"),
+        "decrypted bundle size error must mention maximum size, got: {}",
+        err
+    );
+}
+
+/// Audit remediation: add_iso8601_duration must handle extreme months without panic and return Err.
+#[test]
+fn audit_fix_iso8601_extreme_month_no_panic() {
+    use chrono::{Datelike, TimeZone, Utc};
+    use human_money_core::services::utils::add_iso8601_duration;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    let start = Utc.with_ymd_and_hms(2026, 1, 31, 12, 0, 0).unwrap();
+
+    // Extreme months: 4e9 months (~333M years) must not panic, must return Err
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        add_iso8601_duration(start, "P4000000000M")
+    }));
+    assert!(
+        result.is_ok(),
+        "P4000000000M must not panic, got panic: {:?}",
+        result.err()
+    );
+    assert!(
+        result.unwrap().is_err(),
+        "P4000000000M must return Err (year overflow / date out of range)"
+    );
+
+    // Smaller extreme still out of chrono range should also be Err, not panic (10M months ~833k years >262k limit)
+    let result2 = catch_unwind(AssertUnwindSafe(|| add_iso8601_duration(start, "P10000000M")));
+    assert!(result2.is_ok(), "P10000000M must not panic");
+    assert!(result2.unwrap().is_err(), "P10000000M out of range should be Err");
+
+    // Valid months must still succeed (31 Jan + 1M => 28 Feb 2026)
+    let valid = add_iso8601_duration(start, "P1M").expect("P1M valid");
+    assert_eq!(valid.month(), 2);
+    assert_eq!(valid.day(), 28);
+
+    // Another extreme: u32 MAX months
+    let result_max = catch_unwind(AssertUnwindSafe(|| {
+        add_iso8601_duration(start, "P4294967295M")
+    }));
+    assert!(result_max.is_ok(), "max u32 months must not panic");
+    assert!(result_max.unwrap().is_err(), "max u32 months must be Err");
+}
+

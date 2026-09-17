@@ -383,6 +383,17 @@ pub fn verify_sst_witness(
     let m_r_point = parse_point_bs58(&witness.m_r, "M_R")?;
     let m_s = parse_scalar_bs58(&witness.m_s, "m_s")?;
 
+    if !m_r_point.is_torsion_free() {
+        return Err(VoucherCoreError::Crypto(
+            "SST witness rejected: point is not torsion-free".to_string(),
+        ));
+    }
+    if !r_sig_point.is_torsion_free() {
+        return Err(VoucherCoreError::Crypto(
+            "SST witness rejected: point is not torsion-free".to_string(),
+        ));
+    }
+
     // Resolve the payer's public identity point.
     let payer_pk = get_pubkey_from_user_id(payer_did)?;
     let payer_point = ed25519_pk_to_curve_point(&payer_pk)?;

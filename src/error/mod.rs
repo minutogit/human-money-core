@@ -313,6 +313,10 @@ pub enum Error {
     #[error("Invalid payload type in secure container.")]
     InvalidPayloadType,
 
+    /// Payload exceeds maximum allowed size (pre-deserialization cap).
+    #[error("Invalid payload: {0}")]
+    InvalidPayload(String),
+
     /// The wallet is currently locked, preventing state changes.
     #[error("Wallet is locked.")]
     WalletLocked,

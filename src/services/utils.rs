@@ -309,13 +309,54 @@ pub fn add_iso8601_duration(
         }
         "M" => {
             let current_month0 = start_date.month0();
-            let total_months0 = current_month0 + value;
-            let new_year = start_date.year() + (total_months0 / 12) as i32;
+            let total_months0 = current_month0
+                .checked_add(value)
+                .ok_or_else(|| {
+                    VoucherCoreError::InvalidValidityDuration(format!(
+                        "Month overflow in duration: {}",
+                        duration_str
+                    ))
+                })?;
+            let new_year = start_date
+                .year()
+                .checked_add((total_months0 / 12) as i32)
+                .ok_or_else(|| {
+                    VoucherCoreError::InvalidValidityDuration(format!(
+                        "Year overflow in duration: {}",
+                        duration_str
+                    ))
+                })?;
             let new_month = (total_months0 % 12) + 1;
             let original_day = start_date.day();
-            let days_in_target = days_in_month(new_year, new_month);
+            // Safe days_in_month without panicking on out-of-range years.
+            let days_in_target = {
+                let (next_y, next_m) = if new_month == 12 {
+                    let ny = new_year.checked_add(1).ok_or_else(|| {
+                        VoucherCoreError::InvalidValidityDuration(format!(
+                            "Year overflow in duration: {}",
+                            duration_str
+                        ))
+                    })?;
+                    (ny, 1)
+                } else {
+                    (new_year, new_month + 1)
+                };
+                let first_of_next = NaiveDate::from_ymd_opt(next_y, next_m, 1).ok_or_else(|| {
+                    VoucherCoreError::InvalidValidityDuration(format!(
+                        "Date out of range for duration: {}",
+                        duration_str
+                    ))
+                })?;
+                let last = first_of_next.pred_opt().ok_or_else(|| {
+                    VoucherCoreError::InvalidValidityDuration(format!(
+                        "Date out of range for duration: {}",
+                        duration_str
+                    ))
+                })?;
+                last.day()
+            };
             let new_day = original_day.min(days_in_target);
-            Ok(Utc
+            let candidate = Utc
                 .with_ymd_and_hms(
                     new_year,
                     new_month,
@@ -325,9 +366,20 @@ pub fn add_iso8601_duration(
                     start_date.second(),
                 )
                 .single()
-                .expect("valid clamped date")
-                .with_nanosecond(start_date.nanosecond())
-                .expect("valid nanosecond"))
+                .ok_or_else(|| {
+                    VoucherCoreError::InvalidValidityDuration(format!(
+                        "Date out of range for duration: {}",
+                        duration_str
+                    ))
+                })?;
+            let nanos = start_date.nanosecond();
+            let with_nanos = candidate.with_nanosecond(nanos).ok_or_else(|| {
+                VoucherCoreError::InvalidValidityDuration(format!(
+                    "Invalid nanosecond for duration: {}",
+                    duration_str
+                ))
+            })?;
+            Ok(with_nanos)
         }
         "D" => Ok(start_date + chrono::Duration::days(i64::from(value))),
         _ => Err(crate::Error::Wallet(crate::error::WalletError::InvalidDuration { reason: format!(

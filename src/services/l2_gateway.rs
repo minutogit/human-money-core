@@ -774,13 +774,14 @@ pub fn build_anchor_leap_lock(
 pub fn build_anchor_status_query(
     identity: &UserIdentity,
     epoch: u64,
+    tx_nonce: u64,
     challenge_ds_tag: &str,
     locator_prefixes: Vec<String>,
     read_quorum: u8,
 ) -> Result<L2StatusQuery, VoucherCoreError> {
     let anchor_id = crate::models::seal::derive_l2_anchor_id(identity, epoch);
     let (_sk, pk) =
-        crate::models::seal::derive_anchor_step_key(&identity.signing_key, epoch, 0);
+        crate::models::seal::derive_anchor_step_key(&identity.signing_key, epoch, tx_nonce);
 
     Ok(L2StatusQuery {
         auth: L2AuthPayload {
@@ -844,29 +845,22 @@ pub fn calculate_read_quorum(total_nodes: usize) -> u8 {
     }
 }
 
-/// Evaluates multi-node responses with CFT majority-quorum rules and asymmetric rollback protection.
+/// Evaluates multi-node responses with CFT majority-quorum rules and quorum-gated rollback protection.
 pub fn evaluate_multi_node_anchor_verdicts(
     verdicts: &[L2Verdict],
     local_t_id: &[u8; 32],
     local_tag: &str,
     total_nodes: usize,
 ) -> AnchorSyncVerdict {
-    // Asymmetric rule: an authenticated lock proof beats any MissingLocks response!
-    for v in verdicts {
-        let single = evaluate_anchor_verdict(v, local_t_id, local_tag);
-        if matches!(
-            single,
-            AnchorSyncVerdict::RollbackDetected { .. } | AnchorSyncVerdict::ForkConflict { .. }
-        ) {
-            return single;
-        }
-    }
-
     let required_q = calculate_read_quorum(total_nodes) as usize;
     let mut syncd_count = 0;
     let mut leap_count = 0;
     let mut last_leap_point = String::new();
     let mut unknown_count = 0;
+    let mut rollback_count = 0;
+    let mut fork_count = 0;
+    let mut first_rollback: Option<AnchorSyncVerdict> = None;
+    let mut first_fork: Option<AnchorSyncVerdict> = None;
 
     for v in verdicts {
         match evaluate_anchor_verdict(v, local_t_id, local_tag) {
@@ -876,8 +870,31 @@ pub fn evaluate_multi_node_anchor_verdicts(
                 last_leap_point = sync_point;
             }
             AnchorSyncVerdict::GenesisRequired => unknown_count += 1,
-            _ => {}
+            AnchorSyncVerdict::RollbackDetected { remote_t_id, lock_entry } => {
+                rollback_count += 1;
+                if first_rollback.is_none() {
+                    first_rollback = Some(AnchorSyncVerdict::RollbackDetected {
+                        remote_t_id,
+                        lock_entry: lock_entry.clone(),
+                    });
+                }
+            }
+            AnchorSyncVerdict::ForkConflict { foreign_entry } => {
+                fork_count += 1;
+                if first_fork.is_none() {
+                    first_fork = Some(AnchorSyncVerdict::ForkConflict {
+                        foreign_entry: foreign_entry.clone(),
+                    });
+                }
+            }
         }
+    }
+
+    if rollback_count >= required_q {
+        return first_rollback.unwrap();
+    }
+    if fork_count >= required_q {
+        return first_fork.unwrap();
     }
 
     if syncd_count >= required_q {

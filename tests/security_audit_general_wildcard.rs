@@ -101,8 +101,34 @@ fn audit_00_wildcard_19_unbounded_foreign_ingress_must_be_bounded() {
         };
         blob.entry(ds_tag).or_default().push(fp);
     }
-    let bytes = serde_json::to_vec(&blob).unwrap();
-    let imported = wallet.import_foreign_fingerprints(&bytes).expect("import must not error");
+    // AUDIT FIX: Pre-deserialization cap (1 MiB) now bounds single-blob size.
+    // A 4000-entry blob exceeds 1 MiB (~2.3 MiB) and would be rejected as
+    // InvalidPayload before the global cap is even evaluated. To still verify
+    // the global TOTAL cap (3000) independently of the pre-cap, the ingress is
+    // exercised in chunks each <1 MiB (1000 fps ≈0.57 MiB). Unpatched code
+    // would accumulate all 4000; patched code must stay bounded.
+    let mut imported_total = 0usize;
+    let fps_vec: Vec<(String, TransactionFingerprint)> = blob
+        .into_iter()
+        .flat_map(|(k, v)| v.into_iter().map(move |fp| (k.clone(), fp)))
+        .collect();
+    for chunk in fps_vec.chunks(1000) {
+        let mut chunk_blob: HashMap<String, Vec<TransactionFingerprint>> = HashMap::new();
+        for (ds_tag, fp) in chunk {
+            chunk_blob.entry(ds_tag.clone()).or_default().push(fp.clone());
+        }
+        let bytes = serde_json::to_vec(&chunk_blob).unwrap();
+        // Each chunk is <1 MiB and must not hit the pre-cap
+        assert!(
+            bytes.len() <= 1024 * 1024,
+            "test setup: chunk must stay under pre-cap (got {} bytes)",
+            bytes.len()
+        );
+        let imported = wallet
+            .import_foreign_fingerprints(&bytes)
+            .expect("chunk import must not error");
+        imported_total += imported;
+    }
     let total: usize = wallet
         .known_fingerprints
         .foreign_fingerprints
@@ -113,7 +139,7 @@ fn audit_00_wildcard_19_unbounded_foreign_ingress_must_be_bounded() {
     // On unpatched code, total == 4000 (unbounded) -> FAIL.
     assert!(
         total <= 3000,
-        "AUDIT-00-WILDCARD-19 VIOLATION: unbounded gossip ingress — imported {imported} new, total {total} foreign fingerprints from 4000 distinct ds_tags. Per-bucket cap 150 never triggered (one per bucket). Without a global cap the map grows indefinitely -> OOM / CPU DoS in check_for_double_spend (HashSet+sort over {total} entries)."
+        "AUDIT-00-WILDCARD-19 VIOLATION: unbounded gossip ingress — imported {imported_total} new, total {total} foreign fingerprints from 4000 distinct ds_tags. Per-bucket cap 150 never triggered (one per bucket). Without a global cap the map grows indefinitely -> OOM / CPU DoS in check_for_double_spend (HashSet+sort over {total} entries)."
     );
 }
 

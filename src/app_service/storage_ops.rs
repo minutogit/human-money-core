@@ -313,6 +313,7 @@ impl AppService {
                 let query = crate::services::l2_gateway::build_anchor_status_query(
                     identity,
                     epoch,
+                    tx_nonce,
                     &current_tag,
                     vec![],
                     1,

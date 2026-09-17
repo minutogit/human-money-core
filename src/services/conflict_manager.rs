@@ -860,9 +860,20 @@ pub fn import_foreign_fingerprints(
     known_fingerprints: &mut KnownFingerprints,
     data: &[u8],
 ) -> Result<usize, VoucherCoreError> {
+    const MAX_RAW_IMPORT_BYTES: usize = 1024 * 1024;
+    if data.len() > MAX_RAW_IMPORT_BYTES {
+        return Err(VoucherCoreError::InvalidPayload(
+            "Import payload exceeds maximum size".into(),
+        ));
+    }
     let incoming: HashMap<String, Vec<TransactionFingerprint>> = serde_json::from_slice(data)?;
     let mut new_count = 0;
     let mut rejected_count = 0usize;
+    let mut current_total_foreign: usize = known_fingerprints
+        .foreign_fingerprints
+        .values()
+        .map(|v| v.len())
+        .sum();
     for (_transport_key, fps) in incoming {
         for mut fp in fps {
             if is_init_fingerprint(&fp) || !verify_fingerprint_signature(&fp) {
@@ -879,12 +890,7 @@ pub fn import_foreign_fingerprints(
             // SECURITY (WH4-01-203 + AUDIT-00-WILDCARD-19): check caps BEFORE
             // borrowing the entry mutably, to avoid double-borrow and to
             // enforce both per-bucket and global limits.
-            let total_foreign: usize = known_fingerprints
-                .foreign_fingerprints
-                .values()
-                .map(|v| v.len())
-                .sum();
-            if total_foreign >= MAX_TOTAL_FOREIGN_FINGERPRINTS {
+            if current_total_foreign >= MAX_TOTAL_FOREIGN_FINGERPRINTS {
                 rejected_count += 1;
                 continue;
             }
@@ -924,6 +930,7 @@ pub fn import_foreign_fingerprints(
             }
             entry.push(fp);
             new_count += 1;
+            current_total_foreign += 1;
         }
     }
     known_fingerprints
