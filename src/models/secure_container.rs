@@ -21,6 +21,8 @@ use serde_json::json;
 use sha2::Sha256;
 use zeroize::Zeroize;
 
+pub const MAX_RECIPIENTS: usize = 256;
+
 /// Defines the type of content transported in the `SecureContainer`.
 ///
 /// Using an enum instead of a plain string increases type safety
@@ -416,6 +418,13 @@ impl SecureContainer {
     /// bytes. `i` and `signature` are excluded exactly as during creation,
     /// so the check covers ALL AEAD-exempt envelope fields (`unprotected`, `salt`, `et`, `c`, recipients, ...).
     pub fn verify_integrity(&self) -> Result<(), VoucherCoreError> {
+        if self.recipients.len() > MAX_RECIPIENTS {
+            return Err(VoucherCoreError::ContainerValidation(format!(
+                "Too many recipients: {} exceeds maximum allowed {}",
+                self.recipients.len(),
+                MAX_RECIPIENTS
+            )));
+        }
         let mut container_for_hash = self.clone();
         container_for_hash.i = String::new();
         container_for_hash.signature = String::new();
@@ -442,6 +451,13 @@ impl SecureContainer {
         recipient_identity: &UserIdentity,
         password: Option<&str>,
     ) -> Result<Vec<u8>, VoucherCoreError> {
+        if self.recipients.len() > MAX_RECIPIENTS {
+            return Err(VoucherCoreError::ContainerValidation(format!(
+                "Too many recipients: {} exceeds maximum allowed {}",
+                self.recipients.len(),
+                MAX_RECIPIENTS
+            )));
+        }
         match self.et {
             EncryptionType::Asymmetric => {
                 // JWE format for asymmetric encryption

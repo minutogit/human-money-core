@@ -473,7 +473,37 @@ impl DynamicPolicyEngine {
                             }
                         }
                     Ok(JsonValue::Bool(false))
-                } else {
+                } else if func_name == "@not_strictly_false" {
+                    if call.args.len() != 1 {
+                        return Err(PolicyEngineError::CompilationError(
+                            "@not_strictly_false requires 1 argument".into(),
+                        ));
+                    }
+                    let val = Self::eval_and_check_ast(&call.args[0], env, depth + 1, iter_budget)?;
+                    match val {
+                        JsonValue::Bool(b) => Ok(JsonValue::Bool(b)),
+                        _ => Ok(val),
+                    }
+                } else if matches!(func_name, "_+_" | "_-_" | "_*_" | "_/_" | "_%_") {
+                    if let Some(target) = &call.target {
+                        let _ = Self::eval_and_check_ast(target, env, depth + 1, iter_budget)?;
+                    }
+                    for arg in &call.args {
+                        let _ = Self::eval_and_check_ast(arg, env, depth + 1, iter_budget)?;
+                    }
+                    Ok(JsonValue::Number(0.into()))
+                } else if matches!(func_name, "matches" | "contains" | "startsWith" | "endsWith") {
+                    if let Some(target) = &call.target {
+                        let _ = Self::eval_and_check_ast(target, env, depth + 1, iter_budget)?;
+                    }
+                    for arg in &call.args {
+                        let _ = Self::eval_and_check_ast(arg, env, depth + 1, iter_budget)?;
+                    }
+                    Ok(JsonValue::Bool(true))
+                } else if matches!(
+                    func_name,
+                    "type" | "int" | "uint" | "double" | "string" | "bytes" | "duration" | "timestamp"
+                ) {
                     if let Some(target) = &call.target {
                         let _ = Self::eval_and_check_ast(target, env, depth + 1, iter_budget)?;
                     }
@@ -481,6 +511,11 @@ impl DynamicPolicyEngine {
                         let _ = Self::eval_and_check_ast(arg, env, depth + 1, iter_budget)?;
                     }
                     Ok(JsonValue::Null)
+                } else {
+                    return Err(PolicyEngineError::EvaluationError(format!(
+                        "unknown or unsupported CEL function: '{}'",
+                        func_name
+                    )));
                 }
             }
             Expr::List(list) => {

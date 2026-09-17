@@ -1048,22 +1048,21 @@ fn test_attack_invalid_precision_in_nominal_value() {
 
     let (standard, standard_hash) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
 
-    // ### ATTACK ###
-    // The `create_voucher` function itself does not validate this yet, so the state is created.
-    let malicious_voucher = human_money_core::models::voucher::Voucher::create_with_key(
-        voucher_data,
+    // ### ATTACK & VALIDATION ###
+    // Security Fix (AUDIT-00-WILDCARD-01): `create_with_key` fails fast directly on creation.
+    let creation_result = human_money_core::models::voucher::Voucher::create_with_key(
+        voucher_data.clone(),
         standard,
         standard_hash,
-        &creator_identity.signing_key)
-    .unwrap();
-
-    // ### VALIDATION ###
-    // However, `validate_voucher_against_standard` must detect this error.
-    let result =
-        voucher_validation::validate_voucher_against_standard(&malicious_voucher, standard);
-    println!(
-        "[DEBUG] test_attack_invalid_precision_in_nominal_value actual result: {:?}",
-        result
+        &creator_identity.signing_key,
+    );
+    assert!(
+        matches!(
+            creation_result,
+            Err(human_money_core::error::VoucherCoreError::AmountPrecisionExceeded { .. })
+        ),
+        "create_with_key must directly reject excess precision, got: {:?}",
+        creation_result
     );
 }
 

@@ -515,6 +515,15 @@ impl Voucher {
         let decimal_places = verified_standard.immutable.features.amount_decimal_places as u32;
 
         let initial_amount = Decimal::from_str(&temp_voucher.nominal_value.amount)?;
+        if initial_amount.normalize().scale() > decimal_places {
+            return Err(VoucherCoreError::AmountPrecisionExceeded {
+                allowed: decimal_places,
+                found: initial_amount.normalize().scale(),
+            });
+        }
+        if initial_amount <= Decimal::ZERO {
+            return Err(VoucherCoreError::InvalidNominalValue);
+        }
         init_transaction.amount = format!("{:.1$}", initial_amount, decimal_places as usize);
 
         let creator_prefix = crate::services::crypto::get_prefix_from_user_id(&creator_id);
@@ -750,6 +759,12 @@ impl Voucher {
                         return Err(VoucherCoreError::VoucherPartialTransferNotAllowed);
                     }
                     let remaining = spendable_balance - amount_to_send;
+                    if remaining.normalize().scale() > decimal_places {
+                        return Err(VoucherCoreError::AmountPrecisionExceeded {
+                            allowed: decimal_places,
+                            found: remaining.normalize().scale(),
+                        });
+                    }
                     (
                         "split".to_string(),
                         Some(format!("{:.1$}", remaining, decimal_places as usize)),
@@ -764,6 +779,12 @@ impl Voucher {
                         return Err(VoucherCoreError::VoucherPartialTransferNotAllowed);
                     }
                     let remaining = spendable_balance - amount_to_send;
+                    if remaining.normalize().scale() > decimal_places {
+                        return Err(VoucherCoreError::AmountPrecisionExceeded {
+                            allowed: decimal_places,
+                            found: remaining.normalize().scale(),
+                        });
+                    }
                     (
                         "split".to_string(),
                         Some(format!("{:.1$}", remaining, decimal_places as usize)),

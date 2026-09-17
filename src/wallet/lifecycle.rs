@@ -156,13 +156,17 @@ impl Wallet {
         // --- EXPIRATION SWEEP ---
         // After deserialization, but before returning: Check all vouchers
         // for expiration and generate VoucherExpired events.
+        // SECURITY (AUDIT-00-WILDCARD-12): use `Voucher::is_expired` uniformly
+        // so unparseable or expired vouchers are consistently marked/handled
+        // (fail-closed). Previously `is_expired` treated unparseable as expired
+        // while the load sweep left it Active, yielding never-expiring vouchers.
         let now = chrono::Utc::now();
+        let now_str = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         let expired_local_ids: Vec<(String, String, crate::models::wallet_event::EventBffData)> = {
             let mut expired = Vec::new();
             for instance in wallet.voucher_store.vouchers.values() {
                 if matches!(instance.status, VoucherStatus::Active | VoucherStatus::Incomplete { .. })
-                    && let Ok(valid_until) = chrono::DateTime::parse_from_rfc3339(&instance.voucher.valid_until)
-                    && now > valid_until.with_timezone(&chrono::Utc)
+                    && instance.voucher.is_expired(Some(&now_str))
                 {
                     let bff_data = crate::models::wallet_event::EventBffData {
                         display_currency: crate::wallet::format_bff_name(
@@ -196,6 +200,12 @@ impl Wallet {
             );
         }
         // --- END EXPIRATION SWEEP ---
+
+        // --- ROUTING MEMORY MAINTENANCE ---
+        // Migrate legacy dedup sets and prune expired/decayed entries.
+        wallet.routing_memory.migrate_legacy();
+        wallet.routing_memory.decay_all(now);
+        // --- END ROUTING MEMORY MAINTENANCE ---
 
         // --- PROTOCOL-EPOCH SWEEP (WH3-00-901) ---
         // DESIGN DECISION (documented per design-intent triage): instances

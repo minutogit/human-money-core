@@ -63,6 +63,13 @@ impl StandardRegistry {
         let mut verified = HashMap::with_capacity(toml_map.len());
         for (uuid, toml_str) in toml_map {
             let (def, _) = VoucherStandardDefinition::from_toml(toml_str)?;
+            if def.immutable.identity.uuid != *uuid {
+                return Err(ValidationError::StandardUuidMismatch {
+                    expected: uuid.clone(),
+                    found: def.immutable.identity.uuid.clone(),
+                }
+                .into());
+            }
             verified.insert(uuid.clone(), def);
         }
         Ok(Self { verified })

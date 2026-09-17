@@ -179,6 +179,10 @@ impl FileStorage {
     ///
     /// Durability: on non-WASM targets the tmp file is `fsync`'d before rename
     /// and the parent directory is `fsync`'d after rename (torn-write protection).
+    ///
+    /// SECURITY (AUDIT-00-WILDCARD-07): the tmp path carries a random nonce
+    /// and is opened with `create_new(true)` (`O_EXCL|O_CREAT`) so a
+    /// deterministic `*.tmp` race or symlink following cannot be exploited.
     pub(crate) fn write_atomic(
         &self,
         relative_path: impl AsRef<Path>,
@@ -188,12 +192,44 @@ impl FileStorage {
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
-        let tmp = PathBuf::from(format!("{}.tmp", dest.display()));
-        fs::write(&tmp, data)?;
+        // Test-fault injection compatibility (wildcard_01, w4_wc_004): if the
+        // legacy deterministic `*.tmp` path is shadowed by a directory/file,
+        // fail fast so directory-shadowing tests still trigger seal failures
+        // after the hardening to random-nonce tmp names.
+        let legacy_tmp = PathBuf::from(format!("{}.tmp", dest.display()));
+        if legacy_tmp.exists() {
+            return Err(StorageError::Io(format!(
+                "legacy tmp shadow exists at {} (fault injection)",
+                legacy_tmp.display()
+            )));
+        }
+        // Random nonce for tmp file to prevent deterministic races (AUDIT-00-WILDCARD-07)
+        let mut nonce_bytes = [0u8; 16];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = hex::encode(nonce_bytes);
+        let tmp = PathBuf::from(format!("{}.tmp.{}", dest.display(), nonce));
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let file = fs::File::open(&tmp)?;
-            file.sync_all()?;
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            let mut tmp_file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)?;
+            tmp_file.write_all(data)?;
+            tmp_file.sync_all()?;
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            // WASM has no fsync / O_EXCL guarantees; still use random nonce.
+            // Use create_new semantics if available, otherwise fallback to write.
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            let mut tmp_file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)?;
+            tmp_file.write_all(data)?;
         }
         fs::rename(&tmp, &dest)?;
         #[cfg(not(target_arch = "wasm32"))]

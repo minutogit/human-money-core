@@ -245,6 +245,14 @@ pub enum Error {
     #[error("Amount precision exceeds standard limit. Allowed: {allowed}, Found: {found}")]
     AmountPrecisionExceeded { allowed: u32, found: u32 },
 
+    /// The nominal value is invalid (must be positive).
+    #[error("Invalid nominal value: must be positive")]
+    InvalidNominalValue,
+
+    /// Secure container validation failed (e.g. too many recipients).
+    #[error("Container validation failed: {0}")]
+    ContainerValidation(String),
+
     /// A template value from the standard is invalid.
     #[error("Invalid template value from standard: {0}")]
     InvalidTemplateValue(String),

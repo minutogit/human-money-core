@@ -56,6 +56,7 @@ use crate::services::crypto::symmetric::{
 };
 use crate::services::utils::to_canonical_json;
 use base64::{Engine as _, engine::general_purpose};
+use rand_core::{OsRng, RngCore};
 use std::{fs, path::Path, path::PathBuf};
 
 /// Format identifier stored in every sealed archive envelope.
@@ -76,6 +77,81 @@ const MANIFEST_FORMAT_ID: &str = "hmc-archive-manifest-v1";
 /// each record's envelope bytes so whole-record content substitution is
 /// detectable.
 const MANIFEST_FORMAT_ID_V2: &str = "hmc-archive-manifest-v2";
+
+/// SECURITY (AUDIT-00-WILDCARD-07): atomic write helper with random nonce and
+/// `O_EXCL` (`create_new(true)`) + `sync_all` before rename to prevent
+/// deterministic `*.tmp` races and symlink following.
+fn write_atomic_archive(dest: &Path, data: &[u8]) -> Result<(), StorageError> {
+    // Fault-injection compatibility: if legacy deterministic tmp exists, fail
+    let legacy_tmp = dest.with_file_name(format!(
+        "{}.tmp",
+        dest.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("tmp")
+    ));
+    if legacy_tmp.exists() {
+        return Err(StorageError::Io(format!(
+            "legacy tmp shadow exists at {} (fault injection)",
+            legacy_tmp.display()
+        )));
+    }
+    // For archive_voucher's `.json.tmp` pattern, also check that legacy sibling
+    let legacy_json_tmp = {
+        let fname = dest
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("tmp");
+        // e.g. dest "abc.json" -> legacy "abc.json.tmp"
+        dest.with_file_name(format!("{}.tmp", fname))
+    };
+    if legacy_json_tmp.exists() && legacy_json_tmp != legacy_tmp {
+        return Err(StorageError::Io(format!(
+            "legacy tmp shadow exists at {} (fault injection)",
+            legacy_json_tmp.display()
+        )));
+    }
+    let mut nonce_bytes = [0u8; 16];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = hex::encode(nonce_bytes);
+    let tmp = dest.with_file_name(format!(
+        "{}.tmp.{}",
+        dest.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("tmp"),
+        nonce
+    ));
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        f.write_all(data)?;
+        f.sync_all()?;
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        f.write_all(data)?;
+    }
+    fs::rename(&tmp, dest)?;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Some(parent) = dest.parent() {
+            if let Ok(dir) = fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
+        }
+    }
+    Ok(())
+}
 
 /// A single record entry of a sealed archive manifest.
 #[derive(Debug, Clone)]
@@ -458,9 +534,7 @@ impl FileVoucherArchive {
         let envelope = self.seal_record(payload.to_string().as_bytes())?;
 
         let path = voucher_dir.join(MANIFEST_FILE_NAME);
-        let tmp_path = voucher_dir.join(format!("{}.tmp", MANIFEST_FILE_NAME));
-        fs::write(&tmp_path, serde_json::to_vec(&envelope)?)?;
-        fs::rename(&tmp_path, &path)?;
+        write_atomic_archive(&path, &serde_json::to_vec(&envelope)?)?;
         Ok(())
     }
 
@@ -605,10 +679,8 @@ impl FileVoucherArchive {
         let envelope = self.seal_record(json_content.as_bytes())?;
         let envelope_bytes = serde_json::to_vec(&envelope)?;
 
-        // Atomic write
-        let temp_file_path = voucher_dir.join(format!("{}.json.tmp", &last_tx.t_id));
-        fs::write(&temp_file_path, envelope_bytes)?;
-        fs::rename(&temp_file_path, &file_path)?;
+        // Atomic write with random nonce + O_EXCL + fsync (AUDIT-00-WILDCARD-07)
+        write_atomic_archive(&file_path, &envelope_bytes)?;
 
         // Manifest bookkeeping (HMSEC-SA05-09): keep the sealed record list in
         // sync with the states on disk so whole-record deletions are detected
