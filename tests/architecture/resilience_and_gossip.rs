@@ -33,29 +33,6 @@ mod tests {
         ((alice_service, alice_profile), (bob_service, bob_profile))
     }
 
-    /// Helper function: Creates and sends a bundle containing only fingerprints.
-    fn create_and_send_fingerprint_bundle(
-        sender_service: &mut AppService,
-        recipient_id: &str,
-        forwarded_fingerprints: Vec<TransactionFingerprint>,
-        quarantine_pairs: Vec<[TransactionFingerprint; 2]>,
-    ) -> Vec<u8> {
-        let (wallet, identity) = sender_service.get_unlocked_mut_for_test();
-
-        let (bundle_bytes, _header) = wallet
-            .create_and_encrypt_transaction_bundle(
-                identity,
-                vec![], // No vouchers
-                recipient_id,
-                None,
-                forwarded_fingerprints,
-                quarantine_pairs,
-                None, // sender_profile_name
-            )
-            .unwrap();
-        bundle_bytes
-    }
-
     //==============================================================================
     // C. Storage Cleanup Tests (Resilience in Operation)
     //==============================================================================
@@ -263,6 +240,28 @@ mod tests {
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
+        // Create a voucher for Alice so the bundle carries V = 1 voucher
+        let new_voucher_data = NewVoucherData {
+            nominal_value: human_money_core::models::voucher::ValueDefinition {
+                amount: "100".to_string(),
+                ..Default::default()
+            },
+            creator_profile: human_money_core::models::profile::PublicProfile {
+                id: Some(ACTORS.alice.user_id.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        alice_service
+            .create_new_voucher(
+                &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
+                new_voucher_data,
+                Some(PASSWORD),
+            )
+            .unwrap();
+
+        let local_id = alice_service.get_unlocked_mut_for_test().0.voucher_store.vouchers.keys().next().unwrap().clone();
+
         let fp_key = "test_fp_key".to_string();
         let mut fingerprint =
             human_money_core::test_utils::make_signed_fingerprint(&fp_key, "", 0);
@@ -274,14 +273,32 @@ mod tests {
             sent_to: Vec::new(),
         });
 
+        let mut standards = HashMap::new();
+        standards.insert(
+            FREETALER_STANDARD.0.immutable.identity.uuid.clone(),
+            toml::to_string(&FREETALER_STANDARD.0).unwrap(),
+        );
+
         bob_service
             .login(&bob_profile.folder_name, "password", false, "test-id".to_string())
             .unwrap();
         let bob_id = bob_service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         bob_service.logout();
 
-        let bundle_bytes =
-            create_and_send_fingerprint_bundle(&mut alice_service, &bob_id, vec![fingerprint.clone()], vec![]);
+        let request = human_money_core::wallet::MultiTransferRequest {
+            recipient_id: bob_id,
+            sources: vec![human_money_core::wallet::SourceTransfer {
+                local_instance_id: local_id,
+                amount_to_send: "100".to_string(),
+            }],
+            notes: None,
+            sender_profile_name: None,
+            use_privacy_mode: None,
+        };
+
+        let bundle_res = alice_service
+            .create_transfer_bundle(request, &standards, None, Some(PASSWORD))
+            .unwrap();
 
         alice_service.logout();
 
@@ -290,7 +307,7 @@ mod tests {
             .unwrap();
 
         bob_service
-            .receive_bundle(&bundle_bytes, &HashMap::new(), None, Some("password"), false)
+            .receive_bundle(&bundle_res.bundle_bytes, &standards, None, Some("password"), false)
             .unwrap();
 
         let (bob_wallet, _) = bob_service.get_unlocked_mut_for_test();
@@ -317,7 +334,29 @@ mod tests {
         alice_service
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
+
+        // Create 1 voucher for Alice
+        let new_voucher_data = NewVoucherData {
+            nominal_value: human_money_core::models::voucher::ValueDefinition {
+                amount: "100".to_string(),
+                ..Default::default()
+            },
+            creator_profile: human_money_core::models::profile::PublicProfile {
+                id: Some(ACTORS.alice.user_id.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        alice_service
+            .create_new_voucher(
+                &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
+                new_voucher_data,
+                Some(PASSWORD),
+            )
+            .unwrap();
+
         let (wallet, alice_identity) = alice_service.get_unlocked_mut_for_test();
+        let voucher = wallet.voucher_store.vouchers.values().next().unwrap().voucher.clone();
 
         // Populate direct_queue and foreign_fingerprints
         for i in 0..10 {
@@ -342,9 +381,14 @@ mod tests {
         let bob_id = bob_service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
         bob_service.logout();
 
-        // V = 0 vouchers -> v_eff = 1 -> standard budget = 10 (3 direct + 7 gossip)
+        // 1. V = 0 vouchers -> budget is strictly 0 (no leakage)
+        let (fps_empty, q_empty) = wallet.select_fingerprints_for_bundle(&bob_id, &[]).unwrap();
+        assert!(fps_empty.is_empty());
+        assert!(q_empty.is_empty());
+
+        // 2. V = 1 voucher -> standard budget = 10 (3 direct + 7 gossip)
         let (fingerprints_to_send, quarantine_to_send) =
-            wallet.select_fingerprints_for_bundle(&bob_id, &[]).unwrap();
+            wallet.select_fingerprints_for_bundle(&bob_id, &[voucher.clone()]).unwrap();
 
         assert_eq!(fingerprints_to_send.len(), 10);
         assert!(quarantine_to_send.is_empty());
@@ -352,7 +396,7 @@ mod tests {
         let (bundle_bytes, _header) = wallet
             .create_and_encrypt_transaction_bundle(
                 alice_identity,
-                vec![],
+                vec![voucher],
                 &bob_id,
                 None,
                 fingerprints_to_send,
@@ -369,5 +413,199 @@ mod tests {
         let bob_identity = &bob_service.get_unlocked_mut_for_test().1;
         let bundle = bundle_processor::open_and_verify_bundle(bob_identity, &bundle_bytes).unwrap();
         assert_eq!(bundle.forwarded_fingerprints.len(), 10);
+    }
+
+    #[test]
+    fn test_gossip_zero_voucher_bundle_emits_no_fingerprints() {
+        let dir = tempdir().unwrap();
+        let ((mut alice_service, alice_profile), (_, _)) = setup_test_environment(&dir);
+
+        let alice_wallet_path = dir.path().join(&alice_profile.folder_name);
+        let alice_lock_file = alice_wallet_path.join(".wallet.lock");
+        if alice_lock_file.exists() {
+            std::fs::remove_file(&alice_lock_file).unwrap();
+        }
+
+        alice_service
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
+            .unwrap();
+        let (wallet, _) = alice_service.get_unlocked_mut_for_test();
+
+        // Fill queues
+        for i in 0..5 {
+            let fp = human_money_core::test_utils::make_signed_fingerprint(&format!("dq_{}", i), "", 0);
+            wallet.active_gossip.direct_queue.push_back(DirectEntry {
+                fingerprint: fp,
+                sent_to: Vec::new(),
+            });
+        }
+        for i in 0..5 {
+            let fp = human_money_core::test_utils::make_signed_fingerprint(&format!("gp_{}", i), "", 0);
+            wallet.active_gossip.fresh_gossip_pool.push_back(fp);
+        }
+
+        // When vouchers_in_bundle is empty, selection must immediately return empty vecs
+        let (fps, qps) = wallet.select_fingerprints_for_bundle(&ACTORS.bob.user_id, &[]).unwrap();
+        assert!(fps.is_empty(), "0-voucher bundle must select 0 fingerprints");
+        assert!(qps.is_empty(), "0-voucher bundle must select 0 quarantine pairs");
+    }
+
+    #[test]
+    fn test_gossip_lottery_preservation_for_bundle_vouchers() {
+        let dir = tempdir().unwrap();
+        let ((mut alice_service, alice_profile), _) = setup_test_environment(&dir);
+
+        let alice_wallet_path = dir.path().join(&alice_profile.folder_name);
+        let alice_lock_file = alice_wallet_path.join(".wallet.lock");
+        if alice_lock_file.exists() {
+            std::fs::remove_file(&alice_lock_file).unwrap();
+        }
+
+        alice_service
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
+            .unwrap();
+
+        // Create a voucher
+        let new_voucher_data = NewVoucherData {
+            nominal_value: human_money_core::models::voucher::ValueDefinition {
+                amount: "100".to_string(),
+                ..Default::default()
+            },
+            creator_profile: human_money_core::models::profile::PublicProfile {
+                id: Some(ACTORS.alice.user_id.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        alice_service
+            .create_new_voucher(
+                &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
+                new_voucher_data,
+                Some(PASSWORD),
+            )
+            .unwrap();
+
+        let (wallet, _) = alice_service.get_unlocked_mut_for_test();
+        let voucher = wallet.voucher_store.vouchers.values().next().unwrap().voucher.clone();
+
+        // Obtain ds_tag for the transaction of the created voucher
+        let voucher_tx = &voucher.transactions[0];
+        let voucher_fp = human_money_core::services::conflict_manager::create_fingerprint_for_transaction(
+            voucher_tx,
+            &voucher,
+        ).unwrap();
+
+        // Insert this exact fingerprint into fresh_gossip_pool along with other foreign fps
+        wallet.active_gossip.fresh_gossip_pool.push_back(voucher_fp.clone());
+        for i in 0..10 {
+            let fp = human_money_core::test_utils::make_signed_fingerprint(&format!("other_{}", i), "", 0);
+            wallet.active_gossip.fresh_gossip_pool.push_back(fp);
+        }
+
+        // Select fingerprints for a bundle containing this voucher
+        let (fps, _) = wallet.select_fingerprints_for_bundle(&ACTORS.bob.user_id, &[voucher]).unwrap();
+
+        // The bundle-owned ds_tag MUST NOT be selected as forwarded gossip, but PRESERVED in fresh_gossip_pool
+        assert!(!fps.iter().any(|f| f.ds_tag == voucher_fp.ds_tag), "Bundle ds_tag must not be gossiped");
+        assert!(wallet.active_gossip.fresh_gossip_pool.iter().any(|f| f.ds_tag == voucher_fp.ds_tag), "Bundle ds_tag must be preserved in pool");
+    }
+
+    #[test]
+    fn test_gossip_sent_to_recipient_filter_and_cleanup() {
+        let dir = tempdir().unwrap();
+        let ((mut alice_service, alice_profile), _) = setup_test_environment(&dir);
+
+        let alice_wallet_path = dir.path().join(&alice_profile.folder_name);
+        let alice_lock_file = alice_wallet_path.join(".wallet.lock");
+        if alice_lock_file.exists() {
+            std::fs::remove_file(&alice_lock_file).unwrap();
+        }
+
+        alice_service
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
+            .unwrap();
+
+        // Create a voucher
+        let new_voucher_data = NewVoucherData {
+            nominal_value: human_money_core::models::voucher::ValueDefinition {
+                amount: "100".to_string(),
+                ..Default::default()
+            },
+            creator_profile: human_money_core::models::profile::PublicProfile {
+                id: Some(ACTORS.alice.user_id.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        alice_service
+            .create_new_voucher(
+                &toml::to_string(&FREETALER_STANDARD.0).unwrap(),
+                new_voucher_data,
+                Some(PASSWORD),
+            )
+            .unwrap();
+
+        let (wallet, _) = alice_service.get_unlocked_mut_for_test();
+        let voucher = wallet.voucher_store.vouchers.values().next().unwrap().voucher.clone();
+
+        let fp = human_money_core::test_utils::make_signed_fingerprint("test_direct_filter", "", 0);
+        wallet.active_gossip.direct_queue.push_back(DirectEntry {
+            fingerprint: fp,
+            sent_to: Vec::new(),
+        });
+
+        // Send 1 to Bob
+        let (fps1, _) = wallet.select_fingerprints_for_bundle("user_1@did:key:z6Mku", &[voucher.clone()]).unwrap();
+        assert_eq!(fps1.len(), 1);
+        assert_eq!(wallet.active_gossip.direct_queue.len(), 1);
+        assert_eq!(wallet.active_gossip.direct_queue[0].sent_to.len(), 1);
+
+        // Sending again to same recipient must NOT re-select it
+        let (fps1_dup, _) = wallet.select_fingerprints_for_bundle("user_1@did:key:z6Mku", &[voucher.clone()]).unwrap();
+        assert!(fps1_dup.is_empty());
+
+        // Send to 2nd recipient
+        let (fps2, _) = wallet.select_fingerprints_for_bundle("user_2@did:key:z6Mkv", &[voucher.clone()]).unwrap();
+        assert_eq!(fps2.len(), 1);
+        assert_eq!(wallet.active_gossip.direct_queue[0].sent_to.len(), 2);
+
+        // Send to 3rd recipient -> must be purged afterwards (retain sent_to.len() < 3)
+        let (fps3, _) = wallet.select_fingerprints_for_bundle("user_3@did:key:z6Mkw", &[voucher]).unwrap();
+        assert_eq!(fps3.len(), 1);
+        assert!(wallet.active_gossip.direct_queue.is_empty(), "Entry must be removed after 3 distinct recipients");
+    }
+
+    #[test]
+    fn test_gossip_quarantine_relay_pool_strict_fifo_cap() {
+        let dir = tempdir().unwrap();
+        let ((mut alice_service, alice_profile), (_, _)) = setup_test_environment(&dir);
+
+        let alice_wallet_path = dir.path().join(&alice_profile.folder_name);
+        let alice_lock_file = alice_wallet_path.join(".wallet.lock");
+        if alice_lock_file.exists() {
+            std::fs::remove_file(&alice_lock_file).unwrap();
+        }
+
+        alice_service
+            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
+            .unwrap();
+        let (wallet, _) = alice_service.get_unlocked_mut_for_test();
+
+        // Push 505 quarantine pairs into quarantine_relay_pool using process_received_fingerprints
+        const MAX_CAP: usize = 500;
+        for i in 0..505 {
+            let fp1 = human_money_core::test_utils::make_signed_fingerprint(&format!("q_tag_{}", i), "tx1", 0);
+            let fp2 = human_money_core::test_utils::make_signed_fingerprint(&format!("q_tag_{}", i), "tx2", 0);
+            // Simulate direct bounded push in active_gossip
+            while wallet.active_gossip.quarantine_relay_pool.len() >= MAX_CAP {
+                wallet.active_gossip.quarantine_relay_pool.pop_front();
+            }
+            wallet.active_gossip.quarantine_relay_pool.push_back([fp1, fp2]);
+        }
+
+        assert_eq!(wallet.active_gossip.quarantine_relay_pool.len(), MAX_CAP);
+        // The first 5 entries should have been popped (q_tag_0 .. q_tag_4)
+        assert_eq!(wallet.active_gossip.quarantine_relay_pool[0][0].ds_tag, "q_tag_5");
+        assert_eq!(wallet.active_gossip.quarantine_relay_pool[MAX_CAP - 1][0].ds_tag, "q_tag_504");
     }
 }

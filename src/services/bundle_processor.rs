@@ -55,6 +55,8 @@ pub fn create_and_encrypt_bundle(
             )),
         ));
     }
+    // ARCHITECTURE (KISS-Immune): Base envelope floor (.max(1)) permits pure gossip / security
+    // frames without vouchers (up to 10 fps and 3 qps), while scaling dynamically up to V * 10 / V * 3.
     let max_forwarded_fps = vouchers.len().max(1) * MAX_FINGERPRINTS_PER_VOUCHER;
     if forwarded_fingerprints.len() > max_forwarded_fps {
         return Err(VoucherCoreError::Validation(
@@ -209,6 +211,8 @@ pub fn open_and_verify_bundle(
             )),
         ));
     }
+    // ARCHITECTURE (KISS-Immune): Base envelope floor (.max(1)) permits pure gossip / security
+    // frames without vouchers (up to 10 fps and 3 qps), while scaling dynamically up to V * 10 / V * 3.
     let max_forwarded_fps = bundle.vouchers.len().max(1) * MAX_FINGERPRINTS_PER_VOUCHER;
     if bundle.forwarded_fingerprints.len() > max_forwarded_fps {
         return Err(VoucherCoreError::Validation(

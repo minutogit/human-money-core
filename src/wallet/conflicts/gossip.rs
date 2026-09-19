@@ -33,11 +33,13 @@ impl Wallet {
         vouchers_in_bundle: &[Voucher],
     ) -> Result<(Vec<TransactionFingerprint>, Vec<[TransactionFingerprint; 2]>), VoucherCoreError> {
         let v_count = vouchers_in_bundle.len();
-        let v_eff = if v_count == 0 { 1 } else { v_count };
+        if v_count == 0 {
+            return Ok((Vec::new(), Vec::new()));
+        }
 
-        let m_standard = v_eff * 10;
-        let m_direct = v_eff * 3;
-        let m_quarantine = v_eff * 3;
+        let m_standard = v_count * 10;
+        let m_direct = v_count * 3;
+        let m_quarantine = v_count * 3;
 
         let recipient_short_hash = get_short_hash_from_user_id(recipient_id);
 

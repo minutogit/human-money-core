@@ -81,8 +81,10 @@ impl Wallet {
         }
 
         // --- Phase 2: Selective deletion by recency ---
-        let current_total_count = self.own_fingerprints.history.len()
-            + self.known_fingerprints.local_history.len()
+        // ARCHITECTURE (KISS-Immune): Only volatile foreign and local history caches participate
+        // in opportunistic capacity trimming. `own_fingerprints.history` is the user's authoritative
+        // ledger to prevent accidental double-spends and must never be trimmed opportunistically.
+        let current_total_count = self.known_fingerprints.local_history.len()
             + self.known_fingerprints.foreign_fingerprints.len();
 
         let max_fingerprints = max_fingerprints_override.unwrap_or(MAX_FINGERPRINTS_CONST);
@@ -112,8 +114,13 @@ impl Wallet {
 
             report.limit_based_fingerprints_removed = keys_to_remove.len();
 
-            // Remove selected entries from all stores (3-way helper)
-            self.retain_fingerprints(|k| !keys_to_remove.contains(k));
+            // Remove selected entries only from foreign and local history caches
+            self.known_fingerprints
+                .local_history
+                .retain(|k, _| !keys_to_remove.contains(k));
+            self.known_fingerprints
+                .foreign_fingerprints
+                .retain(|k, _| !keys_to_remove.contains(k));
         }
 
         // --- Phase 3: Archive cleanup ---

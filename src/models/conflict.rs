@@ -25,8 +25,8 @@ pub struct TransactionFingerprint {
     /// identical `ds_tag` signals a double spend.
     pub t_id: String,
 
-    /// The encrypted timestamp of the transaction in nanoseconds.
-    /// `encrypted_nanos = original_nanos ^ hash(prev_hash + t_id)`
+    /// The encrypted timestamp of the transaction in nanoseconds (u128).
+    /// `encrypted_nanos = original_nanos ^ truncate_16_bytes(hash(prev_hash || t_id))`
     pub encrypted_timestamp: u128,
 
     /// The technical signature (Layer 2) of the sender. Serves as cryptographic proof

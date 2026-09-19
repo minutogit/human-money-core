@@ -746,15 +746,6 @@ impl Wallet {
 
             // 4. Add the new instance with the NEW ID and the correct status.
             self.add_voucher_instance(new_local_id.clone(), new_voucher_state.clone(), new_status);
-
-            // 5. STATELESS: We do NOT store the change seed anymore. It is now deterministic.
-            /*
-            if let Some(change_seed) = secrets.change_seed {
-                 if let Some(instance) = self.voucher_store.vouchers.get_mut(&new_local_id) {
-                     instance.current_secret_seed = Some(change_seed);
-                 }
-            }
-            */
         }
 
         // NOTE (HMC-SEC-04-03): No archive writes here. This method may run on

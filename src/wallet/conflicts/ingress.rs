@@ -961,7 +961,7 @@ impl Wallet {
 
             // Push to FreshGossipPool for 70% lottery on future payments (bounded FIFO)
             const MAX_FRESH_GOSSIP_POOL: usize = 3000;
-            if self.active_gossip.fresh_gossip_pool.len() >= MAX_FRESH_GOSSIP_POOL {
+            while self.active_gossip.fresh_gossip_pool.len() >= MAX_FRESH_GOSSIP_POOL {
                 self.active_gossip.fresh_gossip_pool.pop_front();
             }
             self.active_gossip.fresh_gossip_pool.push_back(fp_admitted.clone());
@@ -1016,6 +1016,10 @@ impl Wallet {
                 f2,
             ) {
                 let pk_bytes = point.compress().to_bytes();
+                // ARCHITECTURE (KISS-Gossip): `_did_id_opt` is verified cryptographically here.
+                // We deliberately do not store it as redundant state in ActiveGossipState/QuarantineEntry;
+                // the gossip relay only propagates minimal raw colliding pairs [f1, f2], and every
+                // node can deterministically reconstruct the offender DID on-demand via `extract_sst_identity`.
                 let _did_id_opt = if let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes) {
                     crate::services::crypto::create_user_id(&pk, None).ok()
                 } else {
@@ -1028,7 +1032,7 @@ impl Wallet {
                 conflict_manager::assign_local_retention_to_wire_entry(&mut p1);
 
                 const MAX_QUARANTINE_RELAY_POOL: usize = 500;
-                if self.active_gossip.quarantine_relay_pool.len() >= MAX_QUARANTINE_RELAY_POOL {
+                while self.active_gossip.quarantine_relay_pool.len() >= MAX_QUARANTINE_RELAY_POOL {
                     self.active_gossip.quarantine_relay_pool.pop_front();
                 }
                 self.active_gossip
