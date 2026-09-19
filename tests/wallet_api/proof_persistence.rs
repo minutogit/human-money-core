@@ -80,7 +80,7 @@ fn test_proof_is_created_even_when_transaction_missing_from_store() {
         &watchtower.identity.user_id,
         None,
         vec![],
-        HashMap::new(),
+        vec![],
         None,
     ).unwrap();
 
@@ -102,7 +102,7 @@ fn test_proof_is_created_even_when_transaction_missing_from_store() {
         &watchtower.identity.user_id,
         None,
         vec![],
-        HashMap::new(),
+        vec![],
         None,
     ).unwrap();
 

@@ -43,7 +43,7 @@ mod tests {
             &bob.identity.user_id,
             None,
             vec![],
-            HashMap::new(),
+            vec![],
             None,
         ).unwrap();
 
@@ -129,7 +129,7 @@ mod tests {
             &bob.identity.user_id,
             None,
             vec![],
-            HashMap::new(),
+            vec![],
             None,
         ).unwrap();
 

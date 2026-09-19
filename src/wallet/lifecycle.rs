@@ -6,7 +6,7 @@
 use crate::error::{ValidationError, VoucherCoreError};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::models::{
-    conflict::{CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, ProofStore},
+    conflict::{ActiveGossipState, KnownFingerprints, OwnFingerprints, ProofStore},
     profile::{BundleMetadataStore, UserIdentity, UserProfile, VoucherStore},
     voucher::NewVoucherData,
 };
@@ -99,7 +99,7 @@ impl Wallet {
         let known_fingerprints = KnownFingerprints::default();
         let own_fingerprints = OwnFingerprints::default();
         let proof_store = ProofStore::default();
-        let fingerprint_metadata = CanonicalMetadataStore::default();
+        let active_gossip = ActiveGossipState::default();
         let routing_memory = crate::wallet::routing_memory::RoutingMemoryStore::default();
 
         let wallet = Wallet {
@@ -109,7 +109,7 @@ impl Wallet {
             known_fingerprints,
             own_fingerprints,
             proof_store,
-            fingerprint_metadata,
+            active_gossip,
             routing_memory,
             local_instance_id,
             pending_events: Vec::new(),
@@ -139,7 +139,7 @@ impl Wallet {
         let known_fingerprints = storage.load_known_fingerprints(auth)?;
         let own_fingerprints = storage.load_own_fingerprints(auth)?;
         let proof_store = storage.load_proofs(auth)?;
-        let fingerprint_metadata = storage.load_fingerprint_metadata(auth)?;
+        let active_gossip = storage.load_active_gossip(auth)?;
 
         // Security check to ensure that the decrypted identity
         // matches the profile data.
@@ -156,7 +156,7 @@ impl Wallet {
             known_fingerprints,
             own_fingerprints,
             proof_store,
-            fingerprint_metadata,
+            active_gossip,
             routing_memory: crate::wallet::routing_memory::RoutingMemoryStore::default(),
             local_instance_id,
             pending_events: Vec::new(),

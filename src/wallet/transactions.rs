@@ -100,7 +100,7 @@ impl Wallet {
         recipient_id: &str,
         notes: Option<String>,
         forwarded_fingerprints: Vec<crate::models::conflict::TransactionFingerprint>,
-        fingerprint_depths: HashMap<String, i8>,
+        quarantine_pairs: Vec<[crate::models::conflict::TransactionFingerprint; 2]>,
         sender_profile_name: Option<String>,
     ) -> Result<(Vec<u8>, TransactionBundleHeader), VoucherCoreError> {
         for v in &vouchers {
@@ -117,7 +117,7 @@ impl Wallet {
             recipient_id,
             notes,
             forwarded_fingerprints,
-            fingerprint_depths,
+            quarantine_pairs,
             sender_profile_name,
         )?;
 
@@ -259,7 +259,7 @@ impl Wallet {
 
         // Take ownership of gossip data without cloning (streamlining).
         let forwarded_fingerprints = std::mem::take(&mut bundle.forwarded_fingerprints);
-        let fingerprint_depths = std::mem::take(&mut bundle.fingerprint_depths);
+        let quarantine_pairs = std::mem::take(&mut bundle.quarantine_pairs);
         let received_vouchers = bundle.vouchers.clone();
         // Capture sender metadata before consuming `bundle.vouchers` via `into_iter()`.
         let bundle_sender_id = bundle.sender_id.clone();
@@ -379,7 +379,7 @@ impl Wallet {
             &header,
             &received_vouchers,
             &forwarded_fingerprints,
-            &fingerprint_depths,
+            &quarantine_pairs,
         )?;
 
         // Fingerprint stores are rebuilt from the VoucherStore on every change.
@@ -858,7 +858,7 @@ impl Wallet {
         }
 
         // 3. **Bundling:** Create a single SecureContainer bundle.
-        let (fingerprints_to_send, depths_to_send) = temp_wallet
+        let (fingerprints_to_send, quarantine_pairs_to_send) = temp_wallet
             .select_fingerprints_for_bundle(&request.recipient_id, &vouchers_for_bundle)?;
 
         // Snapshot of the transferred voucher states for the post-commit
@@ -870,9 +870,8 @@ impl Wallet {
             vouchers_for_bundle,
             &request.recipient_id,
             request.notes,
-            // NEW: Additional arguments
             fingerprints_to_send,
-            depths_to_send,
+            quarantine_pairs_to_send,
             request.sender_profile_name,
         )?;
 

@@ -100,10 +100,9 @@ pub struct TransactionBundle {
     #[serde(default)]
     pub forwarded_fingerprints: Vec<TransactionFingerprint>,
 
-    /// The associated 'depth' values for the forwarded fingerprints.
-    /// Key: ds_tag of the fingerprint.
+    /// Quarantine pairs carried on-top for immediate fraud propagation.
     #[serde(default)]
-    pub fingerprint_depths: HashMap<String, i8>,
+    pub quarantine_pairs: Vec<[TransactionFingerprint; 2]>,
 
     /// Optional profile name of the sender.
     #[serde(default, skip_serializing_if = "Option::is_none")]

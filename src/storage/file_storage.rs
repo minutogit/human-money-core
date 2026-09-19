@@ -12,7 +12,7 @@
 //! `vouchers.enc` bytes → `HMAC-SHA3` → embedded in `profile.enc` → atomic writes.
 
 use super::{AuthMethod, StorageError};
-use crate::models::conflict::CanonicalMetadataStore;
+use crate::models::conflict::ActiveGossipState;
 use crate::models::conflict::{KnownFingerprints, OwnFingerprints, ProofStore};
 use crate::models::profile::{BundleMetadataStore, UserIdentity, UserProfile, VoucherStore};
 use crate::services::crypto;
@@ -37,7 +37,7 @@ pub(crate) const BUNDLE_META_FILE_NAME: &str = "bundles.meta.enc";
 pub(crate) const KNOWN_FINGERPRINTS_FILE_NAME: &str = "known_fingerprints.enc";
 pub(crate) const PROOF_STORE_FILE_NAME: &str = "proofs.enc";
 pub(crate) const OWN_FINGERPRINTS_FILE_NAME: &str = "own_fingerprints.enc";
-pub(crate) const FINGERPRINT_METADATA_FILE_NAME: &str = "fingerprint_metadata.enc";
+pub(crate) const ACTIVE_GOSSIP_FILE_NAME: &str = "active_gossip.enc";
 pub(crate) const SEAL_FILE_NAME: &str = "seal.enc";
 pub(crate) const LEGACY_EVENTS_FILE_NAME: &str = "events.json.enc";
 pub(crate) const EVENTS_DIR_NAME: &str = "events";
@@ -644,32 +644,29 @@ impl FileStorage {
         self.save_encrypted_payload(PROOF_STORE_FILE_NAME, auth, proof_store)
     }
 
-    pub fn load_fingerprint_metadata(
+    pub fn load_active_gossip(
         &self,
         auth: &AuthMethod,
-    ) -> Result<CanonicalMetadataStore, StorageError> {
+    ) -> Result<ActiveGossipState, StorageError> {
+        // Clean up legacy fingerprint_metadata.enc if present on disk
+        let legacy_meta = self.user_storage_path.join("fingerprint_metadata.enc");
+        if legacy_meta.exists() {
+            let _ = fs::remove_file(legacy_meta);
+        }
         Ok(self
-            .load_encrypted_payload::<CanonicalMetadataStore>(
-                FINGERPRINT_METADATA_FILE_NAME,
+            .load_encrypted_payload::<ActiveGossipState>(
+                ACTIVE_GOSSIP_FILE_NAME,
                 auth,
             )?
             .unwrap_or_default())
     }
 
-    pub fn save_fingerprint_metadata(
+    pub fn save_active_gossip(
         &mut self,
         auth: &AuthMethod,
-        metadata: &CanonicalMetadataStore,
+        gossip: &ActiveGossipState,
     ) -> Result<(), StorageError> {
-        if metadata.is_empty() {
-            self.get_master_key_from_auth(auth)?;
-            let metadata_path = self.user_storage_path.join(FINGERPRINT_METADATA_FILE_NAME);
-            if metadata_path.exists() {
-                fs::remove_file(metadata_path)?;
-            }
-            return Ok(());
-        }
-        self.save_encrypted_payload(FINGERPRINT_METADATA_FILE_NAME, auth, metadata)
+        self.save_encrypted_payload(ACTIVE_GOSSIP_FILE_NAME, auth, gossip)
     }
 
     /// Stores an arbitrary, named data block encrypted.
@@ -858,19 +855,17 @@ impl FileStorage {
                     .map_err(|e| StorageError::InvalidFormat(e.to_string()))?,
             )?;
         }
-        // Fingerprint metadata (may be empty → delete file if present)
-        if wallet.fingerprint_metadata.is_empty() {
-            let meta_path = self.user_storage_path.join(FINGERPRINT_METADATA_FILE_NAME);
-            if meta_path.exists() {
-                fs::remove_file(meta_path)?;
-            }
-        } else {
-            stage_store(
-                self,
-                FINGERPRINT_METADATA_FILE_NAME,
-                serde_json::to_vec(&wallet.fingerprint_metadata)
-                    .map_err(|e| StorageError::InvalidFormat(e.to_string()))?,
-            )?;
+        // Active gossip state
+        stage_store(
+            self,
+            ACTIVE_GOSSIP_FILE_NAME,
+            serde_json::to_vec(&wallet.active_gossip)
+                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?,
+        )?;
+        // Clean up legacy fingerprint_metadata.enc if present on disk
+        let legacy_meta = self.user_storage_path.join("fingerprint_metadata.enc");
+        if legacy_meta.exists() {
+            let _ = fs::remove_file(legacy_meta);
         }
 
         // Events: staging via append_events (uses same file_key now on disk)

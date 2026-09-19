@@ -5,11 +5,10 @@
 use super::super::types::CleanupReport;
 use super::super::Wallet;
 use crate::error::VoucherCoreError;
-use crate::models::conflict::{CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, TransactionFingerprint};
+use crate::models::conflict::{KnownFingerprints, OwnFingerprints, TransactionFingerprint};
 use crate::services::conflict_manager;
 use crate::wallet::instance::VoucherStatus;
 use chrono::{DateTime, Duration, Utc};
-
 
 impl Wallet {
     /// Removes all expired fingerprints from storage.
@@ -18,18 +17,16 @@ impl Wallet {
         conflict_manager::cleanup_known_fingerprints(&mut self.known_fingerprints)
     }
 
-
-    /// Performs complete storage cleanup for fingerprints, metadata, and archive data.
+    /// Performs complete storage cleanup for fingerprints and archive data.
     ///
     /// This function implements a multi-stage cleanup process:
     ///
     /// **Phase 1: Deletion of expired entries**
-    /// First, all fingerprints from histories and their associated metadata whose
-    /// `valid_until` date lies in the past are removed.
+    /// First, all fingerprints from histories whose `valid_until` date lies in the past are removed.
     ///
     /// **Phase 2: Selective, limit-based cleanup**
     /// If the total number of fingerprints exceeds a hard limit (`MAX_FINGERPRINTS`),
-    /// a percentage-based reduction (`CLEANUP_PERCENTAGE`) is performed (based on depth and age).
+    /// a percentage-based reduction (`CLEANUP_PERCENTAGE`) is performed.
     ///
     /// **Phase 3: Archive cleanup**
     /// Removes outdated voucher instances and double-spend proofs from the archive
@@ -67,11 +64,17 @@ impl Wallet {
         if !expired_keys.is_empty() {
             report.expired_fingerprints_removed = expired_keys.len();
 
-            // Remove expired entries from all stores (4-way helper)
+            // Remove expired entries from all stores (3-way helper)
             self.retain_fingerprints(|k| !expired_keys.contains(k));
+            self.active_gossip
+                .direct_queue
+                .retain(|d| !expired_keys.contains(&d.fingerprint.ds_tag));
+            self.active_gossip
+                .fresh_gossip_pool
+                .retain(|fp| !expired_keys.contains(&fp.ds_tag));
         }
 
-        // --- Phase 2: Selective deletion by depth and recency ---
+        // --- Phase 2: Selective deletion by recency ---
         let current_total_count = self.own_fingerprints.history.len()
             + self.known_fingerprints.local_history.len()
             + self.known_fingerprints.foreign_fingerprints.len();
@@ -81,26 +84,28 @@ impl Wallet {
             let target_removal_count =
                 (current_total_count as f32 * CLEANUP_PERCENTAGE).ceil() as usize;
 
-            // Collect all fingerprints with metadata for sorting (3-way helper)
-            let mut candidates_for_removal = Vec::new();
-            for fp in self.all_fingerprints() {
-                if let Some(meta) = self.fingerprint_metadata.get(&fp.ds_tag) {
-                    candidates_for_removal.push((meta.depth, fp.t_id.clone(), fp.ds_tag.clone()));
+            let mut candidates: Vec<(String, String)> = Vec::new();
+            for (tag, fps) in &self.known_fingerprints.foreign_fingerprints {
+                for fp in fps {
+                    candidates.push((fp.t_id.clone(), tag.clone()));
                 }
             }
+            for (tag, fps) in &self.known_fingerprints.local_history {
+                for fp in fps {
+                    candidates.push((fp.t_id.clone(), tag.clone()));
+                }
+            }
+            candidates.sort_by(|a, b| a.0.cmp(&b.0));
 
-            // Sort: Highest 'depth' first, then oldest 't_id' first
-            candidates_for_removal.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-
-            let keys_to_remove: std::collections::HashSet<String> = candidates_for_removal
+            let keys_to_remove: std::collections::HashSet<String> = candidates
                 .into_iter()
                 .take(target_removal_count)
-                .map(|(_, _, key)| key)
+                .map(|(_, tag)| tag)
                 .collect();
 
             report.limit_based_fingerprints_removed = keys_to_remove.len();
 
-            // Remove selected entries from all stores (4-way helper)
+            // Remove selected entries from all stores (3-way helper)
             self.retain_fingerprints(|k| !keys_to_remove.contains(k));
         }
 
@@ -147,60 +152,27 @@ impl Wallet {
         Ok(report)
     }
 
-
-    /// Rebuilds all derived stores (`fingerprints`, `metadata`) from the `VoucherStore`.
+    /// Rebuilds derived stores from the `VoucherStore`.
     ///
-    /// This method serves as the core of the recovery logic. It ensures that the
-    /// state of fingerprints and their metadata is always consistent with the "source of truth"
-    /// (the vouchers stored in the wallet).
-    ///
-    /// # Process
-    /// 1. Clears existing `own_fingerprints`, `known_fingerprints`, and `fingerprint_metadata` stores.
-    /// 2. Iterates over every voucher and every transaction in `voucher_store`.
-    /// 3. Generates a fingerprint for each transaction.
-    /// 4. Categorizes the fingerprint as "own" or "known" and stores it.
-    /// 5. Reinitializes metadata (`depth`, `known_by_peers`) for each fingerprint.
+    /// Ensures that the state of own and known local fingerprints is consistent
+    /// with the stored vouchers.
     pub fn rebuild_derived_stores(&mut self) -> Result<(), VoucherCoreError> {
-        // Step 1: Preserve foreign gossip data loaded from storage, while recomputing local stores from vouchers
         let preserved_foreign_fingerprints = std::mem::take(&mut self.known_fingerprints.foreign_fingerprints);
-        let preserved_foreign_metadata: std::collections::HashMap<String, _> = preserved_foreign_fingerprints
-            .keys()
-            .filter_map(|k| self.fingerprint_metadata.get(k).map(|meta| (k.clone(), meta.clone())))
-            .collect();
 
         self.own_fingerprints = OwnFingerprints::default();
         self.known_fingerprints = KnownFingerprints::default();
-        self.fingerprint_metadata = CanonicalMetadataStore::default();
 
-        // Step 2: Iterate over ALL instances so no fingerprints are lost.
-        // The correct depth is determined by the "min(depth) wins" rule.
         for instance in self.voucher_store.vouchers.values() {
-            // SECURITY (AUDIT-W4-WC-002): mirror the Endorsed-exclusion of
-            // [`conflict_manager::scan_and_rebuild_fingerprints`]. Endorsed
-            // witness copies do not belong to the user and must not contribute
-            // to double-spend detection — at receive-time AND at load-time.
-            // A diverging filter here let remote signing-request vouchers
-            // poison `own_fingerprints` (and gossip) on every login. This also
-            // guarantees (AUDIT-W4-WC-001) that a malformed Endorsed copy can
-            // never fail the whole load/login via fingerprint parsing.
             if matches!(
                 instance.status,
                 crate::wallet::instance::VoucherStatus::Endorsed { .. }
             ) {
                 continue;
             }
-            let tx_count = instance.voucher.transactions.len();
-            for (i, tx) in instance.voucher.transactions.iter().enumerate() {
-                // Step 3 & 4: Generate and categorize fingerprint
+            for tx in &instance.voucher.transactions {
                 let fingerprint =
                     conflict_manager::create_fingerprint_for_transaction(tx, &instance.voucher)?;
 
-                // SECURITY (WH3-00-903): use the canonical is_sender
-                // definition (see
-                // [`conflict_manager::is_own_transaction`]) so the load-time
-                // rebuild classifies anonymous stealth/flexible spends as own
-                // exactly like the receive-time scan does. A diverging filter
-                // here would wipe the stealth history at every login.
                 if conflict_manager::is_own_transaction(tx, &self.profile.user_id) {
                     let entry = self
                         .own_fingerprints
@@ -220,36 +192,12 @@ impl Wallet {
                         entry.push(fingerprint.clone());
                     }
                 }
-
-                // Step 5: Reinitialize metadata
-                // Calculate the "hop depth" within this voucher (0-based)
-                let depth_in_chain = (tx_count.saturating_sub(1).saturating_sub(i)) as i8;
-
-                let meta = self
-                    .fingerprint_metadata
-                    .entry(fingerprint.ds_tag)
-                    .or_default();
-
-                // Apply "lowest depth wins" rule. A smaller value means
-                // a shorter, more relevant path in the network. The value 0 is the
-                // initial default and is always overwritten.
-                // NOTE: VIP fingerprints (negative) always win over positive ones.
-                if meta.depth == 0 || depth_in_chain < meta.depth {
-                    meta.depth = depth_in_chain;
-                }
-                meta.known_by_peers = std::collections::HashSet::new(); // Reset `known_by_peers`
             }
         }
 
-        // Restore preserved foreign gossip data
         self.known_fingerprints.foreign_fingerprints = preserved_foreign_fingerprints;
-        for (k, meta) in preserved_foreign_metadata {
-            self.fingerprint_metadata.entry(k).or_insert(meta);
-        }
-
         Ok(())
     }
-
 }
 
 impl Wallet {
@@ -295,9 +243,8 @@ impl Wallet {
             )
     }
 
-    /// Retains only entries whose key satisfies `keep` in all four
-    /// fingerprint-related maps (three histories + metadata). Centralizes
-    /// the 4-way `retain` boilerplate used in storage cleanup.
+    /// Retains only entries whose key satisfies `keep` in all three
+    /// fingerprint-related maps (`own.history`, `known.local_history`, `known.foreign_fingerprints`).
     pub(crate) fn retain_fingerprints<F>(&mut self, mut keep: F)
     where
         F: FnMut(&String) -> bool,
@@ -309,7 +256,6 @@ impl Wallet {
         self.known_fingerprints
             .foreign_fingerprints
             .retain(|k, _| keep(k));
-        self.fingerprint_metadata.retain(|k, _| keep(k));
     }
 }
 

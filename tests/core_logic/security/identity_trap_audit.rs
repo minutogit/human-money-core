@@ -529,7 +529,7 @@ fn test_manipulated_shard_rejected_by_recipient_witness_check() {
         &bob.identity.user_id,
         None,
         vec![],
-        HashMap::new(),
+        vec![],
         None,
     ).unwrap();
 

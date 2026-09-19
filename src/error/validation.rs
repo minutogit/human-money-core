@@ -46,6 +46,10 @@ pub enum StandardDefinitionError {
 #[derive(Error, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "payload", rename_all = "camelCase")]
 pub enum ValidationError {
+    /// A critical protocol or security boundary rule was violated (e.g. excessive quarantine pairs).
+    #[error("Security violation: {0}")]
+    SecurityViolation(String),
+
     // --- Data-driven validation errors ---
     /// A quantitative rule was violated (e.g. too many or too few signatures).
     #[error(

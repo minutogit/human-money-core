@@ -552,7 +552,6 @@ mod security_audit_module_01 {
         };
 
         // Attacker ships the poison inside an otherwise harmless bundle.
-        let depths: HashMap<String, i8> = [(real_ds_tag.clone(), 1i8)].into_iter().collect();
         let (hacker_wallet, hacker_identity) = hacker.get_unlocked_mut_for_test();
         let (poison_bundle, _) = hacker_wallet
             .create_and_encrypt_transaction_bundle(
@@ -561,7 +560,7 @@ mod security_audit_module_01 {
                 &id_victim,
                 None,
                 vec![poison_fp],
-                depths,
+                vec![],
                 None,
             )
             .expect("attacker bundle creation failed");
@@ -1021,7 +1020,6 @@ mod security_audit_module_01 {
             privacy_guard_hash: String::new(),
         };
 
-        let depths: HashMap<String, i8> = [(real_ds_tag.clone(), 1i8)].into_iter().collect();
         let (mut hacker, _) =
             setup_service_with_profile(dir.path(), &ACTORS.hacker, "H10", PASSWORD);
         hacker.unlock_session(PASSWORD, 300).unwrap();
@@ -1033,7 +1031,7 @@ mod security_audit_module_01 {
                 &victim_did,
                 None,
                 vec![poison_fp],
-                depths,
+                vec![],
                 None,
             )
             .expect("attacker bundle creation failed");
@@ -1523,7 +1521,7 @@ mod security_audit_module_01 {
                 &id_victim,
                 None,
                 vec![],
-                HashMap::new(),
+                vec![],
                 None,
             )
             .expect("attacker bundle creation failed")
@@ -1958,8 +1956,6 @@ mod security_audit_module_01 {
         fps: Vec<TransactionFingerprint>,
         standards_map: &HashMap<String, String>,
     ) {
-        let depths: HashMap<String, i8> =
-            fps.iter().map(|f| (f.ds_tag.clone(), 1i8)).collect();
         hacker.unlock_session(PASSWORD, 300).unwrap();
         let (hw, hidentity) = hacker.get_unlocked_mut_for_test();
         let (bundle, _) = hw
@@ -1969,7 +1965,7 @@ mod security_audit_module_01 {
                 id_victim,
                 None,
                 fps,
-                depths,
+                vec![],
                 None,
             )
             .expect("gossip bundle creation failed");

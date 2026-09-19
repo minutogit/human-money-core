@@ -208,7 +208,7 @@ fn create_hacked_bundle_and_container(
         notes: Some("Hacked".to_string()),
         sender_signature: "".to_string(),
         forwarded_fingerprints: Vec::new(),
-        fingerprint_depths: std::collections::HashMap::new(),
+        quarantine_pairs: Vec::new(),
         sender_profile_name: None,
     };
     let bundle_json_for_id = to_canonical_json(&bundle).unwrap();

@@ -1,5 +1,5 @@
 use crate::app_service::{AppService, ProfileInfo};
-use crate::models::conflict::{CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, ProofStore};
+use crate::models::conflict::{ActiveGossipState, KnownFingerprints, OwnFingerprints, ProofStore};
 use crate::models::profile::{BundleMetadataStore, PublicProfile, UserProfile, VoucherStore};
 use crate::models::voucher::{Address, ValueDefinition};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
@@ -26,7 +26,7 @@ pub fn setup_in_memory_wallet(identity: &UserIdentity) -> Wallet {
         known_fingerprints: KnownFingerprints::default(),
         own_fingerprints: OwnFingerprints::default(),
         proof_store: ProofStore::default(),
-        fingerprint_metadata: CanonicalMetadataStore::default(),
+        active_gossip: ActiveGossipState::default(),
         routing_memory: crate::wallet::routing_memory::RoutingMemoryStore::default(),
         local_instance_id: "memory-instance".to_string(),
         pending_events: Vec::new(),
@@ -61,7 +61,7 @@ pub fn create_test_wallet(
         known_fingerprints: KnownFingerprints::default(),
         own_fingerprints: OwnFingerprints::default(),
         proof_store: ProofStore::default(),
-        fingerprint_metadata: CanonicalMetadataStore::default(),
+        active_gossip: ActiveGossipState::default(),
         routing_memory: crate::wallet::routing_memory::RoutingMemoryStore::default(),
         local_instance_id,
         pending_events: Vec::new(),
@@ -233,7 +233,7 @@ pub fn create_test_bundle(
         recipient_id,
         message.map(|s| s.to_string()),
         Vec::new(),
-        std::collections::HashMap::new(),
+        Vec::new(),
         None,
     )?;
     Ok(result.0)

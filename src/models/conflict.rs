@@ -5,7 +5,7 @@
 
 use crate::models::voucher::Transaction;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, VecDeque};
 
 //==============================================================================
 // PART 1: CONFLICT DETECTION STRUCTURES (from fingerprint.rs)
@@ -112,33 +112,47 @@ pub struct OwnFingerprints {
 }
 
 //==============================================================================
-// PART 2: CANONICAL METADATA LAYER (NEW)
+// PART 2: ACTIVE GOSSIP STATE LAYER (30/70 KISS-Gossip)
 //==============================================================================
 
-/// Stores dynamic, mutable metadata for a single
-/// `TransactionFingerprint`. This structure is decoupled from the cryptographic
-/// fingerprint structure to avoid redundancy.
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct FingerprintMetadata {
-    /// The propagation depth of the fingerprint in the network (number of hops).
-    /// A lower value indicates more recent, more relevant information.
-    ///
-    /// # MVP VIP Mechanics:
-    /// - Positive values (0 to 127): Normal propagation.
-    /// - Negative values (-1 to -128): "VIP" propagation for toxic fingerprints (fraud detection).
-    ///   These receive priority during sorting/eviction.
-    pub depth: i8,
-
-    /// A set of hash suffixes of peer IDs that already
-    /// know this fingerprint. Serves as an efficient redundancy filter when sending bundles.
+/// Represents an entry in the DirectQueue.
+/// Directly forwarded transaction tips from incoming vouchers or redemptions.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+pub struct DirectEntry {
+    /// The fingerprint of the latest transaction tip.
+    pub fingerprint: TransactionFingerprint,
+    /// Hashes of recipients that have already received this tip.
     #[serde(default)]
-    pub known_by_peers: HashSet<[u8; 4]>,
+    pub sent_to: Vec<[u8; 4]>,
 }
 
-/// The central canonical store for all dynamic fingerprint metadata.
-/// The key is the unique ID of the `TransactionFingerprint`
-/// (`ds_tag`) to ensure a 1:1 relationship.
-pub type CanonicalMetadataStore = HashMap<String, FingerprintMetadata>;
+/// Represents an entry in the QuarantineDirectQueue.
+/// Locally discovered double-spend pairs that need priority propagation.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+pub struct QuarantineEntry {
+    /// The colliding fingerprint pair.
+    pub pair: [TransactionFingerprint; 2],
+    /// Hashes of recipients that have already received this quarantine pair.
+    #[serde(default)]
+    pub sent_to: Vec<[u8; 4]>,
+}
+
+/// Compact active gossip state persisted atomically in the wallet storage container.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+pub struct ActiveGossipState {
+    /// Direct queue for 30% direct tips (max 3 distinct recipients each).
+    #[serde(default)]
+    pub direct_queue: VecDeque<DirectEntry>,
+    /// Fresh gossip pool for 70% lottery foreign fingerprints.
+    #[serde(default)]
+    pub fresh_gossip_pool: VecDeque<TransactionFingerprint>,
+    /// Locally discovered fraud pairs (guaranteed 3x delivery).
+    #[serde(default)]
+    pub quarantine_direct_queue: Vec<QuarantineEntry>,
+    /// Relayed fraud pairs from foreign peers (70% one-shot lottery).
+    #[serde(default)]
+    pub quarantine_relay_pool: VecDeque<[TransactionFingerprint; 2]>,
+}
 
 //==============================================================================
 // PART 3: STRUCTURES FOR PROVING AND RESOLVING CONFLICTS

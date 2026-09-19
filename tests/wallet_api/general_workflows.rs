@@ -941,7 +941,7 @@ fn api_wallet_rejects_invalid_bundle() {
             &bob.identity.user_id,
             None,
             Vec::new(),
-            std::collections::HashMap::new(),
+            Vec::new(),
             None, // sender_profile_name
         )
         .unwrap();

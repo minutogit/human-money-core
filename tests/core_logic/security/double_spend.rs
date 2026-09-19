@@ -765,7 +765,7 @@ fn test_local_double_spend_detection_lifecycle() {
             &charlie_identity.user_id,
             None,
             Vec::new(),
-            std::collections::HashMap::new(),
+            Vec::new(),
             None,
         )
         .unwrap();
@@ -795,7 +795,7 @@ fn test_local_double_spend_detection_lifecycle() {
             &david_identity.user_id,
             None,
             Vec::new(),
-            std::collections::HashMap::new(),
+            Vec::new(),
             None,
         )
         .unwrap();

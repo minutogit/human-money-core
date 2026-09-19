@@ -1747,8 +1747,6 @@ fn sa04_10_fingerprint_ingress_must_bind_to_local_input_context() {
         })
         .collect();
 
-    // Ship the poison inside an otherwise harmless gossip bundle.
-    let depths: HashMap<String, i8> = [(ds_tag_victim.clone(), 1i8)].into_iter().collect();
     hacker.unlock_session(password, 300).unwrap();
     let (attack_bundle, _) = {
         let (hw, hidentity) = hacker.get_unlocked_mut_for_test();
@@ -1758,7 +1756,7 @@ fn sa04_10_fingerprint_ingress_must_bind_to_local_input_context() {
             &id_victim,
             None,
             attack_fps,
-            depths,
+            vec![],
             None,
         )
         .expect("attacker gossip bundle creation failed")

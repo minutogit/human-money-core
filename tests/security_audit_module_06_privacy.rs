@@ -273,7 +273,7 @@ fn sa06_02_received_bundle_content_must_match_signed_bundle_id() {
         notes: Some("URGENT: refund agreed, please accept".to_string()),
         sender_signature: stolen_signature,
         forwarded_fingerprints: Vec::new(),
-        fingerprint_depths: HashMap::new(),
+        quarantine_pairs: Vec::new(),
         sender_profile_name: Some("Alice Support Team".to_string()),
     };
 
@@ -367,7 +367,7 @@ fn sa06_03_cleartext_financial_containers_must_be_rejected_on_receipt() {
         notes: Some("cleartext payment".to_string()),
         sender_signature: String::new(),
         forwarded_fingerprints: Vec::new(),
-        fingerprint_depths: HashMap::new(),
+        quarantine_pairs: Vec::new(),
         sender_profile_name: None,
     };
     bundle.bundle_id = get_hash(to_canonical_json(&bundle).unwrap());

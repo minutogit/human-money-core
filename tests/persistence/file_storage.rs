@@ -630,9 +630,8 @@ fn test_storage_reentrancy_same_process() {
 // ============================================================================
 
 use human_money_core::models::conflict::{
-    FingerprintMetadata, KnownFingerprints, OwnFingerprints, TransactionFingerprint,
+    KnownFingerprints, OwnFingerprints, TransactionFingerprint,
 };
-use std::collections::HashMap;
 
 /// Creates a minimal `TransactionFingerprint` for testing.
 fn dummy_fingerprint(key: &str) -> TransactionFingerprint {
@@ -840,10 +839,11 @@ fn test_own_fingerprints_persist_and_load() {
     );
 }
 
-/// Verifies that `CanonicalMetadataStore` (a `HashMap<String, FingerprintMetadata>`)
-/// is saved and loaded correctly, including all field values.
+/// Verifies that `ActiveGossipState` is saved and loaded correctly, including all queues.
 #[test]
-fn test_fingerprint_metadata_persists_and_loads() {
+fn test_active_gossip_persists_and_loads() {
+    use human_money_core::models::conflict::{ActiveGossipState, DirectEntry};
+
     let temp_dir = tempdir().expect("tempdir");
     let identity = &ACTORS.alice;
     let password = "fpm-test-pw";
@@ -852,31 +852,25 @@ fn test_fingerprint_metadata_persists_and_loads() {
     let mut storage = setup_file_storage_with_wallet(path, identity, password);
     let auth = AuthMethod::Password(password);
 
-    // Create a CanonicalMetadataStore (= HashMap<String, FingerprintMetadata>) with content.
-    let mut metadata_store: HashMap<String, FingerprintMetadata> = HashMap::new();
-    let mut meta = FingerprintMetadata::default();
-    meta.depth = 3;
-    metadata_store.insert("ds_tag_sentinel".to_string(), meta);
+    let mut gossip = ActiveGossipState::default();
+    let fp = human_money_core::test_utils::make_signed_fingerprint("ds_tag_sentinel", "", 0);
+    gossip.direct_queue.push_back(DirectEntry {
+        fingerprint: fp,
+        sent_to: Vec::new(),
+    });
 
     // Save.
     storage
-        .save_fingerprint_metadata(&auth, &metadata_store)
-        .expect("save_fingerprint_metadata should succeed");
+        .save_active_gossip(&auth, &gossip)
+        .expect("save_active_gossip should succeed");
 
     // Load and verify.
     let loaded = storage
-        .load_fingerprint_metadata(&auth)
-        .expect("load_fingerprint_metadata should succeed");
+        .load_active_gossip(&auth)
+        .expect("load_active_gossip should succeed");
 
-    assert!(
-        loaded.contains_key("ds_tag_sentinel"),
-        "'ds_tag_sentinel' must be present in CanonicalMetadataStore after loading"
-    );
-    assert_eq!(
-        loaded["ds_tag_sentinel"].depth,
-        3,
-        "depth must have the saved value 3 after loading"
-    );
+    assert_eq!(loaded.direct_queue.len(), 1);
+    assert_eq!(loaded.direct_queue[0].fingerprint.ds_tag, "ds_tag_sentinel");
 }
 
 #[test]

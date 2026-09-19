@@ -51,26 +51,21 @@ mod tests {
             privacy_guard_hash: String::new(),
 };
 
-        // Add the fingerprint to both relevant stores
+        // Add the fingerprint to history
         wallet
             .known_fingerprints
             .local_history
             .insert(key.clone(), vec![expired_fp]);
-        wallet.fingerprint_metadata.entry(key.clone()).or_default();
 
         assert!(
             wallet.known_fingerprints.local_history.contains_key(&key),
             "Pre-condition: Fingerprint must be in history"
         );
-        assert!(
-            wallet.fingerprint_metadata.contains_key(&key),
-            "Pre-condition: Metadata must exist for fingerprint"
-        );
 
         // WHEN: Storage cleanup is executed.
         service.run_storage_cleanup().unwrap();
 
-        // THEN: The fingerprint was removed synchronously from BOTH stores.
+        // THEN: The fingerprint was removed from history.
         let final_wallet = service.get_unlocked_mut_for_test().0;
         assert!(
             !final_wallet
@@ -78,10 +73,6 @@ mod tests {
                 .local_history
                 .contains_key(&key),
             "Fingerprint should be removed from history"
-        );
-        assert!(
-            !final_wallet.fingerprint_metadata.contains_key(&key),
-            "Metadata should be removed simultaneously"
         );
 
         service.logout();
@@ -169,9 +160,7 @@ mod tests {
             std::fs::remove_file(&lock_file).unwrap();
         }
 
-        // WHEN: Metadata is deleted and the wallet is restored.
-        let metadata_path = wallet_path.join("fingerprint_metadata.enc");
-        std::fs::remove_file(metadata_path).unwrap();
+        // WHEN: Derived stores are rebuilt from vouchers upon login.
         // Also remove the seal as it contains the old state_hash.
         let seal_path = wallet_path.join("seal.enc");
         if seal_path.exists() {
@@ -181,7 +170,7 @@ mod tests {
             .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
             .unwrap();
 
-        // THEN: The `depth` values of the chain are correctly initialized.
+        // THEN: The transactions and their own_fingerprints are correctly restored.
         let wallet = alice_service.get_unlocked_mut_for_test().0;
         let voucher_instance = wallet
             .voucher_store
@@ -194,34 +183,9 @@ mod tests {
             2,
             "Voucher should have two transactions"
         );
-
-        // Find fingerprints for both transactions
-        let init_tx_fp_key = voucher_instance.voucher.transactions[0].t_id.clone(); // This is not the key, we need to find it
-        let split_tx_fp_key = voucher_instance.voucher.transactions[1].t_id.clone();
-
-        let mut init_depth = None;
-        let mut split_depth = None;
-
-        // Find metadata by comparing t_id, since we don't have the key directly
-        for (key, meta) in &wallet.fingerprint_metadata {
-            if let Some(fp_vec) = wallet.own_fingerprints.history.get(key) {
-                if fp_vec.iter().any(|fp| fp.t_id == init_tx_fp_key) {
-                    init_depth = Some(meta.depth);
-                } else if fp_vec.iter().any(|fp| fp.t_id == split_tx_fp_key) {
-                    split_depth = Some(meta.depth);
-                }
-            }
-        }
-
-        assert_eq!(
-            split_depth,
-            Some(0),
-            "Die letzte Transaktion (split) sollte depth 0 haben."
-        );
-        assert_eq!(
-            init_depth,
-            Some(1),
-            "Die erste Transaktion (init) sollte depth 1 haben."
+        assert!(
+            !wallet.own_fingerprints.history.is_empty(),
+            "own_fingerprints must be reconstructed from vouchers"
         );
     }
 
@@ -273,7 +237,7 @@ mod tests {
 
         // Check state afterwards
         let final_wallet = service.get_unlocked_mut_for_test().0;
-        assert!(final_wallet.fingerprint_metadata.is_empty());
+        assert!(final_wallet.active_gossip.direct_queue.is_empty());
         assert!(final_wallet.own_fingerprints.history.is_empty());
 
         service.logout();

@@ -18,10 +18,10 @@ use crate::services::crypto::{
     decode_base64, get_hash, get_pubkey_from_user_id, sign_ed25519, verify_ed25519,
 };
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
-use std::collections::HashMap;
 
 pub const MAX_VOUCHERS_PER_BUNDLE: usize = 32;
 pub const MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE: usize = 256;
+pub const MAX_QUARANTINE_PAIRS_PER_BUNDLE: usize = 96;
 
 /// Creates a `TransactionBundle`, wraps it in a `SecureContainer` and serializes it.
 /// This function is stateless and does not modify any wallet.
@@ -35,7 +35,7 @@ pub fn create_and_encrypt_bundle(
     recipient_id: &str,
     notes: Option<String>,
     forwarded_fingerprints: Vec<TransactionFingerprint>,
-    fingerprint_depths: HashMap<String, i8>,
+    quarantine_pairs: Vec<[TransactionFingerprint; 2]>,
     sender_profile_name: Option<String>,
 ) -> Result<(Vec<u8>, TransactionBundle), VoucherCoreError> {
     if vouchers.len() > MAX_VOUCHERS_PER_BUNDLE {
@@ -56,6 +56,15 @@ pub fn create_and_encrypt_bundle(
             )),
         ));
     }
+    if quarantine_pairs.len() > vouchers.len() * 3 {
+        return Err(VoucherCoreError::Validation(
+            ValidationError::SecurityViolation(format!(
+                "Too many quarantine pairs in bundle: {} exceeds maximum allowed (3 per voucher: {})",
+                quarantine_pairs.len(),
+                vouchers.len() * 3
+            )),
+        ));
+    }
     let mut bundle = TransactionBundle {
         bundle_id: "".to_string(),
         sender_id: identity.user_id.clone(),
@@ -65,7 +74,7 @@ pub fn create_and_encrypt_bundle(
         notes,
         sender_signature: "".to_string(),
         forwarded_fingerprints,
-        fingerprint_depths,
+        quarantine_pairs,
         sender_profile_name,
     };
 
@@ -315,7 +324,7 @@ mod tests {
             notes: None,
             sender_signature: "".to_string(),
             forwarded_fingerprints: vec![],
-            fingerprint_depths: std::collections::HashMap::new(),
+            quarantine_pairs: vec![],
             sender_profile_name: None,
         };
 

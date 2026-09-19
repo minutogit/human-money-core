@@ -10,7 +10,6 @@ use crate::models::conflict::{ProofOfDoubleSpend, TransactionFingerprint};
 use crate::models::profile::{TransactionBundleHeader, UserIdentity, VoucherStore};
 use crate::models::voucher::Voucher;
 use crate::services::conflict_manager;
-use crate::services::crypto::get_short_hash_from_user_id;
 use crate::wallet::instance::VoucherStatus;
 use crate::wallet::{DoubleSpendCheckResult, Wallet};
 use std::collections::HashMap;
@@ -847,40 +846,62 @@ impl Wallet {
         Ok(())
     }
 
-    /// Processes received fingerprints (active and implicit) and updates metadata.
+    /// Processes received fingerprints (active and implicit) and updates gossip queues and archives.
     pub(crate) fn process_received_fingerprints(
         &mut self,
-        bundle_header: &TransactionBundleHeader,
+        _bundle_header: &TransactionBundleHeader,
         vouchers: &[Voucher],
         forwarded_fingerprints: &[TransactionFingerprint],
-        fingerprint_depths: &HashMap<String, i8>,
+        quarantine_pairs: &[[TransactionFingerprint; 2]],
     ) -> Result<(), VoucherCoreError> {
-        // Use memory-efficient short hash
-        let sender_short_hash = get_short_hash_from_user_id(&bundle_header.sender_id);
+        // --- Ingress Firewall: Hard rejection if quarantine pairs exceed V * 3 ---
+        let max_allowed_q_pairs = vouchers.len() * 3;
+        if quarantine_pairs.len() > max_allowed_q_pairs {
+            return Err(VoucherCoreError::Validation(
+                ValidationError::SecurityViolation(format!(
+                    "Ingress rejected: quarantine pairs ({}) exceed maximum allowed ratio of 3 pairs per voucher ({})",
+                    quarantine_pairs.len(),
+                    max_allowed_q_pairs
+                )),
+            ));
+        }
 
-        // Phase 1: Active exchange (from the bundle)
-        //
-        // SECURITY INGRESS GATE (V2 Protocol, AUDIT-01-F01 remediation):
-        // Fingerprints are only admitted when they are self-authenticating:
-        // - genesis ('init') fingerprints without trap shards carry no
-        //   detection value and are dropped, and
-        // - every entry must carry a valid `layer2_signature` over the
-        //   canonical digest, signed by the holder of the ephemeral key
-        //   named in `sender_ephemeral_pub`.
-        // Unsigned, forged or legacy V1 fingerprints are silently discarded;
-        // they must never update metadata nor trigger quarantine.
-        //
-        // SECURITY (HMSEC-SA04-10): Self-authenticity alone is NOT enough
-        // when the claimed ds_tag collides with a LOCALLY KNOWN input.
-        // Anyone can mint signatures naming their own ephemeral key, so a
-        // third party could otherwise poison `foreign_fingerprints[D_H]`
-        // under a victim's publicly gossiped input tag forever (permanent
-        // false-alarm channel, junk proofs). Therefore: if a local input
-        // context exists for the tag, the entry is only admitted when its
-        // `sender_ephemeral_pub` equals the locally revealed input key -
-        // the storage-time analogue of the race-level `reproduces_local_tag`
-        // check. Tags WITHOUT local context stay unaffected so ordinary
-        // gossip forwarding (evidence for unknown inputs) keeps working.
+        // --- Phase 1: Incoming Vouchers (DirectQueue for Tx_N, Archive for predecessors) ---
+        for voucher in vouchers {
+            let tx_count = voucher.transactions.len();
+            if tx_count == 0 {
+                continue;
+            }
+            // Tip transaction Tx_N -> DirectQueue
+            let last_tx = &voucher.transactions[tx_count - 1];
+            let tip_fp = conflict_manager::create_fingerprint_for_transaction(last_tx, voucher)?;
+            if !conflict_manager::is_init_fingerprint(&tip_fp) {
+                // Deduplicate in direct_queue
+                if !self.active_gossip.direct_queue.iter().any(|d| d.fingerprint.t_id == tip_fp.t_id) {
+                    self.active_gossip.direct_queue.push_back(
+                        crate::models::conflict::DirectEntry {
+                            fingerprint: tip_fp.clone(),
+                            sent_to: Vec::new(),
+                        },
+                    );
+                }
+            }
+
+            // All transactions (Tip + older) are added to local_history archive
+            for tx in &voucher.transactions {
+                let fp = conflict_manager::create_fingerprint_for_transaction(tx, voucher)?;
+                let entry = self
+                    .known_fingerprints
+                    .local_history
+                    .entry(fp.ds_tag.clone())
+                    .or_default();
+                if !entry.iter().any(|e| e.t_id == fp.t_id) {
+                    entry.push(fp);
+                }
+            }
+        }
+
+        // --- Phase 2: Foreign Gossip -> FreshGossipPool ---
         let mut local_input_keys: HashMap<String, std::collections::HashSet<String>> =
             HashMap::new();
         let mut record_local_key = |tag: &str, eph_pub: &str| {
@@ -910,37 +931,6 @@ impl Wallet {
             }
         }
 
-        let mut forwarded_fingerprints: Vec<TransactionFingerprint> = forwarded_fingerprints
-            .iter()
-            .filter(|fp| {
-                !conflict_manager::is_init_fingerprint(fp)
-                    && conflict_manager::verify_fingerprint_signature(fp)
-                    && fp.trap_r != conflict_manager::VOID_SPEND_SHARD_MARKER
-                    && fp.trap_s != conflict_manager::VOID_SPEND_SHARD_MARKER
-                    && match local_input_keys.get(&fp.ds_tag) {
-                        Some(keys) => keys.contains(&fp.sender_ephemeral_pub),
-                        None => true,
-                    }
-            })
-            .cloned()
-            .collect();
-
-        // SECURITY (HMSEC-SA06-15) ingress gate: foreign retention deadlines
-        // are untrusted (neutralized by honest peers, attacker-chosen
-        // otherwise). Every admitted fingerprint receives the uniform local
-        // retention deadline before storage.
-        for fp in &mut forwarded_fingerprints {
-            conflict_manager::assign_local_retention_to_wire_entry(fp);
-        }
-
-        // Group fingerprints by ds_tag to perform symmetry check for VIPs.
-        let mut ds_groups: HashMap<String, Vec<(&TransactionFingerprint, i8)>> = HashMap::new();
-        for fp in &forwarded_fingerprints {
-            if let Some(&depth) = fingerprint_depths.get(&fp.ds_tag) {
-                ds_groups.entry(fp.ds_tag.clone()).or_default().push((fp, depth));
-            }
-        }
-
         let mut current_total_foreign: usize = self
             .known_fingerprints
             .foreign_fingerprints
@@ -948,103 +938,105 @@ impl Wallet {
             .map(|v| v.len())
             .sum();
 
-        for (ds_tag, group) in ds_groups {
-            if group.is_empty() { continue; }
-            
-            let mut received_depth = group[0].1;
-
-            // --- Symmetry check for VIP fingerprints ---
-            if received_depth < 0 {
-                // A negative VIP fingerprint must always come as a partner pair (symmetry).
-                // And both must have the exact same depth.
-                let is_symmetric = group.len() >= 2 && group.iter().all(|(_, d)| *d == received_depth);
-                
-                if !is_symmetric {
-                    // Asymmetric VIP spam: Normalize to positive penalty (e.g. 1)
-                    received_depth = 1;
-                }
-            }
-
-            // --- Loop protection & aging ---
-            let meta = self.fingerprint_metadata.entry(ds_tag.clone()).or_default();
-            
-            // Loop protection: If the fingerprint is already locally known as VIP,
-            // ignore further negative updates from gossip to prevent replay loops.
-            // Local aging / initial discovery takes precedence.
-            if meta.depth < 0 && received_depth < 0 {
+        for fp in forwarded_fingerprints {
+            if conflict_manager::is_init_fingerprint(fp)
+                || !conflict_manager::verify_fingerprint_signature(fp)
+                || fp.trap_r == conflict_manager::VOID_SPEND_SHARD_MARKER
+                || fp.trap_s == conflict_manager::VOID_SPEND_SHARD_MARKER
+            {
                 continue;
-            } else if meta.depth > 0 && received_depth < 0 {
-                // Transition from normal to VIP: Adopt VIP status.
-                let new_depth = received_depth.saturating_sub(1);
-                meta.depth = new_depth;
-            } else {
-                // Min-Merge / update for all other cases (normal to normal, new to VIP, etc.)
-                let new_depth = if received_depth < 0 {
-                    // VIP aging: saturating_sub(1) makes it more negative (-1 -> -2 -> ... -> -128)
-                    received_depth.saturating_sub(1)
-                } else {
-                    // Normal aging
-                    received_depth.saturating_add(1)
-                };
-
-                if meta.depth == 0 || new_depth < meta.depth {
-                    meta.depth = new_depth;
-                }
             }
-            meta.known_by_peers.insert(sender_short_hash);
-
-            // FIX: Persistently store gossip fingerprints in foreign_fingerprints.
-            // Enforce both global and per-bucket caps to prevent memory/CPU exhaustion.
-            for (fp, _depth) in &group {
-                if current_total_foreign >= conflict_manager::MAX_TOTAL_FOREIGN_FINGERPRINTS {
+            if let Some(keys) = local_input_keys.get(&fp.ds_tag) {
+                if !keys.contains(&fp.sender_ephemeral_pub) {
                     continue;
                 }
+            }
+
+            let mut fp_admitted = fp.clone();
+            conflict_manager::assign_local_retention_to_wire_entry(&mut fp_admitted);
+
+            // Push to FreshGossipPool for 70% lottery on future payments
+            self.active_gossip.fresh_gossip_pool.push_back(fp_admitted.clone());
+
+            // Also persist to foreign_fingerprints archive under caps
+            if current_total_foreign < conflict_manager::MAX_TOTAL_FOREIGN_FINGERPRINTS {
                 let entry = self
                     .known_fingerprints
                     .foreign_fingerprints
-                    .entry(fp.ds_tag.clone())
+                    .entry(fp_admitted.ds_tag.clone())
                     .or_default();
-                // SECURITY (WH4-01-203): Bounded adversarial ingestion. Enforce bucket cap.
-                if entry.len() >= conflict_manager::MAX_FOREIGN_BUCKET_CAP {
-                    continue;
-                }
-                let is_exact_duplicate = entry.iter().any(|existing| {
-                    existing.t_id == fp.t_id
-                        && existing.trap_r == fp.trap_r
-                        && existing.trap_s == fp.trap_s
-                        && existing.encrypted_timestamp == fp.encrypted_timestamp
-                        && existing.layer2_signature == fp.layer2_signature
-                        && existing.privacy_guard_hash == fp.privacy_guard_hash
-                });
-                if !is_exact_duplicate {
-                    entry.push((*fp).clone());
-                    current_total_foreign += 1;
+                if entry.len() < conflict_manager::MAX_FOREIGN_BUCKET_CAP {
+                    let is_exact_duplicate = entry.iter().any(|existing| {
+                        existing.t_id == fp_admitted.t_id
+                            && existing.trap_r == fp_admitted.trap_r
+                            && existing.trap_s == fp_admitted.trap_s
+                            && existing.encrypted_timestamp == fp_admitted.encrypted_timestamp
+                            && existing.layer2_signature == fp_admitted.layer2_signature
+                            && existing.privacy_guard_hash == fp_admitted.privacy_guard_hash
+                    });
+                    if !is_exact_duplicate {
+                        entry.push(fp_admitted);
+                        current_total_foreign += 1;
+                    }
                 }
             }
         }
 
-        // Phase 2: Implicit confirmation (from voucher chain)
-        for voucher in vouchers {
-            let tx_count = voucher.transactions.len();
-            for (i, tx) in voucher.transactions.iter().enumerate() {
-                let fingerprint =
-                    conflict_manager::create_fingerprint_for_transaction(tx, voucher)?;
+        // --- Phase 3: Quarantine Pairs -> QuarantineRelayPool & Double-Spend Verification ---
+        for pair in quarantine_pairs {
+            let f1 = &pair[0];
+            let f2 = &pair[1];
+            if f1.ds_tag != f2.ds_tag || f1.t_id == f2.t_id {
+                continue;
+            }
+            if conflict_manager::is_init_fingerprint(f1) || conflict_manager::is_init_fingerprint(f2) {
+                continue;
+            }
+            if !conflict_manager::verify_fingerprint_signature(f1) || !conflict_manager::verify_fingerprint_signature(f2) {
+                continue;
+            }
+            let Ok(eph) = crate::services::crypto::decode_bs58_fixed::<32>(
+                &f1.sender_ephemeral_pub,
+                "sender_ephemeral_pub",
+            ) else {
+                continue;
+            };
+            if let Ok(point) = crate::services::trap_manager::extract_sst_identity(
+                &f1.ds_tag,
+                &eph,
+                f1,
+                f2,
+            ) {
+                let pk_bytes = point.compress().to_bytes();
+                let _did_id_opt = if let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes) {
+                    crate::services::crypto::create_user_id(&pk, None).ok()
+                } else {
+                    None
+                };
 
-                let depth_in_chain = (tx_count - 1 - i) as i8;
+                let mut p0 = f1.clone();
+                let mut p1 = f2.clone();
+                conflict_manager::assign_local_retention_to_wire_entry(&mut p0);
+                conflict_manager::assign_local_retention_to_wire_entry(&mut p1);
 
-                let meta = self
-                    .fingerprint_metadata
-                    .entry(fingerprint.ds_tag.clone())
-                    .or_default();
-                // SECURITY: Never overwrite a negative "VIP" (toxic) depth with
-                // a positive chain depth. Otherwise gossip poisoning could
-                // de-prioritize fraud fingerprints.
-                if !(meta.depth < 0 && depth_in_chain >= 0) {
-                    meta.depth = depth_in_chain;
+                self.active_gossip
+                    .quarantine_relay_pool
+                    .push_back([p0.clone(), p1.clone()]);
+
+                // Also record in foreign fingerprints archive
+                for p in [&p0, &p1] {
+                    let entry = self
+                        .known_fingerprints
+                        .foreign_fingerprints
+                        .entry(p.ds_tag.clone())
+                        .or_default();
+                    if !entry.iter().any(|e| e.t_id == p.t_id) {
+                        entry.push(p.clone());
+                    }
                 }
-                meta.known_by_peers.insert(sender_short_hash);
             }
         }
+
         Ok(())
     }
 }

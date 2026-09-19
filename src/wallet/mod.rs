@@ -29,7 +29,7 @@ pub use lifecycle::MAX_PENDING_EVENTS;
 pub(crate) use crate::wallet::types::format_bff_name;
 
 use crate::models::conflict::{
-    CanonicalMetadataStore, KnownFingerprints, OwnFingerprints, ProofStore,
+    ActiveGossipState, KnownFingerprints, OwnFingerprints, ProofStore,
 };
 use crate::models::profile::{BundleMetadataStore, UserProfile, VoucherStore};
 
@@ -51,9 +51,8 @@ pub struct Wallet {
     pub own_fingerprints: OwnFingerprints,
     /// Storage for cryptographically proven double-spend conflicts.
     pub proof_store: ProofStore,
-    /// Central, canonical storage for dynamic metadata.
-    /// Contains metadata for ALL fingerprints in the other stores.
-    pub fingerprint_metadata: CanonicalMetadataStore,
+    /// Active gossip state for 30/70 KISS-Gossip protocol.
+    pub active_gossip: ActiveGossipState,
     /// Intelligent Layer-1 routing memory (corridor reinforcement, lazy decay, LRU).
     pub routing_memory: crate::wallet::routing_memory::RoutingMemoryStore,
     /// Unique ID of the local device for clone protection.

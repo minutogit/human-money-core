@@ -258,7 +258,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
             &a_identity.user_id,
             None,
             Vec::new(),
-            std::collections::HashMap::new(),
+            Vec::new(),
             None,
         )
         .unwrap();
@@ -269,7 +269,7 @@ fn test_collaborative_fraud_detection_with_fingerprints() {
             &b_identity.user_id,
             None,
             Vec::new(),
-            std::collections::HashMap::new(),
+            Vec::new(),
             None,
         )
         .unwrap();
