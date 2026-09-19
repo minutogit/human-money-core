@@ -738,6 +738,12 @@ impl AppService {
         password: Option<&str>,
         target_dir: &Path,
     ) -> Result<String, Error> {
+        // SECURITY (AUDIT-00-WILDCARD-39): Validate target_dir does not contain relative path traversal
+        if target_dir.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            return Err(Error::Validation(crate::error::ValidationError::InvalidTransaction(
+                "target_dir contains relative path traversal (..)".to_string(),
+            )));
+        }
         let toml_str = match serde_json::from_slice::<SecureContainer>(container_bytes) {
             Ok(container) => {
                 if container.c != PayloadType::VoucherStandardDefinition {
@@ -818,6 +824,13 @@ impl AppService {
         standard_id: &str,
         target_dir: &Path,
     ) -> Result<(), Error> {
+        // SECURITY (AUDIT-00-WILDCARD-39): Validate target_dir does not contain relative path traversal
+        if target_dir.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            return Err(Error::Validation(crate::error::ValidationError::InvalidTransaction(
+                "target_dir contains relative path traversal (..)".to_string(),
+            )));
+        }
+
         // 1. Path-traversal validation
         if standard_id.is_empty()
             || standard_id.contains('/')

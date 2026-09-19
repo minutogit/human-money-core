@@ -161,7 +161,13 @@ impl Wallet {
     /// 4. Categorizes the fingerprint as "own" or "known" and stores it.
     /// 5. Reinitializes metadata (`depth`, `known_by_peers`) for each fingerprint.
     pub fn rebuild_derived_stores(&mut self) -> Result<(), VoucherCoreError> {
-        // Step 1: Clear existing derived stores
+        // Step 1: Preserve foreign gossip data loaded from storage, while recomputing local stores from vouchers
+        let preserved_foreign_fingerprints = std::mem::take(&mut self.known_fingerprints.foreign_fingerprints);
+        let preserved_foreign_metadata: std::collections::HashMap<String, _> = preserved_foreign_fingerprints
+            .keys()
+            .filter_map(|k| self.fingerprint_metadata.get(k).map(|meta| (k.clone(), meta.clone())))
+            .collect();
+
         self.own_fingerprints = OwnFingerprints::default();
         self.known_fingerprints = KnownFingerprints::default();
         self.fingerprint_metadata = CanonicalMetadataStore::default();
@@ -215,8 +221,10 @@ impl Wallet {
                     }
                 }
 
-                // Step 5: Initialize metadata or update with "min wins" rule
-                let depth_in_chain = (tx_count - 1 - i) as i8;
+                // Step 5: Reinitialize metadata
+                // Calculate the "hop depth" within this voucher (0-based)
+                let depth_in_chain = (tx_count.saturating_sub(1).saturating_sub(i)) as i8;
+
                 let meta = self
                     .fingerprint_metadata
                     .entry(fingerprint.ds_tag)
@@ -232,6 +240,13 @@ impl Wallet {
                 meta.known_by_peers = std::collections::HashSet::new(); // Reset `known_by_peers`
             }
         }
+
+        // Restore preserved foreign gossip data
+        self.known_fingerprints.foreign_fingerprints = preserved_foreign_fingerprints;
+        for (k, meta) in preserved_foreign_metadata {
+            self.fingerprint_metadata.entry(k).or_insert(meta);
+        }
+
         Ok(())
     }
 

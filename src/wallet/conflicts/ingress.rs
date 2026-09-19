@@ -446,6 +446,21 @@ impl Wallet {
             conflict_role,
         };
 
+        // SECURITY (AUDIT-00-WILDCARD-42): Enforce upper bound on stored proofs to prevent memory bloat DoS
+        const MAX_PROOFS: usize = 1000;
+        if self.proof_store.proofs.len() >= MAX_PROOFS && !self.proof_store.proofs.contains_key(&entry.proof.proof_id) {
+            // Evict the oldest proof by report_timestamp
+            let oldest_id = self
+                .proof_store
+                .proofs
+                .iter()
+                .min_by_key(|(_, e)| e.proof.report_timestamp.as_str())
+                .map(|(k, _)| k.clone());
+            if let Some(id) = oldest_id {
+                self.proof_store.proofs.remove(&id);
+            }
+        }
+
         self.proof_store.proofs.insert(entry.proof.proof_id.to_string(), entry);
         Ok(())
     }

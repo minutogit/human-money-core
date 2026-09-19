@@ -20,6 +20,9 @@ use crate::services::crypto::{
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
 use std::collections::HashMap;
 
+pub const MAX_VOUCHERS_PER_BUNDLE: usize = 32;
+pub const MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE: usize = 256;
+
 /// Creates a `TransactionBundle`, wraps it in a `SecureContainer` and serializes it.
 /// This function is stateless and does not modify any wallet.
 ///
@@ -35,6 +38,24 @@ pub fn create_and_encrypt_bundle(
     fingerprint_depths: HashMap<String, i8>,
     sender_profile_name: Option<String>,
 ) -> Result<(Vec<u8>, TransactionBundle), VoucherCoreError> {
+    if vouchers.len() > MAX_VOUCHERS_PER_BUNDLE {
+        return Err(VoucherCoreError::Validation(
+            ValidationError::InvalidTransaction(format!(
+                "Too many vouchers in bundle: {} exceeds maximum allowed {}",
+                vouchers.len(),
+                MAX_VOUCHERS_PER_BUNDLE
+            )),
+        ));
+    }
+    if forwarded_fingerprints.len() > MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE {
+        return Err(VoucherCoreError::Validation(
+            ValidationError::InvalidTransaction(format!(
+                "Too many forwarded fingerprints in bundle: {} exceeds maximum allowed {}",
+                forwarded_fingerprints.len(),
+                MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE
+            )),
+        ));
+    }
     let mut bundle = TransactionBundle {
         bundle_id: "".to_string(),
         sender_id: identity.user_id.clone(),
@@ -157,6 +178,25 @@ pub fn open_and_verify_bundle(
         ));
     }
     let bundle: TransactionBundle = serde_json::from_slice(&decrypted_bundle_bytes)?;
+
+    if bundle.vouchers.len() > MAX_VOUCHERS_PER_BUNDLE {
+        return Err(VoucherCoreError::Validation(
+            ValidationError::InvalidTransaction(format!(
+                "Too many vouchers in bundle: {} exceeds maximum allowed {}",
+                bundle.vouchers.len(),
+                MAX_VOUCHERS_PER_BUNDLE
+            )),
+        ));
+    }
+    if bundle.forwarded_fingerprints.len() > MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE {
+        return Err(VoucherCoreError::Validation(
+            ValidationError::InvalidTransaction(format!(
+                "Too many forwarded fingerprints in bundle: {} exceeds maximum allowed {}",
+                bundle.forwarded_fingerprints.len(),
+                MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE
+            )),
+        ));
+    }
 
     // HMC-SEC-06-01 (bundle level): Recompute `bundle_id` from the received
     // content and require an exact match. `bundle_id` and `sender_signature`

@@ -13,6 +13,7 @@ use crate::wallet::instance::VoucherStatus;
 use crate::wallet::CleanupReport;
 use crate::wallet::ProofOfDoubleSpendSummary;
 use crate::Error;
+use rand_core::{OsRng, RngCore};
 
 impl AppService {
     // --- Conflict Management (from conflict_handler) ---
@@ -182,8 +183,8 @@ impl AppService {
         let l2_voucher_id =
             l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])?;
 
-        // TODO: In the future, derive a proper ephemeral key. For now, use dummy bytes.
-        let ephemeral_key = [0u8; 32];
+        let mut ephemeral_key = [0u8; 32];
+        OsRng.fill_bytes(&mut ephemeral_key);
         let request =
             l2_gateway::generate_lock_request(&l2_voucher_id, transaction, &ephemeral_key)?;
 
@@ -214,8 +215,8 @@ impl AppService {
 
         let locator_prefixes = l2_gateway::generate_locator_prefixes(&instance.voucher);
 
-        // TODO: derive proper ephemeral key
-        let ephemeral_key = [0u8; 32];
+        let mut ephemeral_key = [0u8; 32];
+        OsRng.fill_bytes(&mut ephemeral_key);
         let auth = L2AuthPayload {
             ephemeral_pubkey: ephemeral_key,
             auth_signature: None,

@@ -155,9 +155,9 @@ impl AppService {
         passphrase: Option<&str>,
         prefix: Option<&str>,
     ) -> String {
-        // 1. Create the unique, secret string for this account.
+        // 1. Create the unique, secret string for this account with domain separation.
         let secret_string = format!(
-            "{}{}{}",
+            "{}\0{}\0{}",
             mnemonic,
             passphrase.unwrap_or(""),
             prefix.unwrap_or("")

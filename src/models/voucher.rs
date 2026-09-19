@@ -1058,9 +1058,19 @@ impl Voucher {
         }
 
         let txs: Vec<&Transaction> = if let Some(as_of_time) = as_of {
+            let as_of_dt = match chrono::DateTime::parse_from_rfc3339(as_of_time) {
+                Ok(dt) => dt,
+                Err(_) => return Decimal::ZERO,
+            };
             self.transactions
                 .iter()
-                .filter(|tx| tx.t_time.as_str() <= as_of_time)
+                .filter(|tx| {
+                    if let Ok(tx_dt) = chrono::DateTime::parse_from_rfc3339(&tx.t_time) {
+                        tx_dt <= as_of_dt
+                    } else {
+                        false
+                    }
+                })
                 .collect()
         } else {
             self.transactions.iter().collect()
@@ -1106,8 +1116,19 @@ impl Voucher {
                 }
             }
 
+            let is_same_identity = |a: &str, b: &str| -> bool {
+                if a == b {
+                    true
+                } else if a.contains(':') && b.contains(':') {
+                    crate::services::crypto::get_pubkey_from_user_id(a).ok()
+                        == crate::services::crypto::get_pubkey_from_user_id(b).ok()
+                } else {
+                    false
+                }
+            };
+
             // C) Init transaction check for creator
-            if last_tx.t_type == "init" && (last_tx.recipient_id == id.user_id || last_tx.sender_id.as_ref() == Some(&id.user_id)) {
+            if last_tx.t_type == "init" && (is_same_identity(&last_tx.recipient_id, &id.user_id) || last_tx.sender_id.as_ref().is_some_and(|sid| is_same_identity(sid, &id.user_id))) {
                 holder_match = true;
             }
 
@@ -1122,9 +1143,9 @@ impl Voucher {
                     .unwrap_or(Decimal::ZERO)
             } else {
                 // Fallback to DID check (Public mode)
-                if last_tx.recipient_id == id.user_id {
+                if is_same_identity(&last_tx.recipient_id, &id.user_id) {
                     Decimal::from_str(&last_tx.amount).unwrap_or(Decimal::ZERO)
-                } else if last_tx.sender_id.as_deref() == Some(&id.user_id) {
+                } else if last_tx.sender_id.as_deref().is_some_and(|sid| is_same_identity(sid, &id.user_id)) {
                     last_tx.sender_remaining_amount
                         .as_deref()
                         .and_then(|a| Decimal::from_str(a).ok())
@@ -1162,6 +1183,16 @@ impl Voucher {
         })?;
         let decimal_places = standard.immutable.features.amount_decimal_places as u32;
 
+        let is_creator_identity = |a: &str, b: &str| -> bool {
+            if a == b {
+                true
+            } else if a.contains(':') && b.contains(':') {
+                crate::services::crypto::get_pubkey_from_user_id(a).ok()
+                    == crate::services::crypto::get_pubkey_from_user_id(b).ok()
+            } else {
+                false
+            }
+        };
         let balance_str = if let Some(hash) = current_holder_pub_hash {
             if Some(hash) == last_tx.receiver_ephemeral_pub_hash.as_deref() {
                 &last_tx.amount
@@ -1171,7 +1202,7 @@ impl Voucher {
                 "0"
             }
         } else {
-            if last_tx.t_type == "init" && last_tx.recipient_id == user_id {
+            if last_tx.t_type == "init" && is_creator_identity(&last_tx.recipient_id, user_id) {
                 &last_tx.amount
             } else if last_tx.t_type == "init" {
                 "0"

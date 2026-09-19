@@ -201,6 +201,29 @@ impl AppService {
             )?;
 
             let voucher: Voucher = serde_json::from_slice(&payload).map_err(Error::from)?;
+
+            // SECURITY (AUDIT-00-WILDCARD-37): Verify container envelope signature against voucher creator
+            let creator_id = voucher
+                .creator_profile
+                .id
+                .as_deref()
+                .or_else(|| voucher.transactions.first().map(|tx| tx.recipient_id.as_str()))
+                .ok_or_else(|| {
+                    Error::Validation(crate::error::ValidationError::InvalidTransaction(
+                        "Voucher for signing is missing creator identity".to_string(),
+                    ))
+                })?;
+
+            if !container.signature.is_empty() {
+                container
+                    .verify_container_signature(creator_id)
+                    .map_err(Error::from)?;
+            } else if matches!(container.et, crate::models::secure_container::EncryptionType::Asymmetric) {
+                return Err(Error::Validation(
+                    crate::error::ValidationError::InvalidContainerSignature,
+                ));
+            }
+
             Ok(voucher)
         })
     }

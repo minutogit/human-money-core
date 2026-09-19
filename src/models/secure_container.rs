@@ -21,7 +21,7 @@ use serde_json::json;
 use sha2::Sha256;
 use zeroize::Zeroize;
 
-pub const MAX_RECIPIENTS: usize = 256;
+pub const MAX_RECIPIENTS: usize = 16;
 
 /// Defines the type of content transported in the `SecureContainer`.
 ///
@@ -66,7 +66,15 @@ impl PayloadType {
             PayloadType::ProofOfDoubleSpend => format!("{}/conflict/1.0/proof.md", base_url),
             PayloadType::TrustAssertion => format!("{}/trust/1.0/assertion.md", base_url),
             PayloadType::VoucherStandardDefinition => format!("{}/standard/1.0/definition.md", base_url),
-            PayloadType::Generic(s) => format!("{}/generic/1.0/{}.md", base_url, s),
+            PayloadType::Generic(s) => {
+                let sanitized: String = s
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                    .take(64)
+                    .collect();
+                let safe_s = if sanitized.is_empty() { "custom" } else { &sanitized };
+                format!("{}/generic/1.0/{}.md", base_url, safe_s)
+            }
         }
     }
 }
@@ -221,9 +229,30 @@ impl SecureContainer {
             return Err(VoucherCoreError::PlaintextNotAllowedForFinancialPayload);
         }
 
+        if let PayloadType::Generic(ref s) = content_type {
+            if s.is_empty()
+                || s.len() > 64
+                || s.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+            {
+                return Err(VoucherCoreError::ContainerValidation(format!(
+                    "Invalid generic payload type: '{}' must be 1..64 characters and contain only [a-zA-Z0-9_-]",
+                    s
+                )));
+            }
+        }
+
         let (recipient_ids, privacy_mode) = match config {
             ContainerConfig::TargetDid(id, mode) => (vec![id.clone()], mode.clone()),
-            ContainerConfig::TargetDids(ids, mode) => (ids.clone(), mode.clone()),
+            ContainerConfig::TargetDids(ids, mode) => {
+                if ids.len() > MAX_RECIPIENTS {
+                    return Err(VoucherCoreError::ContainerValidation(format!(
+                        "Too many recipients: {} exceeds maximum allowed {}",
+                        ids.len(),
+                        MAX_RECIPIENTS
+                    )));
+                }
+                (ids.clone(), mode.clone())
+            }
             _ => (Vec::new(), PrivacyMode::TrialDecryption),
         };
 
@@ -432,6 +461,19 @@ impl SecureContainer {
         if self.i != expected_i {
             return Err(crate::error::ValidationError::InvalidContainerSignature.into());
         }
+        Ok(())
+    }
+
+    /// Verifies the digital signature of the SecureContainer against a claimed sender ID.
+    pub fn verify_container_signature(&self, sender_id: &str) -> Result<(), VoucherCoreError> {
+        let sender_pubkey_ed = get_pubkey_from_user_id(sender_id)?;
+        let signature_bytes = decode_base64(&self.signature)?;
+        let signature = ed25519_dalek::Signature::from_slice(&signature_bytes)?;
+
+        if !crypto::verify_ed25519(&sender_pubkey_ed, self.i.as_bytes(), &signature) {
+            return Err(crate::error::ValidationError::InvalidContainerSignature.into());
+        }
+
         Ok(())
     }
 

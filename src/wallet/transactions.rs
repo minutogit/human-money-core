@@ -1158,6 +1158,18 @@ impl Wallet {
         container_bytes: &[u8],
         password: Option<&str>,
     ) -> Result<String, VoucherCoreError> {
+        // SECURITY (AUDIT-00-WILDCARD-R2-08): Enforce container size cap before
+        // unauthenticated deserialization to prevent OOM DoS via DetachedSignature
+        // preview path (mirrors MAX_CONTAINER_BYTES in bundle_processor).
+        if container_bytes.len() > crate::services::bundle_processor::MAX_CONTAINER_BYTES {
+            return Err(VoucherCoreError::Validation(
+                crate::error::ValidationError::InvalidTransaction(format!(
+                    "Container exceeds maximum size ({} > {} bytes)",
+                    container_bytes.len(),
+                    crate::services::bundle_processor::MAX_CONTAINER_BYTES
+                )),
+            ));
+        }
         let container: SecureContainer = serde_json::from_slice(container_bytes)?;
         let payload =
             container.open(identity, password)?;
