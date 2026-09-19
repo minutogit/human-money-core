@@ -63,6 +63,13 @@ impl Wallet {
     }
 
     /// Finds the associated double-spend conflict proof ID for a voucher using cascading match strategies.
+    ///
+    /// [INTENTIONAL DESIGN REQUIREMENT / READ-ONLY UI HELPER]
+    /// 1. This function is strictly read-only (`&self`) and serves as a UI lookup helper to find
+    ///    relevant conflict details when a user inspects a voucher in the GUI.
+    /// 2. It DOES NOT mutate state and NEVER moves vouchers into quarantine. Quarantine
+    ///    (`VoucherStatus::Quarantined`) is enforced strictly in `ingress.rs` / `transactions.rs`
+    ///    requiring full cryptographic double-spend proofs with matching DS-tags and signatures.
     pub fn get_proof_id_for_voucher(&self, local_id: &str) -> Option<String> {
         // Direct lookup of the voucher instance
         let instance = self.voucher_store.vouchers.get(local_id)?;

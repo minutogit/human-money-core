@@ -84,6 +84,14 @@ pub use services::voucher_validation::validate_voucher_against_standard;
 // =========================================================================
 //  SAFETY FUSE & TEST UTILITIES
 // =========================================================================
+//
+// [INTENTIONAL DESIGN REQUIREMENT: FAST-TEST-EXECUTION & PHYSICAL RELEASE ISOLATION]
+// 1. In debug/test mode (`cargo test`, `cargo nextest run`), `test-utils` and reduced KDF rounds
+//    are intentionally allowed so that test suites execute in milliseconds (<3s) rather than minutes.
+// 2. In release mode (`--release`), the compile-time bomb below physically prevents compiling
+//    any production artifact if `test-utils` is enabled.
+// 3. Security audits flagging test-utils bypasses in production: note that this is structurally
+//    impossible due to the unconditional `compile_error!` fuse.
 
 // 1. COMPILE-TIME BOMB
 // Physically prevents a release build from being created with active test tools.

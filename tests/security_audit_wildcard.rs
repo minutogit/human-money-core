@@ -387,3 +387,116 @@ fn audit_00_wildcard_27_sai_pubkey_equality_in_balance_and_eigen() {
         "AUDIT-00-WILDCARD-27: is_to_creator must recognize creator across SAI prefix variations"
     );
 }
+
+// =============================================================================
+// AUDIT-00-WILDCARD-33: CEL ReDoS Pattern Length & Size Limit
+// =============================================================================
+
+#[test]
+fn audit_00_wildcard_33_cel_regex_length_and_redos_protection() {
+    use human_money_core::services::dynamic_policy_engine::DynamicPolicyEngine;
+    use serde_json::json;
+
+    let voucher = json!({
+        "nominal_value": { "unit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaa!" }
+    });
+
+    // 1. Pathological pattern exceeding 128 chars must fail evaluation cleanly
+    let oversized_pattern = "a".repeat(150);
+    let rule = format!("Voucher.nominal_value.unit.matches('{}')", oversized_pattern);
+
+    let res = DynamicPolicyEngine::evaluate_rule(&rule, &voucher, None);
+    assert!(
+        res.is_err(),
+        "AUDIT-00-WILDCARD-33: Oversized regex pattern (>128 chars) must be rejected with error"
+    );
+
+    // 2. Normal pattern within limits must evaluate correctly
+    let valid_rule = "Voucher.nominal_value.unit.matches('^[a-z!]+$')";
+    let res = DynamicPolicyEngine::evaluate_rule(valid_rule, &voucher, None);
+    assert!(res.is_ok(), "Valid regex under limit must evaluate successfully");
+}
+
+// =============================================================================
+// AUDIT-00-WILDCARD-34: Archive Path Traversal Rejection
+// =============================================================================
+
+#[test]
+fn audit_00_wildcard_34_archive_path_traversal_must_be_rejected() {
+    use human_money_core::archive::file_archive::FileVoucherArchive;
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let archive = FileVoucherArchive::with_key(dir.path(), [0x42; 32]);
+
+    // Attempting to query with path traversal characters must fail
+    let res = archive.get_archived_voucher("../etc/passwd");
+    assert!(
+        res.is_err(),
+        "AUDIT-00-WILDCARD-34: Traversal voucher_id must be rejected"
+    );
+
+    let res_backslash = archive.get_archived_voucher("..\\system32\\calc");
+    assert!(
+        res_backslash.is_err(),
+        "AUDIT-00-WILDCARD-34: Backslash traversal voucher_id must be rejected"
+    );
+}
+
+// =============================================================================
+// AUDIT-00-WILDCARD-35: Expired Voucher Spend Rejection
+// =============================================================================
+
+#[test]
+fn audit_00_wildcard_35_expired_voucher_spend_must_be_rejected() {
+    use human_money_core::models::profile::PublicProfile;
+    use human_money_core::test_utils::ACTORS;
+    use human_money_core::wallet::{MultiTransferRequest, SourceTransfer};
+    use human_money_core::VoucherStatus;
+    use std::collections::HashMap;
+
+    let (standard, standard_hash) = &*human_money_core::test_utils::standards::FREETALER_STANDARD;
+    let alice = &ACTORS.alice.identity;
+
+    let data = NewVoucherData {
+        validity_duration: Some("P4Y".to_string()),
+        non_redeemable_test_voucher: false,
+        nominal_value: ValueDefinition { unit: "MIN".to_string(), amount: "100.00".to_string(), abbreviation: Some("M".to_string()), description: None },
+        collateral: None,
+        creator_profile: PublicProfile { id: Some(alice.user_id.clone()), first_name: Some("Alice".to_string()), ..Default::default() },
+    };
+    let mut voucher = Voucher::create(alice, standard, standard_hash, data).unwrap();
+    // Force voucher valid_until to the past
+    voucher.valid_until = "2020-01-01T00:00:00Z".to_string();
+
+    let mut wallet = human_money_core::test_utils::setup_in_memory_wallet(alice);
+    let local_id = "expired-v1".to_string();
+    wallet.add_voucher_instance(local_id.clone(), voucher, VoucherStatus::Active);
+
+    let mut standards = HashMap::new();
+    standards.insert(standard.immutable.identity.uuid.clone(), standard.clone());
+
+    let req = MultiTransferRequest {
+        recipient_id: "bob@did:key:zBobKey".to_string(),
+        sources: vec![SourceTransfer {
+            local_instance_id: local_id,
+            amount_to_send: "10.00".to_string(),
+        }],
+        notes: None,
+        sender_profile_name: None,
+        use_privacy_mode: None,
+    };
+
+    let spend_result = wallet.execute_multi_transfer_and_bundle(
+        alice,
+        &standards,
+        req,
+        None,
+    );
+
+    assert!(
+        matches!(spend_result, Err(human_money_core::error::VoucherCoreError::VoucherNotActive(VoucherStatus::Expired))),
+        "AUDIT-00-WILDCARD-35: Spending an expired voucher must be rejected with VoucherNotActive(Expired)"
+    );
+}
+

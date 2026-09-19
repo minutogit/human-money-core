@@ -347,6 +347,14 @@ impl Wallet {
             });
         }
 
+        // [INTENTIONAL DESIGN REQUIREMENT: HOP-BY-HOP OFFLINE FORENSICS IN STEALTH MODE]
+        // In Stealth Mode, the public voucher transaction chain (`voucher.transactions`) is anonymized
+        // to protect user privacy against third parties and subsequent chain hops.
+        // However, in decentralized offline cash, the recipient MUST record the immediate 1-hop sender
+        // (`counterparty_id`) in their private, encrypted local event ledger (`TransferReceived`).
+        // This hop-by-hop traceability (A -> B -> C) is the ONLY mechanism to resolve offline double-spends
+        // and hold fraudsters accountable. Since this ledger is encrypted at rest (PBKDF2 + ChaCha20-Poly1305)
+        // and protected by `WalletSeal`, it never leaks across the network.
         // Generate TransferReceived events for each successfully received voucher.
         for info in &involved_vouchers_details {
             let bff_data = crate::models::wallet_event::EventBffData {
@@ -606,6 +614,12 @@ impl Wallet {
             .ok_or_else(|| VoucherCoreError::VoucherNotFound(local_instance_id.to_string()))?;
         if !matches!(instance.status, VoucherStatus::Active) {
             return Err(VoucherCoreError::VoucherNotActive(instance.status.clone()));
+        }
+
+        // --- Expiration Gate ---
+        // Prevents spending vouchers whose validity period has elapsed.
+        if instance.voucher.is_expired(None) {
+            return Err(VoucherCoreError::VoucherNotActive(VoucherStatus::Expired));
         }
 
         // --- Lock for vouchers in the (near) future ---

@@ -1,5 +1,5 @@
 use cel_interpreter::{Context, Program, Value};
-use regex::Regex;
+use regex::RegexBuilder;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use rust_decimal::Decimal;
@@ -42,6 +42,12 @@ const MAX_AST_RECURSION_DEPTH: usize = 512;
 /// Real-world standards comprehend over tiny lists (signature roles);
 /// 1_000 is far above any legitimate use while capping quadratic blowup.
 const MAX_COMPREHENSION_ITERATIONS: usize = 1_000;
+
+/// Maximum characters accepted for a regex pattern in CEL `matches` (ReDoS prevention).
+const MAX_REGEX_PATTERN_CHARS: usize = 128;
+
+/// Maximum compiled size in bytes for a regex in CEL `matches` (memory exhaustion prevention).
+const MAX_REGEX_COMPILED_SIZE_BYTES: usize = 2048;
 
 /// Lightweight, zero-heap lexical environment for AST pre-checks.
 /// Eliminates HashMap allocations and cloning of voucher/transaction trees.
@@ -528,7 +534,17 @@ impl DynamicPolicyEngine {
                         return Err(PolicyEngineError::CompilationError("matches requires 2 arguments".into()));
                     };
                     if let (JsonValue::String(s), JsonValue::String(pat)) = (target, pattern) {
-                        let re = Regex::new(&pat)
+                        if pat.len() > MAX_REGEX_PATTERN_CHARS {
+                            return Err(PolicyEngineError::EvaluationError(format!(
+                                "Regex pattern length ({}) exceeds maximum allowed limit ({})",
+                                pat.len(),
+                                MAX_REGEX_PATTERN_CHARS
+                            )));
+                        }
+                        let re = RegexBuilder::new(&pat)
+                            .size_limit(MAX_REGEX_COMPILED_SIZE_BYTES)
+                            .dfa_size_limit(MAX_REGEX_COMPILED_SIZE_BYTES)
+                            .build()
                             .map_err(|e| PolicyEngineError::EvaluationError(format!("Invalid regex in matches: {}", e)))?;
                         Ok(JsonValue::Bool(re.is_match(&s)))
                     } else {

@@ -806,8 +806,11 @@ impl Voucher {
             .into());
         }
 
+        let last_tx = self.transactions.last().ok_or_else(|| {
+            crate::Error::Wallet(crate::error::WalletError::MissingTransactions)
+        })?;
         let prev_hash = crate::services::crypto::get_hash(
-            crate::services::utils::to_canonical_json(self.transactions.last().unwrap())?
+            crate::services::utils::to_canonical_json(last_tx)?
         );
         let t_time = crate::services::utils::get_current_timestamp();
 
@@ -1154,7 +1157,9 @@ impl Voucher {
             return Ok(Decimal::ZERO);
         }
 
-        let last_tx = self.transactions.last().unwrap();
+        let last_tx = self.transactions.last().ok_or_else(|| {
+            crate::Error::Wallet(crate::error::WalletError::MissingTransactions)
+        })?;
         let decimal_places = standard.immutable.features.amount_decimal_places as u32;
 
         let balance_str = if let Some(hash) = current_holder_pub_hash {

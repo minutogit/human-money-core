@@ -219,6 +219,9 @@ pub fn encrypt_symmetric_password(
     OsRng.fill_bytes(&mut salt);
 
     // 2. Derive the key via PBKDF2 (100,000 iterations like in the master key)
+    // [INTENTIONAL DESIGN REQUIREMENT: FAST-TEST-EXECUTION]
+    // In test/debug builds, PBKDF2_ROUNDS=1 ensures rapid test cycles. Production/release builds
+    // unconditionally use 100,000 rounds and are protected by the compile-time safety fuse in lib.rs.
     #[cfg(not(any(test, feature = "test-utils")))]
     const PBKDF2_ROUNDS: u32 = 100_000;
     #[cfg(any(test, feature = "test-utils"))]

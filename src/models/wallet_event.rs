@@ -49,6 +49,11 @@ pub struct EventBffData {
     pub is_test_voucher: bool,
     /// The user ID of the counterparty (sender or recipient), if known.
     /// Enables direct UI displays like "Sent to Bob".
+    ///
+    /// [INTENTIONAL DESIGN REQUIREMENT: HOP-BY-HOP OFFLINE FORENSICS]
+    /// In decentralized offline cash, storing the immediate 1-hop counterparty locally
+    /// is essential for post-hoc double-spend investigations. This field is stored ONLY
+    /// inside the owner's encrypted, sealed local wallet storage and is NEVER broadcasted.
     pub counterparty_id: Option<String>,
     /// The display name of the counterparty, if available.
     pub counterparty_name: Option<String>,

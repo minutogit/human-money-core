@@ -649,6 +649,30 @@ fn looks_like_envelope(value: &serde_json::Value) -> bool {
         || value.get("kdf_salt").is_some()
 }
 
+/// Validates that an archive component (voucher_id, t_id) is a safe alphanumeric identifier
+/// free of directory traversal (`..`, `/`, `\`, null bytes, control characters).
+fn validate_archive_id(id: &str, field_name: &str) -> Result<(), StorageError> {
+    if id.is_empty() {
+        return Err(StorageError::InvalidItemName {
+            name: id.to_string(),
+            reason: format!("{field_name} must not be empty"),
+        });
+    }
+    if id.contains('/') || id.contains('\\') || id.contains("..") {
+        return Err(StorageError::InvalidItemName {
+            name: id.to_string(),
+            reason: format!("{field_name} contains path traversal characters"),
+        });
+    }
+    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(StorageError::InvalidItemName {
+            name: id.to_string(),
+            reason: format!("{field_name} contains invalid non-alphanumeric characters"),
+        });
+    }
+    Ok(())
+}
+
 impl FileVoucherArchive {
     pub fn archive_voucher(
         &self,
@@ -656,10 +680,16 @@ impl FileVoucherArchive {
         _owner_id: &str,
         _standard: &VoucherStandardDefinition,
     ) -> Result<(), StorageError> {
+        // Validate voucher_id against path traversal before joining
+        validate_archive_id(&voucher.voucher_id, "voucher_id")?;
+
         // Each state is uniquely identified by the ID of the last transaction.
         let last_tx = voucher.transactions.last().ok_or_else(|| {
             StorageError::InvariantViolation { message: "Cannot archive voucher with no transactions.".to_string() }
         })?;
+
+        // Validate t_id against path traversal
+        validate_archive_id(&last_tx.t_id, "t_id")?;
 
         // Create a subdirectory for each voucher to group the states.
         let voucher_dir = self.archive_directory.join(&voucher.voucher_id);
@@ -692,6 +722,7 @@ impl FileVoucherArchive {
     }
 
     pub fn get_archived_voucher(&self, voucher_id: &str) -> Result<Voucher, StorageError> {
+        validate_archive_id(voucher_id, "voucher_id")?;
         let voucher_dir = self.archive_directory.join(voucher_id);
         if !voucher_dir.is_dir() {
             return Err(StorageError::NotFound);

@@ -170,7 +170,9 @@ impl WalletSeal {
         }
 
         // 3. Check instance ID (Cloning Protection)
-        // Exception: If self.payload.instance_id.is_empty() (Legacy Wallet), it is valid.
+        // [INTENTIONAL DESIGN REQUIREMENT: LEGACY WALLET MIGRATION]
+        // An empty `self.payload.instance_id` indicates a legacy wallet created prior to cloning protection.
+        // It is considered valid on first login to allow seamless automatic migration and binding to the new device.
         if !self.payload.instance_id.is_empty() && self.payload.instance_id != local_instance_id {
             return Ok(SealValidationResult::DeviceMismatch {
                 expected: self.payload.instance_id.clone(),

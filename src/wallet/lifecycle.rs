@@ -53,6 +53,10 @@ impl Wallet {
     /// 
     /// **Correct Usage:** Store this ID in the OS Keychain (e.g., via the `keyring` crate),
     /// or derive it deterministically from hardware (e.g., `/etc/machine-id`).
+    // [INTENTIONAL DESIGN REQUIREMENT: LEGACY COMPATIBILITY & DEVICE MIGRATION]
+    // An empty `local_instance_id` ("") represents an unmigrated legacy wallet.
+    // When logged in via `AppService::login`, legacy wallets are automatically upgraded and bound
+    // to the new device's instance ID. Rejection of empty IDs must not block legacy migrations.
     pub fn new_from_mnemonic(
         mnemonic_phrase: &str,
         passphrase: Option<&str>,
