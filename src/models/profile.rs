@@ -136,6 +136,9 @@ pub struct VoucherStore {
     pub vouchers: HashMap<String, VoucherInstance>,
 }
 
+/// Maximum number of bundle metadata headers retained in persistent history before FIFO pruning.
+pub const MAX_BUNDLE_HISTORY: usize = 1000;
+
 /// Represents the persistent storage for the metadata of transaction bundles.
 /// This structure is kept separate from `UserProfile` in its own encrypted file.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -143,6 +146,23 @@ pub struct BundleMetadataStore {
     /// A history of all sent and received transaction bundles,
     /// indexed by `bundle_id`.
     pub history: HashMap<String, TransactionBundleHeader>,
+}
+
+impl BundleMetadataStore {
+    /// Inserts a bundle header into history, enforcing `MAX_BUNDLE_HISTORY` via oldest-first pruning.
+    pub fn insert(&mut self, header: TransactionBundleHeader) {
+        if self.history.len() >= MAX_BUNDLE_HISTORY && !self.history.contains_key(&header.bundle_id) {
+            if let Some(oldest_key) = self
+                .history
+                .iter()
+                .min_by_key(|(_, h)| &h.timestamp)
+                .map(|(k, _)| k.clone())
+            {
+                self.history.remove(&oldest_key);
+            }
+        }
+        self.history.insert(header.bundle_id.clone(), header);
+    }
 }
 
 /// A standardized public profile that can be reused in signatures and

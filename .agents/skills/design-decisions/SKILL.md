@@ -49,6 +49,14 @@ Dieses Dokument hält die grundlegenden Design-Entscheidungen der `human_money_c
 - **Entscheidung:** Validierung der Signatur-Eindeutigkeit auf Ebene des binären Public Keys (`[u8; 32]`).
 - **Begründung:** Verhindert Sybil-Angriffe, bei denen dieselbe Identität durch verschiedene Präfixe getarnt wird.
 
+**Kryptografische Hygiene & Längenpräfix-Disziplin:**
+- **Entscheidung:** Alle mehrteiligen Hash-Schlüssel (`corridor_key`, Merkle-Roots, Challenge-Tags) nutzen zwingend längenpräfixierte Hashes (`get_hash_from_slices`) statt Ad-hoc-String-Verkettungen (`format!("{}::{}")`).
+- **Begründung:** Eliminiert Delimiter-Injektionen und Streaming-Konkatenations-Malleability vollständig.
+
+**Ressourcen-Limits & DoS-Firewalls (OOM-Prävention):**
+- **Entscheidung:** Strikte Obergrenzen für dynamische In-Memory-Strukturen: `MAX_PENDING_EVENTS = 256`, `MAX_BUNDLE_HISTORY = 1000` (FIFO/LRU-Verdrängung) und `amount_decimal_places <= 18` in der Standard-Validierung.
+- **Begründung:** Schützt mobile/WASM-Umgebungen vor Speichererschöpfung bei Wallet-Klon-Operationen im Transaktions-Orchestrator und verhindert Rust-`Decimal.round_dp`-Panics bei `> 28`.
+
 **Stealth Mode vs. Lokale Offline-Forensik (Hop-by-Hop Rückverfolgbarkeit):**
 - **Entscheidung:** Strikte Unterscheidung zwischen *Artefakt-Anonymität* (Gutscheinkette und Transport-Container) und *lokaler Forensik im Wallet-Ledger*.
 - **Begründung:** Im Stealth Mode darf der Gutschein selbst (`voucher.transactions`) und der Transit-Container keine Rückschlüsse für Dritte oder spätere Kettenglieder zulassen. Allerdings müssen die **direkten Transaktionspartner lokal im verschlüsselten Wallet-Event-Log** (`TransferSent` / `TransferReceived`) wissen, mit wem die direkte Transaktion stattfand. Bei Offline-Double-Spends ist diese Hop-by-Hop-Rückverfolgbarkeit die einzige Möglichkeit, den Betrug manuell aufzuklären (Kette von A -> B -> C: Wenn C einen Double Spend meldet, kann B nachweisen, dass er den Gutschein von A erhalten hat). Die lokale Speicherung der `counterparty_id` im verschlüsselten, durch `WalletSeal` geschützten Speicher des Nutzers ist daher kein Sicherheitsleck, sondern eine essenzielle funktionale Anforderung für Offline-Bargeld.

@@ -191,13 +191,51 @@ mod parsing_and_verification {
     }
 
     #[test]
+    fn test_fail_fast_validation_amount_decimal_places_exceeds_18() {
+        let mut standard = FREETALER_STANDARD.0.clone();
+        standard.immutable.features.amount_decimal_places = 19;
+        standard.signature = None;
+        let hash_to_sign = crypto::get_hash(utils::to_canonical_json(&standard).unwrap());
+        let sig = TEST_ISSUER.signing_key.sign(hash_to_sign.as_bytes());
+        standard.signature = Some(human_money_core::models::voucher_standard_definition::SignatureBlock {
+            issuer_id: TEST_ISSUER.user_id.clone(),
+            signature: bs58::encode(sig.to_bytes()).into_string(),
+        });
+        let toml_str = toml::to_string(&standard).unwrap();
+        let result = VoucherStandardDefinition::from_toml(&toml_str);
+        assert!(matches!(
+            result.unwrap_err(),
+            VoucherCoreError::Standard(StandardDefinitionError::InvalidFormat(_))
+        ));
+    }
+
+    #[test]
+    fn test_fail_fast_validation_standard_uuid_contains_colons() {
+        let mut standard = FREETALER_STANDARD.0.clone();
+        standard.immutable.identity.uuid = "custom::standard::uuid".to_string();
+        standard.signature = None;
+        let hash_to_sign = crypto::get_hash(utils::to_canonical_json(&standard).unwrap());
+        let sig = TEST_ISSUER.signing_key.sign(hash_to_sign.as_bytes());
+        standard.signature = Some(human_money_core::models::voucher_standard_definition::SignatureBlock {
+            issuer_id: TEST_ISSUER.user_id.clone(),
+            signature: bs58::encode(sig.to_bytes()).into_string(),
+        });
+        let toml_str = toml::to_string(&standard).unwrap();
+        let result = VoucherStandardDefinition::from_toml(&toml_str);
+        assert!(matches!(
+            result.unwrap_err(),
+            VoucherCoreError::Standard(StandardDefinitionError::InvalidFormat(_))
+        ));
+    }
+
+    #[test]
     fn test_logic_hash_behavior_when_immutable_or_mutable_changed() {
         let (base_standard, original_hash) = MINUTO_STANDARD.clone();
 
         // 1. Change an immutable field
         let (_immutable_changed_standard, new_hash_immutable) =
             human_money_core::test_utils::create_custom_standard(&base_standard, |s| {
-                s.immutable.features.amount_decimal_places = 99; // Change from 0 to 99
+                s.immutable.features.amount_decimal_places = 2; // Change from 0 to 2
             });
         assert_ne!(
             original_hash, new_hash_immutable,

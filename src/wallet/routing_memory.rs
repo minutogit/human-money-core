@@ -28,9 +28,12 @@ pub const MAX_BUNDLE_IDS_PER_CORRIDOR: usize = 256;
 pub const BUNDLE_DEDUP_WINDOW_DAYS: f64 = 90.0;
 
 /// Unique corridor key: (standard_uuid, recipient_id).
-/// Serialized as `"<standard_uuid>::<recipient_id>"` for HashMap storage.
+/// Length-prefixed SHA3-256 hash for deterministic, delimiter-free HashMap indexing.
 fn corridor_key(standard_uuid: &str, recipient_id: &str) -> String {
-    format!("{}::{}", standard_uuid, recipient_id)
+    crate::services::crypto::get_hash_from_slices(&[
+        standard_uuid.as_bytes(),
+        recipient_id.as_bytes(),
+    ])
 }
 
 /// A single corridor entry storing reinforcement weight and deduplication state.
@@ -560,10 +563,10 @@ mod tests {
 
         assert_eq!(store.len(), MAX_CORRIDORS);
         assert!(
-            store.corridors.contains_key("hot-corridor::did:key:zBob"),
+            store.corridors.contains_key(&corridor_key("hot-corridor", "did:key:zBob")),
             "Hot corridor should NOT be evicted by spam of zero-weight entries"
         );
-        assert!(store.corridors.contains_key("new-corridor::did:key:zBob"));
+        assert!(store.corridors.contains_key(&corridor_key("new-corridor", "did:key:zBob")));
     }
 
     #[test]

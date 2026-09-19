@@ -1169,3 +1169,91 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
         "SUCCESS: Voucher was securely transferred from Alice to Bob via an encrypted bundle."
     );
 }
+
+#[test]
+fn test_pending_events_bounded_eviction() {
+    let alice_identity = &ACTORS.alice.identity;
+    let mut wallet = setup_in_memory_wallet(alice_identity);
+    assert_eq!(wallet.pending_events.len(), 0);
+
+    for i in 0..300 {
+        wallet.emit_event(
+            human_money_core::models::wallet_event::WalletEventType::TransferReceived,
+            &format!("inst_{}", i),
+            &format!("v_{}", i),
+            human_money_core::models::wallet_event::EventBffData::default(),
+        );
+    }
+
+    assert_eq!(
+        wallet.pending_events.len(),
+        human_money_core::wallet::MAX_PENDING_EVENTS
+    );
+    assert_eq!(
+        wallet.pending_events.first().unwrap().local_instance_id,
+        "inst_44" // 300 - 256 = 44
+    );
+    assert_eq!(
+        wallet.pending_events.last().unwrap().local_instance_id,
+        "inst_299"
+    );
+}
+
+#[test]
+fn test_bundle_metadata_store_bounded_eviction() {
+    let mut store = human_money_core::models::profile::BundleMetadataStore::default();
+    
+    for i in 0..1050 {
+        let header = human_money_core::models::profile::TransactionBundleHeader {
+            bundle_id: format!("bundle_{:04}", i),
+            sender_id: "sender".to_string(),
+            recipient_id: "recipient".to_string(),
+            voucher_ids: vec!["v1".to_string()],
+            timestamp: format!("2026-01-01T{:02}:{:02}:00Z", i / 60, i % 60),
+            notes: None,
+            sender_signature: "sig".to_string(),
+            direction: human_money_core::models::profile::TransactionDirection::Sent,
+            sender_profile_name: None,
+        };
+        store.insert(header);
+    }
+
+    assert_eq!(
+        store.history.len(),
+        human_money_core::models::profile::MAX_BUNDLE_HISTORY
+    );
+    // Earliest 50 timestamps (0000..0049) should have been pruned
+    assert!(!store.history.contains_key("bundle_0000"));
+    assert!(!store.history.contains_key("bundle_0049"));
+    assert!(store.history.contains_key("bundle_0050"));
+    assert!(store.history.contains_key("bundle_1049"));
+}
+
+#[test]
+fn test_spendable_balance_fail_closed_zero_on_malformed_amount() {
+    let alice = &ACTORS.alice.identity;
+    let bob = &ACTORS.bob.identity;
+    let (standard, standard_hash) = &*MINUTO_STANDARD;
+    let voucher_data = human_money_core::test_utils::create_minuto_voucher_data(
+        human_money_core::models::profile::PublicProfile {
+            id: Some(alice.user_id.clone()),
+            ..Default::default()
+        },
+    );
+    let mut voucher = human_money_core::test_utils::create_voucher_for_manipulation(
+        voucher_data,
+        standard,
+        standard_hash,
+        &alice.signing_key,
+    );
+
+    // Corrupt the amount string of the init transaction
+    if let Some(tx) = voucher.transactions.first_mut() {
+        tx.amount = "not_a_valid_decimal".to_string();
+    }
+
+    // Unparseable amount must fail-closed cleanly as Decimal::ZERO (not Decimal::MIN or panic)
+    assert_eq!(voucher.spendable_balance(None, Some(alice)), rust_decimal::Decimal::ZERO);
+    assert_eq!(voucher.spendable_balance(None, Some(bob)), rust_decimal::Decimal::ZERO);
+    assert_eq!(voucher.spendable_balance(None, None), rust_decimal::Decimal::ZERO);
+}

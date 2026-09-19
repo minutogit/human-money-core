@@ -17,6 +17,9 @@ use crate::storage::{AuthMethod, FileStorage, StorageError};
 use crate::wallet::Wallet;
 use crate::wallet::instance::{ValidationFailureReason, VoucherStatus};
 
+/// Maximum number of unconsumed wallet events retained in memory before FIFO eviction.
+pub const MAX_PENDING_EVENTS: usize = 256;
+
 impl Wallet {
     /// Helper method to create a new event and add it to the RAM buffer.
     pub fn emit_event(
@@ -26,6 +29,9 @@ impl Wallet {
         voucher_id: &str,
         bff_data: crate::models::wallet_event::EventBffData,
     ) {
+        if self.pending_events.len() >= MAX_PENDING_EVENTS {
+            self.pending_events.remove(0);
+        }
         let event = crate::models::wallet_event::WalletEvent::new(
             local_instance_id.to_string(),
             voucher_id.to_string(),

@@ -323,6 +323,25 @@ impl VoucherStandardDefinition {
             }
         }
 
+        // Fail-Fast validation for amount_decimal_places (AUDIT-W5-HARDEN)
+        if standard.immutable.features.amount_decimal_places > 18 {
+            return Err(VoucherCoreError::Standard(
+                StandardDefinitionError::InvalidFormat(format!(
+                    "amount_decimal_places must be between 0 and 18, got {}",
+                    standard.immutable.features.amount_decimal_places
+                )),
+            ));
+        }
+
+        // Fail-Fast validation for standard UUID delimiter injection (AUDIT-W5-HARDEN)
+        if standard.immutable.identity.uuid.contains("::") {
+            return Err(VoucherCoreError::Standard(
+                StandardDefinitionError::InvalidFormat(
+                    "standard uuid must not contain '::'".to_string(),
+                ),
+            ));
+        }
+
         // Fail-Fast validation for min_transfer_amount (AUDIT-WC-EABA-02)
         if let Some(min_str) = &standard.immutable.features.min_transfer_amount {
             let min_val = Decimal::from_str(min_str).map_err(|e| {

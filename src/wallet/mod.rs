@@ -24,6 +24,7 @@ mod reputation_tests;
 
 // NEW: Export all public types from the types module
 pub use types::*;
+pub use lifecycle::MAX_PENDING_EVENTS;
 
 pub(crate) use crate::wallet::types::format_bff_name;
 

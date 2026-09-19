@@ -36,6 +36,9 @@ pub enum StandardDefinitionError {
     /// min_transfer_amount is invalid (non-positive, unparseable, or scale exceeds amount_decimal_places).
     #[error("Invalid min_transfer_amount in standard definition: {0}")]
     InvalidMinTransferAmount(String),
+    /// Format or bounds error in standard definition fields.
+    #[error("Invalid standard definition format: {0}")]
+    InvalidFormat(String),
 }
 
 /// Defines the various errors that can occur during validation.

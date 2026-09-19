@@ -1108,33 +1108,32 @@ impl Voucher {
                 holder_match = true;
             }
 
-            // SECURITY (AUDIT-00-WILDCARD-13): If amount parsing fails, return Decimal::MIN
-            // as a sentinel rather than Decimal::ZERO to prevent forensic masking where
-            // corrupted/malformed transactions would be silently displayed as empty/unfunded.
+            // SECURITY (AUDIT-W5-HARDEN): Return Decimal::ZERO on unparseable amounts
+            // so malformed/corrupt transaction strings fail closed cleanly.
             if holder_match {
-                Decimal::from_str(&last_tx.amount).unwrap_or(Decimal::MIN)
+                Decimal::from_str(&last_tx.amount).unwrap_or(Decimal::ZERO)
             } else if change_match {
                 last_tx.sender_remaining_amount
                     .as_deref()
                     .and_then(|a| Decimal::from_str(a).ok())
-                    .unwrap_or(Decimal::MIN)
+                    .unwrap_or(Decimal::ZERO)
             } else {
                 // Fallback to DID check (Public mode)
                 if last_tx.recipient_id == id.user_id {
-                    Decimal::from_str(&last_tx.amount).unwrap_or(Decimal::MIN)
+                    Decimal::from_str(&last_tx.amount).unwrap_or(Decimal::ZERO)
                 } else if last_tx.sender_id.as_deref() == Some(&id.user_id) {
                     last_tx.sender_remaining_amount
                         .as_deref()
                         .and_then(|a| Decimal::from_str(a).ok())
-                        .unwrap_or(Decimal::MIN)
+                        .unwrap_or(Decimal::ZERO)
                 } else {
                     Decimal::ZERO
                 }
             }
         } else {
             // No identity provided: return amount of last transaction.
-            // SECURITY (AUDIT-00-WILDCARD-13): Fail-closed with Decimal::MIN on malformed amount strings.
-            Decimal::from_str(&last_tx.amount).unwrap_or(Decimal::MIN)
+            // SECURITY (AUDIT-W5-HARDEN): Fail-closed with Decimal::ZERO on malformed amount strings.
+            Decimal::from_str(&last_tx.amount).unwrap_or(Decimal::ZERO)
         }
     }
 

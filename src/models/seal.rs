@@ -304,10 +304,17 @@ impl WalletSeal {
         }
 
         // Calculate hash of each other's seal (for chain verification)
-        let local_canonical = to_canonical_json(local).unwrap_or_default();
+        // SECURITY (AUDIT-W5-HARDEN): Fail-closed with ForkDetected on serialization errors
+        let local_canonical = match to_canonical_json(local) {
+            Ok(s) => s,
+            Err(_) => return SealSyncState::ForkDetected,
+        };
         let local_hash = get_hash(local_canonical.as_bytes());
 
-        let remote_canonical = to_canonical_json(remote).unwrap_or_default();
+        let remote_canonical = match to_canonical_json(remote) {
+            Ok(s) => s,
+            Err(_) => return SealSyncState::ForkDetected,
+        };
         let remote_hash = get_hash(remote_canonical.as_bytes());
 
         // Epoch comparison: Different epochs are a fork signal,
@@ -525,6 +532,7 @@ pub fn derive_anchor_step_key(
 pub fn derive_anchor_step_tag(prev_seal_hash: &str, tx_nonce: u64) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"HMC_ANCHOR_STEP_TAG_V1");
+    hasher.update(&(prev_seal_hash.len() as u32).to_le_bytes());
     hasher.update(prev_seal_hash.as_bytes());
     hasher.update(&tx_nonce.to_le_bytes());
     bs58::encode(hasher.finalize().as_bytes()).into_string()
@@ -532,8 +540,8 @@ pub fn derive_anchor_step_tag(prev_seal_hash: &str, tx_nonce: u64) -> String {
 
 /// Calculates the Merkle root of all active (non-archived) vouchers in the wallet.
 ///
-/// Hashes `(voucher_id || current_leaf_hash)` for each non-archived voucher,
-/// sorts them lexicographically, and hashes them with the count.
+/// Hashes `(voucher_id || current_leaf_hash)` for each non-archived voucher with
+/// length prefixes, sorts them lexicographically, and hashes them with the count.
 pub fn calculate_voucher_merkle_root(
     vouchers: &std::collections::HashMap<String, crate::models::voucher::VoucherInstance>,
 ) -> String {
@@ -550,7 +558,10 @@ pub fn calculate_voucher_merkle_root(
             .map(|t| t.t_id.as_str())
             .unwrap_or("");
         let mut h = blake3::Hasher::new();
+        h.update(b"HMC_VOUCHER_LEAF_V1");
+        h.update(&(voucher_id.len() as u32).to_le_bytes());
         h.update(voucher_id.as_bytes());
+        h.update(&(leaf_tx_hash.len() as u32).to_le_bytes());
         h.update(leaf_tx_hash.as_bytes());
         leaf_hashes.push(*h.finalize().as_bytes());
     }

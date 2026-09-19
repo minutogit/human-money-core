@@ -122,9 +122,7 @@ impl Wallet {
         )?;
 
         let header = bundle.to_header(TransactionDirection::Sent);
-        self.bundle_meta_store
-            .history
-            .insert(header.bundle_id.clone(), header.clone());
+        self.bundle_meta_store.insert(header.clone());
 
         Ok((container_bytes, header))
     }
@@ -366,9 +364,7 @@ impl Wallet {
             );
         }
 
-        self.bundle_meta_store
-            .history
-            .insert(header.bundle_id.clone(), header.clone());
+        self.bundle_meta_store.insert(header.clone());
 
         // NEW: Process all received fingerprints (active and implicit)
         self.process_received_fingerprints(
