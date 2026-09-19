@@ -8,7 +8,7 @@ use crate::error::VoucherCoreError;
 use crate::models::profile::{PublicProfile, UserIdentity};
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use ed25519_dalek::SigningKey;
-use rand::Rng;
+use rand_core::{OsRng, RngCore};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -358,7 +358,8 @@ impl Voucher {
         }
 
         let creation_date_str = crate::services::utils::get_current_timestamp();
-        let nonce_bytes = rand::thread_rng().r#gen::<[u8; 16]>();
+        let mut nonce_bytes = [0u8; 16];
+        OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = bs58::encode(nonce_bytes).into_string();
         let creation_dt = chrono::DateTime::parse_from_rfc3339(&creation_date_str)
             .map_err(|e| crate::Error::Wallet(crate::error::WalletError::InvalidCreationDate { reason: format!("Failed to parse creation date: {}", e) }))?
@@ -844,7 +845,7 @@ impl Voucher {
             bs58::encode(sender_ephemeral_key.verifying_key().to_bytes()).into_string();
 
         let mut recipient_seed = [0u8; 32];
-        rand::thread_rng().fill(&mut recipient_seed);
+        OsRng.fill_bytes(&mut recipient_seed);
         let recipient_signing_key = SigningKey::from_bytes(&recipient_seed);
         let recipient_ephemeral_pub = recipient_signing_key.verifying_key();
         let receiver_ephemeral_pub_hash = Some(crate::services::crypto::get_hash(recipient_ephemeral_pub.to_bytes()));

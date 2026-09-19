@@ -467,8 +467,14 @@ impl SecureContainer {
                 if self.protected.is_empty() {
                     return Err(VoucherCoreError::Crypto("Protected header is required for asymmetric encryption".to_string()));
                 }
+                if self.protected.len() > 4096 {
+                    return Err(VoucherCoreError::Crypto("Protected header exceeds maximum size limit (4096 bytes)".to_string()));
+                }
 
                 let protected_bytes = decode_base64(&self.protected)?;
+                if protected_bytes.len() > 4096 {
+                    return Err(VoucherCoreError::Crypto("Protected header payload exceeds maximum size limit".to_string()));
+                }
                 let protected_header_json = serde_json::from_slice::<serde_json::Value>(&protected_bytes)
                     .map_err(|e| VoucherCoreError::Crypto(format!("Failed to parse protected header: {}", e)))?;
 

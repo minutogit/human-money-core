@@ -1,4 +1,5 @@
 use cel_interpreter::{Context, Program, Value};
+use regex::Regex;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use rust_decimal::Decimal;
@@ -416,11 +417,173 @@ impl DynamicPolicyEngine {
                     let lhs = Self::eval_and_check_ast(&call.args[0], env, depth + 1, iter_budget)?;
                     let rhs = Self::eval_and_check_ast(&call.args[1], env, depth + 1, iter_budget)?;
                     match (&lhs, &rhs) {
-                        (JsonValue::Number(_), JsonValue::Number(_)) => Ok(JsonValue::Null),
+                        (JsonValue::Number(n1), JsonValue::Number(n2)) => {
+                            if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) {
+                                let res = match func_name {
+                                    "_<_" => i1 < i2,
+                                    "_<=_" => i1 <= i2,
+                                    "_>_" => i1 > i2,
+                                    "_>=_" => i1 >= i2,
+                                    _ => false,
+                                };
+                                Ok(JsonValue::Bool(res))
+                            } else if let (Some(f1), Some(f2)) = (n1.as_f64(), n2.as_f64()) {
+                                let res = match func_name {
+                                    "_<_" => f1 < f2,
+                                    "_<=_" => f1 <= f2,
+                                    "_>_" => f1 > f2,
+                                    "_>=_" => f1 >= f2,
+                                    _ => false,
+                                };
+                                Ok(JsonValue::Bool(res))
+                            } else {
+                                Ok(JsonValue::Null)
+                            }
+                        }
                         _ => Err(PolicyEngineError::EvaluationError(format!(
                             "Ordering comparison '{func_name}' requires numeric operands \
                              (lexicographic string ordering is not permitted), got: {lhs:?} vs {rhs:?}"
                         ))),
+                    }
+                } else if matches!(func_name, "_+_" | "_-_" | "_*_" | "_/_" | "_%_") {
+                    if call.args.len() != 2 {
+                        return Err(PolicyEngineError::CompilationError(format!(
+                            "Arithmetic operator '{func_name}' requires 2 arguments"
+                        )));
+                    }
+                    let lhs = Self::eval_and_check_ast(&call.args[0], env, depth + 1, iter_budget)?;
+                    let rhs = Self::eval_and_check_ast(&call.args[1], env, depth + 1, iter_budget)?;
+                    match (&lhs, &rhs) {
+                        (JsonValue::Number(n1), JsonValue::Number(n2)) => {
+                            if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) {
+                                let res = match func_name {
+                                    "_+_" => i1.checked_add(i2).ok_or_else(|| PolicyEngineError::EvaluationError("Integer addition overflow".into()))?,
+                                    "_-_" => i1.checked_sub(i2).ok_or_else(|| PolicyEngineError::EvaluationError("Integer subtraction underflow".into()))?,
+                                    "_*_" => i1.checked_mul(i2).ok_or_else(|| PolicyEngineError::EvaluationError("Integer multiplication overflow".into()))?,
+                                    "_/_" => {
+                                        if i2 == 0 {
+                                            return Err(PolicyEngineError::EvaluationError("Division by zero".into()));
+                                        }
+                                        i1 / i2
+                                    }
+                                    "_%_" => {
+                                        if i2 == 0 {
+                                            return Err(PolicyEngineError::EvaluationError("Modulo by zero".into()));
+                                        }
+                                        i1 % i2
+                                    }
+                                    _ => unreachable!(),
+                                };
+                                Ok(JsonValue::Number(res.into()))
+                            } else if let (Some(f1), Some(f2)) = (n1.as_f64(), n2.as_f64()) {
+                                let res = match func_name {
+                                    "_+_" => f1 + f2,
+                                    "_-_" => f1 - f2,
+                                    "_*_" => f1 * f2,
+                                    "_/_" => {
+                                        if f2 == 0.0 {
+                                            return Err(PolicyEngineError::EvaluationError("Division by zero".into()));
+                                        }
+                                        f1 / f2
+                                    }
+                                    "_%_" => {
+                                        if f2 == 0.0 {
+                                            return Err(PolicyEngineError::EvaluationError("Modulo by zero".into()));
+                                        }
+                                        f1 % f2
+                                    }
+                                    _ => unreachable!(),
+                                };
+                                serde_json::Number::from_f64(res)
+                                    .map(JsonValue::Number)
+                                    .ok_or_else(|| PolicyEngineError::EvaluationError("Float calculation resulted in NaN/Infinite".into()))
+                            } else {
+                                Err(PolicyEngineError::EvaluationError(format!(
+                                    "Arithmetic operator '{func_name}' unsupported numeric types: {lhs:?} vs {rhs:?}"
+                                )))
+                            }
+                        }
+                        (JsonValue::String(s1), JsonValue::String(s2)) if func_name == "_+_" => {
+                            Ok(JsonValue::String(format!("{}{}", s1, s2)))
+                        }
+                        (JsonValue::Array(a1), JsonValue::Array(a2)) if func_name == "_+_" => {
+                            let mut combined = a1.clone();
+                            combined.extend(a2.iter().cloned());
+                            Ok(JsonValue::Array(combined))
+                        }
+                        _ => Err(PolicyEngineError::EvaluationError(format!(
+                            "Arithmetic operator '{func_name}' requires numeric operands, got: {lhs:?} vs {rhs:?}"
+                        ))),
+                    }
+                } else if func_name == "matches" {
+                    let (target, pattern) = if let Some(t) = &call.target {
+                        let t_val = Self::eval_and_check_ast(t, env, depth + 1, iter_budget)?;
+                        let p_val = Self::eval_and_check_ast(&call.args[0], env, depth + 1, iter_budget)?;
+                        (t_val, p_val)
+                    } else if call.args.len() == 2 {
+                        let t_val = Self::eval_and_check_ast(&call.args[0], env, depth + 1, iter_budget)?;
+                        let p_val = Self::eval_and_check_ast(&call.args[1], env, depth + 1, iter_budget)?;
+                        (t_val, p_val)
+                    } else {
+                        return Err(PolicyEngineError::CompilationError("matches requires 2 arguments".into()));
+                    };
+                    if let (JsonValue::String(s), JsonValue::String(pat)) = (target, pattern) {
+                        let re = Regex::new(&pat)
+                            .map_err(|e| PolicyEngineError::EvaluationError(format!("Invalid regex in matches: {}", e)))?;
+                        Ok(JsonValue::Bool(re.is_match(&s)))
+                    } else {
+                        Ok(JsonValue::Bool(false))
+                    }
+                } else if func_name == "contains" {
+                    let (target, search) = if let Some(t) = &call.target {
+                        let t_val = Self::eval_and_check_ast(t, env, depth + 1, iter_budget)?;
+                        let s_val = Self::eval_and_check_ast(&call.args[0], env, depth + 1, iter_budget)?;
+                        (t_val, s_val)
+                    } else if call.args.len() == 2 {
+                        let t_val = Self::eval_and_check_ast(&call.args[0], env, depth + 1, iter_budget)?;
+                        let s_val = Self::eval_and_check_ast(&call.args[1], env, depth + 1, iter_budget)?;
+                        (t_val, s_val)
+                    } else {
+                        return Err(PolicyEngineError::CompilationError("contains requires 2 arguments".into()));
+                    };
+                    match (target, search) {
+                        (JsonValue::String(s), JsonValue::String(sub)) => Ok(JsonValue::Bool(s.contains(&sub))),
+                        (JsonValue::Array(arr), elem) => Ok(JsonValue::Bool(arr.contains(&elem))),
+                        _ => Ok(JsonValue::Bool(false)),
+                    }
+                } else if func_name == "startsWith" {
+                    let (target, prefix) = if let Some(t) = &call.target {
+                        let t_val = Self::eval_and_check_ast(t, env, depth + 1, iter_budget)?;
+                        let p_val = Self::eval_and_check_ast(&call.args[0], env, depth + 1, iter_budget)?;
+                        (t_val, p_val)
+                    } else if call.args.len() == 2 {
+                        let t_val = Self::eval_and_check_ast(&call.args[0], env, depth + 1, iter_budget)?;
+                        let p_val = Self::eval_and_check_ast(&call.args[1], env, depth + 1, iter_budget)?;
+                        (t_val, p_val)
+                    } else {
+                        return Err(PolicyEngineError::CompilationError("startsWith requires 2 arguments".into()));
+                    };
+                    if let (JsonValue::String(s), JsonValue::String(pre)) = (target, prefix) {
+                        Ok(JsonValue::Bool(s.starts_with(&pre)))
+                    } else {
+                        Ok(JsonValue::Bool(false))
+                    }
+                } else if func_name == "endsWith" {
+                    let (target, suffix) = if let Some(t) = &call.target {
+                        let t_val = Self::eval_and_check_ast(t, env, depth + 1, iter_budget)?;
+                        let s_val = Self::eval_and_check_ast(&call.args[0], env, depth + 1, iter_budget)?;
+                        (t_val, s_val)
+                    } else if call.args.len() == 2 {
+                        let t_val = Self::eval_and_check_ast(&call.args[0], env, depth + 1, iter_budget)?;
+                        let p_val = Self::eval_and_check_ast(&call.args[1], env, depth + 1, iter_budget)?;
+                        (t_val, p_val)
+                    } else {
+                        return Err(PolicyEngineError::CompilationError("endsWith requires 2 arguments".into()));
+                    };
+                    if let (JsonValue::String(s), JsonValue::String(suf)) = (target, suffix) {
+                        Ok(JsonValue::Bool(s.ends_with(&suf)))
+                    } else {
+                        Ok(JsonValue::Bool(false))
                     }
                 } else if func_name == "_in_" {
                     if call.args.len() != 2 {
@@ -484,33 +647,6 @@ impl DynamicPolicyEngine {
                         JsonValue::Bool(b) => Ok(JsonValue::Bool(b)),
                         _ => Ok(val),
                     }
-                } else if matches!(func_name, "_+_" | "_-_" | "_*_" | "_/_" | "_%_") {
-                    if let Some(target) = &call.target {
-                        let _ = Self::eval_and_check_ast(target, env, depth + 1, iter_budget)?;
-                    }
-                    for arg in &call.args {
-                        let _ = Self::eval_and_check_ast(arg, env, depth + 1, iter_budget)?;
-                    }
-                    Ok(JsonValue::Number(0.into()))
-                } else if matches!(func_name, "matches" | "contains" | "startsWith" | "endsWith") {
-                    if let Some(target) = &call.target {
-                        let _ = Self::eval_and_check_ast(target, env, depth + 1, iter_budget)?;
-                    }
-                    for arg in &call.args {
-                        let _ = Self::eval_and_check_ast(arg, env, depth + 1, iter_budget)?;
-                    }
-                    Ok(JsonValue::Bool(true))
-                } else if matches!(
-                    func_name,
-                    "type" | "int" | "uint" | "double" | "string" | "bytes" | "duration" | "timestamp"
-                ) {
-                    if let Some(target) = &call.target {
-                        let _ = Self::eval_and_check_ast(target, env, depth + 1, iter_budget)?;
-                    }
-                    for arg in &call.args {
-                        let _ = Self::eval_and_check_ast(arg, env, depth + 1, iter_budget)?;
-                    }
-                    Ok(JsonValue::Null)
                 } else {
                     return Err(PolicyEngineError::EvaluationError(format!(
                         "unknown or unsupported CEL function: '{}'",
