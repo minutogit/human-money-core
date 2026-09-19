@@ -289,14 +289,8 @@ fn rank_vouchers_internal(
             found_boomerang
         };
 
-        // Eigen: creator == wallet owner?
-        let is_eigen = inst
-            .voucher
-            .creator_profile
-            .id
-            .as_deref()
-            .map(|cid| cid == wallet.profile.user_id)
-            .unwrap_or(false);
+        // Eigen: creator == wallet owner? (SAI / prefix tolerant)
+        let is_eigen = inst.voucher.is_to_creator(&wallet.profile.user_id);
 
         let corridor_weight = routing_memory.get_weight(&inst.voucher.voucher_standard.uuid, recipient_id, now);
 

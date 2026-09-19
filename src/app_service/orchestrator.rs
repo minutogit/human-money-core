@@ -53,7 +53,7 @@ impl StateMergeHook {
         // persist. It is owner-controlled session configuration, NOT part of
         // the rolled-back disk content under attack; every persisted-
         // content integrity gate stays fully enforced on the fresh state.
-        if ram_wallet.profile.l2_server_pubkey.is_some() {
+        if fresh_wallet.profile.l2_server_pubkey.is_none() && ram_wallet.profile.l2_server_pubkey.is_some() {
             fresh_wallet.profile.l2_server_pubkey = ram_wallet.profile.l2_server_pubkey;
         }
 

@@ -113,4 +113,19 @@ assertions_on_constants = "allow"
 nonminimal_bool = "allow"
 large_const_arrays = "allow"
 
+[profile.dev]
+debug = 1
+
+[profile.test]
+debug = 1
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.test.package."*"]
+opt-level = 2
+
+
+
 

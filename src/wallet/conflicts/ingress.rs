@@ -926,6 +926,13 @@ impl Wallet {
             }
         }
 
+        let mut current_total_foreign: usize = self
+            .known_fingerprints
+            .foreign_fingerprints
+            .values()
+            .map(|v| v.len())
+            .sum();
+
         for (ds_tag, group) in ds_groups {
             if group.is_empty() { continue; }
             
@@ -972,10 +979,11 @@ impl Wallet {
             meta.known_by_peers.insert(sender_short_hash);
 
             // FIX: Persistently store gossip fingerprints in foreign_fingerprints.
-            // Previously only metadata was updated; the TransactionFingerprint objects
-            // themselves were never stored. Without this persistence, check_for_double_spend()
-            // cannot detect collisions based solely on gossip data.
+            // Enforce both global and per-bucket caps to prevent memory/CPU exhaustion.
             for (fp, _depth) in &group {
+                if current_total_foreign >= conflict_manager::MAX_TOTAL_FOREIGN_FINGERPRINTS {
+                    continue;
+                }
                 let entry = self
                     .known_fingerprints
                     .foreign_fingerprints
@@ -995,6 +1003,7 @@ impl Wallet {
                 });
                 if !is_exact_duplicate {
                     entry.push((*fp).clone());
+                    current_total_foreign += 1;
                 }
             }
         }

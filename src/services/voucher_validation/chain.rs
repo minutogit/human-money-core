@@ -811,6 +811,15 @@ pub fn verify_transaction_integrity_and_signature(
     tx_for_tid_calc.trap_data = None;
     tx_for_tid_calc.privacy_guard = None;
 
+    if let Some(guard) = &transaction.privacy_guard {
+        if guard.is_empty() {
+            return Err(ValidationError::InvalidTransaction(
+                "Empty privacy_guard is not permitted; omit the field (None) for public transactions".to_string(),
+            )
+            .into());
+        }
+    }
+
     let calculated_tid = get_hash(to_canonical_json(&tx_for_tid_calc)?);
     if transaction.t_id != calculated_tid {
         return Err(ValidationError::MismatchedTransactionId {

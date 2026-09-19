@@ -1148,11 +1148,7 @@ impl Voucher {
             return Ok(Decimal::ZERO);
         }
 
-        match crate::services::voucher_validation::validate_voucher_against_standard(self, standard) {
-            Ok(_) => (),
-            Err(VoucherCoreError::Validation(_)) => (),
-            Err(e) => return Err(e),
-        };
+        crate::services::voucher_validation::validate_voucher_against_standard(self, standard)?;
 
         if self.transactions.iter().any(|tx| tx.t_type == "redeem") {
             return Ok(Decimal::ZERO);
@@ -1189,16 +1185,14 @@ impl Voucher {
 
     /// Checks whether this voucher is expired relative to `current_time` (or now if `None`).
     ///
-    /// SECURITY (AUDIT-00-WILDCARD-19): Malformed `valid_until` is treated as
-    /// expired (fail-closed). An unparseable timestamp must never be considered
-    /// "not expired" — otherwise an attacker can craft a voucher with
-    /// `valid_until = "not-a-date"` that lives forever, bypassing the expiry
-    /// sweep and UI gates.
+    /// SECURITY (AUDIT-00-WILDCARD-19 + AUDIT-00-WILDCARD-03): Malformed `valid_until`
+    /// or `current_time` is treated as expired (fail-closed).
     pub fn is_expired(&self, current_time: Option<&str>) -> bool {
         let now_dt = if let Some(ct) = current_time {
-            chrono::DateTime::parse_from_rfc3339(ct)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now())
+            match chrono::DateTime::parse_from_rfc3339(ct) {
+                Ok(dt) => dt.with_timezone(&chrono::Utc),
+                Err(_) => return true, // Fail-closed: unparseable current_time is treated as expired
+            }
         } else {
             chrono::Utc::now()
         };

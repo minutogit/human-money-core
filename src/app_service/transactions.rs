@@ -170,6 +170,16 @@ impl AppService {
         container_bytes: &[u8],
         password: Option<&str>,
     ) -> Result<Voucher, Error> {
+        if container_bytes.len() > crate::services::bundle_processor::MAX_CONTAINER_BYTES {
+            return Err(Error::Validation(
+                crate::error::ValidationError::InvalidTransaction(format!(
+                    "Signing request container exceeds maximum size ({} > {} bytes)",
+                    container_bytes.len(),
+                    crate::services::bundle_processor::MAX_CONTAINER_BYTES
+                )),
+            ));
+        }
+
         self.with_unlocked_ref(|_, identity, _| {
             let container: crate::models::secure_container::SecureContainer =
                 serde_json::from_slice(container_bytes).map_err(Error::from)?;

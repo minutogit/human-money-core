@@ -33,8 +33,11 @@ where
     groups
 }
 
+pub const MAX_CHUNK_EVENTS: usize = 5000;
+pub const MAX_CHUNK_BYTES: usize = 2 * 1024 * 1024;
+
 /// Merges incoming events into a month-chunk on disk, deduplicating by event_id,
-/// and atomically writes the encrypted chunk.
+/// rotating chunks when exceeding size/count limits, and atomically writing the encrypted chunk.
 fn merge_and_write_chunk(
     storage: &mut FileStorage,
     file_key: &[u8; 32],
@@ -42,17 +45,42 @@ fn merge_and_write_chunk(
     events_to_add: Vec<WalletEvent>,
 ) -> Result<(), StorageError> {
     let events_dir = storage.user_storage_path.join(EVENTS_DIR_NAME);
-    let chunk_path = events_dir.join(format!("{}.json.enc", month));
-    let mut all_events: Vec<WalletEvent> = if chunk_path.exists() {
+    
+    // Find all existing chunks for this month
+    let mut matching_chunks = Vec::new();
+    if events_dir.exists() && events_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&events_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if (name.starts_with(&format!("{}_", month)) || name == format!("{}.json.enc", month))
+                    && name.ends_with(".json.enc")
+                    && !name.ends_with(".tmp")
+                {
+                    matching_chunks.push(name);
+                }
+            }
+        }
+    }
+    matching_chunks.sort();
+
+    let (chunk_file_name, mut all_events, _rotate_needed) = if let Some(last_chunk_name) = matching_chunks.last() {
+        let chunk_path = events_dir.join(last_chunk_name);
         let c_bytes = fs::read(&chunk_path)?;
         let c_container: EventsStorageContainer = serde_json::from_slice(&c_bytes)
             .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
         let c_decrypted = crypto::decrypt_data(file_key, &c_container.encrypted_store_payload)
             .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-        serde_json::from_slice(&c_decrypted)
-            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?
+        let events: Vec<WalletEvent> = serde_json::from_slice(&c_decrypted)
+            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+
+        if events.len() >= MAX_CHUNK_EVENTS || c_bytes.len() >= MAX_CHUNK_BYTES {
+            let next_idx = matching_chunks.len() + 1;
+            (format!("{}_{:02}.json.enc", month, next_idx), Vec::new(), true)
+        } else {
+            (last_chunk_name.clone(), events, false)
+        }
     } else {
-        Vec::new()
+        (format!("{}.json.enc", month), Vec::new(), false)
     };
 
     let existing_ids: HashSet<String> = all_events.iter().map(|e| e.event_id.clone()).collect();
@@ -74,7 +102,7 @@ fn merge_and_write_chunk(
         .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
 
     storage.write_atomic(
-        format!("{}/{}.json.enc", EVENTS_DIR_NAME, month),
+        format!("{}/{}", EVENTS_DIR_NAME, chunk_file_name),
         &e_container_bytes,
     )
 }

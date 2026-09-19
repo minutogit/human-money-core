@@ -228,11 +228,16 @@ pub fn calculate_layer2_voucher_id(transaction: &Transaction) -> Result<String, 
 
     let t_id = crate::services::crypto::decode_bs58_fixed::<32>(&transaction.t_id, "t_id")?;
 
-    let sender_pub = transaction
-        .sender_ephemeral_pub
-        .as_deref()
-        .and_then(|s| crate::services::crypto::decode_bs58_fixed::<32>(s, "sender_pub").ok())
-        .unwrap_or([0u8; 32]);
+    let sender_pub = match &transaction.sender_ephemeral_pub {
+        Some(s) => crate::services::crypto::decode_bs58_fixed::<32>(s, "sender_pub")?,
+        None => {
+            return Err(crate::Error::Validation(
+                crate::error::ValidationError::InvalidTransaction(
+                    "Missing sender_ephemeral_pub in init transaction".to_string(),
+                ),
+            ))
+        }
+    };
     let receiver_hash = transaction
         .receiver_ephemeral_pub_hash
         .as_deref()
@@ -905,8 +910,6 @@ pub fn evaluate_multi_node_anchor_verdicts(
         }
     } else if unknown_count >= required_q {
         AnchorSyncVerdict::GenesisRequired
-    } else if syncd_count + leap_count >= required_q && syncd_count > 0 {
-        AnchorSyncVerdict::Synchronized
     } else if let Some(first) = verdicts.first() {
         evaluate_anchor_verdict(first, local_t_id, local_tag)
     } else {
