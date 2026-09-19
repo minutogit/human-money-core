@@ -32,8 +32,9 @@ use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat};
 /// reach remote victims.
 pub const VOID_SPEND_SHARD_MARKER: &str = "invalid";
 
-/// Maximum number of foreign fingerprints admitted per `ds_tag` bucket (DoS prevention).
-/// Symmetric to the outbound cap `MAX_FINGERPRINTS_TO_SEND = 150`.
+/// Maximum number of foreign fingerprints admitted per `ds_tag` bucket in local storage (DoS prevention).
+/// While network transmission budgets scale dynamically ($V \times 10$ standard / $V \times 3$ quarantine),
+/// this storage cap prevents unbounded heap accumulation for any single voucher input chain.
 pub const MAX_FOREIGN_BUCKET_CAP: usize = 150;
 
 /// Maximum TOTAL number of foreign fingerprints retained across ALL `ds_tag` buckets.
@@ -41,7 +42,7 @@ pub const MAX_FOREIGN_BUCKET_CAP: usize = 150;
 /// Set to 50,000 entries (~6-7 MB) for vast offline double-spend detection history.
 pub const MAX_TOTAL_FOREIGN_FINGERPRINTS: usize = 50_000;
 
-/// Creates a single, anonymized fingerprint for a given transaction.
+/// Creates a single, self-authenticating fingerprint for a given transaction.
 /// Contains the logic for anonymizing the `valid_until` timestamp.
 pub fn create_fingerprint_for_transaction(
     transaction: &Transaction,
@@ -956,6 +957,7 @@ pub fn import_foreign_fingerprints(
     Ok(new_count)
 }
 
+/// Derives deterministic 128-bit XOR key for L2 timestamp obfuscation from (prev_hash, t_id).
 fn derive_timestamp_xor_key(transaction: &Transaction) -> Result<u128, VoucherCoreError> {
     let prev_hash_bytes = crate::services::crypto::decode_bs58_fixed::<32>(
         &transaction.prev_hash,

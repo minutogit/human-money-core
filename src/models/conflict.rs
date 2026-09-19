@@ -11,9 +11,9 @@ use std::collections::{HashMap, VecDeque};
 // PART 1: CONFLICT DETECTION STRUCTURES (from fingerprint.rs)
 //==============================================================================
 
-/// Represents an individual, anonymized fingerprint of a transaction.
-/// This structure contains all necessary information to prove a double spend
-/// and manage expired fingerprints.
+/// Represents an individual, self-authenticating fingerprint of a transaction.
+/// This structure contains all necessary cryptographic information to prove a double spend,
+/// verify sender authority via V3 SST, and manage expired fingerprints.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct TransactionFingerprint {
     /// The double-spend tag (DS tag).
@@ -78,8 +78,7 @@ pub struct TransactionFingerprint {
     pub privacy_guard_hash: String,
 }
 
-/// Serves as a storage container for all known transaction fingerprints that
-/// are not critical for preventing one's own double spends.
+/// Serves as a storage container for all known transaction fingerprints (local voucher history and foreign gossip).
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct KnownFingerprints {
     /// **History (persistent):** A complete history of all fingerprints of
@@ -116,7 +115,7 @@ pub struct OwnFingerprints {
 //==============================================================================
 
 /// Represents an entry in the DirectQueue.
-/// Directly forwarded transaction tips from incoming vouchers or redemptions.
+/// Directly forwarded transaction tips from incoming vouchers.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 pub struct DirectEntry {
     /// The fingerprint of the latest transaction tip.

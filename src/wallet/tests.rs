@@ -367,5 +367,107 @@ mod internal_logic {
             "the deterministic outcome must be the genuine SST attribution"
         );
     }
-}
 
+    #[test]
+    fn test_resolve_conflict_offline_tie_breaker_determinism() {
+        use crate::models::conflict::TransactionFingerprint;
+        use crate::models::voucher::{Transaction, Voucher};
+        use crate::wallet::instance::{VoucherInstance, VoucherStatus};
+        use crate::models::profile::VoucherStore;
+        use crate::services::conflict_manager::encrypt_transaction_timestamp;
+
+        let mut t_id_a = crate::services::crypto::get_hash("aaa");
+        let mut t_id_b = crate::services::crypto::get_hash("bbb");
+        if t_id_a > t_id_b {
+            std::mem::swap(&mut t_id_a, &mut t_id_b);
+        }
+
+        let tx_a = Transaction {
+            t_id: t_id_a.clone(),
+            prev_hash: crate::services::crypto::get_hash("prev"),
+            t_time: "2024-01-01T10:00:00.000000Z".to_string(),
+            ..Default::default()
+        };
+        let enc_a = encrypt_transaction_timestamp(&tx_a).unwrap();
+
+        let tx_b = Transaction {
+            t_id: t_id_b.clone(),
+            prev_hash: crate::services::crypto::get_hash("prev"),
+            t_time: "2024-01-01T10:00:00.000000Z".to_string(), // IDENTICAL timestamp!
+            ..Default::default()
+        };
+        let enc_b = encrypt_transaction_timestamp(&tx_b).unwrap();
+
+        let fp_a = TransactionFingerprint {
+            t_id: t_id_a.clone(),
+            encrypted_timestamp: enc_a,
+            ds_tag: "tag".to_string(),
+            trap_r: "u".to_string(),
+            trap_s: "b".to_string(),
+            layer2_signature: "sig".to_string(),
+            deletable_at: "2099-01-01T00:00:00Z".to_string(),
+            sender_ephemeral_pub: String::new(),
+            layer2_voucher_id: String::new(),
+            privacy_guard_hash: String::new(),
+        };
+        let fp_b = TransactionFingerprint {
+            t_id: t_id_b.clone(),
+            encrypted_timestamp: enc_b,
+            ds_tag: "tag".to_string(),
+            trap_r: "u".to_string(),
+            trap_s: "b".to_string(),
+            layer2_signature: "sig".to_string(),
+            deletable_at: "2099-01-01T00:00:00Z".to_string(),
+            sender_ephemeral_pub: String::new(),
+            layer2_voucher_id: String::new(),
+            privacy_guard_hash: String::new(),
+        };
+
+        // Test with order [A, B]
+        let mut store1 = VoucherStore::default();
+        store1.vouchers.insert("v_a".to_string(), VoucherInstance { voucher: Voucher { voucher_id: "v_a".to_string(), transactions: vec![tx_a.clone()], ..Default::default() }, status: VoucherStatus::Active, local_instance_id: "v_a".to_string() });
+        store1.vouchers.insert("v_b".to_string(), VoucherInstance { voucher: Voucher { voucher_id: "v_b".to_string(), transactions: vec![tx_b.clone()], ..Default::default() }, status: VoucherStatus::Active, local_instance_id: "v_b".to_string() });
+
+        crate::wallet::conflicts::resolve_conflict_offline(&mut store1, &[fp_a.clone(), fp_b.clone()]);
+        assert!(matches!(store1.vouchers["v_a"].status, VoucherStatus::Active));
+        assert!(matches!(store1.vouchers["v_b"].status, VoucherStatus::Quarantined { .. }));
+
+        // Test with reversed order [B, A] -> A MUST still win deterministically via tie-breaker (t_id_a < t_id_b)
+        let mut store2 = VoucherStore::default();
+        store2.vouchers.insert("v_a".to_string(), VoucherInstance { voucher: Voucher { voucher_id: "v_a".to_string(), transactions: vec![tx_a.clone()], ..Default::default() }, status: VoucherStatus::Active, local_instance_id: "v_a".to_string() });
+        store2.vouchers.insert("v_b".to_string(), VoucherInstance { voucher: Voucher { voucher_id: "v_b".to_string(), transactions: vec![tx_b.clone()], ..Default::default() }, status: VoucherStatus::Active, local_instance_id: "v_b".to_string() });
+
+        crate::wallet::conflicts::resolve_conflict_offline(&mut store2, &[fp_b, fp_a]);
+        assert!(matches!(store2.vouchers["v_a"].status, VoucherStatus::Active), "A must win even when slice starts with B");
+        assert!(matches!(store2.vouchers["v_b"].status, VoucherStatus::Quarantined { .. }));
+    }
+
+    #[test]
+    fn test_storage_cleanup_precise_fingerprint_count() {
+        use crate::models::conflict::TransactionFingerprint;
+        let mut wallet = setup_in_memory_wallet(&ACTORS.alice);
+
+        // Populate a single bucket with 12 distinct fingerprints (deletable_at in future)
+        let mut fps = Vec::new();
+        for i in 0..12 {
+            fps.push(TransactionFingerprint {
+                t_id: crate::services::crypto::get_hash(&format!("tid_{:02}", i)),
+                ds_tag: "single_bucket".to_string(),
+                deletable_at: format!("2099-01-01T{:02}:00:00Z", i),
+                ..Default::default()
+            });
+        }
+        let expected_kept_first_tid = fps[2].t_id.clone();
+        wallet.known_fingerprints.local_history.insert("single_bucket".to_string(), fps);
+
+        // Limit = 10 fingerprints. Total count is 12 (in 1 bucket).
+        // Trimming 10% ceil = 2 oldest fingerprints.
+        let report = wallet.run_storage_cleanup(Some(10), 10).unwrap();
+        assert_eq!(report.limit_based_fingerprints_removed, 2);
+
+        let remaining = &wallet.known_fingerprints.local_history["single_bucket"];
+        assert_eq!(remaining.len(), 10);
+        // Oldest two (tid_00, tid_01) must have been removed
+        assert_eq!(remaining[0].t_id, expected_kept_first_tid);
+    }
+}

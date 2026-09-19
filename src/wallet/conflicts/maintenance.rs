@@ -84,8 +84,18 @@ impl Wallet {
         // ARCHITECTURE (KISS-Immune): Only volatile foreign and local history caches participate
         // in opportunistic capacity trimming. `own_fingerprints.history` is the user's authoritative
         // ledger to prevent accidental double-spends and must never be trimmed opportunistically.
-        let current_total_count = self.known_fingerprints.local_history.len()
-            + self.known_fingerprints.foreign_fingerprints.len();
+        let current_total_count: usize = self
+            .known_fingerprints
+            .local_history
+            .values()
+            .map(|v| v.len())
+            .sum::<usize>()
+            + self
+                .known_fingerprints
+                .foreign_fingerprints
+                .values()
+                .map(|v| v.len())
+                .sum::<usize>();
 
         let max_fingerprints = max_fingerprints_override.unwrap_or(MAX_FINGERPRINTS_CONST);
         if current_total_count > max_fingerprints {
@@ -106,21 +116,33 @@ impl Wallet {
             // Sort chronologically: oldest deletable_at first, t_id tie-breaker for determinism
             candidates.sort_by(|a, b| a.2.cmp(&b.2).then(a.0.cmp(&b.0)));
 
-            let keys_to_remove: std::collections::HashSet<String> = candidates
+            let t_ids_to_remove: std::collections::HashSet<String> = candidates
                 .into_iter()
                 .take(target_removal_count)
-                .map(|(_, tag, _)| tag)
+                .map(|(t_id, _, _)| t_id)
                 .collect();
 
-            report.limit_based_fingerprints_removed = keys_to_remove.len();
+            let mut removed_count = 0;
+            for fps in self.known_fingerprints.local_history.values_mut() {
+                let before = fps.len();
+                fps.retain(|fp| !t_ids_to_remove.contains(&fp.t_id));
+                removed_count += before - fps.len();
+            }
+            for fps in self.known_fingerprints.foreign_fingerprints.values_mut() {
+                let before = fps.len();
+                fps.retain(|fp| !t_ids_to_remove.contains(&fp.t_id));
+                removed_count += before - fps.len();
+            }
 
-            // Remove selected entries only from foreign and local history caches
+            // Clean up now-empty buckets
             self.known_fingerprints
                 .local_history
-                .retain(|k, _| !keys_to_remove.contains(k));
+                .retain(|_, fps| !fps.is_empty());
             self.known_fingerprints
                 .foreign_fingerprints
-                .retain(|k, _| !keys_to_remove.contains(k));
+                .retain(|_, fps| !fps.is_empty());
+
+            report.limit_based_fingerprints_removed = removed_count;
         }
 
         // --- Phase 3: Archive cleanup ---

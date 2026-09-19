@@ -1059,12 +1059,12 @@ impl Wallet {
 
 /// Encapsulated offline conflict resolution via "Earliest Wins" heuristic.
 ///
-/// # V2 Protocol — Instant Quarantine via Self-Authenticating Fingerprints
+/// # V3 SST Protocol — Instant Quarantine via Self-Authenticating Fingerprints
 ///
 /// ## Threat Model Boundary (accepted residual risk)
 /// Admission of FOREIGN fingerprints into the winner race is restricted to
 /// entries carrying a valid `layer2_signature` over the canonical
-/// `HMC_TX_AUTH_V2` digest. This strictly reduces the attacker class from
+/// `HMC_TX_AUTH_V3` digest. This strictly reduces the attacker class from
 /// "any external peer in the P2P network" (AUDIT-01-F01) to **"actors who at
 /// some point possessed the private ephemeral one-time key for this output"**
 /// (e.g. the issuer or a previous holder). A former key holder can
@@ -1097,10 +1097,10 @@ pub(crate) fn resolve_conflict_offline(
     // Since all conflicting transactions branch from the same fork point, they share the same prev_hash.
     let prev_hash = &conflicting_txs[0].prev_hash;
 
-    // SECURITY (AUDIT-01-F01 + V2 evolution): Participation in the
+    // SECURITY (AUDIT-01-F01 + V3 evolution): Participation in the
     // "Earliest Wins" race requires either
     //  - a LOCALLY-held transaction (chain-backed trust), or
-    //  - a FOREIGN fingerprint that is self-authenticating under the V2/V3
+    //  - a FOREIGN fingerprint that is self-authenticating under the V3 SST
     //    protocol (non-init, i.e. genuine SST trap shards, AND a valid
     //    `layer2_signature` by the named ephemeral key). See the
     //    threat-model documentation above.
@@ -1209,7 +1209,10 @@ pub(crate) fn resolve_conflict_offline(
                 );
                 continue;
             }
-            if decrypted_nanos < earliest_time {
+            if decrypted_nanos < earliest_time
+                || (decrypted_nanos == earliest_time
+                    && winner_id.as_ref().is_some_and(|curr| fp.t_id < *curr))
+            {
                 earliest_time = decrypted_nanos;
                 winner_id = Some(fp.t_id.clone());
             }
