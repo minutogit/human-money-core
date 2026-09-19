@@ -648,11 +648,6 @@ impl FileStorage {
         &self,
         auth: &AuthMethod,
     ) -> Result<ActiveGossipState, StorageError> {
-        // Clean up legacy fingerprint_metadata.enc if present on disk
-        let legacy_meta = self.user_storage_path.join("fingerprint_metadata.enc");
-        if legacy_meta.exists() {
-            let _ = fs::remove_file(legacy_meta);
-        }
         Ok(self
             .load_encrypted_payload::<ActiveGossipState>(
                 ACTIVE_GOSSIP_FILE_NAME,
@@ -771,7 +766,7 @@ impl FileStorage {
     /// and embeds it byte-identically into `profile.enc`, then writes all
     /// modified containers (`profile.enc`, `vouchers.enc`, `bundles.meta.enc`,
     /// `known_fingerprints.enc`, `own_fingerprints.enc`, `proofs.enc`,
-    /// `fingerprint_metadata.enc` and `events`) via atomic tmp+rename.
+    /// `active_gossip.enc` and `events`) via atomic tmp+rename.
     ///
     /// **Phase 2 – Commit:** Only after every container has been durably
     /// staged the generation counter is bumped via `write_generation`. This
@@ -862,11 +857,6 @@ impl FileStorage {
             serde_json::to_vec(&wallet.active_gossip)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?,
         )?;
-        // Clean up legacy fingerprint_metadata.enc if present on disk
-        let legacy_meta = self.user_storage_path.join("fingerprint_metadata.enc");
-        if legacy_meta.exists() {
-            let _ = fs::remove_file(legacy_meta);
-        }
 
         // Events: staging via append_events (uses same file_key now on disk)
         if !wallet.pending_events.is_empty() {

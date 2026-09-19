@@ -43,7 +43,7 @@ impl Wallet {
         max_fingerprints_override: Option<usize>,
         archive_grace_period_years: i64,
     ) -> Result<CleanupReport, VoucherCoreError> {
-        const MAX_FINGERPRINTS_CONST: usize = 20_000;
+        const MAX_FINGERPRINTS_CONST: usize = 50_000;
         const CLEANUP_PERCENTAGE: f32 = 0.10;
 
         let mut report = CleanupReport::default();
@@ -72,6 +72,12 @@ impl Wallet {
             self.active_gossip
                 .fresh_gossip_pool
                 .retain(|fp| !expired_keys.contains(&fp.ds_tag));
+            self.active_gossip
+                .quarantine_direct_queue
+                .retain(|q| !expired_keys.contains(&q.pair[0].ds_tag));
+            self.active_gossip
+                .quarantine_relay_pool
+                .retain(|pair| !expired_keys.contains(&pair[0].ds_tag));
         }
 
         // --- Phase 2: Selective deletion by recency ---
@@ -84,23 +90,24 @@ impl Wallet {
             let target_removal_count =
                 (current_total_count as f32 * CLEANUP_PERCENTAGE).ceil() as usize;
 
-            let mut candidates: Vec<(String, String)> = Vec::new();
+            let mut candidates: Vec<(String, String, String)> = Vec::new();
             for (tag, fps) in &self.known_fingerprints.foreign_fingerprints {
                 for fp in fps {
-                    candidates.push((fp.t_id.clone(), tag.clone()));
+                    candidates.push((fp.t_id.clone(), tag.clone(), fp.deletable_at.clone()));
                 }
             }
             for (tag, fps) in &self.known_fingerprints.local_history {
                 for fp in fps {
-                    candidates.push((fp.t_id.clone(), tag.clone()));
+                    candidates.push((fp.t_id.clone(), tag.clone(), fp.deletable_at.clone()));
                 }
             }
-            candidates.sort_by(|a, b| a.0.cmp(&b.0));
+            // Sort chronologically: oldest deletable_at first, t_id tie-breaker for determinism
+            candidates.sort_by(|a, b| a.2.cmp(&b.2).then(a.0.cmp(&b.0)));
 
             let keys_to_remove: std::collections::HashSet<String> = candidates
                 .into_iter()
                 .take(target_removal_count)
-                .map(|(_, tag)| tag)
+                .map(|(_, tag, _)| tag)
                 .collect();
 
             report.limit_based_fingerprints_removed = keys_to_remove.len();

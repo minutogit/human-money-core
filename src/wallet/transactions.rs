@@ -542,6 +542,28 @@ impl Wallet {
                 quarantined_events,
             );
         }
+
+        // Propagate double-spend conflict to peers via quarantine_direct_queue (3x delivery)
+        if fingerprints.len() >= 2 {
+            let p0 = fingerprints[0].clone();
+            let p1 = fingerprints[1].clone();
+            let already_enqueued = self.active_gossip.quarantine_direct_queue.iter().any(|q| {
+                (q.pair[0].t_id == p0.t_id && q.pair[1].t_id == p1.t_id)
+                    || (q.pair[0].t_id == p1.t_id && q.pair[1].t_id == p0.t_id)
+            });
+            if !already_enqueued {
+                const MAX_QUARANTINE_DIRECT_QUEUE: usize = 500;
+                if self.active_gossip.quarantine_direct_queue.len() >= MAX_QUARANTINE_DIRECT_QUEUE {
+                    self.active_gossip.quarantine_direct_queue.remove(0);
+                }
+                self.active_gossip.quarantine_direct_queue.push(
+                    crate::models::conflict::QuarantineEntry {
+                        pair: [p0, p1],
+                        sent_to: Vec::new(),
+                    },
+                );
+            }
+        }
     }
 
     /// Offline resolution helper that captures pre-statuses, runs the

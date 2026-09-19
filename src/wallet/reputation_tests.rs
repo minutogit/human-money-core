@@ -511,5 +511,111 @@ mod tests {
         );
         assert!(err.is_err(), "Bundle with 321 fingerprints for 32 vouchers must be rejected");
     }
+
+    #[test]
+    fn test_active_gossip_queue_capacity_bounds() {
+        let identity = &ACTORS.alice;
+        let mut wallet = setup_in_memory_wallet(identity);
+        let header = TransactionBundleHeader {
+            sender_id: "sender".to_string(),
+            ..Default::default()
+        };
+
+        // Send 3500 foreign gossip fingerprints (cap is 3000)
+        let fps_3500: Vec<TransactionFingerprint> = (0..3500).map(|i| {
+            make_signed_fingerprint(&format!("ds_bound_{}", i), &format!("tx_bound_{}", i), 0)
+        }).collect();
+
+        wallet.process_received_fingerprints(&header, &[], &fps_3500, &[]).unwrap();
+
+        assert_eq!(
+            wallet.active_gossip.fresh_gossip_pool.len(),
+            3000,
+            "Fresh gossip pool must be capped at 3000 entries (FIFO bounded)"
+        );
+    }
+
+    #[test]
+    fn test_storage_cleanup_phase_2_chronological_retention() {
+        let identity = &ACTORS.alice;
+        let mut wallet = setup_in_memory_wallet(identity);
+
+        // Add 12 fingerprints in foreign_fingerprints with distinct deletable_at dates:
+        // 2030, 2031, ..., 2041.
+        for i in 0..12 {
+            let year = 2030 + i;
+            let tag = format!("ds_tag_{:02}", i);
+            let mut fp = make_signed_fingerprint(&tag, &format!("tx_id_{:02}", i), 0);
+            fp.deletable_at = format!("{}-06-01T00:00:00Z", year);
+            wallet.known_fingerprints.foreign_fingerprints.insert(tag, vec![fp]);
+        }
+
+        assert_eq!(wallet.known_fingerprints.foreign_fingerprints.len(), 12);
+
+        // Run cleanup with max_limit = 10 (target removal = ceil(12 * 0.15) = 2 entries)
+        let report = wallet.run_storage_cleanup(Some(10), 50).unwrap();
+        assert_eq!(report.limit_based_fingerprints_removed, 2);
+        assert_eq!(wallet.known_fingerprints.foreign_fingerprints.len(), 10);
+
+        // The oldest 2 entries (2030 and 2031: ds_tag_00 and ds_tag_01) MUST have been removed
+        assert!(!wallet.known_fingerprints.foreign_fingerprints.contains_key("ds_tag_00"));
+        assert!(!wallet.known_fingerprints.foreign_fingerprints.contains_key("ds_tag_01"));
+        // Later entries (2032..2041) MUST still be present
+        assert!(wallet.known_fingerprints.foreign_fingerprints.contains_key("ds_tag_02"));
+        assert!(wallet.known_fingerprints.foreign_fingerprints.contains_key("ds_tag_11"));
+    }
+
+    #[test]
+    fn test_reproduces_local_tag_invalid_prev_hash() {
+        use crate::models::profile::VoucherStore;
+        use crate::wallet::instance::{VoucherInstance, VoucherStatus};
+
+        let mut store = VoucherStore::default();
+        let mut voucher = create_dummy_voucher_with_txs(2);
+        // Sabotage prev_hash with invalid base58
+        voucher.transactions[1].prev_hash = "invalid-base58-garbage!!!".to_string();
+
+        store.vouchers.insert(
+            "inst_1".to_string(),
+            VoucherInstance {
+                voucher,
+                status: VoucherStatus::Active,
+                local_instance_id: "inst_1".to_string(),
+            },
+        );
+
+        let fp = make_signed_fingerprint("ds_test", "tx_test", 0);
+
+        // Calling resolve_conflict_offline must fail-closed safely without panicking on invalid prev_hash
+        crate::wallet::conflicts::resolve_conflict_offline(&mut store, &[fp]);
+
+        // Status must remain Active (not incorrectly quarantined by invalid base58 evaluation)
+        assert!(matches!(store.vouchers["inst_1"].status, VoucherStatus::Active));
+    }
+
+    #[test]
+    fn test_verify_fingerprint_signature_fuzz_malformed_fields() {
+        let malformed_inputs = [
+            "",
+            "not-base-58!?",
+            "0", // too short
+            "11111111111111111111111111111111111111111111111111111111111111111111111111111111", // too long
+        ];
+
+        for malformed in malformed_inputs {
+            let mut fp = make_signed_fingerprint("ds", "tx", 0);
+            fp.sender_ephemeral_pub = malformed.to_string();
+            assert!(!crate::services::conflict_manager::verify_fingerprint_signature(&fp));
+
+            let mut fp2 = make_signed_fingerprint("ds", "tx", 0);
+            fp2.t_id = malformed.to_string();
+            assert!(!crate::services::conflict_manager::verify_fingerprint_signature(&fp2));
+
+            let mut fp3 = make_signed_fingerprint("ds", "tx", 0);
+            fp3.layer2_signature = malformed.to_string();
+            assert!(!crate::services::conflict_manager::verify_fingerprint_signature(&fp3));
+        }
+    }
 }
+
 

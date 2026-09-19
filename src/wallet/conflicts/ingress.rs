@@ -878,6 +878,10 @@ impl Wallet {
             if !conflict_manager::is_init_fingerprint(&tip_fp) {
                 // Deduplicate in direct_queue
                 if !self.active_gossip.direct_queue.iter().any(|d| d.fingerprint.t_id == tip_fp.t_id) {
+                    const MAX_DIRECT_QUEUE: usize = 1000;
+                    if self.active_gossip.direct_queue.len() >= MAX_DIRECT_QUEUE {
+                        self.active_gossip.direct_queue.pop_front();
+                    }
                     self.active_gossip.direct_queue.push_back(
                         crate::models::conflict::DirectEntry {
                             fingerprint: tip_fp.clone(),
@@ -955,7 +959,11 @@ impl Wallet {
             let mut fp_admitted = fp.clone();
             conflict_manager::assign_local_retention_to_wire_entry(&mut fp_admitted);
 
-            // Push to FreshGossipPool for 70% lottery on future payments
+            // Push to FreshGossipPool for 70% lottery on future payments (bounded FIFO)
+            const MAX_FRESH_GOSSIP_POOL: usize = 3000;
+            if self.active_gossip.fresh_gossip_pool.len() >= MAX_FRESH_GOSSIP_POOL {
+                self.active_gossip.fresh_gossip_pool.pop_front();
+            }
             self.active_gossip.fresh_gossip_pool.push_back(fp_admitted.clone());
 
             // Also persist to foreign_fingerprints archive under caps
@@ -1019,6 +1027,10 @@ impl Wallet {
                 conflict_manager::assign_local_retention_to_wire_entry(&mut p0);
                 conflict_manager::assign_local_retention_to_wire_entry(&mut p1);
 
+                const MAX_QUARANTINE_RELAY_POOL: usize = 500;
+                if self.active_gossip.quarantine_relay_pool.len() >= MAX_QUARANTINE_RELAY_POOL {
+                    self.active_gossip.quarantine_relay_pool.pop_front();
+                }
                 self.active_gossip
                     .quarantine_relay_pool
                     .push_back([p0.clone(), p1.clone()]);

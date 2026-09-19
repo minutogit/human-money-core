@@ -132,9 +132,9 @@ impl AppService {
     /// Performs storage cleanup for fingerprints and their metadata.
     ///
     /// This method implements the logic defined in the architecture specification:
-    /// 1. Delete all expired fingerprints.
+    /// 1. Delete all expired fingerprints (past `deletable_at`).
     /// 2. If the storage limit (`MAX_FINGERPRINTS`) is still exceeded,
-    ///    fingerprints with the highest `depth` (and oldest `t_time`)
+    ///    fingerprints with the oldest `deletable_at` retention deadline
     ///    are deleted until the limit is no longer exceeded.
     ///
     /// # Returns

@@ -136,29 +136,27 @@ Ein Double-Spend liegt vor, wenn der Server einen Fingerprint für einen `ds_tag
 
 ---
 
-## 5. Peer-to-Peer-Verbreitung (Gossip-Protokoll)
+## 5. Peer-to-Peer-Verbreitung (30/70 KISS-Immunsystem)
 
-Neben der zentralisierten Erkennung über einen Layer-2-Server ermöglicht die Architektur eine dezentrale, rein Peer-to-Peer-basierte Verbreitung von Fingerprints. Dies geschieht durch ein „Gossip-Protokoll“, bei dem Teilnehmer sich gegenseitig über Transaktionen informieren, die sie beobachtet haben.
+Neben der zentralisierten Erkennung über einen Layer-2-Server ermöglicht die Architektur eine dezentrale, rein Peer-to-Peer-basierte Verbreitung von Fingerprints über ein schlankes, budget-proportionales 30/70-Gossip-Protokoll:
 
-Jedes Mal, wenn ein Wallet ein Transaktionsbündel an einen Empfänger sendet, legt es eine Sammlung von bis zu 150 Fingerprints bei, die es für relevant hält.
+### 1. Budget-Proportionalität
+Pro versendetem Gutschein $V$ in einem Bündel werden:
+- Maximal $V \times 10$ Standard-Fingerprints weitergeleitet (bei $V=0$ Handshake-Bundles gilt $v_{\text{eff}} = 1$, also 10 Standard-Fingerprints als Baseline-Austausch).
+- Maximal $V \times 3$ Quarantäne-Paare übertragen (Notfall-Beweise lokaler oder weitergeleiteter Betrugsfälle).
 
-### Die intelligente Auswahl (Heuristik)
+### 2. DirectQueue (30 %) & Fresh Gossip Pool (70 %)
+- **DirectQueue (30 % Spitzen)**: Ausschließlich die Tip-Transaktion $Tx_N$ eingehender Gutscheine wandert in die `direct_queue` und wird garantiert an bis zu 3 verschiedene Empfänger weiterverteilt. Ältere Transaktionen ($Tx_1 \dots Tx_{N-1}$) wandern in das passive Langzeit-Archiv `known_fingerprints.local_history`.
+- **Fresh Gossip Pool (70 % Lotterie)**: Fremde Fingerprints im `fresh_gossip_pool` durchlaufen bei Zahlungen einen 70 % Bernoulli-Münzwurf. Fingerprints von Gutscheinen, die im aktuellen Bündel versendet werden, werden von der Lotterie verschont und verbleiben unberührt im Pool.
 
-Die `select_fingerprints_for_bundle`-Methode wählt nicht zufällig aus, welche Fingerprints sie weiterleitet:
+### 3. Quarantäne-Verbreitung (Origin & Relay)
+- Lokale Betrugsfunde landen in der `quarantine_direct_queue` und werden $3\times$ garantiert an Peers weitergegeben.
+- Weitergeleitete fremde Quarantäne-Paare landen im `quarantine_relay_pool` (70 % Lotterie).
 
-- **Priorisierung nach Relevanz (`depth`):** Jeder Fingerprint hat eine „Tiefe“ (`depth`), die angibt, wie viele Stationen (Hops) er bereits durchlaufen hat. Bevorzugt werden Fingerprints mit der niedrigsten `depth` (beginnend bei 0).
-- **Vermeidung von Redundanz (`known_by_peers`):** Das Wallet merkt sich für jeden Fingerprint, welchen Peers es diesen bereits gesendet hat.
-- **„Gieriges“ Füllen des Kontingents:** Das Protokoll versucht immer, das Kontingent von 150 Fingerprints zu füllen.
-
-### Die Verarbeitung (Min-Merge-Regel)
-
-Wenn ein Wallet ein Bündel mit Fingerprints empfängt:
-
-1. Die `depth` jedes empfangenen Fingerprints wird um 1 erhöht.
-2. Das Wallet vergleicht die neue `depth` mit dem lokal gespeicherten Wert.
-3. Es wird immer der **niedrigere (bessere) Wert beibehalten**.
-
-Zusätzlich gilt seit V3 ein **Ingress-Gate**: Nur Fingerprints mit gültiger `HMC_TX_AUTH_V3`-Signatur und Spend-Typ (`trap_r/s != "none"`) werden aufgenommen; Genesis-Fingerprints (`"none"/"none"`) und leere/ungültige Shards werden als „invalid“ markiert und nicht als Genesis fehlklassifiziert. Unvertraute Wire-Deadlines werden lokal auf `+180` Tage vereinheitlicht (HMSEC-SA06-15).
+### 4. Ingress-Gates & Validierung
+- **V3 SST Authentifizierung**: Nur Fingerprints mit gültiger `HMC_TX_AUTH_V3`-Signatur und Spend-Typ (`trap_r/s != "none"`) werden aufgenommen.
+- **Wire-Deadline Neutralisierung**: Untrusted Wire-Deadlines werden auf dem Wire neutralisiert (`""`) und lokal einheitlich auf $+180$ Tage gesetzt (HMSEC-SA06-15).
+- **Ingress Firewall**: Bündel mit mehr als $V \times 3$ Quarantäne-Paaren oder fehlerhaften Signaturen werden sofort hart abgewiesen (Fail-Closed).
 
 ---
 

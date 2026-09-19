@@ -37,13 +37,9 @@ pub const VOID_SPEND_SHARD_MARKER: &str = "invalid";
 pub const MAX_FOREIGN_BUCKET_CAP: usize = 150;
 
 /// Maximum TOTAL number of foreign fingerprints retained across ALL `ds_tag` buckets.
-/// SECURITY (AUDIT-00-WILDCARD-19): the per-bucket cap (150) alone is insufficient:
-/// an attacker can generate an unbounded number of *distinct* `ds_tag`s (one
-/// fingerprint per bucket) and flood gossip with 10k+ distinct inputs, exhausting
-/// memory and making `check_for_double_spend` (HashSet+sort) CPU-bound. A global
-/// cap bounds the total map size regardless of the number of buckets; excess
-/// distinct tags are rejected until cleanup evicts expired entries.
-pub const MAX_TOTAL_FOREIGN_FINGERPRINTS: usize = 3000;
+/// SECURITY (AUDIT-00-WILDCARD-19): Bounds memory usage against unbounded DoS flooding.
+/// Set to 50,000 entries (~6-7 MB) for vast offline double-spend detection history.
+pub const MAX_TOTAL_FOREIGN_FINGERPRINTS: usize = 50_000;
 
 /// Creates a single, anonymized fingerprint for a given transaction.
 /// Contains the logic for anonymizing the `valid_until` timestamp.
@@ -204,24 +200,36 @@ pub fn verify_fingerprint_signature(fp: &TransactionFingerprint) -> bool {
         "sender_ephemeral_pub",
     ) {
         Ok(v) => v,
-        Err(_) => return false,
+        Err(e) => {
+            log::debug!("Fingerprint signature verification failed: invalid sender_ephemeral_pub: {e:?}");
+            return false;
+        }
     };
     let t_id_bytes =
         match crate::services::crypto::decode_bs58_fixed::<32>(&fp.t_id, "t_id") {
             Ok(v) => v,
-            Err(_) => return false,
+            Err(e) => {
+                log::debug!("Fingerprint signature verification failed: invalid t_id: {e:?}");
+                return false;
+            }
         };
     let sig_bytes = match crate::services::crypto::decode_bs58_fixed::<64>(
         &fp.layer2_signature,
         "layer2_signature",
     ) {
         Ok(v) => v,
-        Err(_) => return false,
+        Err(e) => {
+            log::debug!("Fingerprint signature verification failed: invalid layer2_signature: {e:?}");
+            return false;
+        }
     };
 
     let verifying_key = match ed25519_dalek::VerifyingKey::from_bytes(&ephem_pub_bytes) {
         Ok(k) => k,
-        Err(_) => return false,
+        Err(e) => {
+            log::debug!("Fingerprint signature verification failed: invalid verifying key: {e:?}");
+            return false;
+        }
     };
     let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
 
@@ -253,7 +261,11 @@ pub fn verify_fingerprint_signature(fp: &TransactionFingerprint) -> bool {
         &fp.privacy_guard_hash,
     );
 
-    crate::services::crypto::verify_ed25519(&verifying_key, &payload_hash, &signature)
+    let is_valid = crate::services::crypto::verify_ed25519(&verifying_key, &payload_hash, &signature);
+    if !is_valid {
+        log::debug!("Fingerprint signature verification failed: signature mismatch for t_id={}", fp.t_id);
+    }
+    is_valid
 }
 
 /// Canonical marker for genesis ('init') fingerprints, which carry no trap

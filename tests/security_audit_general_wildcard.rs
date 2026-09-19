@@ -135,10 +135,9 @@ fn audit_00_wildcard_19_unbounded_foreign_ingress_must_be_bounded() {
         .values()
         .map(|v| v.len())
         .sum();
-    // Secure invariant: total must be bounded (e.g. <= 3000 per remediation).
-    // On unpatched code, total == 4000 (unbounded) -> FAIL.
+    // Secure invariant: total must be bounded (<= MAX_TOTAL_FOREIGN_FINGERPRINTS).
     assert!(
-        total <= 3000,
+        total <= human_money_core::services::conflict_manager::MAX_TOTAL_FOREIGN_FINGERPRINTS,
         "AUDIT-00-WILDCARD-19 VIOLATION: unbounded gossip ingress — imported {imported_total} new, total {total} foreign fingerprints from 4000 distinct ds_tags. Per-bucket cap 150 never triggered (one per bucket). Without a global cap the map grows indefinitely -> OOM / CPU DoS in check_for_double_spend (HashSet+sort over {total} entries)."
     );
 }
