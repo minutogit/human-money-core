@@ -20,8 +20,14 @@ use crate::services::crypto::{
 use crate::services::utils::{get_current_timestamp, to_canonical_json};
 
 pub const MAX_VOUCHERS_PER_BUNDLE: usize = 32;
-pub const MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE: usize = 256;
-pub const MAX_QUARANTINE_PAIRS_PER_BUNDLE: usize = 96;
+pub const MAX_FINGERPRINTS_PER_VOUCHER: usize = 10;
+pub const MAX_QUARANTINE_PAIRS_PER_VOUCHER: usize = 3;
+
+/// Deprecated static bundle limit alias, kept for backward compatibility and fuzzer guards:
+pub const MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE: usize =
+    MAX_VOUCHERS_PER_BUNDLE * MAX_FINGERPRINTS_PER_VOUCHER; // 320
+pub const MAX_QUARANTINE_PAIRS_PER_BUNDLE: usize =
+    MAX_VOUCHERS_PER_BUNDLE * MAX_QUARANTINE_PAIRS_PER_VOUCHER; // 96
 
 /// Creates a `TransactionBundle`, wraps it in a `SecureContainer` and serializes it.
 /// This function is stateless and does not modify any wallet.
@@ -47,21 +53,24 @@ pub fn create_and_encrypt_bundle(
             )),
         ));
     }
-    if forwarded_fingerprints.len() > MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE {
+    let max_forwarded_fps = vouchers.len().max(1) * MAX_FINGERPRINTS_PER_VOUCHER;
+    if forwarded_fingerprints.len() > max_forwarded_fps {
         return Err(VoucherCoreError::Validation(
             ValidationError::InvalidTransaction(format!(
-                "Too many forwarded fingerprints in bundle: {} exceeds maximum allowed {}",
+                "Too many forwarded fingerprints in bundle: {} exceeds maximum allowed ({} per voucher: {})",
                 forwarded_fingerprints.len(),
-                MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE
+                MAX_FINGERPRINTS_PER_VOUCHER,
+                max_forwarded_fps
             )),
         ));
     }
-    if quarantine_pairs.len() > vouchers.len() * 3 {
+    let max_quarantine = vouchers.len().max(1) * MAX_QUARANTINE_PAIRS_PER_VOUCHER;
+    if quarantine_pairs.len() > max_quarantine {
         return Err(VoucherCoreError::Validation(
             ValidationError::SecurityViolation(format!(
                 "Too many quarantine pairs in bundle: {} exceeds maximum allowed (3 per voucher: {})",
                 quarantine_pairs.len(),
-                vouchers.len() * 3
+                max_quarantine
             )),
         ));
     }
@@ -138,9 +147,10 @@ fn bundle_contains_anonymous_chain(bundle: &TransactionBundle) -> bool {
 ///
 /// # Returns
 /// The validated `TransactionBundle`.
-/// Maximum allowed SecureContainer size (256 KB) to prevent OOM on
+/// Maximum allowed SecureContainer size (1 MB) to prevent OOM on
 /// unauthenticated `from_slice` before integrity verification (AUDIT-00-WILDCARD-24).
-pub const MAX_CONTAINER_BYTES: usize = 256 * 1024;
+/// Comfortably supports up to MAX_VOUCHERS_PER_BUNDLE (32) with 320 fingerprints and 96 quarantine pairs.
+pub const MAX_CONTAINER_BYTES: usize = 1024 * 1024;
 
 pub fn open_and_verify_bundle(
     identity: &UserIdentity,
@@ -197,12 +207,24 @@ pub fn open_and_verify_bundle(
             )),
         ));
     }
-    if bundle.forwarded_fingerprints.len() > MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE {
+    let max_forwarded_fps = bundle.vouchers.len().max(1) * MAX_FINGERPRINTS_PER_VOUCHER;
+    if bundle.forwarded_fingerprints.len() > max_forwarded_fps {
         return Err(VoucherCoreError::Validation(
             ValidationError::InvalidTransaction(format!(
-                "Too many forwarded fingerprints in bundle: {} exceeds maximum allowed {}",
+                "Too many forwarded fingerprints in bundle: {} exceeds maximum allowed ({} per voucher: {})",
                 bundle.forwarded_fingerprints.len(),
-                MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE
+                MAX_FINGERPRINTS_PER_VOUCHER,
+                max_forwarded_fps
+            )),
+        ));
+    }
+    let max_quarantine = bundle.vouchers.len().max(1) * MAX_QUARANTINE_PAIRS_PER_VOUCHER;
+    if bundle.quarantine_pairs.len() > max_quarantine {
+        return Err(VoucherCoreError::Validation(
+            ValidationError::SecurityViolation(format!(
+                "Too many quarantine pairs in bundle: {} exceeds maximum allowed (3 per voucher: {})",
+                bundle.quarantine_pairs.len(),
+                max_quarantine
             )),
         ));
     }

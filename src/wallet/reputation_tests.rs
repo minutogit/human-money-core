@@ -446,5 +446,70 @@ mod tests {
         assert_eq!(loaded.fresh_gossip_pool.len(), 1);
         assert_eq!(loaded.fresh_gossip_pool[0].t_id, fp2.t_id);
     }
+
+    #[test]
+    fn test_bundle_scaling_32_vouchers_with_320_fingerprints() {
+        use crate::services::bundle_processor::{
+            create_and_encrypt_bundle, open_and_verify_bundle,
+        };
+
+        let alice = &ACTORS.alice.identity;
+        let bob = &ACTORS.bob.identity;
+
+        // Create 32 dummy vouchers
+        let vouchers_32: Vec<Voucher> = (0..32).map(|i| {
+            let mut v = create_dummy_voucher_with_txs(2);
+            v.voucher_id = format!("voucher_{}", i);
+            v
+        }).collect();
+
+        // 320 fingerprints (32 vouchers * 10 max per voucher)
+        let fps_320: Vec<TransactionFingerprint> = (0..320).map(|i| {
+            make_signed_fingerprint(&format!("ds_scale_{}", i), &format!("tx_scale_{}", i), 0)
+        }).collect();
+
+        // 96 quarantine pairs (32 vouchers * 3 max per voucher)
+        let q_pairs_96: Vec<[TransactionFingerprint; 2]> = (0..96).map(|i| {
+            let f1 = make_signed_fingerprint(&format!("ds_qscale_{}", i), &format!("tx_q1_{}", i), 0);
+            let f2 = make_signed_fingerprint(&format!("ds_qscale_{}", i), &format!("tx_q2_{}", i), 0);
+            [f1, f2]
+        }).collect();
+
+        // 1. Bundle creation with 32 vouchers, 320 fps and 96 q-pairs MUST succeed
+        let (bundle_bytes, bundle) = create_and_encrypt_bundle(
+            alice,
+            vouchers_32.clone(),
+            &bob.user_id,
+            None,
+            fps_320.clone(),
+            q_pairs_96.clone(),
+            None,
+        ).expect("Bundle creation with 32 vouchers and 320 fingerprints must succeed");
+
+        assert_eq!(bundle.vouchers.len(), 32);
+        assert_eq!(bundle.forwarded_fingerprints.len(), 320);
+        assert_eq!(bundle.quarantine_pairs.len(), 96);
+
+        // 2. Open and verify on recipient side MUST succeed
+        let received_bundle = open_and_verify_bundle(bob, &bundle_bytes)
+            .expect("Bundle opening with 32 vouchers and 320 fingerprints must succeed");
+        assert_eq!(received_bundle.vouchers.len(), 32);
+        assert_eq!(received_bundle.forwarded_fingerprints.len(), 320);
+        assert_eq!(received_bundle.quarantine_pairs.len(), 96);
+
+        // 3. Exceeding 320 fingerprints (e.g. 321) MUST be rejected
+        let mut fps_321 = fps_320.clone();
+        fps_321.push(make_signed_fingerprint("ds_scale_extra", "tx_scale_extra", 0));
+        let err = create_and_encrypt_bundle(
+            alice,
+            vouchers_32.clone(),
+            &bob.user_id,
+            None,
+            fps_321,
+            q_pairs_96,
+            None,
+        );
+        assert!(err.is_err(), "Bundle with 321 fingerprints for 32 vouchers must be rejected");
+    }
 }
 
