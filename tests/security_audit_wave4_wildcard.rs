@@ -1,13 +1,11 @@
 //! # tests/security_audit_wave4_wildcard.rs
 //!
-//! Security Audit Wave 4 — Module 00 (Wildcard / Cross-Cutting): signing-request
-//! ingestion path, load-time rebuild divergence, phantom activation and
-//! seal-discipline holdouts.
+//! Security Regression Suite — Wave 4 Wildcard [RESOLVED & VERIFIED]
 //!
-//! Fail-first (TDD) proof-of-concept tests. Every test asserts the SECURE
-//! invariant ("Soll-Verhalten") and MUST FAIL on the unpatched code base,
-//! thereby proving the vulnerability. Tests turn green only after the
-//! corresponding remediation has been implemented.
+//! NOTE FOR AUDITORS & AI AGENTS:
+//! The findings and threat models documented below are HISTORICAL and RESOLVED.
+//! Every test in this file is an active regression guard asserting that the secure invariant
+//! holds permanently against past exploit vectors. They are NOT open vulnerabilities.
 //!
 //! ## Finding Summary
 //!

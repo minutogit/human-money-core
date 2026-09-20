@@ -61,7 +61,7 @@ Während der Core (Layer 1) offline funktioniert und primär auf Erkennung setzt
 
 - **Fokus auf Betrugserkennung, nicht -vermeidung:** Da es kein globales Ledger gibt, kann die Core-Bibliothek nicht verhindern, dass ein Nutzer widersprüchliche Transaktionshistorien (Double Spending) erzeugt. Das System stellt stattdessen sicher, dass jeder Betrugsversuch durch digitale Signaturen kryptographisch beweisbar ist, was eine Erkennung und soziale Sanktionen in einem übergeordneten System (Layer 2) ermöglicht.
 
-- **Peer-to-Peer Gossip-Protokoll:** Zur dezentralen und anonymisierten Erkennung von Double Spending tauschen Wallets bei jeder Transaktion **Transaktions-Fingerprints** (`ds_tag`) anderer Transaktionen aus. Diese Fingerprints sind deterministisch aus dem Input abgeleitet (`hash(prev_hash + sender_ephemeral_pub)`), was eine O(1) Erkennung von Kollisionen ermöglicht. Eine Heuristik (`depth`, `known_by_peers`) sorgt für eine effiziente Verbreitung.
+- **Peer-to-Peer Gossip-Protokoll (30/70 KISS):** Zur dezentralen Erkennung von Double Spending tauschen Wallets bei jeder Transaktion **Transaktions-Fingerprints** (`ds_tag`) anderer Transaktionen aus ($V \times 10$ Standard-Fingerprints, $V \times 3$ Quarantäne-Paare). Die Verteilung erfolgt über 30 % direkte Spitzen (`direct_queue`) und 70 % frischen Foreign Gossip (`fresh_gossip_pool`) via Bernoulli-Münzwurf. Fingerprints sind deterministisch aus dem Input abgeleitet (`hash(prev_hash + sender_ephemeral_pub)`), was eine O(1) Erkennung von Kollisionen ermöglicht.
 
 - **Transaction Verification Layer (Layer 2):** Die Bibliothek implementiert nun die Kommunikation und Verifizierung für Layer 2. Dies umfasst die Interaktion mit L2-Gateways, die Validierung von L2-Signaturen und die Handhabung von Quarantäne-Zuständen bei Double-Spending oder Verifizierungsfehlern. Die Struktur ist für eine dezentrale Überprüfung durch "Chain of Authority" (CoA) Knoten optimiert.
 
@@ -598,7 +598,7 @@ Das `wallet`-Modul wurde umfassend refaktorisiert, um die Komplexität zu reduzi
   - `fn _execute_single_transfer(...)`: Führt die Zustandsveränderung für EINEN Gutschein im Wallet durch. (Private Hilfsmethode)
 
 - **Wartung & Speicher-Management** (`maintenance.rs`)
-  - `pub fn run_storage_cleanup(...)`: Führt eine mehrstufige Bereinigung der Fingerprint-Stores durch (abgelaufen, dann nach `depth`).
+  - `pub fn run_storage_cleanup(...)`: Führt eine mehrstufige Bereinigung der Fingerprint-Stores durch (abgelaufene Einträge, dann Kapazitätstrimming nach Recency).
   - `pub fn rebuild_derived_stores(...)`: Rekonstruiert alle abgeleiteten Stores (Fingerprints, Metadaten) aus dem `VoucherStore`.
   - `pub fn add_voucher_instance(...)`: Fügt eine Gutscheininstanz zum Wallet hinzu.
   - `pub fn get_voucher_instance(...)`: Ruft eine Gutscheininstanz ab.
@@ -664,8 +664,8 @@ Definiert die Abstraktion für die persistente Speicherung und stellt eine Stand
   - `save_bundle_metadata(...)`: Speichert und verschlüsselt die Metadaten der Transaktionsbündel.
   - `load_proofs(...)`: Lädt und entschlüsselt den ProofStore.
   - `save_proofs(...)`: Speichert und verschlüsselt den ProofStore.
-  - `load_fingerprint_metadata(...)`: Lädt den kanonischen Speicher für Fingerprint-Metadaten.
-  - `save_fingerprint_metadata(...)`: Speichert den kanonischen Speicher für Fingerprint-Metadaten.
+  - `load_active_gossip(...)`: Lädt und entschlüsselt den `ActiveGossipState`-Store (KISS 30/70).
+  - `save_active_gossip(...)`: Speichert und verschlüsselt den `ActiveGossipState`-Store (KISS 30/70).
   - `save_arbitrary_data(...)`: Speichert einen beliebigen, benannten Datenblock verschlüsselt.
   - `load_arbitrary_data(...)`: Lädt einen beliebigen, benannten und verschlüsselten Datenblock.
   - `lock()`: Erlangt eine exklusive Sperre für das Wallet-Verzeichnis, um gleichzeitige Modifikationen zu verhindern.
@@ -867,11 +867,10 @@ Das Wallet-Modul und die AppService-Schnittstelle wurden um neue Informationsstr
   - `SecureContainer`: Anonymer, sicherer Container für Datenaustausch mit Forward Secrecy.
 
 - **conflict.rs**:
-  - `TransactionFingerprint`: Anonymisierter Fingerprint einer Transaktion für Double-Spend-Erkennung.
+  - `TransactionFingerprint`: Selbst-authentifizierender Fingerprint einer Transaktion für Double-Spend-Erkennung (V3 SST).
   - `KnownFingerprints`: Speicher für bekannte Fingerprints (lokal und fremd).
   - `OwnFingerprints`: Kritischer Speicher für eigene Fingerprints.
-  - `FingerprintMetadata`: Dynamische Metadaten für Fingerprints (depth, known_by_peers).
-  - `CanonicalMetadataStore`: Zentraler Speicher für Fingerprint-Metadaten.
+  - `ActiveGossipState`: Aktiver Zustand für das 30/70 KISS-Gossip-Protokoll (`direct_queue`, `fresh_gossip_pool`, `quarantine_*`).
   - `ProofOfDoubleSpend`: Kryptographischer Beweis für Double-Spend.
   - `ResolutionEndorsement`: Bestätigung einer Konfliktbeilegung.
   - `ProofStore`: Speicher für Konfliktbeweise.

@@ -94,8 +94,6 @@ This file contains integration tests specifically for signature workflows, contr
 ### `tests/architecture/hardening.rs`
 This file contains "hardening tests" that verify the robustness of the architecture in edge cases and during consistency checks.
 
--   `test_cleanup_synchronizes_stores`: Verifies that the cleanup process correctly removes expired fingerprints from both `known_fingerprints.local_history` and `fingerprint_metadata` stores simultaneously.
--   `test_recovery_handles_split_transaction_chain`: Ensures that during wallet recovery, the `depth` values for a split transaction chain are correctly initialized, reflecting the chronological order of transactions.
 -   `test_operations_on_empty_wallet_do_not_panic`: Confirms that maintenance operations (like cleanup and rebuilding derived stores) on a brand new, empty wallet execute without panicking and leave the wallet in a consistent empty state.
 
 ### `tests/wallet_api/general_workflows.rs`
@@ -129,19 +127,17 @@ This file contains tests for the detection and handling of double-spend scenario
 -   `test_local_double_spend_detection_lifecycle`: Tests the full lifecycle of local double-spend detection, from initial transfer, through a malicious double-spend, to the detection and resolution using the "Earliest Wins" rule when the conflicting vouchers return to the original sender.
 
 ### `tests/architecture/resilience_and_gossip.rs`
-This file tests the core functions of the new architecture: Resilience (cleanup and recovery) and Gossip (correct propagation and updating of fingerprint metadata).
+This file tests the core functions of the architecture: Resilience (cleanup and recovery) and 30/70 KISS-Gossip (propagation, lottery preservation, and proportional budgeting).
 
 -   `test_cleanup_phase1_removes_expired_fingerprints`: Verifies that the first phase of storage cleanup correctly removes expired fingerprints from the `known_fingerprints.local_history` store.
--   `test_cleanup_phase2_removes_by_depth_and_tie_breaker`: Ensures that the second phase of cleanup removes fingerprints based on `depth` and a tie-breaking mechanism when the store size exceeds a limit.
--   `test_recovery_rebuilds_from_vouchers_if_metadata_missing`: Confirms that if `fingerprint_metadata.enc` is missing, the wallet can successfully rebuild this metadata from existing vouchers during recovery.
+-   `test_cleanup_phase2_removes_by_recency`: Ensures that the second phase of cleanup trims fingerprints based on recency and tie-breaking when store limits are reached.
 -   `test_recovery_rebuilds_if_fingerprint_stores_missing`: Ensures that if `own_fingerprints.enc` and `known_fingerprints.enc` are missing, the wallet can rebuild these stores from existing vouchers during recovery.
--   `test_recovery_initializes_depth_correctly`: Verifies that during wallet recovery, the `depth` of transactions in a chain is correctly initialized (0 for newest, increasing for older transactions).
--   `test_min_merge_rule_updates_depth`: Tests the "min merge rule" for fingerprint metadata, ensuring that a lower `depth` from an incoming bundle correctly updates the local metadata.
--   `test_min_merge_rule_keeps_lower_local_depth`: Ensures that if the local `depth` is already lower than an incoming `depth` from a bundle, the local lower `depth` is retained.
--   `test_implicit_marking_on_send`: Verifies that when a voucher is sent, the recipient's short hash is implicitly marked in the sender's `known_by_peers` metadata for the relevant fingerprint.
--   `test_selection_heuristic_prioritizes_low_depth`: Tests the fingerprint selection heuristic, ensuring it prioritizes sending fingerprints with lower `depth` values.
--   `test_selection_heuristic_skips_known_peers`: Ensures that the fingerprint selection heuristic skips sending fingerprints to peers who are already known to have that fingerprint.
--   `test_selection_heuristic_fills_contingent`: Verifies that the fingerprint selection heuristic fills the contingent size exactly, even if more fingerprints are available.
+-   `test_gossip_ingress_accepts_valid_fingerprint`: Verifies that incoming valid fingerprints from transaction bundles are admitted to foreign archives and gossip queues.
+-   `test_selection_heuristic_proportional_budget`: Verifies that fingerprint selection scales dynamically with $V \times 10$ and obeys the 30% direct / 70% fresh pool distribution.
+-   `test_gossip_zero_voucher_bundle_emits_no_fingerprints`: Ensures 0-voucher bundles emit 0 fingerprints.
+-   `test_gossip_lottery_preservation_for_bundle_vouchers`: Ensures fingerprints of vouchers in the current bundle are preserved in the pool and not forwarded.
+-   `test_gossip_sent_to_recipient_filter_and_cleanup`: Verifies that direct queue tips are distributed to max 3 distinct peers before eviction.
+-   `test_gossip_quarantine_relay_pool_strict_fifo_cap`: Verifies FIFO cap bounds on quarantine relays.
 
 ### `tests/persistence/file_storage.rs`
 This file contains integration tests for the refactored profile and voucher store management, including password recovery logic and edge cases.
