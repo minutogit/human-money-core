@@ -177,8 +177,9 @@ fn test_scenario_1_happy_path() {
     assert!(matches!(envelope.verdict, L2Verdict::Verified { .. }));
 
     // Process should confirm local
-    app.process_l2_response(&voucher_id, &resp_query, Some(correct_password))
+    let outcome = app.process_l2_response(voucher_id.clone(), &resp_query, Some(correct_password))
         .unwrap();
+    assert_eq!(outcome, human_money_core::L2ProcessingOutcome::Confirmed);
 }
 
 #[test]
@@ -315,8 +316,9 @@ fn test_scenario_2_offline_sync() {
     }
 
     // Process output
-    app.process_l2_response(&v_id_tx2, &resp_query, Some(correct_password))
+    let outcome = app.process_l2_response(v_id_tx2.clone(), &resp_query, Some(correct_password))
         .unwrap();
+    assert!(matches!(outcome, human_money_core::L2ProcessingOutcome::SyncRequired { .. }));
 }
 
 #[test]
@@ -418,8 +420,9 @@ fn test_scenario_3_double_spend_detection() {
     let resp_query = mock_l2.handle_status_query(&query_bytes);
 
     // Should be Verified (but with conflicting t_id)
-    app.process_l2_response(&v_id_transfer, &resp_query, Some(correct_password))
+    let outcome = app.process_l2_response(v_id_transfer.clone(), &resp_query, Some(correct_password))
         .unwrap();
+    assert!(matches!(outcome, human_money_core::L2ProcessingOutcome::Quarantined { .. }));
 
     // 5. Check if quarantined
     let details = app.with_wallet(|w| w.get_voucher_details(&v_id_transfer).unwrap()).unwrap();
@@ -481,6 +484,7 @@ fn test_scenario_4_initial_registration() {
     assert!(matches!(envelope.verdict, L2Verdict::UnknownVoucher));
 
     // Process output
-    app.process_l2_response(&voucher_id, &resp_query, Some(correct_password))
+    let outcome = app.process_l2_response(voucher_id.clone(), &resp_query, Some(correct_password))
         .unwrap();
+    assert_eq!(outcome, human_money_core::L2ProcessingOutcome::SyncRequired { sync_point: "genesis".to_string() });
 }

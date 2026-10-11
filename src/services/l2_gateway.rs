@@ -917,6 +917,17 @@ pub fn evaluate_multi_node_anchor_verdicts(
     }
 }
 
+/// Determines whether a voucher can be skipped when creating Layer 2 spend locks.
+///
+/// # Architectural Invariant
+/// A freshly created voucher that only has its initial (`init`) transaction (`transactions.len() <= 1`)
+/// has never circulated or undergone spend operations. Such vouchers have no outgoing spend locks
+/// that must be registered on Layer 2 and can safely be skipped when constructing outgoing
+/// spend lock requests or synchronizing spend history.
+pub fn can_skip_l2_spend_lock(voucher: &crate::models::voucher::Voucher) -> bool {
+    voucher.transactions.len() <= 1
+}
+
 /// Builds an atomic `L2ChainLockRequest` that bundles all not-yet-anchored
 /// voucher steps together with an optional genesis lock.
 ///

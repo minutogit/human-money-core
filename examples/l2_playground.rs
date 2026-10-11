@@ -225,7 +225,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let req_genesis = app.generate_l2_lock_request(&voucher_id)?;
     let parsed_genesis = serde_json::from_slice::<L2LockRequest>(&req_genesis)?;
     let resp_genesis = server.handle_lock_request(&req_genesis);
-    app.process_l2_response(&voucher_id, &resp_genesis, Some(password))
+    app.process_l2_response(voucher_id.clone(), &resp_genesis, Some(password))
         .unwrap();
     println!(
         "✅ Genesis anchored on L2. Voucher ID: \x1b[32m{}\x1b[0m\n",
@@ -264,7 +264,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let req_tx1 = app.generate_l2_lock_request(&v_id_1)?;
     let parsed_tx1 = serde_json::from_slice::<L2LockRequest>(&req_tx1)?;
     let resp_tx1 = server.handle_lock_request(&req_tx1);
-    app.process_l2_response(&v_id_1, &resp_tx1, Some(password))
+    app.process_l2_response(v_id_1.clone(), &resp_tx1, Some(password))
         .unwrap();
     println!(
         "✅ TX 1 anchored on L2. DS_TAG: \x1b[32m{}\x1b[0m\n",
@@ -302,7 +302,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let req_tx2 = app.generate_l2_lock_request(&v_id_2)?;
     let parsed_tx2 = serde_json::from_slice::<L2LockRequest>(&req_tx2)?;
     let resp_tx2 = server.handle_lock_request(&req_tx2);
-    app.process_l2_response(&v_id_2, &resp_tx2, Some(password))
+    app.process_l2_response(v_id_2.clone(), &resp_tx2, Some(password))
         .unwrap();
     println!(
         "✅ TX 2 anchored on L2. DS_TAG: \x1b[32m{}\x1b[0m\n",

@@ -255,7 +255,7 @@ fn test_l2_double_spend_quarantine() {
     let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
     let envelope_genesis: L2ResponseEnvelope = serde_json::from_slice(&resp_genesis).unwrap();
     assert!(matches!(envelope_genesis.verdict, L2Verdict::Ok { .. }));
-    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password))
+    app.process_l2_response(voucher_id.clone(), &resp_genesis, Some(correct_password))
         .unwrap();
 
     // 2. Status Query
@@ -309,7 +309,7 @@ fn test_l2_double_spend_quarantine() {
     let resp_tx1 = mock_l2.handle_lock_request(&req_tx1);
     let envelope_tx1: L2ResponseEnvelope = serde_json::from_slice(&resp_tx1).unwrap();
     assert!(matches!(envelope_tx1.verdict, L2Verdict::Ok { .. }));
-    app.process_l2_response(&voucher_id_tx1, &resp_tx1, Some(correct_password))
+    app.process_l2_response(voucher_id_tx1.clone(), &resp_tx1, Some(correct_password))
         .unwrap();
 
     // L2 Status Query
@@ -368,7 +368,7 @@ fn test_l2_double_spend_quarantine() {
     let envelope_tx2: L2ResponseEnvelope = serde_json::from_slice(&resp_tx2).unwrap();
     assert!(matches!(envelope_tx2.verdict, L2Verdict::Verified { .. }));
 
-    app.process_l2_response(&voucher_id_tx2, &resp_tx2, Some(correct_password))
+    app.process_l2_response(voucher_id_tx2.clone(), &resp_tx2, Some(correct_password))
         .unwrap();
 
     // 7. Final check
@@ -430,7 +430,7 @@ fn test_l2_signature_payload_manipulation() {
     let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
     let envelope_genesis: L2ResponseEnvelope = serde_json::from_slice(&resp_genesis).unwrap();
     assert!(matches!(envelope_genesis.verdict, L2Verdict::Ok { .. }));
-    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password))
+    app.process_l2_response(voucher_id.clone(), &resp_genesis, Some(correct_password))
         .unwrap();
 
     let id_david = test_utils::ACTORS.david.identity.user_id.clone();
@@ -555,7 +555,7 @@ fn test_l2_fake_double_spend_protection() {
     // 1. Genesis Lock
     let req_genesis = app.generate_l2_lock_request(&voucher_id).unwrap();
     let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
-    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password))
+    app.process_l2_response(voucher_id.clone(), &resp_genesis, Some(correct_password))
         .unwrap();
 
     let id_david = test_utils::ACTORS.david.identity.user_id.clone();
@@ -640,7 +640,7 @@ fn test_l2_fake_double_spend_protection() {
     let resp_a = mock_l2.wrap_and_sign(L2Verdict::Verified {
         lock_entry: malicious_entry_a,
     });
-    let result_a = app.process_l2_response(&voucher_id_tx1, &resp_a, Some(correct_password));
+    let result_a = app.process_l2_response(voucher_id_tx1.clone(), &resp_a, Some(correct_password));
 
     assert!(
         result_a.is_err(),
@@ -698,7 +698,7 @@ fn test_l2_fake_double_spend_protection() {
     let resp_b = mock_l2.wrap_and_sign(L2Verdict::Verified {
         lock_entry: malicious_entry_b,
     });
-    let result_b = app.process_l2_response(&voucher_id_tx1, &resp_b, Some(correct_password));
+    let result_b = app.process_l2_response(voucher_id_tx1.clone(), &resp_b, Some(correct_password));
 
     assert!(
         result_b.is_err(),
@@ -759,7 +759,7 @@ fn test_l2_voucher_id_mixup_protection() {
     // 1. Genesis Lock
     let req_genesis = app.generate_l2_lock_request(&voucher_id).unwrap();
     let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
-    app.process_l2_response(&voucher_id, &resp_genesis, Some(correct_password))
+    app.process_l2_response(voucher_id.clone(), &resp_genesis, Some(correct_password))
         .unwrap();
 
     // Extract legitimate parameters from history
@@ -825,7 +825,7 @@ fn test_l2_voucher_id_mixup_protection() {
     let resp_c = mock_l2.wrap_and_sign(L2Verdict::Verified {
         lock_entry: malicious_entry_c,
     });
-    let result_c = app.process_l2_response(&voucher_id, &resp_c, Some(correct_password));
+    let result_c = app.process_l2_response(voucher_id.clone(), &resp_c, Some(correct_password));
 
     assert!(
         result_c.is_err(),

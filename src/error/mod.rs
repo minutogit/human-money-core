@@ -98,6 +98,10 @@ pub enum Error {
     #[error("Missing trap data in transaction")]
     MissingTrapData,
 
+    /// A transaction was blocked because the sender or creator is a known offender in the local proof store.
+    #[error("Transaction blocked: Identity '{id}' is a known offender (proof_id: {proof_id}).")]
+    KnownOffenderTransactionBlocked { id: String, proof_id: String },
+
     /// Error deserializing transaction or protocol payload.
     #[error("L2 Payload Deserialization Error: {0}")]
     DeserializationError(String),

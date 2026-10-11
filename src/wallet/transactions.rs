@@ -272,6 +272,30 @@ impl Wallet {
             });
         }
 
+        // --- WEB OF TRUST: KNOWN OFFENDER BLOCKING (Paket 6) ---
+        // If force_accept is false, reject bundles where the sender or any voucher creator
+        // is classified as a KnownOffender in the local proof store.
+        if !force_accept {
+            use crate::models::conflict::TrustStatus;
+            if let TrustStatus::KnownOffender(proof_id) = self.check_reputation(&bundle.sender_id) {
+                return Err(VoucherCoreError::KnownOffenderTransactionBlocked {
+                    id: bundle.sender_id.clone(),
+                    proof_id,
+                });
+            }
+
+            for voucher in &bundle.vouchers {
+                if let Some(creator_id) = &voucher.creator_profile.id {
+                    if let TrustStatus::KnownOffender(proof_id) = self.check_reputation(creator_id) {
+                        return Err(VoucherCoreError::KnownOffenderTransactionBlocked {
+                            id: creator_id.clone(),
+                            proof_id,
+                        });
+                    }
+                }
+            }
+        }
+
         // --- LINEAR VALIDATION PIPELINE (Phase 1) ---
         // Centralized 4-step audited validation reusing the single decrypted bundle
         // and the cached registry (no repeated TOML parsing, no repeated standard

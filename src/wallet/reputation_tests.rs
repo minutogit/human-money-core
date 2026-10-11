@@ -616,6 +616,394 @@ mod tests {
             assert!(!crate::services::conflict_manager::verify_fingerprint_signature(&fp3));
         }
     }
+
+    #[test]
+    fn test_clock_drift_protection_skips_expiration_sweep() {
+        let dir = tempdir().unwrap();
+        let password = "correct_password";
+        let (mut app, profile_info) =
+            crate::test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", password);
+        app.unlock_session(password, 60).unwrap();
+
+        // Create a voucher that is technically expired relative to now
+        let past_valid_until = "2020-01-01T00:00:00Z".to_string();
+        let voucher = Voucher {
+            voucher_id: "v_expired_test".to_string(),
+            valid_until: past_valid_until,
+            creation_date: "2019-01-01T00:00:00Z".to_string(),
+            ..Default::default()
+        };
+        let mut storage = FileStorage::new(dir.path().join(&profile_info.folder_name));
+        let auth = AuthMethod::Password(password);
+
+        app.get_wallet_mut().unwrap().add_voucher_instance("inst_drift".to_string(), voucher, VoucherStatus::Active);
+        app.get_wallet_mut().unwrap().save(&mut storage, &ACTORS.alice.identity, &auth).unwrap();
+
+        // 1. With normal seal (timestamp = now), loading triggers expiration sweep:
+        let (loaded_normal, _) =
+            crate::wallet::Wallet::load(&storage, &auth, "test-id".to_string()).unwrap();
+        assert_eq!(
+            loaded_normal.voucher_store.vouchers["inst_drift"].status,
+            VoucherStatus::Expired
+        );
+
+        // Reset voucher to Active and persist to disk
+        app.get_wallet_mut().unwrap().voucher_store.vouchers.get_mut("inst_drift").unwrap().status = VoucherStatus::Active;
+        app.get_wallet_mut().unwrap().save(&mut storage, &ACTORS.alice.identity, &auth).unwrap();
+
+        // 2. Simulate clock drift backward: seal timestamp in the future (2099)
+        let future_seal = crate::models::seal::WalletSeal {
+            payload: crate::models::seal::SealPayload {
+                version: 1,
+                user_id: ACTORS.alice.identity.user_id.clone(),
+                epoch: 0,
+                epoch_start_time: "2099-01-01T00:00:00Z".to_string(),
+                tx_nonce: 0,
+                prev_seal_hash: "none".to_string(),
+                state_hash: "hash".to_string(),
+                timestamp: "2099-01-01T00:00:00Z".to_string(),
+                instance_id: "test-id".to_string(),
+            },
+            signature: "sig".to_string(),
+        };
+        let seal_record = crate::models::seal::LocalSealRecord {
+            seal: future_seal,
+            sync_status: crate::models::seal::SyncStatus::Synced,
+            is_locked_due_to_fork: false,
+        };
+        storage.save_seal(&auth, &seal_record).unwrap();
+
+        // Loading the wallet now detects clock drift backward -> skips expiration sweep!
+        let (loaded_drift_back, _) =
+            crate::wallet::Wallet::load(&storage, &auth, "test-id".to_string()).unwrap();
+        assert_eq!(
+            loaded_drift_back.voucher_store.vouchers["inst_drift"].status,
+            VoucherStatus::Active,
+            "Expiration sweep must be skipped when clock went backward relative to seal"
+        );
+
+        // 3. Simulate clock drift forward by > 30 days: seal timestamp is 60 days in the past
+        let sixty_days_ago = chrono::Utc::now() - chrono::Duration::days(60);
+        let sixty_days_ago_str = sixty_days_ago.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let past_seal = crate::models::seal::WalletSeal {
+            payload: crate::models::seal::SealPayload {
+                version: 1,
+                user_id: ACTORS.alice.identity.user_id.clone(),
+                epoch: 0,
+                epoch_start_time: sixty_days_ago_str.clone(),
+                tx_nonce: 0,
+                prev_seal_hash: "none".to_string(),
+                state_hash: "hash".to_string(),
+                timestamp: sixty_days_ago_str,
+                instance_id: "test-id".to_string(),
+            },
+            signature: "sig".to_string(),
+        };
+        let seal_record_past = crate::models::seal::LocalSealRecord {
+            seal: past_seal,
+            sync_status: crate::models::seal::SyncStatus::Synced,
+            is_locked_due_to_fork: false,
+        };
+        storage.save_seal(&auth, &seal_record_past).unwrap();
+
+        // Loading the wallet now detects clock drift forward > 30 days -> skips expiration sweep!
+        let (loaded_drift_fwd, _) =
+            crate::wallet::Wallet::load(&storage, &auth, "test-id".to_string()).unwrap();
+        assert_eq!(
+            loaded_drift_fwd.voucher_store.vouchers["inst_drift"].status,
+            VoucherStatus::Active,
+            "Expiration sweep must be skipped when system clock jumped forward by > 30 days"
+        );
+    }
+
+    #[test]
+    fn test_possession_priority_for_local_active_vouchers() {
+        use crate::models::profile::VoucherStore;
+        use crate::wallet::instance::VoucherInstance;
+
+        let mut store = VoucherStore::default();
+        let prev_hash = bs58::encode([2u8; 32]).into_string();
+        let eph_bytes = [3u8; 32];
+        let eph_pub = bs58::encode(eph_bytes).into_string();
+
+        let local_t_id = bs58::encode([4u8; 32]).into_string();
+        let local_tx = Transaction {
+            t_id: local_t_id.clone(),
+            prev_hash: prev_hash.clone(),
+            sender_ephemeral_pub: Some(eph_pub.clone()),
+            t_time: "2026-06-01T12:00:00Z".to_string(),
+            ..Default::default()
+        };
+        let voucher = Voucher {
+            voucher_id: "v_local_active".to_string(),
+            transactions: vec![local_tx.clone()],
+            ..Default::default()
+        };
+        store.vouchers.insert(
+            "inst_local".to_string(),
+            VoucherInstance {
+                voucher,
+                status: VoucherStatus::Active,
+                local_instance_id: "inst_local".to_string(),
+            },
+        );
+
+        // Construct a foreign gossip fingerprint with an earlier timestamp
+        let foreign_t_id = bs58::encode([5u8; 32]).into_string();
+        let ds_tag = crate::services::crypto::get_ds_tag(&prev_hash, &eph_pub).unwrap();
+
+        let foreign_tx = Transaction {
+            t_id: foreign_t_id.clone(),
+            prev_hash: prev_hash.clone(),
+            sender_ephemeral_pub: Some(eph_pub.clone()),
+            t_time: "2026-06-01T10:00:00Z".to_string(), // 2 hours earlier!
+            ..Default::default()
+        };
+        let foreign_enc_ts =
+            crate::services::conflict_manager::encrypt_transaction_timestamp(&foreign_tx).unwrap();
+
+        let foreign_fp = TransactionFingerprint {
+            t_id: foreign_t_id.clone(),
+            encrypted_timestamp: foreign_enc_ts,
+            ds_tag,
+            trap_r: "u".to_string(),
+            trap_s: "b".to_string(),
+            layer2_signature: "sig".to_string(),
+            deletable_at: "2099-01-01T00:00:00Z".to_string(),
+            sender_ephemeral_pub: eph_pub,
+            layer2_voucher_id: String::new(),
+            privacy_guard_hash: String::new(),
+        };
+
+        let local_enc_ts =
+            crate::services::conflict_manager::encrypt_transaction_timestamp(&local_tx).unwrap();
+        let local_fp = TransactionFingerprint {
+            t_id: local_t_id,
+            encrypted_timestamp: local_enc_ts,
+            ..foreign_fp.clone()
+        };
+
+        // When both local and foreign fingerprints are passed to resolve_conflict_offline:
+        // Even though foreign_fp is earlier, local Active voucher must NOT be quarantined!
+        crate::wallet::conflicts::resolve_conflict_offline(&mut store, &[local_fp, foreign_fp]);
+
+        assert_eq!(
+            store.vouchers["inst_local"].status,
+            VoucherStatus::Active,
+            "Local active voucher must retain possession priority against foreign gossip winner"
+        );
+    }
+
+    #[test]
+    fn test_can_skip_l2_spend_lock_invariant() {
+        use crate::services::l2_gateway::can_skip_l2_spend_lock;
+
+        // Voucher with 0 transactions
+        let empty_voucher = Voucher::default();
+        assert!(can_skip_l2_spend_lock(&empty_voucher));
+
+        // Voucher with 1 transaction (genesis/init)
+        let init_voucher = Voucher {
+            transactions: vec![Transaction {
+                t_type: "init".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(can_skip_l2_spend_lock(&init_voucher));
+
+        // Voucher with 2 transactions (circulated/spent) -> cannot skip!
+        let spent_voucher = Voucher {
+            transactions: vec![
+                Transaction {
+                    t_type: "init".to_string(),
+                    ..Default::default()
+                },
+                Transaction {
+                    t_type: "transfer".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(!can_skip_l2_spend_lock(&spent_voucher));
+    }
+
+    #[test]
+    fn test_app_service_check_reputation() {
+        let dir = tempdir().unwrap();
+        let password = "correct_password";
+        let (mut app, _) =
+            crate::test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", password);
+        app.unlock_session(password, 60).unwrap();
+
+        let offender_id = "offender_123";
+        // Initially clean
+        assert_eq!(
+            app.check_reputation(offender_id).unwrap(),
+            crate::models::conflict::TrustStatus::Clean
+        );
+
+        // Add a signed proof for offender_123
+        let proof = create_signed_proof(offender_id);
+        let proof_id = proof.proof_id.clone();
+        app.get_wallet_mut().unwrap().proof_store.proofs.insert(
+            proof_id.clone(),
+            ProofStoreEntry {
+                proof,
+                local_override: false,
+                local_note: None,
+                conflict_role: ConflictRole::Witness,
+            },
+        );
+
+        // Now returns KnownOffender(proof_id)
+        assert_eq!(
+            app.check_reputation(offender_id).unwrap(),
+            crate::models::conflict::TrustStatus::KnownOffender(proof_id)
+        );
+    }
+
+    #[test]
+    fn test_known_offender_transaction_blocked_unless_force_accepted() {
+        use crate::services::bundle_processor::create_and_encrypt_bundle;
+        use crate::services::voucher_validation::StandardRegistry;
+
+        let alice = &ACTORS.alice.identity;
+        let bob = &ACTORS.bob.identity;
+        let mut bob_wallet = setup_in_memory_wallet(&ACTORS.bob);
+
+        let voucher = create_dummy_voucher_with_txs(1);
+        let (bundle_bytes, _) = create_and_encrypt_bundle(
+            alice,
+            vec![voucher],
+            &bob.user_id,
+            None,
+            vec![],
+            vec![],
+            None,
+        ).expect("Bundle creation should succeed");
+
+        // Record a double-spend proof making Alice a known offender in Bob's wallet
+        let proof = create_signed_proof(&alice.user_id);
+        let proof_id = proof.proof_id.clone();
+        bob_wallet.proof_store.proofs.insert(
+            proof_id.clone(),
+            ProofStoreEntry {
+                proof,
+                local_override: false,
+                local_note: None,
+                conflict_role: ConflictRole::Witness,
+            },
+        );
+
+        let registry = StandardRegistry::new();
+
+        // 1. Without force_accept: bundle from KnownOffender must be rejected with KnownOffenderTransactionBlocked
+        let err = bob_wallet.process_bundle_with_registry_inner(
+            bob,
+            &bundle_bytes,
+            None,
+            &registry,
+            None,
+            0,
+            false,
+        ).unwrap_err();
+
+        match err {
+            VoucherCoreError::KnownOffenderTransactionBlocked { id, proof_id: p_id } => {
+                assert_eq!(id, alice.user_id);
+                assert_eq!(p_id, proof_id);
+            }
+            other => panic!("Expected KnownOffenderTransactionBlocked, got: {:?}", other),
+        }
+
+        // 2. With force_accept: true, KnownOffender check is bypassed
+        let res = bob_wallet.process_bundle_with_registry_inner(
+            bob,
+            &bundle_bytes,
+            None,
+            &registry,
+            None,
+            0,
+            true,
+        );
+        if let Err(VoucherCoreError::KnownOffenderTransactionBlocked { .. }) = res {
+            panic!("force_accept = true should bypass KnownOffenderTransactionBlocked check");
+        }
+    }
+
+    #[test]
+    fn test_known_offender_voucher_creator_blocked_unless_force_accepted() {
+        use crate::services::bundle_processor::create_and_encrypt_bundle;
+        use crate::services::voucher_validation::StandardRegistry;
+
+        let alice = &ACTORS.alice.identity;
+        let bob = &ACTORS.bob.identity;
+        let bad_creator_id = "bad_creator_456".to_string();
+        let mut bob_wallet = setup_in_memory_wallet(&ACTORS.bob);
+
+        let mut voucher = create_dummy_voucher_with_txs(1);
+        voucher.creator_profile.id = Some(bad_creator_id.clone());
+
+        let (bundle_bytes, _) = create_and_encrypt_bundle(
+            alice,
+            vec![voucher],
+            &bob.user_id,
+            None,
+            vec![],
+            vec![],
+            None,
+        ).expect("Bundle creation should succeed");
+
+        // Record a double-spend proof making the voucher creator a known offender
+        let proof = create_signed_proof(&bad_creator_id);
+        let proof_id = proof.proof_id.clone();
+        bob_wallet.proof_store.proofs.insert(
+            proof_id.clone(),
+            ProofStoreEntry {
+                proof,
+                local_override: false,
+                local_note: None,
+                conflict_role: ConflictRole::Witness,
+            },
+        );
+
+        let registry = StandardRegistry::new();
+
+        // 1. Without force_accept: bundle with KnownOffender creator must be rejected
+        let err = bob_wallet.process_bundle_with_registry_inner(
+            bob,
+            &bundle_bytes,
+            None,
+            &registry,
+            None,
+            0,
+            false,
+        ).unwrap_err();
+
+        match err {
+            VoucherCoreError::KnownOffenderTransactionBlocked { id, proof_id: p_id } => {
+                assert_eq!(id, bad_creator_id);
+                assert_eq!(p_id, proof_id);
+            }
+            other => panic!("Expected KnownOffenderTransactionBlocked, got: {:?}", other),
+        }
+
+        // 2. With force_accept: true, KnownOffender check is bypassed
+        let res = bob_wallet.process_bundle_with_registry_inner(
+            bob,
+            &bundle_bytes,
+            None,
+            &registry,
+            None,
+            0,
+            true,
+        );
+        if let Err(VoucherCoreError::KnownOffenderTransactionBlocked { .. }) = res {
+            panic!("force_accept = true should bypass KnownOffenderTransactionBlocked check for creator");
+        }
+    }
 }
 
 

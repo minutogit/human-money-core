@@ -39,6 +39,17 @@ impl AppService {
         })
     }
 
+    /// Checks the reputation / trust status of a user identity based on the local proof store.
+    ///
+    /// # Errors
+    /// Fails if the wallet is locked (`Locked`).
+    pub fn check_reputation(
+        &self,
+        offender_id: &str,
+    ) -> Result<crate::models::conflict::TrustStatus, Error> {
+        self.with_unlocked_ref(|wallet, _, _| Ok(wallet.check_reputation(offender_id)))
+    }
+
     /// Creates a signed resolution endorsement (`ResolutionEndorsement`) for a conflict.
     ///
     /// This operation does not change the wallet state. It generates a
@@ -242,11 +253,10 @@ impl AppService {
     /// sealed commit with compensation — identical to `with_transactional_mut`.
     pub fn process_l2_response(
         &mut self,
-        local_instance_id: &str,
+        local_id: String,
         response_bytes: &[u8],
         password: Option<&str>,
-    ) -> Result<(), Error> {
-        let local_id = local_instance_id.to_string();
+    ) -> Result<crate::models::layer2_api::L2ProcessingOutcome, Error> {
         let response = response_bytes.to_vec();
         TransactionOrchestrator::execute_with_policy(
             self,
@@ -260,22 +270,24 @@ impl AppService {
                 match action {
                     VerdictAction::ConfirmLocal
                     | VerdictAction::ConfirmFinal { .. }
-                    | VerdictAction::ConfirmProvisional { .. } => TransactionOutcome::Commit(()),
+                    | VerdictAction::ConfirmProvisional { .. } => {
+                        TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Confirmed)
+                    }
                     VerdictAction::TriggerSync { sync_point } => {
-                        println!("Sync needed from: {}", sync_point);
-                        TransactionOutcome::Commit(())
+                        TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::SyncRequired { sync_point })
                     }
                     VerdictAction::TriggerQuarantine(conflicting_t_id) => {
+                        let reason = format!(
+                            "Double spend detected for transaction {}",
+                            conflicting_t_id
+                        );
                         temp_wallet.update_voucher_status(
                             &local_id,
                             VoucherStatus::Quarantined {
-                                reason: format!(
-                                    "Double spend detected for transaction {}",
-                                    conflicting_t_id
-                                ),
+                                reason: reason.clone(),
                             },
                         );
-                        TransactionOutcome::Commit(())
+                        TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Quarantined { reason })
                     }
                 }
             },

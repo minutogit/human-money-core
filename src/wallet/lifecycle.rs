@@ -140,6 +140,7 @@ impl Wallet {
         let own_fingerprints = storage.load_own_fingerprints(auth)?;
         let proof_store = storage.load_proofs(auth)?;
         let active_gossip = storage.load_active_gossip(auth)?;
+        let seal_record = storage.load_seal(auth)?;
 
         // Security check to ensure that the decrypted identity
         // matches the profile data.
@@ -172,42 +173,63 @@ impl Wallet {
         // while the load sweep left it Active, yielding never-expiring vouchers.
         let now = chrono::Utc::now();
         let now_str = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        let expired_local_ids: Vec<(String, String, crate::models::wallet_event::EventBffData)> = {
-            let mut expired = Vec::new();
-            for instance in wallet.voucher_store.vouchers.values() {
-                if matches!(instance.status, VoucherStatus::Active | VoucherStatus::Incomplete { .. })
-                    && instance.voucher.is_expired(Some(&now_str))
-                {
-                    let bff_data = crate::models::wallet_event::EventBffData {
-                        display_currency: crate::wallet::format_bff_name(
-                            instance.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&instance.voucher.nominal_value.unit),
-                            instance.voucher.non_redeemable_test_voucher,
-                        ),
-                        amount: instance.voucher.nominal_value.amount.clone(),
-                        is_test_voucher: instance.voucher.non_redeemable_test_voucher,
-                        counterparty_id: None,
-                        counterparty_name: None,
-                    };
-                    expired.push((
-                        instance.local_instance_id.clone(),
-                        instance.voucher.voucher_id.clone(),
-                        bff_data,
-                    ));
+
+        // Sanity-check system time against existing seal to prevent clock drift from
+        // irreversibly invalidating active vouchers.
+        let mut skip_expiration_sweep = false;
+        if let Some(record) = &seal_record {
+            if let Ok(seal_dt) = chrono::DateTime::parse_from_rfc3339(&record.seal.payload.timestamp) {
+                let seal_utc = seal_dt.with_timezone(&chrono::Utc);
+                let thirty_days = chrono::Duration::days(30);
+                if now < seal_utc || now > seal_utc + thirty_days {
+                    log::warn!(
+                        "System clock drift detected; skipping voucher expiration sweep to prevent irreversible voucher invalidation (seal ts: {}, current ts: {})",
+                        record.seal.payload.timestamp,
+                        now_str
+                    );
+                    skip_expiration_sweep = true;
                 }
             }
-            expired
-        };
+        }
 
-        for (local_id, voucher_id, bff_data) in expired_local_ids {
-            if let Some(instance) = wallet.voucher_store.vouchers.get_mut(&local_id) {
-                instance.status = VoucherStatus::Expired;
+        if !skip_expiration_sweep {
+            let expired_local_ids: Vec<(String, String, crate::models::wallet_event::EventBffData)> = {
+                let mut expired = Vec::new();
+                for instance in wallet.voucher_store.vouchers.values() {
+                    if matches!(instance.status, VoucherStatus::Active | VoucherStatus::Incomplete { .. })
+                        && instance.voucher.is_expired(Some(&now_str))
+                    {
+                        let bff_data = crate::models::wallet_event::EventBffData {
+                            display_currency: crate::wallet::format_bff_name(
+                                instance.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&instance.voucher.nominal_value.unit),
+                                instance.voucher.non_redeemable_test_voucher,
+                            ),
+                            amount: instance.voucher.nominal_value.amount.clone(),
+                            is_test_voucher: instance.voucher.non_redeemable_test_voucher,
+                            counterparty_id: None,
+                            counterparty_name: None,
+                        };
+                        expired.push((
+                            instance.local_instance_id.clone(),
+                            instance.voucher.voucher_id.clone(),
+                            bff_data,
+                        ));
+                    }
+                }
+                expired
+            };
+
+            for (local_id, voucher_id, bff_data) in expired_local_ids {
+                if let Some(instance) = wallet.voucher_store.vouchers.get_mut(&local_id) {
+                    instance.status = VoucherStatus::Expired;
+                }
+                wallet.emit_event(
+                    crate::models::wallet_event::WalletEventType::VoucherExpired,
+                    &local_id,
+                    &voucher_id,
+                    bff_data,
+                );
             }
-            wallet.emit_event(
-                crate::models::wallet_event::WalletEventType::VoucherExpired,
-                &local_id,
-                &voucher_id,
-                bff_data,
-            );
         }
         // --- END EXPIRATION SWEEP ---
 

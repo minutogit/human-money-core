@@ -371,3 +371,11 @@ impl L2ResponseEnvelope {
         }
     }
 }
+
+/// The outcome of processing an L2 response in the wallet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum L2ProcessingOutcome {
+    Confirmed,
+    Quarantined { reason: String },
+    SyncRequired { sync_point: String },
+}

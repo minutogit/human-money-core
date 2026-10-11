@@ -1134,9 +1134,32 @@ pub(crate) fn resolve_conflict_offline(
     // collisions inside one voucher's lifetime stay adjudicable here; older
     // evidence is still served by the gated proof-import path. Blind
     // grinding success within the window is ~window/2^128.
-    const MIN_PLAUSIBILITY_LOOKBACK_NANOS: u128 =
-        365 * 24 * 3600 * 1_000_000_000;
-    let min_plausible_nanos = now_nanos.saturating_sub(MIN_PLAUSIBILITY_LOOKBACK_NANOS);
+    const DEFAULT_LOOKBACK_NANOS: u128 = 365 * 24 * 3600 * 1_000_000_000;
+    let earliest_local_tx_nanos = conflicting_txs
+        .iter()
+        .filter_map(|tx| {
+            chrono::DateTime::parse_from_rfc3339(&tx.t_time)
+                .ok()
+                .and_then(|dt| dt.timestamp_nanos_opt())
+                .map(|n| n as u128)
+        })
+        .min();
+    let earliest_local_creation_nanos = voucher_store
+        .vouchers
+        .values()
+        .filter(|inst| inst.voucher.transactions.iter().any(|tx| tx_ids.contains(&tx.t_id)))
+        .filter_map(|inst| {
+            chrono::DateTime::parse_from_rfc3339(&inst.voucher.creation_date)
+                .ok()
+                .and_then(|dt| dt.timestamp_nanos_opt())
+                .map(|n| n as u128)
+        })
+        .min();
+    let dynamic_baseline_nanos = earliest_local_tx_nanos
+        .or(earliest_local_creation_nanos)
+        .map(|t| t.min(now_nanos))
+        .unwrap_or(now_nanos);
+    let min_plausible_nanos = dynamic_baseline_nanos.saturating_sub(DEFAULT_LOOKBACK_NANOS);
 
     // SECURITY (V2 hardening, cryptographic consistency): a genuine sibling
     // fork shares the identical input, i.e. the claimed `sender_ephemeral_pub`
@@ -1221,6 +1244,17 @@ pub(crate) fn resolve_conflict_offline(
 
     // --- 2. Write phase: Update status based on winner ID ---
     if let Some(winner_id) = winner_id {
+        let winner_is_local = local_t_ids.contains(&winner_id);
+        let winner_has_cryptographic_proof = fingerprints
+            .iter()
+            .find(|fp| fp.t_id == winner_id)
+            .is_some_and(|fp| {
+                !conflict_manager::is_init_fingerprint(fp)
+                    && conflict_manager::verify_fingerprint_signature(fp)
+                    && reproduces_local_tag(fp, prev_hash, &conflicting_txs)
+            });
+        drop(conflicting_txs);
+
         for instance in voucher_store.vouchers.values_mut() {
             // Check if this instance contains one of the conflicting transactions.
             if let Some(tx) = instance
@@ -1231,6 +1265,21 @@ pub(crate) fn resolve_conflict_offline(
             {
                 let is_winner = tx.t_id == winner_id;
                 let prev_status = instance.status.clone();
+
+                // SECURITY (Paket 5): Local possession priority for Active vouchers.
+                // If the winner is a pure foreign gossip fingerprint without verified
+                // cryptographic proof of double spend (HMC_TX_AUTH digest signature + reproduces local tag)
+                // and the local voucher is Active, local possession takes precedence:
+                // do NOT quarantine the active voucher!
+                if !winner_is_local && !winner_has_cryptographic_proof && matches!(prev_status, VoucherStatus::Active) {
+                    log::warn!(
+                        "Possession priority: local active voucher '{}' retained; unconfirmed foreign gossip fingerprint '{}' cannot quarantine active voucher without verified double-spend proof.",
+                        instance.voucher.voucher_id,
+                        winner_id
+                    );
+                    continue;
+                }
+
                 // SECURITY (AUDIT-01-F15): monotonic status protection. The
                 // offline race is a HEURISTIC; it may downgrade an Active
                 // branch (safety-first quarantine) or confirm an existing
