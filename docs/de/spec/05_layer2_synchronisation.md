@@ -56,20 +56,23 @@ Um Bandbreite zu sparen und die Komplexität auf Server-Seite (Index-Suche) zu m
 *   **Sicherheit:** 10 Zeichen in Base58 bieten ca. 58,5 Bits Entropie. Da die Suche immer auf einen spezifischen Gutschein (L2 Voucher ID) eingeschränkt ist, ist die Wahrscheinlichkeit einer Kollision vernachlässigbar klein.
 *   **Effizienz:** Der Server kann diese Präfixe direkt für String-basierte Index-Scans (z. B. `LIKE 'Prefix%'`) nutzen, ohne Binärumwandlungen vornehmen zu müssen. Nur der eigentliche Ziel-Hash (Challenge) bleibt als vollständiger Base58-String erhalten.
 
-### D. Trustless Verification durch kryptografische Bindung
+### D. Trustless Verification durch kryptografische Bindung (`HMC_TX_AUTH_V3`)
 Ein bösartiger Server könnte versuchen, einen Client zu täuschen, indem er behauptet, für einen `ds_tag` sei eine andere `t_id` eingetragen, um so fälschlicherweise einen Double-Spend-Alarm auszulösen.
 
 Um dies auszuschließen, nutzt HuMoCo eine strikte kryptografische Bindung (Signature Hardening):
 *   **Proof of Truth:** Wenn der Server meldet, dass ein Tag vergeben ist, muss er den vollständigen `L2LockEntry` (inklusive der `layer2_signature`) mitsenden.
-*   **Payload-Bindung:** Die Signatur des Nutzers (`layer2_signature`) sichert nicht nur die `t_id`, sondern bindet diese untrennbar an die `layer2_voucher_id` und den `challenge_ds_tag`.
-*   **Hashing-Logik:** Der Client serialisiert die Felder strikt in der folgenden Reihenfolge (kodiert als rohe Bytes, gehashed mit SHA-256):
-    1. `challenge_ds_tag` (als Bytes)
-    2. `layer2_voucher_id` (als Bytes)
-    3. `transaction_hash / t_id` (32 Bytes Array)
-    4. `sender_ephemeral_pub` (32 Bytes Array)
-    5. `receiver_ephemeral_pub_hash` (Optional, 32 Bytes Array)
-    6. `change_ephemeral_pub_hash` (Optional, 32 Bytes Array)
-    7. `deletable_at` (Optional, als Bytes)
+*   **Payload-Bindung:** Die Signatur des Nutzers (`layer2_signature`) sichert nicht nur die `t_id`, sondern bindet diese untrennbar an die `layer2_voucher_id`, den `challenge_ds_tag` sowie die SST-Fallenkomponenten.
+*   **Hashing-Logik (`HMC_TX_AUTH_V3`):** Der Client serialisiert die Felder strikt in kanonischer Reihenfolge (längenpräfixiert gehasht mit SHA-256 via `get_raw_hash_from_slices`):
+    1. Domain-Tag `b"HMC_TX_AUTH_V3"`
+    2. `layer2_voucher_id` (Hex-String für Spends, `"none"` für Genesis)
+    3. `challenge_ds_tag` (`t_id` für Genesis, `ds_tag` für Spends)
+    4. `t_id_bytes` (32 Bytes Array)
+    5. `sender_pub_bytes` (32 Bytes Array des ephemeren Schlüssels)
+    6. `trap_r` (Base58 SST-Commitment-Shard, `"none"` für Genesis)
+    7. `trap_s` (Base58 SST-Response-Shard, `"none"` für Genesis)
+    8. `encrypted_timestamp` (Little-Endian, 16 Bytes)
+    9. `deletable_at` (Bytes, leer falls neutralisiert)
+    10. `privacy_guard_commitment` (Base58 SHA3-256 Hash des Guards oder leer)
 *   Da der Server die Signatur des Nutzers über diesen spezifischen Payload unmöglich fälschen kann, dient der zurückgelieferte Eintrag als unumstößlicher Beweis.
 *   **Schutz vor Mix-up:** Ein Server kann keinen gültigen Beweis eines anderen Gutscheins oder eines anderen Tags "umbiegen", da die IDs fest im signierten Hash verankert sind.
 

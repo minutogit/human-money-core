@@ -12,7 +12,7 @@
 //! (`voucher_store`, `*_fingerprints`, `pending_events`, …) and take
 //! **no** `&mut FileStorage`. Durable 2-phase commit (staging →
 //! `store_binding_hash` → `write_generation`) is owned exclusively by
-//! `FileStorage::commit_wallet_atomic` / `save_wallet_transaction`.
+//! `FileStorage::commit_wallet_atomic`.
 
 use super::types::{CreateBundleResult, MultiTransferRequest, ProcessBundleResult};
 use crate::archive::FileVoucherArchive;

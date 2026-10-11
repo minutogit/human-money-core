@@ -124,8 +124,8 @@ pub struct Transaction {
     /// Ermöglicht dem Empfänger die Wiederherstellung von Kontext und Seeds.
     pub privacy_guard: String,
 
-    /// Die mathematische Falle für Double-Spend Erkennung.
-    /// Enthält Challenge `u`, Response `v` und den Zero-Knowledge-Proof.
+    /// Die mathematische Falle für Double-Spend Erkennung (V3 SST - Shared-Signature Trap).
+    /// Enthält ds_tag sowie die spend-spezifischen Schnorr-Shards trap_r und trap_s.
     pub trap_data: TrapData,
 }
 ```
@@ -150,8 +150,13 @@ struct RecipientPayload {
     pub timestamp: u64,
 
     /// Der Seed für den nächsten ephemeren Schlüssel (damit der Empfänger ihn generieren kann).
-    /// Dies ermöglicht dem Empfänger, den nächsten Private Key abzuleiten, ohne dass dieser über das Netzwerk übertragen wird.
     pub next_key_seed: String, 
+
+    // --- V3 SST: Privater Zeuge W für Fail-Closed Handover-Prüfung (R5) ---
+    pub trap_r_sig: Option<String>, // Schnorr-Commitment R_sig
+    pub trap_s_sig: Option<String>, // Schnorr-Response s_sig
+    pub trap_m_r: Option<String>,   // Maskierungspunkt M_R
+    pub trap_m_s: Option<String>,   // Maskierungsskalar m_s
 }
 ```
 

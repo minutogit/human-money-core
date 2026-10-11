@@ -66,6 +66,13 @@ Standards werden über signierte TOML-Dateien definiert, die als **dezentrales "
     *   **Sicherheits-Anker:** Definierte Pflicht-Signaturen (z.B. "Nur gültig mit Unterschrift des Kassenwarts").
     *   **Immutability:** Jeder Gutschein speichert den Hash seines Standards. Ändert sich auch nur ein Zeichen im "Gesetz", gilt dies als neuer Standard. Eine nachträgliche Regeländerung für existierende Gutscheine ist somit kryptographisch unmöglich.
 
+### 2.5 FileStorage (Persistenz-Engine)
+Die Persistenzschicht ist bewusst von der Geschäftslogik des Wallets entkoppelt (`Wallet` ist eine reine In-Memory-Zustandsmaschine):
+*   **Keine Trait-Verschachtelung:** Anstelle einer künstlichen, dynamischen Trait-Abstraktion (`dyn Storage`) setzt `human_money_core` auf die konkrete, hochoptimierte und auditierte `FileStorage`-Engine.
+*   **Transaktionssicherheit (2-Phase Atomic Commit):** Schreibvorgänge (`commit_wallet_atomic`) erfolgen über temporäre Dateien (`.tmp`) mit explizitem `fsync` und anschließendem atomaren Rename. Dies verhindert Datenkorruption bei Stromausfall oder Abstürzen.
+*   **Prozess-Sperren (Process Locks):** Ein OS-Dateilock (`.wallet.lock`) schützt den Datenspeicher vor nebenläufigen Schreibzugriffen konkurrierender Prozesse.
+*   **Kryptografische Integrität & Versiegelung:** Jeder Datensatz wird mit einer HMAC/Hash-Kette (`LocalIntegrityRecord`) und optional mit einer Versiegelung (`LocalSealRecord`) abgesichert. Die Ablage erfolgt verschlüsselt mittels **Argon2id** (Key Derivation) und **ChaCha20-Poly1305** (AEAD).
+
 ## 3. Datenfluss und Prozesse
 
 ### 3.1 Erstellung (Minting)
@@ -77,17 +84,17 @@ Ein Nutzer (Emittent) erstellt einen Gutschein. Dieser ist initial durch sein ei
     *   **Anchor:** In der vorhergehenden Transaktion wurde ein Hash hinterlegt.
     *   **Pre-Image:** Um den Gutschein weiterzugeben, muss der Sender den zum Hash passenden öffentlichen Schlüssel (Pre-Image) enthüllen und damit die Transaktion signieren. Dies beweist den rechtmäßigen Besitz, ohne dass die Identität (`did:key`) zwingend offengelegt werden muss.
 3.  **Privacy Guard:** Der Sender verschlüsselt Metadaten (wie seine eigene permanente DID und den Seed für den nächsten Wechsel-Key) für den Empfänger mittels X25519 (Diffie-Hellman). Dies gewährleistet "Forward Secrecy" und einen sicheren Informationsfluss zwischen den Parteien.
-4.  **Anonymität vs. Vertrauen:** Im Gutschein selbst können sich Nutzer durch **Private Keys** anonymisieren. Dadurch ist in der Historie nicht direkt ersichtlich, wer den Gutschein besessen hat. Da die Identität jedoch als soziale Abschreckung gegen Betrug dient, kommen bei Private Keys mathematische Fallen zum Einsatz: Diese offenbaren die Identität des Senders **nur im Falle eines Betrugs** (Double Spend).
-5.  **Inhalt:** Auf dem Gutschein selbst gehen Transaktionen entweder an öffentliche `did:keys` (Transparent) oder an verschleierte Schlüssel (Private), je nach gewählter Privatsphäre.
+4.  **Anonymität vs. Vertrauen:** Im Gutschein selbst können sich Nutzer durch ephemere Schlüssel anonymisieren (Stealth-Modus). Dadurch ist in der Historie nicht direkt ersichtlich, wer den Gutschein besessen hat. Da die Identität jedoch als soziale Abschreckung gegen Betrug dient, kommen bei anonymen Transfers **V3 Shared-Signature Traps (SST)** zum Einsatz: Diese offenbaren die Identität des Senders **nur im Falle eines Betrugs** (Double Spend).
+5.  **Inhalt:** Auf dem Gutschein selbst gehen Transaktionen entweder an öffentliche `did:keys` (Transparent) oder an verschleierte Schlüssel (Private/Stealth), je nach gewählter Privatsphäre.
 
 ### 3.3 Konfliktlösung und Sicherheit
 Das System bietet je nach Modus und Ebene unterschiedliche Schutzmechanismen:
 
 *   **Online (Layer 2):** Die "Chain of Authority". Der Server bestätigt durch **Locks**, welche Transaktion die gültige Nachfolgerin ist. Ein Double-Spend wird nicht "verhindert" (die falsche Datei existiert ja), aber er wird **sofort erkannt** und vom Empfänger-Client abgelehnt, da der Server den Konflikt (Anker bereits belegt) beweisen kann.
-*   **Anonyme Fingerprints:** Um Double-Spends auch ohne Preisgabe der Historie zu erkennen, tauschen Wallets und Server **Fingerprints** aus.
-    *   Ein Fingerprint enthält den Double-Spend-Tag (Hash aus Kontext und Key), ein gerundetes Ablaufdatum (zur Ununterscheidbarkeit) und einen via XOR verschlüsselten Zeitstempel (nur für Inhaber der Transaktion entschlüsselbar).
+*   **Selbstauthentifizierende Fingerprints (`HMC_TX_AUTH_V3`):** Um Double-Spends auch ohne Preisgabe der Historie zu erkennen, tauschen Wallets und Server **Fingerprints** aus.
+    *   Ein Fingerprint enthält den Double-Spend-Tag (`ds_tag`), die Transaktions-ID (`t_id`), einen verschlüsselten Zeitstempel, die ephemeren Schlüssel, die SST-Shards (`trap_r`, `trap_s`) sowie die `layer2_signature` über den standardisierten Digest **`HMC_TX_AUTH_V3`**.
 *   **Offline (Layer 1 - Öffentlich):** Bei Transaktionen an `did:keys` ist die Historie für jeden Besitzer des Gutscheins sichtbar. Ein Double-Spend würde **verzögert** auffallen (sobald die Pfade wieder zusammenlaufen) und sozial geahndet (Reputationsverlust), da die Identität klar ist.
-*   **Offline (Layer 1 - Private):** Da hier keine Identitäten sichtbar sind, greift die **mathematische Falle**. Wer denselben Private-Zustand zweimal ausgibt, enthüllt rechnerisch seinen privaten Schlüssel.
+*   **Offline (Layer 1 - Private/Stealth):** Da hier keine Identitäten sichtbar sind, greift die **V3 SST-Falle**. Wer denselben Zustand zweimal ausgibt, erzeugt zwei Transaktions-Shards mit identischem $ds\_tag$, aber unterschiedlichen $\tau_i$-Parametern. Daraus lässt sich der langfristige private Schlüssel $x$ und damit die permanente DID des Täters deterministisch berechnen.
 
 ## 4. Die zwei Ebenen (Layers)
 

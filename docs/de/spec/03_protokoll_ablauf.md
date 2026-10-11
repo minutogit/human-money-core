@@ -75,51 +75,39 @@ Alice (`minuto:bth@did:alice`) sendet Guthaben an Bob.
       Falls Wechselgeld entsteht (Split), wird der Seed für den neuen Schlüssel ebenfalls deterministisch abgeleitet, um Statelessness zu garantieren:
       `change_seed = HKDF-Expand(prk, info=context_prefix + "|change_seed", len=32)`
         
-2. **ZKP Challenge (Fiat-Shamir & Schnorr Proof):**
+2. **V3 SST Shard-Erstellung (Shared-Signature Trap):**
     
-    Damit Alice $U$ nicht manipulieren kann, wird er deterministisch abgeleitet.
+    Damit die Double-Spend-Falle deterministisch und unmanipulierbar greift:
     
-    - **Basis-Punkt:** $U = Hash(prev\_hash + sender\_ephemeral\_pub + receiver\_ephemeral\_pub\_hash + amount + prefix)$  
+    - **Spend-Skalar:** $\tau_i = H(\text{"HMC\_TAU\_V1"} \parallel ds\_tag \parallel t\_id_i) \pmod q$  
+    - **Maskierung:** $M_R = \text{hash\_to\_curve}(\text{"HMC\_MASK\_R\_V1"} \parallel x \parallel E \parallel ds\_tag)$, $m_s = H(\text{"HMC\_MASK\_S\_V1"} \parallel x \parallel E \parallel ds\_tag)$  
+    - **Gemeinsame Schnorr-Signatur:** $\sigma = (R_{sig}, s_{sig})$ über $\mu = H(\text{"HMC\_TRAP\_SIG\_V1"} \parallel ds\_tag \parallel E)$  
+    - **Shards:**  
+      $R_i = R_{sig} + \tau_i \cdot M_R$  
+      $s_i = s_{sig} + \tau_i \cdot m_s \pmod q$  
+    - **Privater Zeuge:** $W = (R_{sig}, s_{sig}, M_R, m_s)$ wird im `privacy_guard` verschlüsselt an Bob übergeben.
         
-    - **Ziel-Punkt:** $V = m \cdot U + AliceID$  
-        
-    - **Beweis-Erstellung (Prover):**
-        
-        - Alice wählt zufälligen Nonce $r$.
-            
-        - Berechnet Commitment $R = r \cdot U$.
-            
-        - Berechnet Challenge $c = Hash(U, V, R, prefix)$.
-            
-        - Berechnet Response $s = r + c \cdot m$.
-            
-        - `proof` = Serialisierung von $(R, s)$.
-            
-3. **Verifizierung durch Empfänger (Inbound Check):**
+3. **Verifizierung durch Empfänger (Inbound Check - R5 Fail-Closed):**
     
-    Bevor Bob die Transaktion akzeptiert, **MUSS** er den Proof prüfen. Ohne Prüfung wäre `trap_data` nutzlos.
+    Bevor Bob die Transaktion akzeptiert, **MUSS** er die SST-Integrität prüfen:
     
-    - Berechne $U$ und lese $V$.
-        
-    - Parse $(R, s)$ aus `proof`.
-        
-    - Berechne Challenge $c = Hash(U, V, R, prefix)$ mittels **SHA3-256**.
-        
-    - Prüfe: $s \cdot U \stackrel{?}{=} R + c \cdot (V - AliceID)$.
-        
-    - Wenn ungültig: Ablehnung (Gefahr von gefälschtem Double-Spend-Schutz).
+    - Entschlüssele `privacy_guard` und extrahiere den Zeugen $W = (R_{sig}, s_{sig}, M_R, m_s)$.
+    - Berechne $\tau_i$ aus $ds\_tag$ und $t\_id$.
+    - Prüfe: $R_i \stackrel{?}{=} R_{sig} + \tau_i \cdot M_R$ und $s_i \stackrel{?}{=} s_{sig} + \tau_i \cdot m_s \pmod q$.
+    - Verifiziere die Schnorr-Signatur $(R_{sig}, s_{sig})$ gegen den ephemeren Schlüssel $E$.
+    - Wenn ungültig oder Zeuge fehlt: Sofortige Ablehnung (Schutz vor manipulierter Double-Spend-Falle).
         
 4. **Forking (Anker setzen):**
     
     - **Bob:** Hash seines neuen Keys -> `receiver_ephemeral_pub_hash`.
-        
     - **Alice (Rest):** Hash ihres neuen Keys -> `change_ephemeral_pub_hash`.
         
-5. **L2 Signatur (Payload):**
+5. **L2 Signatur (`HMC_TX_AUTH_V3`):**
     
-    `Hash(pre_l2_tid + sender_ephemeral_pub + receiver_ephemeral_pub_hash + [change_ephemeral_pub_hash])`
+    Kanonischer längenpräfixierter Digest:  
+    `HMC_TX_AUTH_V3 || layer2_voucher_id || challenge_ds_tag || t_id || sender_ephemeral_pub || trap_r || trap_s || encrypted_timestamp || deletable_at || privacy_guard_hash`
     
-    _Dies garantiert: Ich, Alice, autorisiere exakt diese zwei neuen Hashes als rechtmäßige Nachfolger. Der Server prüft nur diese Autorisierung._
+    _Signiert mit dem ephemeren Schlüssel von Alice (`sender_ephemeral_pub`). Damit sind alle Transaktionen und Gossip-Fingerprints selbstauthentifizierend und binden den Trap-Shard untrennbar an die Transaktion._
     
 6. **Finalisierung:** Signatur der gesamten Tx und Anhängen an die Datei.
 

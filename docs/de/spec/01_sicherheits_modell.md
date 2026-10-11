@@ -18,9 +18,9 @@ Das System `human_money` realisiert ein digitales Bargeld, das radikaler ist als
     
     Die Identität (Public Key) des aktuellen Besitzers wird niemals im Klartext in der Kette gespeichert. Stattdessen nutzt das Protokoll kryptographische Commitments (Hashes). Erst im Moment der Ausgabe wird der Schlüssel enthüllt. Dies schützt ruhende Guthaben selbst vor zukünftigen Angriffen durch Quantencomputer, da der Private Key nicht aus dem Hash abgeleitet werden kann.
     
-2. **Mathematische Double-Spend Erkennung (Die Falle):**
+2. **Mathematische Double-Spend Erkennung (V3 SST - Shared-Signature Trap):**
     
-    Da es keine zentrale Instanz gibt, die "Doppelausgaben" in Echtzeit verhindert, nutzt das System eine mathematische Falle. Wer denselben Gutschein-Zustand zweimal ausgibt, muss zwangsläufig seine kryptographische Identität enthüllen. Dies geschieht rein rechnerisch durch den Vergleich von zwei anonymen Transaktions-Fingerprints (Slope-Calculation).
+    Da es keine zentrale Instanz gibt, die "Doppelausgaben" in Echtzeit verhindert, nutzt das System eine mathematische Falle auf Basis geteilter Schnorr-Signaturen. Wer denselben Gutschein-Zustand zweimal ausgibt, muss zwangsläufig seine kryptographische Langzeit-Identität enthüllen. Dies geschieht rein rechnerisch durch den Vergleich von zwei Transaktions-Shards mit unterschiedlichem $\tau$-Parameter.
     
 3. **Kontext-Integrität (Sub-Accounts):**
     
@@ -34,24 +34,25 @@ Dieses Modell beschreibt, wie das System spezifische Angriffe durch kryptographi
 
 - **Szenario:** Ein Angreifer sammelt Millionen von Public Keys und versucht, durch Einsetzen in die mathematische Falle (Trap) herauszufinden, wer der Sender einer anonymen Transaktion war.
     
-- **Analyse:** Die Trap-Gleichung lautet $V = m \cdot U + ID$. Da der Angreifer den Zufallsfaktor $m$ (die Steigung) nicht kennt, gibt es für jeden beliebigen Public Key auf der Welt ein hypothetisches $m$, das die Gleichung lösen würde.
+- **Analyse:** Im V3 SST-Modell trägt eine Spend-Transaktion lediglich einen Shard $(R_i, s_i)$ einer gemeinsamen deterministischen Schnorr-Signatur $\sigma = (R_{sig}, s_{sig})$:
+    $$R_i = R_{sig} + \tau_i \cdot M_R, \quad s_i = s_{sig} + \tau_i \cdot m_s \pmod q$$
+    wobei $\tau_i = H(\text{"HMC\_TAU\_V1"} \parallel ds\_tag \parallel t\_id_i) \pmod q$ spend-spezifisch ist. Die Maskierungswerte $(M_R, m_s)$ sind ausschließlich aus dem privaten Schlüssel $x$ des Senders abgeleitet.
     
-- **Ergebnis (Perfect Hiding):** Es ist mathematisch unmöglich, den wahren Sender von einer zufälligen Annahme zu unterscheiden. Die Privatsphäre ist informationstheoretisch sicher.
-    
+- **Ergebnis (Perfect Hiding):** Da dem Angreifer die Maskierungswerte und die Zufallsnonce der Signatur unbekannt sind, ist ein einzelner Shard für jeden beliebigen öffentlichen Schlüssel mathematisch mit uniform verteilten Werten lösbar. Die Privatsphäre einer Einzelausgabe ist informationstheoretisch perfekt geschützt.
 
 ### 2.2 Angriff: "Trap Evasion" (Ausweichen der Falle)
 
-- **Szenario:** Ein böswilliger Sender versucht, beim zweiten Ausgeben (Double Spend) ein anderes $m$ zu wählen, damit die mathematische Enttarnung fehlschlägt.
+- **Szenario:** Ein böswilliger Sender versucht, beim zweiten Ausgeben (Double Spend) manipulierte oder inkonsistente Trap-Werte einzureichen, damit die mathematische Enttarnung fehlschlägt.
     
-- **Abwehr (Deterministischer Zwang):** Der Zero-Knowledge-Proof (ZKP) validiert nicht nur die Gleichung, sondern erzwingt deterministische Ableitung via HKDF:
-    
-    $$m = HKDF(SenderPrivateKey, prev\_hash, info = prefix)$$
-    (Wobei das Präfix via HKDF-Expand untrennbar mit dem Schlüssel $m$ gebunden wird).
+- **Abwehr (Deterministischer Zwang & Fail-Closed Witness):**
+    1. Die Bindung an die Transaktion erfolgt zwingend über $\tau_i$ und den standardisierten Digest `HMC_TX_AUTH_V3`, welcher die ephemere Signatur `layer2_signature` erzwingt.
+    2. Der legitime Empfänger prüft den privaten SST-Zeugen $W = (\text{trap\_r\_sig}, \text{trap\_s\_sig}, \text{trap\_m\_r}, \text{trap\_m\_s})$ im `privacy_guard` (Fail-Closed R5). Fehlt dieser oder ist er inkonsistent, wird die Zahlung sofort abgewiesen.
+    3. Werden zwei kollidierende Transaktionen für denselben Input ($ds\_tag$) im Netzwerk bekannt, gilt $t\_id_1 \neq t\_id_2$ und somit $\tau_1 \neq \tau_2$:
+       $$s_1 - s_2 = (\tau_1 - \tau_2) \cdot m_s \pmod q \implies m_s = \frac{s_1 - s_2}{\tau_1 - \tau_2} \pmod q$$
+       Daraus ergibt sich $s_{sig} = s_1 - \tau_1 \cdot m_s \pmod q$. Da $s_{sig} = k + e \cdot x \pmod q$ ist, wird der geheime Langzeitschlüssel $x$ des Senders (und damit seine permanente DID) deterministisch und unwiderruflich berechnet.
 - **Ergebnis:**
-    
-    - Wählt der Angreifer das korrekte (gleiche) $m$ $\rightarrow$ Die Falle schnappt zu (Identität wird berechnet).
-        
-    - Wählt der Angreifer ein anderes $m$ $\rightarrow$ Der ZKP ist ungültig. Die Transaktion wird technisch abgewiesen.
+    - Führt der Angreifer einen Double-Spend aus $\rightarrow$ Die Falle schnappt zu (Identität wird offengelegt).
+    - Manipuliert der Angreifer die Shards $\rightarrow$ Der Witness-Check schlägt fehl und die Transaktion wird vom Empfänger fail-closed abgewiesen.
 
 ### 2.3 Angriff: "Prefix Confusion" (Falschbuchung)
 

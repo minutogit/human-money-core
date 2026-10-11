@@ -78,6 +78,8 @@ pub fn create_and_encrypt_bundle(
             )),
         ));
     }
+    validate_bundle_privacy_homogeneity(&vouchers)?;
+
     let mut bundle = TransactionBundle {
         bundle_id: "".to_string(),
         sender_id: identity.user_id.clone(),
@@ -127,6 +129,25 @@ pub fn create_and_encrypt_bundle(
     let container_bytes = serde_json::to_vec(&secure_container)?;
 
     Ok((container_bytes, bundle))
+}
+
+/// Validates that all voucher chains in a bundle share the same privacy mode.
+/// A bundle cannot mix anonymous/stealth and public transaction chains (fail-closed).
+fn validate_bundle_privacy_homogeneity(vouchers: &[Voucher]) -> Result<(), ValidationError> {
+    let has_anonymous = vouchers.iter().any(|v| {
+        v.transactions.last().is_some_and(|tx| {
+            tx.sender_id.is_none() || tx.recipient_id == crate::models::voucher::ANONYMOUS_ID
+        })
+    });
+    let has_public = vouchers.iter().any(|v| {
+        v.transactions.last().is_some_and(|tx| {
+            tx.sender_id.is_some() && tx.recipient_id != crate::models::voucher::ANONYMOUS_ID
+        })
+    });
+    if has_anonymous && has_public {
+        return Err(ValidationError::MixedPrivacyModesInBundleForbidden);
+    }
+    Ok(())
 }
 
 /// Determines whether a bundle contains at least one anonymous
@@ -234,6 +255,8 @@ pub fn open_and_verify_bundle(
             )),
         ));
     }
+
+    validate_bundle_privacy_homogeneity(&bundle.vouchers)?;
 
     // HMC-SEC-06-01 (bundle level): Recompute `bundle_id` from the received
     // content and require an exact match. `bundle_id` and `sender_signature`

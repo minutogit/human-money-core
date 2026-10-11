@@ -214,6 +214,10 @@ pub enum ValidationError {
     #[error("The digital signature of the secure container is invalid.")]
     InvalidContainerSignature,
 
+    /// Mixed privacy modes in transaction bundle are forbidden.
+    #[error("Mixed privacy modes in transaction bundle are forbidden: a bundle cannot mix anonymous/stealth and public transaction chains.")]
+    MixedPrivacyModesInBundleForbidden,
+
     /// Error during signature decoding (e.g. Base58).
     #[error("Failed to decode signature: {0}")]
     SignatureDecodeError(String),

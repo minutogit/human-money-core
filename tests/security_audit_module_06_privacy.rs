@@ -53,6 +53,8 @@ use human_money_core::services::utils::to_canonical_json;
 use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD};
 use human_money_core::wallet::Wallet;
 use human_money_core::wallet::types::{MultiTransferRequest, SourceTransfer};
+use human_money_core::Error as VoucherCoreError;
+use human_money_core::error::ValidationError;
 use std::collections::HashMap;
 
 /// Configures the FreeTaler standard with a specific privacy mode and returns
@@ -870,72 +872,85 @@ fn sa06_08_mixed_visibility_bundle_must_not_carry_permanent_key_envelope_signatu
         test_utils::add_voucher_to_wallet(&mut alice_wallet, alice, "100", &stealth_def, true)
             .expect("stealth voucher creation failed");
 
-    // Combined multi-source transfer; privacy mode resolved per voucher
-    // standard because use_privacy_mode = None.
-    let bundle_bytes = alice_wallet
-        .execute_multi_transfer_and_bundle(
-            alice,
-            &standards_map,
-            MultiTransferRequest {
-                recipient_id: bob.user_id.clone(),
-                sources: vec![
-                    SourceTransfer {
-                        local_instance_id: public_source,
-                        amount_to_send: "50".to_string(),
-                    },
-                    SourceTransfer {
-                        local_instance_id: stealth_source,
-                        amount_to_send: "50".to_string(),
-                    },
-                ],
-                notes: None,
-                sender_profile_name: None,
-                use_privacy_mode: None,
-            },
-            None,
-        )
-        .expect("mixed transfer failed")
-        .bundle_bytes;
-
-    // Parse the transport envelope (all an eavesdropper ever sees).
-    let container: SecureContainer =
-        serde_json::from_slice(&bundle_bytes).expect("container must deserialize");
-
-    // SECURE INVARIANT 1: a bundle containing an anonymous chain must NOT
-    // carry a plaintext envelope signature (de-anonymization oracle).
-    assert!(
-        container.signature.is_empty(),
-        "HMSEC-SA06-08 VIOLATION: mixed-visibility bundle keeps the \
-         permanent-key envelope signature alive because only ONE of the two \
-         chains is anonymous — the stealth sub-chain is de-anonymized \
-         through the transport layer (CWE-359)."
+    // Combined multi-source transfer: attempts to mix a Public voucher and a Stealth voucher.
+    // SECURE INVARIANT: Mixed privacy modes in a single bundle are strictly FORBIDDEN fail-closed
+    // to prevent de-anonymization oracle leaks (CWE-359).
+    let transfer_res = alice_wallet.execute_multi_transfer_and_bundle(
+        alice,
+        &standards_map,
+        MultiTransferRequest {
+            recipient_id: bob.user_id.clone(),
+            sources: vec![
+                SourceTransfer {
+                    local_instance_id: public_source.clone(),
+                    amount_to_send: "50".to_string(),
+                },
+                SourceTransfer {
+                    local_instance_id: stealth_source.clone(),
+                    amount_to_send: "50".to_string(),
+                },
+            ],
+            notes: None,
+            sender_profile_name: None,
+            use_privacy_mode: None,
+        },
+        None,
     );
 
-    // SECURE INVARIANT 2 (defense in depth): even IF signature material were
-    // present, no candidate permanent key may confirm against `i`.
-    if !container.signature.is_empty() {
-        let sig_bytes = bs58_decode_helper(&container.signature);
-        let signature = Signature::from_slice(&sig_bytes).expect("sig decodable");
-        assert!(
-            !verify_ed25519(&alice.public_key, container.i.as_bytes(), &signature),
-            "HMSEC-SA06-08 VIOLATION: eavesdropper attributes the whole \
-             container — including the stealth sub-chain — to the sender's \
-             permanent key via verify(P, i, sig)."
-        );
+    match transfer_res {
+        Err(VoucherCoreError::Validation(ValidationError::MixedPrivacyModesInBundleForbidden)) => {
+            // Creation correctly failed closed
+        }
+        other => panic!(
+            "HMSEC-SA06-08 EXPECTATION: mixed-visibility bundle must be rejected at creation \
+             with MixedPrivacyModesInBundleForbidden, got: {:?}",
+            other
+        ),
     }
 
-    // SECURE INVARIANT 3: authenticity must survive — Bob processes BOTH
-    // vouchers without error (inner bundle signature remains authoritative).
-    let mut bob_wallet = test_utils::setup_in_memory_wallet(bob);
-    let result = bob_wallet
-        .process_encrypted_transaction_bundle(bob, &bundle_bytes, None, &standards_map)
-        .expect("legitimate mixed bundle must remain processable");
-    assert_eq!(
-        result.involved_vouchers.len(),
-        2,
-        "HMSEC-SA06-08 REGRESSION: stripping the envelope signature must not \
-         affect delivery — both vouchers must arrive."
-    );
+    // Now test that open_and_verify_bundle also enforces this invariant upon receipt
+    // if an attacker crafts and sends a mixed bundle.
+    let public_v = alice_wallet.voucher_store.vouchers.get(&public_source).unwrap().voucher.clone();
+    let mut stealth_v = alice_wallet.voucher_store.vouchers.get(&stealth_source).unwrap().voucher.clone();
+    if let Some(last_tx) = stealth_v.transactions.last_mut() {
+        last_tx.recipient_id = human_money_core::models::voucher::ANONYMOUS_ID.to_string();
+        last_tx.sender_id = None;
+    }
+
+    let mut crafted_bundle = TransactionBundle {
+        bundle_id: String::new(),
+        sender_id: alice.user_id.clone(),
+        recipient_id: bob.user_id.clone(),
+        vouchers: vec![public_v, stealth_v],
+        timestamp: human_money_core::services::utils::get_current_timestamp(),
+        notes: None,
+        sender_signature: "test-sig".to_string(),
+        forwarded_fingerprints: Vec::new(),
+        quarantine_pairs: Vec::new(),
+        sender_profile_name: None,
+    };
+    let bundle_canonical = human_money_core::services::utils::to_canonical_json(&crafted_bundle).unwrap();
+    crafted_bundle.bundle_id = human_money_core::services::crypto::get_hash(bundle_canonical);
+    let bundle_bytes = serde_json::to_vec(&crafted_bundle).unwrap();
+    let container = SecureContainer::seal(
+        alice,
+        &ContainerConfig::TargetDid(bob.user_id.clone(), human_money_core::models::secure_container::PrivacyMode::TrialDecryption),
+        &bundle_bytes,
+        PayloadType::TransactionBundle,
+    ).unwrap();
+    let container_bytes = serde_json::to_vec(&container).unwrap();
+
+    let open_res = human_money_core::services::bundle_processor::open_and_verify_bundle(bob, &container_bytes);
+    match open_res {
+        Err(VoucherCoreError::Validation(ValidationError::MixedPrivacyModesInBundleForbidden)) => {
+            // Receive path correctly failed closed
+        }
+        other => panic!(
+            "HMSEC-SA06-08 EXPECTATION: open_and_verify_bundle must reject mixed-visibility \
+             bundle with MixedPrivacyModesInBundleForbidden, got: {:?}",
+            other
+        ),
+    }
 }
 
 // =============================================================================

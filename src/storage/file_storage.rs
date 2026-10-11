@@ -875,17 +875,6 @@ impl FileStorage {
         Ok(())
     }
 
-    /// Alias for `commit_wallet_atomic` (spec names `save_wallet_transaction`).
-    #[deprecated(note = "Use `commit_wallet_atomic` instead. This alias will be removed in a future version.")]
-    pub fn save_wallet_transaction(
-        &mut self,
-        wallet: &mut crate::wallet::Wallet,
-        identity: &crate::models::profile::UserIdentity,
-        auth: &AuthMethod,
-    ) -> Result<(), StorageError> {
-        self.commit_wallet_atomic(wallet, identity, auth)
-    }
-
     pub fn save_seal(
         &mut self,
         auth: &AuthMethod,
