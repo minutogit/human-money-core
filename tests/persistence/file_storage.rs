@@ -910,3 +910,29 @@ fn test_wallet_lock_guard_does_not_delete_persistent_lock() {
     storage.unlock().unwrap();
     assert!(!storage.get_lock_file_path().exists());
 }
+
+#[test]
+fn test_wallet_lock_guard_concurrent_same_process_rejected() {
+    use human_money_core::storage::WalletLockGuard;
+    use human_money_core::storage::file_storage::FileStorage;
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let storage = FileStorage::new(dir.path());
+
+    let guard1 = WalletLockGuard::new(&storage).expect("First guard should succeed");
+
+    // Concurrent attempt within same process MUST be rejected by process lock table
+    let guard2_res = WalletLockGuard::new(&storage);
+    assert!(
+        guard2_res.is_err(),
+        "Concurrent guard acquisition in same process must be rejected"
+    );
+
+    // Drop first guard
+    drop(guard1);
+
+    // Now acquisition must succeed again
+    let guard3 = WalletLockGuard::new(&storage).expect("Guard acquisition should succeed after drop");
+    drop(guard3);
+}

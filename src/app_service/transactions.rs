@@ -458,4 +458,25 @@ impl AppService {
             }
         })
     }
+
+    /// Deletes an incomplete voucher created by the user before it entered circulation.
+    ///
+    /// # Arguments
+    /// * `local_instance_id` - The local ID of the incomplete voucher.
+    /// * `password` - The wallet password (or session-cached if None).
+    ///
+    /// # Returns
+    /// A `Result` returning `Ok(())` on success.
+    pub fn delete_incomplete_voucher(
+        &mut self,
+        local_instance_id: &str,
+        password: Option<&str>,
+    ) -> Result<(), Error> {
+        self.with_transactional_mut(password, |temp_wallet, identity, _, _| {
+            match temp_wallet.delete_incomplete_voucher(local_instance_id, &identity.user_id) {
+                Ok(()) => TransactionOutcome::Commit(()),
+                Err(e) => TransactionOutcome::Rollback(e),
+            }
+        })
+    }
 }

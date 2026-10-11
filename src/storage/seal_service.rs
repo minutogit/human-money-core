@@ -72,19 +72,14 @@ impl SealService {
         let record_opt = storage.load_seal(auth)?;
 
         if let Some(record) = record_opt {
-            let current_state_hash = Self::calculate_state_hash(&wallet.own_fingerprints)?;
-
-            if record.seal.payload.state_hash == current_state_hash {
-                return Ok(());
-            }
-
-            // Check comprehensive state hash
             let merkle_root = crate::models::seal::calculate_voucher_merkle_root(&wallet.voucher_store.vouchers);
+            let own_fp_hash = Self::calculate_state_hash(&wallet.own_fingerprints)?;
+
             let comp_hash = Self::calculate_comprehensive_state_hash(
                 record.seal.payload.epoch as u64,
                 record.seal.payload.tx_nonce,
                 &merkle_root,
-                &current_state_hash,
+                &own_fp_hash,
             );
 
             if record.seal.payload.state_hash == comp_hash {
@@ -100,7 +95,7 @@ impl SealService {
     /// wallet state without touching the `AppService`'s in-memory state.
     ///
     /// 1. Loads the current seal (if any).
-    /// 2. Computes the state hash via [`Self::calculate_state_hash`].
+    /// 2. Computes the comprehensive state hash via [`Self::calculate_comprehensive_state_hash`].
     /// 3. Either updates the existing seal (`seal.update`) or creates the
     ///    genesis seal (`WalletSeal::create_initial`).
     /// 4. Saves the new `LocalSealRecord` with `SyncStatus::PendingUpload`.
@@ -114,29 +109,30 @@ impl SealService {
     ) -> Result<(), Error> {
         let record_opt = storage.load_seal(auth)?;
 
-        // AUDIT-00-WILDCARD-R2-09 FIX: Persist the COMPREHENSIVE state hash
-        // (voucher Merkle root + epoch/nonce + own_fingerprints) instead of the
-        // narrow own_fingerprints-only hash. The narrow hash leaves received
-        // (non-own) vouchers invisible to the rollback guard, allowing silent
-        // rollback of received funds. The verifier already accepts both forms
-        // for backward compat, so new seals use comprehensive while old seals
-        // remain verifiable.
-        // AUDIT-00-WILDCARD-R2-09 (DEFERRED MIGRATION):
-        // Persist comprehensive hash for new wallets while keeping backward
-        // compat for existing seals. The comprehensive hash is computed but
-        // NOT persisted yet for wallets with existing narrow seals to avoid
-        // breaking the atomic rollback simulation (file-copy) tests that rely
-        // on byte-identical seal generation. The verifier already accepts both.
-        // A future migration will flip this to comprehensive persistence.
-        // For now we persist NARROW to keep current test suite green while
-        // documenting the residual risk (wildcard_02 documents the gap).
-        let current_state_hash = Self::calculate_state_hash(&wallet.own_fingerprints)?;
+        let merkle_root = crate::models::seal::calculate_voucher_merkle_root(&wallet.voucher_store.vouchers);
+        let own_fp_hash = Self::calculate_state_hash(&wallet.own_fingerprints)?;
 
         let updated_seal = match record_opt {
             Some(mut record) => {
+                let next_epoch = record.seal.payload.epoch as u64;
+                let next_nonce = record.seal.payload.tx_nonce.checked_add(1).ok_or_else(|| {
+                    crate::error::VoucherCoreError::Validation(
+                        crate::error::ValidationError::InvalidTransaction(
+                            "Seal tx_nonce overflow: counter at u64::MAX, wallet requires recovery"
+                                .to_string(),
+                        ),
+                    )
+                })?;
+                let comp_hash = Self::calculate_comprehensive_state_hash(
+                    next_epoch,
+                    next_nonce,
+                    &merkle_root,
+                    &own_fp_hash,
+                );
+
                 let seal = record.seal.update(
                     identity,
-                    &current_state_hash,
+                    &comp_hash,
                     &wallet.local_instance_id,
                 )?;
 
@@ -147,10 +143,17 @@ impl SealService {
                 seal
             }
             None => {
+                let genesis_hash = Self::calculate_comprehensive_state_hash(
+                    0,
+                    0,
+                    &merkle_root,
+                    &own_fp_hash,
+                );
+
                 let seal = WalletSeal::create_initial(
                     &identity.user_id,
                     identity,
-                    &current_state_hash,
+                    &genesis_hash,
                     &wallet.local_instance_id,
                 )?;
 

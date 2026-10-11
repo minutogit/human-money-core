@@ -527,6 +527,13 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
             &AuthMethod::Password("password123"),
         )
         .unwrap();
+    human_money_core::storage::seal_service::SealService::persist_seal_for_wallet_state(
+        &mut storage,
+        &identity,
+        &AuthMethod::Password("password123"),
+        &wallet,
+    )
+    .unwrap();
 
     // Reload AppService (simulates app restart after "restore")
     let mut app_service = AppService::new(storage_path).unwrap();

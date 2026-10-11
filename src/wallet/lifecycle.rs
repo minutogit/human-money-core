@@ -413,19 +413,72 @@ impl Wallet {
         identity: &UserIdentity,
         old_seal: Option<&crate::models::seal::WalletSeal>,
     ) -> Result<crate::models::seal::WalletSeal, VoucherCoreError> {
-        let state_hash = {
+        let merkle_root = crate::models::seal::calculate_voucher_merkle_root(&self.voucher_store.vouchers);
+        let own_fp_hash = {
             let canonical = crate::services::utils::to_canonical_json(&self.own_fingerprints)?;
             crate::services::crypto::get_hash(canonical.as_bytes())
         };
+        let next_epoch = old_seal.map_or(1, |s| (s.payload.epoch as u64) + 1);
+        let next_nonce = 0;
+        let comp_hash = crate::storage::seal_service::SealService::calculate_comprehensive_state_hash(
+            next_epoch,
+            next_nonce,
+            &merkle_root,
+            &own_fp_hash,
+        );
 
         WalletSeal::recover_epoch(
             old_seal,
             &identity.user_id,
             identity,
-            &state_hash,
+            &comp_hash,
             &self.local_instance_id,
         )
     }
 
+    /// Deletes an incomplete voucher from the wallet.
+    ///
+    /// This operation is only permitted if:
+    /// - The voucher exists in `voucher_store.vouchers`.
+    /// - The voucher status is `VoucherStatus::Incomplete`.
+    /// - Only the `init` transaction exists (`transactions.len() == 1`).
+    /// - The requesting `user_id` matches the voucher creator ID.
+    pub fn delete_incomplete_voucher(
+        &mut self,
+        local_instance_id: &str,
+        user_id: &str,
+    ) -> Result<(), VoucherCoreError> {
+        let instance = match self.voucher_store.vouchers.get(local_instance_id) {
+            Some(inst) => inst,
+            None => {
+                return Err(VoucherCoreError::Validation(
+                    ValidationError::InvalidTransaction(
+                        "Cannot delete active, circulating, or foreign voucher".into(),
+                    ),
+                ));
+            }
+        };
+
+        let is_incomplete = matches!(instance.status, VoucherStatus::Incomplete { .. });
+        let has_single_init = instance.voucher.transactions.len() == 1
+            && instance
+                .voucher
+                .transactions
+                .first()
+                .map_or(false, |tx| tx.t_type == "init");
+        let is_creator = instance.voucher.creator_profile.id.as_deref() == Some(user_id);
+
+        if !is_incomplete || !has_single_init || !is_creator {
+            return Err(VoucherCoreError::Validation(
+                ValidationError::InvalidTransaction(
+                    "Cannot delete active, circulating, or foreign voucher".into(),
+                ),
+            ));
+        }
+
+        self.voucher_store.vouchers.remove(local_instance_id);
+        self.scan_and_rebuild_fingerprints()?;
+        Ok(())
+    }
 }
 

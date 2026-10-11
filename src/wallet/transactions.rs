@@ -200,6 +200,40 @@ impl Wallet {
         epoch: u32,
         force_accept: bool,
     ) -> Result<ProcessBundleResult, VoucherCoreError> {
+        // If a signature container is received, handle it as a detached signature
+        if let Ok(deserialized_container) =
+            serde_json::from_slice::<SecureContainer>(container_bytes)
+            && matches!(deserialized_container.c, PayloadType::DetachedSignature)
+        {
+            let updated_instance_id =
+                self.process_and_attach_signature(identity, container_bytes, None)?;
+            let instance = self
+                .voucher_store
+                .vouchers
+                .get(&updated_instance_id)
+                .ok_or_else(|| {
+                    VoucherCoreError::VoucherNotFound(updated_instance_id.clone())
+                })?;
+            let standard_uuid = instance.voucher.voucher_standard.uuid.clone();
+            let standard_def = registry.get(&standard_uuid).ok_or_else(|| {
+                crate::Error::Wallet(crate::error::WalletError::StandardNotFound {
+                    uuid: standard_uuid,
+                })
+            })?;
+
+            if crate::services::voucher_validation::validate_voucher_against_standard(
+                &instance.voucher,
+                standard_def,
+            )
+            .is_ok()
+            {
+                self.update_voucher_status(&updated_instance_id, VoucherStatus::Active);
+                self.scan_and_rebuild_fingerprints()?;
+            }
+
+            return Ok(ProcessBundleResult::default());
+        }
+
         let mut bundle = bundle_processor::open_and_verify_bundle(identity, container_bytes)?;
 
         // HMSEC-SA06-10: The sender_profile_name is attacker-controlled
@@ -385,14 +419,6 @@ impl Wallet {
         // Fingerprint stores are rebuilt from the VoucherStore on every change.
         // IMPORTANT: Use the Wallet method that preserves history.
         self.scan_and_rebuild_fingerprints()?;
-
-        // If a signature is received, the voucher status must be updated
-        if let Ok(deserialized_container) =
-            serde_json::from_slice::<SecureContainer>(container_bytes)
-            && matches!(deserialized_container.c, PayloadType::DetachedSignature) {
-                self.process_and_attach_signature(identity, container_bytes, None)?;
-                return Ok(ProcessBundleResult::default());
-            }
 
         let check_result = conflict_manager::check_for_double_spend(
             &self.own_fingerprints,

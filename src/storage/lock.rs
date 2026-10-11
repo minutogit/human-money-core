@@ -17,6 +17,22 @@ use sysinfo::{Pid, System};
 use super::StorageError;
 use crate::storage::file_storage::FileStorage;
 
+lazy_static::lazy_static! {
+    static ref PROCESS_LOCK_TABLE: std::sync::Mutex<std::collections::HashSet<PathBuf>> =
+        std::sync::Mutex::new(std::collections::HashSet::new());
+}
+
+fn get_canonical_path(storage: &FileStorage) -> PathBuf {
+    let lock_path = storage.get_lock_file_path();
+    if let Ok(canon) = lock_path.canonicalize() {
+        canon
+    } else if let Ok(dir_canon) = storage.user_storage_path.canonicalize() {
+        dir_canon.join(lock_path.file_name().unwrap_or_default())
+    } else {
+        lock_path.clone()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // RAII guard (moved from `storage::mod`)
 // ---------------------------------------------------------------------------
@@ -31,16 +47,43 @@ use crate::storage::file_storage::FileStorage;
 /// `new` returns a typed `StorageError::LockFailed` instead of panicking.
 pub struct WalletLockGuard {
     lock_file_path: PathBuf,
+    canonical_path: PathBuf,
     was_already_locked: bool,
 }
 
 impl WalletLockGuard {
     /// Creates a new guard and immediately attempts to acquire the lock.
     pub fn new(storage: &FileStorage) -> Result<Self, StorageError> {
-        let is_newly_locked = acquire_lock(storage)?; // Acquire lock upon creation
+        let canonical_path = get_canonical_path(storage);
+
+        // Process-wide lock table: prevent re-entrancy / concurrency races across threads in the same process
+        {
+            let mut table = PROCESS_LOCK_TABLE
+                .lock()
+                .map_err(|_| StorageError::LockFailed("Process lock table poisoned".to_string()))?;
+            if !table.insert(canonical_path.clone()) {
+                return Err(StorageError::LockFailed(format!(
+                    "Wallet wird bereits von einem anderen Vorgang in diesem Prozess verwendet: {:?}",
+                    canonical_path
+                )));
+            }
+        }
+
+        let is_newly_locked = match acquire_lock(storage) {
+            Ok(newly_locked) => newly_locked,
+            Err(e) => {
+                // If acquiring the file lock failed, clean up from process lock table
+                if let Ok(mut table) = PROCESS_LOCK_TABLE.lock() {
+                    table.remove(&canonical_path);
+                }
+                return Err(e);
+            }
+        };
+
         let lock_file_path = storage.get_lock_file_path().clone();
         Ok(Self {
             lock_file_path,
+            canonical_path,
             was_already_locked: !is_newly_locked,
         })
     }
@@ -48,6 +91,11 @@ impl WalletLockGuard {
 
 impl Drop for WalletLockGuard {
     fn drop(&mut self) {
+        // Release from the in-process lock table
+        if let Ok(mut table) = PROCESS_LOCK_TABLE.lock() {
+            table.remove(&self.canonical_path);
+        }
+
         // Delete the file ONLY if we created it ourselves (was_already_locked == false)
         if !self.was_already_locked && self.lock_file_path.exists()
             && let Err(e) = fs::remove_file(&self.lock_file_path)

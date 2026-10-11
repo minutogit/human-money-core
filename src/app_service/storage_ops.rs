@@ -518,10 +518,19 @@ impl AppService {
             // Load the RAW own_fingerprints store directly from storage
             let raw_own_fingerprints = storage.load_own_fingerprints(&auth)?;
 
-            let current_state_hash =
+            let own_fp_hash =
                 crate::storage::seal_service::SealService::calculate_state_hash(&raw_own_fingerprints)?;
 
-            if record.seal.payload.state_hash != current_state_hash {
+            let (_, voucher_store, _) = storage.load_wallet(&auth)?;
+            let merkle_root = crate::models::seal::calculate_voucher_merkle_root(&voucher_store.vouchers);
+            let comp_hash = crate::storage::seal_service::SealService::calculate_comprehensive_state_hash(
+                record.seal.payload.epoch as u64,
+                record.seal.payload.tx_nonce,
+                &merkle_root,
+                &own_fp_hash,
+            );
+
+            if record.seal.payload.state_hash != comp_hash {
                 return Err(Error::StateRollbackDetected);
             }
         }
@@ -541,32 +550,59 @@ impl AppService {
 
         // Only migrate if necessary (legacy binding or no seal present)
         if needs_legacy_binding || seal_record.is_none() {
-            let state_hash =
+            let merkle_root = crate::models::seal::calculate_voucher_merkle_root(&wallet.voucher_store.vouchers);
+            let own_fp_hash =
                 crate::storage::seal_service::SealService::calculate_state_hash(&wallet.own_fingerprints)?;
 
             let migrated_seal = if needs_legacy_binding {
                 if let Some(existing_record) = seal_record {
+                    let next_epoch = existing_record.seal.payload.epoch as u64;
+                    let next_nonce = existing_record.seal.payload.tx_nonce.checked_add(1).ok_or_else(|| {
+                        crate::error::VoucherCoreError::Validation(
+                            crate::error::ValidationError::InvalidTransaction(
+                                "Seal tx_nonce overflow: counter at u64::MAX, wallet requires recovery".to_string(),
+                            ),
+                        )
+                    })?;
+                    let comp_hash = crate::storage::seal_service::SealService::calculate_comprehensive_state_hash(
+                        next_epoch,
+                        next_nonce,
+                        &merkle_root,
+                        &own_fp_hash,
+                    );
                     // Legacy Migration: Update existing seal to preserve the tx_nonce
                     existing_record.seal.update(
                         identity,
-                        &state_hash,
+                        &comp_hash,
                         &wallet.local_instance_id,
                     )?
                 } else {
+                    let genesis_hash = crate::storage::seal_service::SealService::calculate_comprehensive_state_hash(
+                        0,
+                        0,
+                        &merkle_root,
+                        &own_fp_hash,
+                    );
                     // Completely new seal (Genesis)
                     WalletSeal::create_initial(
                         &identity.user_id,
                         identity,
-                        &state_hash,
+                        &genesis_hash,
                         &wallet.local_instance_id,
                     )?
                 }
             } else {
+                let genesis_hash = crate::storage::seal_service::SealService::calculate_comprehensive_state_hash(
+                    0,
+                    0,
+                    &merkle_root,
+                    &own_fp_hash,
+                );
                 // Completely new seal (Genesis)
                 WalletSeal::create_initial(
                     &identity.user_id,
                     identity,
-                    &state_hash,
+                    &genesis_hash,
                     &wallet.local_instance_id,
                 )?
             };

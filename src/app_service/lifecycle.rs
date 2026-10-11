@@ -137,12 +137,19 @@ impl AppService {
             .save(&mut storage, &identity, &AuthMethod::Password(password))?;
 
         // --- WALLET SEAL: Create initial seal (Epoch 0) ---
-        let state_hash =
+        let merkle_root = crate::models::seal::calculate_voucher_merkle_root(&wallet.voucher_store.vouchers);
+        let own_fp_hash =
             crate::storage::seal_service::SealService::calculate_state_hash(&wallet.own_fingerprints)?;
+        let genesis_hash = crate::storage::seal_service::SealService::calculate_comprehensive_state_hash(
+            0,
+            0,
+            &merkle_root,
+            &own_fp_hash,
+        );
         let initial_seal = WalletSeal::create_initial(
             &identity.user_id,
             &identity,
-            &state_hash,
+            &genesis_hash,
             &local_instance_id,
         )?;
 
@@ -342,14 +349,22 @@ impl AppService {
                 .ok()
                 .flatten();
 
-            let current_state_hash =
+            let merkle_root = crate::models::seal::calculate_voucher_merkle_root(&wallet.voucher_store.vouchers);
+            let own_fp_hash =
                 crate::storage::seal_service::SealService::calculate_state_hash(&wallet.own_fingerprints)?;
+            let next_epoch = existing_seal.as_ref().map_or(1, |r| (r.seal.payload.epoch as u64) + 1);
+            let comp_hash = crate::storage::seal_service::SealService::calculate_comprehensive_state_hash(
+                next_epoch,
+                0,
+                &merkle_root,
+                &own_fp_hash,
+            );
 
             let recovered_seal = WalletSeal::recover_epoch(
                 existing_seal.as_ref().map(|r| &r.seal),
                 &identity.user_id,
                 &identity,
-                &current_state_hash,
+                &comp_hash,
                 &local_instance_id,
             )?;
 
