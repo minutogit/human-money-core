@@ -60,7 +60,7 @@ pub use models::voucher::{
     VoucherSignature, VoucherStandard,
 };
 pub use models::discovery::{BootstrapNodeEntry, BootstrapSeedFile, CustomServerEntry};
-pub use models::layer2_api::L2ProcessingOutcome;
+pub use models::layer2_api::{L2ProcessingOutcome, VoucherReconciliationResult};
 pub use models::voucher_standard_definition::VoucherStandardDefinition;
 pub use models::wallet_event::{EventBffData, WalletEvent, WalletEventType};
 pub use services::latency_router::{PeerLatencyInfo, compute_median_latency, update_ema_latency};

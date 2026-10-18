@@ -440,3 +440,29 @@ pub enum L2ProcessingOutcome {
     Quarantined { reason: String },
     SyncRequired { sync_point: String },
 }
+
+/// Outcome of reconciling an individual voucher output against Layer-2 status.
+///
+/// # Two-Tier Ingress Safety Architecture:
+/// - **Tier 1 (Macro-Check - WalletSeal / State Anchor):**
+///   On startup or sync, the wallet checks its State Anchor (`build_anchor_status_query`).
+///   If `AnchorSyncVerdict::Synchronized`, the entire wallet (all vouchers bound in
+///   `voucher_merkle_root`) is guaranteed to be consistent with Layer-2 in O(1).
+///   No per-voucher checks are needed.
+/// - **Tier 2 (Micro-Check - Voucher-Level Reconciliation):**
+///   If Tier 1 detects a rollback (`AnchorSyncVerdict::RollbackDetected`, e.g. after
+///   restoring a backup), or when performing a targeted pre-payment check at checkout,
+///   individual voucher outputs are queried via `POST /v1/status`.
+///   - `UnspentSafe` (HTTP 404): No successor lock exists. The voucher output is unspent and safe to use.
+///   - `AlreadySpent` (HTTP 200): A child lock exists. The voucher was already spent.
+///     The wallet marks it as `VoucherStatus::Archived` and updates balances.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VoucherReconciliationResult {
+    /// No successor lock exists on L2 (HTTP 404). Output is unspent and safe to spend.
+    UnspentSafe,
+    /// A successor lock exists on L2 (HTTP 200). The voucher was already spent remotely.
+    /// The wallet has updated its status to `VoucherStatus::Archived` and adjusted balances.
+    AlreadySpent {
+        successor_t_id: String,
+    },
+}

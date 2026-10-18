@@ -7,7 +7,7 @@
 use super::{AppService, AppState, TransactionOutcome};
 use crate::app_service::orchestrator::{ReloadPolicy, TransactionOrchestrator};
 use crate::models::conflict::{ProofOfDoubleSpend, ResolutionEndorsement};
-use crate::models::layer2_api::{L2AuthPayload, L2StatusQuery};
+use crate::models::layer2_api::{L2LockEntry, VoucherReconciliationResult};
 use crate::services::l2_gateway::{self, VerdictAction};
 use crate::wallet::instance::VoucherStatus;
 use crate::wallet::CleanupReport;
@@ -227,37 +227,45 @@ impl AppService {
             _ => return Err(Error::WalletLocked),
         };
 
-        let instance = wallet
-            .get_voucher_instance(local_instance_id)
-            .ok_or_else(|| Error::VoucherNotFound(local_instance_id.to_string()))?;
-
-        let layer2_voucher_id =
-            l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])?;
-
-        let challenge_ds_tag = if let Some(last_tx) = instance.voucher.transactions.last() {
-            l2_gateway::derive_challenge_tag(last_tx)?
-        } else {
-            return Err(Error::App(crate::error::AppError::VoucherHasNoTransactions));
-        };
-
-        let locator_prefixes = l2_gateway::generate_locator_prefixes(&instance.voucher);
-
-        let mut ephemeral_key = [0u8; 32];
-        OsRng.fill_bytes(&mut ephemeral_key);
-        let auth = L2AuthPayload {
-            ephemeral_pubkey: ephemeral_key,
-            auth_signature: None,
-        };
-
-        let query = L2StatusQuery {
-            auth,
-            layer2_voucher_id,
-            challenge_ds_tag,
-            locator_prefixes,
-            read_quorum: 1,
-        };
-
+        let query = wallet.build_voucher_status_query(local_instance_id, 1)?;
         serde_json::to_vec(&query).map_err(Error::from)
+    }
+
+    /// Reconciles an individual voucher's status against Layer-2 status query results.
+    ///
+    /// # Two-Tier Ingress Safety Architecture:
+    /// - **Tier 1 (Macro-Check - WalletSeal / State Anchor):**
+    ///   On startup or periodic synchronization, the wallet verifies its State Anchor
+    ///   via `build_anchor_status_query`. If `AnchorSyncVerdict::Synchronized`, the entire
+    ///   wallet (all vouchers bound in `voucher_merkle_root`) is confirmed consistent with
+    ///   Layer-2 in O(1). No individual voucher checks are required.
+    /// - **Tier 2 (Micro-Check - Voucher-Level Reconciliation):**
+    ///   If Tier 1 detects a rollback (`AnchorSyncVerdict::RollbackDetected`, e.g. after
+    ///   restoring a backup), or when performing a targeted pre-payment safety check before checkout,
+    ///   `reconcile_voucher_state` synchronizes individual voucher outputs.
+    ///   - If `successor_lock.is_none()` (HTTP 404), the voucher is unspent and safe to spend.
+    ///     The voucher remains [`VoucherStatus::Active`].
+    ///   - If `successor_lock.is_some()` (HTTP 200), a child lock exists on Layer-2 and the voucher
+    ///     was already spent remotely. It is transitioned to [`VoucherStatus::Archived`], committed
+    ///     transactionally via [`TransactionOrchestrator`], and removed from available balances.
+    pub fn reconcile_voucher_state(
+        &mut self,
+        local_instance_id: &str,
+        successor_lock: Option<&L2LockEntry>,
+        password: Option<&str>,
+    ) -> Result<VoucherReconciliationResult, Error> {
+        let local_id = local_instance_id.to_string();
+        TransactionOrchestrator::execute_with_policy(
+            self,
+            password,
+            ReloadPolicy::ReconcileReload,
+            move |temp_wallet, _identity, _storage, _auth| {
+                match temp_wallet.reconcile_voucher_state(&local_id, successor_lock) {
+                    Ok(result) => TransactionOutcome::Commit(result),
+                    Err(e) => TransactionOutcome::Rollback(Error::from(e)),
+                }
+            },
+        )
     }
 
     /// Processes an L2Verdict and executes the corresponding action on the wallet.

@@ -67,6 +67,14 @@ pub enum VerdictAction {
     TriggerSync { sync_point: String },
 }
 
+/// Evaluates whether an HTTP status code indicates a successful Layer-2 lock response.
+///
+/// Both `201 Created` (first-time registration) and `200 OK` (idempotent replay under Rule 3)
+/// are valid successful confirmations.
+pub fn is_l2_success_http_status(status_code: u16) -> bool {
+    matches!(status_code, 200 | 201)
+}
+
 /// Verifies the plausibility of a QuorumCertificate according to order-statistics quorum rules.
 /// Returns Ok((is_valid, is_final)).
 pub fn verify_quorum_plausibility(
@@ -452,7 +460,7 @@ fn matches_lock_id(t_id_bytes: &[u8; 32], cert_lock_id: &str) -> bool {
 /// Verifies that a lock entry is mathematically authentic (Proof of Truth):
 /// checks voucher ID, ephemeral key validity, canonical payload signature,
 /// and optionally binds the ephemeral public key to the expected key.
-fn verify_lock_entry_proof(
+pub fn verify_lock_entry_proof(
     lock_entry: &crate::models::layer2_api::L2LockEntry,
     expected_voucher_id: &str,
     expected_ephemeral_pub: Option<&str>,
@@ -1597,5 +1605,66 @@ mod tests {
         let empty_voucher = crate::models::voucher::Voucher::default();
         let err4 = build_voucher_lock_chain(&empty_voucher, None, target_req).unwrap_err();
         assert!(format!("{:?}", err4).contains("MissingTransactions") || format!("{:?}", err4).contains("transactions"));
+    }
+
+    #[test]
+    fn test_l2_lock_request_signature_commits_to_created_at_ms() {
+        use crate::test_utils::voucher_setup::setup_voucher_with_one_tx;
+
+        #[cfg(feature = "test-utils")]
+        crate::set_signature_bypass(false);
+
+        let (_standard, _hash, _creator, _recipient, voucher1, _secrets1) = setup_voucher_with_one_tx();
+        assert!(voucher1.transactions.len() >= 2);
+        let layer2_id = extract_layer2_voucher_id(&voucher1).expect("extract layer2 id");
+        let spend_tx = &voucher1.transactions[1];
+
+        let sender_str = spend_tx
+            .sender_ephemeral_pub
+            .as_deref()
+            .expect("sender ephemeral pub");
+        let sender_bytes =
+            crate::services::crypto::decode_bs58_fixed::<32>(sender_str, "sender_pub").unwrap();
+
+        let req = generate_lock_request(&layer2_id, spend_tx, &sender_bytes).expect("generate lock request");
+        let challenge_ds_tag = derive_challenge_tag(spend_tx).expect("derive challenge ds tag");
+
+        let lock_entry = L2LockEntry::from(req);
+
+        // 1. Valid lock entry proof must verify successfully
+        verify_lock_entry_proof(&lock_entry, &layer2_id, Some(sender_str), &challenge_ds_tag)
+            .expect("Valid signature verification must succeed");
+
+        // 2. Mutating created_at_ms (+1) must invalidate the signature proof
+        let mut mutated_created_at = lock_entry.clone();
+        mutated_created_at.created_at_ms = mutated_created_at.created_at_ms.wrapping_add(1);
+        let err_created_at = verify_lock_entry_proof(
+            &mutated_created_at,
+            &layer2_id,
+            Some(sender_str),
+            &challenge_ds_tag,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err_created_at, VoucherCoreError::Validation(crate::error::ValidationError::InvalidL2Proof)),
+            "Mutated created_at_ms must fail with InvalidL2Proof, got {:?}",
+            err_created_at
+        );
+
+        // 3. Mutating encrypted_timestamp (+1) must invalidate the signature proof
+        let mut mutated_enc_ts = lock_entry.clone();
+        mutated_enc_ts.encrypted_timestamp = mutated_enc_ts.encrypted_timestamp.wrapping_add(1);
+        let err_enc_ts = verify_lock_entry_proof(
+            &mutated_enc_ts,
+            &layer2_id,
+            Some(sender_str),
+            &challenge_ds_tag,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err_enc_ts, VoucherCoreError::Validation(crate::error::ValidationError::InvalidL2Proof)),
+            "Mutated encrypted_timestamp must fail with InvalidL2Proof, got {:?}",
+            err_enc_ts
+        );
     }
 }

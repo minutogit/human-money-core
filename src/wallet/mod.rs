@@ -10,6 +10,7 @@ pub mod instance;
 pub mod types;
 pub mod routing_memory;
 pub mod coin_selection;
+pub mod reconciliation;
 mod conflicts;
 mod lifecycle;
 mod queries;

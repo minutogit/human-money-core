@@ -301,6 +301,13 @@ impl Wallet {
         Ok(None)
     }
 
+    /// Returns aggregated balances across all active vouchers.
+    ///
+    /// Alias / convenience wrapper around [`Wallet::get_total_balance_by_currency`].
+    pub fn get_aggregated_balances(&self) -> Vec<AggregatedBalance> {
+        self.get_total_balance_by_currency(None)
+    }
+
     /// Aggregates the balances of all active vouchers, grouped by currency/unit.
     ///
     /// This function sums up the values of all vouchers with status `Active`

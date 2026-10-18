@@ -668,7 +668,7 @@ impl Wallet {
     /// effects are performed by the orchestrating caller strictly after its
     /// atomic commit point (HMC-SEC-04-03).
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn _execute_single_transfer(
+    pub fn _execute_single_transfer(
         &mut self,
         identity: &UserIdentity,
         standard_definition: &VoucherStandardDefinition,
