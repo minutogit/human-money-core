@@ -875,6 +875,7 @@ pub fn verify_transaction_integrity_and_signature(
             };
             let encrypted_timestamp = crate::services::conflict_manager::
                 encrypt_transaction_timestamp(transaction)?;
+            let created_at_ms = crate::services::utils::parse_timestamp_ms(&transaction.t_time)?;
 
             let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
                 if transaction.t_type == "init" {
@@ -888,6 +889,7 @@ pub fn verify_transaction_integrity_and_signature(
                 trap_r_str,
                 trap_s_str,
                 encrypted_timestamp,
+                created_at_ms,
                 transaction.deletable_at.as_deref(),
                 &crate::services::l2_gateway::privacy_guard_commitment(
                     transaction.privacy_guard.as_deref(),

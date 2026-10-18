@@ -156,6 +156,8 @@ pub fn create_fingerprint_for_transaction(
         crate::services::l2_gateway::extract_layer2_voucher_id(voucher)?
     };
 
+    let created_at_ms = crate::services::utils::parse_timestamp_ms(&transaction.t_time).unwrap_or(0);
+
     Ok(TransactionFingerprint {
         ds_tag: tag,
         t_id: transaction.t_id.clone(),
@@ -172,6 +174,7 @@ pub fn create_fingerprint_for_transaction(
         privacy_guard_hash: crate::services::l2_gateway::privacy_guard_commitment(
             transaction.privacy_guard.as_deref(),
         ),
+        created_at_ms,
     })
 }
 
@@ -258,6 +261,7 @@ pub fn verify_fingerprint_signature(fp: &TransactionFingerprint) -> bool {
         &fp.trap_r,
         &fp.trap_s,
         fp.encrypted_timestamp,
+        fp.created_at_ms,
         deletable_at,
         &fp.privacy_guard_hash,
     );

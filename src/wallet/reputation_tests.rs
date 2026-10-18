@@ -765,6 +765,7 @@ mod tests {
         let foreign_fp = TransactionFingerprint {
             t_id: foreign_t_id.clone(),
             encrypted_timestamp: foreign_enc_ts,
+            created_at_ms: 0,
             ds_tag,
             trap_r: "u".to_string(),
             trap_s: "b".to_string(),

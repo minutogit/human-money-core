@@ -172,6 +172,22 @@ impl AppService {
 
     // --- L2 Facade (from l2_facade) ---
 
+    /// Generates a serialized JSON [`L2LockRequest`](crate::models::layer2_api::L2LockRequest)
+    /// for the latest transaction of a voucher.
+    ///
+    /// # Gateway Retry & Multi-Homing Invariant (Client & Tauri Guide):
+    /// The returned byte vector is **strictly immutable**. Application clients (e.g. Tauri frontend)
+    /// **MUST reuse this exact byte vector identically** when retrying failed HTTP calls or falling
+    /// back to alternate gateway nodes in the cluster.
+    ///
+    /// **NEVER call this function again for a retry of the same transfer!**
+    ///
+    /// Rationale:
+    /// 1. `created_at_ms` deterministically maps the lock to a 5-minute bucket (`floor(created_at_ms / 300_000)`).
+    ///    Re-generating a fresh request on retry could cross bucket boundaries, creating split-bucket divergence.
+    /// 2. Layer-2 nodes recognize repeated requests with identical `t_id` and return `200 OK (Verified)`
+    ///    under Rule 3 hot-path idempotency without redundant consensus.
+    /// 3. Resending the identical payload keeps the request within the 30-second clock-drift acceptance window.
     pub fn generate_l2_lock_request(&self, local_instance_id: &str) -> Result<Vec<u8>, Error> {
         let (wallet, _identity) = match &self.state {
             AppState::Unlocked {

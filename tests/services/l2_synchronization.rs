@@ -68,19 +68,7 @@ impl MockL2Node {
 
         let voucher_locks = self.locks.entry(req.layer2_voucher_id.clone()).or_default();
 
-        let entry = L2LockEntry {
-            layer2_voucher_id: req.layer2_voucher_id.clone(),
-            t_id: req.transaction_hash,
-            sender_ephemeral_pub: req.sender_ephemeral_pub,
-            receiver_ephemeral_pub_hash: req.receiver_ephemeral_pub_hash,
-            change_ephemeral_pub_hash: req.change_ephemeral_pub_hash,
-            layer2_signature: req.layer2_signature,
-            trap_r: req.trap_r.clone(),
-            trap_s: req.trap_s.clone(),
-            encrypted_timestamp: req.encrypted_timestamp,
-            deletable_at: req.deletable_at.clone(),
-            privacy_guard: req.privacy_guard.clone(),
-        };
+        let entry = L2LockEntry::from(&req);
         voucher_locks.insert(ds_tag, entry);
 
         let verdict = L2Verdict::Ok {

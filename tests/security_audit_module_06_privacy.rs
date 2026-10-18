@@ -1512,6 +1512,7 @@ fn sa06_11_placeholder_shard_spend_must_fail_reception_validation() {
         let guard_commitment = human_money_core::services::l2_gateway::privacy_guard_commitment(
             spend.privacy_guard.as_deref(),
         );
+        let created_at_ms = human_money_core::services::utils::parse_timestamp_ms(&spend.t_time).expect("parse t_time");
         let payload_hash = calculate_l2_payload_hash_raw(
             &layer2_voucher_id,
             &ds_tag,
@@ -1520,6 +1521,7 @@ fn sa06_11_placeholder_shard_spend_must_fail_reception_validation() {
             TRAP_NONE_PLACEHOLDER,
             TRAP_NONE_PLACEHOLDER,
             encrypted_timestamp,
+            created_at_ms,
             spend.deletable_at.as_deref(),
             guard_commitment.as_str(),
         );

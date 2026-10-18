@@ -225,6 +225,56 @@ pub fn set_mock_time(time: Option<String>) {
     MOCK_TIME.with(|t| *t.borrow_mut() = time);
 }
 
+/// Parses an RFC 3339 formatted UTC timestamp string (with or without fractional seconds)
+/// into milliseconds since the UNIX epoch (`u64`).
+///
+/// # Arguments
+/// * `t_time` - The timestamp string (e.g. `"2026-10-18T10:15:00Z"` or `"2026-10-18T10:15:00.123456Z"`).
+///
+/// # Errors
+/// Returns [`VoucherCoreError`] if parsing fails or if the timestamp predates the UNIX epoch.
+pub fn parse_timestamp_ms(t_time: &str) -> Result<u64, crate::error::VoucherCoreError> {
+    let dt = parse_rfc3339_utc(t_time)?;
+    let ms = dt.timestamp_millis();
+    if ms < 0 {
+        return Err(crate::Error::Wallet(crate::error::WalletError::InvalidTimestamp {
+            reason: format!("Timestamp cannot be before UNIX epoch: {}", t_time),
+        }));
+    }
+    Ok(ms as u64)
+}
+
+/// Returns the current UNIX timestamp in milliseconds (`u64`).
+///
+/// In production builds (`not(any(test, feature = "test-utils"))`), this uses
+/// `std::time::SystemTime::now()`. In test builds or when `feature = "test-utils"`
+/// is enabled, it respects mock time overrides configured via [`set_mock_time`].
+#[cfg(not(any(test, feature = "test-utils")))]
+pub fn current_unix_timestamp_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Returns the current UNIX timestamp in milliseconds (`u64`).
+///
+/// Thread-local mock aware: when a mock timestamp is set via [`set_mock_time`],
+/// that timestamp is parsed into milliseconds; otherwise falls back to
+/// `std::time::SystemTime::now()`.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn current_unix_timestamp_ms() -> u64 {
+    let mocked = MOCK_TIME.with(|time| time.borrow().clone());
+    if let Some(mock_str) = mocked {
+        parse_timestamp_ms(&mock_str).unwrap_or(0)
+    } else {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+}
+
 /// The maximum timespan into the future that we accept for a timestamp.
 /// Anything beyond this is rejected as a "Hard Reject".
 /// 2 hours (7200 seconds) accommodate moderate clock drifts and timezone issues.
@@ -505,5 +555,43 @@ mod tests {
         let dt = Utc.with_ymd_and_hms(2026, 5, 15, 10, 30, 0).unwrap();
         assert!(round_up_date(dt, "P2Y").is_err());
         assert!(round_up_date(dt, "invalid").is_err());
+    }
+
+    #[test]
+    fn test_parse_timestamp_ms() {
+        // Without fractional seconds
+        let ts_sec = "2026-10-18T10:15:00Z";
+        let ms_sec = parse_timestamp_ms(ts_sec).expect("parse seconds");
+        assert_eq!(ms_sec % 1000, 0);
+
+        // With fractional seconds (microseconds)
+        let ts_micros = "2026-10-18T10:15:00.123456Z";
+        let ms_micros = parse_timestamp_ms(ts_micros).expect("parse micros");
+        assert_eq!(ms_micros - ms_sec, 123);
+
+        // With milliseconds
+        let ts_millis = "2026-10-18T10:15:00.456Z";
+        let ms_millis = parse_timestamp_ms(ts_millis).expect("parse millis");
+        assert_eq!(ms_millis - ms_sec, 456);
+
+        // Invalid timestamp
+        assert!(parse_timestamp_ms("not-a-timestamp").is_err());
+    }
+
+    #[test]
+    fn test_current_unix_timestamp_ms_and_mocking() {
+        let real_now = current_unix_timestamp_ms();
+        assert!(real_now > 1_700_000_000_000); // Beyond late 2023
+
+        // Mock time
+        set_mock_time(Some("2026-10-18T12:00:00.500Z".to_string()));
+        let mocked_now = current_unix_timestamp_ms();
+        let expected = parse_timestamp_ms("2026-10-18T12:00:00.500Z").unwrap();
+        assert_eq!(mocked_now, expected);
+
+        // Clear mock
+        set_mock_time(None);
+        let restored_now = current_unix_timestamp_ms();
+        assert!(restored_now >= real_now);
     }
 }

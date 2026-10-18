@@ -80,27 +80,29 @@ mod internal_logic {
         let fp_early = TransactionFingerprint {
             t_id: t_id_early,
             encrypted_timestamp: enc_early,
+            created_at_ms: 0,
             ds_tag: "tag".to_string(),
             trap_r: "u".to_string(),
             trap_s: "b".to_string(),
             layer2_signature: "sig".to_string(),
             deletable_at: "2099-01-01T00:00:00Z".to_string(),
-                    sender_ephemeral_pub: String::new(),
-                layer2_voucher_id: String::new(),
-                privacy_guard_hash: String::new(),
-};
+            sender_ephemeral_pub: String::new(),
+            layer2_voucher_id: String::new(),
+            privacy_guard_hash: String::new(),
+        };
         let fp_late = TransactionFingerprint {
             t_id: t_id_late,
             encrypted_timestamp: enc_late,
+            created_at_ms: 0,
             ds_tag: "tag".to_string(),
             trap_r: "u".to_string(),
             trap_s: "b".to_string(),
             layer2_signature: "sig".to_string(),
             deletable_at: "2099-01-01T00:00:00Z".to_string(),
-                    sender_ephemeral_pub: String::new(),
-                layer2_voucher_id: String::new(),
-                privacy_guard_hash: String::new(),
-};
+            sender_ephemeral_pub: String::new(),
+            layer2_voucher_id: String::new(),
+            privacy_guard_hash: String::new(),
+        };
         
         // resolve_conflict_offline is pub(crate), hence directly testable here.
         crate::wallet::conflicts::resolve_conflict_offline(&mut store, &[fp_early, fp_late]);
@@ -139,6 +141,7 @@ mod internal_logic {
             TransactionFingerprint {
                 t_id: tx.t_id.clone(),
                 encrypted_timestamp: encrypt_transaction_timestamp(tx).unwrap(),
+                created_at_ms: 0,
                 ds_tag: "tag".to_string(),
                 trap_r: "u".to_string(),
                 trap_s: "b".to_string(),
@@ -401,6 +404,7 @@ mod internal_logic {
         let fp_a = TransactionFingerprint {
             t_id: t_id_a.clone(),
             encrypted_timestamp: enc_a,
+            created_at_ms: 0,
             ds_tag: "tag".to_string(),
             trap_r: "u".to_string(),
             trap_s: "b".to_string(),
@@ -413,6 +417,7 @@ mod internal_logic {
         let fp_b = TransactionFingerprint {
             t_id: t_id_b.clone(),
             encrypted_timestamp: enc_b,
+            created_at_ms: 0,
             ds_tag: "tag".to_string(),
             trap_r: "u".to_string(),
             trap_s: "b".to_string(),

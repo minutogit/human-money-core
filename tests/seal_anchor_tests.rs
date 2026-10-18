@@ -235,6 +235,7 @@ fn test_multi_device_fork_conflict_409() {
         trap_r: None,
         trap_s: None,
         encrypted_timestamp: 0,
+        created_at_ms: 0,
         deletable_at: None,
         privacy_guard: None,
     };
@@ -364,6 +365,7 @@ fn test_single_malicious_node_cannot_lock_wallet() {
             trap_r: None,
             trap_s: None,
             encrypted_timestamp: 0,
+            created_at_ms: 0,
             deletable_at: None,
             privacy_guard: None,
         }
@@ -451,6 +453,7 @@ fn test_cryptographic_proof_of_rollback_detection() {
         "none",
         "none",
         0,
+        0,
         None,
         "",
     );
@@ -473,6 +476,7 @@ fn test_cryptographic_proof_of_rollback_detection() {
         trap_r: Some("none".to_string()),
         trap_s: Some("none".to_string()),
         encrypted_timestamp: 0,
+        created_at_ms: 0,
         deletable_at: None,
         privacy_guard: None,
     };
@@ -507,6 +511,7 @@ fn test_cryptographic_proof_of_rollback_detection() {
                 found_entry.trap_r.as_deref().unwrap_or("none"),
                 found_entry.trap_s.as_deref().unwrap_or("none"),
                 found_entry.encrypted_timestamp,
+                found_entry.created_at_ms,
                 found_entry.deletable_at.as_deref(),
                 found_entry.privacy_guard.as_deref().unwrap_or(""),
             );
@@ -519,6 +524,7 @@ fn test_cryptographic_proof_of_rollback_detection() {
                 &step_pub_bytes,
                 "none",
                 "none",
+                0,
                 0,
                 None,
                 "",

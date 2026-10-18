@@ -504,6 +504,7 @@ fn test_manipulated_shard_rejected_by_recipient_witness_check() {
         .try_into()
         .unwrap();
     let encrypted_timestamp = encrypt_transaction_timestamp(last_tx).unwrap();
+    let created_at_ms = human_money_core::services::utils::parse_timestamp_ms(&last_tx.t_time).unwrap();
     let payload_hash = calculate_l2_payload_hash_raw(
         &l2_voucher_id,
         &fake_trap.ds_tag,
@@ -512,6 +513,7 @@ fn test_manipulated_shard_rejected_by_recipient_witness_check() {
         &fake_trap.trap_r,
         &fake_trap.trap_s,
         encrypted_timestamp,
+        created_at_ms,
         last_tx.deletable_at.as_deref(),
         // SECURITY (HMSEC-SA04-08): the guard stays untouched, so its
         // canonical commitment must be bound exactly like the validator does.

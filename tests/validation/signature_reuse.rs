@@ -100,6 +100,7 @@ fn test_prevent_signature_reuse_in_init() {
     let encrypted_timestamp =
         human_money_core::services::conflict_manager::encrypt_transaction_timestamp(&bad_tx)
             .unwrap_or(0);
+    let created_at_ms = human_money_core::services::utils::parse_timestamp_ms(&bad_tx.t_time).unwrap_or(0);
 
     let to_32_bytes = |vec: Vec<u8>| -> [u8; 32] { vec.try_into().unwrap() };
 
@@ -113,6 +114,7 @@ fn test_prevent_signature_reuse_in_init() {
         trap_r_str,
         trap_s_str,
         encrypted_timestamp,
+        created_at_ms,
         bad_tx.deletable_at.as_deref(),
         // SECURITY (HMSEC-SA04-08): bind the canonical privacy-guard
         // commitment ("" when no guard is present).

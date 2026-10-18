@@ -48,6 +48,7 @@ fn build_signed_fingerprint(
     dummy_tx.prev_hash = prev_hash;
     dummy_tx.t_time = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
     let enc_ts = conflict_manager::encrypt_transaction_timestamp(&dummy_tx).unwrap();
+    let created_at_ms = human_money_core::services::utils::parse_timestamp_ms(&dummy_tx.t_time).unwrap();
 
     let payload = human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw(
         "none",
@@ -57,6 +58,7 @@ fn build_signed_fingerprint(
         &trap_r,
         &trap_s,
         enc_ts,
+        created_at_ms,
         None,
         "",
     );
@@ -72,6 +74,7 @@ fn build_signed_fingerprint(
         trap_s,
         layer2_voucher_id: "none".to_string(),
         privacy_guard_hash: String::new(),
+        created_at_ms,
     }
 }
 

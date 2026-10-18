@@ -218,6 +218,24 @@ pub struct L2LockRequest {
     #[serde(with = "crate::models::layer2_api::base58_u128", default)]
     pub encrypted_timestamp: u128,
 
+    /// Explicit UTC millisecond timestamp when this lock request was prepared for L2 ingress.
+    ///
+    /// # Protocol Specifications:
+    /// - **5-minute Time Bucket Allocation:** Layer-2 nodes assign incoming locks to discrete
+    ///   5-minute buckets via `floor(created_at_ms / 300_000)` for BFT shard synchronization
+    ///   and immutable Merkle root sealing.
+    /// - **30-second Clock-Drift Window:** Nodes reject any lock request whose `created_at_ms`
+    ///   deviates from network time by more than 30 seconds (`|created_at_ms - net_time_ms| <= 30_000`).
+    /// - **Gateway Retry & Multi-Homing Invariant:** Clients MUST resend the EXACT identical
+    ///   byte payload (`created_at_ms`, signature, etc.) upon network timeouts or when failing
+    ///   over across multiple gateway nodes. Clients must NEVER re-generate timestamps or re-sign
+    ///   on retry. This ensures:
+    ///   1. Deterministic bucket placement across different gateway nodes (avoids split-bucket divergence).
+    ///   2. Immediate hot-path idempotency via Rule 3 (`Verified` verdict returned on seeing the same `t_id`).
+    ///   3. Adherence to the 30-second drift window during rapid retries (500–1500 ms timeouts).
+    #[serde(default)]
+    pub created_at_ms: u64,
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletable_at: Option<String>, // Only required when is_genesis = true
 
@@ -257,6 +275,11 @@ pub struct L2LockEntry {
     /// The encrypted timestamp of the transaction in nanoseconds.
     #[serde(with = "crate::models::layer2_api::base58_u128", default)]
     pub encrypted_timestamp: u128,
+    /// Explicit UTC millisecond timestamp when the lock entry was created on Layer 2.
+    /// Determines the 5-minute time bucket (`floor(created_at_ms / 300_000)`) in the L2 registry
+    /// and is cryptographically bound into the canonical `HMC_TX_AUTH_V3` payload digest.
+    #[serde(default)]
+    pub created_at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletable_at: Option<String>,
     // --- SECURITY (HMSEC-SA04-08): privacy-guard binding field ---
@@ -265,6 +288,44 @@ pub struct L2LockEntry {
     /// `layer2_signature` authenticates (see [`crate::services::l2_gateway`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub privacy_guard: Option<String>,
+}
+
+impl From<&L2LockRequest> for L2LockEntry {
+    fn from(req: &L2LockRequest) -> Self {
+        Self {
+            layer2_voucher_id: req.layer2_voucher_id.clone(),
+            t_id: req.transaction_hash,
+            sender_ephemeral_pub: req.sender_ephemeral_pub,
+            receiver_ephemeral_pub_hash: req.receiver_ephemeral_pub_hash,
+            change_ephemeral_pub_hash: req.change_ephemeral_pub_hash,
+            layer2_signature: req.layer2_signature,
+            trap_r: req.trap_r.clone(),
+            trap_s: req.trap_s.clone(),
+            encrypted_timestamp: req.encrypted_timestamp,
+            created_at_ms: req.created_at_ms,
+            deletable_at: req.deletable_at.clone(),
+            privacy_guard: req.privacy_guard.clone(),
+        }
+    }
+}
+
+impl From<L2LockRequest> for L2LockEntry {
+    fn from(req: L2LockRequest) -> Self {
+        Self {
+            layer2_voucher_id: req.layer2_voucher_id,
+            t_id: req.transaction_hash,
+            sender_ephemeral_pub: req.sender_ephemeral_pub,
+            receiver_ephemeral_pub_hash: req.receiver_ephemeral_pub_hash,
+            change_ephemeral_pub_hash: req.change_ephemeral_pub_hash,
+            layer2_signature: req.layer2_signature,
+            trap_r: req.trap_r,
+            trap_s: req.trap_s,
+            encrypted_timestamp: req.encrypted_timestamp,
+            created_at_ms: req.created_at_ms,
+            deletable_at: req.deletable_at,
+            privacy_guard: req.privacy_guard,
+        }
+    }
 }
 
 fn default_read_quorum() -> u8 {

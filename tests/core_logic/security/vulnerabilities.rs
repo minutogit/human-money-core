@@ -285,6 +285,7 @@ fn create_hacked_tx(
     let encrypted_timestamp =
         human_money_core::services::conflict_manager::encrypt_transaction_timestamp(&hacked_tx)
             .unwrap_or(0);
+    let created_at_ms = human_money_core::services::utils::parse_timestamp_ms(&hacked_tx.t_time).unwrap_or(0);
 
     let payload_hash = human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw(
         // V3 Protocol (audit_02_11): the voucher container id is bound into
@@ -296,6 +297,7 @@ fn create_hacked_tx(
         trap_r_str,
         trap_s_str,
         encrypted_timestamp,
+        created_at_ms,
         hacked_tx.deletable_at.as_deref(),
         // SECURITY (HMSEC-SA04-08): bind the canonical privacy-guard
         // commitment of the transaction ("" when no guard is present).

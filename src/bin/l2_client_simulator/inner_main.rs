@@ -217,6 +217,7 @@ async fn cmd_genesis(url: &str) {
 
     // Compute signature: challenge_ds_tag for Genesis = bs58(t_id)
     let challenge_ds_tag = t_id_bs58.clone();
+    let created_at_ms = human_money_core::services::utils::current_unix_timestamp_ms();
     let payload_hash = calculate_l2_payload_hash_raw(
         TRAP_NONE_PLACEHOLDER,
         &challenge_ds_tag,
@@ -225,6 +226,7 @@ async fn cmd_genesis(url: &str) {
         "none",
         "none",
         0,
+        created_at_ms,
         None,
         "",
     );
@@ -245,6 +247,7 @@ async fn cmd_genesis(url: &str) {
         trap_r: Some("none".to_string()),
         trap_s: Some("none".to_string()),
         encrypted_timestamp: 0,
+        created_at_ms,
         layer2_signature: signature.to_bytes(),
         deletable_at: None,
         privacy_guard: None,
@@ -341,6 +344,7 @@ async fn cmd_transfer(url: &str, voucher_id: &str) {
 
     // ds_tag = bs58(previous t_id) – as required by core logic
     let ds_tag = old_t_id_bs58.clone();
+    let created_at_ms = human_money_core::services::utils::current_unix_timestamp_ms();
 
     let payload_hash = calculate_l2_payload_hash_raw(
         voucher_id,
@@ -350,6 +354,7 @@ async fn cmd_transfer(url: &str, voucher_id: &str) {
         "none",
         "none",
         0,
+        created_at_ms,
         None,
         "",
     );
@@ -370,6 +375,7 @@ async fn cmd_transfer(url: &str, voucher_id: &str) {
         trap_r: Some("none".to_string()),
         trap_s: Some("none".to_string()),
         encrypted_timestamp: 0,
+        created_at_ms,
         layer2_signature: signature.to_bytes(),
         deletable_at: None,
         privacy_guard: None,
@@ -461,6 +467,8 @@ async fn cmd_split(url: &str, voucher_id: &str) {
     rng.fill_bytes(&mut split_t_id);
     let split_t_id_bs58 = bs58::encode(&split_t_id).into_string();
 
+    let created_at_ms = human_money_core::services::utils::current_unix_timestamp_ms();
+
     let split_payload_hash = calculate_l2_payload_hash_raw(
         voucher_id,
         &ds_tag,
@@ -469,6 +477,7 @@ async fn cmd_split(url: &str, voucher_id: &str) {
         "none",
         "none",
         0,
+        created_at_ms,
         None,
         "",
     );
@@ -489,6 +498,7 @@ async fn cmd_split(url: &str, voucher_id: &str) {
         trap_r: Some("none".to_string()),
         trap_s: Some("none".to_string()),
         encrypted_timestamp: 0,
+        created_at_ms,
         layer2_signature: split_sig.to_bytes(),
         deletable_at: None,
         privacy_guard: None,
@@ -604,6 +614,8 @@ async fn cmd_double_spend(url: &str, voucher_id: &str) {
         attempt_t_id[31] = attempt;
         let attempt_t_id_bs58 = bs58::encode(&attempt_t_id).into_string();
 
+        let created_at_ms = human_money_core::services::utils::current_unix_timestamp_ms();
+
         let payload_hash = calculate_l2_payload_hash_raw(
             voucher_id,
             &ds_tag,
@@ -612,6 +624,7 @@ async fn cmd_double_spend(url: &str, voucher_id: &str) {
             "none",
             "none",
             0,
+            created_at_ms,
             None,
             "",
         );
@@ -632,6 +645,7 @@ async fn cmd_double_spend(url: &str, voucher_id: &str) {
             trap_r: Some("none".to_string()),
             trap_s: Some("none".to_string()),
             encrypted_timestamp: 0,
+            created_at_ms,
             layer2_signature: sig.to_bytes(),
             deletable_at: None,
             privacy_guard: None,
@@ -839,6 +853,8 @@ fn generate_mock_lock_request(
         ds_tag.clone().unwrap()
     };
 
+    let created_at_ms = human_money_core::services::utils::current_unix_timestamp_ms();
+
     let payload_hash = calculate_l2_payload_hash_raw(
         if is_genesis {
             TRAP_NONE_PLACEHOLDER
@@ -851,6 +867,7 @@ fn generate_mock_lock_request(
         "none",
         "none",
         0,
+        created_at_ms,
         None,
         "",
     );
@@ -872,6 +889,7 @@ fn generate_mock_lock_request(
         trap_r: Some("none".to_string()),
         trap_s: Some("none".to_string()),
         encrypted_timestamp: 0,
+        created_at_ms,
         layer2_signature: signature.to_bytes(),
         deletable_at: None,
         privacy_guard: None,
@@ -906,6 +924,27 @@ async fn run_compliance_test(url: &str, _server_pubkey: Option<&str>) {
     match envelope.verdict {
         L2Verdict::Verified { .. } | L2Verdict::Ok { .. } => println!("   [OK] Genesis Lock verified!"),
         _ => panic!("Expected Verified or Ok verdict!"),
+    }
+
+    // 1b. Idempotent Retry (Gateway Retry Invariance)
+    println!("-> Testing Idempotent Retry (Gateway Retry Invariance: resending identical lock request)...");
+    let res = client
+        .post(format!("{}/lock", url))
+        .json(&genesis_req)
+        .send()
+        .await
+        .expect("Failed to reach server on retry");
+    assert!(
+        res.status().is_success(),
+        "Idempotent retry failed with status {}",
+        res.status()
+    );
+    let envelope: L2ResponseEnvelope = res.json().await.expect("Failed to parse retry L2ResponseEnvelope");
+    match envelope.verdict {
+        L2Verdict::Verified { .. } | L2Verdict::Ok { .. } => {
+            println!("   [OK] Idempotent retry verified successfully!");
+        }
+        other => panic!("Expected Verified or Ok verdict on idempotent retry, got {:?}", other),
     }
 
     // 2. Happy Path Query
@@ -1218,6 +1257,7 @@ fn cmd_offline_transfer(voucher_id: &str, count: u32) {
 
         // ds_tag = current t_id of predecessor
         let ds_tag = current_t_id_bs58.clone();
+        let created_at_ms = human_money_core::services::utils::current_unix_timestamp_ms();
 
         let payload_hash = calculate_l2_payload_hash_raw(
             voucher_id,
@@ -1227,6 +1267,7 @@ fn cmd_offline_transfer(voucher_id: &str, count: u32) {
             "none",
             "none",
             0,
+            created_at_ms,
             None,
             "",
         );
@@ -1247,6 +1288,7 @@ fn cmd_offline_transfer(voucher_id: &str, count: u32) {
             trap_r: Some("none".to_string()),
             trap_s: Some("none".to_string()),
             encrypted_timestamp: 0,
+            created_at_ms,
             layer2_signature: signature.to_bytes(),
             deletable_at: None,
             privacy_guard: None,
@@ -1542,6 +1584,7 @@ mod tests {
             req.trap_r.as_deref().unwrap_or("none"),
             req.trap_s.as_deref().unwrap_or("none"),
             req.encrypted_timestamp,
+            req.created_at_ms,
             req.deletable_at.as_deref(),
             "",
         );

@@ -574,6 +574,7 @@ impl Voucher {
 
         let encrypted_timestamp =
             crate::services::conflict_manager::encrypt_transaction_timestamp(&init_transaction)?;
+        let created_at_ms = crate::services::utils::parse_timestamp_ms(&init_transaction.t_time)?;
 
         let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
             crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
@@ -583,6 +584,7 @@ impl Voucher {
             crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
             crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
             encrypted_timestamp,
+            created_at_ms,
             init_transaction.deletable_at.as_deref(),
             "",
         );
@@ -953,6 +955,7 @@ impl Voucher {
         let trap = new_transaction.trap_data.as_ref().ok_or(VoucherCoreError::MissingTrapData)?;
         let encrypted_timestamp =
             crate::services::conflict_manager::encrypt_transaction_timestamp(&new_transaction)?;
+        let created_at_ms = crate::services::utils::parse_timestamp_ms(&new_transaction.t_time)?;
         let l2_voucher_id = crate::services::l2_gateway::extract_layer2_voucher_id(self)?;
 
         let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
@@ -963,6 +966,7 @@ impl Voucher {
             &trap.trap_r,
             &trap.trap_s,
             encrypted_timestamp,
+            created_at_ms,
             new_transaction.deletable_at.as_deref(),
             crate::services::l2_gateway::privacy_guard_commitment(
                 new_transaction.privacy_guard.as_deref(),

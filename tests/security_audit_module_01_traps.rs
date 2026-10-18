@@ -546,6 +546,7 @@ mod security_audit_module_01 {
             layer2_signature: String::new(),
             deletable_at: "2099-01-01T00:00:00Z".to_string(),
             encrypted_timestamp: xor_key, // decrypts to nanos = 0 -> always wins
+            created_at_ms: 0,
             sender_ephemeral_pub: String::new(),
             layer2_voucher_id: "none".to_string(),
             privacy_guard_hash: String::new(),
@@ -1015,6 +1016,7 @@ mod security_audit_module_01 {
             layer2_signature: String::new(),
             deletable_at: "2099-01-01T00:00:00Z".to_string(),
             encrypted_timestamp: 0,
+            created_at_ms: 0,
             sender_ephemeral_pub: String::new(),
             layer2_voucher_id: "none".to_string(),
             privacy_guard_hash: String::new(),
@@ -1492,6 +1494,7 @@ mod security_audit_module_01 {
             .try_into()
             .unwrap();
         let enc_ts = encrypt_transaction_timestamp(&tx).unwrap();
+        let created_at_ms = human_money_core::services::utils::parse_timestamp_ms(&tx.t_time).unwrap();
         let trap = tx.trap_data.as_ref().unwrap();
         let l2_voucher_id = extract_layer2_voucher_id(&poisoned).unwrap();
         let payload_hash = calculate_l2_payload_hash_raw(
@@ -1502,6 +1505,7 @@ mod security_audit_module_01 {
             &trap.trap_r,
             &trap.trap_s,
             enc_ts,
+            created_at_ms,
             tx.deletable_at.as_deref(),
             &privacy_guard_commitment(tx.privacy_guard.as_deref()),
         );
@@ -1815,6 +1819,7 @@ mod security_audit_module_01 {
             trap_r,
             trap_s,
             encrypted_timestamp,
+            0,
             None,
             "",
         );
@@ -1830,6 +1835,7 @@ mod security_audit_module_01 {
             encrypted_timestamp,
             layer2_voucher_id: "none".to_string(),
             privacy_guard_hash: String::new(),
+            created_at_ms: 0,
         }
     }
 

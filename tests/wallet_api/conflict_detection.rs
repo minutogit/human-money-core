@@ -70,6 +70,7 @@ fn make_fingerprint(ds_tag: &str, t_id: &str, deletable_at: &str) -> Transaction
         sender_ephemeral_pub: String::new(),
         deletable_at: deletable_at.to_string(),
         encrypted_timestamp: 0,
+        created_at_ms: 0,
         layer2_voucher_id: String::new(),
         privacy_guard_hash: String::new(),
     }

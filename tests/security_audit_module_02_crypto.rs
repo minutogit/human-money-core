@@ -1205,6 +1205,7 @@ mod security_audit_module_02 {
             .expect("t_id len");
         let encrypted_timestamp =
             encrypt_transaction_timestamp(&stripped).expect("timestamp encryption");
+        let created_at_ms = human_money_core::services::utils::parse_timestamp_ms(&stripped.t_time).expect("parse t_time");
 
         let payload_hash = calculate_l2_payload_hash_raw(
             &extract_layer2_voucher_id(&voucher).expect("voucher id"),
@@ -1214,6 +1215,7 @@ mod security_audit_module_02 {
             "",
             "",
             encrypted_timestamp,
+            created_at_ms,
             stripped.deletable_at.as_deref(),
             &privacy_guard_commitment(stripped.privacy_guard.as_deref()),
         );
@@ -1577,6 +1579,7 @@ mod security_audit_module_02 {
             &trap_r,
             &trap_s,
             encrypted_timestamp,
+            0,
             deletable_at.as_deref(),
             "",
         );
@@ -1602,6 +1605,7 @@ mod security_audit_module_02 {
             trap_r: Some(trap_r.clone()),
             trap_s: Some(trap_s.clone()),
             encrypted_timestamp,
+            created_at_ms: 0,
             deletable_at,
             privacy_guard: None,
         };

@@ -1,3 +1,29 @@
+//! # `src/services/l2_gateway.rs`
+//!
+//! Stateless business logic for interacting with the Layer-2 Collision Lock Registry (`humoco-node`).
+//!
+//! ## Protocol Architecture:
+//! - **Canonical `HMC_TX_AUTH_V3` Payload Digest:** Length-prefixed domain-separated hash binding:
+//!   domain, `layer2_voucher_id`, `challenge_ds_tag`, `t_id_bytes`, `sender_pub_bytes`,
+//!   `trap_r`, `trap_s`, `encrypted_timestamp` (16 bytes LE), `created_at_ms` (8 bytes LE),
+//!   `deletable_at`, and `privacy_guard_commitment`.
+//! - **5-minute Time Bucket Allocation:** Layer-2 nodes assign incoming locks to discrete 5-minute buckets
+//!   via `floor(created_at_ms / 300_000)` for BFT shard synchronization and immutable Merkle root sealing.
+//! - **30-second Clock-Drift Window:** Nodes reject any lock request whose `created_at_ms` deviates
+//!   from network time by more than 30 seconds (`|created_at_ms - net_time_ms| <= 30_000`).
+//!
+//! ## Gateway Retry & Multi-Homing Invariant:
+//! When submitting lock requests across distributed gateway nodes (multi-homing) or retrying
+//! upon network timeouts (typically 500–1500 ms):
+//! - Clients **MUST resend the exact, identical byte payload** (`created_at_ms`, signatures, etc.).
+//! - Clients **MUST NEVER** generate a fresh timestamp or re-sign on retry.
+//! - Rationale:
+//!   1. **Deterministic Bucket Allocation:** Regenerating timestamps could cross a 5-minute boundary,
+//!      causing diverging nodes to assign the lock to different Merkle epoch trees.
+//!   2. **Rule 3 Hot-Path Idempotency:** The Layer-2 registry recognizes identical payloads by `t_id`
+//!      and immediately responds with `200 OK (Verified)` without re-running consensus or raising false conflicts.
+//!   3. **Clock Drift Preservation:** Quick retries remain well within the 30-second drift acceptance window.
+
 use crate::error::VoucherCoreError;
 use crate::models::layer2_api::{
     L2AuthPayload, L2ChainLockRequest, L2LockEntry, L2LockRequest, L2ResponseEnvelope,
@@ -102,6 +128,15 @@ pub fn verify_quorum_plausibility(
 }
 
 /// Generates an L2LockRequest based on the given transaction.
+///
+/// # Gateway Retry & Multi-Homing Invariant
+/// The returned [`L2LockRequest`] binds `created_at_ms` parsed from `transaction.t_time`.
+/// Callers MUST reuse the exact same serialized byte payload across retries or fallback
+/// gateway nodes. Callers must NEVER regenerate timestamps or re-sign on retry:
+/// 1. `created_at_ms` deterministically maps the lock to a 5-minute bucket (`floor(created_at_ms / 300_000)`).
+/// 2. Gateways recognize repeated requests by `transaction_hash` (`t_id`) and return `200 OK (Verified)`
+///    under Rule 3 hot-path idempotency.
+/// 3. Retrying the identical payload preserves the 30-second clock-drift window across quick retries.
 pub fn generate_lock_request(
     _voucher_id: &str,
     transaction: &Transaction,
@@ -178,6 +213,7 @@ pub fn generate_lock_request(
     };
     let encrypted_timestamp =
         crate::services::conflict_manager::encrypt_transaction_timestamp(transaction)?;
+    let created_at_ms = crate::services::utils::parse_timestamp_ms(&transaction.t_time)?;
 
     Ok(L2LockRequest {
         auth,
@@ -192,6 +228,7 @@ pub fn generate_lock_request(
         trap_r,
         trap_s,
         encrypted_timestamp,
+        created_at_ms,
         deletable_at: if is_genesis {
             transaction.deletable_at.clone()
         } else {
@@ -318,6 +355,7 @@ pub fn calculate_l2_payload_hash(req: &L2LockRequest) -> [u8; 32] {
         req.trap_r.as_deref().unwrap_or(TRAP_NONE_PLACEHOLDER),
         req.trap_s.as_deref().unwrap_or(TRAP_NONE_PLACEHOLDER),
         req.encrypted_timestamp,
+        req.created_at_ms,
         req.deletable_at.as_deref(),
         privacy_guard_commitment(req.privacy_guard.as_deref()).as_str(),
     )
@@ -337,8 +375,9 @@ pub fn calculate_l2_payload_hash(req: &L2LockRequest) -> [u8; 32] {
 /// 6. SST commitment shard `trap_r` (Base58, `"none"` for genesis)
 /// 7. SST response shard `trap_s` (Base58, `"none"` for genesis)
 /// 8. `encrypted_timestamp` little-endian (16 bytes)
-/// 9. `deletable_at` (empty slice when `None`)
-/// 10. `privacy_guard_commitment` — SECURITY (HMSEC-SA04-08): the canonical
+/// 9. `created_at_ms` little-endian (8 bytes) — Canonical Position (matching humoco-node)
+/// 10. `deletable_at` (empty slice when `None`)
+/// 11. `privacy_guard_commitment` — SECURITY (HMSEC-SA04-08): the canonical
 ///     commitment ([`privacy_guard_commitment`]) of the transaction's
 ///     privacy guard (`""` when absent), making guard equivocation produce
 ///     distinct signatures and attributable evidence.
@@ -354,6 +393,7 @@ pub fn calculate_l2_payload_hash_raw(
     trap_r_str: &str,
     trap_s_str: &str,
     encrypted_timestamp: u128,
+    created_at_ms: u64,
     deletable_at: Option<&str>,
     privacy_guard_commitment: &str,
 ) -> [u8; 32] {
@@ -366,6 +406,7 @@ pub fn calculate_l2_payload_hash_raw(
         trap_r_str.as_bytes(),
         trap_s_str.as_bytes(),
         &encrypted_timestamp.to_le_bytes(),
+        &created_at_ms.to_le_bytes(),
         deletable_at.unwrap_or("").as_bytes(),
         privacy_guard_commitment.as_bytes(),
     ])
@@ -451,6 +492,7 @@ fn verify_lock_entry_proof(
         lock_entry.trap_r.as_deref().unwrap_or(TRAP_NONE_PLACEHOLDER),
         lock_entry.trap_s.as_deref().unwrap_or(TRAP_NONE_PLACEHOLDER),
         lock_entry.encrypted_timestamp,
+        lock_entry.created_at_ms,
         lock_entry.deletable_at.as_deref(),
         privacy_guard_commitment(lock_entry.privacy_guard.as_deref()).as_str(),
     );
@@ -694,6 +736,8 @@ pub fn build_anchor_genesis_lock(
         (now_ms + 2 * 365 * 24 * 3600 * 1000).to_string()
     });
 
+    let created_at_ms = crate::services::utils::current_unix_timestamp_ms();
+
     let payload_hash = calculate_l2_payload_hash_raw(
         TRAP_NONE_PLACEHOLDER,
         &state_hash_bs58,
@@ -702,6 +746,7 @@ pub fn build_anchor_genesis_lock(
         TRAP_NONE_PLACEHOLDER,
         TRAP_NONE_PLACEHOLDER,
         0,
+        created_at_ms,
         Some(&del),
         "",
     );
@@ -723,6 +768,7 @@ pub fn build_anchor_genesis_lock(
         trap_r: Some(TRAP_NONE_PLACEHOLDER.into()),
         trap_s: Some(TRAP_NONE_PLACEHOLDER.into()),
         encrypted_timestamp: 0,
+        created_at_ms,
         deletable_at: Some(del),
         privacy_guard: None,
     })
@@ -740,6 +786,7 @@ pub fn build_anchor_leap_lock(
     let (step_key, step_pub) =
         crate::models::seal::derive_anchor_step_key(&identity.signing_key, epoch, current_tx_nonce);
     let step_pub_bytes = step_pub.to_bytes();
+    let created_at_ms = crate::services::utils::current_unix_timestamp_ms();
 
     let payload_hash = calculate_l2_payload_hash_raw(
         &anchor_id,
@@ -749,6 +796,7 @@ pub fn build_anchor_leap_lock(
         TRAP_NONE_PLACEHOLDER,
         TRAP_NONE_PLACEHOLDER,
         0,
+        created_at_ms,
         None,
         "",
     );
@@ -770,6 +818,7 @@ pub fn build_anchor_leap_lock(
         trap_r: Some(TRAP_NONE_PLACEHOLDER.into()),
         trap_s: Some(TRAP_NONE_PLACEHOLDER.into()),
         encrypted_timestamp: 0,
+        created_at_ms,
         deletable_at: None,
         privacy_guard: None,
     })
@@ -1176,6 +1225,7 @@ mod tests {
             "none",
             "none",
             0,
+            0,
             None,
             "",
         );
@@ -1191,6 +1241,7 @@ mod tests {
             trap_r: Some("none".to_string()),
             trap_s: Some("none".to_string()),
             encrypted_timestamp: 0,
+            created_at_ms: 0,
             deletable_at: None,
             privacy_guard: None,
         };
@@ -1245,6 +1296,7 @@ mod tests {
             TRAP_NONE_PLACEHOLDER,
             TRAP_NONE_PLACEHOLDER,
             0,
+            0,
             None,
             "",
         );
@@ -1260,6 +1312,7 @@ mod tests {
             trap_r: Some(TRAP_NONE_PLACEHOLDER.to_string()),
             trap_s: Some(TRAP_NONE_PLACEHOLDER.to_string()),
             encrypted_timestamp: 0,
+            created_at_ms: 0,
             deletable_at: None,
             privacy_guard: None,
         };
@@ -1370,6 +1423,7 @@ mod tests {
             trap_r: Some(TRAP_NONE_PLACEHOLDER.to_string()),
             trap_s: Some(TRAP_NONE_PLACEHOLDER.to_string()),
             encrypted_timestamp: 12345,
+            created_at_ms: 0,
             deletable_at: Some("2026-01-01T00:00:00Z".to_string()),
             privacy_guard: None,
         };
@@ -1389,6 +1443,7 @@ mod tests {
             trap_r: Some("trapR".to_string()),
             trap_s: Some("trapS".to_string()),
             encrypted_timestamp: 999,
+            created_at_ms: 0,
             deletable_at: None,
             privacy_guard: Some("guard".to_string()),
         };

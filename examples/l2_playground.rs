@@ -115,6 +115,7 @@ impl MockL2Node {
             trap_r: req.trap_r.clone(),
             trap_s: req.trap_s.clone(),
             encrypted_timestamp: req.encrypted_timestamp,
+            created_at_ms: req.created_at_ms,
             deletable_at: req.deletable_at.clone(),
             privacy_guard: None,
         };

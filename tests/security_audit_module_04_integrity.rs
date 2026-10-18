@@ -1616,6 +1616,7 @@ fn sa04_10_make_foreign_fp(
         trap_r,
         trap_s,
         encrypted_timestamp,
+        0,
         None,
         "",
     );
@@ -1631,6 +1632,7 @@ fn sa04_10_make_foreign_fp(
         encrypted_timestamp,
         layer2_voucher_id: TRAP_NONE_PLACEHOLDER.to_string(),
         privacy_guard_hash: String::new(),
+        created_at_ms: 0,
     }
 }
 

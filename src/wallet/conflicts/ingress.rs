@@ -278,6 +278,7 @@ impl Wallet {
                 let guard_commitment = crate::services::l2_gateway::privacy_guard_commitment(
                     tx.privacy_guard.as_deref(),
                 );
+                let created_at_ms = crate::services::utils::parse_timestamp_ms(&tx.t_time).unwrap_or(0);
 
                 let candidates = ["", "none"];
                 let valid = candidates.iter().any(|&vid| {
@@ -289,6 +290,7 @@ impl Wallet {
                         trap_r_str,
                         trap_s_str,
                         encrypted_timestamp,
+                        created_at_ms,
                         deletable_at,
                         &guard_commitment,
                     );

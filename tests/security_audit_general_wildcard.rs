@@ -83,6 +83,7 @@ fn audit_00_wildcard_19_unbounded_foreign_ingress_must_be_bounded() {
             &trap.trap_r,
             &trap.trap_s,
             encrypted_ts,
+            0,
             None,
             "",
         );
@@ -98,6 +99,7 @@ fn audit_00_wildcard_19_unbounded_foreign_ingress_must_be_bounded() {
             encrypted_timestamp: encrypted_ts,
             layer2_voucher_id: TRAP_NONE_PLACEHOLDER.to_string(),
             privacy_guard_hash: String::new(),
+            created_at_ms: 0,
         };
         blob.entry(ds_tag).or_default().push(fp);
     }

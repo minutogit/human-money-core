@@ -491,6 +491,7 @@ pub fn resign_transaction_ext(
     let encrypted_timestamp =
         crate::services::conflict_manager::encrypt_transaction_timestamp(&tx)
             .unwrap_or(0);
+    let created_at_ms = crate::services::utils::parse_timestamp_ms(&tx.t_time).unwrap_or(0);
 
     let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
         if tx.t_type == "init" {
@@ -504,6 +505,7 @@ pub fn resign_transaction_ext(
         trap_r,
         trap_s,
         encrypted_timestamp,
+        created_at_ms,
         tx.deletable_at.as_deref(),
         &crate::services::l2_gateway::privacy_guard_commitment(tx.privacy_guard.as_deref()),
     );
@@ -621,6 +623,7 @@ pub fn make_signed_fingerprint(
         "test_u",
         "test_blinded_id",
         encrypted_timestamp,
+        0,
         None,
         "",
     );
@@ -637,6 +640,7 @@ pub fn make_signed_fingerprint(
         encrypted_timestamp,
         layer2_voucher_id: crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER.to_string(),
         privacy_guard_hash: String::new(),
+        created_at_ms: 0,
     }
 }
 
@@ -688,6 +692,7 @@ pub fn sign_fingerprint_in_place(fp: &mut TransactionFingerprint) {
         &fp.trap_r,
         &fp.trap_s,
         fp.encrypted_timestamp,
+        fp.created_at_ms,
         deletable_at,
         &fp.privacy_guard_hash,
     );

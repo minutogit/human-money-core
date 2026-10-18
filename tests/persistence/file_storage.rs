@@ -641,6 +641,7 @@ fn dummy_fingerprint(key: &str) -> TransactionFingerprint {
         trap_s: "blinded".to_string(),
         t_id: "tid".to_string(),
         encrypted_timestamp: 0,
+        created_at_ms: 0,
         layer2_signature: "sig".to_string(),
         sender_ephemeral_pub: String::new(),
         deletable_at: "2099-01-01".to_string(),

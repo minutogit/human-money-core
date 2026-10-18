@@ -76,6 +76,11 @@ pub struct TransactionFingerprint {
     /// collapsing into byte-identical fingerprints.
     #[serde(default)]
     pub privacy_guard_hash: String,
+
+    /// Layer-2 lock creation / transaction timestamp in milliseconds.
+    /// Bound into the canonical `HMC_TX_AUTH_V3` payload digest.
+    #[serde(default)]
+    pub created_at_ms: u64,
 }
 
 /// Serves as a storage container for all known transaction fingerprints (local voucher history and foreign gossip).

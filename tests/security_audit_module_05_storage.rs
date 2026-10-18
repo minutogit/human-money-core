@@ -905,6 +905,7 @@ fn sa05_08_legacy_v2_fingerprint_data_must_not_be_silently_degraded() {
             ds_tag: "control-ds-tag".to_string(),
             t_id: "control-t-id".to_string(),
             encrypted_timestamp: 42,
+            created_at_ms: 0,
             layer2_signature: "control-l2-sig".to_string(),
             sender_ephemeral_pub: "control-ephemeral-pub".to_string(),
             deletable_at: "2030-01-01T00:00:00Z".to_string(),

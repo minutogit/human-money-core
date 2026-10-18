@@ -45,6 +45,7 @@ mod tests {
             deletable_at: expired_date,
             t_id: String::new(),
             encrypted_timestamp: 0,
+            created_at_ms: 0,
             layer2_signature: String::new(),
                     sender_ephemeral_pub: String::new(),
             layer2_voucher_id: String::new(),
