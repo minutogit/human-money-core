@@ -144,7 +144,7 @@ pub(crate) fn append_events(
         }
 
         // Completion of migration
-        fs::remove_file(&legacy_path)?;
+        storage.remove_durable(LEGACY_EVENTS_FILE_NAME)?;
     }
 
     // 2. Group and append new events

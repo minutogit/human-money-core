@@ -76,6 +76,15 @@ pub enum StorageError {
     /// Invariant violation detected (logic error).
     #[error("Invariant violation: {message}")]
     InvariantViolation { message: String },
+
+    /// A transaction committed and installed into local storage, but directory durability
+    /// could not be confirmed (directory fsync failed after commit-marker rename).
+    #[error("Transaction outcome uncertain: {reason}")]
+    UncertainCommit {
+        reason: String,
+        transaction_id: String,
+        generation: u64,
+    },
 }
 
 impl From<std::io::Error> for StorageError {

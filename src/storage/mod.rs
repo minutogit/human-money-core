@@ -22,6 +22,7 @@ pub mod integrity;
 pub mod key_manager;
 pub mod lock;
 pub mod seal_service;
+pub(crate) mod wallet_transaction;
 // Re-export StorageError from the centralized error module (Phase 3).
 pub use crate::error::storage::StorageError;
 

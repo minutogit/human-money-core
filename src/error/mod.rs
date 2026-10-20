@@ -342,6 +342,28 @@ pub enum Error {
     /// Timestamp parsing or validation failed.
     #[error("Invalid timestamp: {0}")]
     InvalidTimestamp(String),
+
+    /// A transaction committed and installed into local wallet state, but directory durability
+    /// could not be confirmed (directory fsync failed after commit-marker rename).
+    /// The outcome is uncertain; the new state is retained and replacement spend is prohibited.
+    #[error("Transaction outcome uncertain (transaction_id: {transaction_id}, generation: {recovered_generation}): {reason}")]
+    UncertainOutcome {
+        reason: String,
+        transaction_id: String,
+        recovered_generation: u64,
+    },
+}
+
+impl Error {
+    /// Returns true if this error represents an uncertain commit outcome where
+    /// local state has been installed but directory durability could not be confirmed.
+    pub fn is_uncertain_outcome(&self) -> bool {
+        matches!(
+            self,
+            Error::UncertainOutcome { .. }
+                | Error::Storage(crate::error::storage::StorageError::UncertainCommit { .. })
+        )
+    }
 }
 
 /// Backward compatibility alias for the central error type.

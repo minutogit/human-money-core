@@ -218,6 +218,10 @@ impl AppService {
 
         let mut storage = FileStorage::new(profile_path);
 
+        // Lock before recovery, authentication gates, or wallet reads.
+        let mut login_guard = crate::storage::WalletLockGuard::new(&storage)?;
+        storage.recover_wallet_transaction(&AuthMethod::Password(password))?;
+
         // --- WALLET SEAL: Load seal and verify RAW state hash ---
         let needs_legacy_binding = Self::verify_seal_on_login(&storage, password, &local_instance_id)?;
         // --- WALLET SEAL: Pre-Check END ---
@@ -287,6 +291,10 @@ impl AppService {
             session_cache: None,
         };
 
+        // The session-anchor helper acquires its own transaction guard.
+        login_guard.keep_session_lock();
+        drop(login_guard);
+
         // BUG-FIX: Initialize the "session anchor". (See create_profile)
         // This ensures that Mode A / Mode B operations work after a
         // login.
@@ -320,6 +328,10 @@ impl AppService {
         self.check_instance_id_trap(&profile_path)?;
 
         let mut storage = FileStorage::new(profile_path);
+
+        let mut recovery_guard = crate::storage::WalletLockGuard::new(&storage)?;
+        let recovery_auth = AuthMethod::Mnemonic(mnemonic, passphrase, language);
+        storage.recover_wallet_transaction(&recovery_auth)?;
 
         // 1. Load the wallet with the mnemonic phrase (opens the "second lock").
         let auth_method = AuthMethod::Mnemonic(mnemonic, passphrase, language);
@@ -402,6 +414,7 @@ impl AppService {
             session_cache: None,
         };
 
+        recovery_guard.keep_session_lock();
         Ok(())
     }
 

@@ -7,8 +7,8 @@
 //! and delegates seal-related operations to `crate::storage::seal_service::SealService`.
 
 use super::{AppService, AppState, TransactionOutcome};
-use crate::storage::seal_service::SealService;
 use crate::storage::WalletLockGuard;
+use crate::storage::seal_service::SealService;
 use crate::wallet::Wallet;
 
 /// Policy controlling when a Reload-Before-Write is performed.
@@ -79,7 +79,7 @@ impl StateMergeHook {
 /// 2. WalletLockGuard RAII (via `AppState::Locked` swap)
 /// 3. Generation-CAS Reload-Before-Write with `SealService::verify_state_matches_seal`
 /// 4. 3-Wege `TransactionOutcome`: Commit, CommitAndReturnError (Proof-Persistenz), Rollback
-/// 5. Kompensations-Rollback bei Seal-Schreibfehlern via `SealService::compensate_failed_seal_phase`
+/// 5. Authenticated undo recovery covering closure writes, wallet files and seal/integrity.
 pub struct TransactionOrchestrator;
 
 impl TransactionOrchestrator {
@@ -88,9 +88,6 @@ impl TransactionOrchestrator {
         password: Option<&'a str>,
         policy: ReloadPolicy,
     ) -> Result<TxPreamble<'a>, crate::Error> {
-        // 1. Fork-Lock Verification
-        service.check_fork_lock(password)?;
-
         // 2. State Isolation (Unpacking)
         let old_state = std::mem::replace(&mut service.state, AppState::Locked);
 
@@ -129,11 +126,19 @@ impl TransactionOrchestrator {
                     }
                 };
 
+                // Recovery precedes every disk gate while the OS lock is held.
+                let recovered = storage.recover_wallet_transaction(&auth)?;
+                if let Some(record) = storage.load_seal(&auth)?
+                    && record.is_locked_due_to_fork
+                {
+                    return Err(crate::Error::WalletLockedDueToFork);
+                }
+
                 // Reload-Before-Write with policy
                 let mut current_wallet = wallet;
-                let should_reload = match policy {
-                    ReloadPolicy::IfGenerationMismatch => {
-                        match storage.read_generation() {
+                let should_reload = recovered
+                    || match policy {
+                        ReloadPolicy::IfGenerationMismatch => match storage.read_generation() {
                             Ok(disk_gen) => disk_gen != current_wallet.loaded_generation,
                             Err(e) => {
                                 service.state = AppState::Unlocked {
@@ -144,19 +149,20 @@ impl TransactionOrchestrator {
                                 };
                                 return Err(crate::Error::from(e));
                             }
-                        }
-                    }
-                    ReloadPolicy::Always | ReloadPolicy::ReconcileReload => true,
-                };
+                        },
+                        ReloadPolicy::Always | ReloadPolicy::ReconcileReload => true,
+                    };
 
                 if should_reload {
                     let local_instance_id = current_wallet.local_instance_id.clone();
                     match Wallet::load(&storage, &auth, local_instance_id) {
                         Ok((mut fresh_wallet, _)) => {
                             if policy != ReloadPolicy::ReconcileReload {
-                                if let Err(gate_err) =
-                                    SealService::verify_state_matches_seal(&storage, &auth, &fresh_wallet)
-                                {
+                                if let Err(gate_err) = SealService::verify_state_matches_seal(
+                                    &storage,
+                                    &auth,
+                                    &fresh_wallet,
+                                ) {
                                     service.state = AppState::Unlocked {
                                         storage,
                                         wallet: current_wallet,
@@ -244,7 +250,7 @@ impl TransactionOrchestrator {
     /// 6. **Closure Execution:** invoke `f`
     /// 7. **Outcome Evaluation:** Commit / CommitAndReturnError / Rollback
     ///    with sealed commit (`save` + `SealService::persist_seal_for_wallet_state`)
-    ///    and compensation on seal failure.
+    ///    and durable authenticated undo recovery on failure or process interruption.
     pub(crate) fn execute_with_policy<F, R>(
         service: &mut AppService,
         password: Option<&str>,
@@ -268,93 +274,93 @@ impl TransactionOrchestrator {
             session_cache,
         } = Self::prepare(service, password, policy)?;
 
-        // 5. Establish atomicity (cloning)
-        let mut temp_wallet = current_wallet.clone();
-
-        // 6. Execute closure
-        let outcome = f(&mut temp_wallet, &identity, &mut storage, &auth);
-
-        // 7. Evaluate outcome - FullWallet scope: save + seal + compensation
-        // Decoupled: persistence is owned by FileStorage::commit_wallet_atomic (staging → generation bump)
-        match outcome {
-            TransactionOutcome::Commit(res) => {
-                if let Err(e) = storage.commit_wallet_atomic(&mut temp_wallet, &identity, &auth) {
-                    service.state = AppState::Unlocked {
-                        storage,
-                        wallet: current_wallet,
-                        identity,
-                        session_cache,
-                    };
-                    return Err(crate::Error::from(e));
-                }
-                if let Err(seal_err) =
-                    SealService::persist_seal_for_wallet_state(&mut storage, &identity, &auth, &temp_wallet)
-                {
-                    let restored_wallet = SealService::compensate_failed_seal_phase(
-                        &mut storage,
-                        &current_wallet,
-                        &identity,
-                        &auth,
-                    );
-                    service.state = AppState::Unlocked {
-                        storage,
-                        wallet: restored_wallet,
-                        identity,
-                        session_cache,
-                    };
-                    return Err(seal_err);
-                }
-                service.state = AppState::Unlocked {
-                    storage,
-                    wallet: temp_wallet,
-                    identity,
-                    session_cache,
-                };
-                Ok(res)
-            }
-            TransactionOutcome::CommitAndReturnError(err) => {
-                if let Err(e) = storage.commit_wallet_atomic(&mut temp_wallet, &identity, &auth) {
-                    service.state = AppState::Unlocked {
-                        storage,
-                        wallet: current_wallet,
-                        identity,
-                        session_cache,
-                    };
-                    return Err(crate::Error::from(e));
-                }
-                if let Err(seal_err) =
-                    SealService::persist_seal_for_wallet_state(&mut storage, &identity, &auth, &temp_wallet)
-                {
-                    let restored_wallet = SealService::compensate_failed_seal_phase(
-                        &mut storage,
-                        &current_wallet,
-                        &identity,
-                        &auth,
-                    );
-                    service.state = AppState::Unlocked {
-                        storage,
-                        wallet: restored_wallet,
-                        identity,
-                        session_cache,
-                    };
-                    return Err(seal_err);
-                }
-                service.state = AppState::Unlocked {
-                    storage,
-                    wallet: temp_wallet,
-                    identity,
-                    session_cache,
-                };
-                Err(err)
-            }
-            TransactionOutcome::Rollback(err) => {
+        // The undo journal must be durable before the closure can write any files.
+        let transaction = match storage.begin_wallet_transaction(&auth) {
+            Ok(transaction) => transaction,
+            Err(error) => {
                 service.state = AppState::Unlocked {
                     storage,
                     wallet: current_wallet,
                     identity,
                     session_cache,
                 };
-                Err(err)
+                return Err(error.into());
+            }
+        };
+        let mut temp_wallet = current_wallet.clone();
+        let outcome = f(&mut temp_wallet, &identity, &mut storage, &auth);
+        let (result, needs_commit) = match outcome {
+            TransactionOutcome::Commit(value) => (Ok(value), true),
+            TransactionOutcome::CommitAndReturnError(error) => (Err(error), true),
+            TransactionOutcome::Rollback(error) => (Err(error), false),
+        };
+        if !needs_commit {
+            // Failure keeps the session locked if durable restoration fails.
+            transaction.abort(&storage)?;
+            service.state = AppState::Unlocked {
+                storage,
+                wallet: current_wallet,
+                identity,
+                session_cache,
+            };
+            return result;
+        }
+        let persistence = (|| -> Result<(), crate::Error> {
+            storage.commit_wallet_atomic(&mut temp_wallet, &identity, &auth)?;
+            SealService::persist_seal_for_wallet_state(
+                &mut storage,
+                &identity,
+                &auth,
+                &temp_wallet,
+            )?;
+            transaction.commit(&storage)?;
+            Ok(())
+        })();
+        match persistence {
+            Ok(()) => {
+                service.state = AppState::Unlocked {
+                    storage,
+                    wallet: temp_wallet,
+                    identity,
+                    session_cache,
+                };
+                result
+            }
+            Err(crate::Error::Storage(crate::error::storage::StorageError::UncertainCommit {
+                reason,
+                transaction_id,
+                generation,
+            })) => {
+                // Commit marker rename succeeded: new state remains installed on disk.
+                // Complete journal cleanup if possible, but adopt the installed state.
+                let _ = transaction.abort(&storage);
+                let (recovered_wallet, _) =
+                    Wallet::load(&storage, &auth, current_wallet.local_instance_id.clone())?;
+                let _ = SealService::verify_state_matches_seal(&storage, &auth, &recovered_wallet);
+                service.state = AppState::Unlocked {
+                    storage,
+                    wallet: recovered_wallet,
+                    identity,
+                    session_cache,
+                };
+                Err(crate::Error::UncertainOutcome {
+                    reason,
+                    transaction_id,
+                    recovered_generation: generation,
+                })
+            }
+            Err(error) => {
+                transaction.abort(&storage)?;
+                let (recovered_wallet, _) =
+                    Wallet::load(&storage, &auth, current_wallet.local_instance_id.clone())?;
+                let _ = SealService::verify_state_matches_seal(&storage, &auth, &recovered_wallet);
+                service.state = AppState::Unlocked {
+                    storage,
+                    wallet: recovered_wallet,
+                    identity,
+                    session_cache,
+                };
+                Err(error)
             }
         }
     }
@@ -406,18 +412,21 @@ impl TransactionOrchestrator {
     {
         let TxPreamble {
             mut storage,
-            wallet: current_wallet,
+            wallet: mut current_wallet,
             identity,
             auth,
             _guard,
             session_cache,
         } = Self::prepare(service, password, policy)?;
 
-        // Execute closure - SealMetadataOnly: no wallet save, no seal persist via orchestrator
+        let initial_gen = storage.read_generation()?;
         let res = f(&mut storage, &auth, &current_wallet, &identity);
 
         match res {
             Ok(val) => {
+                let new_gen = storage.advance_generation(initial_gen)?;
+                storage.record_commit_marker(&auth, new_gen)?;
+                current_wallet.loaded_generation = new_gen;
                 service.state = AppState::Unlocked {
                     storage,
                     wallet: current_wallet,
@@ -462,36 +471,80 @@ impl TransactionOrchestrator {
             session_cache,
         } = Self::prepare(service, password, ReloadPolicy::ReconcileReload)?;
 
-        let mut temp_wallet = current_wallet.clone();
-        let res = f(&mut temp_wallet, &identity, &mut storage, &auth);
-
-        match res {
-            Ok(val) => {
-                if let Err(e) = storage.commit_wallet_atomic(&mut temp_wallet, &identity, &auth) {
-                    service.state = AppState::Unlocked {
-                        storage,
-                        wallet: current_wallet,
-                        identity,
-                        session_cache,
-                    };
-                    return Err(crate::Error::from(e));
-                }
-                service.state = AppState::Unlocked {
-                    storage,
-                    wallet: temp_wallet,
-                    identity,
-                    session_cache,
-                };
-                Ok(val)
-            }
-            Err(e) => {
+        let transaction = match storage.begin_wallet_transaction(&auth) {
+            Ok(value) => value,
+            Err(error) => {
                 service.state = AppState::Unlocked {
                     storage,
                     wallet: current_wallet,
                     identity,
                     session_cache,
                 };
-                Err(e)
+                return Err(error.into());
+            }
+        };
+        let mut temp_wallet = current_wallet.clone();
+        let result = f(&mut temp_wallet, &identity, &mut storage, &auth);
+        match result {
+            Ok(value) => {
+                let commit_res = storage
+                    .commit_wallet_atomic(&mut temp_wallet, &identity, &auth)
+                    .and_then(|()| transaction.commit(&storage));
+                match commit_res {
+                    Ok(()) => {
+                        service.state = AppState::Unlocked {
+                            storage,
+                            wallet: temp_wallet,
+                            identity,
+                            session_cache,
+                        };
+                        Ok(value)
+                    }
+                    Err(crate::error::storage::StorageError::UncertainCommit {
+                        reason,
+                        transaction_id,
+                        generation,
+                    }) => {
+                        let _ = transaction.abort(&storage);
+                        let (recovered_wallet, _) =
+                            Wallet::load(&storage, &auth, current_wallet.local_instance_id.clone())?;
+                        service.state = AppState::Unlocked {
+                            storage,
+                            wallet: recovered_wallet,
+                            identity,
+                            session_cache,
+                        };
+                        Err(crate::Error::UncertainOutcome {
+                            reason,
+                            transaction_id,
+                            recovered_generation: generation,
+                        })
+                    }
+                    Err(error) => {
+                        transaction.abort(&storage)?;
+                        let (restored_wallet, _) =
+                            Wallet::load(&storage, &auth, current_wallet.local_instance_id.clone())?;
+                        service.state = AppState::Unlocked {
+                            storage,
+                            wallet: restored_wallet,
+                            identity,
+                            session_cache,
+                        };
+                        Err(error.into())
+                    }
+                }
+            }
+            Err(error) => {
+                transaction.abort(&storage)?;
+                let (restored_wallet, _) =
+                    Wallet::load(&storage, &auth, current_wallet.local_instance_id.clone())?;
+                service.state = AppState::Unlocked {
+                    storage,
+                    wallet: restored_wallet,
+                    identity,
+                    session_cache,
+                };
+                Err(error)
             }
         }
     }

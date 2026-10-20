@@ -49,9 +49,17 @@ pub struct WalletLockGuard {
     lock_file_path: PathBuf,
     canonical_path: PathBuf,
     was_already_locked: bool,
+    // Never unlink this inode: the OS releases its exclusive lock after a crash.
+    #[cfg(not(target_arch = "wasm32"))]
+    _transaction_lock: fs::File,
 }
 
 impl WalletLockGuard {
+    /// Retains the existing PID session lock while releasing the OS transaction lock.
+    pub(crate) fn keep_session_lock(&mut self) {
+        self.was_already_locked = true;
+    }
+
     /// Creates a new guard and immediately attempts to acquire the lock.
     pub fn new(storage: &FileStorage) -> Result<Self, StorageError> {
         let canonical_path = get_canonical_path(storage);
@@ -69,6 +77,31 @@ impl WalletLockGuard {
             }
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let transaction_lock = (|| {
+            fs::create_dir_all(&storage.user_storage_path)?;
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(storage.user_storage_path.join(".wallet.transaction.lock"))?;
+            file.try_lock().map_err(|e| {
+                StorageError::LockFailed(format!("Wallet transaction is busy: {e}"))
+            })?;
+            Ok::<_, StorageError>(file)
+        })();
+        #[cfg(not(target_arch = "wasm32"))]
+        let transaction_lock = match transaction_lock {
+            Ok(file) => file,
+            Err(error) => {
+                if let Ok(mut table) = PROCESS_LOCK_TABLE.lock() {
+                    table.remove(&canonical_path);
+                }
+                return Err(error);
+            }
+        };
+
         let is_newly_locked = match acquire_lock(storage) {
             Ok(newly_locked) => newly_locked,
             Err(e) => {
@@ -85,6 +118,8 @@ impl WalletLockGuard {
             lock_file_path,
             canonical_path,
             was_already_locked: !is_newly_locked,
+            #[cfg(not(target_arch = "wasm32"))]
+            _transaction_lock: transaction_lock,
         })
     }
 }

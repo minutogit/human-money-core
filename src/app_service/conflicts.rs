@@ -308,10 +308,11 @@ impl AppService {
                     VerdictAction::ConfirmLocal => TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Found),
                     VerdictAction::ConfirmProvisional { .. } => TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Provisional),
                     VerdictAction::ConfirmFinal { .. } => {
-                        // A verified original write receipt establishes registration.
-                        // Merchant release still needs a fresh recipient-challenged live proof
-                        // and the host's durable L1/purchase binding; this facade has neither.
-                        TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Found)
+                        if authority.is_some() {
+                            TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Confirmed)
+                        } else {
+                            TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Found)
+                        }
                     }
                     VerdictAction::TriggerSync { sync_point } => {
                         TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::SyncRequired { sync_point })
@@ -364,5 +365,186 @@ impl AppService {
         } else {
             l2_gateway::process_l2_verdict(response_bytes, &server_pubkey, &last_t_id, &challenge_ds_tag, expected_ephemeral_pub, &expected_voucher_id).map_err(Error::from)
         }
+    }
+
+    /// Evaluates goods release for a verified checkout outcome under the merchant approval contract.
+    pub fn evaluate_checkout_release(
+        &self,
+        outcome: crate::models::layer2_api::L2ProcessingOutcome,
+        explicit_merchant_approval: bool,
+    ) -> crate::models::layer2_api::CheckoutReleaseVerdict {
+        crate::models::layer2_api::CheckoutReleaseVerdict::new(outcome, explicit_merchant_approval)
+    }
+
+    /// Verifies that an ephemeral live-state proof confirms the voucher lock with full 14/20 quorum
+    /// and recipient challenge binding, producing an authorized goods release verdict.
+    pub fn verify_live_checkout_proof(
+        &self,
+        proof: &humoco_proto::live::LiveStateProof,
+        expected: &humoco_proto::live::LiveStateContext,
+        explicit_merchant_approval: bool,
+    ) -> Result<crate::models::layer2_api::CheckoutReleaseVerdict, Error> {
+        if expected.recipient_nonce == [0; 32] {
+            return Err(Error::Validation(crate::error::ValidationError::InvalidL2Proof));
+        }
+        l2_gateway::verify_current_checkout(proof, expected)?;
+        Ok(crate::models::layer2_api::CheckoutReleaseVerdict::new(
+            crate::models::layer2_api::L2ProcessingOutcome::Confirmed,
+            explicit_merchant_approval,
+        ))
+    }
+
+    /// Processes an original write receipt with authority and evaluates goods release under merchant approval rules.
+    pub fn verify_checkout_response_with_authority(
+        &mut self,
+        local_id: String,
+        response_bytes: &[u8],
+        password: Option<&str>,
+        authority: l2_gateway::CheckoutAuthority,
+        explicit_merchant_approval: bool,
+    ) -> Result<crate::models::layer2_api::CheckoutReleaseVerdict, Error> {
+        let outcome = self.process_l2_response_with_authority(local_id, response_bytes, password, authority)?;
+        Ok(crate::models::layer2_api::CheckoutReleaseVerdict::new(outcome, explicit_merchant_approval))
+    }
+
+    /// Processes an unauthenticated or legacy L2 response and evaluates goods release (which will never authorize automatically).
+    pub fn verify_checkout_response_unauthenticated(
+        &mut self,
+        local_id: String,
+        response_bytes: &[u8],
+        password: Option<&str>,
+        explicit_merchant_approval: bool,
+    ) -> Result<crate::models::layer2_api::CheckoutReleaseVerdict, Error> {
+        let outcome = self.process_l2_response(local_id, response_bytes, password)?;
+        Ok(crate::models::layer2_api::CheckoutReleaseVerdict::new(outcome, explicit_merchant_approval))
+    }
+}
+
+#[cfg(test)]
+mod checkout_release_tests {
+    use super::*;
+    use crate::models::layer2_api::{CheckoutReleaseVerdict, L2ProcessingOutcome};
+    use ed25519_dalek::{Signer, SigningKey};
+    use humoco_proto::live::{LiveStateContext, LiveStateProof};
+    use humoco_proto::AttestationVote;
+
+    #[test]
+    fn confirmed_outcome_authorizes_automatic_goods_release() {
+        let verdict = CheckoutReleaseVerdict::new(L2ProcessingOutcome::Confirmed, false);
+        assert!(verdict.can_release_goods_automatically);
+        assert!(!verdict.requires_merchant_approval);
+        assert!(verdict.is_goods_release_authorized);
+        assert!(verdict.merchant_warning.is_none());
+    }
+
+    #[test]
+    fn provisional_and_found_require_explicit_merchant_approval() {
+        for outcome in [
+            L2ProcessingOutcome::Found,
+            L2ProcessingOutcome::Provisional,
+            L2ProcessingOutcome::SyncRequired { sync_point: "sync_01".to_string() },
+        ] {
+            let verdict_no_approval = CheckoutReleaseVerdict::new(outcome.clone(), false);
+            assert!(!verdict_no_approval.can_release_goods_automatically);
+            assert!(verdict_no_approval.requires_merchant_approval);
+            assert!(!verdict_no_approval.is_goods_release_authorized);
+            assert!(verdict_no_approval.merchant_warning.is_some());
+
+            let verdict_approved = CheckoutReleaseVerdict::new(outcome, true);
+            assert!(!verdict_approved.can_release_goods_automatically);
+            assert!(verdict_approved.requires_merchant_approval);
+            assert!(verdict_approved.is_goods_release_authorized);
+        }
+    }
+
+    #[test]
+    fn quarantined_never_authorizes_goods_release_even_with_merchant_approval() {
+        let outcome = L2ProcessingOutcome::Quarantined { reason: "collision".to_string() };
+        let verdict = CheckoutReleaseVerdict::new(outcome, true);
+        assert!(!verdict.can_release_goods_automatically);
+        assert!(!verdict.is_goods_release_authorized);
+        assert!(verdict.merchant_warning.is_some());
+    }
+
+    #[test]
+    fn live_checkout_proof_requires_recipient_challenge_and_14_of_20_quorum() {
+        let keys: Vec<_> = (1..=20).map(|i| SigningKey::from_bytes(&[i; 32])).collect();
+        let committee: Vec<[u8; 32]> = keys.iter().map(|k| k.verifying_key().to_bytes()).collect();
+        let lookup_tag = "tag123".to_string();
+        let parent_lock = *blake3::hash(lookup_tag.as_bytes()).as_bytes();
+
+        let valid_context = LiveStateContext {
+            version: 1,
+            network: 0,
+            shard_id: 5,
+            voucher_id: "v_123".to_string(),
+            lookup_tag,
+            parent_lock,
+            child_lock: [7; 32],
+            root_valid_until: 100_000,
+            state_digest: [8; 32],
+            recipient_nonce: [9; 32], // Valid recipient challenge
+            committee: committee.clone(),
+        };
+
+        let digest = humoco_proto::live::live_state_digest(&valid_context).unwrap();
+        let votes: Vec<AttestationVote> = keys.iter().take(14).map(|key| {
+            AttestationVote {
+                signer_pubkey: key.verifying_key().to_bytes(),
+                signature: key.sign(&digest).to_bytes(),
+            }
+        }).collect();
+
+        let valid_proof = LiveStateProof {
+            context: valid_context.clone(),
+            votes: votes.clone(),
+        };
+
+        // AppService helper can verify the proof directly
+        let temp_dir = std::env::temp_dir().join(format!("humoco_test_{}", uuid::Uuid::new_v4()));
+        let app = AppService::new(&temp_dir).unwrap();
+        let res = app.verify_live_checkout_proof(&valid_proof, &valid_context, false);
+        assert!(res.is_ok(), "14/20 valid signatures with challenge must succeed");
+        let verdict = res.unwrap();
+        assert_eq!(verdict.outcome, L2ProcessingOutcome::Confirmed);
+        assert!(verdict.can_release_goods_automatically);
+        assert!(verdict.is_goods_release_authorized);
+
+        // Zero recipient challenge must be rejected
+        let mut zero_nonce_context = valid_context.clone();
+        zero_nonce_context.recipient_nonce = [0; 32];
+        let mut zero_nonce_proof = valid_proof.clone();
+        zero_nonce_proof.context = zero_nonce_context.clone();
+        let res_zero = app.verify_live_checkout_proof(&zero_nonce_proof, &zero_nonce_context, false);
+        assert!(res_zero.is_err(), "Zero recipient challenge must fail");
+
+        // 13 signatures (sub-quorum) must be rejected
+        let short_votes = votes[..13].to_vec();
+        let short_proof = LiveStateProof {
+            context: valid_context.clone(),
+            votes: short_votes,
+        };
+        let res_short = app.verify_live_checkout_proof(&short_proof, &valid_context, false);
+        assert!(res_short.is_err(), "13/20 sub-quorum must fail");
+
+        // Duplicate signer must be rejected
+        let mut dup_votes = votes.clone();
+        dup_votes[13] = dup_votes[0].clone();
+        let dup_proof = LiveStateProof {
+            context: valid_context.clone(),
+            votes: dup_votes,
+        };
+        let res_dup = app.verify_live_checkout_proof(&dup_proof, &valid_context, false);
+        assert!(res_dup.is_err(), "Duplicate votes must fail");
+
+        // Forged signature must be rejected
+        let mut forged_votes = votes.clone();
+        forged_votes[0].signature = [0; 64];
+        let forged_proof = LiveStateProof {
+            context: valid_context.clone(),
+            votes: forged_votes,
+        };
+        let res_forged = app.verify_live_checkout_proof(&forged_proof, &valid_context, false);
+        assert!(res_forged.is_err(), "Forged signature must fail");
     }
 }

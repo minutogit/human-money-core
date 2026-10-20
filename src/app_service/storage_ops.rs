@@ -629,28 +629,6 @@ impl AppService {
     }
 
     #[allow(unused_variables)]
-    pub(crate) fn check_fork_lock(&self, password: Option<&str>) -> Result<(), Error> {
-        match &self.state {
-            AppState::Unlocked {
-                storage,
-                identity,
-                session_cache,
-                ..
-            } => {
-                let auth = Self::resolve_auth_method(password, session_cache)?;
-                let record = storage
-                    .load_seal(&auth)?;
-
-                match record {
-                    Some(r) if r.is_locked_due_to_fork => Err(Error::WalletLockedDueToFork),
-                    _ => Ok(()),
-                }
-            }
-            AppState::Locked => Err(Error::WalletLocked),
-        }
-    }
-
-    #[allow(unused_variables)]
     pub(crate) fn get_epoch_info(
         &self,
         password: Option<&str>,

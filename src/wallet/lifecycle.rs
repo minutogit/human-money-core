@@ -295,20 +295,12 @@ impl Wallet {
         Ok((wallet, identity))
     }
 
-    /// Saves the current wallet state via the atomic 2-phase commit in `FileStorage`.
+    /// Writes wallet containers and advances their optimistic concurrency token.
     ///
-    /// This is a thin facade over `FileStorage::commit_wallet_atomic` to keep
-    /// the `Wallet` API ergonomic for tests and callers. The actual atomicity
-    /// (staging → generation bump → pending_events clear) lives entirely in
-    /// `FileStorage` as required by the decoupled architecture.
-    ///
-    /// **Decoupled persistence:** `Wallet` itself remains a pure in-memory
-    /// state machine; all I/O and cryptographic binding is owned by
-    /// `FileStorage::commit_wallet_atomic`:
-    /// 1. `vouchers.enc` bytes → `derive_store_binding_hash` → `profile.store_binding_hash`
-    /// 2. staging writes of all containers via `write_atomic`
-    /// 3. commit point `write_generation` only after all writes succeeded
-    /// 4. `pending_events` cleared only after durable commit
+    /// This low-level facade delegates to `FileStorage::commit_wallet_atomic`.
+    /// It does not include seal/integrity updates or provide crash atomicity by
+    /// itself. AppService's full mutation orchestrator provides the surrounding
+    /// authenticated undo transaction and durable commit acknowledgment.
     pub fn save(
         &mut self,
         storage: &mut FileStorage,

@@ -595,6 +595,57 @@ pub enum L2ProcessingOutcome {
     SyncRequired { sync_point: String },
 }
 
+/// Checkout release verdict governing goods release and merchant approval requirements.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckoutReleaseVerdict {
+    pub outcome: L2ProcessingOutcome,
+    pub can_release_goods_automatically: bool,
+    pub requires_merchant_approval: bool,
+    pub is_goods_release_authorized: bool,
+    pub merchant_warning: Option<String>,
+}
+
+impl CheckoutReleaseVerdict {
+    pub fn new(outcome: L2ProcessingOutcome, explicit_merchant_approval: bool) -> Self {
+        let (can_auto, req_approval, authorized, warning) = match &outcome {
+            L2ProcessingOutcome::Confirmed => (true, false, true, None),
+            L2ProcessingOutcome::Found => (
+                false,
+                true,
+                explicit_merchant_approval,
+                Some("Unverified offline check. Goods release requires explicit merchant approval.".to_string()),
+            ),
+            L2ProcessingOutcome::Provisional => (
+                false,
+                true,
+                explicit_merchant_approval,
+                Some("Payment is provisional (sub-quorum). Goods release requires explicit merchant approval.".to_string()),
+            ),
+            L2ProcessingOutcome::SyncRequired { sync_point } => (
+                false,
+                true,
+                explicit_merchant_approval,
+                Some(format!("Network synchronization required (sync point: {}). Goods release blocked without explicit approval.", sync_point)),
+            ),
+            L2ProcessingOutcome::Quarantined { reason } => (
+                false,
+                false,
+                false, // NEVER authorized under double-spend quarantine!
+                Some(format!("Double-spend detected ({}). Goods release STRICTLY BLOCKED.", reason)),
+            ),
+        };
+
+        Self {
+            outcome,
+            can_release_goods_automatically: can_auto,
+            requires_merchant_approval: req_approval,
+            is_goods_release_authorized: authorized,
+            merchant_warning: warning,
+        }
+    }
+}
+
 /// Outcome of reconciling an individual voucher output against Layer-2 status.
 ///
 /// # Two-Tier Ingress Safety Architecture:

@@ -43,7 +43,7 @@ pub(crate) const LEGACY_EVENTS_FILE_NAME: &str = "events.json.enc";
 pub(crate) const EVENTS_DIR_NAME: &str = "events";
 
 /// Private module to encapsulate Serde logic for Base64 encoding of vectors.
-mod base64_serde {
+pub(crate) mod base64_serde {
     use super::*;
     use serde::{Deserializer, Serializer};
 
@@ -177,8 +177,9 @@ impl FileStorage {
 
     /// Atomic write helper: writes `data` to `relative_path` via tmp-file + rename.
     ///
-    /// Durability: on non-WASM targets the tmp file is `fsync`'d before rename
-    /// and the parent directory is `fsync`'d after rename (torn-write protection).
+    /// Durability: on native targets the tmp file is synchronized before rename.
+    /// Unix additionally synchronizes parent directories and propagates failures.
+    /// Full crash-recoverable transactions are supported only on Unix.
     ///
     /// SECURITY (AUDIT-00-WILDCARD-07): the tmp path carries a random nonce
     /// and is opened with `create_new(true)` (`O_EXCL|O_CREAT`) so a
@@ -231,15 +232,39 @@ impl FileStorage {
                 .open(&tmp)?;
             tmp_file.write_all(data)?;
         }
+        crate::storage::wallet_transaction::checkpoint(&format!("staged:{}", relative_path.as_ref().display()));
         fs::rename(&tmp, &dest)?;
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Some(parent) = dest.parent() {
-                if let Ok(dir) = fs::File::open(parent) {
-                    let _ = dir.sync_all();
-                }
+        if let Some(parent) = dest.parent() {
+            self.sync_directory(parent)?;
+            // Also persist newly created subdirectory entries (for example events/).
+            if parent != self.user_storage_path {
+                self.sync_directory(&self.user_storage_path)?;
             }
         }
+        crate::storage::wallet_transaction::checkpoint(&format!(
+            "write:{}",
+            relative_path.as_ref().display()
+        ));
+        Ok(())
+    }
+
+    pub(crate) fn sync_directory(&self, directory: &Path) -> Result<(), StorageError> {
+        #[cfg(unix)]
+        fs::File::open(directory)?.sync_all()?;
+        #[cfg(not(unix))]
+        let _ = directory;
+        Ok(())
+    }
+
+    pub(crate) fn remove_durable(&self, relative: &str) -> Result<(), StorageError> {
+        let path = self.user_storage_path.join(relative);
+        if path.try_exists()? {
+            fs::remove_file(&path)?;
+        }
+        if let Some(parent) = path.parent() {
+            self.sync_directory(parent)?;
+        }
+        crate::storage::wallet_transaction::checkpoint(&format!("delete:{relative}"));
         Ok(())
     }
 
@@ -287,14 +312,9 @@ impl FileStorage {
             return Err(StorageError::NotFound);
         }
 
-        // SECURITY (AUDIT-00-WILDCARD-22): Consult the generation counter and
-        // seal state so torn multi-file writes (crash between staging and
-        // generation bump) do not load as valid. The store_binding_hash already
-        // binds vouchers.enc↔profile.enc; generation adds a cross-file commit
-        // point, and seal verification (via AppService layer) adds state-hash
-        // coverage. load_wallet reads generation to ensure the on-disk commit
-        // point is coherent before trusting individual file contents.
-        let _generation = self.read_generation().unwrap_or(0);
+        // Recovery is performed by the guarded AppService entry points before loading.
+        // Reject malformed counters here as well; the counter does not select file versions.
+        self.read_generation()?;
 
         let profile_path = self.user_storage_path.join(PROFILE_FILE_NAME);
         let store_path = self.user_storage_path.join(VOUCHER_STORE_FILE_NAME);
@@ -486,18 +506,9 @@ impl FileStorage {
         profile_container.store_binding_hash =
             Some(derive_store_binding_hash(&file_key, &store_container_bytes));
 
-        // SECURITY (AUDIT-00-WILDCARD-20): crash-window ordering. Writing
-        // profile.enc (which embeds the new binding hash) BEFORE vouchers.enc
-        // leaves a window where a crash/power-loss yields new profile + old
-        // vouchers -> StateConflict brick on next load. Write vouchers FIRST
-        // so a crash after vouchers but before profile still yields old profile
-        // + new vouchers -> also StateConflict. Both orders brick without a
-        // WAL, but the generation counter as commit point makes the *second*
-        // file the atomic commit: we therefore stage vouchers first, then
-        // profile, so that the commit point (generation bump in
-        // commit_wallet_atomic) always follows the binding file. The helper
-        // itself is now ordered vouchers->profile to match the 2-phase commit
-        // staging discipline (all containers staged before generation bump).
+        // Preserve the historical vouchers-before-profile replacement order.
+        // The binding detects a torn pair; the generation counter cannot repair
+        // one. Full AppService mutations recover it through the undo journal.
         self.write_atomic(VOUCHER_STORE_FILE_NAME, &store_container_bytes)?;
         self.write_atomic(
             PROFILE_FILE_NAME,
@@ -637,7 +648,7 @@ impl FileStorage {
             self.get_master_key_from_auth(auth)?;
             let proof_path = self.user_storage_path.join(PROOF_STORE_FILE_NAME);
             if proof_path.exists() {
-                fs::remove_file(proof_path)?;
+                self.remove_durable(PROOF_STORE_FILE_NAME)?;
             }
             return Ok(());
         }
@@ -759,26 +770,22 @@ impl FileStorage {
         self.write_atomic(".wallet.generation", new.to_string().as_bytes())
     }
 
-    /// Atomically commits the entire wallet state (2-phase commit).
+    pub fn advance_generation(&mut self, expected: u64) -> Result<u64, StorageError> {
+        let next = expected
+            .checked_add(1)
+            .ok_or_else(|| StorageError::StateConflict("Generation exhausted".to_string()))?;
+        self.write_generation(expected, next)?;
+        Ok(next)
+    }
+
+    /// Writes wallet containers and advances the optimistic concurrency generation.
     ///
-    /// **Phase 1 – Staging:** Encodes `vouchers.enc`, computes the keyed
-    /// `store_binding_hash` (SHA3-256 over `file_key || store_container_bytes`)
-    /// and embeds it byte-identically into `profile.enc`, then writes all
-    /// modified containers (`profile.enc`, `vouchers.enc`, `bundles.meta.enc`,
-    /// `known_fingerprints.enc`, `own_fingerprints.enc`, `proofs.enc`,
-    /// `active_gossip.enc` and `events`) via atomic tmp+rename.
-    ///
-    /// **Phase 2 – Commit:** Only after every container has been durably
-    /// staged the generation counter is bumped via `write_generation`. This
-    /// single file is the atomic commit point; a crash before it leaves the
-    /// previous consistent generation on disk, a crash after it leaves the
-    /// fully staged new generation – never a torn mix where generation is new
-    /// but data is old (or vice-versa).
-    ///
-    /// The `store_binding_hash` computation preserves exact byte identity with
-    /// the historical `save_wallet` implementation:
-    /// `vouchers.enc` bytes → `derive_store_binding_hash(file_key, bytes)` →
-    /// `profile.store_binding_hash`.
+    /// Individual files use durable replacement. This low-level API alone does
+    /// not provide crash atomicity across files or include seal/integrity updates.
+    /// `TransactionOrchestrator` wraps full wallet mutations in an authenticated
+    /// undo transaction covering the closure, these writes, and seal/integrity.
+    /// The generation counter is a concurrency token, not a recovery manifest.
+    /// Container serialization and the profile/voucher store binding remain stable.
     pub fn commit_wallet_atomic(
         &mut self,
         wallet: &mut crate::wallet::Wallet,
@@ -792,7 +799,9 @@ impl FileStorage {
                 "State was modified externally!".to_string(),
             ));
         }
-        let new_generation = current_generation + 1;
+        let new_generation = current_generation.checked_add(1).ok_or_else(|| {
+            StorageError::StateConflict("Wallet generation exhausted".to_string())
+        })?;
 
         let file_key = self.write_profile_and_voucher_store_containers(
             &wallet.profile,
@@ -840,7 +849,7 @@ impl FileStorage {
         if wallet.proof_store.proofs.is_empty() {
             let proof_path = self.user_storage_path.join(PROOF_STORE_FILE_NAME);
             if proof_path.exists() {
-                fs::remove_file(proof_path)?;
+                self.remove_durable(PROOF_STORE_FILE_NAME)?;
             }
         } else {
             stage_store(
