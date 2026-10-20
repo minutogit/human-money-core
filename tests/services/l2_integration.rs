@@ -1074,7 +1074,7 @@ fn test_gateway_retry_invariance_idempotency() {
         .unwrap();
     assert_eq!(
         outcome1,
-        human_money_core::models::layer2_api::L2ProcessingOutcome::Confirmed
+        human_money_core::models::layer2_api::L2ProcessingOutcome::Found
     );
 
     // Gateway retry: resending the EXACT same byte vector req_bytes_1 (as required by Gateway Retry Invariant)
@@ -1085,13 +1085,13 @@ fn test_gateway_retry_invariance_idempotency() {
         "Gateway returns 200 OK / Verified for idempotent retry of same lock"
     );
 
-    // Processing the retry response in wallet must succeed idempotently (treated as success, not conflict)
+    // An idempotent matching response remains Found without a verified quorum.
     let outcome_retry = app
         .process_l2_response(voucher_id.clone(), &resp_retry, Some(correct_password))
         .unwrap();
     assert_eq!(
         outcome_retry,
-        human_money_core::models::layer2_api::L2ProcessingOutcome::Confirmed
+        human_money_core::models::layer2_api::L2ProcessingOutcome::Found
     );
 
     // Voucher status must remain Active

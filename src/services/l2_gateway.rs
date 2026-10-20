@@ -56,9 +56,9 @@ pub enum AnchorSyncVerdict {
 /// Defines the action that AppService should perform after evaluating the verdict.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerdictAction {
-    /// The L2 network confirmed the transaction as valid.
+    /// A matching lookup/registration was found; this is not payment clearance.
     ConfirmLocal,
-    /// Confirmed with final quorum certificate (N >= 20, status == 1).
+    /// Mathematically verified FINAL original approval; not a fresh live-state proof.
     ConfirmFinal { certificate: QuorumCertificateDto },
     /// Confirmed with provisional quorum certificate (N < 20 or provisional status).
     ConfirmProvisional { certificate: Option<QuorumCertificateDto> },
@@ -71,7 +71,7 @@ pub enum VerdictAction {
 /// Evaluates whether an HTTP status code indicates a successful Layer-2 lock response.
 ///
 /// Both `201 Created` (first-time registration) and `200 OK` (idempotent replay under Rule 3)
-/// are valid successful confirmations.
+/// are successful transport/write outcomes, not independently verified payment clearance.
 pub fn is_l2_success_http_status(status_code: u16) -> bool {
     matches!(status_code, 200 | 201)
 }
@@ -568,57 +568,72 @@ pub fn verify_lock_entry_proof(
     Ok(())
 }
 
-/// Evaluates any optional QuorumCertificate present on a confirmed lock entry.
+/// Recipient-established original write-committee context, never sourced from the response itself.
+#[derive(Clone, Debug)]
+pub struct CheckoutAuthority {
+    /// Network domain: zero mainnet, one testnet.
+    pub network: u8,
+    /// Exact voucher shard.
+    pub shard_id: u16,
+    /// Expected predecessor/output hash.
+    pub parent_lock: [u8; 32],
+    /// Expected successor transaction hash.
+    pub child_lock: [u8; 32],
+    /// Independently established frozen committee in canonical order.
+    pub committee: Vec<[u8; 32]>,
+}
+
 fn evaluate_quorum_certificate(
     certificate_opt: Option<QuorumCertificateDto>,
     lock_t_id: &[u8; 32],
-    expected_voucher_id: &str,
+    _expected_voucher_id: &str,
+    authority: Option<&CheckoutAuthority>,
 ) -> Result<VerdictAction, VoucherCoreError> {
-    if let Some(certificate) = certificate_opt {
-        // SECURITY (AUDIT-00-WILDCARD-16): Ensure certificate binds strictly to this lock
-        if !matches_lock_id(lock_t_id, &certificate.lock_id) {
-            return Err(VoucherCoreError::Validation(
-                crate::error::ValidationError::InvalidL2Proof,
-            ));
-        }
-
-        let expected_shard_id = match hex::decode(expected_voucher_id) {
-            Ok(b) if b.len() >= 2 => {
-                let id_from_voucher = u16::from_be_bytes([b[0], b[1]]);
-                let id_from_lock = u16::from_be_bytes([lock_t_id[0], lock_t_id[1]]);
-                if certificate.shard_id == id_from_lock {
-                    id_from_lock
-                } else {
-                    id_from_voucher
-                }
-            }
-            _ => u16::from_be_bytes([lock_t_id[0], lock_t_id[1]]),
-        };
-        let (is_valid, is_final) = verify_quorum_plausibility(&certificate, expected_shard_id)?;
-        if is_valid && is_final && certificate.status == 1 {
-            Ok(VerdictAction::ConfirmFinal { certificate })
-        } else if is_valid {
-            Ok(VerdictAction::ConfirmProvisional {
-                certificate: Some(certificate),
-            })
-        } else {
-            Err(VoucherCoreError::Validation(
-                crate::error::ValidationError::InvalidL2Proof,
-            ))
-        }
-    } else {
-        Ok(VerdictAction::ConfirmLocal)
+    let Some(certificate) = certificate_opt else { return Ok(VerdictAction::ConfirmLocal); };
+    let invalid = || VoucherCoreError::Validation(crate::error::ValidationError::InvalidL2Proof);
+    let authority = authority.ok_or_else(invalid)?;
+    if &authority.child_lock != lock_t_id || !matches_lock_id(lock_t_id, &certificate.lock_id)
+        || certificate.shard_id != authority.shard_id || authority.committee.is_empty() || authority.committee.len() > 20
+        || certificate.signatures.len() > authority.committee.len() { return Err(invalid()); }
+    let distinct: std::collections::HashSet<_> = authority.committee.iter().collect();
+    if distinct.len() != authority.committee.len() { return Err(invalid()); }
+    let final_mode = authority.committee.len() == 20;
+    if certificate.status > 1 || (certificate.status == 1 && !final_mode) { return Err(invalid()); }
+    for att in &certificate.signatures {
+        if att.lock_id != certificate.lock_id || att.shard_id != authority.shard_id
+            || hex::decode(&att.parent_lock).ok().as_deref() != Some(authority.parent_lock.as_slice()) { return Err(invalid()); }
     }
+    let digest = humoco_proto::live::original_approval_digest(authority.network, authority.shard_id, certificate.status, &authority.parent_lock, &authority.child_lock).map_err(|_| invalid())?;
+    let threshold = if final_mode { 14 } else { (2 * authority.committee.len()) / 3 + 1 };
+    verify_checkout_receipt_certificate(&certificate, &digest, &authority.committee, threshold)?;
+    if final_mode && certificate.status == 1 { Ok(VerdictAction::ConfirmFinal { certificate }) }
+    else { Ok(VerdictAction::ConfirmProvisional { certificate: Some(certificate) }) }
+}
+
+/// Verifies ephemeral current state against the recipient's independently justified exact challenge/context.
+pub fn verify_current_checkout(proof: &humoco_proto::live::LiveStateProof, expected: &humoco_proto::live::LiveStateContext) -> Result<(), VoucherCoreError> {
+    humoco_proto::live::verify_live_state_proof(proof, expected).map_err(|_| VoucherCoreError::Validation(crate::error::ValidationError::InvalidL2Proof))
 }
 
 /// Processes the L2Verdict and determines the subsequent wallet action.
-pub fn process_l2_verdict(
+/// Processes legacy lookup responses without treating response-supplied quorum metadata as authority.
+pub fn process_l2_verdict(verdict_bytes: &[u8], server_pubkey: &[u8;32], local_t_id: &str, challenge_ds_tag: &str, expected_ephemeral_pub: Option<&str>, expected_voucher_id: &str) -> Result<VerdictAction, VoucherCoreError> {
+    process_l2_verdict_internal(verdict_bytes, server_pubkey, local_t_id, challenge_ds_tag, expected_ephemeral_pub, expected_voucher_id, None)
+}
+
+/// Processes original write receipts with independently established committee authority and real signatures.
+pub fn process_l2_verdict_with_authority(verdict_bytes: &[u8], server_pubkey: &[u8;32], local_t_id: &str, challenge_ds_tag: &str, expected_ephemeral_pub: Option<&str>, expected_voucher_id: &str, authority: &CheckoutAuthority) -> Result<VerdictAction, VoucherCoreError> {
+    process_l2_verdict_internal(verdict_bytes, server_pubkey, local_t_id, challenge_ds_tag, expected_ephemeral_pub, expected_voucher_id, Some(authority))
+}
+
+fn process_l2_verdict_internal(
     verdict_bytes: &[u8],
     server_pubkey: &[u8; 32],
     local_t_id: &str,       // The local t_id of the requested transaction
     challenge_ds_tag: &str, // The challenge tag used for the query
     expected_ephemeral_pub: Option<&str>, // The expected key according to local history
     expected_voucher_id: &str, // The expected voucher ID
+    authority: Option<&CheckoutAuthority>,
 ) -> Result<VerdictAction, VoucherCoreError> {
     let envelope: L2ResponseEnvelope = serde_json::from_slice(verdict_bytes).map_err(|e| {
         VoucherCoreError::DeserializationError(format!("Invalid response envelope: {}", e))
@@ -663,7 +678,7 @@ pub fn process_l2_verdict(
             let cert = envelope
                 .quorum_certificate
                 .unwrap_or_else(|| QuorumCertificateDto::from(proof.clone()));
-            evaluate_quorum_certificate(Some(cert), &local_t_id_bytes, expected_voucher_id)
+            evaluate_quorum_certificate(Some(cert), &local_t_id_bytes, expected_voucher_id, authority)
         }
         L2Verdict::Verified { lock_entry } => {
             // Cryptographically verify Proof of Truth and expected ephemeral key
@@ -677,7 +692,7 @@ pub fn process_l2_verdict(
             // Compare t_id
             let server_t_id = bs58::encode(lock_entry.t_id).into_string();
             if server_t_id == local_t_id {
-                evaluate_quorum_certificate(envelope.quorum_certificate, &lock_entry.t_id, expected_voucher_id)
+                evaluate_quorum_certificate(envelope.quorum_certificate, &lock_entry.t_id, expected_voucher_id, authority)
             } else {
                 // Double-spend detected!
                 Ok(VerdictAction::TriggerQuarantine(server_t_id))
@@ -694,7 +709,7 @@ pub fn process_l2_verdict(
                     expected_ephemeral_pub,
                     challenge_ds_tag,
                 )?;
-                evaluate_quorum_certificate(envelope.quorum_certificate, &existing_lock.t_id, expected_voucher_id)
+                evaluate_quorum_certificate(envelope.quorum_certificate, &existing_lock.t_id, expected_voucher_id, authority)
             } else {
                 // Genuine conflict: verify proof of truth on the competing lock
                 // (ephemeral key is verified mathematically without expecting our local key)
@@ -1393,7 +1408,7 @@ mod tests {
         ).unwrap();
         assert_eq!(action1, VerdictAction::ConfirmLocal);
 
-        // 2. With FINAL QuorumCertificate -> ConfirmFinal
+        // 2. Claimed FINAL with dummy signatures and no independent authority is rejected.
         let lock_id_hex = hex::encode(t_id);
         let cert_final = QuorumCertificateDto {
             lock_id: lock_id_hex.clone(),
@@ -1415,10 +1430,10 @@ mod tests {
             &challenge_ds_tag,
             Some(&bs58::encode(client_pk.as_bytes()).into_string()),
             &voucher_id,
-        ).unwrap();
-        assert_eq!(action2, VerdictAction::ConfirmFinal { certificate: cert_final });
+        );
+        assert!(action2.is_err());
 
-        // 3. With PROVISIONAL QuorumCertificate -> ConfirmProvisional
+        // 3. Claimed PROVISIONAL with dummy signatures is also rejected.
         let cert_prov = QuorumCertificateDto {
             lock_id: lock_id_hex.clone(),
             shard_id,
@@ -1442,8 +1457,8 @@ mod tests {
             &challenge_ds_tag,
             Some(&bs58::encode(client_pk.as_bytes()).into_string()),
             &voucher_id,
-        ).unwrap();
-        assert_eq!(action3, VerdictAction::ConfirmProvisional { certificate: Some(cert_prov) });
+        );
+        assert!(action3.is_err());
     }
 
     #[test]
@@ -1779,5 +1794,31 @@ mod tests {
         let cert = QuorumCertificateDto::from(proof_14);
         let res_cert = verify_checkout_receipt_certificate(&cert, &digest, &committee, 14);
         assert!(res_cert.is_ok(), "Certificate roundtrip verification must succeed");
+    }
+}
+
+#[cfg(test)]
+mod recipient_authority_tests {
+    use super::*;
+    use crate::models::layer2_api::AttestationDto;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    #[test]
+    fn canonical_original_proof_requires_independent_full_key_authority() {
+        let keys: Vec<_> = (1..=20).map(|i| SigningKey::from_bytes(&[i; 32])).collect();
+        let authority = CheckoutAuthority { network:0, shard_id:9, parent_lock:[1;32], child_lock:[2;32], committee:keys.iter().map(|k| k.verifying_key().to_bytes()).collect() };
+        let digest = humoco_proto::live::original_approval_digest(0,9,1,&authority.parent_lock,&authority.child_lock).unwrap();
+        let certificate = QuorumCertificateDto { lock_id:hex::encode(authority.child_lock), shard_id:9, status:1, active_nodes_count:20, signer_count:14,
+            signatures:keys.iter().take(14).enumerate().map(|(i,key)| AttestationDto { lock_id:hex::encode(authority.child_lock), parent_lock:hex::encode(authority.parent_lock), node_id:i as u16, node_pubkey:hex::encode(key.verifying_key().to_bytes()), timestamp:0, signature:hex::encode(key.sign(&digest).to_bytes()), shard_id:9 }).collect() };
+        assert!(matches!(evaluate_quorum_certificate(Some(certificate.clone()),&authority.child_lock,"voucher",Some(&authority)),Ok(VerdictAction::ConfirmFinal{..})));
+        assert!(evaluate_quorum_certificate(Some(certificate.clone()),&authority.child_lock,"voucher",None).is_err());
+        let mut short = certificate.clone(); short.signatures.pop();
+        assert!(evaluate_quorum_certificate(Some(short),&authority.child_lock,"voucher",Some(&authority)).is_err());
+        let mut duplicate = certificate.clone(); duplicate.signatures[13] = duplicate.signatures[0].clone();
+        assert!(evaluate_quorum_certificate(Some(duplicate),&authority.child_lock,"voucher",Some(&authority)).is_err());
+        let mut forged = certificate.clone(); forged.signatures[0].signature = hex::encode([0;64]);
+        assert!(evaluate_quorum_certificate(Some(forged),&authority.child_lock,"voucher",Some(&authority)).is_err());
+        let mut wrong_network = authority.clone(); wrong_network.network = 1;
+        assert!(evaluate_quorum_certificate(Some(certificate.clone()),&authority.child_lock,"voucher",Some(&wrong_network)).is_err());
     }
 }

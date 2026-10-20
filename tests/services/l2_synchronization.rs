@@ -164,10 +164,10 @@ fn test_scenario_1_happy_path() {
     // Should be Verified
     assert!(matches!(envelope.verdict, L2Verdict::Verified { .. }));
 
-    // Process should confirm local
+    // A matching single-node lookup is Found, never payment confirmation.
     let outcome = app.process_l2_response(voucher_id.clone(), &resp_query, Some(correct_password))
         .unwrap();
-    assert_eq!(outcome, human_money_core::L2ProcessingOutcome::Confirmed);
+    assert_eq!(outcome, human_money_core::L2ProcessingOutcome::Found);
 }
 
 #[test]

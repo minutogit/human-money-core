@@ -281,21 +281,37 @@ impl AppService {
         response_bytes: &[u8],
         password: Option<&str>,
     ) -> Result<crate::models::layer2_api::L2ProcessingOutcome, Error> {
+        self.process_l2_response_internal(local_id, response_bytes, password, None)
+    }
+
+    /// Processes an original receipt using recipient-established frozen committee authority.
+    pub fn process_l2_response_with_authority(
+        &mut self, local_id: String, response_bytes: &[u8], password: Option<&str>, authority: l2_gateway::CheckoutAuthority,
+    ) -> Result<crate::models::layer2_api::L2ProcessingOutcome, Error> {
+        self.process_l2_response_internal(local_id, response_bytes, password, Some(authority))
+    }
+
+    fn process_l2_response_internal(
+        &mut self, local_id: String, response_bytes: &[u8], password: Option<&str>, authority: Option<l2_gateway::CheckoutAuthority>,
+    ) -> Result<crate::models::layer2_api::L2ProcessingOutcome, Error> {
         let response = response_bytes.to_vec();
         TransactionOrchestrator::execute_with_policy(
             self,
             password,
             ReloadPolicy::Always,
             move |temp_wallet, _identity, _storage, _auth| {
-                let action = match Self::evaluate_l2_action(temp_wallet, &local_id, &response) {
+                let action = match Self::evaluate_l2_action(temp_wallet, &local_id, &response, authority.as_ref()) {
                     Ok(a) => a,
                     Err(e) => return TransactionOutcome::Rollback(e),
                 };
                 match action {
-                    VerdictAction::ConfirmLocal
-                    | VerdictAction::ConfirmFinal { .. }
-                    | VerdictAction::ConfirmProvisional { .. } => {
-                        TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Confirmed)
+                    VerdictAction::ConfirmLocal => TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Found),
+                    VerdictAction::ConfirmProvisional { .. } => TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Provisional),
+                    VerdictAction::ConfirmFinal { .. } => {
+                        // A verified original write receipt establishes registration.
+                        // Merchant release still needs a fresh recipient-challenged live proof
+                        // and the host's durable L1/purchase binding; this facade has neither.
+                        TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Found)
                     }
                     VerdictAction::TriggerSync { sync_point } => {
                         TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::SyncRequired { sync_point })
@@ -323,6 +339,7 @@ impl AppService {
         wallet: &crate::wallet::Wallet,
         local_instance_id: &str,
         response_bytes: &[u8],
+        authority: Option<&l2_gateway::CheckoutAuthority>,
     ) -> Result<VerdictAction, Error> {
         let instance = wallet
             .get_voucher_instance(local_instance_id)
@@ -342,13 +359,10 @@ impl AppService {
             Error::App(crate::error::AppError::L2ServerPubkeyNotConfigured)
         })?;
 
-        l2_gateway::process_l2_verdict(
-            response_bytes,
-            &server_pubkey,
-            &last_t_id,
-            &challenge_ds_tag,
-            expected_ephemeral_pub,
-            &expected_voucher_id,
-        )
+        if let Some(authority) = authority {
+            l2_gateway::process_l2_verdict_with_authority(response_bytes, &server_pubkey, &last_t_id, &challenge_ds_tag, expected_ephemeral_pub, &expected_voucher_id, authority).map_err(Error::from)
+        } else {
+            l2_gateway::process_l2_verdict(response_bytes, &server_pubkey, &last_t_id, &challenge_ds_tag, expected_ephemeral_pub, &expected_voucher_id).map_err(Error::from)
+        }
     }
 }

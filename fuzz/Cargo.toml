@@ -1,0 +1,52 @@
+[package]
+name = "human_money_core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+toml = "0.8"
+bs58 = "0.5"
+hex = "0.4"
+ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
+curve25519-dalek = { version = "4.1", features = ["group", "digest", "rand_core"] }
+
+[dependencies.human_money_core]
+path = ".."
+features = ["test-utils"]
+
+[[bin]]
+name = "seed_corpus"
+path = "seed_corpus.rs"
+
+[[bin]]
+name = "fuzz_secure_container"
+path = "fuzz_targets/fuzz_secure_container.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_bundle_ingress"
+path = "fuzz_targets/fuzz_bundle_ingress.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_voucher_and_standard_parser"
+path = "fuzz_targets/fuzz_voucher_and_standard_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_conflict_proof_and_sst"
+path = "fuzz_targets/fuzz_conflict_proof_and_sst.rs"
+test = false
+doc = false

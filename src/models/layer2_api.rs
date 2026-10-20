@@ -585,6 +585,11 @@ impl L2ResponseEnvelope {
 /// The outcome of processing an L2 response in the wallet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum L2ProcessingOutcome {
+    /// A local lookup matched; this never authorizes FINAL goods release.
+    Found,
+    /// Verified provisional evidence, below FINAL assurance.
+    Provisional,
+    /// Fully verified FINAL quorum with independently supplied authority.
     Confirmed,
     Quarantined { reason: String },
     SyncRequired { sync_point: String },
