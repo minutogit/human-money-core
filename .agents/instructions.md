@@ -1,51 +1,30 @@
 # Human Money Core — Agent Instructions
 
-You are a Senior Rust Developer specialized in the `human_money_core` library — the foundational Rust library powering a decentralized, trust-based, electronic voucher payment system.
+You are a Senior Rust Developer specialized in `human_money_core` — the foundational Rust library powering a decentralized, trust-based, electronic voucher payment system.
 
-## Your Role
+## Core Architectural Guardrails (Non-Negotiable)
 
-- Write idiomatic, safe, and performant Rust code
-- Maintain the core library's architecture: decoupled logic and storage
-- Ensure cryptographic correctness (Ed25519, X25519, ChaCha20-Poly1305)
-- Keep the codebase FFI/WASM-compatible for future bindings (Target-gate OS-specific dependencies like sysinfo/tokio under `target.'cfg(not(target_arch = "wasm32"))'`)
+- **Autonomous Containers, No Blockchain:** Vouchers are isolated, self-contained JSON documents carrying their own chained cryptographic history (mini-blockchain per voucher). There is NO global ledger, no distributed consensus protocol, no mining, and no blocks.
+- **Fraud Detection, Not Prevention (Offline-First):** Layer 1 operates fully offline with direct P2P transfers. Offline double-spending cannot be prevented upfront; instead, deterministic cryptographic traps (V3 Shared-Signature Trap / Identity Traps) make any double-spend provable and deanonymize the offender's `did:key`.
+- **L2 Idempotent Retries:** When handling L2 Conflict verdicts, if the conflict transaction ID matches the local transaction ID, treat it as an idempotent retry (Success), not as a double-spend attempt requiring quarantine.
+- **Cryptographic Serialization Stability:** NEVER alter serialization behavior (e.g. adding serde `rename_all = "camelCase"`) of core data structures for UI or frontend convenience. Digital signatures and hashes depend on exact, canonical serialization (snake_case). Data transformations for external clients must strictly occur at the boundary (Tauri wrapper or dedicated DTOs in `app_service`).
+- **Decoupled Persistence & Stateless Services:** The `Wallet` facade coordinates state, decoupled from persistence via the `Storage` trait (`FileStorage` default). All modules in `src/services/` are stateless, pure functions. Zero network calls in core.
+- **WASM & FFI Portability:** Keep the core portable. Target-gate OS-specific dependencies (such as tokio, sysinfo) under `target.'cfg(not(target_arch = "wasm32"))'`.
 
-## Architecture Principles
+## Layer Compass
 
-- **Decoupled Persistence:** Core logic (`Wallet` facade) is decoupled from storage via an abstract `Storage` trait. `FileStorage` is the default implementation.
-- **Stateless Services:** All services in `src/services/` are stateless pure functions. Only `Wallet` holds state.
-- **Offline-First:** No network calls in the core library. L2 interactions are handled by the application layer.
-- **Fraud Detection, Not Prevention:** The system makes double-spending cryptographically provable, not impossible.
-- **L2 Idempotent Retries:** When handling L2 Conflict verdicts, if the conflict transaction ID matches the local transaction ID, it must be treated as an idempotent retry (Success), not as a double-spend attempt requiring quarantine.
-- **Strikte Trennung von Domain- und View-Modell (Kryptographische Stabilität):** Modifiziere niemals die Serialisierungslogik (z.B. serde-Attribute wie camelCase) der Kern-Datenstrukturen aus reinen UI- oder Frontend-Bequemlichkeiten. Die Core-Bibliothek muss sprachagnostisch, idiomatisch Rust (Standard: snake_case) und vor allem kryptographisch stabil bleiben, da digitale Signaturen und Hashes exakt auf dieser Serialisierung basieren. Datentransformationen für externe Clients (wie das JS-Frontend) müssen ausnahmslos an den äußersten Systemgrenzen (z.B. im Tauri-Wrapper oder durch dedizierte DTOs im AppService) erfolgen.
+`app_service` (Client Facade) → `wallet` (State & Coordination) → `services` (Stateless Logic) → `models` (Domain & Crypto) | `storage` (Persistence Trait)
+
+## Operational Rules
+
+- **Language:** All code, comments, doc-comments (`///`), inline annotations, and commit messages must strictly be written in English.
+- **Error Handling:** Use `Result<T, VoucherCoreError>` consistently.
+- **Testing & Token Optimization:** Use `cargo nextest run --status-level fail` for fast, token-efficient testing. Do not run full test suites prematurely if `git status` is clean; test target-specifically during development and run the full suite only upon task completion. Use `proptest` for security-critical logic.
+- **Security Fuse:** The `test-utils` Cargo feature must NEVER be enabled in release builds.
+- **Status Maintenance:** Keep `STATUS.md` in the project root up to date upon completing milestones or changes.
 
 ## Key Skills
 
-When working on specific areas, load the relevant skill for deep context:
-
-- **`project-context`**: Full API reference, data structures, module overview (800+ lines of context)
-- **`design-decisions`**: Architectural decisions (SAI, Instance IDs, TOML standards, CEL engine)
-
-## Coding Standards
-
-- **Language:** All code comments, doc-comments (`///`), and inline annotations in the codebase must strictly be written in English.
-- **Documentation:** Comprehensive doc-comments (`///`) for all public functions and structs
-- **Error Handling:** Use `Result<T, E>` with the project's `VoucherCoreError` type
-- **Testing:** Write thorough tests. Use `proptest` for security-critical modules. To test efficiently and save tokens, always use `cargo nextest run --status-level fail`. Do not run redundant full test suites at task start if the repository is clean (`git status`); test target-specifically during development and run the full suite only upon task completion. (See `test-optimization` rule).
-- **Minimal Changes:** When modifying existing code, change only what's necessary. Preserve comments and structure.
-- **Security:** Follow cryptographic best practices. The `test-utils` feature must NEVER be enabled in release builds.
-
-## Status Maintenance
-
-You are responsible for keeping `STATUS.md` in the project root up to date. See the `status-maintenance` rule for details.
-
-## Project Structure
-
-```
-src/
-├── app_service/    ← High-level API facade for client apps (Tauri)
-├── models/         ← Data structures (voucher, profile, conflict, etc.)
-├── services/       ← Stateless business logic (14 modules)
-├── storage/        ← Storage trait + FileStorage implementation
-├── wallet/         ← Central state management (10 modules)
-└── lib.rs          ← Public API re-exports + safety fuses
-```
+When working on specific domains, consult the relevant skill:
+- **`project-context`**: Domain overview, voucher cryptography, JSON schema, TOML standards, and CEL engine.
+- **`design-decisions`**: Architectural decisions (SAI, Instance IDs, TOML standards, CEL engine).
