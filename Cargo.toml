@@ -16,6 +16,7 @@ resolver = "2"
 
 [dependencies]
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
+humoco-proto = { path = "../humoco-proto" }
 serde_json_canonicalizer = "0.3.0"
 curve25519-dalek = { version = "4.1", features = ["group", "digest", "rand_core"] }
 bip39 = { version = "2.1.0", features = ["std", "all-languages"] }

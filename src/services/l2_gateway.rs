@@ -27,12 +27,13 @@
 use crate::error::VoucherCoreError;
 use crate::models::layer2_api::{
     L2AuthPayload, L2ChainLockRequest, L2LockEntry, L2LockRequest, L2ResponseEnvelope,
-    L2StatusQuery, L2Verdict, QuorumCertificateDto,
+    L2StatusQuery, L2Verdict, QuorumCertificateDto, QuorumProof,
 };
 use crate::models::profile::UserIdentity;
 use crate::models::voucher::Transaction;
 
 use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
+use humoco_proto::verify::verify_quorum_proof;
 
 /// Defines the synchronization verdict of a state anchor against Layer 2.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +74,40 @@ pub enum VerdictAction {
 /// are valid successful confirmations.
 pub fn is_l2_success_http_status(status_code: u16) -> bool {
     matches!(status_code, 200 | 201)
+}
+
+/// Zero-trust 14/20-BFT receipt verification for PoS checkout receipts.
+///
+/// In accordance with zero-trust doctrine and DEC-080 / DEC-084:
+/// PoS terminals MUST verify the full 14/20 cryptographic proof mathematically before payment completion.
+pub fn verify_checkout_receipt(
+    proof: &humoco_proto::types::QuorumProof,
+    expected_digest: &[u8; 32],
+    eligible_committee: &[[u8; 32]],
+    required_quorum: usize, // Typically 14 for FINAL
+) -> Result<(), VoucherCoreError> {
+    verify_quorum_proof(proof, expected_digest, eligible_committee, required_quorum)
+        .map_err(|err| {
+            VoucherCoreError::Validation(crate::error::ValidationError::SecurityViolation(
+                format!("L2 Quorum proof failed: {}", err),
+            ))
+        })
+}
+
+/// Verifies a QuorumCertificateDto receipt by converting it to canonical QuorumProof and running 14/20 verification.
+pub fn verify_checkout_receipt_certificate(
+    cert: &QuorumCertificateDto,
+    expected_digest: &[u8; 32],
+    eligible_committee: &[[u8; 32]],
+    required_quorum: usize,
+) -> Result<(), VoucherCoreError> {
+    let proof = QuorumProof::try_from(cert).map_err(|err| {
+        VoucherCoreError::Validation(crate::error::ValidationError::SecurityViolation(format!(
+            "Invalid QuorumCertificateDto for BFT proof: {}",
+            err
+        )))
+    })?;
+    verify_checkout_receipt(&proof, expected_digest, eligible_committee, required_quorum)
 }
 
 /// Verifies the plausibility of a QuorumCertificate according to order-statistics quorum rules.
@@ -622,6 +657,14 @@ pub fn process_l2_verdict(
     let verdict = envelope.verdict;
 
     match verdict {
+        L2Verdict::Confirmed { proof } => {
+            let local_t_id_bytes = crate::services::crypto::decode_bs58_fixed::<32>(local_t_id, "local_t_id")
+                .unwrap_or([0u8; 32]);
+            let cert = envelope
+                .quorum_certificate
+                .unwrap_or_else(|| QuorumCertificateDto::from(proof.clone()));
+            evaluate_quorum_certificate(Some(cert), &local_t_id_bytes, expected_voucher_id)
+        }
         L2Verdict::Verified { lock_entry } => {
             // Cryptographically verify Proof of Truth and expected ephemeral key
             verify_lock_entry_proof(
@@ -864,6 +907,7 @@ pub fn evaluate_anchor_verdict(
     local_tag: &str,
 ) -> AnchorSyncVerdict {
     match verdict {
+        L2Verdict::Confirmed { .. } => AnchorSyncVerdict::Synchronized,
         L2Verdict::Verified { lock_entry } => {
             if &lock_entry.t_id == local_t_id {
                 AnchorSyncVerdict::Synchronized
@@ -1106,8 +1150,10 @@ mod tests {
             lock_id: lock_id.to_string(),
             parent_lock: "test_parent_lock".to_string(),
             node_id,
+            node_pubkey: String::new(),
             timestamp: 1_000_000,
             signature: "dummy_sig_hex".to_string(),
+            shard_id: _shard_id,
         }
     }
 
@@ -1666,5 +1712,72 @@ mod tests {
             "Mutated encrypted_timestamp must fail with InvalidL2Proof, got {:?}",
             err_enc_ts
         );
+    }
+
+    #[test]
+    fn test_verify_checkout_receipt_14_of_20_bft() {
+        let digest = [0x7au8; 32];
+        let mut committee = Vec::new();
+        let mut signers = Vec::new();
+
+        for i in 0..20u8 {
+            let sk = ed25519_dalek::SigningKey::from_bytes(&[i + 1; 32]);
+            let pk = sk.verifying_key().to_bytes();
+            committee.push(pk);
+            signers.push((sk, pk));
+        }
+
+        // 1. Exactly 14 of 20 valid signers -> Ok(())
+        let votes_14: Vec<humoco_proto::types::AttestationVote> = signers[0..14]
+            .iter()
+            .map(|(sk, pk)| humoco_proto::types::AttestationVote {
+                signer_pubkey: *pk,
+                signature: sk.sign(&digest).to_bytes(),
+            })
+            .collect();
+        let proof_14 = humoco_proto::types::QuorumProof {
+            shard_id: 1,
+            votes: votes_14,
+        };
+        let res_14 = verify_checkout_receipt(&proof_14, &digest, &committee, 14);
+        assert!(res_14.is_ok(), "14 of 20 must be accepted");
+
+        // 2. 13 of 20 signers -> Err (insufficient votes)
+        let proof_13 = humoco_proto::types::QuorumProof {
+            shard_id: 1,
+            votes: proof_14.votes[0..13].to_vec(),
+        };
+        let res_13 = verify_checkout_receipt(&proof_13, &digest, &committee, 14);
+        assert!(res_13.is_err(), "13 of 20 must fail threshold 14");
+
+        // 3. Duplicate signer among 14 -> Err
+        let mut votes_dup = proof_14.votes[0..13].to_vec();
+        votes_dup.push(proof_14.votes[0].clone());
+        let proof_dup = humoco_proto::types::QuorumProof {
+            shard_id: 1,
+            votes: votes_dup,
+        };
+        let res_dup = verify_checkout_receipt(&proof_dup, &digest, &committee, 14);
+        assert!(res_dup.is_err(), "Duplicate signers must be rejected");
+
+        // 4. Rogue non-committee signer -> Err
+        let rogue_sk = ed25519_dalek::SigningKey::from_bytes(&[99u8; 32]);
+        let rogue_pk = rogue_sk.verifying_key().to_bytes();
+        let mut votes_rogue = proof_14.votes[0..13].to_vec();
+        votes_rogue.push(humoco_proto::types::AttestationVote {
+            signer_pubkey: rogue_pk,
+            signature: rogue_sk.sign(&digest).to_bytes(),
+        });
+        let proof_rogue = humoco_proto::types::QuorumProof {
+            shard_id: 1,
+            votes: votes_rogue,
+        };
+        let res_rogue = verify_checkout_receipt(&proof_rogue, &digest, &committee, 14);
+        assert!(res_rogue.is_err(), "Non-committee signer must be rejected");
+
+        // 5. verify_checkout_receipt_certificate via DTO conversion
+        let cert = QuorumCertificateDto::from(proof_14);
+        let res_cert = verify_checkout_receipt_certificate(&cert, &digest, &committee, 14);
+        assert!(res_cert.is_ok(), "Certificate roundtrip verification must succeed");
     }
 }

@@ -1102,6 +1102,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "human_money_core",
+ "humoco-proto",
  "lazy_static",
  "log",
  "pbkdf2",
@@ -1142,6 +1143,16 @@ dependencies = [
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-test",
+]
+
+[[package]]
+name = "humoco-proto"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "blake3",
+ "ed25519-dalek",
+ "serde",
 ]
 
 [[package]]

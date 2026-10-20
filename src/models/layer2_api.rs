@@ -1,5 +1,20 @@
 use serde::{Deserialize, Serialize};
 
+pub use humoco_proto::types::{
+    AttestationVote,
+    L2Verdict as CanonicalL2Verdict,
+    NodePubKey,
+    QuorumProof,
+    ShardId,
+};
+pub use humoco_proto::crypto::{
+    DOMAIN_L2_WRITE,
+    DOMAIN_L2_STATUS_QUERY,
+    DOMAIN_L2_EQUIVOCATION,
+    compute_lock_attestation_digest,
+    compute_status_attestation_digest,
+};
+
 pub mod base58_32 {
     use serde::{Deserialize, Deserializer, Serializer, de};
     use std::convert::TryInto;
@@ -368,8 +383,29 @@ pub struct AttestationDto {
     pub lock_id: String,
     pub parent_lock: String,
     pub node_id: u16,
+    /// Full 32-byte Ed25519 NodePubKey of the signer (hex). Empty for legacy payloads.
+    #[serde(default)]
+    pub node_pubkey: String,
     pub timestamp: u64,
     pub signature: String,
+    #[serde(default)]
+    pub shard_id: u16,
+}
+
+impl AttestationDto {
+    /// Decodes the full 32-byte signer NodePubKey, if present and well-formed.
+    pub fn node_pubkey_bytes(&self) -> Option<[u8; 32]> {
+        if self.node_pubkey.is_empty() {
+            return None;
+        }
+        let raw = hex::decode(&self.node_pubkey).ok()?;
+        if raw.len() != 32 {
+            return None;
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&raw);
+        Some(out)
+    }
 }
 
 /// Assembled quorum certificate with partial signatures from shard nodes.
@@ -384,13 +420,88 @@ pub struct QuorumCertificateDto {
     pub signatures: Vec<AttestationDto>,
 }
 
+impl From<QuorumProof> for QuorumCertificateDto {
+    fn from(proof: QuorumProof) -> Self {
+        let signer_count = proof.votes.len();
+        let signatures = proof
+            .votes
+            .into_iter()
+            .map(|v| {
+                let node_id = u16::from_be_bytes([v.signer_pubkey[0], v.signer_pubkey[1]]);
+                AttestationDto {
+                    lock_id: String::new(),
+                    parent_lock: String::new(),
+                    node_id,
+                    node_pubkey: hex::encode(v.signer_pubkey),
+                    timestamp: 0,
+                    signature: hex::encode(v.signature),
+                    shard_id: proof.shard_id,
+                }
+            })
+            .collect();
+
+        Self {
+            lock_id: String::new(),
+            shard_id: proof.shard_id,
+            status: if signer_count >= 14 { 1 } else { 0 },
+            active_nodes_count: 20.max(signer_count),
+            signer_count,
+            signatures,
+        }
+    }
+}
+
+impl TryFrom<&QuorumCertificateDto> for QuorumProof {
+    type Error = &'static str;
+
+    fn try_from(cert: &QuorumCertificateDto) -> Result<Self, Self::Error> {
+        let mut votes = Vec::with_capacity(cert.signatures.len());
+        for att in &cert.signatures {
+            let signer_pubkey = if !att.node_pubkey.is_empty() {
+                let bytes = hex::decode(&att.node_pubkey).map_err(|_| "invalid hex in node_pubkey")?;
+                bytes.try_into().map_err(|_| "node_pubkey must be 32 bytes")?
+            } else {
+                return Err("missing node_pubkey in attestation");
+            };
+
+            let sig_bytes = if let Ok(raw) = hex::decode(&att.signature) {
+                raw.try_into().map_err(|_| "signature must be 64 bytes")?
+            } else if let Ok(raw) = bs58::decode(&att.signature).into_vec() {
+                raw.try_into().map_err(|_| "signature must be 64 bytes")?
+            } else {
+                return Err("invalid signature format in attestation");
+            };
+
+            votes.push(AttestationVote {
+                signer_pubkey,
+                signature: sig_bytes,
+            });
+        }
+
+        Ok(QuorumProof {
+            shard_id: cert.shard_id,
+            votes,
+        })
+    }
+}
+
+impl TryFrom<QuorumCertificateDto> for QuorumProof {
+    type Error = &'static str;
+
+    fn try_from(cert: QuorumCertificateDto) -> Result<Self, Self::Error> {
+        QuorumProof::try_from(&cert)
+    }
+}
+
 /// Response: The verdict of the L2 server regarding the state of a tag or the chain.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 // The Verified variant legitimately carries a full lock entry; boxing it
 // would only add indirection to a deserialized-once wire object.
 #[allow(clippy::large_enum_variant)]
 #[serde(tag = "type")]
 pub enum L2Verdict {
+    /// Lock was successfully registered with a valid quorum proof.
+    Confirmed { proof: QuorumProof },
     /// The tag is occupied. Contains the complete proof (LockEntry).
     Verified { lock_entry: L2LockEntry },
     /// Conflict detected (e.g. 409 double-spend attempt). Contains the existing lock entry.
@@ -412,6 +523,31 @@ pub enum L2Verdict {
     Rejected { reason: String },
 }
 
+impl From<CanonicalL2Verdict> for L2Verdict {
+    fn from(v: CanonicalL2Verdict) -> Self {
+        match v {
+            CanonicalL2Verdict::Confirmed { proof } => L2Verdict::Confirmed { proof },
+            CanonicalL2Verdict::Conflict { existing_tag } => L2Verdict::Conflict {
+                existing_lock: L2LockEntry {
+                    layer2_voucher_id: String::new(),
+                    t_id: existing_tag,
+                    sender_ephemeral_pub: [0u8; 32],
+                    receiver_ephemeral_pub_hash: None,
+                    change_ephemeral_pub_hash: None,
+                    layer2_signature: [0u8; 64],
+                    trap_r: None,
+                    trap_s: None,
+                    encrypted_timestamp: 0,
+                    created_at_ms: 0,
+                    deletable_at: None,
+                    privacy_guard: None,
+                },
+            },
+            CanonicalL2Verdict::Rejected { reason } => L2Verdict::Rejected { reason },
+        }
+    }
+}
+
 /// Envelope for all L2 server responses.
 /// Guarantees the authenticity of the server via an Ed25519 signature.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -430,6 +566,19 @@ impl L2ResponseEnvelope {
             server_signature,
             quorum_certificate: None,
         }
+    }
+
+    /// Returns canonical `QuorumProof` if present in the verdict or certificate.
+    pub fn quorum_proof(&self) -> Option<QuorumProof> {
+        if let L2Verdict::Confirmed { ref proof } = self.verdict {
+            return Some(proof.clone());
+        }
+        if let Some(ref cert) = self.quorum_certificate {
+            if let Ok(proof) = QuorumProof::try_from(cert) {
+                return Some(proof);
+            }
+        }
+        None
     }
 }
 
