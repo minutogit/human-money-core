@@ -489,6 +489,17 @@ impl TransactionOrchestrator {
             Ok(value) => {
                 let commit_res = storage
                     .commit_wallet_atomic(&mut temp_wallet, &identity, &auth)
+                    .and_then(|()| {
+                        // Reconciliation signs its chosen seal inside the closure, but
+                        // wallet persistence replaces encrypted bytes afterwards.
+                        let seal = storage.load_seal(&auth)?.ok_or_else(|| {
+                            crate::storage::StorageError::IntegrityViolation("Missing reconciliation seal".into())
+                        })?;
+                        let record = crate::models::storage_integrity::StorageIntegrityRecord::create_record(
+                            &identity, &seal.seal, storage.get_all_item_hashes()?,
+                        ).map_err(|e| crate::storage::StorageError::IntegrityViolation(e.to_string()))?;
+                        storage.save_integrity(&record)
+                    })
                     .and_then(|()| transaction.commit(&storage));
                 match commit_res {
                     Ok(()) => {

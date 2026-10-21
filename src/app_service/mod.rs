@@ -69,6 +69,7 @@ pub use crate::error::Error as AppFacadeError;
 
 // Declaration of the consolidated domain modules as public sub-modules.
 // Each file contains `impl AppService` blocks for its specific domain.
+pub mod backup_ops;
 pub mod conflicts;
 pub mod lifecycle;
 pub mod orchestrator;

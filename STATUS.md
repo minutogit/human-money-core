@@ -37,6 +37,25 @@ priority_tasks:
 
 ## Current Focus
 
+Wallet backup milestone (2026-10-21): added transport-independent differential
+backup export, authenticated inspection, and staged restore through `AppService`.
+Cloud exports strip or replace the local password slot, encrypt identifying
+metadata, and use HMAC-derived opaque blob names. Both exported and source byte
+inventories are signed to prevent forged diff reuse. Restore validates all blobs
+before staging, preserves existing profiles, binds a recovery epoch to the new
+device, and returns original-anchor and active-voucher L2 queries. Fixed
+reconciliation integrity signing order so final encrypted bytes are covered.
+See `docs/usage/wallet-backups.md` for transport publication and recovery contracts.
+Validation: seven focused tests cover both credential routes, weak-password
+exclusion, no-op/deletion diffs, tampering/traversal, L2 reconciliation, and
+property-based HMAC/AEAD invariants. Full `cargo nextest run --status-level fail
+--no-fail-fast --offline`: 815 passed, 6 failed, 7 skipped. All six failures
+(`WalletLocked` in existing transactionality/save-failure tests) were independently
+reproduced on an unchanged HEAD archive. `cargo check --lib --target
+wasm32-unknown-unknown --offline` passed with an existing unused-variable warning
+in `storage/wallet_transaction.rs`. `git diff --check` passed.
+
+
 Architecture implementation increment (2026-10-20): canonical L2 signature
 verification now requires independently supplied full-key authority; unverified
 lookup is `Found`, provisional evidence is `Provisional`, and live proofs use a

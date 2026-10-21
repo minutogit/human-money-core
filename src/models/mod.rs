@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod conflict;
 pub mod discovery;
 pub mod layer2_api;

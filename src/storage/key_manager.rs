@@ -56,8 +56,9 @@ pub(crate) fn get_file_key(
         }
         AuthMethod::Mnemonic(mnemonic, passphrase, language) => {
             let (_, signing_key) = crypto::derive_ed25519_keypair(mnemonic, *passphrase, *language)
-                .map_err(|e| {
-                    StorageError::KeyDerivationFailed { method: "mnemonic".to_string(), reason: e.to_string() }
+                .map_err(|e| StorageError::KeyDerivationFailed {
+                    method: "mnemonic".to_string(),
+                    reason: e.to_string(),
                 })?;
             let mnemonic_key =
                 derive_key_from_signing_key(&signing_key, &container.mnemonic_kdf_salt)?;
@@ -106,7 +107,10 @@ pub(crate) fn derive_key_from_password(
         let mut key = [0u8; KEY_SIZE];
         get_argon2()
             .hash_password_into(password.as_bytes(), salt, &mut key)
-            .map_err(|e| StorageError::KeyDerivationFailed { method: "password".to_string(), reason: e.to_string() })?;
+            .map_err(|e| StorageError::KeyDerivationFailed {
+                method: "password".to_string(),
+                reason: e.to_string(),
+            })?;
         Ok(key)
     }
 }
@@ -135,7 +139,53 @@ pub(crate) fn derive_key_from_signing_key(
         let mut key = [0u8; KEY_SIZE];
         get_argon2()
             .hash_password_into(signing_key.to_bytes().as_ref(), salt, &mut key)
-            .map_err(|e| StorageError::KeyDerivationFailed { method: "identity".to_string(), reason: e.to_string() })?;
+            .map_err(|e| StorageError::KeyDerivationFailed {
+                method: "identity".to_string(),
+                reason: e.to_string(),
+            })?;
         Ok(key)
     }
+}
+
+/// Derives the account-specific, domain-separated backup recovery key.
+pub fn derive_backup_envelope_key_from_identity(
+    identity: &crate::models::profile::UserIdentity,
+) -> [u8; 32] {
+    let mut key = [0; 32];
+    hkdf::Hkdf::<sha2::Sha256>::new(None, &identity.signing_key.to_bytes())
+        .expand(b"HMC_BACKUP_ENVELOPE_KEY_V1", &mut key)
+        .expect("32 bytes is a valid HKDF output length");
+    key
+}
+
+/// Replaces only the exported password slot, preserving the data encryption key.
+pub fn repackage_profile_for_backup(
+    bytes: &[u8],
+    auth: &AuthMethod,
+    protection: &crate::models::backup::BackupProtection<'_>,
+) -> Result<Vec<u8>, StorageError> {
+    use crate::models::backup::BackupProtection;
+    use rand_core::{OsRng, RngCore};
+    let mut container: ProfileStorageContainer = serde_json::from_slice(bytes)?;
+    let key = zeroize::Zeroizing::new(get_file_key(auth, &container)?);
+    OsRng.fill_bytes(&mut container.password_kdf_salt);
+    match protection {
+        BackupProtection::MnemonicOnly => {
+            OsRng.fill_bytes(&mut container.password_wrapped_key_with_nonce)
+        }
+        BackupProtection::CustomBackupPassword(password) => {
+            if password.is_empty() {
+                return Err(StorageError::EmptyPassword);
+            }
+            let wrapping = zeroize::Zeroizing::new(derive_key_from_password(
+                password,
+                &container.password_kdf_salt,
+            )?);
+            container.password_wrapped_key_with_nonce = crypto::encrypt_data(&*wrapping, &key)
+                .map_err(|e| StorageError::EncryptionFailed {
+                    reason: e.to_string(),
+                })?;
+        }
+    }
+    Ok(serde_json::to_vec(&container)?)
 }
