@@ -552,8 +552,10 @@ impl WalletTransaction {
         let sync_res = (|| -> Result<(), StorageError> {
             #[cfg(all(test, feature = "test-utils"))]
             {
-                if std::env::var("HMC_INJECT_COMMIT_DIR_FSYNC_FAIL").is_ok() {
-                    return Err(StorageError::Io("injected directory fsync failure".to_string()));
+                if let Ok(inject_target) = std::env::var("HMC_INJECT_COMMIT_DIR_FSYNC_FAIL") {
+                    if inject_target == "1" || dest.to_string_lossy().contains(&inject_target) {
+                        return Err(StorageError::Io("injected directory fsync failure".to_string()));
+                    }
                 }
             }
             if let Some(parent) = dest.parent() {
@@ -901,8 +903,9 @@ mod tests {
             ..Default::default()
         };
 
-        // Inject directory fsync failure on commit marker
-        unsafe { std::env::set_var("HMC_INJECT_COMMIT_DIR_FSYNC_FAIL", "1") };
+        // Inject directory fsync failure on commit marker for this test directory only
+        let test_dir_str = dir.path().to_string_lossy().to_string();
+        unsafe { std::env::set_var("HMC_INJECT_COMMIT_DIR_FSYNC_FAIL", &test_dir_str) };
         let create_res = service.create_new_voucher(&standard, data, Some(PASSWORD));
         unsafe { std::env::remove_var("HMC_INJECT_COMMIT_DIR_FSYNC_FAIL") };
 

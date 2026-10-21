@@ -589,7 +589,10 @@ pub enum L2ProcessingOutcome {
     Found,
     /// Verified provisional evidence, below FINAL assurance.
     Provisional,
-    /// Fully verified FINAL quorum with independently supplied authority.
+    /// Fully verified live, recipient-challenge-bound FINAL quorum proof.
+    ///
+    /// Original write receipts never produce this outcome; only an explicit live-state
+    /// proof (see `AppService::verify_live_checkout_proof`) may.
     Confirmed,
     Quarantined { reason: String },
     SyncRequired { sync_point: String },

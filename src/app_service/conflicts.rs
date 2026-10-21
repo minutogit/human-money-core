@@ -285,6 +285,12 @@ impl AppService {
     }
 
     /// Processes an original receipt using recipient-established frozen committee authority.
+    ///
+    /// A cryptographically valid FINAL original write receipt is still only mapped to
+    /// [`L2ProcessingOutcome::Found`](crate::models::layer2_api::L2ProcessingOutcome::Found):
+    /// an original approval proves that the write was accepted, not that the current state
+    /// carries a live recipient-challenge-bound quorum proof. Goods release therefore
+    /// always requires explicit merchant approval.
     pub fn process_l2_response_with_authority(
         &mut self, local_id: String, response_bytes: &[u8], password: Option<&str>, authority: l2_gateway::CheckoutAuthority,
     ) -> Result<crate::models::layer2_api::L2ProcessingOutcome, Error> {
@@ -307,12 +313,14 @@ impl AppService {
                 match action {
                     VerdictAction::ConfirmLocal => TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Found),
                     VerdictAction::ConfirmProvisional { .. } => TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Provisional),
+                    // DEC-080 / DEC-083 / DEC-084: An original write receipt — even a
+                    // FINAL 14/20 quorum over the original approval digest — only proves
+                    // that the write was accepted. It is not a live,
+                    // recipient-challenge-bound quorum proof for the current state, so it
+                    // must never clear the transaction as `Confirmed`. Only an explicit
+                    // live-state proof (see `verify_live_checkout_proof`) may do that.
                     VerdictAction::ConfirmFinal { .. } => {
-                        if authority.is_some() {
-                            TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Confirmed)
-                        } else {
-                            TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Found)
-                        }
+                        TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Found)
                     }
                     VerdictAction::TriggerSync { sync_point } => {
                         TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::SyncRequired { sync_point })
@@ -394,7 +402,17 @@ impl AppService {
         ))
     }
 
-    /// Processes an original write receipt with authority and evaluates goods release under merchant approval rules.
+    /// Processes an original write receipt with authority and evaluates goods release.
+    ///
+    /// # Original write receipts never authorize automatic goods release
+    ///
+    /// Even a FINAL 14/20 quorum over the original approval digest is only proof that a
+    /// write was accepted. It is **not** bound to a live recipient challenge and therefore
+    /// cannot prove the current voucher state. Consequently this function guarantees
+    /// `can_release_goods_automatically == false` regardless of the supplied authority or
+    /// explicit merchant approval. Only [`Self::verify_live_checkout_proof`] may authorize
+    /// automatic goods release, because only it verifies a live, recipient-challenge-bound
+    /// quorum proof.
     pub fn verify_checkout_response_with_authority(
         &mut self,
         local_id: String,
@@ -404,7 +422,17 @@ impl AppService {
         explicit_merchant_approval: bool,
     ) -> Result<crate::models::layer2_api::CheckoutReleaseVerdict, Error> {
         let outcome = self.process_l2_response_with_authority(local_id, response_bytes, password, authority)?;
-        Ok(crate::models::layer2_api::CheckoutReleaseVerdict::new(outcome, explicit_merchant_approval))
+        // Defensive: an original receipt must never be promoted to `Confirmed`, even if a
+        // future mapping regression tried to do so.
+        let outcome = match outcome {
+            crate::models::layer2_api::L2ProcessingOutcome::Confirmed => {
+                crate::models::layer2_api::L2ProcessingOutcome::Found
+            }
+            other => other,
+        };
+        let mut verdict = crate::models::layer2_api::CheckoutReleaseVerdict::new(outcome, explicit_merchant_approval);
+        verdict.can_release_goods_automatically = false;
+        Ok(verdict)
     }
 
     /// Processes an unauthenticated or legacy L2 response and evaluates goods release (which will never authorize automatically).
@@ -546,5 +574,153 @@ mod checkout_release_tests {
         };
         let res_forged = app.verify_live_checkout_proof(&forged_proof, &valid_context, false);
         assert!(res_forged.is_err(), "Forged signature must fail");
+    }
+
+    #[test]
+    fn original_write_receipt_never_authorizes_automatic_goods_release() {
+        use crate::models::layer2_api::{
+            AttestationDto, L2ResponseEnvelope, L2Verdict, QuorumCertificateDto, QuorumProof,
+        };
+        use crate::models::profile::PublicProfile;
+        use crate::models::voucher::ValueDefinition;
+        use crate::services::l2_gateway::CheckoutAuthority;
+        use crate::test_utils::{self, ACTORS};
+        use crate::NewVoucherData;
+        use sha2::{Digest, Sha256};
+
+        let dir = tempfile::tempdir().unwrap();
+        let password = "checkout-authority-test";
+        let (mut app, _) = test_utils::setup_service_with_profile(
+            dir.path(),
+            &ACTORS.test_user,
+            "Alice",
+            password,
+        );
+        let user_id = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+
+        let standard_toml = test_utils::generate_signed_standard_toml(
+            "voucher_standards/freetaler_v1/standard.toml",
+        );
+        app.create_new_voucher(
+            &standard_toml,
+            NewVoucherData {
+                creator_profile: PublicProfile {
+                    id: Some(user_id),
+                    ..Default::default()
+                },
+                nominal_value: ValueDefinition {
+                    amount: "100".to_string(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(password),
+        )
+        .unwrap();
+
+        let local_id = app
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap()[0]
+            .local_instance_id
+            .clone();
+
+        let child_lock: [u8; 32] = app
+            .with_wallet(|w| {
+                let instance = w.get_voucher_instance(&local_id).unwrap();
+                let last_tx = instance.voucher.transactions.last().unwrap();
+                bs58::decode(&last_tx.t_id)
+                    .into_vec()
+                    .unwrap()
+                    .try_into()
+                    .unwrap()
+            })
+            .unwrap();
+        let parent_lock = [1u8; 32];
+
+        let committee_keys: Vec<SigningKey> =
+            (1..=20).map(|i| SigningKey::from_bytes(&[i; 32])).collect();
+        let committee: Vec<[u8; 32]> = committee_keys
+            .iter()
+            .map(|key| key.verifying_key().to_bytes())
+            .collect();
+        let digest =
+            humoco_proto::live::original_approval_digest(0, 9, 1, &parent_lock, &child_lock)
+                .unwrap();
+        let certificate = QuorumCertificateDto {
+            lock_id: hex::encode(child_lock),
+            shard_id: 9,
+            status: 1,
+            active_nodes_count: 20,
+            signer_count: 14,
+            signatures: committee_keys
+                .iter()
+                .take(14)
+                .enumerate()
+                .map(|(index, key)| AttestationDto {
+                    lock_id: hex::encode(child_lock),
+                    parent_lock: hex::encode(parent_lock),
+                    node_id: index as u16,
+                    node_pubkey: hex::encode(key.verifying_key().to_bytes()),
+                    timestamp: 0,
+                    signature: hex::encode(key.sign(&digest).to_bytes()),
+                    shard_id: 9,
+                })
+                .collect(),
+        };
+        let authority = CheckoutAuthority {
+            network: 0,
+            shard_id: 9,
+            parent_lock,
+            child_lock,
+            committee,
+        };
+
+        let server_key = SigningKey::from_bytes(&[42u8; 32]);
+        app.get_wallet_mut().unwrap().profile.l2_server_pubkey =
+            Some(server_key.verifying_key().to_bytes());
+
+        let l2_verdict = L2Verdict::Confirmed {
+            proof: QuorumProof {
+                shard_id: 9,
+                votes: Vec::new(),
+            },
+        };
+        let verdict_serialized = serde_json::to_vec(&l2_verdict).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(&verdict_serialized);
+        let server_signature = server_key.sign(&hasher.finalize()).to_bytes();
+        let envelope = L2ResponseEnvelope {
+            verdict: l2_verdict,
+            server_signature,
+            quorum_certificate: Some(certificate),
+        };
+        let response_bytes = serde_json::to_vec(&envelope).unwrap();
+
+        for explicit_merchant_approval in [false, true] {
+            let verdict = app
+                .verify_checkout_response_with_authority(
+                    local_id.clone(),
+                    &response_bytes,
+                    Some(password),
+                    authority.clone(),
+                    explicit_merchant_approval,
+                )
+                .unwrap();
+
+            assert_eq!(
+                verdict.outcome,
+                L2ProcessingOutcome::Found,
+                "A FINAL original write receipt must not be treated as Confirmed"
+            );
+            assert!(
+                !verdict.can_release_goods_automatically,
+                "Original write receipts must never authorize automatic goods release"
+            );
+            assert!(verdict.requires_merchant_approval);
+            assert_eq!(
+                verdict.is_goods_release_authorized,
+                explicit_merchant_approval
+            );
+        }
     }
 }

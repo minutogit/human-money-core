@@ -3,7 +3,7 @@ project: human-money-core
 version: "0.3.1"
 phase: "active-development"
 health: "green"
-last_updated: "2026-10-18"
+last_updated: "2026-10-21"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -41,7 +41,9 @@ Architecture implementation increment (2026-10-20): canonical L2 signature
 verification now requires independently supplied full-key authority; unverified
 lookup is `Found`, provisional evidence is `Provisional`, and live proofs use a
 separate recipient challenge/purpose in `humoco-proto`. The response facade reports original registration as `Found`, even for a valid
-original certificate: an old write receipt cannot authorize merchant release. `cargo test --lib --offline`
+original certificate: an old write receipt cannot authorize merchant release. `Confirmed` is reserved for
+live recipient-challenge-bound proofs, and a regression test enforces that
+`verify_checkout_response_with_authority` never authorizes automatic goods release. `cargo test --lib --offline`
 passed 149 tests, including forged/duplicate/short/wrong-network proof cases.
 Actual host dispatch, durable checkout intent, challenge custody and release
 integration remain unverified; this milestone does not certify a wallet/PoS host.
