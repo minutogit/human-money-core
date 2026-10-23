@@ -139,12 +139,10 @@ impl Wallet {
         // --- SECURITY GATE 1-3: structure, reporter signature, proof id ---
         conflict_manager::verify_proof_structure(&proof)?;
         conflict_manager::verify_reporter_signature(&proof)?;
-        let expected_proof_id = conflict_manager::derive_proof_id(
-            &proof.offender_id,
-            &proof.fork_point_prev_hash,
-        )?;
+        let expected_proof_id =
+            conflict_manager::derive_proof_id(&proof.offender_id, &proof.fork_point_prev_hash)?;
         if expected_proof_id != proof.proof_id {
-            return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
+            return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message:
                 "Cannot import proof: proof_id is inconsistent with offender/fork-point data."
                     .to_string(),
              }));
@@ -167,16 +165,14 @@ impl Wallet {
         let bypass_active = false;
 
         if !bypass_active {
-            let offender_pk = crate::services::crypto::get_pubkey_from_user_id(
-                &proof.offender_id,
-            );
+            let offender_pk = crate::services::crypto::get_pubkey_from_user_id(&proof.offender_id);
             if let Ok(offender_pk) = offender_pk {
                 use curve25519_dalek::edwards::CompressedEdwardsY;
                 let claimed_point = CompressedEdwardsY::from_slice(offender_pk.as_bytes())
                     .ok()
                     .and_then(|c| c.decompress())
                     .ok_or_else(|| {
-                        crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
+                        crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message:
                             "Cannot import proof: offender identity point is not a valid curve point."
                                 .to_string(),
                          })
@@ -197,10 +193,14 @@ impl Wallet {
                     Err(e) => last_err = Some(e),
                 }
                 if !verified {
-                    return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: format!(
-                        "Cannot import proof: did:key offender claim failed trap-proof verification ({}).",
-                        last_err.map(|e| e.to_string()).unwrap_or_default()
-                    ) }));
+                    return Err(crate::Error::Wallet(
+                        crate::error::WalletError::InvariantViolation {
+                            message: format!(
+                                "Cannot import proof: did:key offender claim failed trap-proof verification ({}).",
+                                last_err.map(|e| e.to_string()).unwrap_or_default()
+                            ),
+                        },
+                    ));
                 }
             } else if let Some(claimed_eph) = proof.offender_id.strip_prefix("ephemeral:") {
                 // SECURITY GATE 3c (AUDIT-W4-TRAP-201): ephemeral attribution gate.
@@ -208,109 +208,121 @@ impl Wallet {
                 // transactions under that claim must carry valid V3 layer2_signatures
                 // under the claimed ephemeral public key. Unverified claims must never
                 // gain persistent offender linkage.
-                let eph_pub_bytes = crate::services::crypto::decode_bs58_fixed::<32>(
-                    claimed_eph,
-                    "claimed_eph",
-                )
-                .map_err(|_| {
-                    crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
-                            "Cannot import proof: invalid ephemeral pubkey encoding in offender_id.".to_string(),
-                         })
-                })?;
-            let ephem_key = ed25519_dalek::VerifyingKey::from_bytes(&eph_pub_bytes)
-            .map_err(|_| {
-                crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
-                    "Cannot import proof: invalid ephemeral pubkey in offender_id.".to_string(),
-                 })
-            })?;
+                let eph_pub_bytes =
+                    crate::services::crypto::decode_bs58_fixed::<32>(claimed_eph, "claimed_eph")
+                        .map_err(|_| {
+                            crate::Error::Wallet(crate::error::WalletError::InvariantViolation {
+                        message:
+                            "Cannot import proof: invalid ephemeral pubkey encoding in offender_id."
+                                .to_string(),
+                    })
+                        })?;
+                let ephem_key =
+                    ed25519_dalek::VerifyingKey::from_bytes(&eph_pub_bytes).map_err(|_| {
+                        crate::Error::Wallet(crate::error::WalletError::InvariantViolation {
+                            message:
+                                "Cannot import proof: invalid ephemeral pubkey in offender_id."
+                                    .to_string(),
+                        })
+                    })?;
 
-            for tx in &proof.conflicting_transactions {
-                if tx.sender_ephemeral_pub.as_deref() != Some(claimed_eph) {
-                    return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
+                for tx in &proof.conflicting_transactions {
+                    if tx.sender_ephemeral_pub.as_deref() != Some(claimed_eph) {
+                        return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message:
                         "Cannot import proof: conflicting transaction sender_ephemeral_pub does not match claimed ephemeral offender.".to_string(),
                      }));
-                }
-                let sig_str = tx.layer2_signature.as_ref().ok_or_else(|| {
-                    crate::Error::Wallet(crate::error::WalletError::MissingLayer2Signature)
-                })?;
-                let sig_bytes = crate::services::crypto::decode_bs58_fixed::<64>(
-                    sig_str,
-                    "layer2_signature",
-                )
-                .map_err(|_| {
-                    crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
-                            "Cannot import proof: invalid layer2_signature encoding.".to_string(),
-                         })
-                })?;
-                let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-                let t_id_32 = crate::services::crypto::decode_bs58_fixed::<32>(&tx.t_id, "t_id")
-                    .map_err(|_| {
-                        crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
-                            "Cannot import proof: invalid t_id encoding.".to_string(),
-                         })
+                    }
+                    let sig_str = tx.layer2_signature.as_ref().ok_or_else(|| {
+                        crate::Error::Wallet(crate::error::WalletError::MissingLayer2Signature)
                     })?;
-                let ephem_pub_32: [u8; 32] = eph_pub_bytes;
+                    let sig_bytes = crate::services::crypto::decode_bs58_fixed::<64>(
+                        sig_str,
+                        "layer2_signature",
+                    )
+                    .map_err(|_| {
+                        crate::Error::Wallet(crate::error::WalletError::InvariantViolation {
+                            message: "Cannot import proof: invalid layer2_signature encoding."
+                                .to_string(),
+                        })
+                    })?;
+                    let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+                    let t_id_32 =
+                        crate::services::crypto::decode_bs58_fixed::<32>(&tx.t_id, "t_id")
+                            .map_err(|_| {
+                                crate::Error::Wallet(
+                                    crate::error::WalletError::InvariantViolation {
+                                        message: "Cannot import proof: invalid t_id encoding."
+                                            .to_string(),
+                                    },
+                                )
+                            })?;
+                    let ephem_pub_32: [u8; 32] = eph_pub_bytes;
 
-                let challenge_ds_tag = if tx.t_type == "init" {
-                    tx.t_id.clone()
-                } else if let Some(td) = &tx.trap_data {
-                    td.ds_tag.clone()
-                } else {
-                    tx.prev_hash.clone()
-                };
-                let (trap_r_str, trap_s_str) = match &tx.trap_data {
-                    Some(td) => (td.trap_r.as_str(), td.trap_s.as_str()),
-                    None => (
-                        crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
-                        crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
-                    ),
-                };
-                let encrypted_timestamp = if let Ok(raw_ts) = tx.t_time.parse::<u128>() {
-                    raw_ts
-                } else {
-                    crate::services::conflict_manager::encrypt_transaction_timestamp(tx)?
-                };
-                let deletable_at = if tx.t_type == "init" {
-                    tx.deletable_at.as_deref()
-                } else {
-                    None
-                };
-                let guard_commitment = crate::services::l2_gateway::privacy_guard_commitment(
-                    tx.privacy_guard.as_deref(),
-                );
-                let created_at_ms = crate::services::utils::parse_timestamp_ms(&tx.t_time).unwrap_or(0);
-
-                let candidates = ["", "none"];
-                let valid = candidates.iter().any(|&vid| {
-                    let payload_hash = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
-                        if tx.t_type == "init" { "none" } else { vid },
-                        &challenge_ds_tag,
-                        &t_id_32,
-                        &ephem_pub_32,
-                        trap_r_str,
-                        trap_s_str,
-                        encrypted_timestamp,
-                        created_at_ms,
-                        deletable_at,
-                        &guard_commitment,
+                    let challenge_ds_tag = if tx.t_type == "init" {
+                        tx.t_id.clone()
+                    } else if let Some(td) = &tx.trap_data {
+                        td.ds_tag.clone()
+                    } else {
+                        tx.prev_hash.clone()
+                    };
+                    let (trap_r_str, trap_s_str) = match &tx.trap_data {
+                        Some(td) => (td.trap_r.as_str(), td.trap_s.as_str()),
+                        None => (
+                            crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
+                            crate::services::l2_gateway::TRAP_NONE_PLACEHOLDER,
+                        ),
+                    };
+                    let encrypted_timestamp = if let Ok(raw_ts) = tx.t_time.parse::<u128>() {
+                        raw_ts
+                    } else {
+                        crate::services::conflict_manager::encrypt_transaction_timestamp(tx)?
+                    };
+                    let deletable_at = if tx.t_type == "init" {
+                        tx.deletable_at.as_deref()
+                    } else {
+                        None
+                    };
+                    let guard_commitment = crate::services::l2_gateway::privacy_guard_commitment(
+                        tx.privacy_guard.as_deref(),
                     );
-                    crate::services::crypto::verify_ed25519(&ephem_key, &payload_hash, &signature)
-                });
+                    let created_at_ms =
+                        crate::services::utils::parse_timestamp_ms(&tx.t_time).unwrap_or(0);
 
-                if !valid {
-                    return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
+                    let candidates = ["", "none"];
+                    let valid = candidates.iter().any(|&vid| {
+                        let payload_hash =
+                            crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+                                if tx.t_type == "init" { "none" } else { vid },
+                                &challenge_ds_tag,
+                                &t_id_32,
+                                &ephem_pub_32,
+                                trap_r_str,
+                                trap_s_str,
+                                encrypted_timestamp,
+                                created_at_ms,
+                                deletable_at,
+                                &guard_commitment,
+                            );
+                        crate::services::crypto::verify_ed25519(
+                            &ephem_key,
+                            &payload_hash,
+                            &signature,
+                        )
+                    });
+
+                    if !valid {
+                        return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message:
                         "Cannot import proof: conflicting transaction failed layer2_signature verification under claimed ephemeral offender.".to_string(),
                      }));
+                    }
                 }
             }
         }
-    }
 
         // --- SECURITY GATE 4: cryptographically verify conflicting transactions ---
         let mut layer2_voucher_id: Option<String> = None;
         for tx in &proof.conflicting_transactions {
-            if let Ok(Some(voucher)) =
-                self.find_voucher_for_transaction(&tx.t_id, None)
+            if let Ok(Some(voucher)) = self.find_voucher_for_transaction(&tx.t_id, None)
                 && let Ok(vid) = crate::services::l2_gateway::extract_layer2_voucher_id(&voucher)
             {
                 layer2_voucher_id = Some(vid);
@@ -328,7 +340,7 @@ impl Wallet {
                     if crate::services::voucher_validation::verify_transaction_integrity_and_signature(tx, vid).is_err() {
                         // A locally verifiable transaction that fails its
                         // integrity/L2 checks proves tampering -> hard reject.
-                        return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
+                        return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message:
                             "Cannot import proof: conflicting transaction failed integrity/L2-signature verification.".to_string(),
                          }));
                     }
@@ -366,7 +378,11 @@ impl Wallet {
             }
         }
 
-        let tx_ids: std::collections::HashSet<_> = proof.conflicting_transactions.iter().map(|tx| &tx.t_id).collect();
+        let tx_ids: std::collections::HashSet<_> = proof
+            .conflicting_transactions
+            .iter()
+            .map(|tx| &tx.t_id)
+            .collect();
         let mut quarantined_events = Vec::new();
 
         if let (VerificationOutcome::FullyVerified, Some(winner_id)) = (&outcome, winner_tx_id) {
@@ -390,7 +406,12 @@ impl Wallet {
                     {
                         let bff_data = crate::models::wallet_event::EventBffData {
                             display_currency: super::super::format_bff_name(
-                                instance.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&instance.voucher.nominal_value.unit),
+                                instance
+                                    .voucher
+                                    .nominal_value
+                                    .abbreviation
+                                    .as_deref()
+                                    .unwrap_or(&instance.voucher.nominal_value.unit),
                                 instance.voucher.non_redeemable_test_voucher,
                             ),
                             amount: instance.voucher.nominal_value.amount.clone(),
@@ -423,7 +444,7 @@ impl Wallet {
         // conflict tag, but at least one exists (which is now in quarantine).
         let mut has_active = false;
         let mut has_quarantined = false;
-        
+
         for tx in &proof.conflicting_transactions {
             if let Some(instance) = self.find_local_voucher_by_tx_id(&tx.t_id) {
                 if matches!(instance.status, VoucherStatus::Active) {
@@ -433,7 +454,7 @@ impl Wallet {
                 }
             }
         }
-        
+
         let conflict_role = if has_quarantined && !has_active {
             crate::models::conflict::ConflictRole::Victim
         } else {
@@ -449,7 +470,9 @@ impl Wallet {
 
         // SECURITY (AUDIT-00-WILDCARD-42): Enforce upper bound on stored proofs to prevent memory bloat DoS
         const MAX_PROOFS: usize = 1000;
-        if self.proof_store.proofs.len() >= MAX_PROOFS && !self.proof_store.proofs.contains_key(&entry.proof.proof_id) {
+        if self.proof_store.proofs.len() >= MAX_PROOFS
+            && !self.proof_store.proofs.contains_key(&entry.proof.proof_id)
+        {
             // Evict the oldest proof by report_timestamp
             let oldest_id = self
                 .proof_store
@@ -462,7 +485,9 @@ impl Wallet {
             }
         }
 
-        self.proof_store.proofs.insert(entry.proof.proof_id.to_string(), entry);
+        self.proof_store
+            .proofs
+            .insert(entry.proof.proof_id.to_string(), entry);
         Ok(())
     }
 
@@ -594,8 +619,7 @@ impl Wallet {
         // unchanged. Non-did:key identifiers carry no attribution claim and
         // are left untouched.
         if offender_id != crate::models::voucher::ANONYMOUS_ID
-            && let Ok(claimed_pk) =
-                crate::services::crypto::get_pubkey_from_user_id(&offender_id)
+            && let Ok(claimed_pk) = crate::services::crypto::get_pubkey_from_user_id(&offender_id)
         {
             {
                 use curve25519_dalek::edwards::CompressedEdwardsY;
@@ -606,12 +630,11 @@ impl Wallet {
                         // V3 SST (AUDIT-01-F08): single prefix-free gate — the
                         // colliding shards must reconstruct a valid Schnorr
                         // signature for exactly the claimed identity point.
-                        crate::services::trap_manager::
-                            verify_stored_trap_shards_against_identity(
-                                &conflicting_transactions,
-                                &claimed_point,
-                            )
-                            .is_ok()
+                        crate::services::trap_manager::verify_stored_trap_shards_against_identity(
+                            &conflicting_transactions,
+                            &claimed_point,
+                        )
+                        .is_ok()
                     })
                     .unwrap_or(false);
                 if !attributed {
@@ -645,7 +668,9 @@ impl Wallet {
             voucher_standard_uuid = Some(voucher.voucher_standard.uuid.clone());
             is_test_voucher = voucher.non_redeemable_test_voucher;
 
-            if let Ok(layer2_voucher_id) = crate::services::l2_gateway::extract_layer2_voucher_id(voucher) {
+            if let Ok(layer2_voucher_id) =
+                crate::services::l2_gateway::extract_layer2_voucher_id(voucher)
+            {
                 for tx in &real_txs {
                     if crate::services::voucher_validation::verify_transaction_integrity_and_signature(
                         tx,
@@ -707,15 +732,11 @@ impl Wallet {
                         continue;
                     };
                     if let Ok(point) = crate::services::trap_manager::extract_sst_identity(
-                        &f1.ds_tag,
-                        &eph,
-                        f1,
-                        f2,
+                        &f1.ds_tag, &eph, f1, f2,
                     ) {
                         let pk_bytes = point.compress().to_bytes();
                         if let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes)
-                            && let Ok(did_id) =
-                                crate::services::crypto::create_user_id(&pk, None)
+                            && let Ok(did_id) = crate::services::crypto::create_user_id(&pk, None)
                         {
                             suspected_identity = Some(did_id.clone());
                             // V3 SST: extraction IS the proof (EUF-CMA) —
@@ -879,7 +900,12 @@ impl Wallet {
             let tip_fp = conflict_manager::create_fingerprint_for_transaction(last_tx, voucher)?;
             if !conflict_manager::is_init_fingerprint(&tip_fp) {
                 // Deduplicate in direct_queue
-                if !self.active_gossip.direct_queue.iter().any(|d| d.fingerprint.t_id == tip_fp.t_id) {
+                if !self
+                    .active_gossip
+                    .direct_queue
+                    .iter()
+                    .any(|d| d.fingerprint.t_id == tip_fp.t_id)
+                {
                     const MAX_DIRECT_QUEUE: usize = 1000;
                     if self.active_gossip.direct_queue.len() >= MAX_DIRECT_QUEUE {
                         self.active_gossip.direct_queue.pop_front();
@@ -966,7 +992,9 @@ impl Wallet {
             while self.active_gossip.fresh_gossip_pool.len() >= MAX_FRESH_GOSSIP_POOL {
                 self.active_gossip.fresh_gossip_pool.pop_front();
             }
-            self.active_gossip.fresh_gossip_pool.push_back(fp_admitted.clone());
+            self.active_gossip
+                .fresh_gossip_pool
+                .push_back(fp_admitted.clone());
 
             // Also persist to foreign_fingerprints archive under caps
             if current_total_foreign < conflict_manager::MAX_TOTAL_FOREIGN_FINGERPRINTS {
@@ -999,10 +1027,14 @@ impl Wallet {
             if f1.ds_tag != f2.ds_tag || f1.t_id == f2.t_id {
                 continue;
             }
-            if conflict_manager::is_init_fingerprint(f1) || conflict_manager::is_init_fingerprint(f2) {
+            if conflict_manager::is_init_fingerprint(f1)
+                || conflict_manager::is_init_fingerprint(f2)
+            {
                 continue;
             }
-            if !conflict_manager::verify_fingerprint_signature(f1) || !conflict_manager::verify_fingerprint_signature(f2) {
+            if !conflict_manager::verify_fingerprint_signature(f1)
+                || !conflict_manager::verify_fingerprint_signature(f2)
+            {
                 continue;
             }
             let Ok(eph) = crate::services::crypto::decode_bs58_fixed::<32>(
@@ -1011,18 +1043,16 @@ impl Wallet {
             ) else {
                 continue;
             };
-            if let Ok(point) = crate::services::trap_manager::extract_sst_identity(
-                &f1.ds_tag,
-                &eph,
-                f1,
-                f2,
-            ) {
+            if let Ok(point) =
+                crate::services::trap_manager::extract_sst_identity(&f1.ds_tag, &eph, f1, f2)
+            {
                 let pk_bytes = point.compress().to_bytes();
                 // ARCHITECTURE (KISS-Gossip): `_did_id_opt` is verified cryptographically here.
                 // We deliberately do not store it as redundant state in ActiveGossipState/QuarantineEntry;
                 // the gossip relay only propagates minimal raw colliding pairs [f1, f2], and every
                 // node can deterministically reconstruct the offender DID on-demand via `extract_sst_identity`.
-                let _did_id_opt = if let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes) {
+                let _did_id_opt = if let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes)
+                {
                     crate::services::crypto::create_user_id(&pk, None).ok()
                 } else {
                     None
@@ -1122,9 +1152,7 @@ pub(crate) fn resolve_conflict_offline(
     // prev_hash and always embed near-wall-clock timestamps, so the window
     // below never rejects honest evidence (success probability for blind
     // grinding is ~window/2^128).
-    let now_nanos = chrono::Utc::now()
-        .timestamp_nanos_opt()
-        .unwrap_or_default() as u128;
+    let now_nanos = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default() as u128;
     const CLOCK_SKEW_NANOS: u128 = 24 * 3600 * 1_000_000_000;
     let max_plausible_nanos = now_nanos.saturating_add(CLOCK_SKEW_NANOS);
     // SECURITY (AUDIT-01-F14 / lower bound): the plausibility argument is
@@ -1149,7 +1177,12 @@ pub(crate) fn resolve_conflict_offline(
     let earliest_local_creation_nanos = voucher_store
         .vouchers
         .values()
-        .filter(|inst| inst.voucher.transactions.iter().any(|tx| tx_ids.contains(&tx.t_id)))
+        .filter(|inst| {
+            inst.voucher
+                .transactions
+                .iter()
+                .any(|tx| tx_ids.contains(&tx.t_id))
+        })
         .filter_map(|inst| {
             chrono::DateTime::parse_from_rfc3339(&inst.voucher.creation_date)
                 .ok()
@@ -1175,19 +1208,22 @@ pub(crate) fn resolve_conflict_offline(
         prev_hash: &str,
         conflicting_txs: &[&crate::models::voucher::Transaction],
     ) -> bool {
-        let prev_ok = crate::services::crypto::decode_bs58_fixed::<32>(prev_hash, "prev_hash").is_ok();
+        let prev_ok =
+            crate::services::crypto::decode_bs58_fixed::<32>(prev_hash, "prev_hash").is_ok();
         if !prev_ok {
             return false;
         }
-        let Ok(eph_bytes) =
-            crate::services::crypto::decode_bs58_fixed::<32>(&fp.sender_ephemeral_pub, "sender_ephemeral_pub")
-        else {
+        let Ok(eph_bytes) = crate::services::crypto::decode_bs58_fixed::<32>(
+            &fp.sender_ephemeral_pub,
+            "sender_ephemeral_pub",
+        ) else {
             return false;
         };
         // The claimed input key must equal the locally revealed key of the
         // fork AND recompute the collision tag: ds_tag == H(prev || eph).
-        let expected_tag_ok = crate::services::crypto::get_ds_tag(prev_hash, &fp.sender_ephemeral_pub)
-            .is_ok_and(|t| t == fp.ds_tag);
+        let expected_tag_ok =
+            crate::services::crypto::get_ds_tag(prev_hash, &fp.sender_ephemeral_pub)
+                .is_ok_and(|t| t == fp.ds_tag);
         if !expected_tag_ok {
             return false;
         }
@@ -1197,7 +1233,11 @@ pub(crate) fn resolve_conflict_offline(
                     .sender_ephemeral_pub
                     .as_deref()
                     .and_then(|eph| {
-                        crate::services::crypto::decode_bs58_fixed::<32>(eph, "sender_ephemeral_pub").ok()
+                        crate::services::crypto::decode_bs58_fixed::<32>(
+                            eph,
+                            "sender_ephemeral_pub",
+                        )
+                        .ok()
                     })
                     .is_some_and(|p| p == eph_bytes)
         })
@@ -1273,7 +1313,10 @@ pub(crate) fn resolve_conflict_offline(
                 // cryptographic proof of double spend (HMC_TX_AUTH digest signature + reproduces local tag)
                 // and the local voucher is Active, local possession takes precedence:
                 // do NOT quarantine the active voucher!
-                if !winner_is_local && !winner_has_cryptographic_proof && matches!(prev_status, VoucherStatus::Active) {
+                if !winner_is_local
+                    && !winner_has_cryptographic_proof
+                    && matches!(prev_status, VoucherStatus::Active)
+                {
                     log::warn!(
                         "Possession priority: local active voucher '{}' retained; unconfirmed foreign gossip fingerprint '{}' cannot quarantine active voucher without verified double-spend proof.",
                         instance.voucher.voucher_id,

@@ -1,18 +1,18 @@
+use human_money_core::FileStorage;
 use human_money_core::models::layer2_api::{L2LockEntry, L2Verdict};
 use human_money_core::models::seal::{
-    calculate_voucher_merkle_root, derive_anchor_step_key, derive_anchor_step_tag,
-    derive_l2_anchor_id, SyncStatus,
+    SyncStatus, calculate_voucher_merkle_root, derive_anchor_step_key, derive_anchor_step_tag,
+    derive_l2_anchor_id,
 };
 use human_money_core::services::l2_gateway::{
-    build_anchor_leap_lock, build_anchor_status_query, calculate_l2_payload_hash_raw,
-    calculate_read_quorum, evaluate_anchor_verdict, evaluate_multi_node_anchor_verdicts,
-    AnchorSyncVerdict,
+    AnchorSyncVerdict, build_anchor_leap_lock, build_anchor_status_query,
+    calculate_l2_payload_hash_raw, calculate_read_quorum, evaluate_anchor_verdict,
+    evaluate_multi_node_anchor_verdicts,
 };
-use human_money_core::storage::seal_service::SealService;
 use human_money_core::storage::AuthMethod;
+use human_money_core::storage::seal_service::SealService;
 use human_money_core::test_utils::{self, ACTORS};
 use human_money_core::wallet::instance::VoucherStatus;
-use human_money_core::FileStorage;
 use tempfile::TempDir;
 
 const PASSWORD: &str = "test-password-anchor-123";
@@ -31,20 +31,28 @@ fn test_state_hash_determinism() {
 
     let hash_1a = SealService::calculate_comprehensive_state_hash(0, 0, &merkle_root_1, &of_hash_1);
     let hash_1b = SealService::calculate_comprehensive_state_hash(0, 0, &merkle_root_1, &of_hash_1);
-    assert_eq!(hash_1a, hash_1b, "State hash must be strictly deterministic");
+    assert_eq!(
+        hash_1a, hash_1b,
+        "State hash must be strictly deterministic"
+    );
 
     // Nonce change produces different hash
-    let hash_nonce_1 = SealService::calculate_comprehensive_state_hash(0, 1, &merkle_root_1, &of_hash_1);
+    let hash_nonce_1 =
+        SealService::calculate_comprehensive_state_hash(0, 1, &merkle_root_1, &of_hash_1);
     assert_ne!(hash_1a, hash_nonce_1, "Nonce change must alter state hash");
 
     // Epoch change produces different hash
-    let hash_epoch_1 = SealService::calculate_comprehensive_state_hash(1, 0, &merkle_root_1, &of_hash_1);
+    let hash_epoch_1 =
+        SealService::calculate_comprehensive_state_hash(1, 0, &merkle_root_1, &of_hash_1);
     assert_ne!(hash_1a, hash_epoch_1, "Epoch change must alter state hash");
 
     // Merkle root change produces different hash
     let hash_root_changed =
         SealService::calculate_comprehensive_state_hash(0, 0, "different_root", &of_hash_1);
-    assert_ne!(hash_1a, hash_root_changed, "Merkle root change must alter state hash");
+    assert_ne!(
+        hash_1a, hash_root_changed,
+        "Merkle root change must alter state hash"
+    );
 }
 
 /// 2. test_time_insensitivity_and_expiration:
@@ -99,8 +107,16 @@ fn test_deterministic_key_derivation_zero_storage() {
 
     let (sk1, pk1) = derive_anchor_step_key(&identity.signing_key, epoch, tx_nonce);
     let (sk2, pk2) = derive_anchor_step_key(&identity.signing_key, epoch, tx_nonce);
-    assert_eq!(sk1.to_bytes(), sk2.to_bytes(), "Step signing key must be deterministic");
-    assert_eq!(pk1.to_bytes(), pk2.to_bytes(), "Step public key must be deterministic");
+    assert_eq!(
+        sk1.to_bytes(),
+        sk2.to_bytes(),
+        "Step signing key must be deterministic"
+    );
+    assert_eq!(
+        pk1.to_bytes(),
+        pk2.to_bytes(),
+        "Step public key must be deterministic"
+    );
 
     let prev_hash = "prev_seal_hash_123456789";
     let tag1 = derive_anchor_step_tag(prev_hash, tx_nonce);
@@ -133,7 +149,8 @@ fn test_fast_forward_leap_lock_5_offline_steps() {
     assert!(!leap_lock.is_genesis);
 
     // Verify cryptographic signature of the leap-lock request using derived step key
-    let (_expected_sk, expected_pk) = derive_anchor_step_key(&identity.signing_key, epoch, start_nonce);
+    let (_expected_sk, expected_pk) =
+        derive_anchor_step_key(&identity.signing_key, epoch, start_nonce);
     assert_eq!(leap_lock.sender_ephemeral_pub, expected_pk.to_bytes());
 }
 
@@ -161,7 +178,8 @@ fn test_l2_missing_locks_guidance() {
     let verdict_matching = L2Verdict::MissingLocks {
         sync_point: local_tag.to_string(),
     };
-    let anchor_verdict_matching = evaluate_anchor_verdict(&verdict_matching, &local_t_id, local_tag);
+    let anchor_verdict_matching =
+        evaluate_anchor_verdict(&verdict_matching, &local_t_id, local_tag);
     assert_eq!(anchor_verdict_matching, AnchorSyncVerdict::Synchronized);
 }
 
@@ -181,8 +199,10 @@ fn test_rollback_detection_and_reconciliation() {
     // Add two active vouchers
     let (v_id1, v_id2) = {
         let (wallet_mut, identity) = app.get_unlocked_mut_for_test();
-        let id1 = test_utils::add_voucher_to_wallet(wallet_mut, identity, "50.00", standard, true).unwrap();
-        let id2 = test_utils::add_voucher_to_wallet(wallet_mut, identity, "30.00", standard, true).unwrap();
+        let id1 = test_utils::add_voucher_to_wallet(wallet_mut, identity, "50.00", standard, true)
+            .unwrap();
+        let id2 = test_utils::add_voucher_to_wallet(wallet_mut, identity, "30.00", standard, true)
+            .unwrap();
         (id1, id2)
     };
 
@@ -226,6 +246,7 @@ fn test_multi_device_fork_conflict_409() {
     let local_tag = "tag_step_1";
 
     let competing_entry = L2LockEntry {
+        causal_output: None,
         layer2_voucher_id: "test_anchor".to_string(),
         t_id: [99u8; 32], // Different t_id from another device
         sender_ephemeral_pub: [0u8; 32],
@@ -281,7 +302,10 @@ fn test_fault_tolerant_quorum_2_of_3() {
         AnchorSyncVerdict::PendingLeapLock { sync_point } => {
             assert_eq!(sync_point, "sync_pt_1");
         }
-        other => panic!("Expected PendingLeapLock with quorum 2 of 3, got {:?}", other),
+        other => panic!(
+            "Expected PendingLeapLock with quorum 2 of 3, got {:?}",
+            other
+        ),
     }
 }
 
@@ -335,7 +359,10 @@ fn test_two_tier_trigger_timing() {
 
     // Flush when already Synced returns false
     let flushed_again = app.flush_pending_anchor_sync(Some(PASSWORD)).unwrap();
-    assert!(!flushed_again, "Already synced seal should return false on flush");
+    assert!(
+        !flushed_again,
+        "Already synced seal should return false on flush"
+    );
 
     // Immediate sync (tier-1: spend)
     app.schedule_anchor_sync_debounced(Some(PASSWORD)).unwrap();
@@ -356,6 +383,7 @@ fn test_single_malicious_node_cannot_lock_wallet() {
     // Helper to create a dummy lock entry with given t_id
     fn dummy_entry(t_id: [u8; 32]) -> L2LockEntry {
         L2LockEntry {
+            causal_output: None,
             layer2_voucher_id: "test_anchor".to_string(),
             t_id,
             sender_ephemeral_pub: [0u8; 32],
@@ -381,7 +409,11 @@ fn test_single_malicious_node_cannot_lock_wallet() {
 
     // 2 honest synchronized vs 1 malicious rollback -> must be Synchronized
     let res = evaluate_multi_node_anchor_verdicts(
-        &[honest_sync.clone(), honest_sync.clone(), malicious_rollback.clone()],
+        &[
+            honest_sync.clone(),
+            honest_sync.clone(),
+            malicious_rollback.clone(),
+        ],
         &local_t_id,
         local_tag,
         total_nodes,
@@ -441,7 +473,8 @@ fn test_cryptographic_proof_of_rollback_detection() {
 
     // Derive anchor ID and step key that L2 would have used for the remote lock
     let anchor_id = derive_l2_anchor_id(identity, epoch);
-    let (step_sk, step_pk) = derive_anchor_step_key(&identity.signing_key, epoch, tx_nonce_for_lock);
+    let (step_sk, step_pk) =
+        derive_anchor_step_key(&identity.signing_key, epoch, tx_nonce_for_lock);
     let step_pub_bytes = step_pk.to_bytes();
 
     // Create payload hash exactly as L2 would sign it for an anchor leap lock (non-genesis)
@@ -467,6 +500,7 @@ fn test_cryptographic_proof_of_rollback_detection() {
     );
 
     let lock_entry = L2LockEntry {
+        causal_output: None,
         layer2_voucher_id: anchor_id.clone(),
         t_id: remote_t_id,
         sender_ephemeral_pub: step_pub_bytes,
@@ -489,7 +523,11 @@ fn test_cryptographic_proof_of_rollback_detection() {
         lock_entry: lock_entry.clone(),
     };
     let result = evaluate_multi_node_anchor_verdicts(
-        &[rollback_verdict.clone(), rollback_verdict, honest_sync.clone()],
+        &[
+            rollback_verdict.clone(),
+            rollback_verdict,
+            honest_sync.clone(),
+        ],
         &local_t_id,
         local_tag,
         3,
@@ -537,7 +575,10 @@ fn test_cryptographic_proof_of_rollback_detection() {
                 "Returned lock entry must carry valid cryptographic proof"
             );
         }
-        other => panic!("Expected RollbackDetected with quorum 2 of 3, got {:?}", other),
+        other => panic!(
+            "Expected RollbackDetected with quorum 2 of 3, got {:?}",
+            other
+        ),
     }
 
     // ForkConflict quorum as well
@@ -569,8 +610,9 @@ fn test_status_query_key_matches_step_nonce() {
     let locator = vec!["loc1".to_string()];
 
     for tx_nonce in [0u64, 1, 5, 42, 12345] {
-        let query = build_anchor_status_query(identity, epoch, tx_nonce, challenge, locator.clone(), 1)
-            .expect("build query should succeed");
+        let query =
+            build_anchor_status_query(identity, epoch, tx_nonce, challenge, locator.clone(), 1)
+                .expect("build query should succeed");
         let (_sk, expected_pk) = derive_anchor_step_key(&identity.signing_key, epoch, tx_nonce);
         assert_eq!(
             query.auth.ephemeral_pubkey,

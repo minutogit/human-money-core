@@ -106,6 +106,7 @@ impl MockL2Node {
 
         // Success: Anchor
         let entry = human_money_core::models::layer2_api::L2LockEntry {
+            causal_output: None,
             layer2_voucher_id: req.layer2_voucher_id.clone(),
             t_id: req.transaction_hash,
             sender_ephemeral_pub: req.sender_ephemeral_pub,

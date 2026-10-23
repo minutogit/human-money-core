@@ -7,8 +7,8 @@
 #[cfg(test)]
 mod tests {
     use chrono::{Duration, Utc};
-    use human_money_core::models::conflict::TransactionFingerprint;
     use human_money_core::NewVoucherData;
+    use human_money_core::models::conflict::TransactionFingerprint;
     use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD};
     use tempfile::tempdir;
 
@@ -47,10 +47,10 @@ mod tests {
             encrypted_timestamp: 0,
             created_at_ms: 0,
             layer2_signature: String::new(),
-                    sender_ephemeral_pub: String::new(),
+            sender_ephemeral_pub: String::new(),
             layer2_voucher_id: String::new(),
             privacy_guard_hash: String::new(),
-};
+        };
 
         // Add the fingerprint to history
         wallet
@@ -96,7 +96,12 @@ mod tests {
             std::fs::remove_file(&lock_file).unwrap();
         }
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
+            .login(
+                &alice_profile.folder_name,
+                PASSWORD,
+                false,
+                "test-id".to_string(),
+            )
             .unwrap();
 
         // Create a voucher with 100 units
@@ -134,7 +139,12 @@ mod tests {
 
         // Perform a split (send 40 to Bob, keep 60)
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
+            .login(
+                &alice_profile.folder_name,
+                PASSWORD,
+                false,
+                "test-id".to_string(),
+            )
             .unwrap();
         let request = human_money_core::wallet::MultiTransferRequest {
             recipient_id: ACTORS.bob.user_id.clone(),
@@ -144,7 +154,7 @@ mod tests {
             }],
             notes: None,
             sender_profile_name: None,
-        use_privacy_mode: None,
+            use_privacy_mode: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(
@@ -168,7 +178,12 @@ mod tests {
             std::fs::remove_file(seal_path).unwrap();
         }
         alice_service
-            .login(&alice_profile.folder_name, PASSWORD, false, "test-id".to_string())
+            .login(
+                &alice_profile.folder_name,
+                PASSWORD,
+                false,
+                "test-id".to_string(),
+            )
             .unwrap();
 
         // THEN: The transactions and their own_fingerprints are correctly restored.
@@ -250,16 +265,16 @@ mod tests {
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
-        let tauri_app_dir = dir.path(); 
-        
+        let tauri_app_dir = dir.path();
+
         // We simulate that the Core works in a "wallets" subfolder
         let base_storage_path = tauri_app_dir.join("wallets");
-        
+
         // The careless app developer writes the file to the Tauri app folder (one level above)
         std::fs::write(tauri_app_dir.join("instance_id"), "dummy-device-123").unwrap();
-        
+
         let mut service = AppService::new(&base_storage_path).unwrap();
-        
+
         // Attempting to create a profile should immediately trigger the trap!
         let result = service.create_profile(
             "Trap Test", 
@@ -270,8 +285,14 @@ mod tests {
             human_money_core::services::mnemonic::MnemonicLanguage::English, 
             "dummy-device-123".to_string()
         );
-        
+
         assert!(result.is_err(), "Die Falle hat nicht zugeschnappt!");
-        assert!(result.unwrap_err().to_string().contains("CRITICAL SECURITY VIOLATION"), "Falsche Fehlermeldung!");
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("CRITICAL SECURITY VIOLATION"),
+            "Falsche Fehlermeldung!"
+        );
     }
 }

@@ -232,7 +232,7 @@ async fn cmd_genesis(url: &str) {
     );
     let signature = sender_key.sign(&payload_hash);
 
-    let req = L2LockRequest {
+    let req = L2LockRequest { causal_output: None,
         auth: L2AuthPayload {
             ephemeral_pubkey: sender_pub,
             auth_signature: None,
@@ -360,7 +360,7 @@ async fn cmd_transfer(url: &str, voucher_id: &str) {
     );
     let signature = new_key.sign(&payload_hash);
 
-    let req = L2LockRequest {
+    let req = L2LockRequest { causal_output: None,
         auth: L2AuthPayload {
             ephemeral_pubkey: new_pub,
             auth_signature: None,
@@ -483,7 +483,7 @@ async fn cmd_split(url: &str, voucher_id: &str) {
     );
     let split_sig = split_key.sign(&split_payload_hash);
 
-    let split_req = L2LockRequest {
+    let split_req = L2LockRequest { causal_output: None,
         auth: L2AuthPayload {
             ephemeral_pubkey: split_pub,
             auth_signature: None,
@@ -630,7 +630,7 @@ async fn cmd_double_spend(url: &str, voucher_id: &str) {
         );
         let sig = spend_key.sign(&payload_hash);
 
-        let req = L2LockRequest {
+        let req = L2LockRequest { causal_output: None,
             auth: L2AuthPayload {
                 ephemeral_pubkey: spend_pub,
                 auth_signature: None,
@@ -874,7 +874,7 @@ fn generate_mock_lock_request(
 
     let signature = sender_key.sign(&payload_hash);
 
-    let req = L2LockRequest {
+    let req = L2LockRequest { causal_output: None,
         auth: L2AuthPayload {
             ephemeral_pubkey: sender_pub,
             auth_signature: None,
@@ -1273,7 +1273,7 @@ fn cmd_offline_transfer(voucher_id: &str, count: u32) {
         );
         let signature = new_key.sign(&payload_hash);
 
-        let lock = L2LockRequest {
+        let lock = L2LockRequest { causal_output: None,
             auth: L2AuthPayload {
                 ephemeral_pubkey: new_pub,
                 auth_signature: None,

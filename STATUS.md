@@ -227,3 +227,21 @@ reload is tested. The existing Z01 automatic-release gate remains closed pending
 a durable challenge/purchase producer; mathematical proof validity is insufficient.
 Validation: 171 library tests passed with nextest against the local sibling Proto.
 This does not certify the published Git dependency graph or full turnover safety.
+
+### 2026-10-23 — Durable intent, purchase and separate L2 causality
+
+Added bounded durable exact-byte send intents, retained-choice observations,
+recipient-generated challenges and atomic L1-import/purchase completion. Release
+capabilities are minted only after a successful managed wallet transaction, with
+independent configured regional authority and a locally verified 14/20 proof.
+Separately signed author output proofs travel in the transport envelope and
+private profile; L1 Transaction/Voucher serialization and SST remain unchanged.
+Original authors produce proofs while they hold the ephemeral key. Missing legacy
+foreign proofs cannot be forged retroactively. Full UI orchestration, terminal
+intent resolution, historical freshness composition and cross-repository E2E
+fault injection remain open. Validation: full nextest, 824 passed, 7 skipped;
+actual two-wallet purchase/import and durable retry/restart tests included.
+Additional lint audit: `cargo clippy --offline --all-targets -- -D warnings`
+reports 11 warnings-as-errors (redundant conversions/guards, lifetimes, auto-deref,
+derivable default, argument count and map simplification), including surrounding
+existing code. The full test result does not imply a clean strict Core lint audit.

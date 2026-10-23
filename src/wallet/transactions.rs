@@ -27,13 +27,12 @@ use crate::services::utils::to_canonical_json;
 use crate::services::voucher_validation::{StandardRegistry, ValidationPipeline};
 use crate::services::{bundle_processor, conflict_manager};
 use crate::wallet::Wallet;
-use crate::wallet::instance::VoucherStatus;
 use crate::wallet::conflicts::resolve_conflict_offline;
+use crate::wallet::instance::VoucherStatus;
 use ed25519_dalek::SigningKey;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::str::FromStr;
-
 
 const MAX_COUNTERPARTY_NAME_CHARS: usize = 64;
 
@@ -106,20 +105,34 @@ impl Wallet {
         for v in &vouchers {
             let local_id = Self::calculate_local_instance_id(v, &identity.user_id)?;
             if let Some(instance) = self.voucher_store.vouchers.get(&local_id)
-                && matches!(instance.status, VoucherStatus::Quarantined { .. }) {
-                    return Err(VoucherCoreError::VoucherInQuarantine);
-                }
+                && matches!(instance.status, VoucherStatus::Quarantined { .. })
+            {
+                return Err(VoucherCoreError::VoucherInQuarantine);
+            }
         }
 
-        let (container_bytes, bundle) = bundle_processor::create_and_encrypt_bundle(
-            identity,
-            vouchers.clone(),
-            recipient_id,
-            notes,
-            forwarded_fingerprints,
-            quarantine_pairs,
-            sender_profile_name,
-        )?;
+        let causal_outputs = vouchers
+            .iter()
+            .flat_map(|voucher| voucher.transactions.iter())
+            .filter_map(|tx| {
+                self.profile
+                    .l2_causal_outputs
+                    .get(&tx.t_id)
+                    .cloned()
+                    .map(|proof| (tx.t_id.clone(), proof))
+            })
+            .collect();
+        let (container_bytes, bundle) =
+            bundle_processor::create_and_encrypt_bundle_with_causal_outputs(
+                identity,
+                vouchers.clone(),
+                recipient_id,
+                notes,
+                forwarded_fingerprints,
+                quarantine_pairs,
+                sender_profile_name,
+                causal_outputs,
+            )?;
 
         let header = bundle.to_header(TransactionDirection::Sent);
         self.bundle_meta_store.insert(header.clone());
@@ -211,9 +224,7 @@ impl Wallet {
                 .voucher_store
                 .vouchers
                 .get(&updated_instance_id)
-                .ok_or_else(|| {
-                    VoucherCoreError::VoucherNotFound(updated_instance_id.clone())
-                })?;
+                .ok_or_else(|| VoucherCoreError::VoucherNotFound(updated_instance_id.clone()))?;
             let standard_uuid = instance.voucher.voucher_standard.uuid.clone();
             let standard_def = registry.get(&standard_uuid).ok_or_else(|| {
                 crate::Error::Wallet(crate::error::WalletError::StandardNotFound {
@@ -236,6 +247,35 @@ impl Wallet {
 
         let mut bundle = bundle_processor::open_and_verify_bundle(identity, container_bytes)?;
 
+        // Sidecars are optional for legacy offline deeds. Supplied sidecars
+        // must match the actual immutable L1 transaction, not just an owner claim.
+        let tx_count: usize = bundle.vouchers.iter().map(|v| v.transactions.len()).sum();
+        if bundle.causal_outputs.len() > tx_count {
+            return Err(VoucherCoreError::Validation(
+                crate::error::ValidationError::SecurityViolation("excess output sidecars".into()),
+            ));
+        }
+        for (id, proof) in &bundle.causal_outputs {
+            let (voucher, tx) = bundle
+                .vouchers
+                .iter()
+                .find_map(|v| {
+                    v.transactions
+                        .iter()
+                        .find(|tx| &tx.t_id == id)
+                        .map(|tx| (v, tx))
+                })
+                .ok_or_else(|| {
+                    VoucherCoreError::Validation(crate::error::ValidationError::SecurityViolation(
+                        "unknown output sidecar".into(),
+                    ))
+                })?;
+            crate::services::l2_causality::validate_output_proof(voucher, tx, proof)?;
+        }
+        self.profile
+            .l2_causal_outputs
+            .extend(bundle.causal_outputs.clone());
+
         // HMSEC-SA06-10: The sender_profile_name is attacker-controlled
         // display metadata. Sanitize it ONCE at the ingestion point (after
         // all cryptographic verification) so every downstream consumer —
@@ -253,8 +293,10 @@ impl Wallet {
         // --- LAYER 0: BUNDLE-RECIPIENT CHECK ---
         // Prevents a wallet from accepting a bundle explicitly addressed to another
         // instance (e.g. mobile vs. PC) of the same user (SAI).
-        if bundle.recipient_id != identity.user_id && bundle.recipient_id != crate::models::voucher::ANONYMOUS_ID {
-             return Err(VoucherCoreError::BundleRecipientMismatch {
+        if bundle.recipient_id != identity.user_id
+            && bundle.recipient_id != crate::models::voucher::ANONYMOUS_ID
+        {
+            return Err(VoucherCoreError::BundleRecipientMismatch {
                 expected: identity.user_id.clone(),
                 found: bundle.recipient_id.clone(),
             });
@@ -286,7 +328,8 @@ impl Wallet {
 
             for voucher in &bundle.vouchers {
                 if let Some(creator_id) = &voucher.creator_profile.id {
-                    if let TrustStatus::KnownOffender(proof_id) = self.check_reputation(creator_id) {
+                    if let TrustStatus::KnownOffender(proof_id) = self.check_reputation(creator_id)
+                    {
                         return Err(VoucherCoreError::KnownOffenderTransactionBlocked {
                             id: creator_id.clone(),
                             proof_id,
@@ -355,8 +398,12 @@ impl Wallet {
             })?;
 
             let display_currency = super::format_bff_name(
-                voucher.nominal_value.abbreviation.as_deref().unwrap_or(&voucher.nominal_value.unit),
-                voucher.non_redeemable_test_voucher
+                voucher
+                    .nominal_value
+                    .abbreviation
+                    .as_deref()
+                    .unwrap_or(&voucher.nominal_value.unit),
+                voucher.non_redeemable_test_voucher,
             );
 
             // Fungible currency units are summed; non-fungible items are counted as distinct certificates.
@@ -367,19 +414,29 @@ impl Wallet {
                     .or_insert_with(|| "0.0".to_string());
 
                 let val1 = Decimal::from_str(current_sum).map_err(|e| {
-                    crate::Error::Wallet(crate::error::WalletError::InvalidAmount { reason: format!("Invalid decimal amount in summary: {}", e) })
+                    crate::Error::Wallet(crate::error::WalletError::InvalidAmount {
+                        reason: format!("Invalid decimal amount in summary: {}", e),
+                    })
                 })?;
                 let val2 = Decimal::from_str(&last_tx.amount).map_err(|e| {
-                    crate::Error::Wallet(crate::error::WalletError::InvalidAmount { reason: format!("Invalid decimal amount in transaction: {}", e) })
+                    crate::Error::Wallet(crate::error::WalletError::InvalidAmount {
+                        reason: format!("Invalid decimal amount in transaction: {}", e),
+                    })
                 })?;
 
                 // SECURITY (HMC-SEC-04-01): checked_add to avoid panic on overflow.
                 let new_sum = val1.checked_add(val2).ok_or_else(|| {
-                    crate::Error::Wallet(crate::error::WalletError::AmountOverflow { details: "Amount overflow while aggregating received voucher amounts.".to_string() })
+                    crate::Error::Wallet(crate::error::WalletError::AmountOverflow {
+                        details: "Amount overflow while aggregating received voucher amounts."
+                            .to_string(),
+                    })
                 })?;
                 *current_sum = new_sum.to_string();
             } else {
-                let count = transfer_summary.countable_items.entry(display_currency).or_insert(0);
+                let count = transfer_summary
+                    .countable_items
+                    .entry(display_currency)
+                    .or_insert(0);
                 *count += 1;
             }
 
@@ -392,12 +449,16 @@ impl Wallet {
                 allow_partial_transfers: standard.immutable.features.allow_partial_transfers,
                 is_test_voucher: voucher.non_redeemable_test_voucher,
                 display_currency: super::format_bff_name(
-                    voucher.nominal_value.abbreviation.as_deref().unwrap_or(&voucher.nominal_value.unit),
-                    voucher.non_redeemable_test_voucher
+                    voucher
+                        .nominal_value
+                        .abbreviation
+                        .as_deref()
+                        .unwrap_or(&voucher.nominal_value.unit),
+                    voucher.non_redeemable_test_voucher,
                 ),
                 display_standard_name: super::format_bff_name(
                     &voucher.voucher_standard.name,
-                    voucher.non_redeemable_test_voucher
+                    voucher.non_redeemable_test_voucher,
                 ),
                 counterparty_id: Self::extract_sender_from_transaction(last_tx, identity)
                     .or_else(|| Some(bundle_sender_id.clone())),
@@ -419,7 +480,10 @@ impl Wallet {
                 display_currency: info.display_currency.clone(),
                 amount: info.amount.clone(),
                 is_test_voucher: info.is_test_voucher,
-                counterparty_id: info.counterparty_id.clone().or_else(|| Some(bundle_sender_id.clone())),
+                counterparty_id: info
+                    .counterparty_id
+                    .clone()
+                    .or_else(|| Some(bundle_sender_id.clone())),
                 counterparty_name: info.counterparty_name.clone(),
             };
             self.emit_event(
@@ -449,7 +513,6 @@ impl Wallet {
             &self.known_fingerprints,
         );
 
-
         // Collect all conflicts (both verifiable and warnings) for processing.
         let mut all_conflicts = check_result.verifiable_conflicts.clone();
         for (hash, fps) in &check_result.unverifiable_warnings {
@@ -457,11 +520,14 @@ impl Wallet {
         }
 
         // Collect quarantine events during conflict resolution via unified helper.
-        let mut quarantined_events: Vec<(String, String, crate::models::wallet_event::EventBffData)> = Vec::new();
+        let mut quarantined_events: Vec<(
+            String,
+            String,
+            crate::models::wallet_event::EventBffData,
+        )> = Vec::new();
 
         for fingerprints in all_conflicts.values() {
-            let verified_proof =
-                self.verify_and_create_proof(identity, fingerprints, archive)?;
+            let verified_proof = self.verify_and_create_proof(identity, fingerprints, archive)?;
 
             self.handle_conflicts_and_quarantine(
                 fingerprints,
@@ -513,8 +579,7 @@ impl Wallet {
                             self.voucher_store.vouchers.get_mut(&instance_id)
                     {
                         let prev_status = instance_mut.status.clone();
-                        instance_mut.status = if tx.t_id == verdict.valid_transaction_id
-                        {
+                        instance_mut.status = if tx.t_id == verdict.valid_transaction_id {
                             VoucherStatus::Active
                         } else {
                             VoucherStatus::Quarantined {
@@ -527,7 +592,12 @@ impl Wallet {
                         {
                             let bff_data = crate::models::wallet_event::EventBffData {
                                 display_currency: crate::wallet::format_bff_name(
-                                    instance_mut.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&instance_mut.voucher.nominal_value.unit),
+                                    instance_mut
+                                        .voucher
+                                        .nominal_value
+                                        .abbreviation
+                                        .as_deref()
+                                        .unwrap_or(&instance_mut.voucher.nominal_value.unit),
                                     instance_mut.voucher.non_redeemable_test_voucher,
                                 ),
                                 amount: instance_mut.voucher.nominal_value.amount.clone(),
@@ -555,7 +625,7 @@ impl Wallet {
             // --- Role determination (victim vs. witness) ---
             let mut has_active = false;
             let mut has_quarantined = false;
-            
+
             for tx in &proof.conflicting_transactions {
                 if let Some(instance) = self.find_local_voucher_by_tx_id(&tx.t_id) {
                     if matches!(instance.status, VoucherStatus::Active) {
@@ -565,7 +635,7 @@ impl Wallet {
                     }
                 }
             }
-            
+
             let conflict_role = if has_quarantined && !has_active {
                 crate::models::conflict::ConflictRole::Victim
             } else {
@@ -579,7 +649,7 @@ impl Wallet {
                 local_note: None,
                 conflict_role,
             };
-            
+
             self.proof_store
                 .proofs
                 .insert(proof.proof_id.clone(), entry);
@@ -629,7 +699,11 @@ impl Wallet {
             .filter(|(_, inst)| {
                 fingerprints.iter().any(|fp| {
                     fp.ds_tag == inst.voucher.voucher_id
-                        || inst.voucher.transactions.iter().any(|tx| tx.t_id == fp.t_id)
+                        || inst
+                            .voucher
+                            .transactions
+                            .iter()
+                            .any(|tx| tx.t_id == fp.t_id)
                 })
             })
             .map(|(lid, inst)| (lid.clone(), inst.status.clone()))
@@ -640,24 +714,28 @@ impl Wallet {
         for (lid, prev_status) in pre_statuses {
             if let Some(inst) = voucher_store.vouchers.get(&lid)
                 && !matches!(prev_status, VoucherStatus::Quarantined { .. })
-                    && matches!(inst.status, VoucherStatus::Quarantined { .. })
-                {
-                    let bff_data = crate::models::wallet_event::EventBffData {
-                        display_currency: crate::wallet::format_bff_name(
-                            inst.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&inst.voucher.nominal_value.unit),
-                            inst.voucher.non_redeemable_test_voucher,
-                        ),
-                        amount: inst.voucher.nominal_value.amount.clone(),
-                        is_test_voucher: inst.voucher.non_redeemable_test_voucher,
-                        counterparty_id: None,
-                        counterparty_name: None,
-                    };
-                    quarantined_events.push((
-                        inst.local_instance_id.clone(),
-                        inst.voucher.voucher_id.clone(),
-                        bff_data,
-                    ));
-                }
+                && matches!(inst.status, VoucherStatus::Quarantined { .. })
+            {
+                let bff_data = crate::models::wallet_event::EventBffData {
+                    display_currency: crate::wallet::format_bff_name(
+                        inst.voucher
+                            .nominal_value
+                            .abbreviation
+                            .as_deref()
+                            .unwrap_or(&inst.voucher.nominal_value.unit),
+                        inst.voucher.non_redeemable_test_voucher,
+                    ),
+                    amount: inst.voucher.nominal_value.amount.clone(),
+                    is_test_voucher: inst.voucher.non_redeemable_test_voucher,
+                    counterparty_id: None,
+                    counterparty_name: None,
+                };
+                quarantined_events.push((
+                    inst.local_instance_id.clone(),
+                    inst.voucher.voucher_id.clone(),
+                    bff_data,
+                ));
+            }
         }
     }
 
@@ -731,9 +809,10 @@ impl Wallet {
 
         let voucher_to_spend = instance.voucher.clone();
 
-        let last_tx = voucher_to_spend.transactions.last().ok_or_else(|| {
-            crate::Error::Wallet(crate::error::WalletError::MissingTransactions)
-        })?;
+        let last_tx = voucher_to_spend
+            .transactions
+            .last()
+            .ok_or_else(|| crate::Error::Wallet(crate::error::WalletError::MissingTransactions))?;
         let prev_hash = get_hash(to_canonical_json(last_tx)?);
 
         // Privacy Key Logic: RE-DERIVATION (Stateless)
@@ -772,6 +851,24 @@ impl Wallet {
             use_privacy_mode,
         )?;
 
+        let output_proof = crate::services::l2_causality::create_output_proof(
+            &new_voucher_state,
+            &sender_ephemeral_key,
+        )?;
+        let output_id = new_voucher_state
+            .transactions
+            .last()
+            .ok_or_else(|| {
+                VoucherCoreError::Validation(crate::error::ValidationError::SecurityViolation(
+                    "output transaction missing".into(),
+                ))
+            })?
+            .t_id
+            .clone();
+        self.profile
+            .l2_causal_outputs
+            .insert(output_id, output_proof);
+
         // CORRECT LOGIC FOR STATE MANAGEMENT:
         // 1. Remove the old instance that was just spent.
         self.voucher_store.vouchers.remove(local_instance_id);
@@ -780,8 +877,9 @@ impl Wallet {
         if let Some(last_tx) = new_voucher_state.transactions.last() {
             // We are the sender if our ID matches OR if the transaction is anonymous
             // (since we just created it ourselves via _execute_single_transfer).
-            let is_sender = last_tx.sender_id.as_ref() == Some(&identity.user_id) 
-                || (last_tx.sender_id.is_none() && last_tx.recipient_id == crate::models::voucher::ANONYMOUS_ID);
+            let is_sender = last_tx.sender_id.as_ref() == Some(&identity.user_id)
+                || (last_tx.sender_id.is_none()
+                    && last_tx.recipient_id == crate::models::voucher::ANONYMOUS_ID);
 
             let (new_status, owner_id) = if is_sender && last_tx.sender_remaining_amount.is_some() {
                 // It is a split; the sender retains an active remaining amount.
@@ -827,7 +925,11 @@ impl Wallet {
         // NOT a security leak.
         let bff_data = crate::models::wallet_event::EventBffData {
             display_currency: crate::wallet::format_bff_name(
-                new_voucher_state.nominal_value.abbreviation.as_deref().unwrap_or(&new_voucher_state.nominal_value.unit),
+                new_voucher_state
+                    .nominal_value
+                    .abbreviation
+                    .as_deref()
+                    .unwrap_or(&new_voucher_state.nominal_value.unit),
                 new_voucher_state.non_redeemable_test_voucher,
             ),
             amount: amount_to_send.to_string(),
@@ -836,7 +938,8 @@ impl Wallet {
             counterparty_name,
         };
         if let Some(_last_tx) = new_voucher_state.transactions.last() {
-            let new_local_id = Self::calculate_local_instance_id(&new_voucher_state, &identity.user_id)?;
+            let new_local_id =
+                Self::calculate_local_instance_id(&new_voucher_state, &identity.user_id)?;
             self.emit_event(
                 crate::models::wallet_event::WalletEventType::TransferSent,
                 &new_local_id,
@@ -867,6 +970,17 @@ impl Wallet {
 
         // 2. **Orchestration:** Execute `_execute_single_transfer` for each source on the copy.
         for source in request.sources {
+            if temp_wallet
+                .profile
+                .l2_send_intents
+                .contains_key(&source.local_instance_id)
+            {
+                return Err(VoucherCoreError::Validation(
+                    crate::error::ValidationError::SecurityViolation(
+                        "Output has an unresolved durable L2 send intent".into(),
+                    ),
+                ));
+            }
             let instance = temp_wallet
                 .voucher_store
                 .vouchers
@@ -878,7 +992,9 @@ impl Wallet {
             let standard_uuid = instance.voucher.voucher_standard.uuid.clone();
             let standard_definition =
                 standard_definitions.get(&standard_uuid).ok_or_else(|| {
-                    crate::Error::Wallet(crate::error::WalletError::StandardNotFound { uuid: standard_uuid.clone() })
+                    crate::Error::Wallet(crate::error::WalletError::StandardNotFound {
+                        uuid: standard_uuid.clone(),
+                    })
                 })?;
 
             // NEW: Create InvolvedVoucherInfo for the source (BEFORE the transfer)
@@ -891,15 +1007,23 @@ impl Wallet {
                 standard_name: standard_definition.immutable.identity.name.clone(),
                 unit: instance.voucher.nominal_value.unit.clone(),
                 amount: source.amount_to_send.clone(),
-                allow_partial_transfers: standard_definition.immutable.features.allow_partial_transfers,
+                allow_partial_transfers: standard_definition
+                    .immutable
+                    .features
+                    .allow_partial_transfers,
                 is_test_voucher: instance.voucher.non_redeemable_test_voucher,
                 display_currency: super::format_bff_name(
-                    instance.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&instance.voucher.nominal_value.unit),
-                    instance.voucher.non_redeemable_test_voucher
+                    instance
+                        .voucher
+                        .nominal_value
+                        .abbreviation
+                        .as_deref()
+                        .unwrap_or(&instance.voucher.nominal_value.unit),
+                    instance.voucher.non_redeemable_test_voucher,
                 ),
                 display_standard_name: super::format_bff_name(
                     &instance.voucher.voucher_standard.name,
-                    instance.voucher.non_redeemable_test_voucher
+                    instance.voucher.non_redeemable_test_voucher,
                 ),
                 counterparty_id: Some(request.recipient_id.clone()),
                 counterparty_name: None,
@@ -946,7 +1070,12 @@ impl Wallet {
             let now = chrono::Utc::now();
             for voucher in &transferred_states {
                 let std_uuid = voucher.voucher_standard.uuid.clone();
-                self.routing_memory.record_transfer(&std_uuid, &request.recipient_id, &header.bundle_id, now);
+                self.routing_memory.record_transfer(
+                    &std_uuid,
+                    &request.recipient_id,
+                    &header.bundle_id,
+                    now,
+                );
             }
         }
 
@@ -986,11 +1115,9 @@ impl Wallet {
                         continue;
                     }
                 };
-                if let Err(e) = archive_backend.archive_voucher(
-                    voucher,
-                    &identity.user_id,
-                    standard_definition,
-                ) {
+                if let Err(e) =
+                    archive_backend.archive_voucher(voucher, &identity.user_id, standard_definition)
+                {
                     eprintln!(
                         "Forensic archiving failed for a committed voucher state (best effort): {}",
                         e
@@ -1017,15 +1144,17 @@ impl Wallet {
         voucher: &Voucher,
         identity: &UserIdentity,
     ) -> Result<SigningKey, VoucherCoreError> {
-        let last_tx = voucher.transactions.last().ok_or_else(|| {
-            crate::Error::Wallet(crate::error::WalletError::MissingTransactions)
-        })?;
+        let last_tx = voucher
+            .transactions
+            .last()
+            .ok_or_else(|| crate::Error::Wallet(crate::error::WalletError::MissingTransactions))?;
 
         // 1. Check if we are the SENDER (change) via crypto matching
         // We attempt to derive the change key deterministically and compare the hash.
         let prev_hash = &last_tx.prev_hash;
         if let Ok(candidate_key) = derive_deterministic_change_key(identity, prev_hash) {
-            let candidate_hash = crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
+            let candidate_hash =
+                crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
             if Some(&candidate_hash) == last_tx.change_ephemeral_pub_hash.as_ref() {
                 return Ok(candidate_key);
             }
@@ -1038,29 +1167,43 @@ impl Wallet {
                 &identity.signing_key,
                 &identity.user_id,
             )
-                && let Ok(payload) = serde_json::from_slice::<crate::models::voucher::RecipientPayload>(&decrypted_payload_bytes)
-                    && let Ok(seed_arr) = crate::services::crypto::decode_bs58_fixed::<32>(&payload.next_key_seed, "next_key_seed") {
-                            let candidate_key = SigningKey::from_bytes(&seed_arr);
-                            let candidate_hash = crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
-                            
-                            if Some(&candidate_hash) == last_tx.receiver_ephemeral_pub_hash.as_ref() {
-                                return Ok(candidate_key);
-                            }
-                        }
+            && let Ok(payload) = serde_json::from_slice::<crate::models::voucher::RecipientPayload>(
+                &decrypted_payload_bytes,
+            )
+            && let Ok(seed_arr) = crate::services::crypto::decode_bs58_fixed::<32>(
+                &payload.next_key_seed,
+                "next_key_seed",
+            )
+        {
+            let candidate_key = SigningKey::from_bytes(&seed_arr);
+            let candidate_hash =
+                crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
+
+            if Some(&candidate_hash) == last_tx.receiver_ephemeral_pub_hash.as_ref() {
+                return Ok(candidate_key);
+            }
+        }
 
         // 3. Fallback: Public Mode / Init
-        if last_tx.sender_id.as_ref() == Some(&identity.user_id) && last_tx.sender_remaining_amount.is_some() {
-             let candidate_key = derive_deterministic_change_key(identity, prev_hash)?;
-             return Ok(candidate_key);
+        if last_tx.sender_id.as_ref() == Some(&identity.user_id)
+            && last_tx.sender_remaining_amount.is_some()
+        {
+            let candidate_key = derive_deterministic_change_key(identity, prev_hash)?;
+            return Ok(candidate_key);
         }
 
         // Case C: Init (creator)
         if last_tx.t_type == "init" && last_tx.sender_id.as_ref() == Some(&identity.user_id) {
             let nonce_bytes = bs58::decode(&voucher.voucher_nonce)
                 .into_vec()
-                .map_err(|_| crate::Error::Wallet(crate::error::WalletError::InvalidNonce { reason: "Invalid nonce".to_string() }))?;
+                .map_err(|_| {
+                    crate::Error::Wallet(crate::error::WalletError::InvalidNonce {
+                        reason: "Invalid nonce".to_string(),
+                    })
+                })?;
 
-            let sender_id_prefix = crate::services::crypto::get_prefix_from_user_id(&identity.user_id);
+            let sender_id_prefix =
+                crate::services::crypto::get_prefix_from_user_id(&identity.user_id);
 
             let (holder_secret, _) = crate::services::crypto::derive_ephemeral_key_pair(
                 &identity.signing_key,
@@ -1083,9 +1226,10 @@ impl Wallet {
     ) -> Option<String> {
         // Case 1: Public Mode - sender ID is directly present in plaintext
         if let Some(sender_id) = &tx.sender_id
-            && sender_id != crate::models::voucher::ANONYMOUS_ID {
-                return Some(sender_id.clone());
-            }
+            && sender_id != crate::models::voucher::ANONYMOUS_ID
+        {
+            return Some(sender_id.clone());
+        }
 
         // Case 2: Stealth Mode - DID is encrypted in the Privacy Guard
         if let Some(guard_base64) = &tx.privacy_guard
@@ -1094,16 +1238,16 @@ impl Wallet {
                 &identity.signing_key,
                 &identity.user_id,
             )
-                && let Ok(payload) = serde_json::from_slice::<crate::models::voucher::RecipientPayload>(
-                    &decrypted_payload_bytes,
-                ) {
-                    return Some(payload.sender_permanent_did);
-                }
+            && let Ok(payload) = serde_json::from_slice::<crate::models::voucher::RecipientPayload>(
+                &decrypted_payload_bytes,
+            )
+        {
+            return Some(payload.sender_permanent_did);
+        }
 
         None
     }
 }
-
 
 impl Wallet {
     /// Creates a `SecureContainer` to send a voucher for signing.
@@ -1180,9 +1324,7 @@ impl Wallet {
         let init_t_id = &voucher_to_sign
             .transactions
             .first()
-            .ok_or_else(|| {
-                VoucherCoreError::Validation(ValidationError::VoucherHasNoTransactions)
-            })?
+            .ok_or_else(|| VoucherCoreError::Validation(ValidationError::VoucherHasNoTransactions))?
             .t_id;
 
         let signed_signature = signature_data.complete_and_sign(
@@ -1233,8 +1375,7 @@ impl Wallet {
             ));
         }
         let container: SecureContainer = serde_json::from_slice(container_bytes)?;
-        let payload =
-            container.open(identity, password)?;
+        let payload = container.open(identity, password)?;
 
         // HMSEC-SA06-09: Rebind the integrity id `i` to the received bytes
         // before acting on the payload. Placed AFTER decryption so AEAD
@@ -1270,9 +1411,7 @@ impl Wallet {
             .voucher
             .transactions
             .first()
-            .ok_or_else(|| {
-                VoucherCoreError::Validation(ValidationError::VoucherHasNoTransactions)
-            })?
+            .ok_or_else(|| VoucherCoreError::Validation(ValidationError::VoucherHasNoTransactions))?
             .t_id;
         signature.validate(init_t_id)?;
 
@@ -1308,7 +1447,8 @@ impl Wallet {
                     VoucherStatus::Endorsed { .. } => 2,
                     _ => 3,
                 };
-                prio(&a.status).cmp(&prio(&b.status))
+                prio(&a.status)
+                    .cmp(&prio(&b.status))
                     .then_with(|| a.local_instance_id.cmp(&b.local_instance_id))
             });
             // Reject if the best candidate is Archived/Expired/Quarantined
@@ -1333,12 +1473,12 @@ impl Wallet {
             .any(|sig| sig.signature_id == signature_obj.signature_id)
         {
             // Silently ignore or return error
-            return Err(VoucherCoreError::MismatchedSignatureData(
-                format!(
-                    "Signature {} already attached to voucher {} [LOCAL_ID:{}]",
-                    signature_obj.signature_id, signature_obj.voucher_id, target_instance.local_instance_id
-                ),
-            ));
+            return Err(VoucherCoreError::MismatchedSignatureData(format!(
+                "Signature {} already attached to voucher {} [LOCAL_ID:{}]",
+                signature_obj.signature_id,
+                signature_obj.voucher_id,
+                target_instance.local_instance_id
+            )));
         }
 
         target_instance.voucher.signatures.push(signature_obj);
@@ -1411,7 +1551,9 @@ impl Wallet {
             .iter()
             .find(|sig| sig.signature_id == signature_id)
             .ok_or_else(|| {
-                crate::Error::Wallet(crate::error::WalletError::SignatureNotFound { signature_id: signature_id.to_string() })
+                crate::Error::Wallet(crate::error::WalletError::SignatureNotFound {
+                    signature_id: signature_id.to_string(),
+                })
             })?;
 
         if signature_to_remove.role == "creator" {
@@ -1431,7 +1573,8 @@ impl Wallet {
         if !matches!(instance.status, VoucherStatus::Incomplete { .. }) {
             instance.status = VoucherStatus::Incomplete {
                 reasons: vec![crate::ValidationFailureReason::RequiredSignatureMissing {
-                    role_description: "Signature removed, validation against standard required".to_string(),
+                    role_description: "Signature removed, validation against standard required"
+                        .to_string(),
                 }],
             };
         }

@@ -11,7 +11,6 @@ use crate::services::conflict_manager;
 use crate::wallet::ProofOfDoubleSpendSummary;
 use crate::wallet::format_bff_name;
 
-
 impl Wallet {
     /// Returns a list of summaries of all known double-spend conflicts.
     ///
@@ -35,9 +34,10 @@ impl Wallet {
                     local_note: entry.local_note.clone(),
                     conflict_role: entry.conflict_role,
                     affected_voucher_name: proof.affected_voucher_name.clone(),
-                    display_affected_voucher_name: proof.affected_voucher_name.as_ref().map(|n| {
-                        format_bff_name(n, proof.non_redeemable_test_voucher)
-                    }),
+                    display_affected_voucher_name: proof
+                        .affected_voucher_name
+                        .as_ref()
+                        .map(|n| format_bff_name(n, proof.non_redeemable_test_voucher)),
                     voucher_standard_uuid: proof.voucher_standard_uuid.clone(),
                     is_test_voucher: proof.non_redeemable_test_voucher,
                 }
@@ -58,7 +58,9 @@ impl Wallet {
             .get(proof_id)
             .map(|entry| entry.proof.clone())
             .ok_or_else(|| {
-                crate::Error::Wallet(crate::error::WalletError::ProofNotFound { proof_id: proof_id.to_string() })
+                crate::Error::Wallet(crate::error::WalletError::ProofNotFound {
+                    proof_id: proof_id.to_string(),
+                })
             })
     }
 
@@ -79,20 +81,26 @@ impl Wallet {
             let proof = &entry.proof;
 
             // Match 1: Direct transaction ID match (Checks all transactions in the voucher)
-            let has_tx_match = proof.conflicting_transactions.iter().any(|tx| {
-                voucher_txs.iter().any(|vtx| vtx.t_id == tx.t_id)
-            });
+            let has_tx_match = proof
+                .conflicting_transactions
+                .iter()
+                .any(|tx| voucher_txs.iter().any(|vtx| vtx.t_id == tx.t_id));
             if has_tx_match {
                 log::info!("  ✅ Match 1 (t_id) found!");
                 return Some(proof.proof_id.to_string());
             }
 
             // Match 2: DS-Tag match (Very robust)
-            let proof_ds_tags: Vec<&str> = proof.conflicting_transactions.iter()
+            let proof_ds_tags: Vec<&str> = proof
+                .conflicting_transactions
+                .iter()
                 .filter_map(|tx| tx.trap_data.as_ref().map(|td| td.ds_tag.as_str()))
                 .collect();
             let has_ds_tag_match = voucher_txs.iter().any(|vtx| {
-                vtx.trap_data.as_ref().map(|td| proof_ds_tags.contains(&td.ds_tag.as_str())).unwrap_or(false)
+                vtx.trap_data
+                    .as_ref()
+                    .map(|td| proof_ds_tags.contains(&td.ds_tag.as_str()))
+                    .unwrap_or(false)
             });
             if has_ds_tag_match {
                 log::info!("  ✅ Match 2 (ds_tag) found!");
@@ -101,29 +109,35 @@ impl Wallet {
 
             // Match 3: Deep Fork Point match (Scans entire chain)
             let has_deep_fork_match = voucher_txs.iter().any(|vtx| {
-                vtx.prev_hash == proof.fork_point_prev_hash || vtx.t_id == proof.fork_point_prev_hash
+                vtx.prev_hash == proof.fork_point_prev_hash
+                    || vtx.t_id == proof.fork_point_prev_hash
             });
-            let has_any_history_match = voucher_txs.iter().any(|vtx| {
-                 vtx.prev_hash == proof.fork_point_prev_hash
-            });
+            let has_any_history_match = voucher_txs
+                .iter()
+                .any(|vtx| vtx.prev_hash == proof.fork_point_prev_hash);
             if has_deep_fork_match || has_any_history_match {
                 log::info!("  ✅ Match 3 (fork_point) found!");
                 return Some(proof.proof_id.to_string());
             }
 
             // Match 4: Fork-point & DS-Tag linkage (restricted - not blind offender match)
-// Only match if the proof's fork point prev_hash is in the voucher's
-// transaction prev_hashes, OR the ds_tag matches between proof and voucher.
-            let fork_point_match = voucher_txs.iter().any(|vtx| {
-                vtx.prev_hash == proof.fork_point_prev_hash
-            });
+            // Only match if the proof's fork point prev_hash is in the voucher's
+            // transaction prev_hashes, OR the ds_tag matches between proof and voucher.
+            let fork_point_match = voucher_txs
+                .iter()
+                .any(|vtx| vtx.prev_hash == proof.fork_point_prev_hash);
             let ds_tag_match = voucher_txs.iter().any(|vtx| {
-                vtx.trap_data.as_ref().map(|td| {
-                    let proof_ds_tags: Vec<&str> = proof.conflicting_transactions.iter()
-                        .filter_map(|tx| tx.trap_data.as_ref().map(|td| td.ds_tag.as_str()))
-                        .collect();
-                    proof_ds_tags.contains(&td.ds_tag.as_str())
-                }).unwrap_or(false)
+                vtx.trap_data
+                    .as_ref()
+                    .map(|td| {
+                        let proof_ds_tags: Vec<&str> = proof
+                            .conflicting_transactions
+                            .iter()
+                            .filter_map(|tx| tx.trap_data.as_ref().map(|td| td.ds_tag.as_str()))
+                            .collect();
+                        proof_ds_tags.contains(&td.ds_tag.as_str())
+                    })
+                    .unwrap_or(false)
             });
             let has_fork_point_or_ds_tag_match = fork_point_match || ds_tag_match;
             if has_fork_point_or_ds_tag_match {
@@ -133,19 +147,23 @@ impl Wallet {
 
             // Match 5: Recipient match (Targeted at the victim)
             let voucher_last_recipient = voucher_txs.last().map(|tx| tx.recipient_id.as_str());
-            let has_recipient_match = proof.conflicting_transactions.iter().any(|tx| {
-                voucher_last_recipient == Some(tx.recipient_id.as_str())
-            });
+            let has_recipient_match = proof
+                .conflicting_transactions
+                .iter()
+                .any(|tx| voucher_last_recipient == Some(tx.recipient_id.as_str()));
             if has_recipient_match {
                 log::info!("  ✅ Match 5 (recipient_id) found!");
                 return Some(proof.proof_id.to_string());
             }
         }
 
-        log::warn!("=== No proof found for quarantined voucher {} after checking {} conflicts ===", local_id, self.proof_store.proofs.len());
+        log::warn!(
+            "=== No proof found for quarantined voucher {} after checking {} conflicts ===",
+            local_id,
+            self.proof_store.proofs.len()
+        );
         None
     }
-
 
     /// Creates a signed resolution endorsement (`ResolutionEndorsement`) for a conflict.
     ///
@@ -164,7 +182,11 @@ impl Wallet {
     ) -> Result<ResolutionEndorsement, VoucherCoreError> {
         // Ensure that the proof exists before creating an endorsement.
         if !self.proof_store.proofs.contains_key(proof_id) {
-            return Err(crate::Error::Wallet(crate::error::WalletError::ProofNotFound { proof_id: proof_id.to_string() }));
+            return Err(crate::Error::Wallet(
+                crate::error::WalletError::ProofNotFound {
+                    proof_id: proof_id.to_string(),
+                },
+            ));
         }
         conflict_manager::create_and_sign_resolution_endorsement(proof_id, identity, notes)
     }
@@ -212,28 +234,30 @@ impl Wallet {
         }
 
         // --- Signature gate: victim_signature over endorsement_id ---
-        let victim_pk = crate::services::crypto::get_pubkey_from_user_id(
-            &endorsement.victim_id,
-        )
-        .map_err(|_| {
-            crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: format!(
-                "Cannot add endorsement: victim_id '{}' is not a resolvable DID identity.",
-                endorsement.victim_id
-            ) })
-        })?;
+        let victim_pk = crate::services::crypto::get_pubkey_from_user_id(&endorsement.victim_id)
+            .map_err(|_| {
+                crate::Error::Wallet(crate::error::WalletError::InvariantViolation {
+                    message: format!(
+                        "Cannot add endorsement: victim_id '{}' is not a resolvable DID identity.",
+                        endorsement.victim_id
+                    ),
+                })
+            })?;
         let sig_bytes = bs58::decode(&endorsement.victim_signature)
             .into_vec()
             .map_err(|e| {
-                crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: format!(
-                    "Cannot add endorsement: invalid victim_signature encoding: {}",
-                    e
-                ) })
+                crate::Error::Wallet(crate::error::WalletError::InvariantViolation {
+                    message: format!(
+                        "Cannot add endorsement: invalid victim_signature encoding: {}",
+                        e
+                    ),
+                })
             })?;
         let signature = ed25519_dalek::Signature::from_bytes(
             sig_bytes.as_slice().try_into().map_err(|_| {
-                crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
-                    "Cannot add endorsement: invalid victim_signature length.".to_string(),
-                 })
+                crate::Error::Wallet(crate::error::WalletError::InvariantViolation {
+                    message: "Cannot add endorsement: invalid victim_signature length.".to_string(),
+                })
             })?,
         );
         if !crate::services::crypto::verify_ed25519(
@@ -241,11 +265,13 @@ impl Wallet {
             endorsement.endorsement_id.as_bytes(),
             &signature,
         ) {
-            return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message: 
-                "Cannot add endorsement: victim_signature does not verify over \
+            return Err(crate::Error::Wallet(
+                crate::error::WalletError::InvariantViolation {
+                    message: "Cannot add endorsement: victim_signature does not verify over \
                  endorsement_id for the claimed victim identity."
-                    .to_string(),
-             }));
+                        .to_string(),
+                },
+            ));
         }
 
         let entry = self
@@ -253,7 +279,9 @@ impl Wallet {
             .proofs
             .get_mut(&endorsement.proof_id)
             .ok_or_else(|| {
-                crate::Error::Wallet(crate::error::WalletError::ProofNotFound { proof_id: endorsement.proof_id.clone() })
+                crate::Error::Wallet(crate::error::WalletError::ProofNotFound {
+                    proof_id: endorsement.proof_id.clone(),
+                })
             })?;
         let resolutions = entry.proof.resolutions.get_or_insert_with(Vec::new);
         if !resolutions
@@ -274,11 +302,12 @@ impl Wallet {
         note: Option<String>,
     ) -> Result<(), VoucherCoreError> {
         let entry = self.proof_store.proofs.get_mut(proof_id).ok_or_else(|| {
-            crate::Error::Wallet(crate::error::WalletError::ProofNotFound { proof_id: proof_id.to_string() })
+            crate::Error::Wallet(crate::error::WalletError::ProofNotFound {
+                proof_id: proof_id.to_string(),
+            })
         })?;
         entry.local_override = value;
         entry.local_note = note;
         Ok(())
     }
-
 }

@@ -6,17 +6,17 @@
 //! 3. Accidental Double-Spend Prevention on Spent/Archived Voucher Outputs
 
 use ed25519_dalek::Signer;
+use human_money_core::VoucherCoreError;
 use human_money_core::models::layer2_api::{
     L2LockEntry, L2ResponseEnvelope, L2Verdict, VoucherReconciliationResult,
 };
 use human_money_core::models::seal::calculate_voucher_merkle_root;
 use human_money_core::services::l2_gateway::{
-    derive_challenge_tag, extract_layer2_voucher_id, generate_lock_request,
-    is_l2_success_http_status, process_l2_verdict, VerdictAction,
+    VerdictAction, derive_challenge_tag, extract_layer2_voucher_id, generate_lock_request,
+    is_l2_success_http_status, process_l2_verdict,
 };
 use human_money_core::test_utils::{self, ACTORS};
 use human_money_core::wallet::instance::VoucherStatus;
-use human_money_core::VoucherCoreError;
 use sha2::{Digest, Sha256};
 
 /// 1. test_gateway_retry_preserves_identical_payload_and_handles_200_and_201:
@@ -42,8 +42,8 @@ fn test_gateway_retry_preserves_identical_payload_and_handles_200_and_201() {
         human_money_core::services::crypto::decode_bs58_fixed::<32>(sender_str, "sender_pub")
             .unwrap();
 
-    let req = generate_lock_request(&layer2_id, spend_tx, &sender_bytes)
-        .expect("generate lock request");
+    let req =
+        generate_lock_request(&layer2_id, spend_tx, &sender_bytes).expect("generate lock request");
 
     // A. Verify byte-level serialization determinism (multiple retries produce identical payload)
     let payload_attempt_1 = serde_json::to_vec(&req).expect("serialize lock request 1");
@@ -62,10 +62,22 @@ fn test_gateway_retry_preserves_identical_payload_and_handles_200_and_201() {
         is_l2_success_http_status(201),
         "201 Created must be accepted as successful confirmation (first-time lock)"
     );
-    assert!(!is_l2_success_http_status(400), "400 Bad Request is not success");
-    assert!(!is_l2_success_http_status(404), "404 Not Found is not success");
-    assert!(!is_l2_success_http_status(409), "409 Conflict is not success");
-    assert!(!is_l2_success_http_status(500), "500 Internal Error is not success");
+    assert!(
+        !is_l2_success_http_status(400),
+        "400 Bad Request is not success"
+    );
+    assert!(
+        !is_l2_success_http_status(404),
+        "404 Not Found is not success"
+    );
+    assert!(
+        !is_l2_success_http_status(409),
+        "409 Conflict is not success"
+    );
+    assert!(
+        !is_l2_success_http_status(500),
+        "500 Internal Error is not success"
+    );
 
     // C. Verify process_l2_verdict handles both initial confirmation (201) and idempotent replay (200)
     let mut rng = rand::thread_rng();
@@ -134,18 +146,19 @@ fn test_gateway_retry_preserves_identical_payload_and_handles_200_and_201() {
     let guard_comm = human_money_core::services::l2_gateway::privacy_guard_commitment(
         competing_lock.privacy_guard.as_deref(),
     );
-    let foreign_payload_hash = human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw(
-        effective_voucher_id,
-        &challenge_ds_tag,
-        &competing_lock.t_id,
-        &competing_lock.sender_ephemeral_pub,
-        competing_lock.trap_r.as_deref().unwrap_or("none"),
-        competing_lock.trap_s.as_deref().unwrap_or("none"),
-        competing_lock.encrypted_timestamp,
-        competing_lock.created_at_ms,
-        competing_lock.deletable_at.as_deref(),
-        guard_comm.as_str(),
-    );
+    let foreign_payload_hash =
+        human_money_core::services::l2_gateway::calculate_l2_payload_hash_raw(
+            effective_voucher_id,
+            &challenge_ds_tag,
+            &competing_lock.t_id,
+            &competing_lock.sender_ephemeral_pub,
+            competing_lock.trap_r.as_deref().unwrap_or("none"),
+            competing_lock.trap_s.as_deref().unwrap_or("none"),
+            competing_lock.encrypted_timestamp,
+            competing_lock.created_at_ms,
+            competing_lock.deletable_at.as_deref(),
+            guard_comm.as_str(),
+        );
     competing_lock.layer2_signature = foreign_sk.sign(&foreign_payload_hash).to_bytes();
 
     let foreign_env_bytes = sign_verdict(L2Verdict::Conflict {
@@ -190,7 +203,10 @@ fn test_wallet_backup_restore_reconciles_already_spent_voucher_via_status_query(
     assert_eq!(initial_balances[0].total_amount, "100.00");
 
     let initial_root = calculate_voucher_merkle_root(&wallet.voucher_store.vouchers);
-    assert!(!initial_root.is_empty(), "Merkle root must reflect active voucher");
+    assert!(
+        !initial_root.is_empty(),
+        "Merkle root must reflect active voucher"
+    );
 
     // Simulate backup restore scenario:
     // 1. Build voucher status query
@@ -204,6 +220,7 @@ fn test_wallet_backup_restore_reconciles_already_spent_voucher_via_status_query(
     // 2. Query returns HTTP 200 with child lock (remote spend occurred before backup was restored)
     let child_t_id = [0x77u8; 32];
     let child_lock = L2LockEntry {
+        causal_output: None,
         layer2_voucher_id: status_query.layer2_voucher_id.clone(),
         t_id: child_t_id,
         sender_ephemeral_pub: [0x11u8; 32],
@@ -288,7 +305,10 @@ fn test_wallet_backup_restore_reconciles_already_spent_voucher_via_status_query(
 
     let (wallet_consolidated, _) = app.get_unlocked_for_test();
     assert_eq!(
-        wallet_consolidated.get_voucher_instance(&app_voucher_id).unwrap().status,
+        wallet_consolidated
+            .get_voucher_instance(&app_voucher_id)
+            .unwrap()
+            .status,
         VoucherStatus::Archived
     );
     assert!(wallet_consolidated.get_aggregated_balances().is_empty());
@@ -311,6 +331,7 @@ fn test_wallet_prevents_accidental_double_spend_after_status_detects_successor()
 
     // Remote child lock detected via L2 status query
     let child_lock = L2LockEntry {
+        causal_output: None,
         layer2_voucher_id: "test_voucher_id".to_string(),
         t_id: [0x55u8; 32],
         sender_ephemeral_pub: [0x33u8; 32],
@@ -329,7 +350,10 @@ fn test_wallet_prevents_accidental_double_spend_after_status_detects_successor()
     let res = wallet
         .reconcile_voucher_state(&local_id, Some(&child_lock))
         .expect("Reconciliation succeeds");
-    assert!(matches!(res, VoucherReconciliationResult::AlreadySpent { .. }));
+    assert!(matches!(
+        res,
+        VoucherReconciliationResult::AlreadySpent { .. }
+    ));
     assert_eq!(
         wallet.get_voucher_instance(&local_id).unwrap().status,
         VoucherStatus::Archived

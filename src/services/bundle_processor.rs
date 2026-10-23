@@ -24,10 +24,14 @@ pub const MAX_FINGERPRINTS_PER_VOUCHER: usize = 10;
 pub const MAX_QUARANTINE_PAIRS_PER_VOUCHER: usize = 3;
 
 /// Deprecated static bundle limit alias, kept for backward compatibility and fuzzer guards:
-#[deprecated(note = "Use MAX_VOUCHERS_PER_BUNDLE * MAX_FINGERPRINTS_PER_VOUCHER dynamically instead")]
+#[deprecated(
+    note = "Use MAX_VOUCHERS_PER_BUNDLE * MAX_FINGERPRINTS_PER_VOUCHER dynamically instead"
+)]
 pub const MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE: usize =
     MAX_VOUCHERS_PER_BUNDLE * MAX_FINGERPRINTS_PER_VOUCHER; // 320
-#[deprecated(note = "Use MAX_VOUCHERS_PER_BUNDLE * MAX_QUARANTINE_PAIRS_PER_VOUCHER dynamically instead")]
+#[deprecated(
+    note = "Use MAX_VOUCHERS_PER_BUNDLE * MAX_QUARANTINE_PAIRS_PER_VOUCHER dynamically instead"
+)]
 pub const MAX_QUARANTINE_PAIRS_PER_BUNDLE: usize =
     MAX_VOUCHERS_PER_BUNDLE * MAX_QUARANTINE_PAIRS_PER_VOUCHER; // 96
 
@@ -45,6 +49,30 @@ pub fn create_and_encrypt_bundle(
     forwarded_fingerprints: Vec<TransactionFingerprint>,
     quarantine_pairs: Vec<[TransactionFingerprint; 2]>,
     sender_profile_name: Option<String>,
+) -> Result<(Vec<u8>, TransactionBundle), VoucherCoreError> {
+    create_and_encrypt_bundle_with_causal_outputs(
+        identity,
+        vouchers,
+        recipient_id,
+        notes,
+        forwarded_fingerprints,
+        quarantine_pairs,
+        sender_profile_name,
+        std::collections::BTreeMap::new(),
+    )
+}
+
+/// Includes separately signed L2 output sidecars while preserving every L1 byte.
+#[allow(clippy::too_many_arguments)]
+pub fn create_and_encrypt_bundle_with_causal_outputs(
+    identity: &UserIdentity,
+    vouchers: Vec<Voucher>,
+    recipient_id: &str,
+    notes: Option<String>,
+    forwarded_fingerprints: Vec<TransactionFingerprint>,
+    quarantine_pairs: Vec<[TransactionFingerprint; 2]>,
+    sender_profile_name: Option<String>,
+    causal_outputs: std::collections::BTreeMap<String, humoco_proto::causal::CausalOutputProof>,
 ) -> Result<(Vec<u8>, TransactionBundle), VoucherCoreError> {
     if vouchers.len() > MAX_VOUCHERS_PER_BUNDLE {
         return Err(VoucherCoreError::Validation(
@@ -91,6 +119,7 @@ pub fn create_and_encrypt_bundle(
         forwarded_fingerprints,
         quarantine_pairs,
         sender_profile_name,
+        causal_outputs,
     };
 
     let bundle_json_for_id = to_canonical_json(&bundle)?;
@@ -326,7 +355,9 @@ fn verify_bundle_signature(bundle: &TransactionBundle) -> Result<(), VoucherCore
 mod tests {
     use super::*;
     use crate::models::secure_container::ContainerConfig;
-    use crate::services::crypto::{create_user_id, encode_base64, generate_ed25519_keypair_for_tests};
+    use crate::services::crypto::{
+        create_user_id, encode_base64, generate_ed25519_keypair_for_tests,
+    };
 
     #[test]
     fn test_verify_container_signature_invalid() {
@@ -367,6 +398,7 @@ mod tests {
         let user_id = create_user_id(&pub_key, Some("test")).unwrap();
 
         let mut bundle = TransactionBundle {
+            causal_outputs: Default::default(),
             bundle_id: "test".to_string(),
             sender_id: user_id,
             recipient_id: "test2".to_string(),

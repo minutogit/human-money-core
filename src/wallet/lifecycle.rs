@@ -4,13 +4,13 @@
 //! (creation, loading, saving) and the creation of new vouchers.
 
 use crate::error::{ValidationError, VoucherCoreError};
+use crate::models::seal::WalletSeal;
 use crate::models::voucher_standard_definition::VoucherStandardDefinition;
 use crate::models::{
     conflict::{ActiveGossipState, KnownFingerprints, OwnFingerprints, ProofStore},
     profile::{BundleMetadataStore, UserIdentity, UserProfile, VoucherStore},
     voucher::NewVoucherData,
 };
-use crate::models::seal::WalletSeal;
 use crate::services::crypto::create_user_id;
 use crate::services::voucher_validation;
 use crate::storage::{AuthMethod, FileStorage, StorageError};
@@ -44,13 +44,13 @@ impl Wallet {
     /// Creates a brand-new, empty wallet from a mnemonic phrase.
     ///
     /// # ⚠️ CRITICAL SECURITY REQUIREMENT: `local_instance_id`
-    /// The `local_instance_id` prevents users from accidentally cloning their wallet 
+    /// The `local_instance_id` prevents users from accidentally cloning their wallet
     /// folder to another device, which would cause state forks and double-spends.
-    /// 
+    ///
     /// **AS AN APP DEVELOPER, YOU MUST NOT STORE THIS ID IN THE WALLET DIRECTORY!**
-    /// If you store the ID next to the wallet files, a user copying the folder will 
+    /// If you store the ID next to the wallet files, a user copying the folder will
     /// also copy the ID, completely bypassing the cloning protection.
-    /// 
+    ///
     /// **Correct Usage:** Store this ID in the OS Keychain (e.g., via the `keyring` crate),
     /// or derive it deterministically from hardware (e.g., `/etc/machine-id`).
     // [INTENTIONAL DESIGN REQUIREMENT: LEGACY COMPATIBILITY & DEVICE MIGRATION]
@@ -93,6 +93,9 @@ impl Wallet {
             picture_url: None,
             l2_server_pubkey: None,
             l2_regional_mesh_policy: None,
+            l2_send_intents: std::collections::HashMap::new(),
+            l2_checkout_purchases: std::collections::HashMap::new(),
+            l2_causal_outputs: std::collections::BTreeMap::new(),
         };
 
         let voucher_store = VoucherStore::default();
@@ -179,7 +182,9 @@ impl Wallet {
         // irreversibly invalidating active vouchers.
         let mut skip_expiration_sweep = false;
         if let Some(record) = &seal_record {
-            if let Ok(seal_dt) = chrono::DateTime::parse_from_rfc3339(&record.seal.payload.timestamp) {
+            if let Ok(seal_dt) =
+                chrono::DateTime::parse_from_rfc3339(&record.seal.payload.timestamp)
+            {
                 let seal_utc = seal_dt.with_timezone(&chrono::Utc);
                 let thirty_days = chrono::Duration::days(30);
                 if now < seal_utc || now > seal_utc + thirty_days {
@@ -194,15 +199,26 @@ impl Wallet {
         }
 
         if !skip_expiration_sweep {
-            let expired_local_ids: Vec<(String, String, crate::models::wallet_event::EventBffData)> = {
+            let expired_local_ids: Vec<(
+                String,
+                String,
+                crate::models::wallet_event::EventBffData,
+            )> = {
                 let mut expired = Vec::new();
                 for instance in wallet.voucher_store.vouchers.values() {
-                    if matches!(instance.status, VoucherStatus::Active | VoucherStatus::Incomplete { .. })
-                        && instance.voucher.is_expired(Some(&now_str))
+                    if matches!(
+                        instance.status,
+                        VoucherStatus::Active | VoucherStatus::Incomplete { .. }
+                    ) && instance.voucher.is_expired(Some(&now_str))
                     {
                         let bff_data = crate::models::wallet_event::EventBffData {
                             display_currency: crate::wallet::format_bff_name(
-                                instance.voucher.nominal_value.abbreviation.as_deref().unwrap_or(&instance.voucher.nominal_value.unit),
+                                instance
+                                    .voucher
+                                    .nominal_value
+                                    .abbreviation
+                                    .as_deref()
+                                    .unwrap_or(&instance.voucher.nominal_value.unit),
                                 instance.voucher.non_redeemable_test_voucher,
                             ),
                             amount: instance.voucher.nominal_value.amount.clone(),
@@ -359,37 +375,56 @@ impl Wallet {
             verified_standard,
         ) {
             Ok(_) => VoucherStatus::Active,
-            
+
             // Case 1: Missing signatures (Incomplete)
-            Err(VoucherCoreError::Validation(ref validation_err @ ValidationError::FieldValueCountOutOfBounds { ref path, ref field, .. }))
-            if path == "signatures" && (field == "role" || field == "details.gender") =>
-            {
+            Err(VoucherCoreError::Validation(
+                ref validation_err @ ValidationError::FieldValueCountOutOfBounds {
+                    ref path,
+                    ref field,
+                    ..
+                },
+            )) if path == "signatures" && (field == "role" || field == "details.gender") => {
                 VoucherStatus::Incomplete {
-                    reasons: vec![ValidationFailureReason::RequiredSignatureMissing { 
-                        role_description: validation_err.to_string() 
+                    reasons: vec![ValidationFailureReason::RequiredSignatureMissing {
+                        role_description: validation_err.to_string(),
                     }],
                 }
+            }
+            Err(VoucherCoreError::Validation(
+                ref validation_err @ ValidationError::MissingRequiredSignature { .. },
+            )) => VoucherStatus::Incomplete {
+                reasons: vec![ValidationFailureReason::RequiredSignatureMissing {
+                    role_description: validation_err.to_string(),
+                }],
             },
-            Err(VoucherCoreError::Validation(ref validation_err @ ValidationError::MissingRequiredSignature { .. })) =>
-            {
-                VoucherStatus::Incomplete {
-                    reasons: vec![ValidationFailureReason::RequiredSignatureMissing { 
-                        role_description: validation_err.to_string() 
-                    }],
-                }
-            },
-            
+
             // Case 2: Business rules violated (Incomplete)
             Err(VoucherCoreError::Validation(ValidationError::BusinessRuleViolated(msg))) => {
                 VoucherStatus::Incomplete {
-                    reasons: vec![ValidationFailureReason::BusinessRule {
-                        message: msg,
-                    }],
+                    reasons: vec![ValidationFailureReason::BusinessRule { message: msg }],
                 }
             }
             // Any other validation error during creation is a fatal error.
             Err(e) => return Err(e),
         };
+
+        // The genesis author signs a separate L2 output descriptor. Genesis
+        // remains solely a Root Anchor; the L1 voucher and SST stay byte-stable.
+        let nonce = crate::services::crypto::decode_bs58_fixed::<16>(
+            &new_voucher.voucher_nonce,
+            "voucher_nonce",
+        )?;
+        let prefix = crate::services::crypto::get_prefix_from_user_id(&identity.user_id);
+        let (key, _) = crate::services::crypto::derive_ephemeral_key_pair(
+            &identity.signing_key,
+            &nonce,
+            "genesis",
+            prefix,
+        )?;
+        let proof = crate::services::l2_causality::create_output_proof(&new_voucher, &key)?;
+        self.profile
+            .l2_causal_outputs
+            .insert(new_voucher.transactions[0].t_id.clone(), proof);
 
         // 3. Add the instance with the correct ID and status.
         self.add_voucher_instance(local_id.clone(), new_voucher.clone(), initial_status);
@@ -397,7 +432,11 @@ impl Wallet {
         // 4. Generate event for the UI history.
         let bff_data = crate::models::wallet_event::EventBffData {
             display_currency: crate::wallet::format_bff_name(
-                new_voucher.nominal_value.abbreviation.as_deref().unwrap_or(&new_voucher.nominal_value.unit),
+                new_voucher
+                    .nominal_value
+                    .abbreviation
+                    .as_deref()
+                    .unwrap_or(&new_voucher.nominal_value.unit),
                 new_voucher.non_redeemable_test_voucher,
             ),
             amount: new_voucher.nominal_value.amount.clone(),
@@ -428,19 +467,21 @@ impl Wallet {
         identity: &UserIdentity,
         old_seal: Option<&crate::models::seal::WalletSeal>,
     ) -> Result<crate::models::seal::WalletSeal, VoucherCoreError> {
-        let merkle_root = crate::models::seal::calculate_voucher_merkle_root(&self.voucher_store.vouchers);
+        let merkle_root =
+            crate::models::seal::calculate_voucher_merkle_root(&self.voucher_store.vouchers);
         let own_fp_hash = {
             let canonical = crate::services::utils::to_canonical_json(&self.own_fingerprints)?;
             crate::services::crypto::get_hash(canonical.as_bytes())
         };
         let next_epoch = old_seal.map_or(1, |s| (s.payload.epoch as u64) + 1);
         let next_nonce = 0;
-        let comp_hash = crate::storage::seal_service::SealService::calculate_comprehensive_state_hash(
-            next_epoch,
-            next_nonce,
-            &merkle_root,
-            &own_fp_hash,
-        );
+        let comp_hash =
+            crate::storage::seal_service::SealService::calculate_comprehensive_state_hash(
+                next_epoch,
+                next_nonce,
+                &merkle_root,
+                &own_fp_hash,
+            );
 
         WalletSeal::recover_epoch(
             old_seal,
@@ -496,4 +537,3 @@ impl Wallet {
         Ok(())
     }
 }
-

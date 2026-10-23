@@ -211,6 +211,10 @@ pub fn get_secret_scalar(signing_key: &SigningKey) -> curve25519_dalek::scalar::
 
 /// Computes the double-spend tag `ds_tag = H(prev_hash || sender_ephemeral_pub)`.
 ///
+/// ⚠️ IMMUTABLE CRYPTOGRAPHIC INVARIANT:
+/// The `ds_tag` binds both `prev_hash` AND `sender_ephemeral_pub` to isolate
+/// split-transaction branches (receiver output vs. change output) and anchor the SST fraud trap.
+///
 /// Both inputs are Base58-encoded; decoding errors are mapped to
 /// `VoucherCoreError::Crypto` (fail-closed). The digest uses
 /// length-prefixed SHA3-256 via [`get_hash_from_slices`] (second-

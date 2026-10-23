@@ -70,7 +70,9 @@ pub use crate::error::Error as AppFacadeError;
 // Declaration of the consolidated domain modules as public sub-modules.
 // Each file contains `impl AppService` blocks for its specific domain.
 pub mod backup_ops;
+pub mod checkout;
 pub mod conflicts;
+pub mod l2_intents;
 pub mod lifecycle;
 pub mod orchestrator;
 pub mod storage_ops;
@@ -170,9 +172,6 @@ impl AppService {
             .unwrap_or_else(|_| crypto::get_hash(secret_string.as_bytes()))
     }
 
-
-
-
     /// Resolves the authentication method (password or session key).
     /// Also checks the session timeout.
     pub(super) fn resolve_auth_method<'a>(
@@ -186,12 +185,18 @@ impl AppService {
                     // Panic-free deadline check: elapsed() cannot overflow, unlike
                     // `last_activity + session_duration` for host-supplied durations.
                     if cache.last_activity.elapsed() > cache.session_duration {
-                        Err(crate::Error::App(crate::error::AppError::SessionExpired { reason: "Session timed out. Please provide password.".to_string() }))
+                        Err(crate::Error::App(crate::error::AppError::SessionExpired {
+                            reason: "Session timed out. Please provide password.".to_string(),
+                        }))
                     } else {
                         Ok(crate::storage::AuthMethod::SessionKey(cache.session_key))
                     }
                 }
-                None => Err(crate::Error::App(crate::error::AppError::SessionNotActive { reason: "Password required. Please use 'unlock_session'.".to_string() })),
+                None => Err(crate::Error::App(
+                    crate::error::AppError::SessionNotActive {
+                        reason: "Password required. Please use 'unlock_session'.".to_string(),
+                    },
+                )),
             },
         }
     }
@@ -247,7 +252,7 @@ impl AppService {
     /// Orchestrates the lifecycle of a mutating transaction on the wallet state.
     ///
     /// This method is the central safety boundary for state changes in the `AppService`.
-    /// It coordinates concurrent access control, memory isolation, file persistence, 
+    /// It coordinates concurrent access control, memory isolation, file persistence,
     /// cryptographic signing (sealing), and automatic rollback in case of execution errors.
     ///
     /// # Architecture & Transaction Security Model
@@ -337,14 +342,18 @@ impl AppService {
                     if cache.last_activity.elapsed() > cache.session_duration {
                         // --- Timeout! ---
                         *session_cache = None; // Clear key
-                        Err(crate::Error::SessionExpired("Session timed out. Please provide password.".to_string()))
+                        Err(crate::Error::SessionExpired(
+                            "Session timed out. Please provide password.".to_string(),
+                        ))
                     } else {
                         // --- OK, activity detected ---
                         cache.last_activity = Instant::now(); // "Sliding Window"
                         Ok(cache.session_key)
                     }
                 } else {
-                    Err(crate::Error::SessionNotActive("Password required. Please use 'unlock_session'.".to_string()))
+                    Err(crate::Error::SessionNotActive(
+                        "Password required. Please use 'unlock_session'.".to_string(),
+                    ))
                 }
             }
             AppState::Locked => Err(crate::Error::WalletLocked),
@@ -414,4 +423,3 @@ impl AppService {
         }
     }
 }
-

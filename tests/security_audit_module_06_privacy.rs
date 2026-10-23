@@ -32,6 +32,8 @@
 //! | HMSEC-SA06-15  | Medium   | 359/202     | conflict_manager.rs (gossip deletable_at linkability) [WH3-06-605] |
 
 use ed25519_dalek::Signature;
+use human_money_core::Error as VoucherCoreError;
+use human_money_core::error::ValidationError;
 use human_money_core::models::profile::{TransactionBundle, UserIdentity};
 use human_money_core::models::secure_container::{
     ContainerConfig, EncryptionType, PayloadType, SecureContainer,
@@ -43,9 +45,7 @@ use human_money_core::models::voucher_standard_definition::{
 };
 use human_money_core::services::crypto::identity::create_user_id;
 use human_money_core::services::crypto::keys::generate_ed25519_keypair_for_tests;
-use human_money_core::services::crypto::{
-    encode_base64, get_hash, sign_ed25519, verify_ed25519,
-};
+use human_money_core::services::crypto::{encode_base64, get_hash, sign_ed25519, verify_ed25519};
 use human_money_core::services::jws_profile_service::{
     export_profile_as_jws, verify_and_import_jws_profile,
 };
@@ -53,8 +53,6 @@ use human_money_core::services::utils::to_canonical_json;
 use human_money_core::test_utils::{self, ACTORS, FREETALER_STANDARD};
 use human_money_core::wallet::Wallet;
 use human_money_core::wallet::types::{MultiTransferRequest, SourceTransfer};
-use human_money_core::Error as VoucherCoreError;
-use human_money_core::error::ValidationError;
 use std::collections::HashMap;
 
 /// Configures the FreeTaler standard with a specific privacy mode and returns
@@ -266,6 +264,7 @@ fn sa06_02_received_bundle_content_must_match_signed_bundle_id() {
     // Step 2: THE ATTACK — Bob strips the signed ID pair onto poisoned
     // content addressed to Charlie.
     let poisoned = TransactionBundle {
+        causal_outputs: Default::default(),
         bundle_id: stolen_bundle_id,
         sender_id: alice.user_id.clone(),
         recipient_id: charlie.user_id.clone(),
@@ -360,6 +359,7 @@ fn sa06_03_cleartext_financial_containers_must_be_rejected_on_receipt() {
     // signed with the attacker's own key (bs58-encoded, mirroring
     // bundle_processor::create_and_encrypt_bundle).
     let mut bundle = TransactionBundle {
+        causal_outputs: Default::default(),
         bundle_id: String::new(),
         sender_id: mallory.user_id.clone(),
         recipient_id: charlie.user_id.clone(),
@@ -509,7 +509,9 @@ fn sa06_05_events_must_retain_counterparty_did_in_private_mode_for_offline_foren
     let sent_event = alice_wallet
         .pending_events
         .iter()
-        .find(|e| e.event_type == human_money_core::models::wallet_event::WalletEventType::TransferSent)
+        .find(|e| {
+            e.event_type == human_money_core::models::wallet_event::WalletEventType::TransferSent
+        })
         .expect("TransferSent event must be emitted");
 
     assert_eq!(
@@ -534,7 +536,10 @@ fn sa06_05_events_must_retain_counterparty_did_in_private_mode_for_offline_foren
     let received_event = bob_wallet
         .pending_events
         .iter()
-        .find(|e| e.event_type == human_money_core::models::wallet_event::WalletEventType::TransferReceived)
+        .find(|e| {
+            e.event_type
+                == human_money_core::models::wallet_event::WalletEventType::TransferReceived
+        })
         .expect("TransferReceived event must be emitted");
 
     assert_eq!(
@@ -735,8 +740,11 @@ fn sa06_07_trust_assertion_signature_must_bind_all_semantic_fields() {
     let assertion_id = get_hash(canonical);
     // Spec: issuer_signature signs the assertion_id, which transitively
     // commits every semantic field.
-    let issuer_signature =
-        bs58_encode_helper(sign_ed25519(&issuer_sk, assertion_id.as_bytes()).to_bytes().as_slice());
+    let issuer_signature = bs58_encode_helper(
+        sign_ed25519(&issuer_sk, assertion_id.as_bytes())
+            .to_bytes()
+            .as_slice(),
+    );
 
     let legit_assertion = serde_json::json!({
         "assertion_id": assertion_id,
@@ -787,9 +795,8 @@ fn sa06_07_trust_assertion_signature_must_bind_all_semantic_fields() {
     // --- THE ATTACK: rewrite semantics WITHOUT touching signature material --
     let mut tampered = legit_assertion.clone();
     tampered["trust_level"] = serde_json::Value::String("endorsement".to_string());
-    tampered["context"] = serde_json::Value::String(
-        "NOT the issuer's statement - injected by attacker".to_string(),
-    );
+    tampered["context"] =
+        serde_json::Value::String("NOT the issuer's statement - injected by attacker".to_string());
 
     // SECURE INVARIANT: any mutation of a semantic field breaks the recomputed
     // assertion_id and MUST be rejected. (Under the pre-fix v1.0 spec —
@@ -854,10 +861,8 @@ fn sa06_08_mixed_visibility_bundle_must_not_carry_permanent_key_envelope_signatu
     let (public_def, mut standards_map) = setup_standard(PrivacyMode::Public);
     let mut stealth_def = FREETALER_STANDARD.0.clone();
     stealth_def.immutable.features.privacy_mode = PrivacyMode::Stealth;
-    stealth_def.immutable.identity.uuid = format!(
-        "{}-sa0608-stealth",
-        stealth_def.immutable.identity.uuid
-    );
+    stealth_def.immutable.identity.uuid =
+        format!("{}-sa0608-stealth", stealth_def.immutable.identity.uuid);
     standards_map.insert(
         stealth_def.immutable.identity.uuid.clone(),
         stealth_def.clone(),
@@ -910,14 +915,27 @@ fn sa06_08_mixed_visibility_bundle_must_not_carry_permanent_key_envelope_signatu
 
     // Now test that open_and_verify_bundle also enforces this invariant upon receipt
     // if an attacker crafts and sends a mixed bundle.
-    let public_v = alice_wallet.voucher_store.vouchers.get(&public_source).unwrap().voucher.clone();
-    let mut stealth_v = alice_wallet.voucher_store.vouchers.get(&stealth_source).unwrap().voucher.clone();
+    let public_v = alice_wallet
+        .voucher_store
+        .vouchers
+        .get(&public_source)
+        .unwrap()
+        .voucher
+        .clone();
+    let mut stealth_v = alice_wallet
+        .voucher_store
+        .vouchers
+        .get(&stealth_source)
+        .unwrap()
+        .voucher
+        .clone();
     if let Some(last_tx) = stealth_v.transactions.last_mut() {
         last_tx.recipient_id = human_money_core::models::voucher::ANONYMOUS_ID.to_string();
         last_tx.sender_id = None;
     }
 
     let mut crafted_bundle = TransactionBundle {
+        causal_outputs: Default::default(),
         bundle_id: String::new(),
         sender_id: alice.user_id.clone(),
         recipient_id: bob.user_id.clone(),
@@ -929,18 +947,24 @@ fn sa06_08_mixed_visibility_bundle_must_not_carry_permanent_key_envelope_signatu
         quarantine_pairs: Vec::new(),
         sender_profile_name: None,
     };
-    let bundle_canonical = human_money_core::services::utils::to_canonical_json(&crafted_bundle).unwrap();
+    let bundle_canonical =
+        human_money_core::services::utils::to_canonical_json(&crafted_bundle).unwrap();
     crafted_bundle.bundle_id = human_money_core::services::crypto::get_hash(bundle_canonical);
     let bundle_bytes = serde_json::to_vec(&crafted_bundle).unwrap();
     let container = SecureContainer::seal(
         alice,
-        &ContainerConfig::TargetDid(bob.user_id.clone(), human_money_core::models::secure_container::PrivacyMode::TrialDecryption),
+        &ContainerConfig::TargetDid(
+            bob.user_id.clone(),
+            human_money_core::models::secure_container::PrivacyMode::TrialDecryption,
+        ),
         &bundle_bytes,
         PayloadType::TransactionBundle,
-    ).unwrap();
+    )
+    .unwrap();
     let container_bytes = serde_json::to_vec(&container).unwrap();
 
-    let open_res = human_money_core::services::bundle_processor::open_and_verify_bundle(bob, &container_bytes);
+    let open_res =
+        human_money_core::services::bundle_processor::open_and_verify_bundle(bob, &container_bytes);
     match open_res {
         Err(VoucherCoreError::Validation(ValidationError::MixedPrivacyModesInBundleForbidden)) => {
             // Receive path correctly failed closed
@@ -1017,10 +1041,11 @@ fn sa06_09_signing_paths_must_rebind_container_integrity_id() {
         "sa0609_guarantor",
         "correct horse battery staple",
     );
-    let receiver_did = guarantor_app.with_wallet(|w| w.get_user_id().to_string()).expect("receiver did");
+    let receiver_did = guarantor_app
+        .with_wallet(|w| w.get_user_id().to_string())
+        .expect("receiver did");
 
-    let (mut alice_wallet, request_local_id) =
-        funded_wallet(alice, "100", &flexible_def);
+    let (mut alice_wallet, request_local_id) = funded_wallet(alice, "100", &flexible_def);
 
     let legit_request_bytes = alice_wallet
         .create_signing_request(
@@ -1092,14 +1117,9 @@ fn sa06_09_signing_paths_must_rebind_container_integrity_id() {
         .next()
         .map(|inst| inst.voucher.clone())
         .expect("voucher A present");
-    let local_id_b = test_utils::add_voucher_to_wallet(
-        &mut alice_wallet,
-        alice,
-        "100",
-        &flexible_def,
-        true,
-    )
-    .expect("voucher B creation failed");
+    let local_id_b =
+        test_utils::add_voucher_to_wallet(&mut alice_wallet, alice, "100", &flexible_def, true)
+            .expect("voucher B creation failed");
     let voucher_b = alice_wallet
         .voucher_store
         .vouchers
@@ -1267,7 +1287,8 @@ fn sa06_10_received_display_name_must_be_sanitized_and_bounded() {
         .pending_events
         .iter()
         .find(|e| {
-            e.event_type == human_money_core::models::wallet_event::WalletEventType::TransferReceived
+            e.event_type
+                == human_money_core::models::wallet_event::WalletEventType::TransferReceived
         })
         .expect("TransferReceived event must be emitted");
 
@@ -1307,7 +1328,8 @@ fn sa06_10_received_display_name_must_be_sanitized_and_bounded() {
     );
 
     // REGRESSION GUARD: legitimate short names are preserved verbatim.
-    let (mut alice_wallet, alice_source) = funded_wallet(&ACTORS.alice.identity, "100", &standard_def);
+    let (mut alice_wallet, alice_source) =
+        funded_wallet(&ACTORS.alice.identity, "100", &standard_def);
     let legit_bytes = alice_wallet
         .execute_multi_transfer_and_bundle(
             &ACTORS.alice.identity,
@@ -1334,7 +1356,8 @@ fn sa06_10_received_display_name_must_be_sanitized_and_bounded() {
         .pending_events
         .iter()
         .find(|e| {
-            e.event_type == human_money_core::models::wallet_event::WalletEventType::TransferReceived
+            e.event_type
+                == human_money_core::models::wallet_event::WalletEventType::TransferReceived
         })
         .expect("legit TransferReceived event");
     assert_eq!(
@@ -1407,11 +1430,10 @@ fn sa06_10_received_display_name_must_be_sanitized_and_bounded() {
 #[test]
 fn sa06_11_placeholder_shard_spend_must_fail_reception_validation() {
     use human_money_core::services::conflict_manager::{
-        create_fingerprint_for_transaction, encrypt_transaction_timestamp,
-        is_init_fingerprint,
+        create_fingerprint_for_transaction, encrypt_transaction_timestamp, is_init_fingerprint,
     };
     use human_money_core::services::l2_gateway::{
-        calculate_l2_payload_hash_raw, TRAP_NONE_PLACEHOLDER,
+        TRAP_NONE_PLACEHOLDER, calculate_l2_payload_hash_raw,
     };
     use human_money_core::test_utils::derive_holder_key;
 
@@ -1512,7 +1534,8 @@ fn sa06_11_placeholder_shard_spend_must_fail_reception_validation() {
         let guard_commitment = human_money_core::services::l2_gateway::privacy_guard_commitment(
             spend.privacy_guard.as_deref(),
         );
-        let created_at_ms = human_money_core::services::utils::parse_timestamp_ms(&spend.t_time).expect("parse t_time");
+        let created_at_ms = human_money_core::services::utils::parse_timestamp_ms(&spend.t_time)
+            .expect("parse t_time");
         let payload_hash = calculate_l2_payload_hash_raw(
             &layer2_voucher_id,
             &ds_tag,
@@ -1525,10 +1548,7 @@ fn sa06_11_placeholder_shard_spend_must_fail_reception_validation() {
             spend.deletable_at.as_deref(),
             guard_commitment.as_str(),
         );
-        let l2_sig = human_money_core::services::crypto::sign_ed25519(
-            &holder_key,
-            &payload_hash,
-        );
+        let l2_sig = human_money_core::services::crypto::sign_ed25519(&holder_key, &payload_hash);
         spend.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
     }
 
@@ -1555,11 +1575,8 @@ fn sa06_11_placeholder_shard_spend_must_fail_reception_validation() {
 
     // SECURE INVARIANT B: the resulting gossip fingerprint MUST NOT classify
     // as genesis — otherwise ingress/cleanup/extraction silently skip it.
-    let fp = create_fingerprint_for_transaction(
-        attacked.transactions.last().unwrap(),
-        &attacked,
-    )
-    .expect("fingerprint creation");
+    let fp = create_fingerprint_for_transaction(attacked.transactions.last().unwrap(), &attacked)
+        .expect("fingerprint creation");
     assert!(
         !is_init_fingerprint(&fp),
         "HMSEC-SA06-11 VIOLATION: is_init_fingerprint classified a PLACEHOLDER-\
@@ -1577,9 +1594,11 @@ fn sa06_11_placeholder_shard_spend_must_fail_reception_validation() {
 /// an unverified witness note — exactly the transit scenario under audit.
 /// `eph_seed` derives the offender's ephemeral key so callers can produce
 /// DISTINCT offender identities within one wallet.
-fn build_sa06_soft_proof(eph_seed: u8, seed_suffix: &str, reporter_identity: &UserIdentity) ->
-    human_money_core::models::conflict::ProofOfDoubleSpend
-{
+fn build_sa06_soft_proof(
+    eph_seed: u8,
+    seed_suffix: &str,
+    reporter_identity: &UserIdentity,
+) -> human_money_core::models::conflict::ProofOfDoubleSpend {
     use human_money_core::models::voucher::{Transaction, TrapData};
     use human_money_core::services::crypto::get_hash_from_slices;
 
@@ -1696,7 +1715,10 @@ fn sa06_12_unverified_endorsements_and_verdicts_must_not_flip_reputation() {
         .expect("well-formed soft proof must import (baseline)");
     // Baseline control: unresolved proof => KnownOffender.
     assert!(
-        matches!(wallet.check_reputation(&offender_1), TrustStatus::KnownOffender(_)),
+        matches!(
+            wallet.check_reputation(&offender_1),
+            TrustStatus::KnownOffender(_)
+        ),
         "Precondition broken: fresh unresolved proof must yield KnownOffender"
     );
 
@@ -1716,7 +1738,10 @@ fn sa06_12_unverified_endorsements_and_verdicts_must_not_flip_reputation() {
     // SECURE INVARIANT 1: reputation MUST NOT flip to Resolved based on an
     // endorsement whose victim_signature does not verify against victim_id.
     assert!(
-        matches!(wallet.check_reputation(&offender_1), TrustStatus::KnownOffender(_)),
+        matches!(
+            wallet.check_reputation(&offender_1),
+            TrustStatus::KnownOffender(_)
+        ),
         "HMSEC-SA06-12 VIOLATION: check_reputation returned Resolved after an \
          ATTACKER-SIGNED endorsement (claiming victim '{}') was attached — \
          victim_signature is never verified (CWE-347).",
@@ -1743,7 +1768,10 @@ fn sa06_12_unverified_endorsements_and_verdicts_must_not_flip_reputation() {
     // SECURE INVARIANT 2: an unverifiable L2 verdict MUST NOT override the
     // local maximum-caution assessment.
     assert!(
-        matches!(wallet.check_reputation(&offender_2), TrustStatus::KnownOffender(_)),
+        matches!(
+            wallet.check_reputation(&offender_2),
+            TrustStatus::KnownOffender(_)
+        ),
         "HMSEC-SA06-12 VIOLATION: check_reputation honored a FORGED \
          layer2_verdict (server_signature '{}' never verified) and flipped \
          the offender to Resolved.",
@@ -1915,8 +1943,8 @@ fn sa06_14_l2_lock_request_anchors_must_be_absent_or_digest_bound() {
     // Precondition (documents the leak): both branch anchors are on the wire.
     // NOTE: intentionally NOT a hard assert — the minimization remediation
     // legitimately removes the fields entirely.
-    let anchors_present = req.receiver_ephemeral_pub_hash.is_some()
-        || req.change_ephemeral_pub_hash.is_some();
+    let anchors_present =
+        req.receiver_ephemeral_pub_hash.is_some() || req.change_ephemeral_pub_hash.is_some();
 
     // SECURE INVARIANT (disjunctive Soll):
     //   (a) METADATA MINIMIZATION: the request must NOT contain receiver-/
@@ -2054,17 +2082,18 @@ fn sa06_15_gossip_wireformat_must_not_link_family_spends_via_deletable_at() {
     let blob_a = alice_wallet.export_own_fingerprints().expect("export A");
     let blob_b = bob_wallet.export_own_fingerprints().expect("export B");
 
-    let history_a: HashMap<String, Vec<human_money_core::models::conflict::TransactionFingerprint>> =
-        serde_json::from_slice(&blob_a).expect("blob A deserializes");
-    let history_b: HashMap<String, Vec<human_money_core::models::conflict::TransactionFingerprint>> =
-        serde_json::from_slice(&blob_b).expect("blob B deserializes");
+    let history_a: HashMap<
+        String,
+        Vec<human_money_core::models::conflict::TransactionFingerprint>,
+    > = serde_json::from_slice(&blob_a).expect("blob A deserializes");
+    let history_b: HashMap<
+        String,
+        Vec<human_money_core::models::conflict::TransactionFingerprint>,
+    > = serde_json::from_slice(&blob_b).expect("blob B deserializes");
 
     // Spend fingerprints carry real shards (genesis entries use "none").
     let is_spend = |fp: &human_money_core::models::conflict::TransactionFingerprint| {
-        !fp.trap_r.is_empty()
-            && fp.trap_r != "none"
-            && !fp.trap_s.is_empty()
-            && fp.trap_s != "none"
+        !fp.trap_r.is_empty() && fp.trap_r != "none" && !fp.trap_s.is_empty() && fp.trap_s != "none"
     };
     let spend_a = history_a
         .values()
@@ -2085,22 +2114,22 @@ fn sa06_15_gossip_wireformat_must_not_link_family_spends_via_deletable_at() {
     // SECURE INVARIANT: family spends must not publish the SAME coarse
     // voucher-derived deletion timestamp — otherwise gossip observers link
     // the whole voucher family across hops (CWE-359).
-    let linked = spend_a.deletable_at == spend_b.deletable_at
-        && looks_like_rfc3339(&spend_a.deletable_at);
+    let linked =
+        spend_a.deletable_at == spend_b.deletable_at && looks_like_rfc3339(&spend_a.deletable_at);
     assert!(
         !linked,
         "HMSEC-SA06-15 VIOLATION: gossip wireformat links two spends of the \
          SAME voucher family via the identical voucher-derived deletable_at \
          string ('{}' == '{}') — time anonymization does not prevent family \
          correlation.",
-        spend_a.deletable_at,
-        spend_b.deletable_at
+        spend_a.deletable_at, spend_b.deletable_at
     );
 }
 
 // --- small local encoding helpers -------------------------------------------
 
-fn bs58_encode_helper(bytes: &[u8]) -> String {    bs58::encode(bytes).into_string()
+fn bs58_encode_helper(bytes: &[u8]) -> String {
+    bs58::encode(bytes).into_string()
 }
 
 fn bs58_decode_helper(s: &str) -> Vec<u8> {

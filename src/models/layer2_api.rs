@@ -1,18 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-pub use humoco_proto::types::{
-    AttestationVote,
-    L2Verdict as CanonicalL2Verdict,
-    NodePubKey,
-    QuorumProof,
-    ShardId,
-};
 pub use humoco_proto::crypto::{
-    DOMAIN_L2_WRITE,
-    DOMAIN_L2_STATUS_QUERY,
-    DOMAIN_L2_EQUIVOCATION,
-    compute_lock_attestation_digest,
-    compute_status_attestation_digest,
+    DOMAIN_L2_EQUIVOCATION, DOMAIN_L2_STATUS_QUERY, DOMAIN_L2_WRITE,
+    compute_lock_attestation_digest, compute_status_attestation_digest,
+};
+pub use humoco_proto::types::{
+    AttestationVote, L2Verdict as CanonicalL2Verdict, NodePubKey, QuorumProof, ShardId,
 };
 
 pub mod base58_32 {
@@ -197,6 +190,10 @@ pub struct L2AuthPayload {
 /// Request: Anchor a voucher (genesis) or a transaction
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct L2LockRequest {
+    /// Separate authenticated L2 output commitment; never part of L1/SST bytes.
+    #[serde(default)]
+    pub causal_output: Option<humoco_proto::causal::CausalOutputProof>,
+
     pub auth: L2AuthPayload,
     pub layer2_voucher_id: String, // Hex string (64 chars), mandatory field
     pub ds_tag: Option<String>,    // Hex string (64 chars), None for 'init'
@@ -269,6 +266,10 @@ pub struct L2LockRequest {
 /// Serves as cryptographic proof for the state of a tag.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct L2LockEntry {
+    /// Separate authenticated L2 output commitment; never part of L1/SST bytes.
+    #[serde(default)]
+    pub causal_output: Option<humoco_proto::causal::CausalOutputProof>,
+
     pub layer2_voucher_id: String,
     #[serde(with = "crate::models::layer2_api::base58_32")]
     pub t_id: [u8; 32],
@@ -308,6 +309,7 @@ pub struct L2LockEntry {
 impl From<&L2LockRequest> for L2LockEntry {
     fn from(req: &L2LockRequest) -> Self {
         Self {
+            causal_output: req.causal_output.clone(),
             layer2_voucher_id: req.layer2_voucher_id.clone(),
             t_id: req.transaction_hash,
             sender_ephemeral_pub: req.sender_ephemeral_pub,
@@ -327,6 +329,7 @@ impl From<&L2LockRequest> for L2LockEntry {
 impl From<L2LockRequest> for L2LockEntry {
     fn from(req: L2LockRequest) -> Self {
         Self {
+            causal_output: req.causal_output.clone(),
             layer2_voucher_id: req.layer2_voucher_id,
             t_id: req.transaction_hash,
             sender_ephemeral_pub: req.sender_ephemeral_pub,
@@ -458,8 +461,11 @@ impl TryFrom<&QuorumCertificateDto> for QuorumProof {
         let mut votes = Vec::with_capacity(cert.signatures.len());
         for att in &cert.signatures {
             let signer_pubkey = if !att.node_pubkey.is_empty() {
-                let bytes = hex::decode(&att.node_pubkey).map_err(|_| "invalid hex in node_pubkey")?;
-                bytes.try_into().map_err(|_| "node_pubkey must be 32 bytes")?
+                let bytes =
+                    hex::decode(&att.node_pubkey).map_err(|_| "invalid hex in node_pubkey")?;
+                bytes
+                    .try_into()
+                    .map_err(|_| "node_pubkey must be 32 bytes")?
             } else {
                 return Err("missing node_pubkey in attestation");
             };
@@ -529,6 +535,7 @@ impl From<CanonicalL2Verdict> for L2Verdict {
             CanonicalL2Verdict::Confirmed { proof } => L2Verdict::Confirmed { proof },
             CanonicalL2Verdict::Conflict { existing_tag } => L2Verdict::Conflict {
                 existing_lock: L2LockEntry {
+                    causal_output: None,
                     layer2_voucher_id: String::new(),
                     t_id: existing_tag,
                     sender_ephemeral_pub: [0u8; 32],
@@ -602,8 +609,12 @@ pub enum L2ProcessingOutcome {
     /// has been durably committed on the backend. Automatic goods release is
     /// only minted through an explicit [`DurablePurchaseBinding`] (Z08).
     Confirmed,
-    Quarantined { reason: String },
-    SyncRequired { sync_point: String },
+    Quarantined {
+        reason: String,
+    },
+    SyncRequired {
+        sync_point: String,
+    },
 }
 
 /// Checkout release verdict governing goods release and merchant approval requirements.
@@ -630,19 +641,17 @@ pub struct CheckoutReleaseVerdict {
 /// state — never through caller-controlled parameters or raw outcome
 /// constructors (`CheckoutReleaseVerdict::new`).
 ///
-/// Until Z08 (durable purchase state) is wired, no production call site mints
-/// this token; the goods release boundary is fail-closed.
+/// The production caller is `AppService::complete_checkout_purchase`, after
+/// its managed transaction durably binds the exact L1 deed, purchase ID and
+/// recipient challenge. Errors and uncertain commit outcomes return before minting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DurablePurchaseBinding(());
 
 impl DurablePurchaseBinding {
     /// Mints a binding from backend-verified durable purchase state.
     ///
-    /// # Z08 Placeholder:
-    /// Until the durable purchase/operation state boundary exists, this is a
-    /// crate-internal capability used only by tests and future backend-owned
-    /// verification paths. Wallet-facing call sites must never call it.
-    #[allow(dead_code)]
+    /// Call only after the backend-owned purchase transaction reports a durable
+    /// commit. Proof verification or a caller-supplied outcome alone is insufficient.
     pub(crate) fn backend_verified() -> Self {
         Self(())
     }
@@ -740,7 +749,5 @@ pub enum VoucherReconciliationResult {
     UnspentSafe,
     /// A successor lock exists on L2 (HTTP 200). The voucher was already spent remotely.
     /// The wallet has updated its status to `VoucherStatus::Archived` and adjusted balances.
-    AlreadySpent {
-        successor_t_id: String,
-    },
+    AlreadySpent { successor_t_id: String },
 }

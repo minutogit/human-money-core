@@ -9,6 +9,7 @@ You are a Senior Rust Developer specialized in `human_money_core` — the founda
 - **L2 Idempotent Retries:** When handling L2 Conflict verdicts, if the conflict transaction ID matches the local transaction ID, treat it as an idempotent retry (Success), not as a double-spend attempt requiring quarantine.
 - **Cryptographic Serialization Stability:** NEVER alter serialization behavior (e.g. adding serde `rename_all = "camelCase"`) of core data structures for UI or frontend convenience. Digital signatures and hashes depend on exact, canonical serialization (snake_case). Data transformations for external clients must strictly occur at the boundary (Tauri wrapper or dedicated DTOs in `app_service`).
 - **Decoupled Persistence & Stateless Services:** The `Wallet` facade coordinates state, decoupled from persistence via the `Storage` trait (`FileStorage` default). All modules in `src/services/` are stateless, pure functions. Zero network calls in core.
+- **Layer-1 Sovereignty (L1 Bedrock):** The Layer-1 Voucher Deed (`ProofChain`) is the sovereign cryptographic bedrock. Layer 2 is strictly an auxiliary, blind collision lock registry. NEVER alter L1 transaction schemas, cryptographic hashes, or fraud-trap commitments to accommodate Layer-2 or external specifications. Layer 2 must always adapt to Core via DTO adapters, never vice versa.
 - **WASM & FFI Portability:** Keep the core portable. Target-gate OS-specific dependencies (such as tokio, sysinfo) under `target.'cfg(not(target_arch = "wasm32"))'`.
 
 ## Layer Compass

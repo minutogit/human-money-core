@@ -750,6 +750,9 @@ fn test_create_voucher_is_transactional_on_save_failure() {
         creation_result_fail.is_err(),
         "Creation with wrong password should fail"
     );
+    assert!(app_service.with_wallet(|_| ()).is_err());
+    let profile = app_service.list_profiles().unwrap().remove(0);
+    app_service.login(&profile.folder_name, correct_password, false, "test-id".into()).unwrap();
     let summaries_after_fail = app_service
         .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
         .unwrap();

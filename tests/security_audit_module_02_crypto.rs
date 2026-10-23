@@ -139,18 +139,20 @@ use human_money_core::models::voucher::TrapData;
 use human_money_core::models::voucher_standard_definition::{
     ImmutableIssuance, ImmutableZone, VoucherStandardDefinition,
 };
-use human_money_core::services::trap_manager::{
-    compute_sst_challenge, compute_trap_message_mu, compute_tau, extract_sst_identity,
-    generate_sst_trap, hash_to_scalar, verify_sst_witness, TrapWitness,
-};
 use human_money_core::services::crypto::constants::HKDF_X25519_EXCHANGE_LABEL;
 use human_money_core::services::crypto::{
-    create_user_id, decrypt_recipient_payload, ed25519_pub_to_x25519, encrypt_data,
-    encrypt_recipient_payload, encode_base64, generate_ed25519_keypair_for_tests,
-    get_hash_from_slices, get_hash, sign_ed25519, validate_user_id, verify_ed25519,
+    create_user_id, decrypt_recipient_payload, ed25519_pub_to_x25519, encode_base64, encrypt_data,
+    encrypt_recipient_payload, generate_ed25519_keypair_for_tests, get_hash, get_hash_from_slices,
+    sign_ed25519, validate_user_id, verify_ed25519,
+};
+use human_money_core::services::trap_manager::{
+    TrapWitness, compute_sst_challenge, compute_tau, compute_trap_message_mu, extract_sst_identity,
+    generate_sst_trap, hash_to_scalar, verify_sst_witness,
 };
 use human_money_core::services::voucher_validation::verify_signatures;
-use human_money_core::{to_canonical_json, Transaction, Voucher, VoucherSignature, SealSyncState, WalletSeal};
+use human_money_core::{
+    SealSyncState, Transaction, Voucher, VoucherSignature, WalletSeal, to_canonical_json,
+};
 use sha2::Sha256;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
@@ -159,7 +161,6 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 /// of this module (mirrors the security_audit_module_01 convention).
 mod security_audit_module_02 {
     use super::*;
-
 
     // ===========================================================================
     // HMC-SEC-02-01 — Non-contributory DH in privacy_guard decryption
@@ -173,7 +174,8 @@ mod security_audit_module_02 {
         let attacker_plaintext = b"{\"next_key_seed\":\"ATTACKER-CONTROLLED-SEED\"}";
 
         // --- Setup: legitimate sender -> recipient channel ---
-        let (recipient_pk, recipient_sk) = generate_ed25519_keypair_for_tests(Some("audit-02-01-recipient"));
+        let (recipient_pk, recipient_sk) =
+            generate_ed25519_keypair_for_tests(Some("audit-02-01-recipient"));
         let recipient_id =
             create_user_id(&recipient_pk, None).expect("Root user id creation must succeed");
 
@@ -181,9 +183,8 @@ mod security_audit_module_02 {
         let honest_guard =
             encrypt_recipient_payload(recipient_plaintext, &recipient_pk, &recipient_id)
                 .expect("Honest encryption must succeed");
-        let honest_opened =
-            decrypt_recipient_payload(&honest_guard, &recipient_sk, &recipient_id)
-                .expect("Honest decryption must succeed");
+        let honest_opened = decrypt_recipient_payload(&honest_guard, &recipient_sk, &recipient_id)
+            .expect("Honest decryption must succeed");
         assert_eq!(honest_opened, recipient_plaintext.to_vec());
 
         // --- Attack: build a guard under the all-zero low-order public key ---
@@ -266,10 +267,10 @@ mod security_audit_module_02 {
             "Precondition broken: test alias unexpectedly passes validate_user_id"
         );
         // ...but which the lenient parser still resolves to the attacker's key.
-        assert!(human_money_core::services::crypto::get_pubkey_from_user_id(
-            &malformed_signer_id
-        )
-        .is_ok());
+        assert!(
+            human_money_core::services::crypto::get_pubkey_from_user_id(&malformed_signer_id)
+                .is_ok()
+        );
 
         // Build a fully VALID detached-style signature bound to the alias string.
         let mut sig = VoucherSignature {
@@ -282,7 +283,9 @@ mod security_audit_module_02 {
             details: None,
         };
         sig.signature_id = get_hash_from_slices(&[
-            to_canonical_json(&sig).expect("Canonical JSON must serialize").as_bytes(),
+            to_canonical_json(&sig)
+                .expect("Canonical JSON must serialize")
+                .as_bytes(),
             INIT_T_ID.as_bytes(),
         ]);
         let digital_sig = sign_ed25519(&attacker_sk, sig.signature_id.as_bytes());
@@ -409,7 +412,9 @@ mod security_audit_module_02 {
             details: None,
         };
         sig.signature_id = get_hash_from_slices(&[
-            to_canonical_json(&sig).expect("Canonical JSON must serialize").as_bytes(),
+            to_canonical_json(&sig)
+                .expect("Canonical JSON must serialize")
+                .as_bytes(),
             INIT_T_ID.as_bytes(),
         ]);
         let digital_sig = sign_ed25519(&attacker_sk, sig.signature_id.as_bytes());
@@ -499,27 +504,26 @@ mod security_audit_module_02 {
         .expect("Base seal creation must succeed");
 
         // Local branch: one honest transaction -> nonce 1.
-        let local = base.update(
-            &identity,
-            &get_hash("audit-02-05-local-state"),
-            "device_a",
-        )
-        .expect("Local seal update must succeed");
+        let local = base
+            .update(&identity, &get_hash("audit-02-05-local-state"), "device_a")
+            .expect("Local seal update must succeed");
 
         // Remote branch: five honest transactions from the SAME base -> nonce 5.
-        let mut remote = base.update(
-            &identity,
-            &get_hash("audit-02-05-remote-state-1"),
-            "device_b",
-        )
-        .expect("Remote seal update must succeed");
-        for i in 2..=5 {
-            remote = remote.update(
+        let mut remote = base
+            .update(
                 &identity,
-                &get_hash(format!("audit-02-05-remote-state-{}", i)),
+                &get_hash("audit-02-05-remote-state-1"),
                 "device_b",
             )
             .expect("Remote seal update must succeed");
+        for i in 2..=5 {
+            remote = remote
+                .update(
+                    &identity,
+                    &get_hash(format!("audit-02-05-remote-state-{}", i)),
+                    "device_b",
+                )
+                .expect("Remote seal update must succeed");
         }
 
         assert_eq!(local.payload.tx_nonce, 1);
@@ -565,12 +569,13 @@ mod security_audit_module_02 {
             "device_b",
         )
         .expect("Sibling base seal creation must succeed");
-        let remote = sibling_base.update(
-            &identity,
-            &get_hash("audit-02-05-control-remote"),
-            "device_b",
-        )
-        .expect("Remote seal update must succeed");
+        let remote = sibling_base
+            .update(
+                &identity,
+                &get_hash("audit-02-05-control-remote"),
+                "device_b",
+            )
+            .expect("Remote seal update must succeed");
 
         assert_eq!(remote.payload.tx_nonce, local.payload.tx_nonce + 1);
         assert_eq!(
@@ -597,7 +602,10 @@ mod security_audit_module_02 {
     fn audit_02_06_empty_prefix_and_separator_less_aliases_must_be_rejected() {
         let (pk, _) = generate_ed25519_keypair_for_tests(Some("audit-02-06-forge"));
         let did = create_user_id(&pk, None).expect("Root did:key must be creatable");
-        assert!(validate_user_id(&did), "Precondition broken: root id must validate");
+        assert!(
+            validate_user_id(&did),
+            "Precondition broken: root id must validate"
+        );
 
         // Mirror the checksum derivation exactly: last 3 base58 chars of
         // SHA3-256(prefix || did_key_part). For both attack forms prefix = "",
@@ -615,7 +623,9 @@ mod security_audit_module_02 {
         // Documented aliasing effect of form A on the UNPATCHED code path basis:
         // get_prefix_from_user_id treats it as a root-equivalent identity.
         assert_eq!(
-            human_money_core::services::crypto::identity::get_prefix_from_user_id(&empty_prefix_form),
+            human_money_core::services::crypto::identity::get_prefix_from_user_id(
+                &empty_prefix_form
+            ),
             None,
             "Precondition: the empty-prefix form resolves as a root alias"
         );
@@ -637,8 +647,12 @@ mod security_audit_module_02 {
         );
 
         // Positive control: the honestly produced prefixed ID still validates.
-        let honest = create_user_id(&pk, Some("audit-context")).expect("Prefix id must be creatable");
-        assert!(validate_user_id(&honest), "Honest prefixed id must remain valid");
+        let honest =
+            create_user_id(&pk, Some("audit-context")).expect("Prefix id must be creatable");
+        assert!(
+            validate_user_id(&honest),
+            "Honest prefixed id must remain valid"
+        );
     }
 
     // ===========================================================================
@@ -684,7 +698,11 @@ mod security_audit_module_02 {
         // and MUST be rejected by the validator.
         let uppercased = {
             let at = honest_prefixed.find('@').expect("'@' separator must exist");
-            format!("{}{}", honest_prefixed[..at].to_uppercase(), &honest_prefixed[at..])
+            format!(
+                "{}{}",
+                honest_prefixed[..at].to_uppercase(),
+                &honest_prefixed[at..]
+            )
         };
         assert!(
             !validate_user_id(&uppercased),
@@ -744,8 +762,7 @@ mod security_audit_module_02 {
 
         // --- (c) Short-hash index logic pinned against a reference computation ---
         let user_id = "audit-context:some-checksum@did:key:zAudit0207Peer";
-        let short_hash =
-            human_money_core::services::crypto::get_short_hash_from_user_id(user_id);
+        let short_hash = human_money_core::services::crypto::get_short_hash_from_user_id(user_id);
 
         // Reference: SHA3-256 -> Base58 string -> decode -> LAST 4 bytes.
         let mut hasher = sha3::Sha3_256::new();
@@ -759,7 +776,10 @@ mod security_audit_module_02 {
             .try_into()
             .expect("Reference tail slice must be exactly 4 bytes");
 
-        assert_ne!(short_hash, [0u8; 4], "Short hash must never collapse to all zeros");
+        assert_ne!(
+            short_hash, [0u8; 4],
+            "Short hash must never collapse to all zeros"
+        );
         assert_eq!(
             short_hash, expected_tail,
             "REGRESSION HMC-SEC-02-07c: get_short_hash_from_user_id deviates from \
@@ -845,8 +865,8 @@ mod security_audit_module_02 {
     fn audit_02_08_offline_fabricated_junk_collision_must_not_yield_usable_offender_identity() {
         use human_money_core::services::crypto::get_hash;
 
-    let (_payer_pk, payer_sk) =
-        generate_ed25519_keypair_for_tests(Some("audit-02-08-junk-spender"));
+        let (_payer_pk, payer_sk) =
+            generate_ed25519_keypair_for_tests(Some("audit-02-08-junk-spender"));
         let ds_tag = get_hash("audit-02-08-input-state");
         let eph: [u8; 32] = audit_02_08_deterministic_bytes("audit-02-08-eph", 0);
 
@@ -870,10 +890,11 @@ mod security_audit_module_02 {
             if let Some(point) = CompressedEdwardsY::from_slice(&candidate)
                 .expect("32 bytes are a valid encoding length")
                 .decompress()
-                && !point.is_torsion_free() {
-                    junk_point = Some((point, bs58::encode(candidate).into_string()));
-                    break;
-                }
+                && !point.is_torsion_free()
+            {
+                junk_point = Some((point, bs58::encode(candidate).into_string()));
+                break;
+            }
         }
         let (junk_r_point, junk_r_b58) =
             junk_point.expect("Precondition broken: no torsion-carrying test point found");
@@ -881,7 +902,9 @@ mod security_audit_module_02 {
         // Canonical scalar encoding (< group order), e.g. 0x0101...01.
         let junk_s_bytes = [0x01u8; 32];
         assert!(
-            CurveScalar::from_canonical_bytes(junk_s_bytes).into_option().is_some(),
+            CurveScalar::from_canonical_bytes(junk_s_bytes)
+                .into_option()
+                .is_some(),
             "Precondition broken: junk scalar fixture is not canonical"
         );
 
@@ -955,8 +978,7 @@ mod security_audit_module_02 {
 
         let (payer_pk, payer_sk) =
             generate_ed25519_keypair_for_tests(Some("audit-02-08-schnorr-spender"));
-        let payer_did =
-            create_user_id(&payer_pk, None).expect("Root did:key must be creatable");
+        let payer_did = create_user_id(&payer_pk, None).expect("Root did:key must be creatable");
         let ds_tag = get_hash("audit-02-08-input-state-s");
         let eph: [u8; 32] = audit_02_08_deterministic_bytes("audit-02-08-eph-s", 1);
         let mu = compute_trap_message_mu(&ds_tag, &eph);
@@ -1079,22 +1101,21 @@ mod security_audit_module_02 {
     /// equates empty shards with genesis (A-00, WH3-00-902).
     #[test]
     fn audit_02_09_stripped_shard_spend_passes_chain_validation_and_masquerades_as_init() {
+        use human_money_core::NewVoucherData;
+        use human_money_core::ValueDefinition;
+        use human_money_core::models::profile::PublicProfile;
         use human_money_core::services::conflict_manager::{
-            create_fingerprint_for_transaction, encrypt_transaction_timestamp,
-            is_init_fingerprint,
+            create_fingerprint_for_transaction, encrypt_transaction_timestamp, is_init_fingerprint,
         };
         use human_money_core::services::crypto::identity::get_prefix_from_user_id;
         use human_money_core::services::crypto::keys::derive_ephemeral_key_pair;
         use human_money_core::services::l2_gateway::{
             calculate_l2_payload_hash_raw, extract_layer2_voucher_id, privacy_guard_commitment,
         };
-        use human_money_core::NewVoucherData;
         use human_money_core::test_utils::{
-            generate_signed_standard_toml, setup_service_with_profile, ACTORS, FREETALER_STANDARD,
+            ACTORS, FREETALER_STANDARD, generate_signed_standard_toml, setup_service_with_profile,
         };
         use human_money_core::wallet::{MultiTransferRequest, SourceTransfer};
-        use human_money_core::models::profile::PublicProfile;
-        use human_money_core::ValueDefinition;
         use std::collections::HashMap;
         use tempfile::tempdir;
 
@@ -1105,13 +1126,15 @@ mod security_audit_module_02 {
             generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
         let (standard_def, _) = &*FREETALER_STANDARD;
 
-        let (mut alice, _) =
-            setup_service_with_profile(dir.path(), &ACTORS.alice, "A9", PASSWORD);
-        let (mut bob, _) =
-            setup_service_with_profile(dir.path(), &ACTORS.charlie, "B9", PASSWORD);
+        let (mut alice, _) = setup_service_with_profile(dir.path(), &ACTORS.alice, "A9", PASSWORD);
+        let (mut bob, _) = setup_service_with_profile(dir.path(), &ACTORS.charlie, "B9", PASSWORD);
 
-        let id_alice = alice.with_wallet(|w| w.get_user_id().to_string()).expect("alice id");
-        let id_bob = bob.with_wallet(|w| w.get_user_id().to_string()).expect("bob id");
+        let id_alice = alice
+            .with_wallet(|w| w.get_user_id().to_string())
+            .expect("alice id");
+        let id_bob = bob
+            .with_wallet(|w| w.get_user_id().to_string())
+            .expect("bob id");
 
         alice.unlock_session(PASSWORD, 300).expect("unlock alice");
         alice
@@ -1158,8 +1181,14 @@ mod security_audit_module_02 {
             .create_transfer_bundle(request, &standards_map, None, Some(PASSWORD))
             .expect("transfer creation failed");
         bob.unlock_session(PASSWORD, 300).expect("unlock bob");
-        bob.receive_bundle(&result.bundle_bytes, &standards_map, None, Some(PASSWORD), false)
-            .expect("honest transfer must be accepted");
+        bob.receive_bundle(
+            &result.bundle_bytes,
+            &standards_map,
+            None,
+            Some(PASSWORD),
+            false,
+        )
+        .expect("honest transfer must be accepted");
 
         // Extract bob's real spend transaction (public chain data).
         let (bob_wallet, _) = bob.get_unlocked_mut_for_test();
@@ -1192,7 +1221,10 @@ mod security_audit_module_02 {
             t.trap_s = String::new();
         }
         // t_id preimage excludes trap_data -> unchanged; re-sign L2 proof.
-        let eph_b58 = stripped.sender_ephemeral_pub.clone().expect("spend eph pub");
+        let eph_b58 = stripped
+            .sender_ephemeral_pub
+            .clone()
+            .expect("spend eph pub");
         let eph_bytes: [u8; 32] = bs58::decode(&eph_b58)
             .into_vec()
             .expect("eph base58")
@@ -1205,7 +1237,8 @@ mod security_audit_module_02 {
             .expect("t_id len");
         let encrypted_timestamp =
             encrypt_transaction_timestamp(&stripped).expect("timestamp encryption");
-        let created_at_ms = human_money_core::services::utils::parse_timestamp_ms(&stripped.t_time).expect("parse t_time");
+        let created_at_ms = human_money_core::services::utils::parse_timestamp_ms(&stripped.t_time)
+            .expect("parse t_time");
 
         let payload_hash = calculate_l2_payload_hash_raw(
             &extract_layer2_voucher_id(&voucher).expect("voucher id"),
@@ -1279,11 +1312,9 @@ mod security_audit_module_02 {
             t.trap_r = String::new();
             t.trap_s = String::new();
         }
-        let fp = create_fingerprint_for_transaction(
-            fp_source.transactions.last().unwrap(),
-            &fp_source,
-        )
-        .expect("fingerprint creation");
+        let fp =
+            create_fingerprint_for_transaction(fp_source.transactions.last().unwrap(), &fp_source)
+                .expect("fingerprint creation");
         assert!(
             !is_init_fingerprint(&fp),
             "SECURITY VIOLATION HMC-SEC-02-09: is_init_fingerprint classified a \
@@ -1352,12 +1383,8 @@ mod security_audit_module_02 {
         use human_money_core::models::secure_container::{
             ContainerConfig, PayloadType, PrivacyMode, SecureContainer,
         };
-        use human_money_core::services::crypto::symmetric::{
-            decrypt_data, decrypt_data_with_aad,
-        };
-        use human_money_core::services::crypto::{
-            decode_base64, ed25519_pub_to_x25519,
-        };
+        use human_money_core::services::crypto::symmetric::{decrypt_data, decrypt_data_with_aad};
+        use human_money_core::services::crypto::{decode_base64, ed25519_pub_to_x25519};
 
         // Order-2 Edwards point (0,-1): y = p-1, encoding [0xec, 0xff*30, 0x7f].
         let mut order2_bytes = [0xffu8; 32];
@@ -1371,8 +1398,7 @@ mod security_audit_module_02 {
         };
 
         for (label, point_bytes) in [("order-2", &order2_bytes), ("order-1", &identity_bytes)] {
-            let compressed =
-                CompressedEdwardsY::from_slice(point_bytes).expect("encoding length");
+            let compressed = CompressedEdwardsY::from_slice(point_bytes).expect("encoding length");
             let point = compressed
                 .decompress()
                 .unwrap_or_else(|| panic!("Precondition broken: {label} point must decompress"));
@@ -1387,9 +1413,7 @@ mod security_audit_module_02 {
             let malicious_did = format!("did:key:z{}", bs58::encode(&mc).into_string());
 
             // --- SOLL-VERHALTEN: the identity firewall MUST reject it ---
-            match human_money_core::services::crypto::get_pubkey_from_user_id(
-                &malicious_did,
-            ) {
+            match human_money_core::services::crypto::get_pubkey_from_user_id(&malicious_did) {
                 Err(_) => {
                     // Secure behavior after the subgroup guard lands.
                 }
@@ -1414,8 +1438,7 @@ mod security_audit_module_02 {
         // still succeeds for a small-order target, a third party must be able
         // to recover the payload without any secret. Once the firewall fix
         // lands, creation fails closed and the probe reports secure behavior.
-        let (victim_pk, victim_sk) =
-            generate_ed25519_keypair_for_tests(Some("audit-02-10-victim"));
+        let (victim_pk, victim_sk) = generate_ed25519_keypair_for_tests(Some("audit-02-10-victim"));
         let victim_identity = UserIdentity {
             signing_key: victim_sk,
             public_key: victim_pk,
@@ -1459,16 +1482,20 @@ mod security_audit_module_02 {
                 // 2. Unwrap the content encryption key.
                 let cek_vec = decrypt_data(&kek, &wrapped_cek)
                     .expect("ATTACKER unwrapped the CEK from the collapsed KEK");
-                let cek: [u8; 32] = cek_vec
-                    .try_into()
-                    .expect("CEK length must be 32 bytes");
+                let cek: [u8; 32] = cek_vec.try_into().expect("CEK length must be 32 bytes");
 
                 // 3. Decrypt the financial payload with AAD binding.
                 let iv = decode_base64(&container.iv).expect("iv b64");
                 let ciphertext = decode_base64(&container.ciphertext).expect("ct b64");
                 let tag = decode_base64(&container.tag).expect("tag b64");
-                let plaintext = decrypt_data_with_aad(&cek, &iv, &ciphertext, &tag, container.protected.as_bytes())
-                    .expect("ATTACKER decrypted the bundle payload");
+                let plaintext = decrypt_data_with_aad(
+                    &cek,
+                    &iv,
+                    &ciphertext,
+                    &tag,
+                    container.protected.as_bytes(),
+                )
+                .expect("ATTACKER decrypted the bundle payload");
 
                 panic!(
                     "SECURITY VIOLATION HMC-SEC-02-10: create_secure_container \
@@ -1535,14 +1562,13 @@ mod security_audit_module_02 {
     // ```
 
     #[test]
-    fn audit_02_11_lock_entry_signature_without_voucher_binding_must_not_quarantine_foreign_voucher() {
+    fn audit_02_11_lock_entry_signature_without_voucher_binding_must_not_quarantine_foreign_voucher()
+     {
         use ed25519_dalek::{Signature as EdSig, Signer, SigningKey, VerifyingKey};
-        use human_money_core::models::layer2_api::{
-            L2LockEntry, L2ResponseEnvelope, L2Verdict,
-        };
+        use human_money_core::models::layer2_api::{L2LockEntry, L2ResponseEnvelope, L2Verdict};
         use human_money_core::services::crypto::get_hash_from_slices;
         use human_money_core::services::l2_gateway::{
-            calculate_l2_payload_hash_raw, process_l2_verdict, VerdictAction,
+            VerdictAction, calculate_l2_payload_hash_raw, process_l2_verdict,
         };
         use sha2::{Digest, Sha256};
 
@@ -1562,9 +1588,7 @@ mod security_audit_module_02 {
         });
         let spender_pk = spender_sk.verifying_key().to_bytes();
         let t_id_bytes: [u8; 32] =
-            human_money_core::services::crypto::get_raw_hash_from_slices(&[
-                b"audit-02-11-tid",
-            ]);
+            human_money_core::services::crypto::get_raw_hash_from_slices(&[b"audit-02-11-tid"]);
         let ds_tag = get_hash_from_slices(&[b"audit-02-11", b"prev-hash-input"]);
         let trap_r = bs58::encode([0x11u8; 32]).into_string();
         let trap_s = bs58::encode([0x22u8; 32]).into_string();
@@ -1596,6 +1620,7 @@ mod security_audit_module_02 {
 
         // --- Transplant: relabel the authentic entry onto voucher "B" ---
         let transplanted = L2LockEntry {
+            causal_output: None,
             layer2_voucher_id: "voucher-B-of-victim".to_string(), // RELABELED
             t_id: t_id_bytes,
             sender_ephemeral_pub: spender_pk,
@@ -1610,7 +1635,9 @@ mod security_audit_module_02 {
             privacy_guard: None,
         };
 
-        let verdict = L2Verdict::Verified { lock_entry: transplanted };
+        let verdict = L2Verdict::Verified {
+            lock_entry: transplanted,
+        };
         let verdict_bytes = serde_json::to_vec(&verdict).expect("verdict serialization");
         let mut verdict_hasher = Sha256::new();
         verdict_hasher.update(&verdict_bytes);
@@ -1623,8 +1650,7 @@ mod security_audit_module_02 {
 
         // Victim wallet context: querying about ITS transaction on voucher B,
         // expecting the spender's ephemeral key (full key pinning active!).
-        let local_t_id_of_victim = bs58::encode(get_hash("audit-02-11-victim-tid"))
-            .into_string();
+        let local_t_id_of_victim = bs58::encode(get_hash("audit-02-11-victim-tid")).into_string();
         let outcome = process_l2_verdict(
             &envelope_bytes,
             &server_pk,

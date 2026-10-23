@@ -42,14 +42,12 @@ impl Default for UserIdentity {
 }
 
 /// An enum indicating the direction of a transaction from the profile holder's perspective.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub enum TransactionDirection {
     #[default]
     Sent,
     Received,
 }
-
 
 /// A lightweight summary of a `TransactionBundle` for display in a history.
 /// Contains all metadata, but instead of the full vouchers, only their IDs.
@@ -103,6 +101,9 @@ pub struct TransactionBundle {
     /// Quarantine pairs carried on-top for immediate fraud propagation.
     #[serde(default)]
     pub quarantine_pairs: Vec<[TransactionFingerprint; 2]>,
+    /// Optional signed L2 output sidecars in the transport envelope, not in L1.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub causal_outputs: std::collections::BTreeMap<String, humoco_proto::causal::CausalOutputProof>,
 
     /// Optional profile name of the sender.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -150,7 +151,8 @@ pub struct BundleMetadataStore {
 impl BundleMetadataStore {
     /// Inserts a bundle header into history, enforcing `MAX_BUNDLE_HISTORY` via oldest-first pruning.
     pub fn insert(&mut self, header: TransactionBundleHeader) {
-        if self.history.len() >= MAX_BUNDLE_HISTORY && !self.history.contains_key(&header.bundle_id) {
+        if self.history.len() >= MAX_BUNDLE_HISTORY && !self.history.contains_key(&header.bundle_id)
+        {
             if let Some(oldest_key) = self
                 .history
                 .iter()
@@ -225,8 +227,7 @@ pub struct PublicProfile {
 /// The main structure representing the entire state of a user wallet.
 /// It contains identity, voucher inventory, and transaction history.
 /// This structure is serialized and stored encrypted on disk.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct UserProfile {
     /// The public user ID. Derived from `identity` and duplicated here for easy access.
     pub user_id: String,
@@ -263,6 +264,16 @@ pub struct UserProfile {
     /// Recipient-owned pinned regional observation sources, separate from proofs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub l2_regional_mesh_policy: Option<humoco_proto::mesh::RegionalMeshPolicy>,
+    /// Private durable transport intents, never included in public profiles.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub l2_send_intents: HashMap<String, crate::app_service::l2_intents::L2SendIntent>,
+    /// Recipient-owned durable challenges and completed purchase associations.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub l2_checkout_purchases: HashMap<String, crate::app_service::checkout::CheckoutPurchase>,
+    /// Client-custodied L2 sidecars; never serialized into L1 vouchers.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub l2_causal_outputs:
+        std::collections::BTreeMap<String, humoco_proto::causal::CausalOutputProof>,
 }
 
 // Implement `Default` for UserProfile to create an empty instance that is then populated.
@@ -278,7 +289,11 @@ impl UserProfile {
     pub fn to_public_profile_with_id(&self, include_id: bool) -> PublicProfile {
         PublicProfile {
             protocol_version: Some("v1".to_string()),
-            id: if include_id { Some(self.user_id.clone()) } else { None },
+            id: if include_id {
+                Some(self.user_id.clone())
+            } else {
+                None
+            },
             first_name: self.first_name.clone(),
             last_name: self.last_name.clone(),
             organization: self.organization.clone(),

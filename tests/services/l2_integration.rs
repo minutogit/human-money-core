@@ -80,9 +80,11 @@ impl MockL2Node {
                 &challenge_ds_tag,
                 &req.transaction_hash,
                 &req.sender_ephemeral_pub,
-                req.trap_r.as_deref()
+                req.trap_r
+                    .as_deref()
                     .unwrap_or(human_money_core::services::l2_gateway::TRAP_NONE_PLACEHOLDER),
-                req.trap_s.as_deref()
+                req.trap_s
+                    .as_deref()
                     .unwrap_or(human_money_core::services::l2_gateway::TRAP_NONE_PLACEHOLDER),
                 req.encrypted_timestamp,
                 req.created_at_ms,
@@ -137,6 +139,7 @@ impl MockL2Node {
         }
 
         let entry = human_money_core::models::layer2_api::L2LockEntry {
+            causal_output: None,
             layer2_voucher_id: req.layer2_voucher_id.clone(),
             t_id: req.transaction_hash,
             sender_ephemeral_pub: req.sender_ephemeral_pub,
@@ -219,7 +222,8 @@ fn test_l2_double_spend_quarantine() {
     let user_id = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+        s.immutable.features.privacy_mode =
+            human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
 
@@ -374,7 +378,9 @@ fn test_l2_double_spend_quarantine() {
         .unwrap();
 
     // 7. Final check
-    let final_details = app.with_wallet(|w| w.get_voucher_details(&voucher_id_tx2).unwrap()).unwrap();
+    let final_details = app
+        .with_wallet(|w| w.get_voucher_details(&voucher_id_tx2).unwrap())
+        .unwrap();
     assert!(matches!(
         final_details.status,
         VoucherStatus::Quarantined { .. }
@@ -394,7 +400,8 @@ fn test_l2_signature_payload_manipulation() {
     let user_id = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+        s.immutable.features.privacy_mode =
+            human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
 
@@ -521,7 +528,8 @@ fn test_l2_fake_double_spend_protection() {
     let user_id = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+        s.immutable.features.privacy_mode =
+            human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
 
@@ -626,6 +634,7 @@ fn test_l2_fake_double_spend_protection() {
     fake_t_id[0] = 0xEE;
 
     let malicious_entry_a = human_money_core::models::layer2_api::L2LockEntry {
+        causal_output: None,
         layer2_voucher_id: l2_voucher_id.clone(),
         t_id: fake_t_id,
         sender_ephemeral_pub: expected_ephem_pub,
@@ -653,7 +662,9 @@ fn test_l2_fake_double_spend_protection() {
 
     // Check status -> must remain Active
     assert!(matches!(
-        app.with_wallet(|w| w.get_voucher_details(&voucher_id_tx1).unwrap()).unwrap().status,
+        app.with_wallet(|w| w.get_voucher_details(&voucher_id_tx1).unwrap())
+            .unwrap()
+            .status,
         VoucherStatus::Active
     ));
 
@@ -686,6 +697,7 @@ fn test_l2_fake_double_spend_protection() {
     let malicious_sig_b = malicious_key.sign(&payload_hash_b).to_bytes();
 
     let malicious_entry_b = human_money_core::models::layer2_api::L2LockEntry {
+        causal_output: None,
         layer2_voucher_id: l2_voucher_id.clone(),
         t_id: fake_t_id,
         sender_ephemeral_pub: malicious_pub,
@@ -713,7 +725,9 @@ fn test_l2_fake_double_spend_protection() {
 
     // Check status -> must remain Active
     assert!(matches!(
-        app.with_wallet(|w| w.get_voucher_details(&voucher_id_tx1).unwrap()).unwrap().status,
+        app.with_wallet(|w| w.get_voucher_details(&voucher_id_tx1).unwrap())
+            .unwrap()
+            .status,
         VoucherStatus::Active
     ));
 }
@@ -731,7 +745,8 @@ fn test_l2_voucher_id_mixup_protection() {
     let user_id = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
 
     let (flexible_standard, _) = create_custom_standard(&FREETALER_STANDARD.0, |s| {
-        s.immutable.features.privacy_mode = human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
+        s.immutable.features.privacy_mode =
+            human_money_core::models::voucher_standard_definition::PrivacyMode::Public;
     });
     let flexible_toml = toml::to_string(&flexible_standard).unwrap();
 
@@ -814,6 +829,7 @@ fn test_l2_voucher_id_mixup_protection() {
     human_money_core::set_signature_bypass(true);
 
     let malicious_entry_c = human_money_core::models::layer2_api::L2LockEntry {
+        causal_output: None,
         layer2_voucher_id: fake_voucher_id,
         t_id: fake_t_id,
         sender_ephemeral_pub: expected_ephem_pub,
@@ -841,7 +857,9 @@ fn test_l2_voucher_id_mixup_protection() {
 
     // Check status -> must remain Active
     assert!(matches!(
-        app.with_wallet(|w| w.get_voucher_details(&voucher_id).unwrap()).unwrap().status,
+        app.with_wallet(|w| w.get_voucher_details(&voucher_id).unwrap())
+            .unwrap()
+            .status,
         VoucherStatus::Active
     ));
 }
@@ -891,7 +909,10 @@ fn test_l2_lock_payload_hash_commits_to_created_at_ms() {
     let req_genesis: L2LockRequest = serde_json::from_slice(&req_genesis_bytes).unwrap();
 
     assert!(req_genesis.is_genesis);
-    assert!(req_genesis.created_at_ms > 0, "Genesis created_at_ms must be populated from t_time");
+    assert!(
+        req_genesis.created_at_ms > 0,
+        "Genesis created_at_ms must be populated from t_time"
+    );
 
     let ephem_key = VerifyingKey::from_bytes(&req_genesis.sender_ephemeral_pub).unwrap();
     let sig = Signature::from_bytes(&req_genesis.layer2_signature);
@@ -979,7 +1000,11 @@ fn test_l2_lock_payload_hash_commits_to_created_at_ms() {
             )
         })
         .unwrap();
-    let voucher_id_spend = summaries_after_tx1.last().unwrap().local_instance_id.clone();
+    let voucher_id_spend = summaries_after_tx1
+        .last()
+        .unwrap()
+        .local_instance_id
+        .clone();
 
     let req_spend_bytes = app.generate_l2_lock_request(&voucher_id_spend).unwrap();
     let req_spend: L2LockRequest = serde_json::from_slice(&req_spend_bytes).unwrap();
@@ -999,7 +1024,11 @@ fn test_l2_lock_payload_hash_commits_to_created_at_ms() {
     let tampered_spend_hash =
         human_money_core::services::l2_gateway::calculate_l2_payload_hash(&tampered_spend);
     assert_ne!(spend_hash, tampered_spend_hash);
-    assert!(spend_ephem_key.verify(&tampered_spend_hash, &spend_sig).is_err());
+    assert!(
+        spend_ephem_key
+            .verify(&tampered_spend_hash, &spend_sig)
+            .is_err()
+    );
 
     let tampered_spend_bytes = serde_json::to_vec(&tampered_spend).unwrap();
     let resp_spend_tampered = mock_l2.handle_lock_request(&tampered_spend_bytes);
@@ -1102,5 +1131,3 @@ fn test_gateway_retry_invariance_idempotency() {
         VoucherStatus::Active
     ));
 }
-
-

@@ -5,14 +5,14 @@
 //! Consolidates the former `conflict_handler.rs` and `l2_facade.rs`.
 
 use super::{AppService, AppState, TransactionOutcome};
+use crate::Error;
 use crate::app_service::orchestrator::{ReloadPolicy, TransactionOrchestrator};
 use crate::models::conflict::{ProofOfDoubleSpend, ResolutionEndorsement};
 use crate::models::layer2_api::{L2LockEntry, VoucherReconciliationResult};
 use crate::services::l2_gateway::{self, VerdictAction};
-use crate::wallet::instance::VoucherStatus;
 use crate::wallet::CleanupReport;
 use crate::wallet::ProofOfDoubleSpendSummary;
-use crate::Error;
+use crate::wallet::instance::VoucherStatus;
 use rand_core::{OsRng, RngCore};
 
 impl AppService {
@@ -34,9 +34,7 @@ impl AppService {
     /// # Errors
     /// Fails if the wallet is locked or no proof with this ID exists.
     pub fn get_proof_of_double_spend(&self, proof_id: &str) -> Result<ProofOfDoubleSpend, Error> {
-        self.with_unlocked_ref(|wallet, _, _| {
-            wallet.get_proof_of_double_spend(proof_id)
-        })
+        self.with_unlocked_ref(|wallet, _, _| wallet.get_proof_of_double_spend(proof_id))
     }
 
     /// Checks the reputation / trust status of a user identity based on the local proof store.
@@ -88,7 +86,11 @@ impl AppService {
     }
 
     /// Imports a proof directly as an object.
-    pub fn import_proof(&mut self, proof: ProofOfDoubleSpend, password: Option<&str>) -> Result<(), Error> {
+    pub fn import_proof(
+        &mut self,
+        proof: ProofOfDoubleSpend,
+        password: Option<&str>,
+    ) -> Result<(), Error> {
         self.with_transactional_mut(password, |temp_wallet, _, _, _| {
             match temp_wallet.import_proof(proof) {
                 Ok(()) => TransactionOutcome::Commit(()),
@@ -98,39 +100,45 @@ impl AppService {
     }
 
     /// Imports a proof from a bs58-encoded JSON string (plain text export).
-    pub fn import_proof_from_json(&mut self, json_bs58: &str, password: Option<&str>) -> Result<(), Error> {
+    pub fn import_proof_from_json(
+        &mut self,
+        json_bs58: &str,
+        password: Option<&str>,
+    ) -> Result<(), Error> {
         let json_bytes = bs58::decode(json_bs58)
             .into_vec()
             .map_err(|e| Error::Bs58Decode(e.to_string()))?;
-        let proof: ProofOfDoubleSpend =
-            serde_json::from_slice(&json_bytes).map_err(Error::from)?;
+        let proof: ProofOfDoubleSpend = serde_json::from_slice(&json_bytes).map_err(Error::from)?;
 
         self.import_proof(proof, password)
     }
 
     /// Imports a proof from a `SecureContainer` (secure exchange).
-    pub fn import_proof_from_container(&mut self, container_bytes: &[u8], password: Option<&str>) -> Result<(), Error> {
+    pub fn import_proof_from_container(
+        &mut self,
+        container_bytes: &[u8],
+        password: Option<&str>,
+    ) -> Result<(), Error> {
         let proof = {
             if let AppState::Unlocked { identity, .. } = &self.state {
                 let container: crate::models::secure_container::SecureContainer =
                     serde_json::from_slice(container_bytes).map_err(Error::from)?;
 
                 if container.c != crate::models::secure_container::PayloadType::ProofOfDoubleSpend {
-                    return Err(Error::App(crate::error::AppError::ContainerDoesNotContainDoubleSpendProof));
+                    return Err(Error::App(
+                        crate::error::AppError::ContainerDoesNotContainDoubleSpendProof,
+                    ));
                 }
 
                 // Verify container integrity (header signature and payload binding)
                 container.verify_integrity().map_err(Error::from)?;
 
                 // Wallet identity is required to open the container
-                let decrypted_payload = container.open(
-                    identity,
-                    None,
-                )?;
+                let decrypted_payload = container.open(identity, None)?;
 
                 let parsed_proof: ProofOfDoubleSpend =
                     serde_json::from_slice(&decrypted_payload).map_err(Error::from)?;
-                
+
                 parsed_proof
             } else {
                 return Err(Error::WalletLocked);
@@ -153,7 +161,8 @@ impl AppService {
     /// or an error if the process fails.
     pub fn run_storage_cleanup(&mut self) -> Result<CleanupReport, Error> {
         if let AppState::Unlocked { wallet, .. } = &mut self.state {
-            let report = wallet.run_storage_cleanup(None, super::DEFAULT_ARCHIVE_GRACE_PERIOD_YEARS)?;
+            let report =
+                wallet.run_storage_cleanup(None, super::DEFAULT_ARCHIVE_GRACE_PERIOD_YEARS)?;
             // Note: Saving the wallet after cleanup is left to the caller
             // (e.g. at the end of an operation) to avoid multiple writes.
             Ok(report)
@@ -212,8 +221,13 @@ impl AppService {
 
         let mut ephemeral_key = [0u8; 32];
         OsRng.fill_bytes(&mut ephemeral_key);
-        let request =
+        let mut request =
             l2_gateway::generate_lock_request(&l2_voucher_id, transaction, &ephemeral_key)?;
+        request.causal_output = wallet
+            .profile
+            .l2_causal_outputs
+            .get(&transaction.t_id)
+            .cloned();
 
         serde_json::to_vec(&request).map_err(Error::from)
     }
@@ -259,11 +273,11 @@ impl AppService {
             self,
             password,
             ReloadPolicy::ReconcileReload,
-            move |temp_wallet, _identity, _storage, _auth| {
-                match temp_wallet.reconcile_voucher_state(&local_id, successor_lock) {
-                    Ok(result) => TransactionOutcome::Commit(result),
-                    Err(e) => TransactionOutcome::Rollback(Error::from(e)),
-                }
+            move |temp_wallet, _identity, _storage, _auth| match temp_wallet
+                .reconcile_voucher_state(&local_id, successor_lock)
+            {
+                Ok(result) => TransactionOutcome::Commit(result),
+                Err(e) => TransactionOutcome::Rollback(Error::from(e)),
             },
         )
     }
@@ -292,13 +306,21 @@ impl AppService {
     /// carries a live recipient-challenge-bound quorum proof. Goods release therefore
     /// always requires explicit merchant approval.
     pub fn process_l2_response_with_authority(
-        &mut self, local_id: String, response_bytes: &[u8], password: Option<&str>, authority: l2_gateway::CheckoutAuthority,
+        &mut self,
+        local_id: String,
+        response_bytes: &[u8],
+        password: Option<&str>,
+        authority: l2_gateway::CheckoutAuthority,
     ) -> Result<crate::models::layer2_api::L2ProcessingOutcome, Error> {
         self.process_l2_response_internal(local_id, response_bytes, password, Some(authority))
     }
 
     fn process_l2_response_internal(
-        &mut self, local_id: String, response_bytes: &[u8], password: Option<&str>, authority: Option<l2_gateway::CheckoutAuthority>,
+        &mut self,
+        local_id: String,
+        response_bytes: &[u8],
+        password: Option<&str>,
+        authority: Option<l2_gateway::CheckoutAuthority>,
     ) -> Result<crate::models::layer2_api::L2ProcessingOutcome, Error> {
         let response = response_bytes.to_vec();
         TransactionOrchestrator::execute_with_policy(
@@ -306,37 +328,46 @@ impl AppService {
             password,
             ReloadPolicy::Always,
             move |temp_wallet, _identity, _storage, _auth| {
-                let action = match Self::evaluate_l2_action(temp_wallet, &local_id, &response, authority.as_ref()) {
+                let action = match Self::evaluate_l2_action(
+                    temp_wallet,
+                    &local_id,
+                    &response,
+                    authority.as_ref(),
+                ) {
                     Ok(a) => a,
                     Err(e) => return TransactionOutcome::Rollback(e),
                 };
                 match action {
-                    VerdictAction::ConfirmLocal => TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Found),
-                    VerdictAction::ConfirmProvisional { .. } => TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Provisional),
+                    VerdictAction::ConfirmLocal => TransactionOutcome::Commit(
+                        crate::models::layer2_api::L2ProcessingOutcome::Found,
+                    ),
+                    VerdictAction::ConfirmProvisional { .. } => TransactionOutcome::Commit(
+                        crate::models::layer2_api::L2ProcessingOutcome::Provisional,
+                    ),
                     // DEC-080 / DEC-083 / DEC-084: An original write receipt — even a
                     // FINAL 14/20 quorum over the original approval digest — only proves
                     // that the write was accepted. It is not a live,
                     // recipient-challenge-bound quorum proof for the current state, so it
                     // must never clear the transaction as `Confirmed`. Only an explicit
                     // live-state proof (see `verify_live_checkout_proof`) may do that.
-                    VerdictAction::ConfirmFinal { .. } => {
-                        TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Found)
-                    }
-                    VerdictAction::TriggerSync { sync_point } => {
-                        TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::SyncRequired { sync_point })
-                    }
+                    VerdictAction::ConfirmFinal { .. } => TransactionOutcome::Commit(
+                        crate::models::layer2_api::L2ProcessingOutcome::Found,
+                    ),
+                    VerdictAction::TriggerSync { sync_point } => TransactionOutcome::Commit(
+                        crate::models::layer2_api::L2ProcessingOutcome::SyncRequired { sync_point },
+                    ),
                     VerdictAction::TriggerQuarantine(conflicting_t_id) => {
-                        let reason = format!(
-                            "Double spend detected for transaction {}",
-                            conflicting_t_id
-                        );
+                        let reason =
+                            format!("Double spend detected for transaction {}", conflicting_t_id);
                         temp_wallet.update_voucher_status(
                             &local_id,
                             VoucherStatus::Quarantined {
                                 reason: reason.clone(),
                             },
                         );
-                        TransactionOutcome::Commit(crate::models::layer2_api::L2ProcessingOutcome::Quarantined { reason })
+                        TransactionOutcome::Commit(
+                            crate::models::layer2_api::L2ProcessingOutcome::Quarantined { reason },
+                        )
                     }
                 }
             },
@@ -354,24 +385,43 @@ impl AppService {
             .get_voucher_instance(local_instance_id)
             .ok_or_else(|| Error::VoucherNotFound(local_instance_id.to_string()))?;
 
-        let last_tx = instance.voucher.transactions.last().ok_or_else(|| {
-            Error::App(crate::error::AppError::NoTransactionsFound)
-        })?;
+        let last_tx = instance
+            .voucher
+            .transactions
+            .last()
+            .ok_or_else(|| Error::App(crate::error::AppError::NoTransactionsFound))?;
         let last_t_id = last_tx.t_id.clone();
-        let challenge_ds_tag =
-            l2_gateway::derive_challenge_tag(last_tx)?;
+        let challenge_ds_tag = l2_gateway::derive_challenge_tag(last_tx)?;
         let expected_ephemeral_pub = last_tx.sender_ephemeral_pub.as_deref();
         let expected_voucher_id =
             l2_gateway::calculate_layer2_voucher_id(&instance.voucher.transactions[0])?;
 
-        let server_pubkey = wallet.profile.l2_server_pubkey.ok_or_else(|| {
-            Error::App(crate::error::AppError::L2ServerPubkeyNotConfigured)
-        })?;
+        let server_pubkey = wallet
+            .profile
+            .l2_server_pubkey
+            .ok_or_else(|| Error::App(crate::error::AppError::L2ServerPubkeyNotConfigured))?;
 
         if let Some(authority) = authority {
-            l2_gateway::process_l2_verdict_with_authority(response_bytes, &server_pubkey, &last_t_id, &challenge_ds_tag, expected_ephemeral_pub, &expected_voucher_id, authority).map_err(Error::from)
+            l2_gateway::process_l2_verdict_with_authority(
+                response_bytes,
+                &server_pubkey,
+                &last_t_id,
+                &challenge_ds_tag,
+                expected_ephemeral_pub,
+                &expected_voucher_id,
+                authority,
+            )
+            .map_err(Error::from)
         } else {
-            l2_gateway::process_l2_verdict(response_bytes, &server_pubkey, &last_t_id, &challenge_ds_tag, expected_ephemeral_pub, &expected_voucher_id).map_err(Error::from)
+            l2_gateway::process_l2_verdict(
+                response_bytes,
+                &server_pubkey,
+                &last_t_id,
+                &challenge_ds_tag,
+                expected_ephemeral_pub,
+                &expected_voucher_id,
+            )
+            .map_err(Error::from)
         }
     }
 
@@ -387,9 +437,13 @@ impl AppService {
     /// Configures recipient-owned regional sources in an authenticated durable
     /// wallet transaction. A payment proof can never replace this policy.
     pub fn configure_regional_mesh_authority(
-        &mut self, policy: humoco_proto::mesh::RegionalMeshPolicy, password: Option<&str>,
+        &mut self,
+        policy: humoco_proto::mesh::RegionalMeshPolicy,
+        password: Option<&str>,
     ) -> Result<(), Error> {
-        policy.validate().map_err(|_| Error::Validation(crate::error::ValidationError::InvalidL2Proof))?;
+        policy
+            .validate()
+            .map_err(|_| Error::Validation(crate::error::ValidationError::InvalidL2Proof))?;
         self.with_transactional_mut(password, move |wallet, _, _, _| {
             wallet.profile.l2_regional_mesh_policy = Some(policy);
             TransactionOutcome::Commit(())
@@ -408,10 +462,21 @@ impl AppService {
         explicit_merchant_approval: bool,
     ) -> Result<crate::models::layer2_api::CheckoutReleaseVerdict, Error> {
         let invalid = || Error::Validation(crate::error::ValidationError::InvalidL2Proof);
-        if expected.root_valid_until <= now_ms { return Err(invalid()); }
-        let policy = self.get_wallet()?.profile.l2_regional_mesh_policy.as_ref().ok_or_else(invalid)?;
-        let committee = humoco_proto::mesh::regional_committee(policy, views, expected.shard_id, now_ms).map_err(|_| invalid())?;
-        if expected.network != policy.network || expected.committee != committee { return Err(invalid()); }
+        if expected.root_valid_until <= now_ms {
+            return Err(invalid());
+        }
+        let policy = self
+            .get_wallet()?
+            .profile
+            .l2_regional_mesh_policy
+            .as_ref()
+            .ok_or_else(invalid)?;
+        let committee =
+            humoco_proto::mesh::regional_committee(policy, views, expected.shard_id, now_ms)
+                .map_err(|_| invalid())?;
+        if expected.network != policy.network || expected.committee != committee {
+            return Err(invalid());
+        }
         self.verify_live_checkout_proof(proof, expected, explicit_merchant_approval)
     }
 
@@ -433,7 +498,9 @@ impl AppService {
         explicit_merchant_approval: bool,
     ) -> Result<crate::models::layer2_api::CheckoutReleaseVerdict, Error> {
         if expected.recipient_nonce == [0; 32] {
-            return Err(Error::Validation(crate::error::ValidationError::InvalidL2Proof));
+            return Err(Error::Validation(
+                crate::error::ValidationError::InvalidL2Proof,
+            ));
         }
         l2_gateway::verify_current_checkout(proof, expected)?;
         Ok(crate::models::layer2_api::CheckoutReleaseVerdict::new(
@@ -461,7 +528,8 @@ impl AppService {
         authority: l2_gateway::CheckoutAuthority,
         explicit_merchant_approval: bool,
     ) -> Result<crate::models::layer2_api::CheckoutReleaseVerdict, Error> {
-        let outcome = self.process_l2_response_with_authority(local_id, response_bytes, password, authority)?;
+        let outcome =
+            self.process_l2_response_with_authority(local_id, response_bytes, password, authority)?;
         // Defensive: an original receipt must never be promoted to `Confirmed`, even if a
         // future mapping regression tried to do so.
         let outcome = match outcome {
@@ -470,7 +538,10 @@ impl AppService {
             }
             other => other,
         };
-        let mut verdict = crate::models::layer2_api::CheckoutReleaseVerdict::new(outcome, explicit_merchant_approval);
+        let mut verdict = crate::models::layer2_api::CheckoutReleaseVerdict::new(
+            outcome,
+            explicit_merchant_approval,
+        );
         verdict.can_release_goods_automatically = false;
         Ok(verdict)
     }
@@ -484,17 +555,22 @@ impl AppService {
         explicit_merchant_approval: bool,
     ) -> Result<crate::models::layer2_api::CheckoutReleaseVerdict, Error> {
         let outcome = self.process_l2_response(local_id, response_bytes, password)?;
-        Ok(crate::models::layer2_api::CheckoutReleaseVerdict::new(outcome, explicit_merchant_approval))
+        Ok(crate::models::layer2_api::CheckoutReleaseVerdict::new(
+            outcome,
+            explicit_merchant_approval,
+        ))
     }
 }
 
 #[cfg(test)]
 mod checkout_release_tests {
     use super::*;
-    use crate::models::layer2_api::{CheckoutReleaseVerdict, DurablePurchaseBinding, L2ProcessingOutcome};
+    use crate::models::layer2_api::{
+        CheckoutReleaseVerdict, DurablePurchaseBinding, L2ProcessingOutcome,
+    };
     use ed25519_dalek::{Signer, SigningKey};
-    use humoco_proto::live::{LiveStateContext, LiveStateProof};
     use humoco_proto::AttestationVote;
+    use humoco_proto::live::{LiveStateContext, LiveStateProof};
 
     #[test]
     fn confirmed_outcome_authorizes_automatic_goods_release() {
@@ -526,7 +602,9 @@ mod checkout_release_tests {
 
         // The binding is a no-op for all non-Confirmed outcomes.
         let quarantined = CheckoutReleaseVerdict::new(
-            L2ProcessingOutcome::Quarantined { reason: "collision".to_string() },
+            L2ProcessingOutcome::Quarantined {
+                reason: "collision".to_string(),
+            },
             false,
         )
         .with_durable_purchase_binding(DurablePurchaseBinding::backend_verified());
@@ -539,7 +617,9 @@ mod checkout_release_tests {
         for outcome in [
             L2ProcessingOutcome::Found,
             L2ProcessingOutcome::Provisional,
-            L2ProcessingOutcome::SyncRequired { sync_point: "sync_01".to_string() },
+            L2ProcessingOutcome::SyncRequired {
+                sync_point: "sync_01".to_string(),
+            },
         ] {
             let verdict_no_approval = CheckoutReleaseVerdict::new(outcome.clone(), false);
             assert!(!verdict_no_approval.can_release_goods_automatically);
@@ -556,7 +636,9 @@ mod checkout_release_tests {
 
     #[test]
     fn quarantined_never_authorizes_goods_release_even_with_merchant_approval() {
-        let outcome = L2ProcessingOutcome::Quarantined { reason: "collision".to_string() };
+        let outcome = L2ProcessingOutcome::Quarantined {
+            reason: "collision".to_string(),
+        };
         let verdict = CheckoutReleaseVerdict::new(outcome, true);
         assert!(!verdict.can_release_goods_automatically);
         assert!(!verdict.is_goods_release_authorized);
@@ -585,12 +667,14 @@ mod checkout_release_tests {
         };
 
         let digest = humoco_proto::live::live_state_digest(&valid_context).unwrap();
-        let votes: Vec<AttestationVote> = keys.iter().take(14).map(|key| {
-            AttestationVote {
+        let votes: Vec<AttestationVote> = keys
+            .iter()
+            .take(14)
+            .map(|key| AttestationVote {
                 signer_pubkey: key.verifying_key().to_bytes(),
                 signature: key.sign(&digest).to_bytes(),
-            }
-        }).collect();
+            })
+            .collect();
 
         let valid_proof = LiveStateProof {
             context: valid_context.clone(),
@@ -601,7 +685,10 @@ mod checkout_release_tests {
         let temp_dir = std::env::temp_dir().join(format!("humoco_test_{}", uuid::Uuid::new_v4()));
         let app = AppService::new(&temp_dir).unwrap();
         let res = app.verify_live_checkout_proof(&valid_proof, &valid_context, false);
-        assert!(res.is_ok(), "14/20 valid signatures with challenge must succeed");
+        assert!(
+            res.is_ok(),
+            "14/20 valid signatures with challenge must succeed"
+        );
         let verdict = res.unwrap();
         assert_eq!(verdict.outcome, L2ProcessingOutcome::Confirmed);
         // Z01 fail-closed boundary: mathematical live proof verification alone
@@ -616,7 +703,8 @@ mod checkout_release_tests {
         zero_nonce_context.recipient_nonce = [0; 32];
         let mut zero_nonce_proof = valid_proof.clone();
         zero_nonce_proof.context = zero_nonce_context.clone();
-        let res_zero = app.verify_live_checkout_proof(&zero_nonce_proof, &zero_nonce_context, false);
+        let res_zero =
+            app.verify_live_checkout_proof(&zero_nonce_proof, &zero_nonce_context, false);
         assert!(res_zero.is_err(), "Zero recipient challenge must fail");
 
         // 13 signatures (sub-quorum) must be rejected
@@ -651,6 +739,7 @@ mod checkout_release_tests {
 
     #[test]
     fn original_write_receipt_never_authorizes_automatic_goods_release() {
+        use crate::NewVoucherData;
         use crate::models::layer2_api::{
             AttestationDto, L2ResponseEnvelope, L2Verdict, QuorumCertificateDto, QuorumProof,
         };
@@ -658,7 +747,6 @@ mod checkout_release_tests {
         use crate::models::voucher::ValueDefinition;
         use crate::services::l2_gateway::CheckoutAuthority;
         use crate::test_utils::{self, ACTORS};
-        use crate::NewVoucherData;
         use sha2::{Digest, Sha256};
 
         let dir = tempfile::tempdir().unwrap();
@@ -802,44 +890,197 @@ mod checkout_release_tests {
 mod regional_mesh_backend_tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
-    use humoco_proto::{AttestationVote, live::{LiveStateContext, LiveStateProof}, mesh::{RegionalMeshPolicy, RegionalMeshView, RegionalMeshMember}};
+    use humoco_proto::{
+        AttestationVote,
+        live::{LiveStateContext, LiveStateProof},
+        mesh::{RegionalMeshMember, RegionalMeshPolicy, RegionalMeshView},
+    };
     #[test]
     fn stored_configuration_survives_restart_and_rejects_receipt_selected_authority() {
         let dir = tempfile::tempdir().unwrap();
         let password = "regional-source-test";
-        let (mut service, profile) = crate::test_utils::setup_service_with_profile(dir.path(), &crate::test_utils::ACTORS.test_user, "Regional", password);
-        let source = SigningKey::from_bytes(&[100;32]);
-        let keys: Vec<_> = (1u8..=20).map(|i| SigningKey::from_bytes(&[i;32])).collect();
-        let mut members: Vec<_> = keys.iter().enumerate().map(|(i,key)| RegionalMeshMember { node_pubkey:key.verifying_key().to_bytes(), hrw_routing_id:[i as u8;32] }).collect();
-        members.sort_by_key(|m|m.node_pubkey);
-        let mut view = RegionalMeshView { version:1, network:0, source_key:source.verifying_key().to_bytes(), issued_at_ms:1_000, valid_until_ms:61_000, members, signature:[0;64] };
+        let (mut service, profile) = crate::test_utils::setup_service_with_profile(
+            dir.path(),
+            &crate::test_utils::ACTORS.test_user,
+            "Regional",
+            password,
+        );
+        let source = SigningKey::from_bytes(&[100; 32]);
+        let keys: Vec<_> = (1u8..=20)
+            .map(|i| SigningKey::from_bytes(&[i; 32]))
+            .collect();
+        let mut members: Vec<_> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, key)| RegionalMeshMember {
+                node_pubkey: key.verifying_key().to_bytes(),
+                hrw_routing_id: [i as u8; 32],
+            })
+            .collect();
+        members.sort_by_key(|m| m.node_pubkey);
+        let mut view = RegionalMeshView {
+            version: 1,
+            network: 0,
+            source_key: source.verifying_key().to_bytes(),
+            issued_at_ms: 1_000,
+            valid_until_ms: 61_000,
+            members,
+            signature: [0; 64],
+        };
         view.signature = source.sign(&view.digest().unwrap()).to_bytes();
-        let policy = RegionalMeshPolicy { network:0, source_keys:vec![view.source_key] };
-        let roster = humoco_proto::mesh::regional_committee(&policy, &[view.clone()], 42, 2_000).unwrap();
+        let policy = RegionalMeshPolicy {
+            network: 0,
+            source_keys: vec![view.source_key],
+        };
+        let roster =
+            humoco_proto::mesh::regional_committee(&policy, &[view.clone()], 42, 2_000).unwrap();
         let tag = "recipient-regional-slot".to_string();
-        let expected = LiveStateContext { version:1, network:0, shard_id:42, voucher_id:"voucher".into(), lookup_tag:tag.clone(), parent_lock:*blake3::hash(tag.as_bytes()).as_bytes(), child_lock:[3;32], root_valid_until:50_000, state_digest:[4;32], recipient_nonce:[5;32], committee:roster };
+        let expected = LiveStateContext {
+            version: 1,
+            network: 0,
+            shard_id: 42,
+            voucher_id: "voucher".into(),
+            lookup_tag: tag.clone(),
+            parent_lock: *blake3::hash(tag.as_bytes()).as_bytes(),
+            child_lock: [3; 32],
+            root_valid_until: 50_000,
+            state_digest: [4; 32],
+            recipient_nonce: [5; 32],
+            committee: roster,
+        };
         let digest = humoco_proto::live::live_state_digest(&expected).unwrap();
-        let votes = keys.iter().take(14).map(|key|AttestationVote { signer_pubkey:key.verifying_key().to_bytes(), signature:key.sign(&digest).to_bytes() }).collect();
-        let proof = LiveStateProof { context:expected.clone(), votes };
-        assert!(service.verify_live_checkout_with_regional_authority(&proof,&expected,&[view.clone()],2_000,false).is_err());
-        assert!(service.configure_regional_mesh_authority(policy.clone(),Some("wrong password")).is_err());
-        service.login(&profile.folder_name,password,false,"test-id".into()).unwrap();
-        assert!(service.get_wallet().unwrap().profile.l2_regional_mesh_policy.is_none());
-        service.configure_regional_mesh_authority(policy.clone(),Some(password)).unwrap();
-        let verdict = service.verify_live_checkout_with_regional_authority(&proof,&expected,&[view.clone()],2_000,false).unwrap();
-        assert!(!verdict.can_release_goods_automatically, "authority is not a durable purchase");
-        assert!(service.verify_live_checkout_with_regional_authority(&proof,&expected,&[view.clone()],55_000,false).is_err(), "a current regional view cannot revive an expired root");
-        service.logout(); drop(service);
+        let votes = keys
+            .iter()
+            .take(14)
+            .map(|key| AttestationVote {
+                signer_pubkey: key.verifying_key().to_bytes(),
+                signature: key.sign(&digest).to_bytes(),
+            })
+            .collect();
+        let proof = LiveStateProof {
+            context: expected.clone(),
+            votes,
+        };
+        assert!(
+            service
+                .verify_live_checkout_with_regional_authority(
+                    &proof,
+                    &expected,
+                    &[view.clone()],
+                    2_000,
+                    false
+                )
+                .is_err()
+        );
+        assert!(
+            service
+                .configure_regional_mesh_authority(policy.clone(), Some("wrong password"))
+                .is_err()
+        );
+        service
+            .login(&profile.folder_name, password, false, "test-id".into())
+            .unwrap();
+        assert!(
+            service
+                .get_wallet()
+                .unwrap()
+                .profile
+                .l2_regional_mesh_policy
+                .is_none()
+        );
+        service
+            .configure_regional_mesh_authority(policy.clone(), Some(password))
+            .unwrap();
+        let verdict = service
+            .verify_live_checkout_with_regional_authority(
+                &proof,
+                &expected,
+                &[view.clone()],
+                2_000,
+                false,
+            )
+            .unwrap();
+        assert!(
+            !verdict.can_release_goods_automatically,
+            "authority is not a durable purchase"
+        );
+        assert!(
+            service
+                .verify_live_checkout_with_regional_authority(
+                    &proof,
+                    &expected,
+                    &[view.clone()],
+                    55_000,
+                    false
+                )
+                .is_err(),
+            "a current regional view cannot revive an expired root"
+        );
+        service.logout();
+        drop(service);
         let mut service = AppService::new(dir.path()).unwrap();
-        service.login(&profile.folder_name,password,false,"test-id".into()).unwrap();
-        assert_eq!(service.get_wallet().unwrap().profile.l2_regional_mesh_policy,Some(policy));
-        assert!(service.verify_live_checkout_with_regional_authority(&proof,&expected,&[view.clone()],2_000,false).is_ok());
-        let mut self_chosen = expected.clone(); self_chosen.committee.reverse();
+        service
+            .login(&profile.folder_name, password, false, "test-id".into())
+            .unwrap();
+        assert_eq!(
+            service
+                .get_wallet()
+                .unwrap()
+                .profile
+                .l2_regional_mesh_policy,
+            Some(policy)
+        );
+        assert!(
+            service
+                .verify_live_checkout_with_regional_authority(
+                    &proof,
+                    &expected,
+                    &[view.clone()],
+                    2_000,
+                    false
+                )
+                .is_ok()
+        );
+        let mut self_chosen = expected.clone();
+        self_chosen.committee.reverse();
         let wrong_digest = humoco_proto::live::live_state_digest(&self_chosen).unwrap();
-        let wrong_proof = LiveStateProof { context:self_chosen.clone(), votes:keys.iter().take(14).map(|key| AttestationVote { signer_pubkey:key.verifying_key().to_bytes(), signature:key.sign(&wrong_digest).to_bytes() }).collect() };
-        assert!(humoco_proto::live::verify_live_state_proof(&wrong_proof,&self_chosen).is_ok(), "the adversarial proof is mathematically genuine");
-        assert!(service.verify_live_checkout_with_regional_authority(&wrong_proof,&self_chosen,&[view.clone()],2_000,false).is_err());
+        let wrong_proof = LiveStateProof {
+            context: self_chosen.clone(),
+            votes: keys
+                .iter()
+                .take(14)
+                .map(|key| AttestationVote {
+                    signer_pubkey: key.verifying_key().to_bytes(),
+                    signature: key.sign(&wrong_digest).to_bytes(),
+                })
+                .collect(),
+        };
+        assert!(
+            humoco_proto::live::verify_live_state_proof(&wrong_proof, &self_chosen).is_ok(),
+            "the adversarial proof is mathematically genuine"
+        );
+        assert!(
+            service
+                .verify_live_checkout_with_regional_authority(
+                    &wrong_proof,
+                    &self_chosen,
+                    &[view.clone()],
+                    2_000,
+                    false
+                )
+                .is_err()
+        );
         view.signature[0] ^= 1;
-        assert!(service.verify_live_checkout_with_regional_authority(&proof,&expected,&[view],2_000,false).is_err());
+        assert!(
+            service
+                .verify_live_checkout_with_regional_authority(
+                    &proof,
+                    &expected,
+                    &[view],
+                    2_000,
+                    false
+                )
+                .is_err()
+        );
     }
 }

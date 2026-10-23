@@ -149,10 +149,11 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
         error_msg
     );
 
-    // NOTE: This test continues to fail because it reveals a real bug.
-    // The `create_transfer_bundle` operation is not atomic. The state in memory
-    // is modified (the 100 voucher is replaced by a 60 voucher), but not rolled back
-    // after the save failure. The following assertion would thus fail.
+    // Authentication rejection deliberately locks the live wallet. Reopen the
+    // authenticated durable snapshot before asserting that no mutation escaped.
+    assert!(service.with_wallet(|_| ()).is_err());
+    let profile = service.list_profiles().unwrap().remove(0);
+    service.login(&profile.folder_name, correct_password, false, "test-id".into()).unwrap();
     let summaries_after = service
         .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
         .unwrap();
@@ -266,6 +267,11 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         error_msg
     );
 
+    // Authentication rejection deliberately locks the live wallet. Reopen the
+    // authenticated durable snapshot before asserting that no mutation escaped.
+    assert!(service_recipient.with_wallet(|_| ()).is_err());
+    let profile = service_recipient.list_profiles().unwrap().remove(0);
+    service_recipient.login(&profile.folder_name, correct_password, false, "test-id".into()).unwrap();
     let summaries_after = service_recipient
         .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
         .unwrap();
@@ -436,6 +442,11 @@ fn test_attach_signature_is_transactional_on_save_failure() {
     // 3. ASSERT: Operation fails, state remains unchanged.
     assert!(result.is_err(), "Signature attachment should fail");
 
+    // Authentication rejection deliberately locks the live wallet. Reopen the
+    // authenticated durable snapshot before asserting that no mutation escaped.
+    assert!(service_creator.with_wallet(|_| ()).is_err());
+    let profile = service_creator.list_profiles().unwrap().remove(0);
+    service_creator.login(&profile.folder_name, correct_password, false, "test-id".into()).unwrap();
     let details_after = service_creator.with_wallet(|w| w.get_voucher_details(&local_id).unwrap()).unwrap();
     assert_eq!(
         details_after.voucher.signatures.len(),
@@ -514,6 +525,11 @@ fn test_import_endorsement_is_transactional_on_save_failure() {
     // 3. ASSERT: Operation fails, conflict remains unresolved.
     assert!(result.is_err(), "Endorsement import should fail");
 
+    // Authentication rejection deliberately locks the live wallet. Reopen the
+    // authenticated durable snapshot before asserting that no mutation escaped.
+    assert!(service_reporter.with_wallet(|_| ()).is_err());
+    let profile = service_reporter.list_profiles().unwrap().remove(0);
+    service_reporter.login(&profile.folder_name, correct_password, false, "test-id".into()).unwrap();
     let conflicts_after = service_reporter.list_conflicts().unwrap();
     assert_eq!(conflicts_after.len(), 1);
     assert!(
@@ -674,6 +690,11 @@ fn test_receive_bundle_is_transactional_on_conflict_and_save_failure() {
         "Receive should fail on conflict + save error"
     );
 
+    // Authentication rejection deliberately locks the live wallet. Reopen the
+    // authenticated durable snapshot before asserting that no mutation escaped.
+    assert!(service_david.with_wallet(|_| ()).is_err());
+    let profile = service_david.list_profiles().unwrap().remove(0);
+    service_david.login(&profile.folder_name, correct_password, false, "test-id".into()).unwrap();
     let summaries_after = service_david
         .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
         .unwrap();

@@ -61,7 +61,9 @@ pub enum VerdictAction {
     /// Mathematically verified FINAL original approval; not a fresh live-state proof.
     ConfirmFinal { certificate: QuorumCertificateDto },
     /// Confirmed with provisional quorum certificate (N < 20 or provisional status).
-    ConfirmProvisional { certificate: Option<QuorumCertificateDto> },
+    ConfirmProvisional {
+        certificate: Option<QuorumCertificateDto>,
+    },
     /// A double-spend was detected; the wallet/voucher must be placed in quarantine.
     TriggerQuarantine(String),
     /// Synchronization is required. Contains the sync_point (prefix).
@@ -86,12 +88,14 @@ pub fn verify_checkout_receipt(
     eligible_committee: &[[u8; 32]],
     required_quorum: usize, // Typically 14 for FINAL
 ) -> Result<(), VoucherCoreError> {
-    verify_quorum_proof(proof, expected_digest, eligible_committee, required_quorum)
-        .map_err(|err| {
-            VoucherCoreError::Validation(crate::error::ValidationError::SecurityViolation(
-                format!("L2 Quorum proof failed: {}", err),
-            ))
-        })
+    verify_quorum_proof(proof, expected_digest, eligible_committee, required_quorum).map_err(
+        |err| {
+            VoucherCoreError::Validation(crate::error::ValidationError::SecurityViolation(format!(
+                "L2 Quorum proof failed: {}",
+                err
+            )))
+        },
+    )
 }
 
 /// Verifies a QuorumCertificateDto receipt by converting it to canonical QuorumProof and running 14/20 verification.
@@ -221,11 +225,14 @@ pub fn generate_lock_request(
 
     // SECURITY: Fail closed on malformed data. Silent zero-filling would
     // create lock requests that cannot be verified server-side.
-    let sender_ephemeral_pub_str = transaction.sender_ephemeral_pub.as_deref().ok_or_else(|| {
-        crate::Error::Wallet(crate::error::WalletError::MissingSenderEphemeralPub)
-    })?;
-    let sender_ephemeral_pub =
-        crate::services::crypto::decode_bs58_fixed::<32>(sender_ephemeral_pub_str, "sender_ephemeral_pub")?;
+    let sender_ephemeral_pub_str =
+        transaction.sender_ephemeral_pub.as_deref().ok_or_else(|| {
+            crate::Error::Wallet(crate::error::WalletError::MissingSenderEphemeralPub)
+        })?;
+    let sender_ephemeral_pub = crate::services::crypto::decode_bs58_fixed::<32>(
+        sender_ephemeral_pub_str,
+        "sender_ephemeral_pub",
+    )?;
 
     // SECURITY (HMSEC-SA06-14): Metadata minimization on the L2 wire.
     // The receiver-/change-anchor hashes of both output branches are NOT
@@ -239,9 +246,10 @@ pub fn generate_lock_request(
     let change_ephemeral_pub_hash: Option<[u8; 32]> = None;
 
     // SECURITY: Fail closed on malformed signatures as well.
-    let layer2_sig_str = transaction.layer2_signature.as_deref().ok_or_else(|| {
-        crate::Error::Wallet(crate::error::WalletError::MissingLayer2Signature)
-    })?;
+    let layer2_sig_str = transaction
+        .layer2_signature
+        .as_deref()
+        .ok_or_else(|| crate::Error::Wallet(crate::error::WalletError::MissingLayer2Signature))?;
     let layer2_signature =
         crate::services::crypto::decode_bs58_fixed::<64>(layer2_sig_str, "layer2_signature")?;
 
@@ -259,6 +267,7 @@ pub fn generate_lock_request(
     let created_at_ms = crate::services::utils::parse_timestamp_ms(&transaction.t_time)?;
 
     Ok(L2LockRequest {
+        causal_output: None,
         auth,
         layer2_voucher_id: l2_voucher_id,
         ds_tag,
@@ -303,7 +312,9 @@ pub const TRAP_NONE_PLACEHOLDER: &str = "none";
 /// Calculates the layer2_voucher_id from a genesis transaction.
 pub fn calculate_layer2_voucher_id(transaction: &Transaction) -> Result<String, VoucherCoreError> {
     if transaction.t_type != "init" {
-        return Err(crate::Error::Wallet(crate::error::WalletError::OnlyInitTransactionsAllowed));
+        return Err(crate::Error::Wallet(
+            crate::error::WalletError::OnlyInitTransactionsAllowed,
+        ));
     }
 
     let t_id = crate::services::crypto::decode_bs58_fixed::<32>(&transaction.t_id, "t_id")?;
@@ -315,7 +326,7 @@ pub fn calculate_layer2_voucher_id(transaction: &Transaction) -> Result<String, 
                 crate::error::ValidationError::InvalidTransaction(
                     "Missing sender_ephemeral_pub in init transaction".to_string(),
                 ),
-            ))
+            ));
         }
     };
     let receiver_hash = transaction
@@ -352,9 +363,7 @@ pub fn calculate_layer2_voucher_id(transaction: &Transaction) -> Result<String, 
 /// collapsing into byte-identical fingerprints.
 pub fn privacy_guard_commitment(privacy_guard: Option<&str>) -> String {
     match privacy_guard {
-        Some(guard) if !guard.is_empty() => {
-            crate::services::crypto::get_hash(guard.as_bytes())
-        }
+        Some(guard) if !guard.is_empty() => crate::services::crypto::get_hash(guard.as_bytes()),
         _ => String::new(),
     }
 }
@@ -473,7 +482,9 @@ pub fn extract_layer2_voucher_id(
     voucher: &crate::models::voucher::Voucher,
 ) -> Result<String, VoucherCoreError> {
     if voucher.transactions.is_empty() {
-        return Err(crate::Error::Wallet(crate::error::WalletError::MissingTransactions));
+        return Err(crate::Error::Wallet(
+            crate::error::WalletError::MissingTransactions,
+        ));
     }
     calculate_layer2_voucher_id(&voucher.transactions[0])
 }
@@ -512,12 +523,9 @@ pub fn verify_lock_entry_proof(
     }
 
     // 1. Verify L2 signature mathematically (Proof of Truth)
-    let ephem_key =
-        VerifyingKey::from_bytes(&lock_entry.sender_ephemeral_pub).map_err(|_| {
-            VoucherCoreError::Validation(
-                crate::error::ValidationError::InvalidEphemeralKeyInLockEntry,
-            )
-        })?;
+    let ephem_key = VerifyingKey::from_bytes(&lock_entry.sender_ephemeral_pub).map_err(|_| {
+        VoucherCoreError::Validation(crate::error::ValidationError::InvalidEphemeralKeyInLockEntry)
+    })?;
     let signature = Signature::from_bytes(&lock_entry.layer2_signature);
 
     let entry_is_genesis = lock_entry.trap_r.as_deref() == Some(TRAP_NONE_PLACEHOLDER)
@@ -532,8 +540,14 @@ pub fn verify_lock_entry_proof(
         challenge_ds_tag,
         &lock_entry.t_id,
         &lock_entry.sender_ephemeral_pub,
-        lock_entry.trap_r.as_deref().unwrap_or(TRAP_NONE_PLACEHOLDER),
-        lock_entry.trap_s.as_deref().unwrap_or(TRAP_NONE_PLACEHOLDER),
+        lock_entry
+            .trap_r
+            .as_deref()
+            .unwrap_or(TRAP_NONE_PLACEHOLDER),
+        lock_entry
+            .trap_s
+            .as_deref()
+            .unwrap_or(TRAP_NONE_PLACEHOLDER),
         lock_entry.encrypted_timestamp,
         lock_entry.created_at_ms,
         lock_entry.deletable_at.as_deref(),
@@ -541,8 +555,8 @@ pub fn verify_lock_entry_proof(
     );
 
     #[cfg(feature = "test-utils")]
-    let signature_valid = ephem_key.verify(&payload_hash, &signature).is_ok()
-        || crate::is_signature_bypass_active();
+    let signature_valid =
+        ephem_key.verify(&payload_hash, &signature).is_ok() || crate::is_signature_bypass_active();
     #[cfg(not(feature = "test-utils"))]
     let signature_valid = ephem_key.verify(&payload_hash, &signature).is_ok();
 
@@ -589,41 +603,109 @@ fn evaluate_quorum_certificate(
     _expected_voucher_id: &str,
     authority: Option<&CheckoutAuthority>,
 ) -> Result<VerdictAction, VoucherCoreError> {
-    let Some(certificate) = certificate_opt else { return Ok(VerdictAction::ConfirmLocal); };
+    let Some(certificate) = certificate_opt else {
+        return Ok(VerdictAction::ConfirmLocal);
+    };
     let invalid = || VoucherCoreError::Validation(crate::error::ValidationError::InvalidL2Proof);
     let authority = authority.ok_or_else(invalid)?;
-    if &authority.child_lock != lock_t_id || !matches_lock_id(lock_t_id, &certificate.lock_id)
-        || certificate.shard_id != authority.shard_id || authority.committee.is_empty() || authority.committee.len() > 20
-        || certificate.signatures.len() > authority.committee.len() { return Err(invalid()); }
-    let distinct: std::collections::HashSet<_> = authority.committee.iter().collect();
-    if distinct.len() != authority.committee.len() { return Err(invalid()); }
-    let final_mode = authority.committee.len() == 20;
-    if certificate.status > 1 || (certificate.status == 1 && !final_mode) { return Err(invalid()); }
-    for att in &certificate.signatures {
-        if att.lock_id != certificate.lock_id || att.shard_id != authority.shard_id
-            || hex::decode(&att.parent_lock).ok().as_deref() != Some(authority.parent_lock.as_slice()) { return Err(invalid()); }
+    if &authority.child_lock != lock_t_id
+        || !matches_lock_id(lock_t_id, &certificate.lock_id)
+        || certificate.shard_id != authority.shard_id
+        || authority.committee.is_empty()
+        || authority.committee.len() > 20
+        || certificate.signatures.len() > authority.committee.len()
+    {
+        return Err(invalid());
     }
-    let digest = humoco_proto::live::original_approval_digest(authority.network, authority.shard_id, certificate.status, &authority.parent_lock, &authority.child_lock).map_err(|_| invalid())?;
-    let threshold = if final_mode { 14 } else { (2 * authority.committee.len()) / 3 + 1 };
+    let distinct: std::collections::HashSet<_> = authority.committee.iter().collect();
+    if distinct.len() != authority.committee.len() {
+        return Err(invalid());
+    }
+    let final_mode = authority.committee.len() == 20;
+    if certificate.status > 1 || (certificate.status == 1 && !final_mode) {
+        return Err(invalid());
+    }
+    for att in &certificate.signatures {
+        if att.lock_id != certificate.lock_id
+            || att.shard_id != authority.shard_id
+            || hex::decode(&att.parent_lock).ok().as_deref()
+                != Some(authority.parent_lock.as_slice())
+        {
+            return Err(invalid());
+        }
+    }
+    let digest = humoco_proto::live::original_approval_digest(
+        authority.network,
+        authority.shard_id,
+        certificate.status,
+        &authority.parent_lock,
+        &authority.child_lock,
+    )
+    .map_err(|_| invalid())?;
+    let threshold = if final_mode {
+        14
+    } else {
+        (2 * authority.committee.len()) / 3 + 1
+    };
     verify_checkout_receipt_certificate(&certificate, &digest, &authority.committee, threshold)?;
-    if final_mode && certificate.status == 1 { Ok(VerdictAction::ConfirmFinal { certificate }) }
-    else { Ok(VerdictAction::ConfirmProvisional { certificate: Some(certificate) }) }
+    if final_mode && certificate.status == 1 {
+        Ok(VerdictAction::ConfirmFinal { certificate })
+    } else {
+        Ok(VerdictAction::ConfirmProvisional {
+            certificate: Some(certificate),
+        })
+    }
 }
 
 /// Verifies ephemeral current state against the recipient's independently justified exact challenge/context.
-pub fn verify_current_checkout(proof: &humoco_proto::live::LiveStateProof, expected: &humoco_proto::live::LiveStateContext) -> Result<(), VoucherCoreError> {
-    humoco_proto::live::verify_live_state_proof(proof, expected).map_err(|_| VoucherCoreError::Validation(crate::error::ValidationError::InvalidL2Proof))
+pub fn verify_current_checkout(
+    proof: &humoco_proto::live::LiveStateProof,
+    expected: &humoco_proto::live::LiveStateContext,
+) -> Result<(), VoucherCoreError> {
+    humoco_proto::live::verify_live_state_proof(proof, expected)
+        .map_err(|_| VoucherCoreError::Validation(crate::error::ValidationError::InvalidL2Proof))
 }
 
 /// Processes the L2Verdict and determines the subsequent wallet action.
 /// Processes legacy lookup responses without treating response-supplied quorum metadata as authority.
-pub fn process_l2_verdict(verdict_bytes: &[u8], server_pubkey: &[u8;32], local_t_id: &str, challenge_ds_tag: &str, expected_ephemeral_pub: Option<&str>, expected_voucher_id: &str) -> Result<VerdictAction, VoucherCoreError> {
-    process_l2_verdict_internal(verdict_bytes, server_pubkey, local_t_id, challenge_ds_tag, expected_ephemeral_pub, expected_voucher_id, None)
+pub fn process_l2_verdict(
+    verdict_bytes: &[u8],
+    server_pubkey: &[u8; 32],
+    local_t_id: &str,
+    challenge_ds_tag: &str,
+    expected_ephemeral_pub: Option<&str>,
+    expected_voucher_id: &str,
+) -> Result<VerdictAction, VoucherCoreError> {
+    process_l2_verdict_internal(
+        verdict_bytes,
+        server_pubkey,
+        local_t_id,
+        challenge_ds_tag,
+        expected_ephemeral_pub,
+        expected_voucher_id,
+        None,
+    )
 }
 
 /// Processes original write receipts with independently established committee authority and real signatures.
-pub fn process_l2_verdict_with_authority(verdict_bytes: &[u8], server_pubkey: &[u8;32], local_t_id: &str, challenge_ds_tag: &str, expected_ephemeral_pub: Option<&str>, expected_voucher_id: &str, authority: &CheckoutAuthority) -> Result<VerdictAction, VoucherCoreError> {
-    process_l2_verdict_internal(verdict_bytes, server_pubkey, local_t_id, challenge_ds_tag, expected_ephemeral_pub, expected_voucher_id, Some(authority))
+pub fn process_l2_verdict_with_authority(
+    verdict_bytes: &[u8],
+    server_pubkey: &[u8; 32],
+    local_t_id: &str,
+    challenge_ds_tag: &str,
+    expected_ephemeral_pub: Option<&str>,
+    expected_voucher_id: &str,
+    authority: &CheckoutAuthority,
+) -> Result<VerdictAction, VoucherCoreError> {
+    process_l2_verdict_internal(
+        verdict_bytes,
+        server_pubkey,
+        local_t_id,
+        challenge_ds_tag,
+        expected_ephemeral_pub,
+        expected_voucher_id,
+        Some(authority),
+    )
 }
 
 fn process_l2_verdict_internal(
@@ -640,8 +722,9 @@ fn process_l2_verdict_internal(
     })?;
 
     // 1. Verify server authenticity
-    let server_key = VerifyingKey::from_bytes(server_pubkey)
-        .map_err(|_| VoucherCoreError::Validation(crate::error::ValidationError::InvalidServerPublicKey))?;
+    let server_key = VerifyingKey::from_bytes(server_pubkey).map_err(|_| {
+        VoucherCoreError::Validation(crate::error::ValidationError::InvalidServerPublicKey)
+    })?;
     let server_sig = Signature::from_bytes(&envelope.server_signature);
 
     let verdict_serialized = serde_json::to_vec(&envelope.verdict).map_err(|e| {
@@ -673,12 +756,18 @@ fn process_l2_verdict_internal(
 
     match verdict {
         L2Verdict::Confirmed { proof } => {
-            let local_t_id_bytes = crate::services::crypto::decode_bs58_fixed::<32>(local_t_id, "local_t_id")
-                .unwrap_or([0u8; 32]);
+            let local_t_id_bytes =
+                crate::services::crypto::decode_bs58_fixed::<32>(local_t_id, "local_t_id")
+                    .unwrap_or([0u8; 32]);
             let cert = envelope
                 .quorum_certificate
                 .unwrap_or_else(|| QuorumCertificateDto::from(proof.clone()));
-            evaluate_quorum_certificate(Some(cert), &local_t_id_bytes, expected_voucher_id, authority)
+            evaluate_quorum_certificate(
+                Some(cert),
+                &local_t_id_bytes,
+                expected_voucher_id,
+                authority,
+            )
         }
         L2Verdict::Verified { lock_entry } => {
             // Cryptographically verify Proof of Truth and expected ephemeral key
@@ -692,7 +781,12 @@ fn process_l2_verdict_internal(
             // Compare t_id
             let server_t_id = bs58::encode(lock_entry.t_id).into_string();
             if server_t_id == local_t_id {
-                evaluate_quorum_certificate(envelope.quorum_certificate, &lock_entry.t_id, expected_voucher_id, authority)
+                evaluate_quorum_certificate(
+                    envelope.quorum_certificate,
+                    &lock_entry.t_id,
+                    expected_voucher_id,
+                    authority,
+                )
             } else {
                 // Double-spend detected!
                 Ok(VerdictAction::TriggerQuarantine(server_t_id))
@@ -709,7 +803,12 @@ fn process_l2_verdict_internal(
                     expected_ephemeral_pub,
                     challenge_ds_tag,
                 )?;
-                evaluate_quorum_certificate(envelope.quorum_certificate, &existing_lock.t_id, expected_voucher_id, authority)
+                evaluate_quorum_certificate(
+                    envelope.quorum_certificate,
+                    &existing_lock.t_id,
+                    expected_voucher_id,
+                    authority,
+                )
             } else {
                 // Genuine conflict: verify proof of truth on the competing lock
                 // (ephemeral key is verified mathematically without expecting our local key)
@@ -819,6 +918,7 @@ pub fn build_anchor_genesis_lock(
     let sig = step_key.sign(&payload_hash);
 
     Ok(L2LockRequest {
+        causal_output: None,
         auth: L2AuthPayload {
             ephemeral_pubkey: step_pub_bytes,
             auth_signature: None,
@@ -869,6 +969,7 @@ pub fn build_anchor_leap_lock(
     let sig = step_key.sign(&payload_hash);
 
     Ok(L2LockRequest {
+        causal_output: None,
         auth: L2AuthPayload {
             ephemeral_pubkey: step_pub_bytes,
             auth_signature: None,
@@ -991,7 +1092,10 @@ pub fn evaluate_multi_node_anchor_verdicts(
                 last_leap_point = sync_point;
             }
             AnchorSyncVerdict::GenesisRequired => unknown_count += 1,
-            AnchorSyncVerdict::RollbackDetected { remote_t_id, lock_entry } => {
+            AnchorSyncVerdict::RollbackDetected {
+                remote_t_id,
+                lock_entry,
+            } => {
                 rollback_count += 1;
                 if first_rollback.is_none() {
                     first_rollback = Some(AnchorSyncVerdict::RollbackDetected {
@@ -1044,11 +1148,11 @@ pub fn can_skip_l2_spend_lock(voucher: &crate::models::voucher::Voucher) -> bool
     voucher.transactions.len() <= 1
 }
 
-/// Builds an atomic `L2ChainLockRequest` that bundles all not-yet-anchored
-/// voucher steps together with an optional genesis lock.
+/// Builds an ordered, prefix-preserving `L2ChainLockRequest`. Genesis is only
+/// a root proof and never occupies a collision slot.
 ///
 /// - If `sync_point` is `None` or `"genesis"` the chain starts at index 0
-///   (genesis lock) — included if the voucher is not yet anchored on L2.
+///   (root proof), included if the voucher is not yet anchored on L2.
 /// - Otherwise all transactions strictly *after* the transaction identified by
 ///   `sync_point` up to and including the transaction referenced by
 ///   `target_spend_req` are collected.
@@ -1063,8 +1167,26 @@ pub fn build_voucher_lock_chain(
     sync_point: Option<&str>,
     target_spend_req: L2LockRequest,
 ) -> Result<L2ChainLockRequest, VoucherCoreError> {
+    build_voucher_lock_chain_with_outputs(
+        voucher,
+        sync_point,
+        target_spend_req,
+        &Default::default(),
+    )
+}
+
+/// Attach original author sidecars without re-signing any L1 transaction. A
+/// legacy history lacking these proofs cannot fabricate predecessor authority.
+pub fn build_voucher_lock_chain_with_outputs(
+    voucher: &crate::models::voucher::Voucher,
+    sync_point: Option<&str>,
+    target_spend_req: L2LockRequest,
+    outputs: &std::collections::BTreeMap<String, humoco_proto::causal::CausalOutputProof>,
+) -> Result<L2ChainLockRequest, VoucherCoreError> {
     if voucher.transactions.is_empty() {
-        return Err(crate::Error::Wallet(crate::error::WalletError::MissingTransactions));
+        return Err(crate::Error::Wallet(
+            crate::error::WalletError::MissingTransactions,
+        ));
     }
 
     let expected_voucher_id = extract_layer2_voucher_id(voucher)?;
@@ -1092,11 +1214,7 @@ pub fn build_voucher_lock_chain(
                 .transactions
                 .iter()
                 .rposition(|tx| {
-                    tx.t_id == sp
-                        || tx
-                            .trap_data
-                            .as_ref()
-                            .is_some_and(|td| td.ds_tag == sp)
+                    tx.t_id == sp || tx.trap_data.as_ref().is_some_and(|td| td.ds_tag == sp)
                 })
                 .or_else(|| {
                     voucher.transactions.iter().rposition(|tx| {
@@ -1139,9 +1257,15 @@ pub fn build_voucher_lock_chain(
             let sender_str = tx.sender_ephemeral_pub.as_deref().ok_or_else(|| {
                 crate::Error::Wallet(crate::error::WalletError::MissingSenderEphemeralPub)
             })?;
-            let sender_bytes =
-                crate::services::crypto::decode_bs58_fixed::<32>(sender_str, "sender_ephemeral_pub")?;
-            let req = generate_lock_request(&expected_voucher_id, tx, &sender_bytes)?;
+            let sender_bytes = crate::services::crypto::decode_bs58_fixed::<32>(
+                sender_str,
+                "sender_ephemeral_pub",
+            )?;
+            let mut req = generate_lock_request(&expected_voucher_id, tx, &sender_bytes)?;
+            req.causal_output = outputs.get(&tx.t_id).cloned();
+            if let Some(proof) = &req.causal_output {
+                crate::services::l2_causality::validate_output_proof(voucher, tx, proof)?;
+            }
             chain.push(req);
         }
     }
@@ -1180,11 +1304,15 @@ mod tests {
             status: 1,
             active_nodes_count: 20,
             signer_count: 14,
-            signatures: vec![make_dummy_attestation(1, 42, "lock_123"), make_dummy_attestation(2, 42, "lock_123")],
+            signatures: vec![
+                make_dummy_attestation(1, 42, "lock_123"),
+                make_dummy_attestation(2, 42, "lock_123"),
+            ],
         };
 
         let json = serde_json::to_string(&cert).expect("serialize cert");
-        let deserialized: QuorumCertificateDto = serde_json::from_str(&json).expect("deserialize cert");
+        let deserialized: QuorumCertificateDto =
+            serde_json::from_str(&json).expect("deserialize cert");
         assert_eq!(cert, deserialized);
     }
 
@@ -1198,7 +1326,10 @@ mod tests {
             status: 0,
             active_nodes_count: 2,
             signer_count: 2,
-            signatures: vec![make_dummy_attestation(1, shard_id, "lock_1"), make_dummy_attestation(2, shard_id, "lock_1")],
+            signatures: vec![
+                make_dummy_attestation(1, shard_id, "lock_1"),
+                make_dummy_attestation(2, shard_id, "lock_1"),
+            ],
         };
         let (valid, is_final) = verify_quorum_plausibility(&cert_ok, shard_id).unwrap();
         assert!(valid, "2 of 2 must be valid in bootstrap");
@@ -1223,7 +1354,10 @@ mod tests {
             status: 0,
             active_nodes_count: 2,
             signer_count: 2,
-            signatures: vec![make_dummy_attestation(1, shard_id, "lock_1"), make_dummy_attestation(1, shard_id, "lock_1")],
+            signatures: vec![
+                make_dummy_attestation(1, shard_id, "lock_1"),
+                make_dummy_attestation(1, shard_id, "lock_1"),
+            ],
         };
         let (valid_dup, _) = verify_quorum_plausibility(&cert_dup, shard_id).unwrap();
         assert!(!valid_dup, "Duplicate signers must not satisfy quorum");
@@ -1301,6 +1435,7 @@ mod tests {
         let conflict_sig = conflict_sk.sign(&payload_hash);
 
         let existing_lock = L2LockEntry {
+            causal_output: None,
             layer2_voucher_id: voucher_id.to_string(),
             t_id: existing_t_id,
             sender_ephemeral_pub: *conflict_pk.as_bytes(),
@@ -1335,10 +1470,14 @@ mod tests {
             challenge_ds_tag,
             None,
             voucher_id,
-        ).expect("process conflict verdict");
+        )
+        .expect("process conflict verdict");
 
         let expected_server_t_id = bs58::encode(existing_t_id).into_string();
-        assert_eq!(action, VerdictAction::TriggerQuarantine(expected_server_t_id));
+        assert_eq!(
+            action,
+            VerdictAction::TriggerQuarantine(expected_server_t_id)
+        );
     }
 
     #[test]
@@ -1372,6 +1511,7 @@ mod tests {
         let client_sig = client_sk.sign(&payload_hash);
 
         let lock_entry = L2LockEntry {
+            causal_output: None,
             layer2_voucher_id: voucher_id.clone(),
             t_id,
             sender_ephemeral_pub: *client_pk.as_bytes(),
@@ -1387,7 +1527,9 @@ mod tests {
         };
 
         // 1. Without QuorumCertificate -> ConfirmLocal
-        let verdict1 = L2Verdict::Verified { lock_entry: lock_entry.clone() };
+        let verdict1 = L2Verdict::Verified {
+            lock_entry: lock_entry.clone(),
+        };
         let v1_bytes = serde_json::to_vec(&verdict1).unwrap();
         let mut h1 = Sha256::new();
         h1.update(&v1_bytes);
@@ -1405,7 +1547,8 @@ mod tests {
             &challenge_ds_tag,
             Some(&bs58::encode(client_pk.as_bytes()).into_string()),
             &voucher_id,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(action1, VerdictAction::ConfirmLocal);
 
         // 2. Claimed FINAL with dummy signatures and no independent authority is rejected.
@@ -1416,10 +1559,14 @@ mod tests {
             status: 1,
             active_nodes_count: 20,
             signer_count: 14,
-            signatures: (1..=14).map(|nid| make_dummy_attestation(nid, shard_id, &lock_id_hex)).collect(),
+            signatures: (1..=14)
+                .map(|nid| make_dummy_attestation(nid, shard_id, &lock_id_hex))
+                .collect(),
         };
         let env2 = L2ResponseEnvelope {
-            verdict: L2Verdict::Verified { lock_entry: lock_entry.clone() },
+            verdict: L2Verdict::Verified {
+                lock_entry: lock_entry.clone(),
+            },
             server_signature: sig1.to_bytes(),
             quorum_certificate: Some(cert_final.clone()),
         };
@@ -1477,11 +1624,13 @@ mod tests {
         let t_id = [0x11u8; 32];
         let sig = [0x22u8; 64];
         let lock1 = L2LockRequest {
+            causal_output: None,
             auth: L2AuthPayload {
                 ephemeral_pubkey: pk1,
                 auth_signature: None,
             },
-            layer2_voucher_id: "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234".to_string(),
+            layer2_voucher_id: "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234"
+                .to_string(),
             ds_tag: None,
             transaction_hash: t_id,
             is_genesis: true,
@@ -1497,6 +1646,7 @@ mod tests {
             privacy_guard: None,
         };
         let lock2 = L2LockRequest {
+            causal_output: None,
             auth: L2AuthPayload {
                 ephemeral_pubkey: pk2,
                 auth_signature: None,
@@ -1536,9 +1686,12 @@ mod tests {
     #[test]
     fn test_build_voucher_lock_chain_genesis_variants() {
         use crate::test_utils::ACTORS;
-        use crate::test_utils::voucher_setup::{create_transaction_with_auto_decrypt, setup_voucher_with_one_tx};
+        use crate::test_utils::voucher_setup::{
+            create_transaction_with_auto_decrypt, setup_voucher_with_one_tx,
+        };
 
-        let (standard, _hash, _creator, _recipient, voucher1, secrets1) = setup_voucher_with_one_tx();
+        let (standard, _hash, _creator, _recipient, voucher1, secrets1) =
+            setup_voucher_with_one_tx();
         // Build second tx: bob -> charlie
         let bob = &ACTORS.bob.identity;
         let charlie = &ACTORS.charlie.identity;
@@ -1566,18 +1719,23 @@ mod tests {
         let last_tx = voucher2.transactions.last().unwrap();
         let last_sender_str = last_tx.sender_ephemeral_pub.as_deref().unwrap();
         let last_sender_bytes =
-            crate::services::crypto::decode_bs58_fixed::<32>(last_sender_str, "sender_pub").unwrap();
+            crate::services::crypto::decode_bs58_fixed::<32>(last_sender_str, "sender_pub")
+                .unwrap();
         let target_req = generate_lock_request(&layer2_id, last_tx, &last_sender_bytes).unwrap();
 
         // Case A: sync_point None -> genesis inclusive chain of length 3
         let chain_none = build_voucher_lock_chain(&voucher2, None, target_req.clone()).unwrap();
         assert_eq!(chain_none.chain.len(), 3);
         assert!(chain_none.chain[0].is_genesis);
-        assert_eq!(chain_none.chain[2].transaction_hash, target_req.transaction_hash);
+        assert_eq!(
+            chain_none.chain[2].transaction_hash,
+            target_req.transaction_hash
+        );
         assert_eq!(chain_none.layer2_voucher_id, layer2_id);
 
         // Case B: sync_point "genesis" -> also starts at 0
-        let chain_genesis = build_voucher_lock_chain(&voucher2, Some("genesis"), target_req.clone()).unwrap();
+        let chain_genesis =
+            build_voucher_lock_chain(&voucher2, Some("genesis"), target_req.clone()).unwrap();
         assert_eq!(chain_genesis.chain.len(), 3);
         assert!(chain_genesis.chain[0].is_genesis);
 
@@ -1588,38 +1746,60 @@ mod tests {
         assert_eq!(chain_after_genesis.chain.len(), 2);
         assert!(!chain_after_genesis.chain[0].is_genesis);
         // first element should correspond to tx1
-        let tx1_hash = crate::services::crypto::decode_bs58_fixed::<32>(&voucher2.transactions[1].t_id, "t_id").unwrap();
+        let tx1_hash = crate::services::crypto::decode_bs58_fixed::<32>(
+            &voucher2.transactions[1].t_id,
+            "t_id",
+        )
+        .unwrap();
         assert_eq!(chain_after_genesis.chain[0].transaction_hash, tx1_hash);
 
         // Case D: sync_point = ds_tag of first spend -> only last tx
-        let tx1_ds = voucher2.transactions[1].trap_data.as_ref().unwrap().ds_tag.clone();
-        let chain_after_tx1 = build_voucher_lock_chain(&voucher2, Some(&tx1_ds), target_req.clone()).unwrap();
+        let tx1_ds = voucher2.transactions[1]
+            .trap_data
+            .as_ref()
+            .unwrap()
+            .ds_tag
+            .clone();
+        let chain_after_tx1 =
+            build_voucher_lock_chain(&voucher2, Some(&tx1_ds), target_req.clone()).unwrap();
         assert_eq!(chain_after_tx1.chain.len(), 1);
-        assert_eq!(chain_after_tx1.chain[0].transaction_hash, target_req.transaction_hash);
+        assert_eq!(
+            chain_after_tx1.chain[0].transaction_hash,
+            target_req.transaction_hash
+        );
 
         // Case E: sync_point prefix (10 chars) of genesis t_id
         let genesis_prefix: String = genesis_tid.chars().take(10).collect();
-        let chain_prefix = build_voucher_lock_chain(&voucher2, Some(&genesis_prefix), target_req.clone()).unwrap();
+        let chain_prefix =
+            build_voucher_lock_chain(&voucher2, Some(&genesis_prefix), target_req.clone()).unwrap();
         assert_eq!(chain_prefix.chain.len(), 2);
 
         // Case F: Exact match takes priority and rposition finds latest match
         let tx1_tid = voucher2.transactions[1].t_id.clone();
-        let chain_tx1_exact = build_voucher_lock_chain(&voucher2, Some(&tx1_tid), target_req.clone()).unwrap();
+        let chain_tx1_exact =
+            build_voucher_lock_chain(&voucher2, Some(&tx1_tid), target_req.clone()).unwrap();
         assert_eq!(chain_tx1_exact.chain.len(), 1); // Only tx2 remains
-        assert_eq!(chain_tx1_exact.chain[0].transaction_hash, target_req.transaction_hash);
+        assert_eq!(
+            chain_tx1_exact.chain[0].transaction_hash,
+            target_req.transaction_hash
+        );
 
         // Serde roundtrip of built chain
         let json = serde_json::to_string(&chain_none).unwrap();
-        let de: crate::models::layer2_api::L2ChainLockRequest = serde_json::from_str(&json).unwrap();
+        let de: crate::models::layer2_api::L2ChainLockRequest =
+            serde_json::from_str(&json).unwrap();
         assert_eq!(de.chain.len(), 3);
     }
 
     #[test]
     fn test_build_voucher_lock_chain_error_cases() {
         use crate::test_utils::ACTORS;
-        use crate::test_utils::voucher_setup::{create_transaction_with_auto_decrypt, setup_voucher_with_one_tx};
+        use crate::test_utils::voucher_setup::{
+            create_transaction_with_auto_decrypt, setup_voucher_with_one_tx,
+        };
 
-        let (standard, _hash, _creator, _recipient, voucher1, secrets1) = setup_voucher_with_one_tx();
+        let (standard, _hash, _creator, _recipient, voucher1, secrets1) =
+            setup_voucher_with_one_tx();
         let bob = &ACTORS.bob.identity;
         let charlie = &ACTORS.charlie.identity;
         let seed_bytes = bs58::decode(&secrets1.recipient_seed).into_vec().unwrap();
@@ -1646,16 +1826,23 @@ mod tests {
         let target_req = generate_lock_request(&layer2_id, last_tx, &last_sender_bytes).unwrap();
 
         // Unknown sync_point
-        let err = build_voucher_lock_chain(&voucher2, Some("nonexistent_sync_point"), target_req.clone()).unwrap_err();
+        let err = build_voucher_lock_chain(
+            &voucher2,
+            Some("nonexistent_sync_point"),
+            target_req.clone(),
+        )
+        .unwrap_err();
         assert!(format!("{:?}", err).contains("sync_point"));
 
         // sync beyond target (use last tx's t_id as sync)
         let last_tid = last_tx.t_id.clone();
-        let err2 = build_voucher_lock_chain(&voucher2, Some(&last_tid), target_req.clone()).unwrap_err();
+        let err2 =
+            build_voucher_lock_chain(&voucher2, Some(&last_tid), target_req.clone()).unwrap_err();
         assert!(format!("{:?}", err2).contains("beyond"));
 
         // target not in voucher
         let fake_target = L2LockRequest {
+            causal_output: None,
             transaction_hash: [0xFFu8; 32],
             ..target_req.clone()
         };
@@ -1665,7 +1852,10 @@ mod tests {
         // empty voucher
         let empty_voucher = crate::models::voucher::Voucher::default();
         let err4 = build_voucher_lock_chain(&empty_voucher, None, target_req).unwrap_err();
-        assert!(format!("{:?}", err4).contains("MissingTransactions") || format!("{:?}", err4).contains("transactions"));
+        assert!(
+            format!("{:?}", err4).contains("MissingTransactions")
+                || format!("{:?}", err4).contains("transactions")
+        );
     }
 
     #[test]
@@ -1675,7 +1865,8 @@ mod tests {
         #[cfg(feature = "test-utils")]
         crate::set_signature_bypass(false);
 
-        let (_standard, _hash, _creator, _recipient, voucher1, _secrets1) = setup_voucher_with_one_tx();
+        let (_standard, _hash, _creator, _recipient, voucher1, _secrets1) =
+            setup_voucher_with_one_tx();
         assert!(voucher1.transactions.len() >= 2);
         let layer2_id = extract_layer2_voucher_id(&voucher1).expect("extract layer2 id");
         let spend_tx = &voucher1.transactions[1];
@@ -1687,7 +1878,8 @@ mod tests {
         let sender_bytes =
             crate::services::crypto::decode_bs58_fixed::<32>(sender_str, "sender_pub").unwrap();
 
-        let req = generate_lock_request(&layer2_id, spend_tx, &sender_bytes).expect("generate lock request");
+        let req = generate_lock_request(&layer2_id, spend_tx, &sender_bytes)
+            .expect("generate lock request");
         let challenge_ds_tag = derive_challenge_tag(spend_tx).expect("derive challenge ds tag");
 
         let lock_entry = L2LockEntry::from(req);
@@ -1707,7 +1899,10 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(err_created_at, VoucherCoreError::Validation(crate::error::ValidationError::InvalidL2Proof)),
+            matches!(
+                err_created_at,
+                VoucherCoreError::Validation(crate::error::ValidationError::InvalidL2Proof)
+            ),
             "Mutated created_at_ms must fail with InvalidL2Proof, got {:?}",
             err_created_at
         );
@@ -1723,7 +1918,10 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(err_enc_ts, VoucherCoreError::Validation(crate::error::ValidationError::InvalidL2Proof)),
+            matches!(
+                err_enc_ts,
+                VoucherCoreError::Validation(crate::error::ValidationError::InvalidL2Proof)
+            ),
             "Mutated encrypted_timestamp must fail with InvalidL2Proof, got {:?}",
             err_enc_ts
         );
@@ -1793,7 +1991,10 @@ mod tests {
         // 5. verify_checkout_receipt_certificate via DTO conversion
         let cert = QuorumCertificateDto::from(proof_14);
         let res_cert = verify_checkout_receipt_certificate(&cert, &digest, &committee, 14);
-        assert!(res_cert.is_ok(), "Certificate roundtrip verification must succeed");
+        assert!(
+            res_cert.is_ok(),
+            "Certificate roundtrip verification must succeed"
+        );
     }
 }
 
@@ -1806,19 +2007,103 @@ mod recipient_authority_tests {
     #[test]
     fn canonical_original_proof_requires_independent_full_key_authority() {
         let keys: Vec<_> = (1..=20).map(|i| SigningKey::from_bytes(&[i; 32])).collect();
-        let authority = CheckoutAuthority { network:0, shard_id:9, parent_lock:[1;32], child_lock:[2;32], committee:keys.iter().map(|k| k.verifying_key().to_bytes()).collect() };
-        let digest = humoco_proto::live::original_approval_digest(0,9,1,&authority.parent_lock,&authority.child_lock).unwrap();
-        let certificate = QuorumCertificateDto { lock_id:hex::encode(authority.child_lock), shard_id:9, status:1, active_nodes_count:20, signer_count:14,
-            signatures:keys.iter().take(14).enumerate().map(|(i,key)| AttestationDto { lock_id:hex::encode(authority.child_lock), parent_lock:hex::encode(authority.parent_lock), node_id:i as u16, node_pubkey:hex::encode(key.verifying_key().to_bytes()), timestamp:0, signature:hex::encode(key.sign(&digest).to_bytes()), shard_id:9 }).collect() };
-        assert!(matches!(evaluate_quorum_certificate(Some(certificate.clone()),&authority.child_lock,"voucher",Some(&authority)),Ok(VerdictAction::ConfirmFinal{..})));
-        assert!(evaluate_quorum_certificate(Some(certificate.clone()),&authority.child_lock,"voucher",None).is_err());
-        let mut short = certificate.clone(); short.signatures.pop();
-        assert!(evaluate_quorum_certificate(Some(short),&authority.child_lock,"voucher",Some(&authority)).is_err());
-        let mut duplicate = certificate.clone(); duplicate.signatures[13] = duplicate.signatures[0].clone();
-        assert!(evaluate_quorum_certificate(Some(duplicate),&authority.child_lock,"voucher",Some(&authority)).is_err());
-        let mut forged = certificate.clone(); forged.signatures[0].signature = hex::encode([0;64]);
-        assert!(evaluate_quorum_certificate(Some(forged),&authority.child_lock,"voucher",Some(&authority)).is_err());
-        let mut wrong_network = authority.clone(); wrong_network.network = 1;
-        assert!(evaluate_quorum_certificate(Some(certificate.clone()),&authority.child_lock,"voucher",Some(&wrong_network)).is_err());
+        let authority = CheckoutAuthority {
+            network: 0,
+            shard_id: 9,
+            parent_lock: [1; 32],
+            child_lock: [2; 32],
+            committee: keys.iter().map(|k| k.verifying_key().to_bytes()).collect(),
+        };
+        let digest = humoco_proto::live::original_approval_digest(
+            0,
+            9,
+            1,
+            &authority.parent_lock,
+            &authority.child_lock,
+        )
+        .unwrap();
+        let certificate = QuorumCertificateDto {
+            lock_id: hex::encode(authority.child_lock),
+            shard_id: 9,
+            status: 1,
+            active_nodes_count: 20,
+            signer_count: 14,
+            signatures: keys
+                .iter()
+                .take(14)
+                .enumerate()
+                .map(|(i, key)| AttestationDto {
+                    lock_id: hex::encode(authority.child_lock),
+                    parent_lock: hex::encode(authority.parent_lock),
+                    node_id: i as u16,
+                    node_pubkey: hex::encode(key.verifying_key().to_bytes()),
+                    timestamp: 0,
+                    signature: hex::encode(key.sign(&digest).to_bytes()),
+                    shard_id: 9,
+                })
+                .collect(),
+        };
+        assert!(matches!(
+            evaluate_quorum_certificate(
+                Some(certificate.clone()),
+                &authority.child_lock,
+                "voucher",
+                Some(&authority)
+            ),
+            Ok(VerdictAction::ConfirmFinal { .. })
+        ));
+        assert!(
+            evaluate_quorum_certificate(
+                Some(certificate.clone()),
+                &authority.child_lock,
+                "voucher",
+                None
+            )
+            .is_err()
+        );
+        let mut short = certificate.clone();
+        short.signatures.pop();
+        assert!(
+            evaluate_quorum_certificate(
+                Some(short),
+                &authority.child_lock,
+                "voucher",
+                Some(&authority)
+            )
+            .is_err()
+        );
+        let mut duplicate = certificate.clone();
+        duplicate.signatures[13] = duplicate.signatures[0].clone();
+        assert!(
+            evaluate_quorum_certificate(
+                Some(duplicate),
+                &authority.child_lock,
+                "voucher",
+                Some(&authority)
+            )
+            .is_err()
+        );
+        let mut forged = certificate.clone();
+        forged.signatures[0].signature = hex::encode([0; 64]);
+        assert!(
+            evaluate_quorum_certificate(
+                Some(forged),
+                &authority.child_lock,
+                "voucher",
+                Some(&authority)
+            )
+            .is_err()
+        );
+        let mut wrong_network = authority.clone();
+        wrong_network.network = 1;
+        assert!(
+            evaluate_quorum_certificate(
+                Some(certificate.clone()),
+                &authority.child_lock,
+                "voucher",
+                Some(&wrong_network)
+            )
+            .is_err()
+        );
     }
 }
