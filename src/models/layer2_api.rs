@@ -593,6 +593,14 @@ pub enum L2ProcessingOutcome {
     ///
     /// Original write receipts never produce this outcome; only an explicit live-state
     /// proof (see `AppService::verify_live_checkout_proof`) may.
+    ///
+    /// # Z01 Fail-Closed Goods Release Boundary:
+    /// This outcome is purely a **mathematical observation**: the live proof
+    /// (14/20 quorum signatures + recipient challenge binding) is verified as a
+    /// service. It does **not** authorize automatic goods release by itself,
+    /// because the caller-supplied context alone cannot prove that a purchase
+    /// has been durably committed on the backend. Automatic goods release is
+    /// only minted through an explicit [`DurablePurchaseBinding`] (Z08).
     Confirmed,
     Quarantined { reason: String },
     SyncRequired { sync_point: String },
@@ -609,10 +617,55 @@ pub struct CheckoutReleaseVerdict {
     pub merchant_warning: Option<String>,
 }
 
+/// Capability token representing a backend-verified, durably committed
+/// purchase/operation binding (Z08 boundary).
+///
+/// # Capability-Security Design:
+/// This struct is deliberately **unconstructible from caller-supplied data**:
+/// it carries no externalizable payload and has no public constructor. Its
+/// `Serialize`/`Deserialize` derivings are intentionally omitted so it cannot
+/// be forged via deserialization either. Automatic goods release for
+/// [`L2ProcessingOutcome::Confirmed`] can therefore only be minted by code
+/// inside this crate that actually holds a backend-verified durable purchase
+/// state — never through caller-controlled parameters or raw outcome
+/// constructors (`CheckoutReleaseVerdict::new`).
+///
+/// Until Z08 (durable purchase state) is wired, no production call site mints
+/// this token; the goods release boundary is fail-closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DurablePurchaseBinding(());
+
+impl DurablePurchaseBinding {
+    /// Mints a binding from backend-verified durable purchase state.
+    ///
+    /// # Z08 Placeholder:
+    /// Until the durable purchase/operation state boundary exists, this is a
+    /// crate-internal capability used only by tests and future backend-owned
+    /// verification paths. Wallet-facing call sites must never call it.
+    #[allow(dead_code)]
+    pub(crate) fn backend_verified() -> Self {
+        Self(())
+    }
+}
+
 impl CheckoutReleaseVerdict {
     pub fn new(outcome: L2ProcessingOutcome, explicit_merchant_approval: bool) -> Self {
         let (can_auto, req_approval, authorized, warning) = match &outcome {
-            L2ProcessingOutcome::Confirmed => (true, false, true, None),
+            // Z01 fail-closed boundary (DEC-072 / DEC-084): a `Confirmed` live
+            // proof is a mathematically verified **observation**. Automatic
+            // goods release requires a backend-owned, durably committed
+            // purchase/operation binding (Z08) and can never be minted from
+            // caller-supplied context alone. Attach a
+            // [`DurablePurchaseBinding`] via
+            // [`Self::with_durable_purchase_binding`] to lift it.
+            L2ProcessingOutcome::Confirmed => (
+                false,
+                true,
+                false,
+                Some(
+                    "Live checkout proof mathematically verified as an observation (14/20 quorum + recipient challenge). Automatic goods release requires backend durable purchase state and cannot be authorized from caller context (Z01 fail-closed).".to_string(),
+                ),
+            ),
             L2ProcessingOutcome::Found => (
                 false,
                 true,
@@ -646,6 +699,23 @@ impl CheckoutReleaseVerdict {
             is_goods_release_authorized: authorized,
             merchant_warning: warning,
         }
+    }
+
+    /// Explicitly binds an outcome to backend-verified durable purchase state.
+    ///
+    /// This is the **only** escalation path that can mint automatic goods
+    /// release, and it requires a [`DurablePurchaseBinding`] token that
+    /// cannot be constructed from caller-supplied data. Binding only has an
+    /// effect for [`L2ProcessingOutcome::Confirmed`]; all other outcomes
+    /// (esp. `Quarantined`) remain strictly fail-closed.
+    pub fn with_durable_purchase_binding(mut self, _binding: DurablePurchaseBinding) -> Self {
+        if self.outcome == L2ProcessingOutcome::Confirmed {
+            self.can_release_goods_automatically = true;
+            self.requires_merchant_approval = false;
+            self.is_goods_release_authorized = true;
+            self.merchant_warning = None;
+        }
+        self
     }
 }
 

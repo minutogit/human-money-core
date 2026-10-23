@@ -60,7 +60,10 @@ pub use models::voucher::{
     VoucherSignature, VoucherStandard,
 };
 pub use models::discovery::{BootstrapNodeEntry, BootstrapSeedFile, CustomServerEntry};
-pub use models::layer2_api::{CheckoutReleaseVerdict, L2ProcessingOutcome, VoucherReconciliationResult};
+pub use models::layer2_api::{
+    CheckoutReleaseVerdict, DurablePurchaseBinding, L2ProcessingOutcome,
+    VoucherReconciliationResult,
+};
 pub use humoco_proto;
 pub use hex;
 pub use models::voucher_standard_definition::VoucherStandardDefinition;

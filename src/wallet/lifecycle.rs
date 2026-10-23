@@ -92,6 +92,7 @@ impl Wallet {
             needs: None,
             picture_url: None,
             l2_server_pubkey: None,
+            l2_regional_mesh_policy: None,
         };
 
         let voucher_store = VoucherStore::default();

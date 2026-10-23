@@ -384,8 +384,48 @@ impl AppService {
         crate::models::layer2_api::CheckoutReleaseVerdict::new(outcome, explicit_merchant_approval)
     }
 
+    /// Configures recipient-owned regional sources in an authenticated durable
+    /// wallet transaction. A payment proof can never replace this policy.
+    pub fn configure_regional_mesh_authority(
+        &mut self, policy: humoco_proto::mesh::RegionalMeshPolicy, password: Option<&str>,
+    ) -> Result<(), Error> {
+        policy.validate().map_err(|_| Error::Validation(crate::error::ValidationError::InvalidL2Proof))?;
+        self.with_transactional_mut(password, move |wallet, _, _, _| {
+            wallet.profile.l2_regional_mesh_policy = Some(policy);
+            TransactionOutcome::Commit(())
+        })
+    }
+
+    /// Derives current authority from configured authenticated regional views.
+    /// The expected nonce/purchase binding still requires the separate durable
+    /// operation boundary; this observation alone never authorizes goods release.
+    pub fn verify_live_checkout_with_regional_authority(
+        &self,
+        proof: &humoco_proto::live::LiveStateProof,
+        expected: &humoco_proto::live::LiveStateContext,
+        views: &[humoco_proto::mesh::RegionalMeshView],
+        now_ms: u64,
+        explicit_merchant_approval: bool,
+    ) -> Result<crate::models::layer2_api::CheckoutReleaseVerdict, Error> {
+        let invalid = || Error::Validation(crate::error::ValidationError::InvalidL2Proof);
+        if expected.root_valid_until <= now_ms { return Err(invalid()); }
+        let policy = self.get_wallet()?.profile.l2_regional_mesh_policy.as_ref().ok_or_else(invalid)?;
+        let committee = humoco_proto::mesh::regional_committee(policy, views, expected.shard_id, now_ms).map_err(|_| invalid())?;
+        if expected.network != policy.network || expected.committee != committee { return Err(invalid()); }
+        self.verify_live_checkout_proof(proof, expected, explicit_merchant_approval)
+    }
+
     /// Verifies that an ephemeral live-state proof confirms the voucher lock with full 14/20 quorum
-    /// and recipient challenge binding, producing an authorized goods release verdict.
+    /// and recipient challenge binding.
+    ///
+    /// # Z01 Fail-Closed Goods Release Boundary:
+    /// The mathematical verification (signatures, quorum, recipient challenge) is performed
+    /// as a pure service and reported via [`L2ProcessingOutcome::Confirmed`]. However, this
+    /// is only an **observation**: automatic goods release is never granted from
+    /// caller-supplied context alone. The returned verdict always carries
+    /// `can_release_goods_automatically == false` with an explanatory [`merchant_warning`]
+    /// until the backend durably commits the purchase/operation state (Z08) and lifts the
+    /// boundary via [`DurablePurchaseBinding`].
     pub fn verify_live_checkout_proof(
         &self,
         proof: &humoco_proto::live::LiveStateProof,
@@ -410,9 +450,9 @@ impl AppService {
     /// write was accepted. It is **not** bound to a live recipient challenge and therefore
     /// cannot prove the current voucher state. Consequently this function guarantees
     /// `can_release_goods_automatically == false` regardless of the supplied authority or
-    /// explicit merchant approval. Only [`Self::verify_live_checkout_proof`] may authorize
-    /// automatic goods release, because only it verifies a live, recipient-challenge-bound
-    /// quorum proof.
+    /// explicit merchant approval. Even [`Self::verify_live_checkout_proof`] only verifies
+    /// the mathematical proof as an observation: automatic goods release stays fail-closed
+    /// until a backend [`DurablePurchaseBinding`] is presented (Z08).
     pub fn verify_checkout_response_with_authority(
         &mut self,
         local_id: String,
@@ -451,18 +491,47 @@ impl AppService {
 #[cfg(test)]
 mod checkout_release_tests {
     use super::*;
-    use crate::models::layer2_api::{CheckoutReleaseVerdict, L2ProcessingOutcome};
+    use crate::models::layer2_api::{CheckoutReleaseVerdict, DurablePurchaseBinding, L2ProcessingOutcome};
     use ed25519_dalek::{Signer, SigningKey};
     use humoco_proto::live::{LiveStateContext, LiveStateProof};
     use humoco_proto::AttestationVote;
 
     #[test]
     fn confirmed_outcome_authorizes_automatic_goods_release() {
-        let verdict = CheckoutReleaseVerdict::new(L2ProcessingOutcome::Confirmed, false);
-        assert!(verdict.can_release_goods_automatically);
-        assert!(!verdict.requires_merchant_approval);
-        assert!(verdict.is_goods_release_authorized);
-        assert!(verdict.merchant_warning.is_none());
+        // Z01 fail-closed boundary: the raw outcome constructor must never mint
+        // automatic goods release from caller-controlled parameters alone,
+        // even for a `Confirmed` live proof.
+        let unbound = CheckoutReleaseVerdict::new(L2ProcessingOutcome::Confirmed, false);
+        assert!(!unbound.can_release_goods_automatically);
+        assert!(unbound.requires_merchant_approval);
+        assert!(!unbound.is_goods_release_authorized);
+        assert!(unbound.merchant_warning.is_some());
+
+        // Even an explicitly approving merchant cannot mint automatic release;
+        // approval is only a manual observation override, not a Z08 binding.
+        let approved = CheckoutReleaseVerdict::new(L2ProcessingOutcome::Confirmed, true);
+        assert!(!approved.can_release_goods_automatically);
+        assert!(!approved.is_goods_release_authorized);
+        assert!(approved.merchant_warning.is_some());
+
+        // Only an explicit binding to backend-verified durable purchase state
+        // (Z08) authorizes automatic goods release.
+        let bound = unbound
+            .clone()
+            .with_durable_purchase_binding(DurablePurchaseBinding::backend_verified());
+        assert!(bound.can_release_goods_automatically);
+        assert!(!bound.requires_merchant_approval);
+        assert!(bound.is_goods_release_authorized);
+        assert!(bound.merchant_warning.is_none());
+
+        // The binding is a no-op for all non-Confirmed outcomes.
+        let quarantined = CheckoutReleaseVerdict::new(
+            L2ProcessingOutcome::Quarantined { reason: "collision".to_string() },
+            false,
+        )
+        .with_durable_purchase_binding(DurablePurchaseBinding::backend_verified());
+        assert!(!quarantined.can_release_goods_automatically);
+        assert!(!quarantined.is_goods_release_authorized);
     }
 
     #[test]
@@ -535,8 +604,12 @@ mod checkout_release_tests {
         assert!(res.is_ok(), "14/20 valid signatures with challenge must succeed");
         let verdict = res.unwrap();
         assert_eq!(verdict.outcome, L2ProcessingOutcome::Confirmed);
-        assert!(verdict.can_release_goods_automatically);
-        assert!(verdict.is_goods_release_authorized);
+        // Z01 fail-closed boundary: mathematical live proof verification alone
+        // does NOT authorize automatic goods release until backend purchase
+        // state is durably committed (Z08).
+        assert!(!verdict.can_release_goods_automatically);
+        assert!(!verdict.is_goods_release_authorized);
+        assert!(verdict.merchant_warning.is_some());
 
         // Zero recipient challenge must be rejected
         let mut zero_nonce_context = valid_context.clone();
@@ -722,5 +795,51 @@ mod checkout_release_tests {
                 explicit_merchant_approval
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod regional_mesh_backend_tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+    use humoco_proto::{AttestationVote, live::{LiveStateContext, LiveStateProof}, mesh::{RegionalMeshPolicy, RegionalMeshView, RegionalMeshMember}};
+    #[test]
+    fn stored_configuration_survives_restart_and_rejects_receipt_selected_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let password = "regional-source-test";
+        let (mut service, profile) = crate::test_utils::setup_service_with_profile(dir.path(), &crate::test_utils::ACTORS.test_user, "Regional", password);
+        let source = SigningKey::from_bytes(&[100;32]);
+        let keys: Vec<_> = (1u8..=20).map(|i| SigningKey::from_bytes(&[i;32])).collect();
+        let mut members: Vec<_> = keys.iter().enumerate().map(|(i,key)| RegionalMeshMember { node_pubkey:key.verifying_key().to_bytes(), hrw_routing_id:[i as u8;32] }).collect();
+        members.sort_by_key(|m|m.node_pubkey);
+        let mut view = RegionalMeshView { version:1, network:0, source_key:source.verifying_key().to_bytes(), issued_at_ms:1_000, valid_until_ms:61_000, members, signature:[0;64] };
+        view.signature = source.sign(&view.digest().unwrap()).to_bytes();
+        let policy = RegionalMeshPolicy { network:0, source_keys:vec![view.source_key] };
+        let roster = humoco_proto::mesh::regional_committee(&policy, &[view.clone()], 42, 2_000).unwrap();
+        let tag = "recipient-regional-slot".to_string();
+        let expected = LiveStateContext { version:1, network:0, shard_id:42, voucher_id:"voucher".into(), lookup_tag:tag.clone(), parent_lock:*blake3::hash(tag.as_bytes()).as_bytes(), child_lock:[3;32], root_valid_until:50_000, state_digest:[4;32], recipient_nonce:[5;32], committee:roster };
+        let digest = humoco_proto::live::live_state_digest(&expected).unwrap();
+        let votes = keys.iter().take(14).map(|key|AttestationVote { signer_pubkey:key.verifying_key().to_bytes(), signature:key.sign(&digest).to_bytes() }).collect();
+        let proof = LiveStateProof { context:expected.clone(), votes };
+        assert!(service.verify_live_checkout_with_regional_authority(&proof,&expected,&[view.clone()],2_000,false).is_err());
+        assert!(service.configure_regional_mesh_authority(policy.clone(),Some("wrong password")).is_err());
+        service.login(&profile.folder_name,password,false,"test-id".into()).unwrap();
+        assert!(service.get_wallet().unwrap().profile.l2_regional_mesh_policy.is_none());
+        service.configure_regional_mesh_authority(policy.clone(),Some(password)).unwrap();
+        let verdict = service.verify_live_checkout_with_regional_authority(&proof,&expected,&[view.clone()],2_000,false).unwrap();
+        assert!(!verdict.can_release_goods_automatically, "authority is not a durable purchase");
+        assert!(service.verify_live_checkout_with_regional_authority(&proof,&expected,&[view.clone()],55_000,false).is_err(), "a current regional view cannot revive an expired root");
+        service.logout(); drop(service);
+        let mut service = AppService::new(dir.path()).unwrap();
+        service.login(&profile.folder_name,password,false,"test-id".into()).unwrap();
+        assert_eq!(service.get_wallet().unwrap().profile.l2_regional_mesh_policy,Some(policy));
+        assert!(service.verify_live_checkout_with_regional_authority(&proof,&expected,&[view.clone()],2_000,false).is_ok());
+        let mut self_chosen = expected.clone(); self_chosen.committee.reverse();
+        let wrong_digest = humoco_proto::live::live_state_digest(&self_chosen).unwrap();
+        let wrong_proof = LiveStateProof { context:self_chosen.clone(), votes:keys.iter().take(14).map(|key| AttestationVote { signer_pubkey:key.verifying_key().to_bytes(), signature:key.sign(&wrong_digest).to_bytes() }).collect() };
+        assert!(humoco_proto::live::verify_live_state_proof(&wrong_proof,&self_chosen).is_ok(), "the adversarial proof is mathematically genuine");
+        assert!(service.verify_live_checkout_with_regional_authority(&wrong_proof,&self_chosen,&[view.clone()],2_000,false).is_err());
+        view.signature[0] ^= 1;
+        assert!(service.verify_live_checkout_with_regional_authority(&proof,&expected,&[view],2_000,false).is_err());
     }
 }

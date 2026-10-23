@@ -3,7 +3,7 @@ project: human-money-core
 version: "0.3.1"
 phase: "active-development"
 health: "green"
-last_updated: "2026-10-21"
+last_updated: "2026-10-23"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -36,6 +36,11 @@ priority_tasks:
 # Human Money Core — Status
 
 ## Current Focus
+
+Z01 fail-closed checkout release (2026-10-23): `Confirmed` live-proof verification
+is now a pure mathematical observation; automatic goods release is fail-closed and
+requires the crate-internal `DurablePurchaseBinding` capability token (Z08 durable
+purchase state). See Recent Milestones for the full contract and test evidence.
 
 Wallet backup milestone (2026-10-21): added transport-independent differential
 backup export, authenticated inspection, and staged restore through `AppService`.
@@ -125,6 +130,8 @@ The core library is stable and feature-rich. Current focus areas:
 
 ## Recent Milestones
 
+- [x] **Z01 Fail-Closed Goods Release Boundary (2026-10-23)**: Decoupled mathematical live-proof verification from automatic goods release authorization in `models/layer2_api` and `app_service/conflicts.rs`. `CheckoutReleaseVerdict::new` now treats `L2ProcessingOutcome::Confirmed` strictly as a mathematical observation (14/20 live quorum + recipient challenge): `can_release_goods_automatically == false`, `is_goods_release_authorized == false`, and an explanatory `merchant_warning` is emitted until the backend durably commits purchase/operation state (Z08). Automatic release can only be minted through the new `with_durable_purchase_binding` escalation path, which requires the new capability token `DurablePurchaseBinding` (no public constructor, no serde, unconstructible from caller-supplied data). `AppService::verify_live_checkout_proof` still succeeds at cryptographic verification but returns the fail-closed verdict. Test suite updated in `checkout_release_tests` to assert the Z01 fail-closed boundary plus the explicit durable binding path. Known pre-existing failures: 6 `WalletLocked` transactionality/save-failure tests (reproduced on unchanged HEAD) and one timing-flaky session-refresh test (green in isolation).
+
 - [x] **Layer-2 Wallet Safety, Backup Reconciliation, and Ingress Invariants (2026-10-18)**: Implemented Two-Tier Ingress Safety Architecture in `human-money-core`. Added `VoucherReconciliationResult` enum (`UnspentSafe`, `AlreadySpent`) in `models::layer2_api`. In `services::l2_gateway`, introduced `is_l2_success_http_status` (verifying 200 OK and 201 Created as confirmations), exposed `verify_lock_entry_proof`, and added unit test `test_l2_lock_request_signature_commits_to_created_at_ms` confirming that `created_at_ms` and `encrypted_timestamp` independently invalidate the V3 payload digest upon mutation. Created `wallet/reconciliation.rs` implementing `Wallet::build_voucher_status_query` and `Wallet::reconcile_voucher_state`. Implemented `AppService::reconcile_voucher_state` using `TransactionOrchestrator` with `ReloadPolicy::ReconcileReload` to safely synchronize out-of-sync or restored backup states. Provided `Wallet::get_aggregated_balances` convenience query and exposed `_execute_single_transfer`. Created comprehensive integration and recovery test suite `tests/l2_wallet_safety_tests.rs` verifying gateway retry payload determinism, status code acceptance, Rule 3 idempotent retry, backup recovery with balance adjustments and merkle root exclusion, and double-spend prevention. Full test suite green.
 
 - [x] **L2 Lock Request `created_at_ms` & Gateway Retry Invariance (2026-10-18)**: Implemented explicit `created_at_ms: u64` in `L2LockRequest`, `L2LockEntry`, and `TransactionFingerprint`. Placed `&created_at_ms.to_le_bytes()` as canonical slice #9 in `calculate_l2_payload_hash_raw` (between `encrypted_timestamp` and `deletable_at`), achieving strict 1:1 digest parity with `human-money-node`'s `HMC_TX_AUTH_V3`. Enforced and documented the Gateway Retry & Multi-Homing Invariant across all interfaces (`generate_l2_lock_request`, `AppService`, `l2_gateway`): deterministic 5-minute bucket allocation `floor(created_at_ms / 300_000)`, 30-second clock-drift acceptance window `|created_at_ms - net_time_ms| <= 30_000`, and Rule 3 hot-path idempotency on retries. Added dedicated invariance integration tests in `tests/services/l2_integration.rs` verifying that mutating `created_at_ms` alters the payload hash and invalidates the Ed25519 signature, while identical retries evaluate idempotently to `L2ProcessingOutcome::Confirmed`. Full test suite green.
@@ -208,3 +215,15 @@ The core library is stable and feature-rich. Current focus areas:
 - [ ] DID:key identity mapping helpers (Ed25519 ↔ did:key)
 - [ ] Accept external WoT crate via dependency injection (trait objects)
 - [ ] Stranger discovery protocol primitives (offline trust proof)
+
+
+### 2026-10-23 — Recipient regional authority boundary
+
+Added recipient-owned regional mesh source configuration in authenticated durable
+wallet state and backend derivation of the exact current committee from bounded
+signed source views. Missing, forged, stale or disagreeing sources, mismatched
+proof rosters and expired roots fail closed. Policy persistence across logout and
+reload is tested. The existing Z01 automatic-release gate remains closed pending
+a durable challenge/purchase producer; mathematical proof validity is insufficient.
+Validation: 171 library tests passed with nextest against the local sibling Proto.
+This does not certify the published Git dependency graph or full turnover safety.

@@ -260,6 +260,9 @@ pub struct UserProfile {
     /// The public key of the L2 server trusted by this wallet.
     #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
     pub l2_server_pubkey: Option<[u8; 32]>,
+    /// Recipient-owned pinned regional observation sources, separate from proofs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub l2_regional_mesh_policy: Option<humoco_proto::mesh::RegionalMeshPolicy>,
 }
 
 // Implement `Default` for UserProfile to create an empty instance that is then populated.
