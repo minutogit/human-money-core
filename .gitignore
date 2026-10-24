@@ -17,3 +17,6 @@ todo.md
 /.windsurfrules
 node_modules/
 dist/
+fuzz/corpus/
+fuzz/target/
+__pycache__/
