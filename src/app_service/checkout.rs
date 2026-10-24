@@ -137,11 +137,24 @@ impl AppService {
                     }
                     let nonce =
                         generate_recipient_nonce(Some(purchase.context.recipient_nonce))?;
+                    let policy = wallet
+                        .profile
+                        .l2_regional_mesh_policy
+                        .as_ref()
+                        .ok_or_else(|| invalid("recipient authority missing"))?;
+                    let committee = regional_committee(
+                        policy,
+                        views,
+                        purchase.context.shard_id,
+                        now_ms,
+                    )
+                    .map_err(invalid)?;
                     let expires_at_ms = now_ms
                         .saturating_add(CHECKOUT_CHALLENGE_TTL_MS)
                         .min(purchase.context.root_valid_until);
                     let mut context = purchase.context;
                     context.recipient_nonce = nonce;
+                    context.committee = committee;
                     let stored = wallet
                         .profile
                         .l2_checkout_purchases
@@ -670,6 +683,129 @@ mod tests {
             )
             .unwrap_err();
         assert_security_error(&error, "purchase root expired");
+    }
+
+    #[test]
+    fn expired_challenge_renewal_refreshes_committee_and_accepts_new_roster() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut fixture = checkout_fixture(dir.path());
+        let password = "checkout-lifecycle-test";
+        let first = fixture
+            .receiver
+            .begin_checkout_purchase(
+                "renew-authority",
+                &fixture.bundle_bytes,
+                std::slice::from_ref(&fixture.view),
+                fixture.now,
+                Some(password),
+            )
+            .unwrap();
+        let first_expiry = fixture
+            .receiver
+            .with_wallet(|wallet| {
+                wallet
+                    .profile
+                    .l2_checkout_purchases
+                    .get("renew-authority")
+                    .unwrap()
+                    .expires_at_ms
+            })
+            .unwrap();
+        let source = SigningKey::from_bytes(&[100; 32]);
+        let updated_keys: Vec<_> = (21..=40u8)
+            .map(|seed| SigningKey::from_bytes(&[seed; 32]))
+            .collect();
+        let mut updated_members: Vec<_> = updated_keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| RegionalMeshMember {
+                node_pubkey: key.verifying_key().to_bytes(),
+                hrw_routing_id: [(index + 21) as u8; 32],
+            })
+            .collect();
+        updated_members.sort_by_key(|member| member.node_pubkey);
+        let mut updated_view = RegionalMeshView {
+            version: 1,
+            network: 0,
+            source_key: fixture.view.source_key,
+            issued_at_ms: fixture.now,
+            valid_until_ms: fixture.now + 60_000,
+            members: updated_members,
+            signature: [0; 64],
+        };
+        updated_view.signature = source.sign(&updated_view.digest().unwrap()).to_bytes();
+        let renewal_now = first_expiry + 1;
+        let expected_committee = fixture
+            .receiver
+            .with_wallet(|wallet| {
+                let policy = wallet.profile.l2_regional_mesh_policy.as_ref().unwrap();
+                regional_committee(
+                    policy,
+                    std::slice::from_ref(&updated_view),
+                    first.shard_id,
+                    renewal_now,
+                )
+                .unwrap()
+            })
+            .unwrap();
+        assert_ne!(expected_committee, first.committee);
+        let renewed = fixture
+            .receiver
+            .begin_checkout_purchase(
+                "renew-authority",
+                &fixture.bundle_bytes,
+                std::slice::from_ref(&updated_view),
+                renewal_now,
+                Some(password),
+            )
+            .unwrap();
+        assert_ne!(renewed.recipient_nonce, first.recipient_nonce);
+        assert_eq!(renewed.committee, expected_committee);
+        fixture
+            .receiver
+            .with_wallet(|wallet| {
+                let stored = wallet
+                    .profile
+                    .l2_checkout_purchases
+                    .get("renew-authority")
+                    .unwrap();
+                assert_eq!(stored.context.committee, expected_committee);
+                assert_eq!(stored.context.recipient_nonce, renewed.recipient_nonce);
+            })
+            .unwrap();
+        let digest = humoco_proto::live::live_state_digest(&renewed).unwrap();
+        let votes = renewed
+            .committee
+            .iter()
+            .map(|public| {
+                let key = updated_keys
+                    .iter()
+                    .find(|key| key.verifying_key().to_bytes() == *public)
+                    .unwrap();
+                AttestationVote {
+                    signer_pubkey: *public,
+                    signature: key.sign(&digest).to_bytes(),
+                }
+            })
+            .collect();
+        let proof = LiveStateProof {
+            context: renewed.clone(),
+            votes,
+        };
+        let completed = fixture
+            .receiver
+            .complete_checkout_purchase(
+                "renew-authority",
+                &fixture.bundle_bytes,
+                &proof,
+                std::slice::from_ref(&updated_view),
+                &fixture.standards,
+                renewal_now + 1,
+                Some(password),
+            )
+            .unwrap();
+        assert!(completed.newly_committed);
+        assert!(completed.verdict.can_release_goods_automatically);
     }
 
     #[test]
