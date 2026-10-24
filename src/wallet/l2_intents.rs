@@ -10,7 +10,22 @@ impl Wallet {
             if intent.network != network { return Err(invalid("pending intent network cannot change")); }
             return Ok(intent.clone());
         }
-        if self.profile.l2_send_intents.len() >= 256 { return Err(invalid("pending intent capacity exhausted")); }
+        if self.profile.l2_send_intents.len() >= 256 {
+            let now_ms = crate::services::utils::current_unix_timestamp_ms();
+            self.profile.l2_send_intents.retain(|_, intent| {
+                let resolved_at = intent.terminal_resolution.as_ref().map(|res| match res {
+                    crate::models::l2_intent::IntentTerminalResolution::Confirmed { resolved_at_ms }
+                    | crate::models::l2_intent::IntentTerminalResolution::Conflicted { resolved_at_ms, .. }
+                    | crate::models::l2_intent::IntentTerminalResolution::Expired { resolved_at_ms } => *resolved_at_ms,
+                });
+                let retention_elapsed = match resolved_at {
+                    Some(resolved_at_ms) => now_ms >= resolved_at_ms.saturating_add(60_000),
+                    None => false,
+                };
+                !retention_elapsed && now_ms < intent.root_valid_until_ms.saturating_add(30_000)
+            });
+            if self.profile.l2_send_intents.len() >= 256 { return Err(invalid("pending intent capacity exhausted")); }
+        }
         let transaction = voucher.transactions.last().ok_or_else(||invalid("intent transaction missing"))?;
         let root = voucher.transactions.first().ok_or_else(||invalid("intent root missing"))?;
         let voucher_id = l2_gateway::calculate_layer2_voucher_id(root)?;

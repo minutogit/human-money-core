@@ -114,6 +114,7 @@ impl AppService {
         let bundle_hash = *blake3::hash(bundle_data).as_bytes();
         self.with_transactional_mut(password, |wallet, identity, _, _| {
             let mut pruned = false;
+            let mut mutated = false;
             let result = (|| {
                 if let Some(purchase) = wallet
                     .profile
@@ -127,28 +128,41 @@ impl AppService {
                     if purchase.completed {
                         return Ok(purchase.context.clone());
                     }
-                    if now_ms < purchase.expires_at_ms
-                        && now_ms < purchase.context.root_valid_until
+                    if now_ms < purchase.expires_at_ms && now_ms < purchase.context.root_valid_until
                     {
+                        let committee = {
+                            let policy = wallet
+                                .profile
+                                .l2_regional_mesh_policy
+                                .as_ref()
+                                .ok_or_else(|| invalid("recipient authority missing"))?;
+                            regional_committee(policy, views, purchase.context.shard_id, now_ms)
+                                .map_err(invalid)?
+                        };
+                        if committee != purchase.context.committee {
+                            let stored = wallet
+                                .profile
+                                .l2_checkout_purchases
+                                .get_mut(purchase_id)
+                                .ok_or_else(|| invalid("purchase disappeared"))?;
+                            stored.context.committee = committee;
+                            mutated = true;
+                            return Ok(stored.context.clone());
+                        }
                         return Ok(purchase.context.clone());
                     }
                     if now_ms >= purchase.context.root_valid_until {
                         return Err(invalid("purchase root expired"));
                     }
-                    let nonce =
-                        generate_recipient_nonce(Some(purchase.context.recipient_nonce))?;
+                    let nonce = generate_recipient_nonce(Some(purchase.context.recipient_nonce))?;
                     let policy = wallet
                         .profile
                         .l2_regional_mesh_policy
                         .as_ref()
                         .ok_or_else(|| invalid("recipient authority missing"))?;
-                    let committee = regional_committee(
-                        policy,
-                        views,
-                        purchase.context.shard_id,
-                        now_ms,
-                    )
-                    .map_err(invalid)?;
+                    let committee =
+                        regional_committee(policy, views, purchase.context.shard_id, now_ms)
+                            .map_err(invalid)?;
                     let expires_at_ms = now_ms
                         .saturating_add(CHECKOUT_CHALLENGE_TTL_MS)
                         .min(purchase.context.root_valid_until);
@@ -162,11 +176,10 @@ impl AppService {
                         .ok_or_else(|| invalid("purchase disappeared"))?;
                     stored.context = context.clone();
                     stored.expires_at_ms = expires_at_ms;
+                    mutated = true;
                     return Ok(context);
                 }
-                pruned = wallet
-                    .profile
-                    .prune_expired_checkout_purchases(now_ms);
+                pruned = wallet.profile.prune_expired_checkout_purchases(now_ms);
                 if wallet.profile.active_checkout_purchase_count(now_ms)
                     >= MAX_ACTIVE_CHECKOUT_PURCHASES
                 {
@@ -242,10 +255,12 @@ impl AppService {
                         completed: false,
                     },
                 );
+                mutated = true;
                 Ok(context)
             })();
             match result {
-                Ok(context) => TransactionOutcome::Commit(context),
+                Ok(context) if mutated || pruned => TransactionOutcome::Commit(context),
+                Ok(context) => TransactionOutcome::Abort(context),
                 Err(error) if pruned => TransactionOutcome::CommitAndReturnError(error),
                 Err(error) => TransactionOutcome::Rollback(error),
             }
@@ -330,10 +345,7 @@ impl AppService {
                 if outcome.involved_vouchers.len() != 1 {
                     return Err(invalid("purchase did not import exactly one voucher"));
                 }
-                if !wallet
-                    .profile
-                    .mark_checkout_purchase_completed(purchase_id)
-                {
+                if !wallet.profile.mark_checkout_purchase_completed(purchase_id) {
                     return Err(invalid("purchase disappeared"));
                 }
                 Ok(true)
@@ -416,7 +428,9 @@ mod tests {
             "Receiver",
             password,
         );
-        let sender_id = sender.with_wallet(|wallet| wallet.get_user_id().to_string()).unwrap();
+        let sender_id = sender
+            .with_wallet(|wallet| wallet.get_user_id().to_string())
+            .unwrap();
         let recipient = receiver
             .with_wallet(|wallet| wallet.get_user_id().to_string())
             .unwrap();
@@ -559,10 +573,10 @@ mod tests {
         {
             let wallet = fixture.receiver.get_wallet_mut().unwrap();
             for index in 1..=256 {
-                wallet.profile.l2_checkout_purchases.insert(
-                    format!("completed-{index}"),
-                    completed.clone(),
-                );
+                wallet
+                    .profile
+                    .l2_checkout_purchases
+                    .insert(format!("completed-{index}"), completed.clone());
             }
         }
         let dummy_proof = LiveStateProof {
@@ -599,7 +613,10 @@ mod tests {
         fixture
             .receiver
             .with_wallet(|wallet| {
-                assert_eq!(wallet.profile.active_checkout_purchase_count(fixture.now), 1);
+                assert_eq!(
+                    wallet.profile.active_checkout_purchase_count(fixture.now),
+                    1
+                );
                 assert_eq!(wallet.profile.l2_checkout_purchases.len(), 258);
             })
             .unwrap();
@@ -809,6 +826,117 @@ mod tests {
     }
 
     #[test]
+    fn intra_ttl_committee_change_refreshes_stored_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut fixture = checkout_fixture(dir.path());
+        let password = "checkout-lifecycle-test";
+        let first = fixture
+            .receiver
+            .begin_checkout_purchase(
+                "intra-ttl-authority",
+                &fixture.bundle_bytes,
+                std::slice::from_ref(&fixture.view),
+                fixture.now,
+                Some(password),
+            )
+            .unwrap();
+        let source = SigningKey::from_bytes(&[100; 32]);
+        let updated_keys: Vec<_> = (21..=40u8)
+            .map(|seed| SigningKey::from_bytes(&[seed; 32]))
+            .collect();
+        let mut updated_members: Vec<_> = updated_keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| RegionalMeshMember {
+                node_pubkey: key.verifying_key().to_bytes(),
+                hrw_routing_id: [(index + 21) as u8; 32],
+            })
+            .collect();
+        updated_members.sort_by_key(|member| member.node_pubkey);
+        let mut updated_view = RegionalMeshView {
+            version: 1,
+            network: 0,
+            source_key: fixture.view.source_key,
+            issued_at_ms: fixture.now,
+            valid_until_ms: fixture.now + 60_000,
+            members: updated_members,
+            signature: [0; 64],
+        };
+        updated_view.signature = source.sign(&updated_view.digest().unwrap()).to_bytes();
+        let change_now = fixture.now + 1;
+        let expected_committee = fixture
+            .receiver
+            .with_wallet(|wallet| {
+                let policy = wallet.profile.l2_regional_mesh_policy.as_ref().unwrap();
+                regional_committee(
+                    policy,
+                    std::slice::from_ref(&updated_view),
+                    first.shard_id,
+                    change_now,
+                )
+                .unwrap()
+            })
+            .unwrap();
+        assert_ne!(expected_committee, first.committee);
+        let refreshed = fixture
+            .receiver
+            .begin_checkout_purchase(
+                "intra-ttl-authority",
+                &fixture.bundle_bytes,
+                std::slice::from_ref(&updated_view),
+                change_now,
+                Some(password),
+            )
+            .unwrap();
+        assert_eq!(refreshed.committee, expected_committee);
+        assert_eq!(refreshed.recipient_nonce, first.recipient_nonce);
+        fixture
+            .receiver
+            .with_wallet(|wallet| {
+                let stored = wallet
+                    .profile
+                    .l2_checkout_purchases
+                    .get("intra-ttl-authority")
+                    .unwrap();
+                assert_eq!(stored.context.committee, expected_committee);
+                assert_eq!(stored.context.recipient_nonce, refreshed.recipient_nonce);
+            })
+            .unwrap();
+        let digest = humoco_proto::live::live_state_digest(&refreshed).unwrap();
+        let votes = refreshed
+            .committee
+            .iter()
+            .map(|public| {
+                let key = updated_keys
+                    .iter()
+                    .find(|key| key.verifying_key().to_bytes() == *public)
+                    .unwrap();
+                AttestationVote {
+                    signer_pubkey: *public,
+                    signature: key.sign(&digest).to_bytes(),
+                }
+            })
+            .collect();
+        let proof = LiveStateProof {
+            context: refreshed.clone(),
+            votes,
+        };
+        let completed = fixture
+            .receiver
+            .complete_checkout_purchase(
+                "intra-ttl-authority",
+                &fixture.bundle_bytes,
+                &proof,
+                std::slice::from_ref(&updated_view),
+                &fixture.standards,
+                change_now + 1,
+                Some(password),
+            )
+            .unwrap();
+        assert!(completed.newly_committed);
+    }
+
+    #[test]
     fn unexpired_active_reservations_are_bounded_and_expired_entries_are_pruned() {
         let dir = tempfile::tempdir().unwrap();
         let mut fixture = checkout_fixture(dir.path());
@@ -837,10 +965,10 @@ mod tests {
         {
             let wallet = fixture.receiver.get_wallet_mut().unwrap();
             for index in 1..MAX_ACTIVE_CHECKOUT_PURCHASES {
-                wallet.profile.l2_checkout_purchases.insert(
-                    format!("active-{index}"),
-                    template.clone(),
-                );
+                wallet
+                    .profile
+                    .l2_checkout_purchases
+                    .insert(format!("active-{index}"), template.clone());
             }
         }
         let error = fixture
@@ -880,7 +1008,12 @@ mod tests {
                     wallet.profile.active_checkout_purchase_count(fixture.now),
                     MAX_ACTIVE_CHECKOUT_PURCHASES
                 );
-                assert!(!wallet.profile.l2_checkout_purchases.contains_key("active-255"));
+                assert!(
+                    !wallet
+                        .profile
+                        .l2_checkout_purchases
+                        .contains_key("active-255")
+                );
             })
             .unwrap();
     }
@@ -951,36 +1084,90 @@ mod tests {
             .unwrap();
         let intent = sender.pending_l2_send_intent(&local).unwrap();
         assert!(!intent.chain_request_bytes.is_empty());
-        let chain: crate::models::layer2_api::L2ChainLockRequest = serde_json::from_slice(&intent.chain_request_bytes).unwrap();
-        let request: crate::models::layer2_api::L2LockRequest = serde_json::from_slice(&intent.request_bytes).unwrap();
-        assert_eq!(chain.chain.last().unwrap().transaction_hash,request.transaction_hash);
-        assert_eq!(request.created_at_ms,intent.created_at_ms);
+        let chain: crate::models::layer2_api::L2ChainLockRequest =
+            serde_json::from_slice(&intent.chain_request_bytes).unwrap();
+        let request: crate::models::layer2_api::L2LockRequest =
+            serde_json::from_slice(&intent.request_bytes).unwrap();
+        assert_eq!(
+            chain.chain.last().unwrap().transaction_hash,
+            request.transaction_hash
+        );
+        assert_eq!(request.created_at_ms, intent.created_at_ms);
         sender.logout();
         drop(sender);
         let mut sender = AppService::new(&dir.path().join("sender")).unwrap();
-        sender.login(&sender_profile.folder_name,password,false,"test-id".into()).unwrap();
-        assert_eq!(sender.pending_l2_send_intent(&local).unwrap(),intent,"the transfer and exact intent survive the same managed commit");
-        receiver.with_wallet_and_identity(|_, identity| {
-            let opened = bundle_processor::open_and_verify_bundle(identity, &bundle.bundle_bytes).unwrap();
-            let voucher = &opened.vouchers[0];
-            assert_eq!(opened.causal_outputs.len(), voucher.transactions.len());
-            for transaction in &voucher.transactions {
-                let proof = opened.causal_outputs.get(&transaction.t_id).unwrap();
-                crate::services::l2_causality::validate_output_proof(voucher, transaction, proof).unwrap();
-                let mut forged = proof.clone();
-                forged.state_hash = [99; 32];
-                assert!(crate::services::l2_causality::validate_output_proof(voucher, transaction, &forged).is_err());
-            }
-            let last = voucher.transactions.last().unwrap();
-            let request = l2_gateway::generate_lock_request(&l2_gateway::calculate_layer2_voucher_id(&voucher.transactions[0]).unwrap(), last, &[0; 32]).unwrap();
-            let chain = l2_gateway::build_voucher_lock_chain_with_outputs(voucher, None, request, &opened.causal_outputs).unwrap();
-            assert!(chain.chain[0].is_genesis);
-            assert!(chain.chain[0].causal_output.is_some());
-            let previous = chain.chain[0].causal_output.as_ref().unwrap();
-            let expected = crate::services::crypto::get_ds_tag(&bs58::encode(previous.state_hash).into_string(), last.sender_ephemeral_pub.as_ref().unwrap()).unwrap();
-            assert_eq!(chain.chain[1].ds_tag.as_deref(), Some(expected.as_str()), "the real L1 SST formula must remain unchanged");
-            assert_eq!(chain.chain[1].ds_tag.as_deref(), last.trap_data.as_ref().map(|trap| trap.ds_tag.as_str()));
-        }).unwrap();
+        sender
+            .login(
+                &sender_profile.folder_name,
+                password,
+                false,
+                "test-id".into(),
+            )
+            .unwrap();
+        assert_eq!(
+            sender.pending_l2_send_intent(&local).unwrap(),
+            intent,
+            "the transfer and exact intent survive the same managed commit"
+        );
+        receiver
+            .with_wallet_and_identity(|_, identity| {
+                let opened =
+                    bundle_processor::open_and_verify_bundle(identity, &bundle.bundle_bytes)
+                        .unwrap();
+                let voucher = &opened.vouchers[0];
+                assert_eq!(opened.causal_outputs.len(), voucher.transactions.len());
+                for transaction in &voucher.transactions {
+                    let proof = opened.causal_outputs.get(&transaction.t_id).unwrap();
+                    crate::services::l2_causality::validate_output_proof(
+                        voucher,
+                        transaction,
+                        proof,
+                    )
+                    .unwrap();
+                    let mut forged = proof.clone();
+                    forged.state_hash = [99; 32];
+                    assert!(
+                        crate::services::l2_causality::validate_output_proof(
+                            voucher,
+                            transaction,
+                            &forged
+                        )
+                        .is_err()
+                    );
+                }
+                let last = voucher.transactions.last().unwrap();
+                let request = l2_gateway::generate_lock_request(
+                    &l2_gateway::calculate_layer2_voucher_id(&voucher.transactions[0]).unwrap(),
+                    last,
+                    &[0; 32],
+                )
+                .unwrap();
+                let chain = l2_gateway::build_voucher_lock_chain_with_outputs(
+                    voucher,
+                    None,
+                    request,
+                    &opened.causal_outputs,
+                )
+                .unwrap();
+                assert!(chain.chain[0].is_genesis);
+                assert!(chain.chain[0].causal_output.is_some());
+                let previous = chain.chain[0].causal_output.as_ref().unwrap();
+                let expected = crate::services::crypto::get_ds_tag(
+                    &bs58::encode(previous.state_hash).into_string(),
+                    last.sender_ephemeral_pub.as_ref().unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    chain.chain[1].ds_tag.as_deref(),
+                    Some(expected.as_str()),
+                    "the real L1 SST formula must remain unchanged"
+                );
+                assert_eq!(
+                    chain.chain[1].ds_tag.as_deref(),
+                    last.trap_data.as_ref().map(|trap| trap.ds_tag.as_str())
+                );
+            })
+            .unwrap();
         let source = SigningKey::from_bytes(&[100; 32]);
         let keys: Vec<_> = (1..=20).map(|i| SigningKey::from_bytes(&[i; 32])).collect();
         let now = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();

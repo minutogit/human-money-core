@@ -145,6 +145,10 @@ pub(super) enum TransactionOutcome<T, E> {
     /// issues or marking state transitions) must not be rolled back. The state is saved to disk,
     /// seal is updated, and the error `E` is returned.
     CommitAndReturnError(E),
+    /// Indicates a successful no-op. Any modifications made to the temporary wallet
+    /// state are discarded, no files are written, and no seals are updated, but the
+    /// successful value `T` is returned. The memory state remains unchanged.
+    Abort(T),
     /// Indicates the transaction must be aborted. All modifications made to the temporary
     /// wallet state are discarded. No files are written, no seals are updated, and the error `E`
     /// is returned. The memory state remains unchanged.
@@ -303,6 +307,9 @@ impl AppService {
     ///      actions where we want to persist structural corrections even if a specific logic query failed.
     ///      If save fails, it also falls back to the original memory state.
     ///      
+    ///    - [`TransactionOutcome::Abort`]: Discards the mutated clone without writing any files,
+    ///      restores the original memory state, and returns the successful value unchanged.
+    ///
     ///    - [`TransactionOutcome::Rollback`]: Instantly discards the mutated clone, restores the original
     ///      unmodified state in memory, and returns the error without writing any changes to disk or updating the seal.
     ///

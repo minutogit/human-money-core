@@ -248,7 +248,7 @@ impl TransactionOrchestrator {
     ///    `SealService::verify_state_matches_seal` + [`StateMergeHook::apply`]
     /// 5. **Atomic Isolation (Cloning):** clone `Wallet`
     /// 6. **Closure Execution:** invoke `f`
-    /// 7. **Outcome Evaluation:** Commit / CommitAndReturnError / Rollback
+    /// 7. **Outcome Evaluation:** Commit / CommitAndReturnError / Abort / Rollback
     ///    with sealed commit (`save` + `SealService::persist_seal_for_wallet_state`)
     ///    and durable authenticated undo recovery on failure or process interruption.
     pub(crate) fn execute_with_policy<F, R>(
@@ -292,6 +292,7 @@ impl TransactionOrchestrator {
         let (result, needs_commit) = match outcome {
             TransactionOutcome::Commit(value) => (Ok(value), true),
             TransactionOutcome::CommitAndReturnError(error) => (Err(error), true),
+            TransactionOutcome::Abort(value) => (Ok(value), false),
             TransactionOutcome::Rollback(error) => (Err(error), false),
         };
         if !needs_commit {

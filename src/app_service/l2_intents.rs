@@ -11,6 +11,13 @@ fn invalid(reason: &str) -> Error {
         reason.into(),
     ))
 }
+fn terminal_resolved_at(resolution: &IntentTerminalResolution) -> u64 {
+    match resolution {
+        IntentTerminalResolution::Confirmed { resolved_at_ms }
+        | IntentTerminalResolution::Conflicted { resolved_at_ms, .. }
+        | IntentTerminalResolution::Expired { resolved_at_ms } => *resolved_at_ms,
+    }
+}
 impl AppService {
     /// Authenticates, reloads and durably commits exact bytes BEFORE a host may
     /// begin HTTP. An existing intent is returned unchanged even after timeout.
@@ -399,16 +406,19 @@ impl AppService {
         now_ms: u64,
         password: Option<&str>,
     ) -> Result<usize, Error> {
+        let needs_cleanup = self.get_wallet()?.profile.l2_send_intents.values().any(|intent| {
+            intent.terminal_resolution.as_ref().is_some_and(|res| {
+                now_ms >= terminal_resolved_at(res).saturating_add(max_retain_ms)
+            }) || now_ms >= intent.root_valid_until_ms.saturating_add(30_000)
+        });
+        if !needs_cleanup {
+            return Ok(0);
+        }
         self.with_transactional_mut(password, |wallet, _, _, _| {
             let initial_count = wallet.profile.l2_send_intents.len();
             wallet.profile.l2_send_intents.retain(|_, intent| {
                 if let Some(res) = &intent.terminal_resolution {
-                    let resolved_at = match res {
-                        IntentTerminalResolution::Confirmed { resolved_at_ms } => *resolved_at_ms,
-                        IntentTerminalResolution::Conflicted { resolved_at_ms, .. } => *resolved_at_ms,
-                        IntentTerminalResolution::Expired { resolved_at_ms } => *resolved_at_ms,
-                    };
-                    if now_ms >= resolved_at.saturating_add(max_retain_ms) {
+                    if now_ms >= terminal_resolved_at(res).saturating_add(max_retain_ms) {
                         return false;
                     }
                 }
@@ -418,7 +428,11 @@ impl AppService {
                 true
             });
             let removed = initial_count.saturating_sub(wallet.profile.l2_send_intents.len());
-            TransactionOutcome::Commit(removed)
+            if removed == 0 {
+                TransactionOutcome::Abort(0)
+            } else {
+                TransactionOutcome::Commit(removed)
+            }
         })
     }
 }
@@ -1023,5 +1037,51 @@ mod tests {
             .unwrap(),
             resolution
         );
+    }
+
+    #[test]
+    fn cleanup_terminal_intents_skips_disk_write_when_idle_and_stage_prunes_inline() {
+        let dir = tempfile::tempdir().unwrap();
+        let password = "no-op-cleanup-and-inline-prune";
+        let (mut app, local_id, now_ms, _keys, _view) = reconciliation_fixture(&dir, password);
+
+        // When no intent is due for cleanup, calling cleanup_terminal_intents with an invalid
+        // password must still succeed with Ok(0) because it returns early before opening a write transaction.
+        assert_eq!(
+            app.cleanup_terminal_intents(60_000, now_ms + 1_000, Some("wrong-password-would-fail-write"))
+                .unwrap(),
+            0
+        );
+
+        // Fill wallet profile with 256 terminally resolved intents that are past their retention window,
+        // then verify stage_l2_send_intent prunes them inline instead of failing with capacity exhaustion.
+        let template = app.pending_l2_send_intent(&local_id).unwrap();
+        app.with_transactional_mut(Some(password), |wallet, _, _, _| {
+            let voucher = wallet
+                .voucher_store
+                .vouchers
+                .values()
+                .next()
+                .expect("fixture voucher present")
+                .voucher
+                .clone();
+            wallet.profile.l2_send_intents.clear();
+            for i in 0..256 {
+                let mut item = template.clone();
+                item.local_instance_id = format!("terminal-{i}");
+                item.created_at_ms = 1_000;
+                item.root_valid_until_ms = 5_000;
+                item.terminal_resolution = Some(IntentTerminalResolution::Confirmed {
+                    resolved_at_ms: 2_000,
+                });
+                wallet.profile.l2_send_intents.insert(item.local_instance_id.clone(), item);
+            }
+            wallet
+                .stage_l2_send_intent("fresh-intent-after-inline-prune", &voucher, 0)
+                .expect("inline pruning must free expired terminal intents before enforcing the 256 cap");
+            assert_eq!(wallet.profile.l2_send_intents.len(), 1);
+            crate::app_service::TransactionOutcome::Commit(())
+        })
+        .unwrap();
     }
 }
