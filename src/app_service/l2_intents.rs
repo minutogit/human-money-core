@@ -1,30 +1,11 @@
 //! Durable exact-byte send intents. No transport or outcome guess can free an
 //! uncertain output; matching retained originals are observations, not clearance.
 use super::{AppService, TransactionOutcome};
-use crate::{Error, models::layer2_api::L2LockRequest, services::l2_gateway};
-use rand_core::{OsRng, RngCore};
-use serde::{Deserialize, Serialize};
+use crate::{Error, models::layer2_api::L2LockRequest};
+use serde::Deserialize;
 
-/// Backend-owned pending transport state, included in the authenticated wallet.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct L2SendIntent {
-    /// Exact local source, blocked from replacement while outcome is uncertain.
-    pub local_instance_id: String,
-    /// Exact serialized signed request, reused verbatim through every retry.
-    pub request_bytes: Vec<u8>,
-    /// Exact signed L1 transaction, including its original outputs.
-    pub transaction_bytes: Vec<u8>,
-    /// Signed wallet creation time, never regenerated on retry.
-    pub created_at_ms: u64,
-    /// Frozen transport domain and root-bound verification context.
-    pub network: u8,
-    pub shard_id: u16,
-    pub root_valid_until_ms: u64,
-    /// True once first-party retained evidence has been observed. This does not
-    /// authorize goods release, a replacement spend or an automatic refund.
-    #[serde(default)]
-    pub retained_original_observed: bool,
-}
+pub use crate::models::l2_intent::{IntentTerminalResolution, L2SendIntent};
+use rand_core::RngCore;
 fn invalid(reason: &str) -> Error {
     Error::Validation(crate::error::ValidationError::SecurityViolation(
         reason.into(),
@@ -40,78 +21,14 @@ impl AppService {
         password: Option<&str>,
     ) -> Result<L2SendIntent, Error> {
         self.with_transactional_mut(password, |wallet, _, _, _| {
-            let result = (|| {
-                if network > 1 {
-                    return Err(invalid("invalid intent network"));
-                }
-                if let Some(intent) = wallet.profile.l2_send_intents.get(local_id) {
-                    if intent.network != network {
-                        return Err(invalid("pending intent network cannot change"));
-                    }
-                    return Ok(intent.clone());
-                }
-                if wallet.profile.l2_send_intents.len() >= 256 {
-                    return Err(invalid("pending intent capacity exhausted"));
-                }
-                let instance = wallet
-                    .get_voucher_instance(local_id)
-                    .ok_or_else(|| Error::VoucherNotFound(local_id.into()))?;
-                let transaction = instance
-                    .voucher
-                    .transactions
-                    .last()
-                    .ok_or_else(|| invalid("intent transaction missing"))?;
-                let root = instance
-                    .voucher
-                    .transactions
-                    .first()
-                    .ok_or_else(|| invalid("intent root missing"))?;
-                let voucher_id = l2_gateway::calculate_layer2_voucher_id(root)?;
-                let mut auth = [0; 32];
-                OsRng.fill_bytes(&mut auth);
-                let mut request =
-                    l2_gateway::generate_lock_request(&voucher_id, transaction, &auth)?;
-                request.causal_output = wallet
-                    .profile
-                    .l2_causal_outputs
-                    .get(&transaction.t_id)
-                    .cloned();
-                let request_bytes = serde_json::to_vec(&request)?;
-                let transaction_bytes = serde_json::to_vec(transaction)?;
-                let used: usize = wallet
-                    .profile
-                    .l2_send_intents
-                    .values()
-                    .map(|i| i.request_bytes.len() + i.transaction_bytes.len())
-                    .sum();
-                if request_bytes.len() > 65_536
-                    || transaction_bytes.len() > 131_072
-                    || used
-                        .saturating_add(request_bytes.len())
-                        .saturating_add(transaction_bytes.len())
-                        > 8 * 1024 * 1024
-                {
-                    return Err(invalid("pending intent byte budget exhausted"));
-                }
-                let root_valid_until_ms =
-                    crate::services::utils::parse_timestamp_ms(&instance.voucher.valid_until)?;
-                let parent = *blake3::hash(root.t_id.as_bytes()).as_bytes();
-                let intent = L2SendIntent {
-                    local_instance_id: local_id.into(),
-                    request_bytes,
-                    transaction_bytes,
-                    created_at_ms: request.created_at_ms,
-                    network,
-                    shard_id: u16::from_be_bytes([parent[0], parent[1]]),
-                    root_valid_until_ms,
-                    retained_original_observed: false,
-                };
-                wallet
-                    .profile
-                    .l2_send_intents
-                    .insert(local_id.into(), intent.clone());
-                Ok(intent)
-            })();
+            let result = if let Some(intent) = wallet.profile.l2_send_intents.get(local_id) {
+                if intent.network == network { Ok(intent.clone()) } else { Err(invalid("pending intent network cannot change")) }
+            } else {
+                let voucher = wallet.get_voucher_instance(local_id)
+                    .ok_or_else(|| Error::VoucherNotFound(local_id.into()))
+                    .map(|instance|instance.voucher.clone());
+                voucher.and_then(|voucher|wallet.stage_l2_send_intent(local_id,&voucher,network))
+            };
             match result {
                 Ok(intent) => TransactionOutcome::Commit(intent),
                 Err(error) => TransactionOutcome::Rollback(error),
@@ -239,6 +156,248 @@ impl AppService {
             }
             current.retained_original_observed = true;
             TransactionOutcome::Commit(true)
+        })
+    }
+
+    /// Initiates authenticated live-state quorum reconciliation for a pending intent.
+    /// Available 30 seconds after intent creation, binds an unpredictable fresh challenge,
+    /// and derives the required committee from the wallet's regional mesh policy.
+    pub fn begin_intent_reconciliation(
+        &mut self,
+        local_id: &str,
+        views: &[humoco_proto::mesh::RegionalMeshView],
+        now_ms: u64,
+        password: Option<&str>,
+    ) -> Result<humoco_proto::live::LiveStateContext, Error> {
+        let intent = self.pending_l2_send_intent(local_id)?;
+        if now_ms < intent.created_at_ms.saturating_add(30_000) {
+            return Err(invalid("intent reconciliation is not due"));
+        }
+        if now_ms >= intent.root_valid_until_ms {
+            return Err(invalid("intent root expired"));
+        }
+        let request: L2LockRequest = serde_json::from_slice(&intent.request_bytes)?;
+        let tag = if request.is_genesis {
+            bs58::encode(request.transaction_hash).into_string()
+        } else {
+            request.ds_tag.clone().ok_or_else(|| invalid("intent parent missing"))?
+        };
+        let parent = *blake3::hash(tag.as_bytes()).as_bytes();
+        let entry = crate::models::layer2_api::L2LockEntry::from(&request);
+        let state_digest = *blake3::hash(&serde_json::to_vec(&entry)?).as_bytes();
+
+        let mut nonce = [0u8; 32];
+        rand_core::OsRng
+            .try_fill_bytes(&mut nonce)
+            .map_err(|_| invalid("reconciliation entropy unavailable"))?;
+        if nonce == [0u8; 32] {
+            return Err(invalid("invalid reconciliation entropy"));
+        }
+
+        self.with_transactional_mut(password, |wallet, _, _, _| {
+            let result = (|| {
+                let policy = wallet
+                    .profile
+                    .l2_regional_mesh_policy
+                    .as_ref()
+                    .ok_or_else(|| invalid("reconciliation authority missing"))?;
+                let committee =
+                    humoco_proto::mesh::regional_committee(policy, views, intent.shard_id, now_ms)
+                        .map_err(invalid)?;
+                let current = wallet.profile.l2_send_intents.get_mut(local_id)
+                    .ok_or_else(|| invalid("intent disappeared"))?;
+                if current.request_bytes != intent.request_bytes || current.network != intent.network {
+                    return Err(invalid("intent changed during reconciliation"));
+                }
+                current.stored_challenge = Some(nonce);
+
+                let context = humoco_proto::live::LiveStateContext {
+                    version: 1,
+                    network: intent.network,
+                    shard_id: intent.shard_id,
+                    voucher_id: request.layer2_voucher_id.clone(),
+                    lookup_tag: tag.clone(),
+                    parent_lock: parent,
+                    child_lock: request.transaction_hash,
+                    root_valid_until: intent.root_valid_until_ms,
+                    state_digest,
+                    recipient_nonce: nonce,
+                    committee,
+                };
+                Ok(context)
+            })();
+            match result {
+                Ok(context) => TransactionOutcome::Commit(context),
+                Err(error) => TransactionOutcome::Rollback(error),
+            }
+        })
+    }
+
+    /// Verifies current live-state quorum proof against the stored fresh challenge and
+    /// the intent's context. Terminally resolves the intent as Confirmed upon valid 14/20 quorum.
+    pub fn complete_intent_reconciliation(
+        &mut self,
+        local_id: &str,
+        proof: &humoco_proto::live::LiveStateProof,
+        views: &[humoco_proto::mesh::RegionalMeshView],
+        now_ms: u64,
+        password: Option<&str>,
+    ) -> Result<IntentTerminalResolution, Error> {
+        self.with_transactional_mut(password, |wallet, _, _, _| {
+            let Some(intent) = wallet.profile.l2_send_intents.get_mut(local_id) else {
+                return TransactionOutcome::Rollback(invalid("intent disappeared"));
+            };
+            if let Some(res) = &intent.terminal_resolution {
+                return TransactionOutcome::Commit(res.clone());
+            }
+            let stored_nonce = match intent.stored_challenge {
+                Some(n) => n,
+                None => return TransactionOutcome::Rollback(invalid("stored reconciliation challenge missing")),
+            };
+            if proof.context.recipient_nonce != stored_nonce {
+                return TransactionOutcome::Rollback(invalid("reconciliation challenge mismatch"));
+            }
+            if now_ms >= intent.root_valid_until_ms {
+                let res = IntentTerminalResolution::Expired { resolved_at_ms: now_ms };
+                intent.terminal_resolution = Some(res.clone());
+                return TransactionOutcome::Commit(res);
+            }
+            let request: L2LockRequest = match serde_json::from_slice(&intent.request_bytes) {
+                Ok(r) => r,
+                Err(e) => return TransactionOutcome::Rollback(invalid(&e.to_string())),
+            };
+            let tag = if request.is_genesis {
+                bs58::encode(request.transaction_hash).into_string()
+            } else {
+                match &request.ds_tag {
+                    Some(t) => t.clone(),
+                    None => return TransactionOutcome::Rollback(invalid("intent parent missing")),
+                }
+            };
+            let parent = *blake3::hash(tag.as_bytes()).as_bytes();
+            let entry = crate::models::layer2_api::L2LockEntry::from(&request);
+            let state_digest = match serde_json::to_vec(&entry) {
+                Ok(bytes) => *blake3::hash(&bytes).as_bytes(),
+                Err(e) => return TransactionOutcome::Rollback(invalid(&e.to_string())),
+            };
+            let policy = match wallet.profile.l2_regional_mesh_policy.as_ref() {
+                Some(p) => p,
+                None => return TransactionOutcome::Rollback(invalid("reconciliation authority missing")),
+            };
+            let committee = match humoco_proto::mesh::regional_committee(policy, views, intent.shard_id, now_ms) {
+                Ok(c) => c,
+                Err(e) => return TransactionOutcome::Rollback(invalid(e)),
+            };
+            let expected_context = humoco_proto::live::LiveStateContext {
+                version: 1,
+                network: intent.network,
+                shard_id: intent.shard_id,
+                voucher_id: request.layer2_voucher_id,
+                lookup_tag: tag,
+                parent_lock: parent,
+                child_lock: request.transaction_hash,
+                root_valid_until: intent.root_valid_until_ms,
+                state_digest,
+                recipient_nonce: stored_nonce,
+                committee,
+            };
+            if let Err(e) = humoco_proto::live::verify_live_state_proof(proof, &expected_context) {
+                return TransactionOutcome::Rollback(invalid(e));
+            }
+            let res = IntentTerminalResolution::Confirmed { resolved_at_ms: now_ms };
+            intent.terminal_resolution = Some(res.clone());
+            intent.stored_challenge = None;
+            TransactionOutcome::Commit(res)
+        })
+    }
+
+    /// Records an observed conflicting child spend for the intent's parent lock.
+    /// Rejects conflicting choices and marks the intent Conflicted.
+    pub fn record_intent_conflict(
+        &mut self,
+        local_id: &str,
+        observed_child_hex: &str,
+        now_ms: u64,
+        password: Option<&str>,
+    ) -> Result<IntentTerminalResolution, Error> {
+        self.with_transactional_mut(password, |wallet, _, _, _| {
+            let Some(intent) = wallet.profile.l2_send_intents.get_mut(local_id) else {
+                return TransactionOutcome::Rollback(invalid("intent disappeared"));
+            };
+            if let Some(res) = &intent.terminal_resolution {
+                return TransactionOutcome::Commit(res.clone());
+            }
+            let request: L2LockRequest = match serde_json::from_slice(&intent.request_bytes) {
+                Ok(r) => r,
+                Err(e) => return TransactionOutcome::Rollback(invalid(&e.to_string())),
+            };
+            if observed_child_hex == hex::encode(request.transaction_hash) {
+                return TransactionOutcome::Rollback(invalid("observed child matches intent choice, not conflicting"));
+            }
+            let res = IntentTerminalResolution::Conflicted {
+                resolved_at_ms: now_ms,
+                observed_child: observed_child_hex.into(),
+            };
+            intent.terminal_resolution = Some(res.clone());
+            intent.retained_original_observed = false;
+            intent.stored_challenge = None;
+            TransactionOutcome::Commit(res)
+        })
+    }
+
+    /// Checks and marks the intent Expired if physical root validity has passed.
+    pub fn expire_intent_if_overdue(
+        &mut self,
+        local_id: &str,
+        now_ms: u64,
+        password: Option<&str>,
+    ) -> Result<Option<IntentTerminalResolution>, Error> {
+        self.with_transactional_mut(password, |wallet, _, _, _| {
+            let Some(intent) = wallet.profile.l2_send_intents.get_mut(local_id) else {
+                return TransactionOutcome::Commit(None);
+            };
+            if let Some(res) = &intent.terminal_resolution {
+                return TransactionOutcome::Commit(Some(res.clone()));
+            }
+            if now_ms >= intent.root_valid_until_ms {
+                let res = IntentTerminalResolution::Expired { resolved_at_ms: now_ms };
+                intent.terminal_resolution = Some(res.clone());
+                intent.stored_challenge = None;
+                TransactionOutcome::Commit(Some(res))
+            } else {
+                TransactionOutcome::Commit(None)
+            }
+        })
+    }
+
+    /// Cleans up terminally resolved intents that have reached the end of their retention
+    /// window or physical root validity plus grace period.
+    pub fn cleanup_terminal_intents(
+        &mut self,
+        max_retain_ms: u64,
+        now_ms: u64,
+        password: Option<&str>,
+    ) -> Result<usize, Error> {
+        self.with_transactional_mut(password, |wallet, _, _, _| {
+            let initial_count = wallet.profile.l2_send_intents.len();
+            wallet.profile.l2_send_intents.retain(|_, intent| {
+                if let Some(res) = &intent.terminal_resolution {
+                    let resolved_at = match res {
+                        IntentTerminalResolution::Confirmed { resolved_at_ms } => *resolved_at_ms,
+                        IntentTerminalResolution::Conflicted { resolved_at_ms, .. } => *resolved_at_ms,
+                        IntentTerminalResolution::Expired { resolved_at_ms } => *resolved_at_ms,
+                    };
+                    if now_ms >= resolved_at.saturating_add(max_retain_ms) {
+                        return false;
+                    }
+                }
+                if now_ms >= intent.root_valid_until_ms.saturating_add(30_000) {
+                    return false;
+                }
+                true
+            });
+            let removed = initial_count.saturating_sub(wallet.profile.l2_send_intents.len());
+            TransactionOutcome::Commit(removed)
         })
     }
 }
@@ -401,5 +560,177 @@ mod tests {
             matches!(result,Err(Error::Validation(crate::error::ValidationError::SecurityViolation(ref reason))) if reason.contains("unresolved durable L2 send intent")),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn terminal_reconciliation_verifies_quorum_rejects_conflicts_and_cleans_up() {
+        use ed25519_dalek::{Signer, SigningKey};
+        use humoco_proto::{AttestationVote, live::LiveStateProof, mesh::{RegionalMeshMember, RegionalMeshPolicy, RegionalMeshView}};
+
+        let dir = tempfile::tempdir().unwrap();
+        let password = "terminal-reconcile-test";
+        let (mut app, _profile) = test_utils::setup_service_with_profile(
+            dir.path(),
+            &ACTORS.alice,
+            "ReconcileSender",
+            password,
+        );
+        let user = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+        let standard = test_utils::generate_signed_standard_toml(
+            "voucher_standards/freetaler_v1/standard.toml",
+        );
+        let voucher = app.create_new_voucher(
+            &standard,
+            NewVoucherData {
+                creator_profile: PublicProfile {
+                    id: Some(user),
+                    ..Default::default()
+                },
+                nominal_value: ValueDefinition {
+                    amount: "100".into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(password),
+        )
+        .unwrap();
+        let local_id = app
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap()[0]
+            .local_instance_id
+            .clone();
+
+        let standards = std::collections::HashMap::from([(voucher.voucher_standard.uuid.clone(), standard)]);
+        let _bundle = app.create_transfer_bundle_with_l2_intents(
+            crate::wallet::MultiTransferRequest {
+                recipient_id: ACTORS.bob.user_id.clone(),
+                sources: vec![crate::wallet::SourceTransfer {
+                    local_instance_id: local_id.clone(),
+                    amount_to_send: "10".into(),
+                }],
+                notes: None,
+                sender_profile_name: None,
+                use_privacy_mode: Some(false),
+            },
+            &standards,
+            None,
+            Some(password),
+            0,
+        )
+        .unwrap();
+
+        let intent = app.pending_l2_send_intent(&local_id).unwrap();
+        let now_ms = intent.created_at_ms;
+
+        // 1. Before 30s, reconciliation is rejected
+        let source = SigningKey::from_bytes(&[101; 32]);
+        let keys: Vec<_> = (1..=20).map(|i| SigningKey::from_bytes(&[i; 32])).collect();
+        let mut members: Vec<_> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, key)| RegionalMeshMember {
+                node_pubkey: key.verifying_key().to_bytes(),
+                hrw_routing_id: [i as u8; 32],
+            })
+            .collect();
+        members.sort_by_key(|m| m.node_pubkey);
+        let mut view = RegionalMeshView {
+            version: 1,
+            network: 0,
+            source_key: source.verifying_key().to_bytes(),
+            issued_at_ms: now_ms,
+            valid_until_ms: now_ms + 60_000,
+            members,
+            signature: [0; 64],
+        };
+        view.signature = source.sign(&view.digest().unwrap()).to_bytes();
+
+        app.configure_regional_mesh_authority(
+            RegionalMeshPolicy {
+                network: 0,
+                source_keys: vec![view.source_key],
+            },
+            Some(password),
+        )
+        .unwrap();
+
+        assert!(
+            app.begin_intent_reconciliation(&local_id, std::slice::from_ref(&view), now_ms + 10_000, Some(password))
+                .is_err()
+        );
+
+        // 2. After 30s, reconciliation context is generated with stored fresh challenge
+        let context = app
+            .begin_intent_reconciliation(&local_id, std::slice::from_ref(&view), now_ms + 30_000, Some(password))
+            .unwrap();
+        assert_ne!(context.recipient_nonce, [0; 32]);
+        assert_eq!(
+            app.pending_l2_send_intent(&local_id).unwrap().stored_challenge,
+            Some(context.recipient_nonce)
+        );
+
+        // 3. Mathematical quorum proof verification
+        let digest = humoco_proto::live::live_state_digest(&context).unwrap();
+        let votes: Vec<_> = context.committee[..14]
+            .iter()
+            .map(|public| {
+                let key = keys
+                    .iter()
+                    .find(|k| k.verifying_key().to_bytes() == *public)
+                    .unwrap();
+                AttestationVote {
+                    signer_pubkey: *public,
+                    signature: key.sign(&digest).to_bytes(),
+                }
+            })
+            .collect();
+        let proof = LiveStateProof {
+            context: context.clone(),
+            votes,
+        };
+
+        // Forged/mismatched nonce must fail
+        let mut forged_proof = proof.clone();
+        forged_proof.context.recipient_nonce = [99; 32];
+        assert!(
+            app.complete_intent_reconciliation(
+                &local_id,
+                &forged_proof,
+                std::slice::from_ref(&view),
+                now_ms + 30_500,
+                Some(password)
+            )
+            .is_err()
+        );
+
+        // Valid proof completes reconciliation as Confirmed
+        let resolution = app
+            .complete_intent_reconciliation(
+                &local_id,
+                &proof,
+                std::slice::from_ref(&view),
+                now_ms + 30_500,
+                Some(password)
+            )
+            .unwrap();
+        assert_eq!(
+            resolution,
+            IntentTerminalResolution::Confirmed { resolved_at_ms: now_ms + 30_500 }
+        );
+        let updated_intent = app.pending_l2_send_intent(&local_id).unwrap();
+        assert_eq!(updated_intent.terminal_resolution, Some(resolution));
+        assert_eq!(updated_intent.stored_challenge, None);
+
+        // 4. Bounded journal cleanup prunes after max_retain_ms
+        assert_eq!(
+            app.cleanup_terminal_intents(60_000, now_ms + 31_000, Some(password)).unwrap(),
+            0
+        );
+        assert_eq!(
+            app.cleanup_terminal_intents(60_000, now_ms + 95_000, Some(password)).unwrap(),
+            1
+        );
+        assert!(app.pending_l2_send_intent(&local_id).is_err());
     }
 }

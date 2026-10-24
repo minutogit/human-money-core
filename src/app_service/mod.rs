@@ -78,6 +78,9 @@ pub mod orchestrator;
 pub mod storage_ops;
 pub mod transactions;
 
+pub use crate::models::l2_intent::IntentTerminalResolution;
+pub use checkout::{CheckoutCompletion, CheckoutPurchase};
+
 /// Represents the publicly visible information of a profile.
 /// Used to pass a list of available profiles to the frontend.
 #[derive(Serialize, Deserialize, Clone, Debug)]

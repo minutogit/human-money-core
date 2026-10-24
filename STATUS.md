@@ -3,10 +3,16 @@ project: human-money-core
 version: "0.3.1"
 phase: "active-development"
 health: "green"
-last_updated: "2026-10-23"
+last_updated: "2026-10-24"
 blocks: []
 blocked_by: []
 priority_tasks:
+  - id: "CORE-005"
+    title: "Z10 Terminal Retained-Choice Reconciliation & Z08 Checkout Replay"
+    status: "closed"
+    priority: "high"
+    depends_on: []
+    description: "Implemented terminal intent reconciliation lifecycle (30s hold, unforgeable stored challenge, committee validation, 14/20 quorum verification, conflict marking, expiry cleanup) and offline purchase replay idempotency (newly_committed = false) without network dependencies."
   - id: "CORE-001"
     title: "Define WoT integration traits"
     status: "closed"

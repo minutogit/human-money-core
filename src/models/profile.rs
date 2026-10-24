@@ -266,7 +266,7 @@ pub struct UserProfile {
     pub l2_regional_mesh_policy: Option<humoco_proto::mesh::RegionalMeshPolicy>,
     /// Private durable transport intents, never included in public profiles.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub l2_send_intents: HashMap<String, crate::app_service::l2_intents::L2SendIntent>,
+    pub l2_send_intents: HashMap<String, crate::models::l2_intent::L2SendIntent>,
     /// Recipient-owned durable challenges and completed purchase associations.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub l2_checkout_purchases: HashMap<String, crate::app_service::checkout::CheckoutPurchase>,

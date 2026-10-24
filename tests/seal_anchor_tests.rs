@@ -211,7 +211,7 @@ fn test_rollback_detection_and_reconciliation() {
 
     // Reconcile rollback where v_id1 was spent on another device and remote nonce is 3
     let report = app
-        .reconcile_rollback_with_diagnostics(&[v_id1.clone()], Some(3), Some(PASSWORD))
+        .reconcile_rollback_with_diagnostics(std::slice::from_ref(&v_id1), Some(3), Some(PASSWORD))
         .expect("Reconciliation should succeed");
 
     assert_eq!(report.new_tx_nonce, 3);

@@ -227,7 +227,7 @@ mod tests {
 
         // Case A: 1 voucher in bundle -> max 3 quarantine pairs
         let v1 = create_dummy_voucher_with_txs(2);
-        let (_, q_pairs_1) = wallet.select_fingerprints_for_bundle("bob", &[v1.clone()]).unwrap();
+        let (_, q_pairs_1) = wallet.select_fingerprints_for_bundle("bob", std::slice::from_ref(&v1)).unwrap();
         assert_eq!(q_pairs_1.len(), 3, "1 voucher must yield exactly 3 quarantine pairs (V * 3)");
 
         // Reset wallet quarantine queue with fresh entries
@@ -394,19 +394,19 @@ mod tests {
         let v1 = create_dummy_voucher_with_txs(2);
 
         // 1st payment to Bob: direct tip is selected
-        let (sel1, _) = wallet.select_fingerprints_for_bundle("bob", &[v1.clone()]).unwrap();
+        let (sel1, _) = wallet.select_fingerprints_for_bundle("bob", std::slice::from_ref(&v1)).unwrap();
         assert!(sel1.iter().any(|f| f.t_id == tip_tid), "Tip must be sent to Bob on first transfer");
 
         // 2nd payment to Bob: direct tip is NOT selected (already known by Bob)
-        let (sel2, _) = wallet.select_fingerprints_for_bundle("bob", &[v1.clone()]).unwrap();
+        let (sel2, _) = wallet.select_fingerprints_for_bundle("bob", std::slice::from_ref(&v1)).unwrap();
         assert!(!sel2.iter().any(|f| f.t_id == tip_tid), "Tip must NOT be sent to Bob again");
 
         // 1st payment to Charlie: direct tip IS selected
-        let (sel3, _) = wallet.select_fingerprints_for_bundle("charlie", &[v1.clone()]).unwrap();
+        let (sel3, _) = wallet.select_fingerprints_for_bundle("charlie", std::slice::from_ref(&v1)).unwrap();
         assert!(sel3.iter().any(|f| f.t_id == tip_tid), "Tip must be sent to Charlie on first transfer");
 
         // 1st payment to Dave: direct tip IS selected (3rd distinct recipient)
-        let (sel4, _) = wallet.select_fingerprints_for_bundle("dave", &[v1.clone()]).unwrap();
+        let (sel4, _) = wallet.select_fingerprints_for_bundle("dave", std::slice::from_ref(&v1)).unwrap();
         assert!(sel4.iter().any(|f| f.t_id == tip_tid), "Tip must be sent to Dave on first transfer");
 
         // After reaching 3 distinct recipients (Bob, Charlie, Dave), entry must be evicted from direct_queue

@@ -391,7 +391,7 @@ mod tests {
 
         // 2. V = 1 voucher -> standard budget = 10 (3 direct + 7 gossip)
         let (fingerprints_to_send, quarantine_to_send) =
-            wallet.select_fingerprints_for_bundle(&bob_id, &[voucher.clone()]).unwrap();
+            wallet.select_fingerprints_for_bundle(&bob_id, std::slice::from_ref(&voucher)).unwrap();
 
         assert_eq!(fingerprints_to_send.len(), 10);
         assert!(quarantine_to_send.is_empty());
@@ -558,17 +558,17 @@ mod tests {
         });
 
         // Send 1 to Bob
-        let (fps1, _) = wallet.select_fingerprints_for_bundle("user_1@did:key:z6Mku", &[voucher.clone()]).unwrap();
+        let (fps1, _) = wallet.select_fingerprints_for_bundle("user_1@did:key:z6Mku", std::slice::from_ref(&voucher)).unwrap();
         assert_eq!(fps1.len(), 1);
         assert_eq!(wallet.active_gossip.direct_queue.len(), 1);
         assert_eq!(wallet.active_gossip.direct_queue[0].sent_to.len(), 1);
 
         // Sending again to same recipient must NOT re-select it
-        let (fps1_dup, _) = wallet.select_fingerprints_for_bundle("user_1@did:key:z6Mku", &[voucher.clone()]).unwrap();
+        let (fps1_dup, _) = wallet.select_fingerprints_for_bundle("user_1@did:key:z6Mku", std::slice::from_ref(&voucher)).unwrap();
         assert!(fps1_dup.is_empty());
 
         // Send to 2nd recipient
-        let (fps2, _) = wallet.select_fingerprints_for_bundle("user_2@did:key:z6Mkv", &[voucher.clone()]).unwrap();
+        let (fps2, _) = wallet.select_fingerprints_for_bundle("user_2@did:key:z6Mkv", std::slice::from_ref(&voucher)).unwrap();
         assert_eq!(fps2.len(), 1);
         assert_eq!(wallet.active_gossip.direct_queue[0].sent_to.len(), 2);
 

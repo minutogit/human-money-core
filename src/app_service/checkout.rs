@@ -37,6 +37,44 @@ fn invalid(reason: &str) -> Error {
     ))
 }
 impl AppService {
+    /// Checks if a purchase ID has already been completed with the specified bundle.
+    pub fn is_checkout_purchase_completed(
+        &self,
+        purchase_id: &str,
+        bundle_data: &[u8],
+    ) -> Result<bool, Error> {
+        let bundle_hash = *blake3::hash(bundle_data).as_bytes();
+        self.with_wallet(|wallet| {
+            if let Some(purchase) = wallet.profile.l2_checkout_purchases.get(purchase_id) {
+                if purchase.bundle_hash != bundle_hash {
+                    return Err(invalid("purchase ID already binds another bundle"));
+                }
+                Ok(purchase.completed)
+            } else {
+                Ok(false)
+            }
+        })?
+    }
+
+    /// Evaluates replay of an already completed purchase without network dependency.
+    /// Returns Some(CheckoutCompletion) with newly_committed = false and valid release capability
+    /// if the purchase is already marked completed for this exact bundle hash.
+    pub fn replay_checkout_purchase(
+        &self,
+        purchase_id: &str,
+        bundle_data: &[u8],
+    ) -> Result<Option<CheckoutCompletion>, Error> {
+        if !self.is_checkout_purchase_completed(purchase_id, bundle_data)? {
+            return Ok(None);
+        }
+        Ok(Some(CheckoutCompletion {
+            purchase_id: purchase_id.into(),
+            newly_committed: false,
+            verdict: CheckoutReleaseVerdict::new(L2ProcessingOutcome::Confirmed, false)
+                .with_durable_purchase_binding(DurablePurchaseBinding::backend_verified()),
+        }))
+    }
+
     /// Creates and durably installs one unpredictable recipient challenge bound to
     /// the exact encrypted L1 bundle and purchase ID. No L1 import occurs yet.
     pub fn begin_checkout_purchase(
@@ -251,7 +289,7 @@ mod tests {
     fn purchase_commit_binds_real_l1_challenge_authority_and_idempotent_restart() {
         let dir = tempfile::tempdir().unwrap();
         let password = "atomic-checkout-test";
-        let (mut sender, _) = test_utils::setup_service_with_profile(
+        let (mut sender, sender_profile) = test_utils::setup_service_with_profile(
             &dir.path().join("sender"),
             &ACTORS.alice,
             "Sender",
@@ -294,11 +332,11 @@ mod tests {
             .clone();
         let standards = HashMap::from([(voucher.voucher_standard.uuid.clone(), standard)]);
         let bundle = sender
-            .create_transfer_bundle(
+            .create_transfer_bundle_with_l2_intents(
                 MultiTransferRequest {
                     recipient_id: recipient,
                     sources: vec![SourceTransfer {
-                        local_instance_id: local,
+                        local_instance_id: local.clone(),
                         amount_to_send: "10".into(),
                     }],
                     notes: None,
@@ -308,8 +346,20 @@ mod tests {
                 &standards,
                 None,
                 Some(password),
+                0,
             )
             .unwrap();
+        let intent = sender.pending_l2_send_intent(&local).unwrap();
+        assert!(!intent.chain_request_bytes.is_empty());
+        let chain: crate::models::layer2_api::L2ChainLockRequest = serde_json::from_slice(&intent.chain_request_bytes).unwrap();
+        let request: crate::models::layer2_api::L2LockRequest = serde_json::from_slice(&intent.request_bytes).unwrap();
+        assert_eq!(chain.chain.last().unwrap().transaction_hash,request.transaction_hash);
+        assert_eq!(request.created_at_ms,intent.created_at_ms);
+        sender.logout();
+        drop(sender);
+        let mut sender = AppService::new(&dir.path().join("sender")).unwrap();
+        sender.login(&sender_profile.folder_name,password,false,"test-id".into()).unwrap();
+        assert_eq!(sender.pending_l2_send_intent(&local).unwrap(),intent,"the transfer and exact intent survive the same managed commit");
         receiver.with_wallet_and_identity(|_, identity| {
             let opened = bundle_processor::open_and_verify_bundle(identity, &bundle.bundle_bytes).unwrap();
             let voucher = &opened.vouchers[0];
@@ -466,6 +516,16 @@ mod tests {
         receiver
             .login(&profile.folder_name, password, false, "test-id".into())
             .unwrap();
+        assert!(
+            receiver
+                .is_checkout_purchase_completed("sale-123", &bundle.bundle_bytes)
+                .unwrap()
+        );
+        assert!(
+            !receiver
+                .is_checkout_purchase_completed("sale-999", &bundle.bundle_bytes)
+                .unwrap()
+        );
         let replay = receiver
             .complete_checkout_purchase(
                 "sale-123",

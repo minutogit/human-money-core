@@ -103,10 +103,10 @@ pub fn select_best_peer(peers: &[PeerLatencyInfo]) -> Option<&PeerLatencyInfo> {
 ///
 /// If `peers` is unsorted, it is not mutated; the function works on a
 /// sorted view internally.
-pub fn select_peer_from_top3<'a>(
-    peers: &'a [PeerLatencyInfo],
+pub fn select_peer_from_top3(
+    peers: &[PeerLatencyInfo],
     jitter_seed: u64,
-) -> Option<&'a PeerLatencyInfo> {
+) -> Option<&PeerLatencyInfo> {
     // Collect online peers sorted by latency without mutating caller slice
     let mut online: Vec<&PeerLatencyInfo> = peers.iter().filter(|p| !p.is_offline).collect();
     if online.is_empty() {

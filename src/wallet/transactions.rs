@@ -960,6 +960,22 @@ impl Wallet {
         request: MultiTransferRequest,
         archive: Option<&FileVoucherArchive>,
     ) -> Result<CreateBundleResult, VoucherCoreError> {
+        self.execute_multi_transfer_and_bundle_inner(identity,standard_definitions,request,archive,None)
+    }
+
+    /// Builds the L1 bundle and durable-intent state together; the host commits
+    /// this wallet before dispatch. Offline L1 serialization remains unchanged.
+    pub(crate) fn execute_multi_transfer_and_bundle_with_l2_intents(
+        &mut self, identity:&UserIdentity, standard_definitions:&HashMap<String,VoucherStandardDefinition>,
+        request:MultiTransferRequest, archive:Option<&FileVoucherArchive>, network:u8,
+    )->Result<CreateBundleResult,VoucherCoreError> {
+        self.execute_multi_transfer_and_bundle_inner(identity,standard_definitions,request,archive,Some(network))
+    }
+
+    fn execute_multi_transfer_and_bundle_inner(
+        &mut self, identity:&UserIdentity, standard_definitions:&HashMap<String,VoucherStandardDefinition>,
+        request:MultiTransferRequest, archive:Option<&FileVoucherArchive>, network:Option<u8>,
+    )->Result<CreateBundleResult,VoucherCoreError> {
         // TRANSACTIONAL APPROACH:
         // 1. Create a temporary copy of the wallet. All changes are
         //    initially performed on this copy.
@@ -1041,6 +1057,11 @@ impl Wallet {
                 request.sender_profile_name.clone(),
             )?;
 
+            if let Some(network) = network {
+                // The input local ID is the durable transport handle. It stays
+                // bound to the exact spent branch, independently of split change.
+                temp_wallet.stage_l2_send_intent(&source.local_instance_id,&new_voucher,network)?;
+            }
             vouchers_for_bundle.push(new_voucher);
         }
 

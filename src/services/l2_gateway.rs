@@ -1208,7 +1208,7 @@ pub fn build_voucher_lock_chain_with_outputs(
 
     let start_idx = match sync_point {
         None => 0,
-        Some(s) if s == "genesis" => 0,
+        Some("genesis") => 0,
         Some(sp) => {
             let sync_idx = voucher
                 .transactions

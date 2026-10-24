@@ -55,6 +55,22 @@ impl AppService {
         archive: Option<&FileVoucherArchive>,
         password: Option<&str>,
     ) -> Result<CreateBundleResult, Error> {
+        self.create_transfer_bundle_inner(request,standard_definitions_toml,archive,password,None)
+    }
+
+    /// Atomically commits the signed L1 transfer and exact outbound L2 bytes.
+    /// A host must wait for this successful commit before any HTTP dispatch.
+    pub fn create_transfer_bundle_with_l2_intents(
+        &mut self, request:MultiTransferRequest, standard_definitions_toml:&HashMap<String,String>,
+        archive:Option<&FileVoucherArchive>, password:Option<&str>, network:u8,
+    )->Result<CreateBundleResult,Error> {
+        self.create_transfer_bundle_inner(request,standard_definitions_toml,archive,password,Some(network))
+    }
+
+    fn create_transfer_bundle_inner(
+        &mut self, request:MultiTransferRequest, standard_definitions_toml:&HashMap<String,String>,
+        archive:Option<&FileVoucherArchive>, password:Option<&str>, network:Option<u8>,
+    )->Result<CreateBundleResult,Error> {
         // Parse the TOML definitions BEFORE the lock/state swap occurs
         let mut verified_definitions = HashMap::new();
         for (uuid, toml_content) in standard_definitions_toml {
@@ -63,12 +79,11 @@ impl AppService {
         }
 
         let res = self.with_transactional_mut(password, |temp_wallet, identity, _, _| {
-            match temp_wallet.execute_multi_transfer_and_bundle(
-                identity,
-                &verified_definitions,
-                request,
-                archive,
-            ) {
+            let created = match network {
+                Some(network) => temp_wallet.execute_multi_transfer_and_bundle_with_l2_intents(identity,&verified_definitions,request,archive,network),
+                None => temp_wallet.execute_multi_transfer_and_bundle(identity,&verified_definitions,request,archive),
+            };
+            match created {
                 Ok(create_result) => TransactionOutcome::Commit(create_result),
                 // --- SELF-HEALING ---
                 Err(Error::DoubleSpendAttemptBlocked { local_instance_id }) => {
@@ -216,8 +231,7 @@ impl AppService {
 
             if !container.signature.is_empty() {
                 container
-                    .verify_container_signature(creator_id)
-                    .map_err(Error::from)?;
+                    .verify_container_signature(creator_id)?;
             } else if matches!(container.et, crate::models::secure_container::EncryptionType::Asymmetric) {
                 return Err(Error::Validation(
                     crate::error::ValidationError::InvalidContainerSignature,

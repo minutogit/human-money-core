@@ -220,18 +220,13 @@ impl CorridorEntry {
 ///
 /// The store is serializable and cloneable so it can be persisted via `Wallet`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Default)]
 pub struct RoutingMemoryStore {
     /// Map from corridor_key -> entry.
     pub corridors: HashMap<String, CorridorEntry>,
 }
 
-impl Default for RoutingMemoryStore {
-    fn default() -> Self {
-        Self {
-            corridors: HashMap::new(),
-        }
-    }
-}
+
 
 impl RoutingMemoryStore {
     /// Create a new empty store.

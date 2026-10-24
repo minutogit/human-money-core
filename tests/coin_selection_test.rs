@@ -126,10 +126,10 @@ fn test_bumerang_priority_dominates() {
     insert_active(&mut wallet, "local-b", v_b);
 
     // Even if we artificially boost corridor for A, bumerang should still win
-    let mut mem = RoutingMemoryStore::new();
+    let mem = RoutingMemoryStore::new();
     // Give corridor weight to A's path? Both share same std_uuid + recipient, so corridor equal.
     // So boomerang (+10000) must dominate.
-    let ranked = rank_vouchers(&wallet, dec!(10), Some(std_uuid), &bob_id, &mut mem);
+    let ranked = rank_vouchers(&wallet, dec!(10), Some(std_uuid), &bob_id, &mem);
     assert_eq!(ranked.len(), 2);
     // B (boomerang) must be first
     assert_eq!(ranked[0].local_instance_id, "local-b");
@@ -188,8 +188,8 @@ fn test_exact_match_single_avoids_split() {
     insert_active(&mut wallet, "local-100", v100);
     insert_active(&mut wallet, "local-60", v60);
 
-    let mut mem = RoutingMemoryStore::new();
-    let plan = prepare_transfer(&wallet, dec!(60), Some(std_uuid), &bob_id, &mut mem).unwrap();
+    let mem = RoutingMemoryStore::new();
+    let plan = prepare_transfer(&wallet, dec!(60), Some(std_uuid), &bob_id, &mem).unwrap();
     assert_eq!(plan.plan_reason, SelectionReason::ExactMatch);
     assert_eq!(plan.selected.len(), 1);
     assert_eq!(plan.selected[0].local_instance_id, "local-60");
@@ -215,8 +215,8 @@ fn test_subset_sum_preferred_over_greedy_split() {
     insert_active(&mut wallet, "local-30b", v30b);
     insert_active(&mut wallet, "local-100b", v100);
 
-    let mut mem = RoutingMemoryStore::new();
-    let plan = prepare_transfer(&wallet, dec!(60), Some(std_uuid), &bob_id, &mut mem).unwrap();
+    let mem = RoutingMemoryStore::new();
+    let plan = prepare_transfer(&wallet, dec!(60), Some(std_uuid), &bob_id, &mem).unwrap();
     // Should find exact subset 30+30, not greedy
     assert_eq!(plan.plan_reason, SelectionReason::SubsetExact);
     assert!(!plan.needs_split);
@@ -242,8 +242,8 @@ fn test_greedy_split_when_no_exact_available() {
     insert_active(&mut wallet, "local-50c", v50);
     insert_active(&mut wallet, "local-40", v40);
 
-    let mut mem = RoutingMemoryStore::new();
-    let plan = prepare_transfer(&wallet, dec!(60), Some(std_uuid), &bob_id, &mut mem).unwrap();
+    let mem = RoutingMemoryStore::new();
+    let plan = prepare_transfer(&wallet, dec!(60), Some(std_uuid), &bob_id, &mem).unwrap();
     assert_eq!(plan.plan_reason, SelectionReason::Greedy);
     assert!(plan.needs_split);
     // Total selected > target (50+40=90) and last will be split
@@ -269,8 +269,8 @@ fn test_relative_fefo_older_scores_higher() {
     insert_active(&mut wallet, "local-old", v_old);
     insert_active(&mut wallet, "local-young", v_young);
 
-    let mut mem = RoutingMemoryStore::new();
-    let ranked = rank_vouchers(&wallet, dec!(10), Some(std_uuid), &bob_id, &mut mem);
+    let mem = RoutingMemoryStore::new();
+    let ranked = rank_vouchers(&wallet, dec!(10), Some(std_uuid), &bob_id, &mem);
     assert_eq!(ranked.len(), 2);
     let old_entry = ranked.iter().find(|r| r.local_instance_id == "local-old").unwrap();
     let young_entry = ranked.iter().find(|r| r.local_instance_id == "local-young").unwrap();
@@ -415,9 +415,9 @@ fn test_deterministic_ranking_tie_break() {
     let v2 = make_voucher("vid-2", std_uuid, "Freetaler", &bob_id, "10.00", vec![("t-2", &bob_id, Some("10.00"))], "2024-01-01T00:00:00.000000Z");
     insert_active(&mut wallet, "local-a", v1);
     insert_active(&mut wallet, "local-b", v2);
-    let mut mem = RoutingMemoryStore::new();
-    let r1 = rank_vouchers(&wallet, dec!(5), Some(std_uuid), &bob_id, &mut mem);
-    let r2 = rank_vouchers(&wallet, dec!(5), Some(std_uuid), &bob_id, &mut mem);
+    let mem = RoutingMemoryStore::new();
+    let r1 = rank_vouchers(&wallet, dec!(5), Some(std_uuid), &bob_id, &mem);
+    let r2 = rank_vouchers(&wallet, dec!(5), Some(std_uuid), &bob_id, &mem);
     assert_eq!(r1[0].local_instance_id, r2[0].local_instance_id, "ranking must be deterministic");
     // Lexicographic tie break: local-a before local-b if scores equal
     assert_eq!(r1[0].local_instance_id, "local-a");

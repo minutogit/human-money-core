@@ -131,7 +131,7 @@ impl AppService {
                 }
 
                 // Verify container integrity (header signature and payload binding)
-                container.verify_integrity().map_err(Error::from)?;
+                container.verify_integrity()?;
 
                 // Wallet identity is required to open the container
                 let decrypted_payload = container.open(identity, None)?;
@@ -277,7 +277,7 @@ impl AppService {
                 .reconcile_voucher_state(&local_id, successor_lock)
             {
                 Ok(result) => TransactionOutcome::Commit(result),
-                Err(e) => TransactionOutcome::Rollback(Error::from(e)),
+                Err(e) => TransactionOutcome::Rollback(e),
             },
         )
     }
@@ -411,7 +411,6 @@ impl AppService {
                 &expected_voucher_id,
                 authority,
             )
-            .map_err(Error::from)
         } else {
             l2_gateway::process_l2_verdict(
                 response_bytes,
@@ -421,7 +420,6 @@ impl AppService {
                 expected_ephemeral_pub,
                 &expected_voucher_id,
             )
-            .map_err(Error::from)
         }
     }
 

@@ -298,7 +298,7 @@ fn test_wallet_backup_restore_reconciles_already_spent_voucher_via_status_query(
 
     // Reconcile rollback with diagnostics: confirms Tier 1 / Tier 2 consolidation
     let report = app
-        .reconcile_rollback_with_diagnostics(&[app_voucher_id.clone()], Some(42), Some(password))
+        .reconcile_rollback_with_diagnostics(std::slice::from_ref(&app_voucher_id), Some(42), Some(password))
         .expect("reconcile rollback with diagnostics");
     assert!(report.archived_voucher_ids.contains(&app_voucher_id));
     assert_eq!(report.new_tx_nonce, 42);

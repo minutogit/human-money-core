@@ -521,7 +521,7 @@ impl Wallet {
                 .voucher
                 .transactions
                 .first()
-                .map_or(false, |tx| tx.t_type == "init");
+                .is_some_and(|tx| tx.t_type == "init");
         let is_creator = instance.voucher.creator_profile.id.as_deref() == Some(user_id);
 
         if !is_incomplete || !has_single_init || !is_creator {

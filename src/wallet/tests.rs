@@ -456,7 +456,7 @@ mod internal_logic {
         let mut fps = Vec::new();
         for i in 0..12 {
             fps.push(TransactionFingerprint {
-                t_id: crate::services::crypto::get_hash(&format!("tid_{:02}", i)),
+                t_id: crate::services::crypto::get_hash(format!("tid_{:02}", i)),
                 ds_tag: "single_bucket".to_string(),
                 deletable_at: format!("2099-01-01T{:02}:00:00Z", i),
                 ..Default::default()

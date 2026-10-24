@@ -181,7 +181,7 @@ pub fn repackage_profile_for_backup(
                 password,
                 &container.password_kdf_salt,
             )?);
-            container.password_wrapped_key_with_nonce = crypto::encrypt_data(&*wrapping, &key)
+            container.password_wrapped_key_with_nonce = crypto::encrypt_data(&wrapping, &key)
                 .map_err(|e| StorageError::EncryptionFailed {
                     reason: e.to_string(),
                 })?;

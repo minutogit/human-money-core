@@ -10,3 +10,5 @@ pub mod signature;
 pub mod voucher;
 pub mod voucher_standard_definition;
 pub mod wallet_event;
+
+pub mod l2_intent;

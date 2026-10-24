@@ -104,6 +104,7 @@ pub struct TransferPlan {
 /// - `is_eigen` – true if voucher creator == owner_id
 /// - `age_ratio` – relative age 0.0..1.0 (1.0 = oldest in wallet for this asset class)
 /// - `chain_len` – number of transactions beyond init (hop depth)
+#[allow(clippy::too_many_arguments)] // Keep the established scoring API stable.
 pub fn score_voucher(
     amount: Decimal,
     target: Decimal,

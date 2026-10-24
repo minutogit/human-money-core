@@ -80,3 +80,5 @@ impl Wallet {
     // - _execute_single_transfer
     // - execute_multi_transfer_and_bundle
 }
+
+mod l2_intents;
