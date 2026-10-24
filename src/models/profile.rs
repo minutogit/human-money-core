@@ -280,6 +280,35 @@ pub struct UserProfile {
 // The `identity` is added separately after creation.
 
 impl UserProfile {
+    pub(crate) fn prune_expired_checkout_purchases(&mut self, now_ms: u64) -> bool {
+        let previous_len = self.l2_checkout_purchases.len();
+        self.l2_checkout_purchases.retain(|_, purchase| {
+            purchase.completed
+                || (purchase.expires_at_ms > now_ms
+                    && purchase.context.root_valid_until > now_ms)
+        });
+        previous_len != self.l2_checkout_purchases.len()
+    }
+
+    pub(crate) fn active_checkout_purchase_count(&self, now_ms: u64) -> usize {
+        self.l2_checkout_purchases
+            .values()
+            .filter(|purchase| {
+                !purchase.completed
+                    && purchase.expires_at_ms > now_ms
+                    && purchase.context.root_valid_until > now_ms
+            })
+            .count()
+    }
+
+    pub(crate) fn mark_checkout_purchase_completed(&mut self, purchase_id: &str) -> bool {
+        let Some(purchase) = self.l2_checkout_purchases.get_mut(purchase_id) else {
+            return false;
+        };
+        purchase.completed = true;
+        true
+    }
+
     /// Converts this `UserProfile` into a `PublicProfile`, including the `id`.
     pub fn to_public_profile(&self) -> PublicProfile {
         self.to_public_profile_with_id(true)

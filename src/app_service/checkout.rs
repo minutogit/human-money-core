@@ -15,6 +15,9 @@ use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+const MAX_ACTIVE_CHECKOUT_PURCHASES: usize = 256;
+const CHECKOUT_CHALLENGE_TTL_MS: u64 = 30_000;
+
 /// Private purchase binding. Never accepted from a proof or IPC outcome string.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CheckoutPurchase {
@@ -36,6 +39,28 @@ fn invalid(reason: &str) -> Error {
         reason.into(),
     ))
 }
+
+fn generate_recipient_nonce(previous: Option<[u8; 32]>) -> Result<[u8; 32], Error> {
+    loop {
+        let mut nonce = [0; 32];
+        OsRng
+            .try_fill_bytes(&mut nonce)
+            .map_err(|_| invalid("challenge entropy unavailable"))?;
+        if nonce != [0; 32] && previous != Some(nonce) {
+            return Ok(nonce);
+        }
+    }
+}
+
+fn completed_checkout_completion(purchase_id: &str) -> CheckoutCompletion {
+    CheckoutCompletion {
+        purchase_id: purchase_id.into(),
+        newly_committed: false,
+        verdict: CheckoutReleaseVerdict::new(L2ProcessingOutcome::Confirmed, false)
+            .with_durable_purchase_binding(DurablePurchaseBinding::backend_verified()),
+    }
+}
+
 impl AppService {
     /// Checks if a purchase ID has already been completed with the specified bundle.
     pub fn is_checkout_purchase_completed(
@@ -67,12 +92,7 @@ impl AppService {
         if !self.is_checkout_purchase_completed(purchase_id, bundle_data)? {
             return Ok(None);
         }
-        Ok(Some(CheckoutCompletion {
-            purchase_id: purchase_id.into(),
-            newly_committed: false,
-            verdict: CheckoutReleaseVerdict::new(L2ProcessingOutcome::Confirmed, false)
-                .with_durable_purchase_binding(DurablePurchaseBinding::backend_verified()),
-        }))
+        Ok(Some(completed_checkout_completion(purchase_id)))
     }
 
     /// Creates and durably installs one unpredictable recipient challenge bound to
@@ -93,14 +113,50 @@ impl AppService {
         }
         let bundle_hash = *blake3::hash(bundle_data).as_bytes();
         self.with_transactional_mut(password, |wallet, identity, _, _| {
+            let mut pruned = false;
             let result = (|| {
-                if let Some(purchase) = wallet.profile.l2_checkout_purchases.get(purchase_id) {
+                if let Some(purchase) = wallet
+                    .profile
+                    .l2_checkout_purchases
+                    .get(purchase_id)
+                    .cloned()
+                {
                     if purchase.bundle_hash != bundle_hash {
                         return Err(invalid("purchase ID already binds another bundle"));
                     }
-                    return Ok(purchase.context.clone());
+                    if purchase.completed {
+                        return Ok(purchase.context.clone());
+                    }
+                    if now_ms < purchase.expires_at_ms
+                        && now_ms < purchase.context.root_valid_until
+                    {
+                        return Ok(purchase.context.clone());
+                    }
+                    if now_ms >= purchase.context.root_valid_until {
+                        return Err(invalid("purchase root expired"));
+                    }
+                    let nonce =
+                        generate_recipient_nonce(Some(purchase.context.recipient_nonce))?;
+                    let expires_at_ms = now_ms
+                        .saturating_add(CHECKOUT_CHALLENGE_TTL_MS)
+                        .min(purchase.context.root_valid_until);
+                    let mut context = purchase.context;
+                    context.recipient_nonce = nonce;
+                    let stored = wallet
+                        .profile
+                        .l2_checkout_purchases
+                        .get_mut(purchase_id)
+                        .ok_or_else(|| invalid("purchase disappeared"))?;
+                    stored.context = context.clone();
+                    stored.expires_at_ms = expires_at_ms;
+                    return Ok(context);
                 }
-                if wallet.profile.l2_checkout_purchases.len() >= 256 {
+                pruned = wallet
+                    .profile
+                    .prune_expired_checkout_purchases(now_ms);
+                if wallet.profile.active_checkout_purchase_count(now_ms)
+                    >= MAX_ACTIVE_CHECKOUT_PURCHASES
+                {
                     return Err(invalid("purchase capacity exhausted"));
                 }
                 let bundle = bundle_processor::open_and_verify_bundle(identity, bundle_data)?;
@@ -148,13 +204,7 @@ impl AppService {
                 let committee =
                     regional_committee(policy, views, shard, now_ms).map_err(invalid)?;
                 let entry = L2LockEntry::from(&request);
-                let mut nonce = [0; 32];
-                OsRng
-                    .try_fill_bytes(&mut nonce)
-                    .map_err(|_| invalid("challenge entropy unavailable"))?;
-                if nonce == [0; 32] {
-                    return Err(invalid("invalid challenge entropy"));
-                }
+                let nonce = generate_recipient_nonce(None)?;
                 let context = LiveStateContext {
                     version: 1,
                     network: policy.network,
@@ -173,7 +223,9 @@ impl AppService {
                     CheckoutPurchase {
                         bundle_hash,
                         context: context.clone(),
-                        expires_at_ms: now_ms.saturating_add(30_000).min(root_valid_until),
+                        expires_at_ms: now_ms
+                            .saturating_add(CHECKOUT_CHALLENGE_TTL_MS)
+                            .min(root_valid_until),
                         completed: false,
                     },
                 );
@@ -181,6 +233,7 @@ impl AppService {
             })();
             match result {
                 Ok(context) => TransactionOutcome::Commit(context),
+                Err(error) if pruned => TransactionOutcome::CommitAndReturnError(error),
                 Err(error) => TransactionOutcome::Rollback(error),
             }
         })
@@ -202,10 +255,25 @@ impl AppService {
         if bundle_data.len() > crate::services::bundle_processor::MAX_CONTAINER_BYTES {
             return Err(invalid("purchase bundle too large"));
         }
+        let hash = *blake3::hash(bundle_data).as_bytes();
+        let stored_purchase = self.with_wallet(|wallet| {
+            wallet
+                .profile
+                .l2_checkout_purchases
+                .get(purchase_id)
+                .map(|purchase| (purchase.bundle_hash, purchase.completed))
+        })?;
+        if let Some((stored_hash, completed)) = stored_purchase {
+            if stored_hash != hash {
+                return Err(invalid("purchase bundle mismatch"));
+            }
+            if completed {
+                return Ok(completed_checkout_completion(purchase_id));
+            }
+        }
         let registry = StandardRegistry::from_toml_map(standards)?;
         let epoch_info = self.get_epoch_info(password)?.unwrap_or_default();
         let (epoch_start, epoch) = epoch_info;
-        let hash = *blake3::hash(bundle_data).as_bytes();
         let newly_committed = self.with_transactional_mut(password, |wallet, identity, _, _| {
             let result = (|| {
                 let purchase = wallet
@@ -249,12 +317,12 @@ impl AppService {
                 if outcome.involved_vouchers.len() != 1 {
                     return Err(invalid("purchase did not import exactly one voucher"));
                 }
-                wallet
+                if !wallet
                     .profile
-                    .l2_checkout_purchases
-                    .get_mut(purchase_id)
-                    .ok_or_else(|| invalid("purchase disappeared"))?
-                    .completed = true;
+                    .mark_checkout_purchase_completed(purchase_id)
+                {
+                    return Err(invalid("purchase disappeared"));
+                }
                 Ok(true)
             })();
             match result {
@@ -285,6 +353,402 @@ mod tests {
         AttestationVote,
         mesh::{RegionalMeshMember, RegionalMeshPolicy},
     };
+
+    struct CheckoutFixture {
+        receiver: AppService,
+        bundle_bytes: Vec<u8>,
+        standards: HashMap<String, String>,
+        view: RegionalMeshView,
+        keys: Vec<SigningKey>,
+        now: u64,
+    }
+
+    impl CheckoutFixture {
+        fn proof(&self, context: &LiveStateContext) -> LiveStateProof {
+            let digest = humoco_proto::live::live_state_digest(context).unwrap();
+            let votes = context
+                .committee
+                .iter()
+                .take(14)
+                .map(|public| {
+                    let key = self
+                        .keys
+                        .iter()
+                        .find(|key| key.verifying_key().to_bytes() == *public)
+                        .unwrap();
+                    AttestationVote {
+                        signer_pubkey: *public,
+                        signature: key.sign(&digest).to_bytes(),
+                    }
+                })
+                .collect();
+            LiveStateProof {
+                context: context.clone(),
+                votes,
+            }
+        }
+    }
+
+    fn checkout_fixture(dir: &std::path::Path) -> CheckoutFixture {
+        let password = "checkout-lifecycle-test";
+        let (mut sender, _) = test_utils::setup_service_with_profile(
+            &dir.join("sender"),
+            &ACTORS.alice,
+            "Sender",
+            password,
+        );
+        let (mut receiver, _) = test_utils::setup_service_with_profile(
+            &dir.join("receiver"),
+            &ACTORS.bob,
+            "Receiver",
+            password,
+        );
+        let sender_id = sender.with_wallet(|wallet| wallet.get_user_id().to_string()).unwrap();
+        let recipient = receiver
+            .with_wallet(|wallet| wallet.get_user_id().to_string())
+            .unwrap();
+        let standard = test_utils::generate_signed_standard_toml(
+            "voucher_standards/freetaler_v1/standard.toml",
+        );
+        let voucher = sender
+            .create_new_voucher(
+                &standard,
+                NewVoucherData {
+                    creator_profile: PublicProfile {
+                        id: Some(sender_id),
+                        ..Default::default()
+                    },
+                    nominal_value: ValueDefinition {
+                        amount: "100".into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                Some(password),
+            )
+            .unwrap();
+        let local = sender
+            .with_wallet_and_identity(|wallet, identity| {
+                wallet.list_vouchers(Some(identity), None, None, None)
+            })
+            .unwrap()[0]
+            .local_instance_id
+            .clone();
+        let standards = HashMap::from([(voucher.voucher_standard.uuid.clone(), standard)]);
+        let bundle = sender
+            .create_transfer_bundle_with_l2_intents(
+                MultiTransferRequest {
+                    recipient_id: recipient,
+                    sources: vec![SourceTransfer {
+                        local_instance_id: local,
+                        amount_to_send: "10".into(),
+                    }],
+                    notes: None,
+                    sender_profile_name: None,
+                    use_privacy_mode: Some(false),
+                },
+                &standards,
+                None,
+                Some(password),
+                0,
+            )
+            .unwrap();
+        let source = SigningKey::from_bytes(&[100; 32]);
+        let keys: Vec<_> = (1..=20).map(|i| SigningKey::from_bytes(&[i; 32])).collect();
+        let now = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();
+        let mut members: Vec<_> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, key)| RegionalMeshMember {
+                node_pubkey: key.verifying_key().to_bytes(),
+                hrw_routing_id: [i as u8; 32],
+            })
+            .collect();
+        members.sort_by_key(|member| member.node_pubkey);
+        let mut view = RegionalMeshView {
+            version: 1,
+            network: 0,
+            source_key: source.verifying_key().to_bytes(),
+            issued_at_ms: now,
+            valid_until_ms: now + 60_000,
+            members,
+            signature: [0; 64],
+        };
+        view.signature = source.sign(&view.digest().unwrap()).to_bytes();
+        receiver
+            .configure_regional_mesh_authority(
+                RegionalMeshPolicy {
+                    network: 0,
+                    source_keys: vec![view.source_key],
+                },
+                Some(password),
+            )
+            .unwrap();
+        CheckoutFixture {
+            receiver,
+            bundle_bytes: bundle.bundle_bytes,
+            standards,
+            view,
+            keys,
+            now,
+        }
+    }
+
+    fn assert_security_error(error: &Error, expected: &str) {
+        match error {
+            Error::Validation(crate::error::ValidationError::SecurityViolation(reason)) => {
+                assert_eq!(reason, expected);
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn more_than_256_completed_purchases_remain_replayable_without_capacity_exhaustion() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut fixture = checkout_fixture(dir.path());
+        let password = "checkout-lifecycle-test";
+        let context = fixture
+            .receiver
+            .begin_checkout_purchase(
+                "completed-0",
+                &fixture.bundle_bytes,
+                std::slice::from_ref(&fixture.view),
+                fixture.now,
+                Some(password),
+            )
+            .unwrap();
+        let proof = fixture.proof(&context);
+        let completion = fixture
+            .receiver
+            .complete_checkout_purchase(
+                "completed-0",
+                &fixture.bundle_bytes,
+                &proof,
+                std::slice::from_ref(&fixture.view),
+                &fixture.standards,
+                fixture.now + 1,
+                Some(password),
+            )
+            .unwrap();
+        assert!(completion.newly_committed);
+        let completed = fixture
+            .receiver
+            .with_wallet(|wallet| {
+                wallet
+                    .profile
+                    .l2_checkout_purchases
+                    .get("completed-0")
+                    .cloned()
+            })
+            .unwrap()
+            .unwrap();
+        {
+            let wallet = fixture.receiver.get_wallet_mut().unwrap();
+            for index in 1..=256 {
+                wallet.profile.l2_checkout_purchases.insert(
+                    format!("completed-{index}"),
+                    completed.clone(),
+                );
+            }
+        }
+        let dummy_proof = LiveStateProof {
+            context: context.clone(),
+            votes: Vec::new(),
+        };
+        for index in 0..=256 {
+            let purchase_id = format!("completed-{index}");
+            let replay = fixture
+                .receiver
+                .complete_checkout_purchase(
+                    &purchase_id,
+                    &fixture.bundle_bytes,
+                    &dummy_proof,
+                    std::slice::from_ref(&fixture.view),
+                    &HashMap::new(),
+                    fixture.now + 2,
+                    Some(password),
+                )
+                .unwrap();
+            assert!(!replay.newly_committed);
+            assert!(replay.verdict.can_release_goods_automatically);
+        }
+        fixture
+            .receiver
+            .begin_checkout_purchase(
+                "active-after-completed",
+                &fixture.bundle_bytes,
+                std::slice::from_ref(&fixture.view),
+                fixture.now,
+                Some(password),
+            )
+            .unwrap();
+        fixture
+            .receiver
+            .with_wallet(|wallet| {
+                assert_eq!(wallet.profile.active_checkout_purchase_count(fixture.now), 1);
+                assert_eq!(wallet.profile.l2_checkout_purchases.len(), 258);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn expired_active_reservation_renews_with_new_nonce_and_extended_expiry() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut fixture = checkout_fixture(dir.path());
+        let password = "checkout-lifecycle-test";
+        let first = fixture
+            .receiver
+            .begin_checkout_purchase(
+                "renewable",
+                &fixture.bundle_bytes,
+                std::slice::from_ref(&fixture.view),
+                fixture.now,
+                Some(password),
+            )
+            .unwrap();
+        let first_expiry = fixture
+            .receiver
+            .with_wallet(|wallet| {
+                wallet
+                    .profile
+                    .l2_checkout_purchases
+                    .get("renewable")
+                    .unwrap()
+                    .expires_at_ms
+            })
+            .unwrap();
+        let unchanged = fixture
+            .receiver
+            .begin_checkout_purchase(
+                "renewable",
+                &fixture.bundle_bytes,
+                std::slice::from_ref(&fixture.view),
+                fixture.now + 1,
+                Some(password),
+            )
+            .unwrap();
+        assert_eq!(unchanged, first);
+        let renewed = fixture
+            .receiver
+            .begin_checkout_purchase(
+                "renewable",
+                &fixture.bundle_bytes,
+                std::slice::from_ref(&fixture.view),
+                first_expiry + 1,
+                Some(password),
+            )
+            .unwrap();
+        assert_ne!(renewed.recipient_nonce, [0; 32]);
+        assert_ne!(renewed.recipient_nonce, first.recipient_nonce);
+        let (stored_expiry, stored_nonce, completed) = fixture
+            .receiver
+            .with_wallet(|wallet| {
+                let purchase = wallet
+                    .profile
+                    .l2_checkout_purchases
+                    .get("renewable")
+                    .unwrap();
+                (
+                    purchase.expires_at_ms,
+                    purchase.context.recipient_nonce,
+                    purchase.completed,
+                )
+            })
+            .unwrap();
+        assert!(stored_expiry > first_expiry);
+        assert_eq!(stored_nonce, renewed.recipient_nonce);
+        assert!(!completed);
+        let error = fixture
+            .receiver
+            .begin_checkout_purchase(
+                "renewable",
+                &fixture.bundle_bytes,
+                std::slice::from_ref(&fixture.view),
+                renewed.root_valid_until,
+                Some(password),
+            )
+            .unwrap_err();
+        assert_security_error(&error, "purchase root expired");
+    }
+
+    #[test]
+    fn unexpired_active_reservations_are_bounded_and_expired_entries_are_pruned() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut fixture = checkout_fixture(dir.path());
+        let password = "checkout-lifecycle-test";
+        fixture
+            .receiver
+            .begin_checkout_purchase(
+                "active-0",
+                &fixture.bundle_bytes,
+                std::slice::from_ref(&fixture.view),
+                fixture.now,
+                Some(password),
+            )
+            .unwrap();
+        let template = fixture
+            .receiver
+            .with_wallet(|wallet| {
+                wallet
+                    .profile
+                    .l2_checkout_purchases
+                    .get("active-0")
+                    .cloned()
+            })
+            .unwrap()
+            .unwrap();
+        {
+            let wallet = fixture.receiver.get_wallet_mut().unwrap();
+            for index in 1..MAX_ACTIVE_CHECKOUT_PURCHASES {
+                wallet.profile.l2_checkout_purchases.insert(
+                    format!("active-{index}"),
+                    template.clone(),
+                );
+            }
+        }
+        let error = fixture
+            .receiver
+            .begin_checkout_purchase(
+                "overflow",
+                &fixture.bundle_bytes,
+                std::slice::from_ref(&fixture.view),
+                fixture.now,
+                Some(password),
+            )
+            .unwrap_err();
+        assert_security_error(&error, "purchase capacity exhausted");
+        fixture
+            .receiver
+            .get_wallet_mut()
+            .unwrap()
+            .profile
+            .l2_checkout_purchases
+            .get_mut("active-255")
+            .unwrap()
+            .expires_at_ms = fixture.now;
+        fixture
+            .receiver
+            .begin_checkout_purchase(
+                "replacement",
+                &fixture.bundle_bytes,
+                std::slice::from_ref(&fixture.view),
+                fixture.now,
+                Some(password),
+            )
+            .unwrap();
+        fixture
+            .receiver
+            .with_wallet(|wallet| {
+                assert_eq!(
+                    wallet.profile.active_checkout_purchase_count(fixture.now),
+                    MAX_ACTIVE_CHECKOUT_PURCHASES
+                );
+                assert!(!wallet.profile.l2_checkout_purchases.contains_key("active-255"));
+            })
+            .unwrap();
+    }
+
     #[test]
     fn purchase_commit_binds_real_l1_challenge_authority_and_idempotent_restart() {
         let dir = tempfile::tempdir().unwrap();
