@@ -44,6 +44,23 @@ impl AppService {
             .cloned()
             .ok_or_else(|| invalid("pending intent missing"))
     }
+    /// Enumerates every intent whose outcome is still unresolved in a stable order.
+    pub fn unresolved_l2_send_intents(&self) -> Result<Vec<L2SendIntent>, Error> {
+        let wallet = self.get_wallet()?;
+        let mut intents: Vec<L2SendIntent> = wallet
+            .profile
+            .l2_send_intents
+            .values()
+            .filter(|intent| intent.terminal_resolution.is_none())
+            .cloned()
+            .collect();
+        intents.sort_by(|a, b| {
+            a.created_at_ms
+                .cmp(&b.created_at_ms)
+                .then_with(|| a.local_instance_id.cmp(&b.local_instance_id))
+        });
+        Ok(intents)
+    }
     /// Returns the original lookup target after thirty seconds. A host performs
     /// the read; Core stays network-free and never synthesizes a new wallet T0.
     pub fn retained_choice_target(&self, local_id: &str, now_ms: u64) -> Result<String, Error> {
@@ -301,48 +318,52 @@ impl AppService {
                 recipient_nonce: stored_nonce,
                 committee,
             };
-            if let Err(e) = humoco_proto::live::verify_live_state_proof(proof, &expected_context) {
-                return TransactionOutcome::Rollback(invalid(e));
-            }
-            let res = IntentTerminalResolution::Confirmed { resolved_at_ms: now_ms };
+            let res = if proof.context.child_lock == request.transaction_hash {
+                if let Err(e) =
+                    humoco_proto::live::verify_live_state_proof(proof, &expected_context)
+                {
+                    return TransactionOutcome::Rollback(invalid(e));
+                }
+                IntentTerminalResolution::Confirmed { resolved_at_ms: now_ms }
+            } else {
+                let expected_conflict_context = humoco_proto::live::LiveStateContext {
+                    child_lock: proof.context.child_lock,
+                    state_digest: proof.context.state_digest,
+                    ..expected_context
+                };
+                if let Err(e) =
+                    humoco_proto::live::verify_live_state_proof(proof, &expected_conflict_context)
+                {
+                    return TransactionOutcome::Rollback(invalid(e));
+                }
+                intent.retained_original_observed = false;
+                IntentTerminalResolution::Conflicted {
+                    resolved_at_ms: now_ms,
+                    observed_child: hex::encode(proof.context.child_lock),
+                }
+            };
             intent.terminal_resolution = Some(res.clone());
             intent.stored_challenge = None;
             TransactionOutcome::Commit(res)
         })
     }
 
-    /// Records an observed conflicting child spend for the intent's parent lock.
-    /// Rejects conflicting choices and marks the intent Conflicted.
+    /// Records a quorum-proven conflicting child spend for the intent's parent lock.
+    /// Delegates verification to reconciliation and requires a Conflicted outcome.
     pub fn record_intent_conflict(
         &mut self,
         local_id: &str,
-        observed_child_hex: &str,
+        proof: &humoco_proto::live::LiveStateProof,
+        views: &[humoco_proto::mesh::RegionalMeshView],
         now_ms: u64,
         password: Option<&str>,
     ) -> Result<IntentTerminalResolution, Error> {
-        self.with_transactional_mut(password, |wallet, _, _, _| {
-            let Some(intent) = wallet.profile.l2_send_intents.get_mut(local_id) else {
-                return TransactionOutcome::Rollback(invalid("intent disappeared"));
-            };
-            if let Some(res) = &intent.terminal_resolution {
-                return TransactionOutcome::Commit(res.clone());
-            }
-            let request: L2LockRequest = match serde_json::from_slice(&intent.request_bytes) {
-                Ok(r) => r,
-                Err(e) => return TransactionOutcome::Rollback(invalid(&e.to_string())),
-            };
-            if observed_child_hex == hex::encode(request.transaction_hash) {
-                return TransactionOutcome::Rollback(invalid("observed child matches intent choice, not conflicting"));
-            }
-            let res = IntentTerminalResolution::Conflicted {
-                resolved_at_ms: now_ms,
-                observed_child: observed_child_hex.into(),
-            };
-            intent.terminal_resolution = Some(res.clone());
-            intent.retained_original_observed = false;
-            intent.stored_challenge = None;
-            TransactionOutcome::Commit(res)
-        })
+        let resolution =
+            self.complete_intent_reconciliation(local_id, proof, views, now_ms, password)?;
+        match resolution {
+            IntentTerminalResolution::Conflicted { .. } => Ok(resolution),
+            _ => Err(invalid("proof did not establish a conflicting choice")),
+        }
     }
 
     /// Checks and marks the intent Expired if physical root validity has passed.
@@ -732,5 +753,275 @@ mod tests {
             1
         );
         assert!(app.pending_l2_send_intent(&local_id).is_err());
+    }
+
+    use ed25519_dalek::{Signer, SigningKey};
+    use humoco_proto::{
+        AttestationVote,
+        live::{LiveStateContext, LiveStateProof},
+        mesh::{RegionalMeshMember, RegionalMeshPolicy, RegionalMeshView},
+    };
+
+    fn signed_live_proof(context: &LiveStateContext, keys: &[SigningKey]) -> LiveStateProof {
+        let digest = humoco_proto::live::live_state_digest(context).unwrap();
+        let votes = context.committee[..14]
+            .iter()
+            .map(|public| {
+                let key = keys
+                    .iter()
+                    .find(|k| k.verifying_key().to_bytes() == *public)
+                    .unwrap();
+                AttestationVote {
+                    signer_pubkey: *public,
+                    signature: key.sign(&digest).to_bytes(),
+                }
+            })
+            .collect();
+        LiveStateProof {
+            context: context.clone(),
+            votes,
+        }
+    }
+
+    fn reconciliation_fixture(
+        dir: &tempfile::TempDir,
+        password: &str,
+    ) -> (AppService, String, u64, Vec<SigningKey>, RegionalMeshView) {
+        let (mut app, _profile) = test_utils::setup_service_with_profile(
+            dir.path(),
+            &ACTORS.test_user,
+            "ConflictSender",
+            password,
+        );
+        let user = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+        let standard = test_utils::generate_signed_standard_toml(
+            "voucher_standards/freetaler_v1/standard.toml",
+        );
+        let voucher = app
+            .create_new_voucher(
+                &standard,
+                NewVoucherData {
+                    creator_profile: PublicProfile {
+                        id: Some(user),
+                        ..Default::default()
+                    },
+                    nominal_value: ValueDefinition {
+                        amount: "100".into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                Some(password),
+            )
+            .unwrap();
+        let local_id = app
+            .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+            .unwrap()[0]
+            .local_instance_id
+            .clone();
+        let standards =
+            std::collections::HashMap::from([(voucher.voucher_standard.uuid.clone(), standard)]);
+        app.create_transfer_bundle_with_l2_intents(
+            crate::wallet::MultiTransferRequest {
+                recipient_id: ACTORS.bob.user_id.clone(),
+                sources: vec![crate::wallet::SourceTransfer {
+                    local_instance_id: local_id.clone(),
+                    amount_to_send: "10".into(),
+                }],
+                notes: None,
+                sender_profile_name: None,
+                use_privacy_mode: Some(false),
+            },
+            &standards,
+            None,
+            Some(password),
+            0,
+        )
+        .unwrap();
+        let intent = app.pending_l2_send_intent(&local_id).unwrap();
+        let now_ms = intent.created_at_ms;
+        let source = SigningKey::from_bytes(&[101; 32]);
+        let keys: Vec<_> = (1..=20).map(|i| SigningKey::from_bytes(&[i; 32])).collect();
+        let mut members: Vec<_> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, key)| RegionalMeshMember {
+                node_pubkey: key.verifying_key().to_bytes(),
+                hrw_routing_id: [i as u8; 32],
+            })
+            .collect();
+        members.sort_by_key(|m| m.node_pubkey);
+        let mut view = RegionalMeshView {
+            version: 1,
+            network: 0,
+            source_key: source.verifying_key().to_bytes(),
+            issued_at_ms: now_ms,
+            valid_until_ms: now_ms + 60_000,
+            members,
+            signature: [0; 64],
+        };
+        view.signature = source.sign(&view.digest().unwrap()).to_bytes();
+        app.configure_regional_mesh_authority(
+            RegionalMeshPolicy {
+                network: 0,
+                source_keys: vec![view.source_key],
+            },
+            Some(password),
+        )
+        .unwrap();
+        (app, local_id, now_ms, keys, view)
+    }
+
+    #[test]
+    fn unresolved_intents_are_enumerated_until_terminal_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let password = "unresolved-intents";
+        let (mut app, local_id, now_ms, keys, view) = reconciliation_fixture(&dir, password);
+
+        let unresolved = app.unresolved_l2_send_intents().unwrap();
+        assert_eq!(unresolved.len(), 1);
+        assert_eq!(unresolved[0].local_instance_id, local_id);
+
+        let context = app
+            .begin_intent_reconciliation(
+                &local_id,
+                std::slice::from_ref(&view),
+                now_ms + 30_000,
+                Some(password),
+            )
+            .unwrap();
+        let proof = signed_live_proof(&context, &keys);
+        app.complete_intent_reconciliation(
+            &local_id,
+            &proof,
+            std::slice::from_ref(&view),
+            now_ms + 30_500,
+            Some(password),
+        )
+        .unwrap();
+
+        assert!(app.unresolved_l2_send_intents().unwrap().is_empty());
+    }
+
+    #[test]
+    fn verified_conflicting_live_state_proof_resolves_conflicted() {
+        let dir = tempfile::tempdir().unwrap();
+        let password = "verified-conflict";
+        let (mut app, local_id, now_ms, keys, view) = reconciliation_fixture(&dir, password);
+
+        let context = app
+            .begin_intent_reconciliation(
+                &local_id,
+                std::slice::from_ref(&view),
+                now_ms + 30_000,
+                Some(password),
+            )
+            .unwrap();
+        let mut conflict_context = context.clone();
+        conflict_context.child_lock = [42; 32];
+        conflict_context.state_digest = [43; 32];
+        let proof = signed_live_proof(&conflict_context, &keys);
+
+        let resolution = app
+            .complete_intent_reconciliation(
+                &local_id,
+                &proof,
+                std::slice::from_ref(&view),
+                now_ms + 30_500,
+                Some(password),
+            )
+            .unwrap();
+        let expected = IntentTerminalResolution::Conflicted {
+            resolved_at_ms: now_ms + 30_500,
+            observed_child: hex::encode([42; 32]),
+        };
+        assert_eq!(resolution, expected);
+        let intent = app.pending_l2_send_intent(&local_id).unwrap();
+        assert_eq!(intent.terminal_resolution, Some(expected));
+        assert_eq!(intent.stored_challenge, None);
+        assert!(!intent.retained_original_observed);
+    }
+
+    #[test]
+    fn forged_conflicting_live_state_proof_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let password = "forged-conflict";
+        let (mut app, local_id, now_ms, keys, view) = reconciliation_fixture(&dir, password);
+
+        let context = app
+            .begin_intent_reconciliation(
+                &local_id,
+                std::slice::from_ref(&view),
+                now_ms + 30_000,
+                Some(password),
+            )
+            .unwrap();
+        let mut conflict_context = context.clone();
+        conflict_context.child_lock = [42; 32];
+        conflict_context.state_digest = [43; 32];
+        let mut proof = signed_live_proof(&conflict_context, &keys);
+        proof.context.child_lock = [44; 32];
+
+        assert!(
+            app.complete_intent_reconciliation(
+                &local_id,
+                &proof,
+                std::slice::from_ref(&view),
+                now_ms + 30_500,
+                Some(password),
+            )
+            .is_err()
+        );
+        let intent = app.pending_l2_send_intent(&local_id).unwrap();
+        assert_eq!(intent.terminal_resolution, None);
+        assert_eq!(intent.stored_challenge, Some(context.recipient_nonce));
+    }
+
+    #[test]
+    fn record_intent_conflict_resolves_verified_conflicting_proof() {
+        let dir = tempfile::tempdir().unwrap();
+        let password = "record-conflict";
+        let (mut app, local_id, now_ms, keys, view) = reconciliation_fixture(&dir, password);
+
+        let context = app
+            .begin_intent_reconciliation(
+                &local_id,
+                std::slice::from_ref(&view),
+                now_ms + 30_000,
+                Some(password),
+            )
+            .unwrap();
+        let mut conflict_context = context.clone();
+        conflict_context.child_lock = [42; 32];
+        conflict_context.state_digest = [43; 32];
+        let proof = signed_live_proof(&conflict_context, &keys);
+
+        let resolution = app
+            .record_intent_conflict(
+                &local_id,
+                &proof,
+                std::slice::from_ref(&view),
+                now_ms + 30_500,
+                Some(password),
+            )
+            .unwrap();
+        assert_eq!(
+            resolution,
+            IntentTerminalResolution::Conflicted {
+                resolved_at_ms: now_ms + 30_500,
+                observed_child: hex::encode([42; 32]),
+            }
+        );
+        assert_eq!(
+            app.record_intent_conflict(
+                &local_id,
+                &proof,
+                std::slice::from_ref(&view),
+                now_ms + 30_600,
+                Some(password),
+            )
+            .unwrap(),
+            resolution
+        );
     }
 }
