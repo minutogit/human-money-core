@@ -7,10 +7,14 @@ use rand_core::{OsRng, RngCore};
 use sha2::{Sha256, Sha512};
 #[allow(unused_imports)]
 use sha2::Digest;
-use ed25519_dalek::{SigningKey, VerifyingKey as EdPublicKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey as EdPublicKey};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use std::convert::TryInto;
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+use curve25519_dalek::edwards::EdwardsPoint;
+use curve25519_dalek::scalar::Scalar;
+use super::utils::{ed25519_pk_to_curve_point, get_secret_scalar};
 
 use crate::error::VoucherCoreError;
 use super::constants::SLIP10_ED25519_SEED_LABEL;
@@ -119,6 +123,111 @@ pub fn derive_deterministic_change_key(
     hkdf.expand(info.as_bytes(), &mut change_seed)
         .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
     Ok(SigningKey::from_bytes(&change_seed))
+}
+
+/// Derives the stealth ephemeral public point for a recipient public key and random seed.
+///
+/// $P_{eph} = X_{Bob} + h \cdot G$ where $h = \text{sst\_scalar}(\text{SST\_DOMAIN\_STEALTH\_BLIND}, [seed, X_{Bob}])$.
+pub fn derive_stealth_ephemeral_point(
+    recipient_pubkey: &EdPublicKey,
+    recipient_seed: &[u8; 32],
+) -> Result<EdwardsPoint, VoucherCoreError> {
+    let recipient_point = ed25519_pk_to_curve_point(recipient_pubkey)?;
+    let h = crate::services::trap_manager::sst_scalar(
+        crate::services::trap_manager::SST_DOMAIN_STEALTH_BLIND,
+        &[recipient_seed.as_slice(), recipient_point.compress().as_bytes()],
+    );
+    Ok(recipient_point + h * ED25519_BASEPOINT_POINT)
+}
+
+/// Derives the stealth ephemeral secret key scalar and public key for the recipient.
+///
+/// $x_{eph} = x_{Bob} + h \bmod q$
+/// $P_{eph} = x_{eph} \cdot G = X_{Bob} + h \cdot G$
+pub fn derive_stealth_secret_key(
+    recipient_signing_key: &SigningKey,
+    recipient_seed: &[u8; 32],
+) -> Result<(Scalar, EdwardsPoint, EdPublicKey), VoucherCoreError> {
+    let x_bob = get_secret_scalar(recipient_signing_key);
+    let x_bob_point = x_bob * ED25519_BASEPOINT_POINT;
+    let h = crate::services::trap_manager::sst_scalar(
+        crate::services::trap_manager::SST_DOMAIN_STEALTH_BLIND,
+        &[recipient_seed.as_slice(), x_bob_point.compress().as_bytes()],
+    );
+    let x_eph = x_bob + h;
+    let p_eph = x_eph * ED25519_BASEPOINT_POINT;
+    let p_eph_compressed = p_eph.compress();
+    let verifying_key = EdPublicKey::from_bytes(&p_eph_compressed.to_bytes())
+        .map_err(|e| VoucherCoreError::Crypto(format!("Failed to create VerifyingKey from stealth point: {}", e)))?;
+    Ok((x_eph, p_eph, verifying_key))
+}
+
+/// An ephemeral key capable of signing and verifying transactions.
+///
+/// Supports standard RFC 8032 Ed25519 signing keys as well as stealth-derived
+/// scalar keys where only the recipient can derive the secret spending scalar.
+#[derive(Clone, Debug)]
+pub enum EphemeralKey {
+    Standard(SigningKey),
+    Stealth {
+        secret_scalar: Scalar,
+        public_point: EdwardsPoint,
+        verifying_key: EdPublicKey,
+    },
+}
+
+impl EphemeralKey {
+    pub fn from_signing_key(sk: SigningKey) -> Self {
+        EphemeralKey::Standard(sk)
+    }
+
+    pub fn from_stealth_scalar(
+        secret_scalar: Scalar,
+        public_point: EdwardsPoint,
+    ) -> Result<Self, VoucherCoreError> {
+        let compressed = public_point.compress();
+        let verifying_key = EdPublicKey::from_bytes(&compressed.to_bytes())
+            .map_err(|e| VoucherCoreError::Crypto(format!("Invalid public key from EdwardsPoint: {}", e)))?;
+        Ok(EphemeralKey::Stealth {
+            secret_scalar,
+            public_point,
+            verifying_key,
+        })
+    }
+
+    pub fn verifying_key(&self) -> EdPublicKey {
+        match self {
+            EphemeralKey::Standard(sk) => sk.verifying_key(),
+            EphemeralKey::Stealth { verifying_key, .. } => *verifying_key,
+        }
+    }
+
+    pub fn sign(&self, message: &[u8]) -> ed25519_dalek::Signature {
+        match self {
+            EphemeralKey::Standard(sk) => sk.sign(message),
+            EphemeralKey::Stealth { secret_scalar, public_point, .. } => {
+                super::utils::sign_ed25519_scalar(secret_scalar, public_point, message)
+            }
+        }
+    }
+}
+
+impl From<SigningKey> for EphemeralKey {
+    fn from(sk: SigningKey) -> Self {
+        EphemeralKey::Standard(sk)
+    }
+}
+
+impl From<&SigningKey> for EphemeralKey {
+    fn from(sk: &SigningKey) -> Self {
+        EphemeralKey::Standard(sk.clone())
+    }
+}
+
+impl From<&EphemeralKey> for EphemeralKey {
+    fn from(k: &EphemeralKey) -> Self {
+        k.clone()
+    }
 }
 
 /// Generates a random or deterministic Ed25519 keypair for test purposes.

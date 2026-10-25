@@ -39,8 +39,7 @@ fn test_path_dependency_long_chain() {
     let (standard, _, _, bob, voucher_after_tx1, secrets) = test_utils::setup_voucher_with_one_tx();
     let charlie = &ACTORS.charlie;
 
-    let bob_seed_bytes = bs58::decode(secrets.recipient_seed).into_vec().unwrap();
-    let bob_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(&bob_seed_bytes.try_into().unwrap());
+    let bob_ephemeral_key = test_utils::derive_recipient_holder_key(bob, &secrets.recipient_seed);
 
     let (voucher_after_tx2, _) = human_money_core::models::voucher::Transaction::create(
         &voucher_after_tx1,
@@ -67,8 +66,7 @@ fn test_path_dependency_long_chain() {
 fn test_path_dependency_bounce_back() {
     let (standard, _, alice, bob, voucher_after_tx1, secrets) = test_utils::setup_voucher_with_one_tx();
 
-    let bob_seed_bytes = bs58::decode(secrets.recipient_seed).into_vec().unwrap();
-    let bob_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(&bob_seed_bytes.try_into().unwrap());
+    let bob_ephemeral_key = test_utils::derive_recipient_holder_key(bob, &secrets.recipient_seed);
 
     let (voucher_after_tx2, _) = human_money_core::models::voucher::Transaction::create(
         &voucher_after_tx1,

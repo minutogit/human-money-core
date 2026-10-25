@@ -64,6 +64,16 @@ pub const SST_DOMAIN_MASK_R: &[u8] = b"HMC_MASK_R_V1";
 pub const SST_DOMAIN_MASK_S: &[u8] = b"HMC_MASK_S_V1";
 /// Domain tag for the spend-specific shard evaluation point $\tau_i$.
 pub const SST_DOMAIN_TAU: &[u8] = b"HMC_TAU_V1";
+/// Domain tag for VRF generator point H_mu derivation.
+pub const SST_DOMAIN_VRF_BASE: &[u8] = b"HMC_SST_VRF_BASE_V1";
+/// Domain tag for deterministic DLEQ nonce derivation.
+pub const SST_DOMAIN_DLEQ_NONCE: &[u8] = b"HMC_SST_DLEQ_NONCE_V1";
+/// Domain tag for Chaum-Pedersen DLEQ challenge hash.
+pub const SST_DOMAIN_DLEQ_CHAL: &[u8] = b"HMC_SST_DLEQ_CHAL_V1";
+/// Domain tag for stealth key blinding scalar derivation.
+pub const SST_DOMAIN_STEALTH_BLIND: &[u8] = b"HMC_STEALTH_BLIND_V1";
+/// Domain tag for stealth key Ed25519 signing nonce derivation.
+pub const SST_DOMAIN_STEALTH_NONCE: &[u8] = b"HMC_STEALTH_NONCE_V1";
 
 /// Canonical marker for absent trap components (genesis transactions).
 pub const SST_NONE_PLACEHOLDER: &str = "none";
@@ -81,7 +91,7 @@ pub fn hash_to_scalar(input: &[u8]) -> Scalar {
 
 /// Encodes a domain tag plus raw parts with 4-byte little-endian length
 /// prefixes (anti-malleability: segment boundaries cannot be shifted).
-fn sst_encoded_parts(tag: &[u8], parts: &[&[u8]]) -> Vec<u8> {
+pub fn sst_encoded_parts(tag: &[u8], parts: &[&[u8]]) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(&(tag.len() as u32).to_le_bytes());
     out.extend_from_slice(tag);
@@ -94,7 +104,7 @@ fn sst_encoded_parts(tag: &[u8], parts: &[&[u8]]) -> Vec<u8> {
 
 /// Derives a deterministic scalar from a domain tag and raw parts
 /// (SHA-512 followed by modular reduction).
-fn sst_scalar(tag: &[u8], parts: &[&[u8]]) -> Scalar {
+pub fn sst_scalar(tag: &[u8], parts: &[&[u8]]) -> Scalar {
     hash_to_scalar(&sst_encoded_parts(tag, parts))
 }
 
@@ -257,8 +267,10 @@ fn ensure_canonical_y(encoded: &[u8; 32]) -> Result<(), VoucherCoreError> {
 /// The private trap witness handed to the payment recipient at L1.
 ///
 /// Contains everything needed to verify the trap shard locally:
-/// the underlying Schnorr signature $(R_{sig}, s_{sig})$ and the masking
-/// values $(M_R, m_s)$. All fields are Base58-encoded 32-byte values.
+/// the underlying Schnorr signature $(R_{sig}, s_{sig})$, the masking
+/// values $(M_R, m_s)$, the VRF point $K_{trap}$, and the Chaum-Pedersen
+/// DLEQ proof $(c_{dleq}, s_{dleq})$ binding $K_{trap}$ to the payer's identity.
+/// All fields are Base58-encoded 32-byte values.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TrapWitness {
     /// The Schnorr commitment $R_{sig}$ over the spend input.
@@ -269,20 +281,34 @@ pub struct TrapWitness {
     pub m_r: String,
     /// The masking scalar $m_s$ (canonical scalar, Base58).
     pub m_s: String,
+    /// The VRF point $K_{trap} = x \cdot H_\mu$ (compressed point, Base58).
+    pub k_trap: String,
+    /// The Chaum-Pedersen DLEQ challenge $c_{dleq}$ (canonical scalar, Base58).
+    pub dleq_c: String,
+    /// The Chaum-Pedersen DLEQ response $s_{dleq}$ (canonical scalar, Base58).
+    pub dleq_s: String,
 }
 
 /// Generates the SST trap data (public shard) and the private witness for a
 /// single spend transaction.
 ///
-/// Math specification (V3):
+/// Math specification (V3 + Fix 1 VRF/DLEQ):
 /// 1. $\mu = H(\text{"SIG"} \parallel ds\_tag \parallel E)$
-/// 2. $r = H(\text{"NONCE"} \parallel x \parallel \mu) \bmod q$ (deterministic nonce);\quad
+/// 2. $H_\mu = \text{hash\_to\_curve}(\text{"VRF\_BASE"} \parallel \mu)$;\quad
+///    $K_{trap} = x \cdot H_\mu$
+/// 3. DLEQ proof $(\log_G(X_{payer}) == \log_{H_\mu}(K_{trap}))$:
+///    $k = H(\text{"DLEQ\_NONCE"} \parallel x \parallel \mu) \bmod q$;\quad
+///    $A = k \cdot G$;\quad $B = k \cdot H_\mu$;\quad
+///    $c_{dleq} = H(\text{"DLEQ\_CHAL"} \parallel \mu \parallel X \parallel H_\mu \parallel K_{trap} \parallel A \parallel B) \bmod q$;\quad
+///    $s_{dleq} = k + c_{dleq} \cdot x$
+/// 4. Line parameters derived deterministically from $K_{trap}$ and spend input:
+///    $r = H(\text{"NONCE"} \parallel K_{trap} \parallel \mu) \bmod q$;\quad
 ///    $R_{sig} = r \cdot G$;\quad
 ///    $c = H(\text{"CHAL"} \parallel \mu \parallel R_{sig})$;\quad
-///    $s_{sig} = r + c \cdot x$
-/// 3. $M_R = \text{hash\_to\_curve}(\text{"MASK\_R"} \parallel x \parallel E \parallel ds\_tag)$;\quad
-///    $m_s = H(\text{"MASK\_S"} \parallel x \parallel E \parallel ds\_tag) \bmod q$
-/// 4. $\tau_i = H(\text{"TAU"} \parallel ds\_tag \parallel t\_id)$;\quad
+///    $s_{sig} = r + c \cdot x$;\quad
+///    $M_R = \text{hash\_to\_curve}(\text{"MASK\_R"} \parallel K_{trap} \parallel E \parallel ds\_tag)$;\quad
+///    $m_s = H(\text{"MASK\_S"} \parallel K_{trap} \parallel E \parallel ds\_tag) \bmod q$
+/// 5. $\tau_i = H(\text{"TAU"} \parallel ds\_tag \parallel t\_id)$;\quad
 ///    $R_i = R_{sig} + \tau_i \cdot M_R$;\quad
 ///    $s_i = s_{sig} + \tau_i \cdot m_s$
 ///
@@ -303,27 +329,51 @@ pub fn generate_sst_trap(
     t_id: &str,
 ) -> Result<(TrapData, TrapWitness), VoucherCoreError> {
     let x = get_secret_scalar(sk);
+    let payer_point = ed25519_pk_to_curve_point(&sk.verifying_key())?;
 
     // 1. Message binding
     let mu = compute_trap_message_mu(ds_tag, eph_pub);
 
-    // 2. Deterministic nonce & Schnorr signature
-    let r = sst_scalar(SST_DOMAIN_NONCE, &[x.as_bytes(), &mu]);
+    // 2. VRF base point and K_trap
+    let h_mu = hash_to_curve(&sst_encoded_parts(SST_DOMAIN_VRF_BASE, &[mu.as_slice()]));
+    let k_trap = x * h_mu;
+
+    // 3. Chaum-Pedersen DLEQ proof (log_G(payer_point) == log_{H_mu}(K_trap))
+    let k = sst_scalar(SST_DOMAIN_DLEQ_NONCE, &[x.as_bytes(), mu.as_slice()]);
+    let a_point = k * ED25519_BASEPOINT_POINT;
+    let b_point = k * h_mu;
+    let dleq_c = sst_scalar(
+        SST_DOMAIN_DLEQ_CHAL,
+        &[
+            mu.as_slice(),
+            payer_point.compress().as_bytes(),
+            h_mu.compress().as_bytes(),
+            k_trap.compress().as_bytes(),
+            a_point.compress().as_bytes(),
+            b_point.compress().as_bytes(),
+        ],
+    );
+    let dleq_s = k + dleq_c * x;
+
+    // 4. Deterministic line parameters derived from K_trap and spend input
+    let r = sst_scalar(
+        SST_DOMAIN_NONCE,
+        &[k_trap.compress().as_bytes(), mu.as_slice()],
+    );
     let r_sig_point = r * ED25519_BASEPOINT_POINT;
     let c = sst_challenge(&mu, &r_sig_point);
     let s_sig = r + c * x;
 
-    // 3. Masking slopes (derived exclusively from the long-term key + input)
     let m_r_point = hash_to_curve(&sst_encoded_parts(
         SST_DOMAIN_MASK_R,
-        &[x.as_bytes(), eph_pub.as_slice(), ds_tag.as_bytes()],
+        &[k_trap.compress().as_bytes(), eph_pub.as_slice(), ds_tag.as_bytes()],
     ));
     let m_s = sst_scalar(
         SST_DOMAIN_MASK_S,
-        &[x.as_bytes(), eph_pub.as_slice(), ds_tag.as_bytes()],
+        &[k_trap.compress().as_bytes(), eph_pub.as_slice(), ds_tag.as_bytes()],
     );
 
-    // 4. Spend-specific evaluation point & shards
+    // 5. Spend-specific evaluation point & shards
     let tau = compute_tau(ds_tag, t_id);
     let r_i = r_sig_point + tau * m_r_point;
     let s_i = s_sig + tau * m_s;
@@ -339,6 +389,9 @@ pub fn generate_sst_trap(
         s_sig: bs58::encode(s_sig.as_bytes()).into_string(),
         m_r: bs58::encode(m_r_point.compress().as_bytes()).into_string(),
         m_s: bs58::encode(m_s.as_bytes()).into_string(),
+        k_trap: bs58::encode(k_trap.compress().as_bytes()).into_string(),
+        dleq_c: bs58::encode(dleq_c.as_bytes()).into_string(),
+        dleq_s: bs58::encode(dleq_s.as_bytes()).into_string(),
     };
 
     Ok((trap_data, witness))
@@ -348,10 +401,12 @@ pub fn generate_sst_trap(
 ///
 /// The recipient of a payment re-derives the challenge from the payer's
 /// public identity and checks:
-/// 1. **Signature validity:** $s_{sig} \cdot G \stackrel{?}{=} R_{sig} + c \cdot X_{payer}$
+/// 1. **DLEQ Proof:** $\log_G(X_{payer}) == \log_{H_\mu}(K_{trap})$
+/// 2. **Line Determinism:** $(R_{sig}, M_R, m_s)$ match deterministic derivations from $K_{trap}$
+/// 3. **Signature validity:** $s_{sig} \cdot G \stackrel{?}{=} R_{sig} + c \cdot X_{payer}$
 ///    with $c = H(\text{"CHAL"} \parallel \mu \parallel R_{sig})$
-/// 2. **Commitment shard:** $R_i \stackrel{?}{=} R_{sig} + \tau_i \cdot M_R$
-/// 3. **Response shard:** $s_i \stackrel{?}{=} s_{sig} + \tau_i \cdot m_s$
+/// 4. **Commitment shard:** $R_i \stackrel{?}{=} R_{sig} + \tau_i \cdot M_R$
+/// 5. **Response shard:** $s_i \stackrel{?}{=} s_{sig} + \tau_i \cdot m_s$
 ///
 /// Any failing check proves a garbage/manipulated trap — the caller MUST
 /// reject the payment.
@@ -383,6 +438,15 @@ pub fn verify_sst_witness(
     let m_r_point = parse_point_bs58(&witness.m_r, "M_R")?;
     let m_s = parse_scalar_bs58(&witness.m_s, "m_s")?;
 
+    let k_trap_point = parse_point_bs58(&witness.k_trap, "k_trap")?;
+    let dleq_c = parse_scalar_bs58(&witness.dleq_c, "dleq_c")?;
+    let dleq_s = parse_scalar_bs58(&witness.dleq_s, "dleq_s")?;
+
+    if !k_trap_point.is_torsion_free() || k_trap_point.is_identity() {
+        return Err(VoucherCoreError::Crypto(
+            "SST witness rejected: k_trap is not torsion-free or is identity".to_string(),
+        ));
+    }
     if !m_r_point.is_torsion_free() {
         return Err(VoucherCoreError::Crypto(
             "SST witness rejected: point is not torsion-free".to_string(),
@@ -398,8 +462,9 @@ pub fn verify_sst_witness(
     let payer_pk = get_pubkey_from_user_id(payer_did)?;
     let payer_point = ed25519_pk_to_curve_point(&payer_pk)?;
 
-    // 1. One-stage Schnorr signature verification against the payer identity.
     let mu = compute_trap_message_mu(ds_tag, eph_pub);
+
+    // 1. One-stage Schnorr signature verification against the payer identity.
     let c = sst_challenge(&mu, &r_sig_point);
     if s_sig * ED25519_BASEPOINT_POINT != r_sig_point + c * payer_point {
         return Err(VoucherCoreError::Crypto(
@@ -407,7 +472,50 @@ pub fn verify_sst_witness(
         ));
     }
 
-    // 2./3. Shard consistency for THIS spend.
+    // 2. Chaum-Pedersen DLEQ proof verification:
+    // log_G(payer_point) == log_{H_mu}(k_trap_point)
+    let h_mu = hash_to_curve(&sst_encoded_parts(SST_DOMAIN_VRF_BASE, &[mu.as_slice()]));
+    let a_prime = dleq_s * ED25519_BASEPOINT_POINT - dleq_c * payer_point;
+    let b_prime = dleq_s * h_mu - dleq_c * k_trap_point;
+    let c_expected = sst_scalar(
+        SST_DOMAIN_DLEQ_CHAL,
+        &[
+            mu.as_slice(),
+            payer_point.compress().as_bytes(),
+            h_mu.compress().as_bytes(),
+            k_trap_point.compress().as_bytes(),
+            a_prime.compress().as_bytes(),
+            b_prime.compress().as_bytes(),
+        ],
+    );
+    if dleq_c != c_expected {
+        return Err(VoucherCoreError::Crypto(
+            "SST witness rejected: invalid DLEQ proof for K_trap".to_string(),
+        ));
+    }
+
+    // 3. Deterministic line parameter verification derived from K_trap:
+    let expected_r = sst_scalar(
+        SST_DOMAIN_NONCE,
+        &[k_trap_point.compress().as_bytes(), mu.as_slice()],
+    );
+    let expected_r_sig_point = expected_r * ED25519_BASEPOINT_POINT;
+    let expected_m_r = hash_to_curve(&sst_encoded_parts(
+        SST_DOMAIN_MASK_R,
+        &[k_trap_point.compress().as_bytes(), eph_pub.as_slice(), ds_tag.as_bytes()],
+    ));
+    let expected_m_s = sst_scalar(
+        SST_DOMAIN_MASK_S,
+        &[k_trap_point.compress().as_bytes(), eph_pub.as_slice(), ds_tag.as_bytes()],
+    );
+
+    if r_sig_point != expected_r_sig_point || m_r_point != expected_m_r || m_s != expected_m_s {
+        return Err(VoucherCoreError::Crypto(
+            "SST witness rejected: witness components do not match deterministic K_trap derivation".to_string(),
+        ));
+    }
+
+    // 4. Shard consistency for THIS spend.
     let tau = compute_tau(ds_tag, t_id);
     let expected_r = r_sig_point + tau * m_r_point;
     let expected_s = s_sig + tau * m_s;
@@ -566,6 +674,15 @@ pub fn extract_sst_identity(
         ));
     }
 
+    let expected_eph = bs58::encode(eph_pub).into_string();
+    if (!fp1.sender_ephemeral_pub.is_empty() || !fp2.sender_ephemeral_pub.is_empty())
+        && (fp1.sender_ephemeral_pub != expected_eph || fp2.sender_ephemeral_pub != expected_eph)
+    {
+        return Err(VoucherCoreError::Crypto(
+            "SST extraction failed: fingerprint sender_ephemeral_pub mismatch".to_string(),
+        ));
+    }
+
     let mu = compute_trap_message_mu(ds_tag, eph_pub);
 
     let sh1 = parse_shard(&fp1.trap_r, &fp1.trap_s, compute_tau(ds_tag, &fp1.t_id))?;
@@ -595,6 +712,18 @@ pub fn verify_sst_shards_consistency(
         return Err(VoucherCoreError::Crypto(
             "SST consistency check requires at least two colliding shards".to_string(),
         ));
+    }
+
+    let expected_eph = bs58::encode(eph_pub).into_string();
+    let has_any_eph = shards.iter().any(|fp| !fp.sender_ephemeral_pub.is_empty());
+    if has_any_eph {
+        for fp in shards {
+            if fp.sender_ephemeral_pub != expected_eph {
+                return Err(VoucherCoreError::Crypto(
+                    "SST consistency check: shard sender_ephemeral_pub mismatch".to_string(),
+                ));
+            }
+        }
     }
 
     let mu = compute_trap_message_mu(ds_tag, eph_pub);
@@ -818,6 +947,7 @@ mod tests {
                         .as_bytes(),
                 )
                 .into_string(),
+                ..wit_a.clone()
             },
             &trap_a,
             &payer_did,

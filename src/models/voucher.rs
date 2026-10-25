@@ -257,15 +257,16 @@ impl VoucherSignature {
     ///
     /// The ID is the length-prefixed SHA3-256 hash of the canonical JSON
     /// representation (with `signature_id` and `signature` cleared) concatenated
-    /// with the genesis transaction ID `init_t_id`.
-    pub fn calculate_signature_id(&self, init_t_id: &str) -> Result<String, VoucherCoreError> {
+    /// with the genesis transaction context hash (`init_tx_hash` for the creator,
+    /// or `init_t_id` for additional / detached signatures).
+    pub fn calculate_signature_id(&self, bound_hash: &str) -> Result<String, VoucherCoreError> {
         let mut sig_clone = self.clone();
         sig_clone.signature_id.clear();
         sig_clone.signature.clear();
         let json_str = crate::services::utils::to_canonical_json(&sig_clone)?;
         Ok(crate::services::crypto::get_hash_from_slices(&[
             json_str.as_bytes(),
-            init_t_id.as_bytes(),
+            bound_hash.as_bytes(),
         ]))
     }
 }
@@ -550,21 +551,6 @@ impl Voucher {
         let init_t_id = crate::services::crypto::get_hash(tx_json_for_id);
         init_transaction.t_id = init_t_id.clone();
 
-        let mut creator_sig_obj = VoucherSignature {
-            voucher_id: voucher_hash.clone(),
-            signature_id: "".to_string(),
-            signer_id: creator_id.clone(),
-            signature: "".to_string(),
-            signature_time: creation_date_str.clone(),
-            role: "creator".to_string(),
-            details: None,
-        };
-
-        creator_sig_obj.signature_id = creator_sig_obj.calculate_signature_id(&init_t_id)?;
-        let creator_signature =
-            crate::services::crypto::sign_ed25519(creator_signing_key, creator_sig_obj.signature_id.as_bytes());
-        creator_sig_obj.signature = bs58::encode(creator_signature.to_bytes()).into_string();
-
         let t_id_32 = crate::services::crypto::decode_bs58_fixed::<32>(&init_transaction.t_id, "t_id")?;
 
         let sender_pub_32 =
@@ -596,6 +582,29 @@ impl Voucher {
         init_transaction.sender_identity_signature =
             Some(bs58::encode(identity_sig_bytes.to_bytes()).into_string());
 
+        // SECURITY (FIX 3): The creator signature MUST bind the complete, canonical
+        // state of the genesis transaction (including its layer2 and sender_identity
+        // signatures). This prevents signer-malleability evasion where a creator
+        // re-randomizes signatures to forge diverging prev_hash and ds_tag chains.
+        let init_tx_hash = crate::services::crypto::get_hash(
+            crate::services::utils::to_canonical_json(&init_transaction)?
+        );
+
+        let mut creator_sig_obj = VoucherSignature {
+            voucher_id: voucher_hash.clone(),
+            signature_id: "".to_string(),
+            signer_id: creator_id.clone(),
+            signature: "".to_string(),
+            signature_time: creation_date_str.clone(),
+            role: "creator".to_string(),
+            details: None,
+        };
+
+        creator_sig_obj.signature_id = creator_sig_obj.calculate_signature_id(&init_tx_hash)?;
+        let creator_signature =
+            crate::services::crypto::sign_ed25519(creator_signing_key, creator_sig_obj.signature_id.as_bytes());
+        creator_sig_obj.signature = bs58::encode(creator_signature.to_bytes()).into_string();
+
         temp_voucher.signatures.push(creator_sig_obj);
         temp_voucher.transactions.push(init_transaction);
 
@@ -609,7 +618,7 @@ impl Voucher {
         standard: &VoucherStandardDefinition,
         sender_id: &str,
         sender_permanent_key: &SigningKey,
-        sender_ephemeral_key: &SigningKey,
+        sender_ephemeral_key: impl Into<crate::services::crypto::EphemeralKey>,
         recipient_id: &str,
         amount_to_send_str: &str,
         use_privacy_mode: Option<bool>,
@@ -618,7 +627,7 @@ impl Voucher {
             standard,
             sender_id,
             sender_permanent_key,
-            sender_ephemeral_key,
+            &sender_ephemeral_key.into(),
             recipient_id,
             amount_to_send_str,
             use_privacy_mode,
@@ -633,7 +642,7 @@ impl Voucher {
         standard: &VoucherStandardDefinition,
         sender_id: &str,
         sender_permanent_key: &SigningKey,
-        sender_ephemeral_key: &SigningKey,
+        sender_ephemeral_key: impl Into<crate::services::crypto::EphemeralKey>,
         recipient_id: &str,
         amount_to_send_str: &str,
         use_privacy_mode: Option<bool>,
@@ -642,7 +651,7 @@ impl Voucher {
             standard,
             sender_id,
             sender_permanent_key,
-            sender_ephemeral_key,
+            &sender_ephemeral_key.into(),
             recipient_id,
             amount_to_send_str,
             use_privacy_mode,
@@ -657,7 +666,7 @@ impl Voucher {
         standard: &VoucherStandardDefinition,
         sender_id: &str,
         sender_permanent_key: &SigningKey,
-        sender_ephemeral_key: &SigningKey,
+        sender_ephemeral_key: impl Into<crate::services::crypto::EphemeralKey>,
         recipient_id: &str,
         amount_to_send_str: &str,
         use_privacy_mode: Option<bool>,
@@ -666,7 +675,7 @@ impl Voucher {
             standard,
             sender_id,
             sender_permanent_key,
-            sender_ephemeral_key,
+            &sender_ephemeral_key.into(),
             recipient_id,
             amount_to_send_str,
             use_privacy_mode,
@@ -680,7 +689,7 @@ impl Voucher {
         standard: &VoucherStandardDefinition,
         sender_id: &str,
         sender_permanent_key: &SigningKey,
-        sender_ephemeral_key: &SigningKey,
+        sender_ephemeral_key: &crate::services::crypto::EphemeralKey,
         recipient_id: &str,
         amount_to_send_str: &str,
         use_privacy_mode: Option<bool>,
@@ -851,9 +860,16 @@ impl Voucher {
 
         let mut recipient_seed = [0u8; 32];
         OsRng.fill_bytes(&mut recipient_seed);
-        let recipient_signing_key = SigningKey::from_bytes(&recipient_seed);
-        let recipient_ephemeral_pub = recipient_signing_key.verifying_key();
-        let receiver_ephemeral_pub_hash = Some(crate::services::crypto::get_hash(recipient_ephemeral_pub.to_bytes()));
+
+        let receiver_ephemeral_pub_hash =
+            if let Ok(recipient_ed_pk) = crate::services::crypto::get_pubkey_from_user_id(recipient_id) {
+                let p_eph = crate::services::crypto::derive_stealth_ephemeral_point(&recipient_ed_pk, &recipient_seed)?;
+                Some(crate::services::crypto::get_hash(p_eph.compress().as_bytes()))
+            } else {
+                let recipient_signing_key = SigningKey::from_bytes(&recipient_seed);
+                let recipient_ephemeral_pub = recipient_signing_key.verifying_key();
+                Some(crate::services::crypto::get_hash(recipient_ephemeral_pub.to_bytes()))
+            };
 
         let (change_ephemeral_pub_hash, change_key_seed_opt) = if t_type == "split" {
             let change_signing_key = crate::services::crypto::derive_deterministic_change_key(sender_permanent_key, sender_id, &prev_hash)?;
@@ -921,9 +937,9 @@ impl Voucher {
                 target_prefix,
                 timestamp: chrono::Utc::now().timestamp() as u64,
                 next_key_seed: encoded_recipient_seed.clone(),
-                trap_k_point: None,
-                dleq_c: None,
-                dleq_s: None,
+                trap_k_point: Some(sst_witness.k_trap),
+                dleq_c: Some(sst_witness.dleq_c),
+                dleq_s: Some(sst_witness.dleq_s),
                 trap_r_sig: Some(sst_witness.r_sig),
                 trap_s_sig: Some(sst_witness.s_sig),
                 trap_m_r: Some(sst_witness.m_r),
@@ -974,7 +990,7 @@ impl Voucher {
             .as_str(),
         );
 
-        let l2_sig_bytes = crate::services::crypto::sign_ed25519(sender_ephemeral_key, &payload_hash);
+        let l2_sig_bytes = sender_ephemeral_key.sign(&payload_hash);
         new_transaction.layer2_signature = Some(bs58::encode(l2_sig_bytes.to_bytes()).into_string());
 
         if new_transaction.sender_id.is_some() {
@@ -1105,10 +1121,18 @@ impl Voucher {
                             &payload.next_key_seed,
                             "next_key_seed",
                         ) {
-                                let candidate_key = SigningKey::from_bytes(&seed_arr);
-                                let candidate_hash = crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
-                                if Some(&candidate_hash) == last_tx.receiver_ephemeral_pub_hash.as_ref() {
-                                    holder_match = true;
+                                if let Ok((_, p_eph, _)) = crate::services::crypto::derive_stealth_secret_key(&id.signing_key, &seed_arr) {
+                                    let candidate_hash = crate::services::crypto::get_hash(p_eph.compress().as_bytes());
+                                    if Some(&candidate_hash) == last_tx.receiver_ephemeral_pub_hash.as_ref() {
+                                        holder_match = true;
+                                    }
+                                }
+                                if !holder_match {
+                                    let candidate_key = SigningKey::from_bytes(&seed_arr);
+                                    let candidate_hash = crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
+                                    if Some(&candidate_hash) == last_tx.receiver_ephemeral_pub_hash.as_ref() {
+                                        holder_match = true;
+                                    }
                                 }
                             }
 
@@ -1280,7 +1304,7 @@ impl Transaction {
         standard: &VoucherStandardDefinition,
         sender_id: &str,
         sender_permanent_key: &SigningKey,
-        sender_ephemeral_key: &SigningKey,
+        sender_ephemeral_key: impl Into<crate::services::crypto::EphemeralKey>,
         recipient_id: &str,
         amount_to_send_str: &str,
         use_privacy_mode: Option<bool>,

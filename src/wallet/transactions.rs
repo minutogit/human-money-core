@@ -1159,12 +1159,12 @@ impl Wallet {
     /// Helper function for stateless seed recovery.
     /// Attempts to restore the required ephemeral key for the LAST transaction.
     /// - Case A (Split): Deterministic via HKDF from Identity.
-    /// - Case B (Received): Decrypting the Privacy Guard via Identity.
+    /// - Case B (Received): Decrypting the Privacy Guard via Identity and stealth/legacy derivation.
     pub fn rederive_secret_seed(
         &self,
         voucher: &Voucher,
         identity: &UserIdentity,
-    ) -> Result<SigningKey, VoucherCoreError> {
+    ) -> Result<crate::services::crypto::EphemeralKey, VoucherCoreError> {
         let last_tx = voucher
             .transactions
             .last()
@@ -1177,7 +1177,7 @@ impl Wallet {
             let candidate_hash =
                 crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
             if Some(&candidate_hash) == last_tx.change_ephemeral_pub_hash.as_ref() {
-                return Ok(candidate_key);
+                return Ok(candidate_key.into());
             }
         }
 
@@ -1196,12 +1196,23 @@ impl Wallet {
                 "next_key_seed",
             )
         {
+            if let Ok((x_eph, p_eph, vk)) = crate::services::crypto::derive_stealth_secret_key(&identity.signing_key, &seed_arr) {
+                let candidate_hash = crate::services::crypto::get_hash(p_eph.compress().as_bytes());
+                if Some(&candidate_hash) == last_tx.receiver_ephemeral_pub_hash.as_ref() {
+                    return Ok(crate::services::crypto::EphemeralKey::Stealth {
+                        secret_scalar: x_eph,
+                        public_point: p_eph,
+                        verifying_key: vk,
+                    });
+                }
+            }
+
             let candidate_key = SigningKey::from_bytes(&seed_arr);
             let candidate_hash =
                 crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
 
             if Some(&candidate_hash) == last_tx.receiver_ephemeral_pub_hash.as_ref() {
-                return Ok(candidate_key);
+                return Ok(candidate_key.into());
             }
         }
 
@@ -1210,7 +1221,7 @@ impl Wallet {
             && last_tx.sender_remaining_amount.is_some()
         {
             let candidate_key = derive_deterministic_change_key(identity, prev_hash)?;
-            return Ok(candidate_key);
+            return Ok(candidate_key.into());
         }
 
         // Case C: Init (creator)
@@ -1232,7 +1243,7 @@ impl Wallet {
                 "holder",
                 sender_id_prefix,
             )?;
-            return Ok(holder_secret);
+            return Ok(holder_secret.into());
         }
 
         Err(crate::Error::Wallet(crate::error::WalletError::SeedDerivationFailed { reason: "Could not rederive secret seed: No valid ownership strategy found (neither Change nor Receiver hash matches).".to_string() }))

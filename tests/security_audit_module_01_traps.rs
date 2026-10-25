@@ -2496,6 +2496,7 @@ mod security_audit_module_01 {
                 bs58::encode(m_r_pt.compress().as_bytes()).into_string()
             },
             m_s: bs58::encode(m_s_prime.as_bytes()).into_string(),
+            ..Default::default()
         };
 
         // The true payer DID of `sk` in project-canonical multicodec format.
@@ -2506,14 +2507,15 @@ mod security_audit_module_01 {
             format!("did:key:z{}", bs58::encode(mc).into_string())
         };
 
-        // Both structurally INDEPENDENT witnesses validate the same shard...
+        // Honest witness A validates the shard...
         trap_manager::verify_sst_witness(&witness_a, &shard, &payer_did_true, &ds_tag, &eph_bytes, &t_id)
             .expect("witness A (deterministic nonce) must verify");
-        trap_manager::verify_sst_witness(&witness_b, &shard, &payer_did_true, &ds_tag, &eph_bytes, &t_id)
-            .expect("witness B (fresh nonce + free parameter) must verify");
-        assert_ne!(
-            witness_a.r_sig, witness_b.r_sig,
-            "the two witnesses must be genuinely independent fiber members"
+        // Under Fix 1 (VRF + DLEQ), an alternative witness with a fresh nonce / free parameter
+        // is strictly rejected because it does not match the deterministic K_trap derivation.
+        assert!(
+            trap_manager::verify_sst_witness(&witness_b, &shard, &payer_did_true, &ds_tag, &eph_bytes, &t_id)
+                .is_err(),
+            "witness B (fresh nonce / non-deterministic parameter) must be rejected"
         );
 
         // --- Avalanche: distinct evaluation points yield unrelated shards ---

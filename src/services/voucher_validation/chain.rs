@@ -4,7 +4,7 @@ use crate::models::voucher::{Transaction, Voucher};
 use crate::models::voucher_standard_definition::{VoucherStandardDefinition, PrivacyMode};
 use crate::services::crypto::{get_hash, get_hash_from_slices, get_pubkey_from_user_id};
 use crate::services::utils::to_canonical_json;
-use ed25519_dalek::{Signature, Verifier};
+use ed25519_dalek::Signature;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
@@ -896,7 +896,7 @@ pub fn verify_transaction_integrity_and_signature(
                 ),
             );
 
-            if ephem_key.verify(&payload_hash, &signature).is_err() {
+            if ephem_key.verify_strict(&payload_hash, &signature).is_err() {
                 return Err(ValidationError::InvalidTransaction(
                     "Invalid layer2_signature (Technical Proof)".to_string(),
                 )
@@ -937,7 +937,7 @@ pub fn verify_transaction_integrity_and_signature(
             "t_id",
         )
         .map_err(|e| ValidationError::SignatureDecodeError(e.to_string()))?;
-        if pub_key.verify(&t_id_raw, &signature).is_err() {
+        if pub_key.verify_strict(&t_id_raw, &signature).is_err() {
             return Err(ValidationError::InvalidTransaction(
                 "Invalid sender_identity_signature".to_string(),
             )

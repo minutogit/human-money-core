@@ -77,11 +77,11 @@ pub fn create_transaction_with_auto_decrypt(
     standard: &VoucherStandardDefinition,
     sender_id: &str,
     sender_permanent_key: &SigningKey,
-    sender_ephemeral_key: &SigningKey,
+    sender_ephemeral_key: impl Into<crypto::EphemeralKey>,
     recipient_id: &str,
-    _recipient_permanent_key: &SigningKey,
+    recipient_permanent_key: &SigningKey,
     amount: &str,
-) -> Result<(Voucher, SigningKey), VoucherCoreError> {
+) -> Result<(Voucher, crypto::EphemeralKey), VoucherCoreError> {
     let (new_voucher, secrets) = voucher.create_transaction(
         standard,
         sender_id,
@@ -97,9 +97,34 @@ pub fn create_transaction_with_auto_decrypt(
         .map_err(|e| VoucherCoreError::Crypto(format!("Invalid seed base58: {}", e)))?;
 
     let seed_arr: [u8; 32] = seed_bytes.try_into().expect("Seed must be 32 bytes");
-    let next_key = SigningKey::from_bytes(&seed_arr);
+    let next_key = if let Ok((x_eph, p_eph, vk)) = crypto::derive_stealth_secret_key(recipient_permanent_key, &seed_arr) {
+        crypto::EphemeralKey::Stealth {
+            secret_scalar: x_eph,
+            public_point: p_eph,
+            verifying_key: vk,
+        }
+    } else {
+        crypto::EphemeralKey::Standard(SigningKey::from_bytes(&seed_arr))
+    };
 
     Ok((new_voucher, next_key))
+}
+
+pub fn derive_recipient_holder_key(
+    recipient_identity: &UserIdentity,
+    recipient_seed: &str,
+) -> crypto::EphemeralKey {
+    let seed_bytes = bs58::decode(recipient_seed).into_vec().unwrap();
+    let seed_arr: [u8; 32] = seed_bytes.try_into().unwrap();
+    if let Ok((x_eph, p_eph, vk)) = crypto::derive_stealth_secret_key(&recipient_identity.signing_key, &seed_arr) {
+        crypto::EphemeralKey::Stealth {
+            secret_scalar: x_eph,
+            public_point: p_eph,
+            verifying_key: vk,
+        }
+    } else {
+        crypto::EphemeralKey::Standard(SigningKey::from_bytes(&seed_arr))
+    }
 }
 
 pub fn create_guarantor_signature_data(
@@ -310,6 +335,17 @@ pub fn create_voucher_for_manipulation(
     let init_t_id = get_hash(tx_json_for_id);
     init_tx.t_id = init_t_id.clone();
 
+    let v_id = crate::services::l2_gateway::calculate_layer2_voucher_id(&init_tx)
+        .expect("Failed to calculate v_id");
+    let init_tx = resign_transaction_ext(
+        init_tx,
+        signing_key,
+        &v_id,
+        Some(&genesis_secret),
+    );
+
+    let init_tx_hash = get_hash(to_canonical_json(&init_tx).unwrap());
+
     let mut creator_sig_obj = VoucherSignature {
         voucher_id: voucher_hash.clone(),
         signature_id: "".to_string(),
@@ -320,25 +356,14 @@ pub fn create_voucher_for_manipulation(
         details: None,
     };
 
-    creator_sig_obj.signature_id = get_hash_from_slices(&[
-        to_canonical_json(&creator_sig_obj).unwrap().as_bytes(),
-        init_t_id.as_bytes(),
-    ]);
+    creator_sig_obj.signature_id = creator_sig_obj.calculate_signature_id(&init_tx_hash).unwrap();
 
     let digital_signature =
         crypto::sign_ed25519(signing_key, creator_sig_obj.signature_id.as_bytes());
     creator_sig_obj.signature = bs58::encode(digital_signature.to_bytes()).into_string();
 
     voucher.signatures.push(creator_sig_obj);
-
-    let v_id = crate::services::l2_gateway::calculate_layer2_voucher_id(&init_tx)
-        .expect("Failed to calculate v_id");
-    voucher.transactions.push(resign_transaction_ext(
-        init_tx,
-        signing_key,
-        &v_id,
-        Some(&genesis_secret),
-    ));
+    voucher.transactions.push(init_tx);
 
     voucher
 }

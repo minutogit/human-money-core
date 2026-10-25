@@ -5,7 +5,6 @@ use crate::{
     models::voucher::Voucher,
     services::{crypto, l2_gateway, utils},
 };
-use ed25519_dalek::{Signer, SigningKey};
 use humoco_proto::causal::CausalOutputProof;
 fn invalid(reason: &str) -> Error {
     Error::Validation(crate::error::ValidationError::SecurityViolation(
@@ -16,8 +15,9 @@ fn invalid(reason: &str) -> Error {
 /// This never re-signs or changes a Layer-1 transaction or its SST trap.
 pub fn create_output_proof(
     voucher: &Voucher,
-    key: &SigningKey,
+    key: impl Into<crypto::EphemeralKey>,
 ) -> Result<CausalOutputProof, Error> {
+    let key = key.into();
     let tx = voucher
         .transactions
         .last()

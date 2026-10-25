@@ -19,7 +19,7 @@
 //! - **Full transfer:** Correct creation of a transaction without remaining amount
 //!   when the entire balance is transferred.
 
-use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD, create_custom_standard};
+use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD, create_custom_standard, derive_recipient_holder_key};
 use human_money_core::{
     // Structs/Enums from the crate root (or re-exported there)
     NewVoucherData,
@@ -253,15 +253,8 @@ fn test_chained_transaction_math_and_scaling() {
 
     // --- 7. CASE: RETURN TRANSACTIONS FROM BOB TO ALICE ---
     // Bob (balance: 40.0066) sends "10" (integer) back to Alice.
-    // Bob spends the "received" amount from Tx6. He needs recipient_seed from secrets_5.
-    let bob_seed = secrets_5.recipient_seed;
-    let bob_key = ed25519_dalek::SigningKey::from_bytes(
-        &bs58::decode(&bob_seed)
-            .into_vec()
-            .unwrap()
-            .try_into()
-            .unwrap(),
-    );
+    // Bob derives his stealth ephemeral key from secrets_5.recipient_seed and his identity
+    let bob_key = derive_recipient_holder_key(&bob.identity, &secrets_5.recipient_seed);
 
     let (v, secrets_6) = human_money_core::models::voucher::Transaction::create(
         &current_voucher,

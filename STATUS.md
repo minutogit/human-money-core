@@ -1,12 +1,18 @@
 ---
 project: human-money-core
-version: "0.3.1"
+version: "0.5.0"
 phase: "active-development"
 health: "green"
-last_updated: "2026-10-24"
+last_updated: "2026-10-26"
 blocks: []
 blocked_by: []
 priority_tasks:
+  - id: "CORE-006"
+    title: "V3 SST Trap Protocol Hardening (VRF/DLEQ, Stealth-Key Custody & Malleability Defense)"
+    status: "closed"
+    priority: "critical"
+    depends_on: []
+    description: "Hardened the Shared-Signature Trap (SST) against deanonymization evasion: 1) VRF + Chaum-Pedersen DLEQ forces deterministic line derivation; 2) Asymmetric stealth-key derivation prevents sender reuse of recipient seeds; 3) Genesis canonical binding eliminates signature-malleable ds_tag evasion; 4) Fixed soft-placeholder shard propagation; 5) Enforced sender_ephemeral_pub consistency across all extraction gates. Maintained 100% anonymous L2 compatibility and RFC 8032 strict verification."
   - id: "CORE-005"
     title: "Z10 Terminal Retained-Choice Reconciliation & Z08 Checkout Replay"
     status: "closed"

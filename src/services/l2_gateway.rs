@@ -1695,11 +1695,7 @@ mod tests {
         // Build second tx: bob -> charlie
         let bob = &ACTORS.bob.identity;
         let charlie = &ACTORS.charlie.identity;
-        let seed_bytes = bs58::decode(&secrets1.recipient_seed)
-            .into_vec()
-            .expect("decode seed");
-        let seed_arr: [u8; 32] = seed_bytes.try_into().expect("32 bytes");
-        let bob_eph = ed25519_dalek::SigningKey::from_bytes(&seed_arr);
+        let bob_eph = crate::test_utils::voucher_setup::derive_recipient_holder_key(bob, &secrets1.recipient_seed);
         let (voucher2, _next_seed) = create_transaction_with_auto_decrypt(
             &voucher1,
             standard,
@@ -1802,9 +1798,7 @@ mod tests {
             setup_voucher_with_one_tx();
         let bob = &ACTORS.bob.identity;
         let charlie = &ACTORS.charlie.identity;
-        let seed_bytes = bs58::decode(&secrets1.recipient_seed).into_vec().unwrap();
-        let seed_arr: [u8; 32] = seed_bytes.try_into().unwrap();
-        let bob_eph = ed25519_dalek::SigningKey::from_bytes(&seed_arr);
+        let bob_eph = crate::test_utils::voucher_setup::derive_recipient_holder_key(bob, &secrets1.recipient_seed);
         let (voucher2, _) = create_transaction_with_auto_decrypt(
             &voucher1,
             standard,

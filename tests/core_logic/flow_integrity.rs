@@ -1,5 +1,5 @@
 use human_money_core::models::profile::PublicProfile;
-use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD, create_minuto_voucher_data};
+use human_money_core::test_utils::{ACTORS, FREETALER_STANDARD, create_minuto_voucher_data, derive_recipient_holder_key};
 use human_money_core::validate_voucher_against_standard;
 
 #[test]
@@ -93,14 +93,8 @@ fn test_init_transfer_split_chain() {
     // So `derive_holder_key` might fail for Bob if it relies on the seed.
     // UNLESS `derive_holder_key` is smart enough to find the key for `Bob` if he is the last recipient.
 
-    // Bob needs his key from secrets_1.recipient_seed
-    let bob_seed = bs58::decode(secrets_1.recipient_seed)
-        .into_vec()
-        .expect("Invalid seed");
-
-    // wait, create_transaction takes &SigningKey.
-    let holder_key_bob_owned = ed25519_dalek::SigningKey::from_bytes(&bob_seed.try_into().unwrap());
-    let holder_key_bob = &holder_key_bob_owned;
+    // Bob derives his stealth ephemeral key from secrets_1.recipient_seed and his identity
+    let holder_key_bob = derive_recipient_holder_key(&bob.identity, &secrets_1.recipient_seed);
 
     // Bob sends 10 to Charlie.
     let (voucher_2, _) = human_money_core::models::voucher::Transaction::create(

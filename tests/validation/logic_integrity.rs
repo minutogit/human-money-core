@@ -4,7 +4,7 @@ use human_money_core::services::voucher_validation::{
     verify_transactions,
 };
 use human_money_core::test_utils::{
-    ACTORS, setup_voucher_with_one_tx,
+    ACTORS, setup_voucher_with_one_tx, derive_recipient_holder_key,
 };
 use human_money_core::error::ValidationError;
 
@@ -196,9 +196,7 @@ fn test_transaction_monotonic_time() {
     // Create a second transaction
     let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
-
-    let seed_bytes = bs58::decode(&secrets.recipient_seed).into_vec().unwrap();
-    let bob_signing_key = ed25519_dalek::SigningKey::from_bytes(seed_bytes.as_slice().try_into().unwrap());
+    let bob_signing_key = derive_recipient_holder_key(&bob.identity, &secrets.recipient_seed);
 
     // Create a valid subsequent transfer
     let (mut next_voucher, _next_secrets) = human_money_core::models::voucher::Transaction::create(
@@ -315,8 +313,7 @@ fn test_p2pkh_change_output_verification() {
     let alice = &human_money_core::test_utils::ACTORS.alice;
     let bob = &human_money_core::test_utils::ACTORS.bob;
 
-    let seed_bytes = bs58::decode(&_secrets.recipient_seed).into_vec().unwrap();
-    let bob_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(seed_bytes.as_slice().try_into().unwrap());
+    let bob_ephemeral_key = derive_recipient_holder_key(&bob.identity, &_secrets.recipient_seed);
 
     let (voucher, _secrets) = human_money_core::models::voucher::Transaction::create(
         &voucher,
@@ -518,8 +515,7 @@ fn test_trap_data_privacy_validation() {
     // Attach TrapData to a transfer with @ (email leak). Init is skipped for TrapData!
         let alice = &ACTORS.alice;
     let bob = &ACTORS.bob;
-    let seed_bytes = bs58::decode(&secrets.recipient_seed).into_vec().unwrap();
-    let bob_signing_key = ed25519_dalek::SigningKey::from_bytes(seed_bytes.as_slice().try_into().unwrap());
+    let bob_signing_key = derive_recipient_holder_key(&bob.identity, &secrets.recipient_seed);
     
     let (mut next_voucher, _) = human_money_core::models::voucher::Transaction::create(
         &voucher,
@@ -562,8 +558,7 @@ fn test_balance_attribution_logic() {
     // We use the real setup that created a valid chain init -> transfer
     let alice = &human_money_core::test_utils::ACTORS.alice;
     let bob = &human_money_core::test_utils::ACTORS.bob;
-    let seed_bytes = bs58::decode(&secrets.recipient_seed).into_vec().unwrap();
-    let bob_signing_key = ed25519_dalek::SigningKey::from_bytes(seed_bytes.as_slice().try_into().unwrap());
+    let bob_signing_key = derive_recipient_holder_key(&bob.identity, &secrets.recipient_seed);
 
     // Create transfer (real & valid)
     let (next_voucher, _) = human_money_core::Transaction::create(

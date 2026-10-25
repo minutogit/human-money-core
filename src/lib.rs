@@ -82,6 +82,7 @@ pub use archive::file_archive::FileVoucherArchive;
 
 // Services
 pub use services::crypto;
+pub use services::crypto::EphemeralKey;
 pub use services::trust_provider::{NoopTrustProvider, TrustProvider};
 pub use services::utils;
 pub use services::utils::to_canonical_json;

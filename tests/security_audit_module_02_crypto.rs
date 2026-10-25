@@ -972,7 +972,6 @@ mod security_audit_module_02 {
     /// full-set consistency before definitive attribution, or documented
     /// downgrade semantics) — beyond primitive-level hardening.
     #[test]
-    #[ignore = "pending architectural/protocol decision - see report"]
     fn audit_02_08_schnorr_valid_offline_line_passes_l1_witness_and_poisons_attribution() {
         use human_money_core::services::crypto::{get_hash, get_secret_scalar};
 
@@ -1014,6 +1013,7 @@ mod security_audit_module_02 {
             s_sig: bs58::encode(s_sig_star.as_bytes()).into_string(),
             m_r: bs58::encode(m_r_star.compress().as_bytes()).into_string(),
             m_s: bs58::encode(m_s_star.as_bytes()).into_string(),
+            ..Default::default()
         };
         let trap_b = TrapData {
             ds_tag: ds_tag.clone(),

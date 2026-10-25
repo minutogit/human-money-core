@@ -768,14 +768,24 @@ impl Wallet {
         let fork_point_prev_hash = conflicting_transactions[0].prev_hash.clone();
 
         for t_id in missing_t_ids {
-            let synthetic_tx = crate::models::voucher::Transaction {
-                t_id,
+            let mut synthetic_tx = crate::models::voucher::Transaction {
+                t_id: t_id.clone(),
                 sender_id: Some(offender_id.clone()),
                 prev_hash: fork_point_prev_hash.clone(),
                 t_type: "soft_placeholder".to_string(),
                 amount: "0.00 (Synthetic)".to_string(),
                 ..Default::default()
             };
+            if let Some(fp) = fingerprints.iter().find(|fp| fp.t_id == t_id) {
+                synthetic_tx.sender_ephemeral_pub = Some(fp.sender_ephemeral_pub.clone());
+                synthetic_tx.layer2_signature = Some(fp.layer2_signature.clone());
+                synthetic_tx.trap_data = Some(crate::models::voucher::TrapData {
+                    ds_tag: fp.ds_tag.clone(),
+                    trap_r: fp.trap_r.clone(),
+                    trap_s: fp.trap_s.clone(),
+                });
+                synthetic_tx.t_time = fp.encrypted_timestamp.to_string();
+            }
             conflicting_transactions.push(synthetic_tx);
         }
 
@@ -1024,7 +1034,11 @@ impl Wallet {
         for pair in quarantine_pairs {
             let f1 = &pair[0];
             let f2 = &pair[1];
-            if f1.ds_tag != f2.ds_tag || f1.t_id == f2.t_id {
+            if f1.ds_tag != f2.ds_tag
+                || f1.t_id == f2.t_id
+                || f1.sender_ephemeral_pub.is_empty()
+                || f1.sender_ephemeral_pub != f2.sender_ephemeral_pub
+            {
                 continue;
             }
             if conflict_manager::is_init_fingerprint(f1)

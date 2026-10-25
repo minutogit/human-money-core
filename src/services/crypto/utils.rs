@@ -9,9 +9,11 @@ use crate::services::mnemonic::{MnemonicLanguage, MnemonicProcessor};
 // Symmetric encryption and hashes
 use sha2::{Digest as _, Sha512};
 use ed25519_dalek::{
-    Signature, Signer, SigningKey, Verifier, VerifyingKey as EdPublicKey,
+    Signature, Signer, SigningKey, VerifyingKey as EdPublicKey,
 };
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
+use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{Engine as _, engine::general_purpose};
 
@@ -158,6 +160,33 @@ pub fn sign_ed25519(signing_key: &SigningKey, message: &[u8]) -> Signature {
     signing_key.sign(message)
 }
 
+/// Signs a message with an Ed25519 secret scalar and public point using standard RFC 8032 equations.
+///
+/// Uses deterministic nonce derivation via `SST_DOMAIN_STEALTH_NONCE`.
+/// The resulting signature verifies strictly against `public_point` with any RFC 8032 Ed25519 verifier.
+pub fn sign_ed25519_scalar(
+    secret_scalar: &Scalar,
+    public_point: &EdwardsPoint,
+    message: &[u8],
+) -> Signature {
+    let r = crate::services::trap_manager::sst_scalar(
+        crate::services::trap_manager::SST_DOMAIN_STEALTH_NONCE,
+        &[secret_scalar.as_bytes(), message],
+    );
+    let r_point = r * ED25519_BASEPOINT_POINT;
+    let r_bytes = r_point.compress().to_bytes();
+    let p_bytes = public_point.compress().to_bytes();
+
+    let mut hasher = Sha512::new();
+    hasher.update(&r_bytes);
+    hasher.update(&p_bytes);
+    hasher.update(message);
+    let k = Scalar::from_hash(hasher);
+
+    let s = r + k * secret_scalar;
+    Signature::from_components(r_bytes, s.to_bytes())
+}
+
 /// Verifies an Ed25519 signature.
 ///
 /// # Arguments
@@ -170,7 +199,7 @@ pub fn sign_ed25519(signing_key: &SigningKey, message: &[u8]) -> Signature {
 ///
 /// `true` if the signature is valid, `false` otherwise.
 pub fn verify_ed25519(public_key: &EdPublicKey, message: &[u8], signature: &Signature) -> bool {
-    public_key.verify(message, signature).is_ok()
+    public_key.verify_strict(message, signature).is_ok()
 }
 
 /// Encodes byte data into a URL-safe Base64 string.

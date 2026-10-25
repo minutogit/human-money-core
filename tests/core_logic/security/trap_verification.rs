@@ -269,6 +269,9 @@ fn test_sst_zero_challenge_forgery_rejected() {
         s_sig: bs58::encode(s_fake.as_bytes()).into_string(),
         m_r: bs58::encode(ED25519_BASEPOINT_POINT.compress().as_bytes()).into_string(),
         m_s: bs58::encode(Scalar::ONE.as_bytes()).into_string(),
+        k_trap: bs58::encode(ED25519_BASEPOINT_POINT.compress().as_bytes()).into_string(),
+        dleq_c: bs58::encode(Scalar::ONE.as_bytes()).into_string(),
+        dleq_s: bs58::encode(Scalar::ONE.as_bytes()).into_string(),
     };
     // The shard itself is irrelevant: the signature equation fires first.
     let trap_shard = human_money_core::models::voucher::TrapData {

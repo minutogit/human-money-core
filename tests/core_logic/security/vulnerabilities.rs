@@ -239,11 +239,12 @@ fn create_hacked_bundle_and_container(
 
 /// Creates and signs a (potentially manipulated) transaction.
 fn create_hacked_tx(
-    signer_key: &ed25519_dalek::SigningKey,
+    signer_key: impl Into<human_money_core::services::crypto::EphemeralKey>,
     identity_key: Option<&ed25519_dalek::SigningKey>,
     mut hacked_tx: Transaction,
     v_id: &str,
 ) -> Transaction {
+    let signer_key = signer_key.into();
     hacked_tx.t_id = "".to_string();
     hacked_tx.layer2_signature = None;
     hacked_tx.sender_identity_signature = None;
@@ -318,7 +319,7 @@ fn create_hacked_tx(
         ),
     );
 
-    let l2_sig = sign_ed25519(signer_key, &payload_hash);
+    let l2_sig = signer_key.sign(&payload_hash);
     hacked_tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 
     // 2. Sender Identity Signature (L1): Optional, if sender_id is present
@@ -383,7 +384,8 @@ fn generate_valid_trap_for_test(
         .0
 }
 
-fn add_p2pkh_layer(tx: &mut Transaction, holder_secret: &ed25519_dalek::SigningKey) {
+fn add_p2pkh_layer(tx: &mut Transaction, holder_secret: impl Into<human_money_core::services::crypto::EphemeralKey>) {
+    let holder_secret = holder_secret.into();
     let holder_pub = holder_secret.verifying_key();
     let holder_pub_str = bs58::encode(holder_pub.to_bytes()).into_string();
 
@@ -1369,13 +1371,7 @@ fn test_attack_fuzzing_random_mutations() {
     .unwrap();
     master_voucher = mv;
     let alice_seed = secrets_1.recipient_seed;
-    let alice_key = ed25519_dalek::SigningKey::from_bytes(
-        &bs58::decode(alice_seed)
-            .into_vec()
-            .unwrap()
-            .try_into()
-            .unwrap(),
-    );
+    let alice_key = human_money_core::test_utils::derive_recipient_holder_key(&ACTORS.alice.identity, &alice_seed);
     let (mv, _) = human_money_core::models::voucher::Transaction::create(
         &master_voucher,
         standard,

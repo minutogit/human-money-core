@@ -218,10 +218,8 @@ fn test_balance_lifecycle_root_to_root() {
     assert_eq!(voucher.spendable_balance_for_user( &bob_id, standard, None).unwrap(), dec!(40));
     
     // 6. Bob (Root) sends 10 to Alice (Root)
-    // Bob must derive his holder key.
-    let bob_holder_key = ed25519_dalek::SigningKey::from_bytes(
-        &bs58::decode(&secrets.recipient_seed).into_vec().unwrap().try_into().unwrap()
-    );
+    // Bob must derive his stealth holder key.
+    let bob_holder_key = test_utils::derive_recipient_holder_key(&bob, &secrets.recipient_seed);
     
     let (v_after_back, _secrets2) = human_money_core::models::voucher::Transaction::create(
         &voucher, standard, &bob_id, &bob.signing_key, &bob_holder_key, &alice_id, "10", None
@@ -317,10 +315,8 @@ fn test_stealth_balance_root_account() {
     assert_eq!(voucher.spendable_balance_for_user( &bob_id, standard, Some(bob_receiver_hash)).unwrap(), dec!(40));
     assert_eq!(voucher.spendable_balance_for_user( &alice_id, standard, Some(alice_change_hash)).unwrap(), dec!(60));
     
-    // Verify that the seed was derived correctly (must match empty prefix)
-    let bob_holder_key = ed25519_dalek::SigningKey::from_bytes(
-        &bs58::decode(&secrets.recipient_seed).into_vec().unwrap().try_into().unwrap()
-    );
+    // Verify that the stealth key was derived correctly
+    let bob_holder_key = test_utils::derive_recipient_holder_key(&bob, &secrets.recipient_seed);
     let bob_derived_hash = human_money_core::services::crypto::get_hash(bob_holder_key.verifying_key().to_bytes());
     
     assert_eq!(bob_derived_hash, bob_receiver_hash);

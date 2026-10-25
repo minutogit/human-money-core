@@ -17,6 +17,7 @@ use human_money_core::{
 use human_money_core::test_utils::{
     ACTORS, MINUTO_STANDARD, FREETALER_STANDARD, create_female_guarantor_signature,
     create_male_guarantor_signature, create_voucher_for_manipulation, derive_holder_key,
+    derive_recipient_holder_key,
 };
 
 /// Verifies fundamental structural and logical rules.
@@ -346,11 +347,7 @@ mod behavioral_rules {
             test_utils::setup_voucher_with_one_tx();
 
         // 1. Prepare P2PKH keys
-        let seed_bytes = bs58::decode(recipient_secrets.recipient_seed)
-            .into_vec()
-            .unwrap();
-        let sender_ephem_key =
-            ed25519_dalek::SigningKey::from_bytes(&seed_bytes.try_into().unwrap());
+        let sender_ephem_key = derive_recipient_holder_key(recipient, &recipient_secrets.recipient_seed);
         let sender_ephem_pub_str =
             bs58::encode(sender_ephem_key.verifying_key().to_bytes()).into_string();
 
@@ -390,7 +387,7 @@ mod behavioral_rules {
         invalid_transfer_tx.t_id = crypto::get_hash(tx_json);
 
         let t_id_raw = bs58::decode(&invalid_transfer_tx.t_id).into_vec().unwrap();
-        let l2_sig = crypto::sign_ed25519(&sender_ephem_key, &t_id_raw);
+        let l2_sig = sender_ephem_key.sign(&t_id_raw);
         invalid_transfer_tx.layer2_signature = Some(bs58::encode(l2_sig.to_bytes()).into_string());
 
         let signed_tx = invalid_transfer_tx; // No re-signing required
@@ -775,9 +772,7 @@ mod behavioral_rules {
             human_money_core::services::utils::set_mock_time(Some(future_time_str));
 
             // Action: User_B (non-creator) sends to User_C
-            let user_b_seed = bs58::decode(secrets_b.recipient_seed).into_vec().unwrap();
-            let user_b_ephemeral_key =
-                ed25519_dalek::SigningKey::from_bytes(&user_b_seed.try_into().unwrap());
+            let user_b_ephemeral_key = derive_recipient_holder_key(&setup.user_b, &secrets_b.recipient_seed);
 
             // Action: User_B (non-creator) sends to User_C
             let result = human_money_core::models::voucher::Transaction::create(

@@ -233,12 +233,18 @@ fn test_forged_witness_without_key_knowledge_rejected() {
         let r_fake = Scalar::random(&mut OsRng) * ED25519_BASEPOINT_POINT;
         let m_r_fake = Scalar::random(&mut OsRng) * ED25519_BASEPOINT_POINT;
         let m_s_fake = Scalar::random(&mut OsRng);
+        let k_fake = Scalar::random(&mut OsRng) * ED25519_BASEPOINT_POINT;
+        let dleq_c_fake = Scalar::random(&mut OsRng);
+        let dleq_s_fake = Scalar::random(&mut OsRng);
 
         let fake_witness = TrapWitness {
             r_sig: bs58::encode(r_fake.compress().as_bytes()).into_string(),
             s_sig: bs58::encode(s_fake.as_bytes()).into_string(),
             m_r: bs58::encode(m_r_fake.compress().as_bytes()).into_string(),
             m_s: bs58::encode(m_s_fake.as_bytes()).into_string(),
+            k_trap: bs58::encode(k_fake.compress().as_bytes()).into_string(),
+            dleq_c: bs58::encode(dleq_c_fake.as_bytes()).into_string(),
+            dleq_s: bs58::encode(dleq_s_fake.as_bytes()).into_string(),
         };
 
         // Assertions

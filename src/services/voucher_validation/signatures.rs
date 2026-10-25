@@ -13,13 +13,16 @@ pub fn verify_signatures(
 ) -> Result<(), VoucherCoreError> {
     let mut seen_signers: HashSet<[u8; 32]> = HashSet::new();
 
-    let init_t_id = voucher
+    let init_tx = voucher
         .transactions
         .first()
-        .map(|tx| tx.t_id.as_str())
         .ok_or_else(|| {
             VoucherCoreError::Validation(ValidationError::VoucherMustHaveInitTransaction)
         })?;
+    let init_t_id = &init_tx.t_id;
+    let init_tx_hash = crate::services::crypto::get_hash(
+        crate::services::utils::to_canonical_json(init_tx)?
+    );
 
     let allowed_roles = standard.immutable.issuance.allowed_signature_roles.as_slice();
     let min_sigs = standard.immutable.issuance.additional_signatures_range.first().copied().unwrap_or(0);
@@ -113,7 +116,13 @@ pub fn verify_signatures(
             .into());
         }
 
-        is_signature_valid(signature_obj, init_t_id)?;
+        let bound_hash = if signature_obj.role == "creator" {
+            &init_tx_hash
+        } else {
+            init_t_id
+        };
+
+        is_signature_valid(signature_obj, bound_hash)?;
     }
 
     if additional_sig_count < min_sigs || additional_sig_count > max_sigs {
@@ -131,7 +140,7 @@ pub fn verify_signatures(
 
 fn is_signature_valid(
     signature_obj: &VoucherSignature,
-    init_t_id: &str,
+    bound_hash: &str,
 ) -> Result<(), ValidationError> {
     #[cfg(feature = "test-utils")]
     if crate::is_signature_bypass_active() {
@@ -139,7 +148,7 @@ fn is_signature_valid(
     }
 
     let calculated_id_hash = signature_obj
-        .calculate_signature_id(init_t_id)
+        .calculate_signature_id(bound_hash)
         .unwrap_or_default();
 
     if calculated_id_hash != signature_obj.signature_id {

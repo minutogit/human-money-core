@@ -400,6 +400,32 @@ impl ValidationPipeline {
                     }
                     .into());
                 }
+
+                if let Some(expected_recv_hash) = &last_tx.receiver_ephemeral_pub_hash {
+                    let seed_arr = crate::services::crypto::decode_bs58_fixed::<32>(
+                        &payload.next_key_seed,
+                        "next_key_seed",
+                    )?;
+                    let mut matched = false;
+                    if let Ok((_, p_eph, _)) = crate::services::crypto::derive_stealth_secret_key(&identity.signing_key, &seed_arr) {
+                        let candidate_hash = crate::services::crypto::get_hash(p_eph.compress().as_bytes());
+                        if candidate_hash == *expected_recv_hash {
+                            matched = true;
+                        }
+                    }
+                    if !matched {
+                        let candidate_key = ed25519_dalek::SigningKey::from_bytes(&seed_arr);
+                        let candidate_hash = crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
+                        if candidate_hash == *expected_recv_hash {
+                            matched = true;
+                        }
+                    }
+                    if !matched {
+                        return Err(VoucherCoreError::Validation(ValidationError::SecurityViolation(
+                            "Decrypted recipient key seed does not match receiver_ephemeral_pub_hash".to_string(),
+                        )));
+                    }
+                }
             }
         }
         Ok(())
@@ -502,6 +528,18 @@ impl ValidationPipeline {
                                 .ok_or_else(missing_witness)?,
                             m_s: payload
                                 .trap_m_s
+                                .clone()
+                                .ok_or_else(missing_witness)?,
+                            k_trap: payload
+                                .trap_k_point
+                                .clone()
+                                .ok_or_else(missing_witness)?,
+                            dleq_c: payload
+                                .dleq_c
+                                .clone()
+                                .ok_or_else(missing_witness)?,
+                            dleq_s: payload
+                                .dleq_s
                                 .clone()
                                 .ok_or_else(missing_witness)?,
                         };
