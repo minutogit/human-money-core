@@ -201,6 +201,8 @@ fn wh4_01_201_import_rejects_unverified_ephemeral_offender_claims() {
     let reporter_sig = sign_ed25519(&attacker.signing_key, proof_id.as_bytes());
 
     let forged = ProofOfDoubleSpend {
+        fingerprints: Vec::new(),
+        victim_witnesses: Vec::new(),
         proof_id,
         offender_id: offender_claim.clone(),
         suspected_identity: None,
@@ -291,10 +293,10 @@ fn wh4_01_202_trap_bearing_init_must_not_classify_as_spend_claim() {
     // renewed (challenge tag = t_id for init, shards bound verbatim).
     let attacker_ds_tag = random_b58_32();
     let throwaway = fresh_key();
-    let eph_bytes = throwaway.verifying_key().to_bytes();
+    let eph_bytes = human_money_core::test_utils::bound_test_point(&throwaway);
     let init_t_id = voucher.transactions[0].t_id.clone();
     let (trap, _) =
-        generate_sst_trap(&throwaway, &attacker_ds_tag, &eph_bytes, &init_t_id)
+        generate_sst_trap(&throwaway, &attacker_ds_tag, &eph_bytes, &init_t_id, "", &[0u8; 32])
             .expect("genuine shard pair");
     voucher.transactions[0].trap_data = Some(trap);
 

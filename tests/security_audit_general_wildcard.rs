@@ -59,7 +59,7 @@ fn audit_00_wildcard_19_unbounded_foreign_ingress_must_be_bounded() {
     let mut blob: HashMap<String, Vec<TransactionFingerprint>> = HashMap::new();
     for _ in 0..4000 {
         let sk = w3_fresh_sk();
-        let eph = sk.verifying_key().to_bytes();
+        let eph = human_money_core::test_utils::bound_test_point(&sk);
         let eph_b58 = bs58::encode(&eph).into_string();
         let prev = w3_random_b58_32();
         let ds_tag = get_hash_from_slices(&[
@@ -74,7 +74,7 @@ fn audit_00_wildcard_19_unbounded_foreign_ingress_must_be_bounded() {
                 .unwrap(),
         );
         // generate a valid SST shard pair so the fingerprint passes ingress
-        let (trap, _) = trap_manager::generate_sst_trap(&sk, &ds_tag, &eph, &t_id).unwrap();
+        let (trap, _) = trap_manager::generate_sst_trap(&sk, &ds_tag, &eph, &t_id, "", &[0u8; 32]).unwrap();
         let payload_hash = calculate_l2_payload_hash_raw(
             TRAP_NONE_PLACEHOLDER,
             &ds_tag,
@@ -87,7 +87,7 @@ fn audit_00_wildcard_19_unbounded_foreign_ingress_must_be_bounded() {
             None,
             "",
         );
-        let sig = sign_ed25519(&sk, &payload_hash);
+        let sig = sign_ed25519(&human_money_core::test_utils::bound_test_key(&sk), &payload_hash);
         let fp = TransactionFingerprint {
             ds_tag: ds_tag.clone(),
             t_id: t_id.clone(),

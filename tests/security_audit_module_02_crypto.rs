@@ -868,11 +868,11 @@ mod security_audit_module_02 {
         let (_payer_pk, payer_sk) =
             generate_ed25519_keypair_for_tests(Some("audit-02-08-junk-spender"));
         let ds_tag = get_hash("audit-02-08-input-state");
-        let eph: [u8; 32] = audit_02_08_deterministic_bytes("audit-02-08-eph", 0);
+        let eph: [u8; 32] = human_money_core::test_utils::bound_test_point(&payer_sk);
 
         // Honest fork A generated with the REAL spend routine.
         let t_id_a = get_hash("audit-02-08-tid-a");
-        let (trap_a, _) = generate_sst_trap(&payer_sk, &ds_tag, &eph, &t_id_a)
+        let (trap_a, _) = generate_sst_trap(&payer_sk, &ds_tag, &eph, &t_id_a, "", &[0u8; 32])
             .expect("Honest trap generation must succeed");
         let fp_a = TransactionFingerprint {
             ds_tag: ds_tag.clone(),
@@ -979,12 +979,12 @@ mod security_audit_module_02 {
             generate_ed25519_keypair_for_tests(Some("audit-02-08-schnorr-spender"));
         let payer_did = create_user_id(&payer_pk, None).expect("Root did:key must be creatable");
         let ds_tag = get_hash("audit-02-08-input-state-s");
-        let eph: [u8; 32] = audit_02_08_deterministic_bytes("audit-02-08-eph-s", 1);
+        let eph: [u8; 32] = human_money_core::test_utils::bound_test_point(&payer_sk);
         let mu = compute_trap_message_mu(&ds_tag, &eph);
 
         // Honest fork A.
         let t_id_a = get_hash("audit-02-08-tid-a-s");
-        let (trap_a, _) = generate_sst_trap(&payer_sk, &ds_tag, &eph, &t_id_a)
+        let (trap_a, _) = generate_sst_trap(&payer_sk, &ds_tag, &eph, &t_id_a, "", &[0u8; 32])
             .expect("Honest trap generation must succeed");
         let _ = trap_a;
 
@@ -992,7 +992,7 @@ mod security_audit_module_02 {
         // attacker's own key:
         let t_id_b = get_hash("audit-02-08-tid-b-s");
         let x = get_secret_scalar(&payer_sk);
-        let tau_b = compute_tau(&ds_tag, &t_id_b);
+        let tau_b = compute_tau(&ds_tag, &t_id_b, "");
 
         let r_star = hash_to_scalar(b"audit-02-08 fresh nonce r*");
         let r_sig_star = r_star * ED25519_BASEPOINT_POINT;
@@ -1013,6 +1013,7 @@ mod security_audit_module_02 {
             s_sig: bs58::encode(s_sig_star.as_bytes()).into_string(),
             m_r: bs58::encode(m_r_star.compress().as_bytes()).into_string(),
             m_s: bs58::encode(m_s_star.as_bytes()).into_string(),
+            input_seed: bs58::encode([0u8; 32]).into_string(),
             ..Default::default()
         };
         let trap_b = TrapData {
@@ -1022,7 +1023,7 @@ mod security_audit_module_02 {
         };
 
         // --- SOLL-VERHALTEN: the L1 handover MUST reject the fabricated line ---
-        match verify_sst_witness(&witness_b, &trap_b, &payer_did, &ds_tag, &eph, &t_id_b) {
+        match verify_sst_witness(&witness_b, &trap_b, &payer_did, &ds_tag, &eph, &t_id_b, "") {
             Ok(()) => panic!(
                 "SECURITY VIOLATION HMC-SEC-02-08: verify_sst_witness accepted an \
                  OFF-LINE FABRICATED trap line whose masking values were solved from \
@@ -1108,7 +1109,6 @@ mod security_audit_module_02 {
             create_fingerprint_for_transaction, encrypt_transaction_timestamp, is_init_fingerprint,
         };
         use human_money_core::services::crypto::identity::get_prefix_from_user_id;
-        use human_money_core::services::crypto::keys::derive_ephemeral_key_pair;
         use human_money_core::services::l2_gateway::{
             calculate_l2_payload_hash_raw, extract_layer2_voucher_id, privacy_guard_commitment,
         };
@@ -1260,13 +1260,8 @@ mod security_audit_module_02 {
             .into_vec()
             .expect("nonce base58");
         let prefix = get_prefix_from_user_id(&id_alice);
-        let (input_secret, _input_pub) = derive_ephemeral_key_pair(
-            &ACTORS.alice.identity.signing_key,
-            &nonce_bytes,
-            "holder",
-            prefix,
-        )
-        .expect("input anchor derivation");
+        let input_secret = human_money_core::services::crypto::derive_holder_ephemeral_key(
+            &ACTORS.alice.identity.signing_key, &nonce_bytes, prefix).expect("input anchor derivation");
         assert_eq!(
             bs58::encode(input_secret.verifying_key().to_bytes()).into_string(),
             eph_b58,

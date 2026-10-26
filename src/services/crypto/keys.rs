@@ -100,7 +100,7 @@ pub fn derive_ephemeral_key_pair(
     Ok((signing_key, public_key))
 }
 
-/// Derives the deterministic change key via HKDF from a signing key, user_id and prev_hash.
+/// Derives an identity-bound change key from a context-bound HKDF blinding seed.
 ///
 /// This is the canonical central implementation consolidating previously duplicated
 /// HKDF logic in `wallet/transactions.rs` and `models/voucher.rs`.
@@ -108,7 +108,17 @@ pub fn derive_deterministic_change_key(
     signing_key: &SigningKey,
     user_id: &str,
     prev_hash: &str,
-) -> Result<SigningKey, VoucherCoreError> {
+) -> Result<EphemeralKey, VoucherCoreError> {
+    let seed = derive_deterministic_change_seed(signing_key, user_id, prev_hash)?;
+    derive_owned_ephemeral_key(signing_key, &seed)
+}
+
+/// Derives the private, context-bound blinding seed for a change output.
+pub fn derive_deterministic_change_seed(
+    signing_key: &SigningKey,
+    user_id: &str,
+    prev_hash: &str,
+) -> Result<[u8; 32], VoucherCoreError> {
     let sender_id_prefix = super::utils::get_prefix_from_user_id(user_id);
     let ikm = signing_key.to_bytes();
     let (prk, _) = Hkdf::<Sha256>::extract(Some(prev_hash.as_bytes()), &ikm);
@@ -122,7 +132,31 @@ pub fn derive_deterministic_change_key(
     let mut change_seed = [0u8; 32];
     hkdf.expand(info.as_bytes(), &mut change_seed)
         .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
-    Ok(SigningKey::from_bytes(&change_seed))
+    Ok(change_seed)
+}
+
+/// Derives a holder key with the same identity binding as received/change outputs.
+pub fn derive_holder_ephemeral_key(
+    master: &SigningKey,
+    nonce: &[u8],
+    prefix: Option<&str>,
+) -> Result<EphemeralKey, VoucherCoreError> {
+    let (material, _) = derive_ephemeral_key_pair(master, nonce, "holder", prefix)?;
+    derive_owned_ephemeral_key(master, &material.to_bytes())
+}
+
+/// Creates a spend key and retains its private ownership-opening seed.
+pub fn derive_owned_ephemeral_key(
+    owner: &SigningKey,
+    seed: &[u8; 32],
+) -> Result<EphemeralKey, VoucherCoreError> {
+    let (secret_scalar, public_point, verifying_key) = derive_stealth_secret_key(owner, seed)?;
+    Ok(EphemeralKey::Stealth {
+        secret_scalar,
+        public_point,
+        verifying_key,
+        input_seed: *seed,
+    })
 }
 
 /// Derives the stealth ephemeral public point for a recipient public key and random seed.
@@ -173,6 +207,7 @@ pub enum EphemeralKey {
         secret_scalar: Scalar,
         public_point: EdwardsPoint,
         verifying_key: EdPublicKey,
+        input_seed: [u8; 32],
     },
 }
 
@@ -184,6 +219,7 @@ impl EphemeralKey {
     pub fn from_stealth_scalar(
         secret_scalar: Scalar,
         public_point: EdwardsPoint,
+        input_seed: [u8; 32],
     ) -> Result<Self, VoucherCoreError> {
         let compressed = public_point.compress();
         let verifying_key = EdPublicKey::from_bytes(&compressed.to_bytes())
@@ -192,7 +228,16 @@ impl EphemeralKey {
             secret_scalar,
             public_point,
             verifying_key,
+            input_seed,
         })
+    }
+
+    /// Returns the ownership opening; ordinary Ed25519 keys are not spend outputs.
+    pub fn input_seed(&self) -> Result<[u8; 32], VoucherCoreError> {
+        match self {
+            Self::Stealth { input_seed, .. } => Ok(*input_seed),
+            Self::Standard(_) => Err(VoucherCoreError::Crypto("Unbound legacy output key rejected".into())),
+        }
     }
 
     pub fn verifying_key(&self) -> EdPublicKey {
@@ -209,6 +254,12 @@ impl EphemeralKey {
                 super::utils::sign_ed25519_scalar(secret_scalar, public_point, message)
             }
         }
+    }
+}
+
+impl ed25519_dalek::Signer<ed25519_dalek::Signature> for EphemeralKey {
+    fn try_sign(&self, message: &[u8]) -> Result<ed25519_dalek::Signature, ed25519_dalek::SignatureError> {
+        Ok(self.sign(message))
     }
 }
 
@@ -341,15 +392,15 @@ mod tests {
         // Determinism: same inputs yield same key
         let key1 = derive_deterministic_change_key(&signing_key, user_id, prev_hash).unwrap();
         let key2 = derive_deterministic_change_key(&signing_key, user_id, prev_hash).unwrap();
-        assert_eq!(key1.to_bytes(), key2.to_bytes());
+        assert_eq!(key1.verifying_key().to_bytes(), key2.verifying_key().to_bytes());
 
         // Different prev_hash yields different key
         let key3 = derive_deterministic_change_key(&signing_key, user_id, "different_prev_hash").unwrap();
-        assert_ne!(key1.to_bytes(), key3.to_bytes());
+        assert_ne!(key1.verifying_key().to_bytes(), key3.verifying_key().to_bytes());
 
         // Different prefix yields different key (context binding)
         let root_user_id = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwA8PhDU";
         let key_root = derive_deterministic_change_key(&signing_key, root_user_id, prev_hash).unwrap();
-        assert_ne!(key1.to_bytes(), key_root.to_bytes());
+        assert_ne!(key1.verifying_key().to_bytes(), key_root.verifying_key().to_bytes());
     }
 }

@@ -13,7 +13,7 @@ use std::collections::{HashMap, VecDeque};
 
 /// Represents an individual, self-authenticating fingerprint of a transaction.
 /// This structure contains all necessary cryptographic information to prove a double spend,
-/// verify sender authority via V3 SST, and manage expired fingerprints.
+/// verify input authority via V4 signatures, and manage expired fingerprints.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct TransactionFingerprint {
     /// The double-spend tag (DS tag).
@@ -35,12 +35,9 @@ pub struct TransactionFingerprint {
 
     /// The revealed ephemeral public key of the sender (32 bytes, Base58).
     ///
-    /// # V3 Protocol (Shared-Signature Trap)
-    /// Together with the trap shards, `encrypted_timestamp` and
-    /// `deletable_at` this key allows ANY gossip recipient to verify the
-    /// embedded `layer2_signature` against the canonical
-    /// `HMC_TX_AUTH_V3` digest — turning fingerprints from unauthenticated
-    /// rumors into self-authenticating instant proofs.
+    /// Together with the signed fingerprint fields, this key allows any gossip
+    /// recipient to verify `layer2_signature` against `HMC_TX_AUTH_V4`.
+    /// Permanent owner attribution additionally requires a victim disclosure.
     #[serde(default)]
     pub sender_ephemeral_pub: String,
 
@@ -48,20 +45,20 @@ pub struct TransactionFingerprint {
     /// (corresponds to `deletable_at` of the 'init' transaction).
     pub deletable_at: String,
 
-    /// # V3 Protocol (SST): commitment shard $R_i$ of the shared Schnorr
+    /// V4 SST commitment shard $R_i$ of the shared Schnorr
     /// signature (32 bytes, Base58). Genesis fingerprints carry the canonical
-    /// `"none"` placeholder. Two colliding shards reconstruct the underlying
-    /// signature and autonomously reveal the offender's `did:key` identity.
+    /// `"none"` placeholder. Two valid colliding shards reconstruct a candidate
+    /// signature identity; a checked victim receipt proves ownership of E.
     #[serde(default)]
     pub trap_r: String,
 
-    /// # V3 Protocol (SST): response shard $s_i$ of the shared Schnorr
+    /// V4 SST response shard $s_i$ of the shared Schnorr
     /// signature (32 bytes, Base58). Genesis fingerprints carry the canonical
     /// `"none"` placeholder.
     #[serde(default)]
     pub trap_s: String,
 
-    /// # V3 Protocol (HMC_TX_AUTH_V3, audit_02_11): the voucher container id
+    /// The voucher container ID authenticated by HMC_TX_AUTH_V4
     /// that the embedded `layer2_signature` authorizes. Spends carry the hex
     /// `layer2_voucher_id`, genesis fingerprints the canonical `"none"`
     /// placeholder — mirroring exactly what the spender signed. Binding this
@@ -78,7 +75,7 @@ pub struct TransactionFingerprint {
     pub privacy_guard_hash: String,
 
     /// Layer-2 lock creation / transaction timestamp in milliseconds.
-    /// Bound into the canonical `HMC_TX_AUTH_V3` payload digest.
+    /// Bound into the canonical `HMC_TX_AUTH_V4` payload digest.
     #[serde(default)]
     pub created_at_ms: u64,
 }
@@ -162,9 +159,16 @@ pub struct ActiveGossipState {
 // PART 3: STRUCTURES FOR PROVING AND RESOLVING CONFLICTS
 //==============================================================================
 
-/// Represents a cryptographically verifiable proof of a
-/// double-spend attempt. This object is portable and serves as the basis
-/// for social or technical (Layer 2) conflict resolutions.
+/// Private receipt evidence disclosed only after two authenticated spends collide.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct VictimWitnessDisclosure {
+    /// Index of the honestly validated handover in ProofOfDoubleSpend.fingerprints.
+    pub fingerprint_index: usize,
+    pub sender_permanent_did: String,
+    pub witness: crate::models::voucher::TrapWitness,
+}
+
+/// Portable signed conflict evidence, optionally carrying a victim ownership disclosure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofOfDoubleSpend {
     /// The unique, deterministic ID of this conflict.
@@ -175,22 +179,14 @@ pub struct ProofOfDoubleSpend {
 
     /// The ID of the sender (offender) who performed the double spend.
     ///
-    /// # Attribution hierarchy (anti-framing, V3 SST)
-    /// - A `did:key` identity is written here when the Shared-Signature Trap
-    ///   shards of the colliding forks reconstruct a valid Schnorr signature
-    ///   under the extracted identity point (EUF-CMA security — framing is
-    ///   computationally infeasible).
-    /// - Otherwise the canonical offender identifier is the ephemeral key
-    ///   linkage (`ephemeral:<bs58(sender_ephemeral_pub)>`), which cannot be
-    ///   forged by third parties.
-    /// - `"anonymous"` means no attribution was possible.
+    /// # Attribution hierarchy (V4)
+    /// A permanent DID requires a checked victim receipt binding E to that
+    /// identity, plus two conflicting E-signed fingerprints. Otherwise the
+    /// offender is the authenticated ephemeral input key or remains anonymous.
     pub offender_id: String,
 
-    /// ADVISORY metadata only: a did:key identity recovered from the
-    /// mathematical trap extraction. Under the V3 SST protocol this value is
-    /// cryptographically bound to the offender (Schnorr EUF-CMA) whenever the
-    /// extraction succeeded; it is kept for UI compatibility and mirrors
-    /// `offender_id` in that case.
+    /// Advisory signature identity candidate. It becomes an authenticated
+    /// owner identity only when a victim ownership disclosure is verified.
     #[serde(default)]
     pub suspected_identity: Option<String>,
 
@@ -199,6 +195,14 @@ pub struct ProofOfDoubleSpend {
 
     /// The complete, conflicting transactions that prove the fraud.
     pub conflicting_transactions: Vec<Transaction>,
+
+    /// Original authenticated evidence, including guard hashes and voucher binding.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fingerprints: Vec<TransactionFingerprint>,
+
+    /// Input ownership evidence; absent from normal L1 chains and gossip.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub victim_witnesses: Vec<VictimWitnessDisclosure>,
 
     /// The date after which this proof can be deleted.
     pub deletable_at: String,

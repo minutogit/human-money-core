@@ -235,15 +235,19 @@ These helper functions can be called at any time, even when the service is `Lock
 
 ---
 
-## Cryptographic Protocol (V3 SST)
+## Cryptographic Protocol (V4 SST)
 
-All transaction authorization and gossip proofs use the **V3 Shared-Signature Trap (SST)** under domain tag **`HMC_TX_AUTH_V3`**.
+V4 uses **`HMC_TX_AUTH_V4`** and intentionally rejects prior signatures/key derivations. See [the protocol and regression report](../../docs/security/sst_v4_regression_hardening.md).
 
-*   **Double-spend tag:** `ds_tag = hash(prev_hash || sender_ephemeral_pub)` (SHA3, length-prefixed). The tag is bound exclusively to the revealed one-time key (`sender_ephemeral_pub`), prefix-independent. Different composite DIDs sharing the same underlying `did:key` still yield distinct tags because the ephemeral keys are HKDF-derived per prefix.
-*   **On-chain trap (`TrapData`):** `ds_tag`, `trap_r` (= `R_i = R_sig + tau_i * M_R`, compressed Edwards point, Base58), `trap_s` (= `s_i = s_sig + tau_i * m_s` mod q, canonical scalar, Base58). V2 fields `u`, `blinded_id`, `proof` are obsolete and hard-rejected on load. Genesis transactions carry no `trap_data`; fingerprints use the canonical placeholder `"none"` / `"none"`.
-*   **Fingerprint (`TransactionFingerprint`):** `ds_tag`, `t_id`, `encrypted_timestamp`, `layer2_signature`, `sender_ephemeral_pub`, `deletable_at`, **`trap_r` / `trap_s`**, `layer2_voucher_id` (hex for spends, `"none"` for genesis), `privacy_guard_hash`. The embedded `layer2_signature` is verified via `HMC_TX_AUTH_V3` at gossip ingress, turning fingerprints into self-authenticating instant proofs.
-*   **Digest `HMC_TX_AUTH_V3` (length-prefixed via `get_raw_hash_from_slices`):** `HMC_TX_AUTH_V3 || layer2_voucher_id || challenge_ds_tag (t_id for genesis, ds_tag for spends) || t_id || sender_ephemeral_pub || trap_r || trap_s || encrypted_timestamp (LE u128) || deletable_at || privacy_guard_hash`. Any bit change invalidates the signature.
-*   **Autonomous deanonymization:** A single shard is information-theoretically anonymous (4 unknowns). Two colliding shards (same `ds_tag`, distinct `t_id` → distinct `tau = H("HMC_TAU_V1" || ds_tag || t_id)`) linearly reconstruct `(R_sig, s_sig)` and the offender's public key `did:key` (`X_hat = (s_hat*G - R_hat)/c`). Framing an innocent party requires an EUF-CMA Schnorr forgery. Degenerate cases (identical `tau`, identical shards, non-canonical scalars, zero challenge, neutral element, torsion) are firewall-rejected. L1 handover carries the private witness `W = (R_sig, s_sig, M_R, m_s)` in `RecipientPayload` for immediate `verify_sst_witness` checks (fraud prevention, R5).
+* **Input ownership:** all holder, recipient, and change keys use `E = X + H(domain, seed, X)G`. Raw recipient seeds are blinding openings, not Ed25519 private keys. The existing wallet recovery API returns `EphemeralKey`.
+* **Public trap:** `TrapData { ds_tag, trap_r, trap_s }` still contains a 32-byte Edwards point and a canonical 32-byte scalar. Both masks derive from the base Schnorr signature and input message. The nonce derives from the permanent secret, never from the disclosed `K_trap`.
+* **Evaluation:** `tau = H(HMC_TAU_V4, ds_tag, t_id, privacy_guard_hash)`. This supports same-ID guard equivocation without adding historical proofs to L1.
+* **Fingerprint:** the existing fields remain `ds_tag`, `t_id`, `sender_ephemeral_pub`, `trap_r`, `trap_s`, `layer2_signature`, `encrypted_timestamp`, `created_at_ms`, `layer2_voucher_id`, `privacy_guard_hash`, and local retention metadata.
+* **Authorization digest:** length-prefixed `HMC_TX_AUTH_V4`, voucher ID, challenge tag, transaction ID, E, trap point, trap scalar, encrypted timestamp (LE u128), creation time (LE u64), deletable-at, guard commitment. Spend signatures omit raw retention metadata as in the existing adapter contract.
+* **Attribution:** interpolation authenticates a signature identity candidate. A definitive owner DID additionally requires a **`VictimWitnessDisclosure`** and two conflicting E-signed fingerprints. The second shard may be junk. Bare gossip keeps an `ephemeral:E` offender until the ownership receipt is disclosed.
+* **Privacy:** input openings and witnesses stay inside the encrypted `RecipientPayload` during normal handovers. Conflict-only disclosures and complete authenticated fingerprints are carried in `ProofOfDoubleSpend`, never as historical L1 certificates. Single-shard hiding is computational.
+* **Import:** every disclosed receipt is checked against its signed collision. Synthetic fingerprint evidence can establish attribution, but its placeholder IDs/timestamps cannot authorize local transaction-state changes.
+
 
 ---
 

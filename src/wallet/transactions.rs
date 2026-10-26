@@ -29,7 +29,6 @@ use crate::services::{bundle_processor, conflict_manager};
 use crate::wallet::Wallet;
 use crate::wallet::conflicts::resolve_conflict_offline;
 use crate::wallet::instance::VoucherStatus;
-use ed25519_dalek::SigningKey;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -73,14 +72,14 @@ fn sanitize_display_name(raw: Option<String>) -> Option<String> {
 // Helper functions for de-nesting and deduplication (refactoring plan)
 // ---------------------------------------------------------------------------
 
-/// Derives the deterministic change key via HKDF from the identity's IKM and the
+/// Derives the identity-bound change key using the identity's IKM and the
 /// transaction's `prev_hash`.
 ///
 /// Delegates to the canonical implementation in `crate::services::crypto`.
 fn derive_deterministic_change_key(
     identity: &UserIdentity,
     prev_hash: &str,
-) -> Result<SigningKey, VoucherCoreError> {
+) -> Result<crate::services::crypto::EphemeralKey, VoucherCoreError> {
     crate::services::crypto::derive_deterministic_change_key(
         &identity.signing_key,
         &identity.user_id,
@@ -1158,8 +1157,8 @@ impl Wallet {
 
     /// Helper function for stateless seed recovery.
     /// Attempts to restore the required ephemeral key for the LAST transaction.
-    /// - Case A (Split): Deterministic via HKDF from Identity.
-    /// - Case B (Received): Decrypting the Privacy Guard via Identity and stealth/legacy derivation.
+    /// - Case A (Split): Identity-bound key using a deterministic HKDF blinding seed.
+    /// - Case B (Received): Decrypting the Privacy Guard via Identity and identity-bound derivation.
     pub fn rederive_secret_seed(
         &self,
         voucher: &Voucher,
@@ -1177,7 +1176,7 @@ impl Wallet {
             let candidate_hash =
                 crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
             if Some(&candidate_hash) == last_tx.change_ephemeral_pub_hash.as_ref() {
-                return Ok(candidate_key.into());
+                return Ok(candidate_key);
             }
         }
 
@@ -1203,25 +1202,10 @@ impl Wallet {
                         secret_scalar: x_eph,
                         public_point: p_eph,
                         verifying_key: vk,
+                        input_seed: seed_arr,
                     });
                 }
             }
-
-            let candidate_key = SigningKey::from_bytes(&seed_arr);
-            let candidate_hash =
-                crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
-
-            if Some(&candidate_hash) == last_tx.receiver_ephemeral_pub_hash.as_ref() {
-                return Ok(candidate_key.into());
-            }
-        }
-
-        // 3. Fallback: Public Mode / Init
-        if last_tx.sender_id.as_ref() == Some(&identity.user_id)
-            && last_tx.sender_remaining_amount.is_some()
-        {
-            let candidate_key = derive_deterministic_change_key(identity, prev_hash)?;
-            return Ok(candidate_key.into());
         }
 
         // Case C: Init (creator)
@@ -1237,13 +1221,9 @@ impl Wallet {
             let sender_id_prefix =
                 crate::services::crypto::get_prefix_from_user_id(&identity.user_id);
 
-            let (holder_secret, _) = crate::services::crypto::derive_ephemeral_key_pair(
-                &identity.signing_key,
-                &nonce_bytes,
-                "holder",
-                sender_id_prefix,
-            )?;
-            return Ok(holder_secret.into());
+            let holder_secret = crate::services::crypto::derive_holder_ephemeral_key(
+                &identity.signing_key, &nonce_bytes, sender_id_prefix)?;
+            return Ok(holder_secret);
         }
 
         Err(crate::Error::Wallet(crate::error::WalletError::SeedDerivationFailed { reason: "Could not rederive secret seed: No valid ownership strategy found (neither Change nor Receiver hash matches).".to_string() }))

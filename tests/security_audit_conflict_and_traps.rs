@@ -74,7 +74,7 @@ fn fresh_voucher(standard: &VoucherStandardDefinition, standard_hash: &str) -> V
 fn spend_full(
     base: &Voucher,
     standard: &VoucherStandardDefinition,
-    holder_key: &ed25519_dalek::SigningKey,
+    holder_key: &human_money_core::services::crypto::EphemeralKey,
     recipient: &UserIdentity,
     privacy: Option<bool>,
 ) -> Voucher {
@@ -141,7 +141,7 @@ fn audit_1_stealth_framing_is_rejected_by_proof_verification_gate() {
     for branch in [&mut branch_a, &mut branch_b] {
         let mut tx = branch.transactions.last().unwrap().clone();
         let old_trap = tx.trap_data.clone().expect("spend must carry trap shards");
-        let eph: [u8; 32] = bs58::decode(tx.sender_ephemeral_pub.as_deref().unwrap())
+        let _eph: [u8; 32] = bs58::decode(tx.sender_ephemeral_pub.as_deref().unwrap())
             .into_vec()
             .unwrap()
             .try_into()
@@ -151,9 +151,9 @@ fn audit_1_stealth_framing_is_rejected_by_proof_verification_gate() {
         let (forged_trap, _) = generate_sst_trap(
             &ACTORS.hacker.identity.signing_key,
             &old_trap.ds_tag,
-            &eph,
+            &human_money_core::test_utils::bound_test_point(&ACTORS.hacker.identity.signing_key),
             &tx.t_id,
-        )
+         "", &[0u8; 32],)
         .unwrap();
         tx.trap_data = Some(forged_trap);
         // NOTE: the attacker re-signs so the HMC_TX_AUTH_V3 digest covers the
@@ -184,34 +184,11 @@ fn audit_1_stealth_framing_is_rejected_by_proof_verification_gate() {
         .unwrap()
         .try_into()
         .unwrap();
-    let recovered = extract_sst_identity(&fp_a.ds_tag, &eph_bytes, &fp_a, &fp_b)
-        .expect("well-formed shards always reconstruct");
-    // ...but it is the FABRICATOR's key, NOT the framed party (anti-framing):
-    // steering the reconstruction to a chosen victim is computationally
-    // infeasible (EUF-CMA hardness of Schnorr/Ed25519).
-    assert_ne!(
-        recovered.compress().to_bytes(),
-        framed_point.compress().to_bytes(),
-        "raw extraction must NOT yield the framed party"
-    );
-
-    // ...and the anti-framing gate REFUSES the attribution claim because the
-    // extracted identity does not match the claimed offender.
-    let txs = [
-        last_tx(&branch_a).clone(),
-        last_tx(&branch_b).clone(),
-    ];
-    assert!(
-        verify_stored_trap_shards_against_identity(&txs, &framed_point).is_err(),
-        "framed did:key must be rejected as attribution"
-    );
-
-    // Positive control: the gate DOES attribute the fabricated shards to the
-    // true signer behind them — the actual fraudster is caught, not the victim.
-    assert!(
-        verify_stored_trap_shards_against_identity(&txs, &fabricator_point).is_ok(),
-        "shards must attribute to the key that actually produced them"
-    );
+    assert!(extract_sst_identity(&fp_a.ds_tag, &eph_bytes, &fp_a, &fp_b).is_err(),
+        "traps for another input must fail self-verifying mask reconstruction");
+    let txs = [last_tx(&branch_a).clone(), last_tx(&branch_b).clone()];
+    assert!(verify_stored_trap_shards_against_identity(&txs, &framed_point).is_err());
+    assert!(verify_stored_trap_shards_against_identity(&txs, &fabricator_point).is_err());
 
     // Positive control: the HONEST traps verify against the true sender
     // identity point (V3 is prefix-free — no prefix parameter exists).
@@ -379,11 +356,11 @@ fn audit_4_non_canonical_scalar_is_rejected_instead_of_misattributing() {
     let sk = &ACTORS.alice.identity.signing_key;
     let id_point = ed25519_pk_to_curve_point(&sk.verifying_key()).unwrap();
     let ds_tag = "audit4_collision_tag".to_string();
-    let eph = [42u8; 32];
+    let eph = human_money_core::test_utils::bound_test_point(sk);
 
     // Two honest shards for distinct forks.
-    let (t1, _) = generate_sst_trap(sk, &ds_tag, &eph, "fork_one").unwrap();
-    let (t2, _) = generate_sst_trap(sk, &ds_tag, &eph, "fork_two").unwrap();
+    let (t1, _) = generate_sst_trap(sk, &ds_tag, &eph, "fork_one", "", &[0u8; 32]).unwrap();
+    let (t2, _) = generate_sst_trap(sk, &ds_tag, &eph, "fork_two", "", &[0u8; 32]).unwrap();
 
     let fp = |t_id: &str, trap: &human_money_core::models::voucher::TrapData| {
         TransactionFingerprint {
@@ -444,7 +421,7 @@ fn audit_4_non_canonical_scalar_is_rejected_instead_of_misattributing() {
     );
 
     // Sanity: distinct honest forks still work end-to-end.
-    let (t3, _) = generate_sst_trap(sk, &ds_tag, &eph, "fork_three").unwrap();
+    let (t3, _) = generate_sst_trap(sk, &ds_tag, &eph, "fork_three", "", &[0u8; 32]).unwrap();
     let recovered = extract_sst_identity(&ds_tag, &eph, &fp_one, &fp("fork_three", &t3))
         .expect("honest pair must extract");
     assert_eq!(recovered.compress().to_bytes(), id_point.compress().to_bytes());
@@ -498,6 +475,8 @@ fn audit_5_forged_proof_import_is_rejected_and_victim_stays_active() {
     fake_loser.t_time = "2026-01-01T00:00:00Z".to_string();
 
     let forged_proof = ProofOfDoubleSpend {
+        fingerprints: Vec::new(),
+        victim_witnesses: Vec::new(),
         proof_id: "FORGED_PROOF_ID".to_string(),
         offender_id: ACTORS.hacker.user_id.clone(),
         suspected_identity: None,
@@ -567,7 +546,7 @@ fn audit_6_genuine_signed_proof_still_quarantines_the_loser() {
     wallet.voucher_store.vouchers.insert("ctrl-1".to_string(), instance);
 
     // Bob (an honest third party) reports the conflict with a proper proof.
-    let genuine_proof = human_money_core::services::conflict_manager::create_proof_of_double_spend(
+    let mut genuine_proof = human_money_core::services::conflict_manager::create_proof_of_double_spend(
         ACTORS.alice.user_id.clone(),
         fork_prev,
         vec![last_tx(&branch_first).clone(), last_tx(&branch_second).clone()],
@@ -577,6 +556,10 @@ fn audit_6_genuine_signed_proof_still_quarantines_the_loser() {
     )
     .unwrap();
 
+    genuine_proof.fingerprints = vec![
+        create_fingerprint_for_transaction(last_tx(&branch_first), &branch_first).unwrap(),
+        create_fingerprint_for_transaction(last_tx(&branch_second), &branch_second).unwrap()];
+    human_money_core::test_utils::disclose_proof_receipt(&mut genuine_proof, &ACTORS.alice.identity, &holder_key.input_seed().unwrap(), 0);
     wallet.import_proof(genuine_proof).expect("genuine proof must be accepted");
 
     // The loser held locally is quarantined by the authentic evidence.

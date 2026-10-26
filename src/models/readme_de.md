@@ -48,7 +48,7 @@ HMC_TX_AUTH_V3 || layer2_voucher_id || challenge_ds_tag || t_id || sender_epheme
 
 ---
 
-## 4. Layer 2: Anonymisierte Double-Spending-Erkennung (V3 SST)
+## 4. Layer 2: Anonymisierte Double-Spending-Erkennung (V4 SST)
 
 Die `human_money_core`-Bibliothek erlaubt einer übergeordneten Anwendung, eine globale Datenbank zur Betrugserkennung zu nutzen, ohne sensible Daten preiszugeben.
 
@@ -98,41 +98,17 @@ Der Schlüssel ist der **verschlüsselte Zeitstempel**. Er löst das Dilemma, ei
 - **Datenschutz:** Der Server kann nicht entschlüsseln, da `prev_hash` nicht im Fingerprint enthalten ist.
 - **Beweisführung:** Ein Opfer mit `ProofOfDoubleSpend` besitzt `prev_hash`, `t_id_A` und `t_id_B` und rekonstruiert beide Schlüssel, entschlüsselt und vergleicht die Zeitstempel.
 
-### V3 Shared-Signature Trap (SST): Autonome Enttarnung
+### V4 Shared-Signature Trap und Opferzeugnis
 
-Jeder Spend publiziert nur einen **Shard** einer **einzigen deterministischen Schnorr-Signatur** `sigma = (R_sig, s_sig)` über die Spend-Nachricht `mu = H("HMC_TRAP_SIG_V1" || ds_tag || E)` (`E = sender_ephemeral_pub`):
+Das aktuelle Protokoll verwendet `HMC_TX_AUTH_V4`. Der öffentliche Shard bleibt ein Edwards-Punkt plus ein kanonischer Skalar (64 Byte). Die Maskierung wird aus der Basissignatur und der Input-Nachricht abgeleitet und nach einer Rekonstruktion erneut geprüft. Die geheime Schnorr-Nonce wird aus dem langfristigen Geheimnis abgeleitet; ein offengelegter `K_trap` darf sie nicht berechenbar machen.
 
-```
-tau_i  = H("HMC_TAU_V1" || ds_tag || t_id_i)  mod q
-R_i    = R_sig + tau_i * M_R
-s_i    = s_sig + tau_i * m_s                mod q
-```
+Alle Output-Schlüssel sind über `E = X + H(domain, seed, X)G` an ihren Besitzer gebunden. Das bestehende verschlüsselte `RecipientPayload` enthält den privaten Besitz-Seed des ausgegebenen Inputs. Normale Stealth-Übergaben geben frühere Absender nicht preis. `tau` bindet zusätzlich den signierten `privacy_guard_hash`, damit auch unterschiedliche Guards bei identischer `t_id` unterscheidbar sind.
 
-- `M_R = hash_to_curve("HMC_MASK_R_V1" || x || E || ds_tag)`, `m_s = H("HMC_MASK_S_V1" || x || E || ds_tag)` – ausschließlich aus dem **langfristigen Schlüssel** `x` des Senders abgeleitet.
-- **Einzel-Shard-Anonymität:** Ein einzelner Shard verbirgt den Signierer informationstheoretisch (4 Unbekannte `R_sig, s_sig, M_R, m_s` vs. 3 Gleichungen). Kein Register-Mining („P-pre“) kann ihn verknüpfen.
-- **Kollisions-Enttarnung:** Zwei kollidierende Shards (`ds_tag` gleich, `t_id` verschieden, `tau_1 != tau_2`) erlauben **lineare Rekonstruktion**:
+Eine rekonstruierte Signatur liefert zunächst einen Identitätskandidaten. Die definitive DID-Zuschreibung benötigt ein geprüftes `VictimWitnessDisclosure` und zwei widersprüchliche Fingerprints mit gültigen Signaturen desselben E. Ein direktes Opfer legt sein geprüftes Empfangszeugnis erst bei diesem bestätigten Konflikt offen. Damit bleibt der echte Besitzer auch bei einem Müll-Shard in einem früheren Zwischenhop beweisbar. Ohne Besitzzeugnis bleibt die Zuschreibung `ephemeral:E`.
 
-  ```
-  M_R  = (R1 - R2) / (tau1 - tau2)
-  m_s  = (s1 - s2) / (tau1 - tau2)
-  R_hat = R1 - tau1 * M_R
-  s_hat = s1 - tau1 * m_s
-  c     = H("HMC_TRAP_CHAL_V1" || mu || R_hat)
-  X_hat = (s_hat * G - R_hat) * c^{-1}
-  ```
+`ProofOfDoubleSpend` transportiert die ursprünglichen Fingerprints und das Konfliktzeugnis. Beim Import werden Signaturen, Input-Kontext, Guard-Bindung und Zeuge erneut geprüft. Synthetische Transaktions-IDs oder Zeitangaben dürfen dabei keine fremden Gutscheine quarantänisieren. Reine Signatur-Neurandomisierung oder Retention-Unterschiede sind kein neuer Spend.
 
-  `X_hat` ist der **öffentliche Schlüssel (`did:key`) des Täters**. Die Bindung ist **EUF-CMA-sicher**: Einen unschuldigen Dritten zu framen erfordert eine Schnorr-Fälschung unter dessen Schlüssel – praktisch unmöglich (Remediation AUDIT-01-F07). Degenerierte Fälle (`tau`-Gleichheit, identische Shards, nicht-kanonische Skalare, `c = 0`, neutrales Element, Torsion) werden als Firewall abgewiesen.
-
-- **L1-Betrugsvorbeugung (R5):** Der private Zeuge `W = (R_sig, s_sig, M_R, m_s)` reist verschlüsselt im `RecipientPayload` (`trap_r_sig/trap_s_sig/trap_m_r/trap_m_s`). Der Empfänger verifiziert bei der Übergabe Signatur und Shard-Konsistenz (`verify_sst_witness`) und weist manipulierte Fallen sofort ab.
-
-Damit sind Gossip-Fingerprints **selbstauthentifizierend**: Jeder Peer verifiziert `layer2_signature` gegen `HMC_TX_AUTH_V3` allein aus Fingerprint-Daten (`ds_tag`, `E`, `trap_r/s`), ohne Transaktionsketten anzufordern. Zwei verifizierte kollidierende Fingerprints genügen für eine definitive `did:key`-Attribution; ein einzelner gefälschter Off-line-Shard kann die Attribution nicht vereiteln (beliebiges konsistentes Paar genügt).
-
-### Erkennung und Beweisführung (V3-Schema)
-
-Ein Double-Spend liegt vor, wenn der Server einen Fingerprint für einen `ds_tag` erhält, für den bereits ein Eintrag mit abweichender `t_id` **oder** – bei gleicher `t_id` – mit divergenten signaturgebundenen Feldern (`trap_r/s`, `encrypted_timestamp`, `layer2_signature`, `privacy_guard_hash`) existiert (Guard-Äquivokation, HMSEC-SA04-08).
-
-- **Alarm:** Der Server schlägt Alarm und sendet den existierenden Fingerprint als Beweis zurück.
-- **Lokale Verifizierung:** Der Client verifiziert beide `layer2_signature`-Signaturen über `HMC_TX_AUTH_V3` und – bei Kollisionsverdacht – die SST-Shards via `extract_sst_identity` / `verify_stored_trap_shards_against_identity`. Zusätzlich entschlüsselt er beide Zeitstempel und vergleicht sie.
+V4 ist ein absichtlicher Breaking Change. Alle Einzelheiten und Regressionen stehen in [sst_v4_regression_hardening.md](../../docs/security/sst_v4_regression_hardening.md).
 
 ---
 

@@ -95,7 +95,7 @@ fn test_correct_id_for_archived_state() {
 
     let alice_change_seed = secrets.change_seed.expect("Alice should have received change from split");
     let alice_change_key_bytes = bs58::decode(alice_change_seed).into_vec().unwrap();
-    let alice_ephemeral_key = ed25519_dalek::SigningKey::from_bytes(&alice_change_key_bytes.try_into().unwrap());
+    let alice_ephemeral_key = human_money_core::services::crypto::derive_owned_ephemeral_key(&alice.signing_key, &alice_change_key_bytes.try_into().unwrap()).unwrap();
 
     let (voucher_after_full_transfer, _) = human_money_core::models::voucher::Transaction::create(
         &initial_voucher,

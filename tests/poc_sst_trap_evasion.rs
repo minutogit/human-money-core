@@ -62,7 +62,7 @@ fn malicious_sst_trap(
     let s_sig = r + c * x;
     let m_r = rand_scalar() * ED25519_BASEPOINT_POINT; // NOT hash_to_curve(x||...)
     let m_s = rand_scalar(); // NOT H(x||...)
-    let tau = compute_tau(ds_tag, t_id);
+    let tau = compute_tau(ds_tag, t_id, "");
     let r_i = r_sig + tau * m_r;
     let s_i = s_sig + tau * m_s;
     (
@@ -76,41 +76,45 @@ fn malicious_sst_trap(
             s_sig: bs58::encode(s_sig.as_bytes()).into_string(),
             m_r: bs58::encode(m_r.compress().as_bytes()).into_string(),
             m_s: bs58::encode(m_s.as_bytes()).into_string(),
-            ..Default::default()
+            ..generate_sst_trap(sk, ds_tag, eph, t_id, "", &[0; 32]).unwrap().1
         },
     )
 }
 
-/// FIX 1 VERIFIED: per-fork fresh nonce/masks fail L1 verification (verify_sst_witness
-/// rejects them because they do not match the deterministic K_trap derivation / DLEQ proof).
+/// Fresh signature nonces with arbitrary masks fail L1 verification because
+/// the masks must derive from the base signature. Valid alternative signatures
+/// are covered by the victim-disclosure regression in trap_manager.
 /// Honest generation on both forks succeeds and correctly extracts the attacker's identity.
 #[test]
 fn poc_fresh_nonce_per_fork_evades_identity_extraction() {
     let attacker = ed25519_dalek::SigningKey::from_bytes(&rand32());
     let did = did_of(&attacker);
     let ds_tag = bs58::encode(rand32()).into_string();
-    let eph = rand32();
+    let input_seed = [0u8; 32];
+    let eph = human_money_core::test_utils::bound_test_point(&attacker);
     let t_a = bs58::encode(rand32()).into_string();
     let t_b = bs58::encode(rand32()).into_string();
 
     // Fork A: completely honest generation.
-    let (trap_a, wit_a) = generate_sst_trap(&attacker, &ds_tag, &eph, &t_a).unwrap();
+    let (trap_a, mut wit_a) = generate_sst_trap(&attacker, &ds_tag, &eph, &t_a, "", &[0u8; 32]).unwrap();
     // Fork B: modified client with fresh random nonce/masks.
     let (trap_b, wit_b) = malicious_sst_trap(&attacker, &ds_tag, &eph, &t_b);
 
     // Recipient A accepts payment (honest generation).
-    verify_sst_witness(&wit_a, &trap_a, &did, &ds_tag, &eph, &t_a).unwrap();
+    wit_a.input_seed = bs58::encode(input_seed).into_string();
+    verify_sst_witness(&wit_a, &trap_a, &did, &ds_tag, &eph, &t_a, "").unwrap();
 
     // Recipient B REJECTS payment under Fix 1!
     assert!(
-        verify_sst_witness(&wit_b, &trap_b, &did, &ds_tag, &eph, &t_b).is_err(),
+        verify_sst_witness(&wit_b, &trap_b, &did, &ds_tag, &eph, &t_b, "").is_err(),
         "Fix 1 enforced: recipient must reject forged/fresh-nonce trap line!"
     );
 
     // If both forks are generated honestly under the attacker's key:
-    let (trap_b_honest, wit_b_honest) =
-        generate_sst_trap(&attacker, &ds_tag, &eph, &t_b).unwrap();
-    verify_sst_witness(&wit_b_honest, &trap_b_honest, &did, &ds_tag, &eph, &t_b).unwrap();
+    let (trap_b_honest, mut wit_b_honest) =
+        generate_sst_trap(&attacker, &ds_tag, &eph, &t_b, "", &[0u8; 32]).unwrap();
+    wit_b_honest.input_seed = wit_a.input_seed.clone();
+    verify_sst_witness(&wit_b_honest, &trap_b_honest, &did, &ds_tag, &eph, &t_b, "").unwrap();
 
     let x_hat = extract_sst_identity(&ds_tag, &eph, &fp(&t_a, &trap_a), &fp(&t_b, &trap_b_honest))
         .expect("extraction must succeed on honest colliding forks");
@@ -150,6 +154,7 @@ fn poc_retained_recipient_seed_cross_identity_fork_evades_extraction() {
         secret_scalar: bob_scalar,
         public_point: bob_point,
         verifying_key: bob_vk,
+        input_seed: recipient_seed,
     };
     let bob_sig = bob_eph.sign(message);
     assert!(
@@ -326,13 +331,13 @@ fn poc_extract_sst_identity_missing_ephemeral_pub_equality_guard() {
     let sk_a = ed25519_dalek::SigningKey::from_bytes(&rand32());
     let sk_b = ed25519_dalek::SigningKey::from_bytes(&rand32());
     let ds_tag = bs58::encode(rand32()).into_string();
-    let eph_a = rand32();
-    let eph_b = rand32();
+    let eph_a = human_money_core::test_utils::bound_test_point(&sk_a);
+    let eph_b = human_money_core::test_utils::bound_test_point(&sk_b);
     let t_a = bs58::encode(rand32()).into_string();
     let t_b = bs58::encode(rand32()).into_string();
 
-    let (trap_a, _) = generate_sst_trap(&sk_a, &ds_tag, &eph_a, &t_a).unwrap();
-    let (trap_b, _) = generate_sst_trap(&sk_b, &ds_tag, &eph_b, &t_b).unwrap();
+    let (trap_a, _) = generate_sst_trap(&sk_a, &ds_tag, &eph_a, &t_a, "", &[0u8; 32]).unwrap();
+    let (trap_b, _) = generate_sst_trap(&sk_b, &ds_tag, &eph_b, &t_b, "", &[0u8; 32]).unwrap();
 
     let mut fp_a = fp(&t_a, &trap_a);
     fp_a.sender_ephemeral_pub = bs58::encode(eph_a).into_string();
@@ -359,13 +364,13 @@ fn poc_mixed_local_and_gossip_proof_omits_trap_data_and_fails_import() {
 
     let offender = ed25519_dalek::SigningKey::from_bytes(&rand32());
     let ds_tag = bs58::encode(rand32()).into_string();
-    let eph = rand32();
+    let eph = human_money_core::test_utils::bound_test_point(&offender);
     let eph_str = bs58::encode(eph).into_string();
     let t_a = bs58::encode(rand32()).into_string();
     let t_b = bs58::encode(rand32()).into_string();
 
-    let (trap_a, _) = generate_sst_trap(&offender, &ds_tag, &eph, &t_a).unwrap();
-    let (trap_b, _) = generate_sst_trap(&offender, &ds_tag, &eph, &t_b).unwrap();
+    let (trap_a, _) = generate_sst_trap(&offender, &ds_tag, &eph, &t_a, "", &[0u8; 32]).unwrap();
+    let (trap_b, _) = generate_sst_trap(&offender, &ds_tag, &eph, &t_b, "", &[0u8; 32]).unwrap();
 
     // Fingerprint extraction succeeds (this is what ingress.rs:734 does):
     let mut fp_a = fp(&t_a, &trap_a);

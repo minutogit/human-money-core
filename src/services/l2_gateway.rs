@@ -3,7 +3,7 @@
 //! Stateless business logic for interacting with the Layer-2 Collision Lock Registry (`humoco-node`).
 //!
 //! ## Protocol Architecture:
-//! - **Canonical `HMC_TX_AUTH_V3` Payload Digest:** Length-prefixed domain-separated hash binding:
+//! - **Canonical `HMC_TX_AUTH_V4` Payload Digest:** Length-prefixed domain-separated hash binding:
 //!   domain, `layer2_voucher_id`, `challenge_ds_tag`, `t_id_bytes`, `sender_pub_bytes`,
 //!   `trap_r`, `trap_s`, `encrypted_timestamp` (16 bytes LE), `created_at_ms` (8 bytes LE),
 //!   `deletable_at`, and `privacy_guard_commitment`.
@@ -253,7 +253,7 @@ pub fn generate_lock_request(
     let layer2_signature =
         crate::services::crypto::decode_bs58_fixed::<64>(layer2_sig_str, "layer2_signature")?;
 
-    // V3 Protocol (SST): bind the trap shards and the encrypted timestamp into
+    // V4 Protocol (SST): bind the trap shards and the encrypted timestamp into
     // the payload digest. Genesis transactions have no trap ("none"/"none").
     let (trap_r, trap_s) = match &transaction.trap_data {
         Some(td) => (Some(td.trap_r.clone()), Some(td.trap_s.clone())),
@@ -287,24 +287,22 @@ pub fn generate_lock_request(
             None
         },
         // SECURITY (HMSEC-SA04-08): transport the guard so the L2 server can
-        // recompute its canonical commitment and verify the V3 digest of
+        // recompute its canonical commitment and verify the V4 digest of
         // guarded spends. Genesis / public-mode spends carry None.
         privacy_guard: transaction.privacy_guard.clone(),
     })
 }
 
-/// Domain-separation tag for the V3 transaction-authentication digest.
+/// Domain-separation tag for the V4 transaction-authentication digest.
 ///
 /// The digest simultaneously serves as:
 /// - **L1 ownership proof** (chain validation of `layer2_signature`),
 /// - **L2 lock proof** (server-side verification of lock requests), and
 /// - **Gossip proof** (self-authenticating fingerprints / instant proofs).
 ///
-/// # V3 Protocol (Shared-Signature Trap)
-/// The digest binds the SST trap shards (`trap_r`, `trap_s`) instead of the
-/// V2 `u`/`blinded_id` components, coupling gossip fingerprints to the
-/// EUF-CMA security of the underlying Schnorr signature.
-pub const HMC_TX_AUTH_V3_DOMAIN: &[u8] = b"HMC_TX_AUTH_V3";
+/// The digest authenticates the SST shards, guard commitment, timestamps, and
+/// voucher/input context with the revealed ephemeral input key.
+pub const HMC_TX_AUTH_V4_DOMAIN: &[u8] = b"HMC_TX_AUTH_V4";
 
 /// Canonical placeholder for absent trap components (genesis transactions).
 pub const TRAP_NONE_PLACEHOLDER: &str = "none";
@@ -350,7 +348,7 @@ pub fn calculate_layer2_voucher_id(transaction: &Transaction) -> Result<String, 
 }
 
 /// SECURITY (HMSEC-SA04-08): Canonical commitment of a transaction's
-/// `privacy_guard` that is bound into the V3 payload digest.
+/// `privacy_guard` that is bound into the V4 payload digest.
 ///
 /// - `Some(guard)` binds the SHA3-256 hash (Base58) of the Base64 guard
 ///   payload — committing the handover context WITHOUT publishing the
@@ -369,9 +367,9 @@ pub fn privacy_guard_commitment(privacy_guard: Option<&str>) -> String {
 }
 
 /// Generates a deterministic, domain-separated digest of the L2 payload for
-/// signature verification (**V3 protocol**, digest `HMC_TX_AUTH_V3`).
+/// signature verification (**V4 protocol**, digest `HMC_TX_AUTH_V4`).
 ///
-/// # V3 Protocol — Self-Authenticating Payloads (SST)
+/// # V4 Protocol — Self-Authenticating Payloads (SST)
 /// The signature over this digest simultaneously authorizes:
 /// 1. the transaction itself (L1 ownership proof),
 /// 2. the Layer-2 lock request (L2 lock proof), and
@@ -413,10 +411,10 @@ pub fn calculate_l2_payload_hash(req: &L2LockRequest) -> [u8; 32] {
     )
 }
 
-/// Inner logic for hashing the L2 payload (canonical V3 definition).
+/// Inner logic for hashing the L2 payload (canonical V4 definition).
 ///
 /// Slice order (all length-prefixed):
-/// 1. Domain tag `b"HMC_TX_AUTH_V3"`
+/// 1. Domain tag `b"HMC_TX_AUTH_V4"`
 /// 2. `layer2_voucher_id` (hex string for spends, `"none"` for genesis) —
 ///    SECURITY (audit_02_11 / HMC-SEC-02-11): binds every lock authorization
 ///    to ITS voucher container so lock entries cannot be transplanted
@@ -450,7 +448,7 @@ pub fn calculate_l2_payload_hash_raw(
     privacy_guard_commitment: &str,
 ) -> [u8; 32] {
     crate::services::crypto::get_raw_hash_from_slices(&[
-        HMC_TX_AUTH_V3_DOMAIN,
+        HMC_TX_AUTH_V4_DOMAIN,
         layer2_voucher_id.as_bytes(),
         challenge_ds_tag.as_bytes(),
         t_id_bytes,

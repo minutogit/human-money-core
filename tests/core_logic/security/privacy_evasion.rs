@@ -346,7 +346,7 @@ fn prevent_trap_data_replay() {
 
     // Prepare Link 2 (Tx1 -> Tx2)
     let (pk_tx2, _) = generate_ed25519_keypair_for_tests(Some("tx2_seed"));
-    let receiver_ephemeral_pub_hash_tx1 =
+    let _receiver_ephemeral_pub_hash_tx1 =
         human_money_core::services::crypto::get_hash(pk_tx2.as_bytes());
 
     // 3. Create Tx1 (Valid) via create_transaction
@@ -357,7 +357,7 @@ fn prevent_trap_data_replay() {
         &creator_id,
         &sk,
         &holder_key_init,
-        &receiver_ephemeral_pub_hash_tx1,
+        &create_user_id(&pk_tx2, None).unwrap(),
         amount,
         None,
     )
@@ -371,7 +371,7 @@ fn prevent_trap_data_replay() {
     // Tx2 MUST have correct sender_ephemeral_pub matching Tx1's output
     let user_b_seed = bs58::decode(secrets.recipient_seed).into_vec().unwrap();
     let sender_ephem_key_tx2 =
-        ed25519_dalek::SigningKey::from_bytes(&user_b_seed.try_into().unwrap());
+        human_money_core::services::crypto::derive_owned_ephemeral_key(&generate_ed25519_keypair_for_tests(Some("tx2_seed")).1, &user_b_seed.try_into().unwrap()).unwrap();
     let sender_ephemeral_pub_tx2 =
         bs58::encode(sender_ephem_key_tx2.verifying_key().to_bytes()).into_string();
 

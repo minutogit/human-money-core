@@ -30,8 +30,10 @@ pub struct NewVoucherData {
 /// present in the voucher in encrypted or hashed form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransactionSecrets {
-    pub recipient_seed: String,      // BS58 encoded seed for the recipient
-    pub change_seed: Option<String>, // BS58 encoded seed for change (if split)
+    /// Base58 blinding seed; combine with the recipient identity via derive_owned_ephemeral_key.
+    pub recipient_seed: String,
+    /// Base58 blinding seed for the sender's change output.
+    pub change_seed: Option<String>,
 }
 
 /// The ID used for anonymous participants in transactions.
@@ -128,6 +130,33 @@ pub struct TrapData {
     pub trap_s: String,
 }
 
+/// The private trap witness handed to the payment recipient at L1.
+///
+/// Contains everything needed to verify the trap shard locally:
+/// the underlying Schnorr signature $(R_{sig}, s_{sig})$, the masking
+/// values $(M_R, m_s)$, the VRF point $K_{trap}$, and the Chaum-Pedersen
+/// DLEQ proof $(c_{dleq}, s_{dleq})$ binding $K_{trap}$ to the payer's identity.
+/// All fields are Base58-encoded 32-byte values.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TrapWitness {
+    /// Opening of the spent identity-bound output; private until a confirmed conflict.
+    pub input_seed: String,
+    /// The Schnorr commitment $R_{sig}$ over the spend input.
+    pub r_sig: String,
+    /// The Schnorr response $s_{sig}$ over the spend input.
+    pub s_sig: String,
+    /// The masking point $M_R$ (compressed, Base58).
+    pub m_r: String,
+    /// The masking scalar $m_s$ (canonical scalar, Base58).
+    pub m_s: String,
+    /// The VRF point $K_{trap} = x \cdot H_\mu$ (compressed point, Base58).
+    pub k_trap: String,
+    /// The Chaum-Pedersen DLEQ challenge $c_{dleq}$ (canonical scalar, Base58).
+    pub dleq_c: String,
+    /// The Chaum-Pedersen DLEQ response $s_{dleq}$ (canonical scalar, Base58).
+    pub dleq_s: String,
+}
+
 /// The decrypted payload of the privacy guard.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct RecipientPayload {
@@ -148,21 +177,18 @@ pub struct RecipientPayload {
     /// Response s component of the DLEQ proof.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dleq_s: Option<String>,
-    /// # V3 Protocol (SST): private trap witness $\sigma = (R_{sig}, s_{sig})$
-    /// The Schnorr commitment over the spend input (32 bytes, Base58).
-    /// Handed over privately at L1 so the recipient can reject garbage traps
-    /// immediately (fraud *prevention* at handover, R5).
+    /// Private base signature and mask parameters for handover verification.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trap_r_sig: Option<String>,
-    /// The Schnorr response over the spend input (32 bytes, Base58).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trap_s_sig: Option<String>,
-    /// The masking point $M_R$ of the shared-signature trap (Base58).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trap_m_r: Option<String>,
-    /// The masking scalar $m_s$ of the shared-signature trap (Base58).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trap_m_s: Option<String>,
+    /// Opening of the spent input's identity-bound key (private handover only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_key_seed: Option<String>,
 }
 
 /// Represents a single transaction in the voucher's transaction chain.
@@ -538,13 +564,9 @@ impl Voucher {
         let genesis_pub_str = bs58::encode(genesis_public.to_bytes()).into_string();
         init_transaction.sender_ephemeral_pub = Some(genesis_pub_str.clone());
 
-        let (_, holder_public) = crate::services::crypto::derive_ephemeral_key_pair(
-            creator_signing_key,
-            &nonce_bytes,
-            "holder",
-            creator_prefix,
-        )?;
-        let holder_anchor_hash = crate::services::crypto::get_hash(holder_public.to_bytes());
+        let holder = crate::services::crypto::derive_holder_ephemeral_key(
+            creator_signing_key, &nonce_bytes, creator_prefix)?;
+        let holder_anchor_hash = crate::services::crypto::get_hash(holder.verifying_key().to_bytes());
         init_transaction.receiver_ephemeral_pub_hash = Some(holder_anchor_hash);
 
         let tx_json_for_id = crate::services::utils::to_canonical_json(&init_transaction)?;
@@ -861,21 +883,15 @@ impl Voucher {
         let mut recipient_seed = [0u8; 32];
         OsRng.fill_bytes(&mut recipient_seed);
 
-        let receiver_ephemeral_pub_hash =
-            if let Ok(recipient_ed_pk) = crate::services::crypto::get_pubkey_from_user_id(recipient_id) {
-                let p_eph = crate::services::crypto::derive_stealth_ephemeral_point(&recipient_ed_pk, &recipient_seed)?;
-                Some(crate::services::crypto::get_hash(p_eph.compress().as_bytes()))
-            } else {
-                let recipient_signing_key = SigningKey::from_bytes(&recipient_seed);
-                let recipient_ephemeral_pub = recipient_signing_key.verifying_key();
-                Some(crate::services::crypto::get_hash(recipient_ephemeral_pub.to_bytes()))
-            };
+        let recipient_ed_pk = crate::services::crypto::get_pubkey_from_user_id(recipient_id)?;
+        let p_eph = crate::services::crypto::derive_stealth_ephemeral_point(&recipient_ed_pk, &recipient_seed)?;
+        let receiver_ephemeral_pub_hash = Some(crate::services::crypto::get_hash(p_eph.compress().as_bytes()));
 
         let (change_ephemeral_pub_hash, change_key_seed_opt) = if t_type == "split" {
             let change_signing_key = crate::services::crypto::derive_deterministic_change_key(sender_permanent_key, sender_id, &prev_hash)?;
             let change_pub = change_signing_key.verifying_key();
             let change_hash = crate::services::crypto::get_hash(change_pub.to_bytes());
-            let change_seed = change_signing_key.to_bytes();
+            let change_seed = change_signing_key.input_seed()?;
             (
                 Some(change_hash),
                 Some(bs58::encode(change_seed).into_string()),
@@ -914,14 +930,16 @@ impl Voucher {
         let tx_json_for_id = crate::services::utils::to_canonical_json(&new_transaction)?;
         new_transaction.t_id = crate::services::crypto::get_hash(tx_json_for_id);
 
-        let (sst_trap, sst_witness) =
+        let (_, sst_witness) =
             crate::services::trap_manager::generate_sst_trap(
                 sender_permanent_key,
                 &ds_tag,
                 &eph_pub_32,
                 &new_transaction.t_id,
+                "",
+                &sender_ephemeral_key.input_seed()?,
             )?;
-        new_transaction.trap_data = Some(sst_trap);
+        crate::services::trap_manager::verify_input_owner(sender_id, &sst_witness.input_seed, &eph_pub_32)?;
 
         let encoded_recipient_seed = bs58::encode(recipient_seed).into_string();
 
@@ -937,13 +955,14 @@ impl Voucher {
                 target_prefix,
                 timestamp: chrono::Utc::now().timestamp() as u64,
                 next_key_seed: encoded_recipient_seed.clone(),
-                trap_k_point: Some(sst_witness.k_trap),
-                dleq_c: Some(sst_witness.dleq_c),
-                dleq_s: Some(sst_witness.dleq_s),
-                trap_r_sig: Some(sst_witness.r_sig),
-                trap_s_sig: Some(sst_witness.s_sig),
-                trap_m_r: Some(sst_witness.m_r),
-                trap_m_s: Some(sst_witness.m_s),
+                trap_k_point: Some(sst_witness.k_trap.clone()),
+                dleq_c: Some(sst_witness.dleq_c.clone()),
+                dleq_s: Some(sst_witness.dleq_s.clone()),
+                input_key_seed: Some(sst_witness.input_seed.clone()),
+                trap_r_sig: Some(sst_witness.r_sig.clone()),
+                trap_s_sig: Some(sst_witness.s_sig.clone()),
+                trap_m_r: Some(sst_witness.m_r.clone()),
+                trap_m_s: Some(sst_witness.m_s.clone()),
             };
 
             let (ephemeral_pk, ephemeral_sk) = crate::services::crypto::generate_ephemeral_x25519_keypair();
@@ -961,6 +980,10 @@ impl Voucher {
             None
         };
         new_transaction.privacy_guard = privacy_guard;
+        let guard_hash = crate::services::l2_gateway::privacy_guard_commitment(new_transaction.privacy_guard.as_deref());
+        let identity_point = crate::services::crypto::ed25519_pk_to_curve_point(&sender_permanent_key.verifying_key())?;
+        new_transaction.trap_data = Some(crate::services::trap_manager::shard_from_witness(
+            &sst_witness, &identity_point, &ds_tag, &eph_pub_32, &new_transaction.t_id, &guard_hash)?);
 
         let t_id_32 = crate::services::crypto::decode_bs58_fixed::<32>(&new_transaction.t_id, "t_id")?;
         let sender_pub_32 =
@@ -1127,16 +1150,9 @@ impl Voucher {
                                         holder_match = true;
                                     }
                                 }
-                                if !holder_match {
-                                    let candidate_key = SigningKey::from_bytes(&seed_arr);
-                                    let candidate_hash = crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
-                                    if Some(&candidate_hash) == last_tx.receiver_ephemeral_pub_hash.as_ref() {
-                                        holder_match = true;
-                                    }
-                                }
                             }
 
-            // B) Check change key via HKDF (Change mode)
+            // B) Check the identity-bound change key
             if let Ok(candidate_key) = crate::services::crypto::derive_deterministic_change_key(&id.signing_key, &id.user_id, &last_tx.prev_hash) {
                 let candidate_hash = crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
                 if Some(&candidate_hash) == last_tx.change_ephemeral_pub_hash.as_ref() {

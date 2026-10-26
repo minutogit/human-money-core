@@ -97,15 +97,7 @@ pub fn create_transaction_with_auto_decrypt(
         .map_err(|e| VoucherCoreError::Crypto(format!("Invalid seed base58: {}", e)))?;
 
     let seed_arr: [u8; 32] = seed_bytes.try_into().expect("Seed must be 32 bytes");
-    let next_key = if let Ok((x_eph, p_eph, vk)) = crypto::derive_stealth_secret_key(recipient_permanent_key, &seed_arr) {
-        crypto::EphemeralKey::Stealth {
-            secret_scalar: x_eph,
-            public_point: p_eph,
-            verifying_key: vk,
-        }
-    } else {
-        crypto::EphemeralKey::Standard(SigningKey::from_bytes(&seed_arr))
-    };
+    let next_key = crypto::derive_owned_ephemeral_key(recipient_permanent_key, &seed_arr)?;
 
     Ok((new_voucher, next_key))
 }
@@ -116,15 +108,7 @@ pub fn derive_recipient_holder_key(
 ) -> crypto::EphemeralKey {
     let seed_bytes = bs58::decode(recipient_seed).into_vec().unwrap();
     let seed_arr: [u8; 32] = seed_bytes.try_into().unwrap();
-    if let Ok((x_eph, p_eph, vk)) = crypto::derive_stealth_secret_key(&recipient_identity.signing_key, &seed_arr) {
-        crypto::EphemeralKey::Stealth {
-            secret_scalar: x_eph,
-            public_point: p_eph,
-            verifying_key: vk,
-        }
-    } else {
-        crypto::EphemeralKey::Standard(SigningKey::from_bytes(&seed_arr))
-    }
+    crypto::derive_owned_ephemeral_key(&recipient_identity.signing_key, &seed_arr).unwrap()
 }
 
 pub fn create_guarantor_signature_data(
@@ -297,10 +281,8 @@ pub fn create_voucher_for_manipulation(
     .expect("Failed to derive genesis key");
     let genesis_pub_str = bs58::encode(genesis_public.to_bytes()).into_string();
 
-    let (_, holder_public) =
-        crypto::derive_ephemeral_key_pair(signing_key, &nonce_bytes, "holder", prefix)
-            .expect("Failed to derive holder key");
-    let holder_anchor_hash = crypto::get_hash(holder_public.to_bytes());
+    let holder = crypto::derive_holder_ephemeral_key(signing_key, &nonce_bytes, prefix).unwrap();
+    let holder_anchor_hash = crypto::get_hash(holder.verifying_key().to_bytes());
 
     let prev_hash = {
         let v_id_bytes = bs58::decode(&voucher.voucher_id)
@@ -468,7 +450,7 @@ pub fn resign_transaction_ext(
     // V3 Protocol (audit_02_11): the voucher id is signature-bound again.
     // Genesis transactions sign the canonical "none" placeholder.
     v_id: &str,
-    l2_signer_key: Option<&SigningKey>,
+    l2_signer_key: Option<&dyn ed25519_dalek::Signer<ed25519_dalek::Signature>>,
 ) -> Transaction {
     // V3 Protocol (SST): the t_id preimage excludes `trap_data` and
     // `privacy_guard` — both are attached only after t_id computation at
@@ -570,7 +552,7 @@ pub fn resign_transaction_with_privacy(
     mut tx: Transaction,
     signer_key: &SigningKey,
     v_id: &str,
-    l2_signer_key: Option<&SigningKey>,
+    l2_signer_key: Option<&dyn ed25519_dalek::Signer<ed25519_dalek::Signature>>,
     recipient_id: &str,
 ) -> Transaction {
     if tx.recipient_id == crate::models::voucher::ANONYMOUS_ID && tx.privacy_guard.is_none() {
@@ -582,27 +564,10 @@ pub fn resign_transaction_with_privacy(
     resign_transaction_ext(tx, signer_key, v_id, l2_signer_key)
 }
 
-pub fn derive_holder_key(
-    voucher: &Voucher,
-    creator_signing_key: &SigningKey,
-) -> SigningKey {
+pub fn derive_holder_key(voucher: &Voucher, creator_signing_key: &SigningKey) -> crypto::EphemeralKey {
     let nonce_bytes = bs58::decode(&voucher.voucher_nonce).into_vec().unwrap();
-    let nonce_arr: [u8; 16] = nonce_bytes.try_into().unwrap();
-
-    let prefix = voucher
-        .creator_profile
-        .id
-        .as_ref()
-        .and_then(|id| crypto::get_prefix_from_user_id(id));
-
-    let (holder_key, _) = crypto::derive_ephemeral_key_pair(
-        creator_signing_key,
-        &nonce_arr,
-        "holder",
-        prefix,
-    )
-    .unwrap();
-    holder_key
+    let prefix = voucher.creator_profile.id.as_ref().and_then(|id| crypto::get_prefix_from_user_id(id));
+    crypto::derive_holder_ephemeral_key(creator_signing_key, &nonce_bytes, prefix).unwrap()
 }
 
 /// Creates a fully self-authenticating (V3) gossip fingerprint for tests.
@@ -724,4 +689,87 @@ pub fn sign_fingerprint_in_place(fp: &mut TransactionFingerprint) {
     let sig = crypto::sign_ed25519(&eph_key, &payload_hash);
     fp.layer2_signature = bs58::encode(sig.to_bytes()).into_string();
     fp.sender_ephemeral_pub = bs58::encode(eph_pub).into_string();
+}
+
+/// Deterministic identity-bound output fixture used by protocol-level tests.
+pub fn bound_test_key(owner: &SigningKey) -> crypto::EphemeralKey {
+    crypto::derive_owned_ephemeral_key(owner, &[0u8; 32]).unwrap()
+}
+
+pub fn bound_test_point(owner: &SigningKey) -> [u8; 32] {
+    bound_test_key(owner).verifying_key().to_bytes()
+}
+
+/// Signs complete gossip evidence for isolated proof-import fixtures.
+pub fn sign_proof_fingerprints(
+    transactions: &mut [Transaction],
+    key: &crypto::EphemeralKey,
+) -> Vec<TransactionFingerprint> {
+    transactions
+        .iter_mut()
+        .map(|tx| {
+            let trap = tx.trap_data.as_ref().unwrap();
+            let t_id = crypto::decode_bs58_fixed::<32>(&tx.t_id, "t_id").unwrap();
+            let pubkey = key.verifying_key().to_bytes();
+            let guard =
+                crate::services::l2_gateway::privacy_guard_commitment(tx.privacy_guard.as_deref());
+            let digest = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+                "none",
+                &trap.ds_tag,
+                &t_id,
+                &pubkey,
+                &trap.trap_r,
+                &trap.trap_s,
+                0,
+                0,
+                None,
+                &guard,
+            );
+            let signature = bs58::encode(key.sign(&digest).to_bytes()).into_string();
+            tx.layer2_signature = Some(signature.clone());
+            TransactionFingerprint {
+                ds_tag: trap.ds_tag.clone(),
+                t_id: tx.t_id.clone(),
+                trap_r: trap.trap_r.clone(),
+                trap_s: trap.trap_s.clone(),
+                sender_ephemeral_pub: bs58::encode(pubkey).into_string(),
+                layer2_signature: signature,
+                privacy_guard_hash: guard,
+                layer2_voucher_id: "none".into(),
+                ..Default::default()
+            }
+        })
+        .collect()
+}
+
+/// Adds a checked private receipt to a signed proof fixture.
+pub fn disclose_proof_receipt(
+    proof: &mut crate::models::conflict::ProofOfDoubleSpend,
+    owner: &UserIdentity,
+    input_seed: &[u8; 32],
+    index: usize,
+) {
+    let fp = &proof.fingerprints[index];
+    let eph =
+        crypto::decode_bs58_fixed::<32>(&fp.sender_ephemeral_pub, "sender_ephemeral_pub").unwrap();
+    let (_, witness) = crate::services::trap_manager::generate_sst_trap(
+        &owner.signing_key,
+        &fp.ds_tag,
+        &eph,
+        &fp.t_id,
+        &fp.privacy_guard_hash,
+        input_seed,
+    )
+    .unwrap();
+    let disclosure = crate::models::conflict::VictimWitnessDisclosure {
+        fingerprint_index: index,
+        sender_permanent_did: owner.user_id.clone(),
+        witness,
+    };
+    crate::services::trap_manager::verify_victim_witness_disclosure(
+        &disclosure,
+        &proof.fingerprints,
+    )
+    .unwrap();
+    proof.victim_witnesses = vec![disclosure];
 }

@@ -386,6 +386,47 @@ pub fn scan_and_rebuild_fingerprints(
     Ok((own, known))
 }
 
+/// Stable spend-content ordering; signature/retention variants are replays.
+pub(crate) fn sort_and_dedup_fingerprints(fingerprints: &mut Vec<TransactionFingerprint>) {
+    fingerprints.sort_by(|a, b| {
+        (
+            &a.ds_tag,
+            &a.t_id,
+            &a.sender_ephemeral_pub,
+            &a.privacy_guard_hash,
+            &a.trap_r,
+            &a.trap_s,
+            a.encrypted_timestamp,
+            a.created_at_ms,
+            &a.layer2_voucher_id,
+            &a.layer2_signature,
+        )
+            .cmp(&(
+                &b.ds_tag,
+                &b.t_id,
+                &b.sender_ephemeral_pub,
+                &b.privacy_guard_hash,
+                &b.trap_r,
+                &b.trap_s,
+                b.encrypted_timestamp,
+                b.created_at_ms,
+                &b.layer2_voucher_id,
+                &b.layer2_signature,
+            ))
+    });
+    fingerprints.dedup_by(|a, b| {
+        a.ds_tag == b.ds_tag
+            && a.sender_ephemeral_pub == b.sender_ephemeral_pub
+            && a.t_id == b.t_id
+            && a.privacy_guard_hash == b.privacy_guard_hash
+            && a.trap_r == b.trap_r
+            && a.trap_s == b.trap_s
+            && a.encrypted_timestamp == b.encrypted_timestamp
+            && a.created_at_ms == b.created_at_ms
+            && a.layer2_voucher_id == b.layer2_voucher_id
+    });
+}
+
 /// Performs a complete double-spend check by combining own and foreign
 /// fingerprints and checking for collisions.
 pub fn check_for_double_spend(
@@ -423,9 +464,9 @@ pub fn check_for_double_spend(
         // order differs per process/call; downstream attribution consumed
         // positional pairs ([0]/[1]), so identical evidence sets produced
         // different offender identities across runs (dedup/immunity keyed on
-        // proof_id, UI and forensics all broke). t_ids are unique per bucket,
-        // making this a total deterministic order.
-        fps_vec.sort_by(|a, b| a.t_id.cmp(&b.t_id));
+        // proof_id, UI and forensics all broke). Same-ID equivocations use
+        // the remaining authenticated fields as deterministic tie-breakers.
+        sort_and_dedup_fingerprints(&mut fps_vec);
         let unique_t_ids = fps_vec
             .iter()
             .map(|fp| &fp.t_id)
@@ -435,7 +476,7 @@ pub fn check_for_double_spend(
         // Two handovers of ONE input share a single t_id, so the classic
         // `unique_t_ids > 1` gate never fires. When two same-t_id entries
         // diverge in any SIGNATURE-BOUND evidence field (trap shards,
-        // encrypted timestamp, layer2_signature or privacy-guard commitment),
+        // encrypted/creation timestamp, voucher binding or privacy-guard commitment),
         // the signer equivocated and this bucket IS genuine fraud evidence.
         // `deletable_at` is deliberately excluded: it is retention metadata
         // that legitimately differs between local and foreign stores.
@@ -448,7 +489,8 @@ pub fn check_for_double_spend(
                         if prev.trap_r != fp.trap_r
                             || prev.trap_s != fp.trap_s
                             || prev.encrypted_timestamp != fp.encrypted_timestamp
-                            || prev.layer2_signature != fp.layer2_signature
+                            || prev.created_at_ms != fp.created_at_ms
+                            || prev.layer2_voucher_id != fp.layer2_voucher_id
                             || prev.privacy_guard_hash != fp.privacy_guard_hash
                         {
                             diverged = true;
@@ -552,12 +594,25 @@ pub fn verify_reporter_signature(proof: &ProofOfDoubleSpend) -> Result<(), Vouch
     Ok(())
 }
 
+/// Matches all spend data available in both full transactions and fingerprints.
+pub fn fingerprint_matches_transaction(fp: &TransactionFingerprint, tx: &Transaction) -> bool {
+    tx.t_id == fp.t_id
+        && tx.layer2_signature.as_deref() == Some(fp.layer2_signature.as_str())
+        && tx.sender_ephemeral_pub.as_deref() == Some(fp.sender_ephemeral_pub.as_str())
+        && tx.trap_data.as_ref().is_some_and(|t| {
+            t.ds_tag == fp.ds_tag && t.trap_r == fp.trap_r && t.trap_s == fp.trap_s
+        })
+        && (tx.t_type.contains("placeholder")
+            || crate::services::l2_gateway::privacy_guard_commitment(tx.privacy_guard.as_deref())
+                == fp.privacy_guard_hash)
+}
+
 /// SECURITY GATE: Structural collision validation for imported proofs.
 ///
 /// Ensures the contained transactions form a plausible double-spend:
 /// - at least two transactions,
 /// - all share `fork_point_prev_hash` as their direct predecessor,
-/// - distinct `t_id`s,
+/// - distinct signed spend contents (same-ID guard/shard equivocation is allowed),
 /// - a revealed `sender_ephemeral_pub` (32 bytes),
 /// - one identical recomputed `ds_tag` (`hash(prev_hash || sender_ephemeral_pub)`).
 pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherCoreError> {
@@ -569,13 +624,43 @@ pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherC
         )));
     }
 
-    let mut seen_t_ids = std::collections::HashSet::new();
+    let mut seen_evidence = std::collections::HashSet::new();
+    let mut input_keys = std::collections::HashSet::new();
     let mut ds_tags = std::collections::HashSet::new();
 
-    for tx in txs {
-        if !seen_t_ids.insert(&tx.t_id) {
+    for (index, tx) in txs.iter().enumerate() {
+        input_keys.insert(tx.sender_ephemeral_pub.as_deref());
+        let original = proof
+            .fingerprints
+            .get(index)
+            .filter(|fp| fingerprint_matches_transaction(fp, tx));
+        let guard_hash = original
+            .map(|fp| fp.privacy_guard_hash.clone())
+            .unwrap_or_else(|| {
+                crate::services::l2_gateway::privacy_guard_commitment(tx.privacy_guard.as_deref())
+            });
+        let trap_pair = tx
+            .trap_data
+            .as_ref()
+            .map(|t| (t.trap_r.as_str(), t.trap_s.as_str()));
+        let authenticated_metadata = original.map(|fp| {
+            (
+                fp.encrypted_timestamp,
+                fp.created_at_ms,
+                fp.layer2_voucher_id.as_str(),
+            )
+        });
+        let full_transaction_time = original.is_none().then_some(tx.t_time.as_str());
+        if !seen_evidence.insert((
+            &tx.t_id,
+            trap_pair,
+            guard_hash,
+            authenticated_metadata,
+            full_transaction_time,
+        )) {
             return Err(VoucherCoreError::ProofImport(
-                "Cannot import proof: duplicate t_id among conflicting transactions.".to_string(),
+                "Cannot import proof: duplicate evidence among conflicting transactions."
+                    .to_string(),
             ));
         }
         if tx.prev_hash != proof.fork_point_prev_hash {
@@ -584,11 +669,11 @@ pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherC
             ));
         }
 
-        // V2 Protocol (Gossip Soft Proofs): synthetic placeholder transactions
+        // Synthetic placeholder transactions
         // built from self-authenticating gossip fingerprints cannot recompute
         // their ds_tag from a real prev_hash (the true fork predecessor is not
         // part of the fingerprint). Their structural integrity instead follows
-        // from the verified V2 layer2_signature checked at gossip ingress;
+        // from the verified V4 layer2_signature checked at gossip ingress;
         // here we only enforce internal consistency: prev_hash == fork point
         // == claimed ds_tag and a well-formed revealed ephemeral key.
         if tx.t_type == "gossip_soft_placeholder" {
@@ -597,7 +682,15 @@ pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherC
                     "Cannot import proof: gossip soft placeholder missing trap_data.".to_string(),
                 )
             })?;
-            if trap.ds_tag != proof.fork_point_prev_hash {
+            let expected_tag = if tx.prev_hash == trap.ds_tag {
+                trap.ds_tag.clone()
+            } else {
+                crate::services::crypto::get_ds_tag(
+                    &tx.prev_hash,
+                    tx.sender_ephemeral_pub.as_deref().unwrap_or(""),
+                )?
+            };
+            if trap.ds_tag != expected_tag {
                 return Err(VoucherCoreError::ProofImport(
                     "Cannot import proof: gossip soft placeholder ds_tag does not match the fork point.".to_string(),
                 ));
@@ -606,7 +699,8 @@ pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherC
             ds_tags.insert(trap.ds_tag.clone());
             let eph_pub_raw = tx.sender_ephemeral_pub.as_ref().ok_or_else(|| {
                 VoucherCoreError::ProofImport(
-                    "Cannot import proof: gossip soft placeholder missing sender_ephemeral_pub.".to_string(),
+                    "Cannot import proof: gossip soft placeholder missing sender_ephemeral_pub."
+                        .to_string(),
                 )
             })?;
             let eph_ok = bs58::decode(eph_pub_raw)
@@ -623,25 +717,33 @@ pub fn verify_proof_structure(proof: &ProofOfDoubleSpend) -> Result<(), VoucherC
 
         let eph_pub_raw = tx.sender_ephemeral_pub.as_ref().ok_or_else(|| {
             VoucherCoreError::ProofImport(
-                "Cannot import proof: conflicting transaction missing sender_ephemeral_pub.".to_string(),
+                "Cannot import proof: conflicting transaction missing sender_ephemeral_pub."
+                    .to_string(),
             )
         })?;
         // Validate 32-byte length before tag computation (preserves original ProofImport mapping).
-        let _ = crate::services::crypto::decode_bs58_fixed::<32>(
-            eph_pub_raw, "sender_ephemeral_pub",
-        ).map_err(|e| VoucherCoreError::ProofImport(e.to_string()))?;
+        let _ =
+            crate::services::crypto::decode_bs58_fixed::<32>(eph_pub_raw, "sender_ephemeral_pub")
+                .map_err(|e| VoucherCoreError::ProofImport(e.to_string()))?;
 
         let recomputed_ds_tag = crate::services::crypto::get_ds_tag(&tx.prev_hash, eph_pub_raw)
             .map_err(|e| VoucherCoreError::ProofImport(e.to_string()))?;
         if let Some(trap) = &tx.trap_data
-            && trap.ds_tag != recomputed_ds_tag {
-                return Err(VoucherCoreError::ProofImport(
-                    "Cannot import proof: trap_data.ds_tag does not match recomputed input tag.".to_string(),
-                ));
-            }
+            && trap.ds_tag != recomputed_ds_tag
+        {
+            return Err(VoucherCoreError::ProofImport(
+                "Cannot import proof: trap_data.ds_tag does not match recomputed input tag."
+                    .to_string(),
+            ));
+        }
         ds_tags.insert(recomputed_ds_tag);
     }
 
+    if input_keys.len() != 1 || input_keys.contains(&None) {
+        return Err(VoucherCoreError::ProofImport(
+            "Conflicting evidence must share one ephemeral input key".into(),
+        ));
+    }
     if ds_tags.len() != 1 {
         return Err(VoucherCoreError::ProofImport(
             "Cannot import proof: transactions do not collide on a single ds_tag.".to_string(),
@@ -682,6 +784,8 @@ pub fn create_proof_of_double_spend(
     let reporter_signature = bs58::encode(reporter_signature_bytes.to_bytes()).into_string();
 
     let proof = ProofOfDoubleSpend {
+        fingerprints: Vec::new(),
+        victim_witnesses: Vec::new(),
         proof_id,
         offender_id,
         suspected_identity: None,

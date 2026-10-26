@@ -113,13 +113,7 @@ fn test_chained_transaction_math_and_scaling() {
     // Alice (60) sends "10.1234" to Bob.
     // Use change seed from Tx1 for Tx2
     let change_seed_1 = secrets_1.change_seed.expect("Tx1 should have change");
-    let change_key_1 = ed25519_dalek::SigningKey::from_bytes(
-        &bs58::decode(&change_seed_1)
-            .into_vec()
-            .unwrap()
-            .try_into()
-            .unwrap(),
-    );
+    let change_key_1 = derive_recipient_holder_key(&alice.identity, &change_seed_1);
 
     let (v, secrets_2) = human_money_core::models::voucher::Transaction::create(
         &current_voucher,
@@ -147,13 +141,7 @@ fn test_chained_transaction_math_and_scaling() {
     // Alice (49.8766) sends "9" to Bob.
     // Use change seed from Tx2 for Tx3
     let change_seed_2 = secrets_2.change_seed.expect("Tx2 should have change");
-    let change_key_2 = ed25519_dalek::SigningKey::from_bytes(
-        &bs58::decode(&change_seed_2)
-            .into_vec()
-            .unwrap()
-            .try_into()
-            .unwrap(),
-    );
+    let change_key_2 = derive_recipient_holder_key(&alice.identity, &change_seed_2);
 
     let (v, secrets_3) = human_money_core::models::voucher::Transaction::create(
         &current_voucher,
@@ -182,13 +170,7 @@ fn test_chained_transaction_math_and_scaling() {
     // --- 5. CASE: SPLIT WITH FEWER DECIMAL PLACES THAN ALLOWED ---
     // Alice (40.8766) sends "0.87" (2 instead of 4 decimal places) to Bob.
     let change_seed_3 = secrets_3.change_seed.expect("Tx3 should have change");
-    let change_key_3 = ed25519_dalek::SigningKey::from_bytes(
-        &bs58::decode(&change_seed_3)
-            .into_vec()
-            .unwrap()
-            .try_into()
-            .unwrap(),
-    );
+    let change_key_3 = derive_recipient_holder_key(&alice.identity, &change_seed_3);
 
     let (v, secrets_4) = human_money_core::models::voucher::Transaction::create(
         &current_voucher,
@@ -217,13 +199,7 @@ fn test_chained_transaction_math_and_scaling() {
     // --- 6. CASE: FULL TRANSFER OF REMAINING BALANCE ---
     // Alice (40.0066) sends her complete remaining balance "40.0066" to Bob.
     let change_seed_4 = secrets_4.change_seed.expect("Tx4 should have change");
-    let change_key_4 = ed25519_dalek::SigningKey::from_bytes(
-        &bs58::decode(&change_seed_4)
-            .into_vec()
-            .unwrap()
-            .try_into()
-            .unwrap(),
-    );
+    let change_key_4 = derive_recipient_holder_key(&alice.identity, &change_seed_4);
 
     let (v, secrets_5) = human_money_core::models::voucher::Transaction::create(
         &current_voucher,
@@ -282,13 +258,7 @@ fn test_chained_transaction_math_and_scaling() {
 
     // Bob (balance: 30.0066) sends "0.0066" (decimal) back to Alice.
     let bob_change_seed = secrets_6.change_seed.expect("Tx7 should have change");
-    let bob_change_key = ed25519_dalek::SigningKey::from_bytes(
-        &bs58::decode(&bob_change_seed)
-            .into_vec()
-            .unwrap()
-            .try_into()
-            .unwrap(),
-    );
+    let bob_change_key = derive_recipient_holder_key(&bob.identity, &bob_change_seed);
 
     let (v, _) = human_money_core::models::voucher::Transaction::create(
         &current_voucher,

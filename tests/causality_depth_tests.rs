@@ -143,7 +143,7 @@ fn build_voucher(depth: usize, standard: VoucherStandardDefinition, standard_has
         let prev_tx = voucher.transactions.last().unwrap();
         let prev_hash = get_hash(to_canonical_json(prev_tx).unwrap());
         let t_time = t_time_for(i);
-        let sender_id = sender_id_for_depth(i);
+        let sender_id = if i == 1 { creator_id.clone() } else { sender_id_for_depth(i) };
         let mut tx = Transaction {
             t_id: String::new(),
             prev_hash,

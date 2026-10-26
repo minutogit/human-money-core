@@ -31,6 +31,8 @@ fn create_mock_proof_of_double_spend(
     verdict: Option<human_money_core::models::conflict::Layer2Verdict>,
 ) -> ProofOfDoubleSpend {
     ProofOfDoubleSpend {
+        fingerprints: Vec::new(),
+        victim_witnesses: Vec::new(),
         proof_id: crypto::get_hash(offender_id), // Dummy ID for test
         offender_id: offender_id.to_string(),
         suspected_identity: None,

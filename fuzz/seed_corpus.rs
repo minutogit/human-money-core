@@ -97,6 +97,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&c4_dir)?;
 
     let proof = ProofOfDoubleSpend {
+        fingerprints: Vec::new(),
+        victim_witnesses: Vec::new(),
         proof_id: "test_proof_id_1234567890".into(),
         offender_id: alice.user_id.clone(),
         suspected_identity: Some(alice.user_id.clone()),

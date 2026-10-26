@@ -385,7 +385,7 @@ fn test_consolidation_zone_to_creator_requires_redeem() {
         let receiver_hash = get_hash(receiver_key.verifying_key().to_bytes());
         let prev_tx = voucher.transactions.last().unwrap();
         let prev_hash = get_hash(to_canonical_json(prev_tx).unwrap());
-        let sender_id = if i % 2 == 1 { ACTORS.bob.identity.user_id.clone() } else { ACTORS.charlie.identity.user_id.clone() };
+        let sender_id = if i == 1 { creator_id.clone() } else if i % 2 == 1 { ACTORS.bob.identity.user_id.clone() } else { ACTORS.charlie.identity.user_id.clone() };
         let recipient_id = if i % 2 == 1 { ACTORS.charlie.identity.user_id.clone() } else { ACTORS.bob.identity.user_id.clone() };
 
         let mut tx = Transaction {

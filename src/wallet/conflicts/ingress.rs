@@ -80,9 +80,9 @@ impl Wallet {
     /// 4. **Attribution consistency (AUDIT-01-F05)** — if `offender_id` is a
     ///    did:key identity, the stored SST trap shards must verify against
     ///    it. Prevents forged attribution claims (framing).
-    /// 5. **Cryptographic transaction verification** — if a matching voucher
-    ///    exists locally, every conflicting transaction must pass integrity and
-    ///    L2-signature checks; failures reject the proof entirely.
+    /// 5. **Canonical transaction verification** — complete transaction bodies
+    ///    with local voucher context must pass integrity and signature checks.
+    ///    Fingerprint-only evidence never authorizes transaction-state changes.
     ///
     /// If no local voucher context allows full cryptographic verification,
     /// the proof is stored as an *unverified witness note* WITHOUT any
@@ -136,6 +136,21 @@ impl Wallet {
             proof.suspected_identity = None;
         }
 
+        if proof.fingerprints.len() > conflict_manager::MAX_FOREIGN_BUCKET_CAP
+            || proof.conflicting_transactions.len() > conflict_manager::MAX_FOREIGN_BUCKET_CAP
+            || proof.victim_witnesses.len() > 1
+        {
+            return Err(VoucherCoreError::ProofImport(
+                "Proof evidence exceeds the admission limit".into(),
+            ));
+        }
+        for disclosure in &proof.victim_witnesses {
+            crate::services::trap_manager::verify_victim_witness_disclosure(
+                disclosure,
+                &proof.fingerprints,
+            )?;
+        }
+
         // --- SECURITY GATE 1-3: structure, reporter signature, proof id ---
         conflict_manager::verify_proof_structure(&proof)?;
         conflict_manager::verify_reporter_signature(&proof)?;
@@ -150,15 +165,9 @@ impl Wallet {
 
         // --- SECURITY GATE 3b (AUDIT-01-F05): attribution-consistency check ---
         //
-        // The anti-framing invariant documented on
-        // `ProofOfDoubleSpend.offender_id` states that a did:key identity may
-        // only be claimed when the stored SST trap shards verify against the
-        // mathematically extracted identity point. Creation time enforces
-        // this (`verify_and_create_proof`); without this gate an importer
-        // would trust the claim blindly, letting a real double-spender frame
-        // any innocent did:key identity with a cryptographically genuine
-        // report. Anonymous and `ephemeral:` fallback identifiers carry no
-        // attribution claim and skip this gate.
+        // Definitive DID claims require a checked victim receipt binding the
+        // input E to that permanent identity and two conflicting E signatures.
+        // Interpolation by itself authenticates only a signature candidate.
         #[cfg(feature = "test-utils")]
         let bypass_active = crate::is_signature_bypass_active();
         #[cfg(not(feature = "test-utils"))]
@@ -177,28 +186,18 @@ impl Wallet {
                                 .to_string(),
                          })
                     })?;
-                // V3 SST (AUDIT-01-F05): EUF-CMA-bound attribution, no prefix
-                // ambiguity. The colliding shards must reconstruct a valid Schnorr
-                // signature for exactly the claimed identity point; anything else
-                // is a framing attempt and rejects the whole proof.
-                let mut verified = false;
-                let mut last_err: Option<VoucherCoreError> = None;
-                match crate::services::trap_manager::verify_stored_trap_shards_against_identity(
-                    &proof.conflicting_transactions,
-                    &claimed_point,
-                ) {
-                    Ok(()) => {
-                        verified = true;
-                    }
-                    Err(e) => last_err = Some(e),
-                }
+                // Prefix aliases compare through the decoded permanent point.
+                let verified = proof.victim_witnesses.iter().any(|disclosure| {
+                    crate::services::trap_manager::verify_victim_witness_disclosure(
+                        disclosure,
+                        &proof.fingerprints,
+                    )
+                    .is_ok_and(|point| point == claimed_point)
+                });
                 if !verified {
                     return Err(crate::Error::Wallet(
                         crate::error::WalletError::InvariantViolation {
-                            message: format!(
-                                "Cannot import proof: did:key offender claim failed trap-proof verification ({}).",
-                                last_err.map(|e| e.to_string()).unwrap_or_default()
-                            ),
+                            message: "Cannot import proof: did:key offender claim failed trap-proof verification (missing or invalid victim ownership disclosure).".into(),
                         },
                     ));
                 }
@@ -227,6 +226,15 @@ impl Wallet {
                     })?;
 
                 for tx in &proof.conflicting_transactions {
+                    if !proof.fingerprints.is_empty()
+                        && proof.fingerprints.iter().any(|fp| {
+                            fp.sender_ephemeral_pub == claimed_eph
+                                && conflict_manager::fingerprint_matches_transaction(fp, tx)
+                                && conflict_manager::verify_fingerprint_signature(fp)
+                        })
+                    {
+                        continue;
+                    }
                     if tx.sender_ephemeral_pub.as_deref() != Some(claimed_eph) {
                         return Err(crate::Error::Wallet(crate::error::WalletError::InvariantViolation { message:
                         "Cannot import proof: conflicting transaction sender_ephemeral_pub does not match claimed ephemeral offender.".to_string(),
@@ -319,6 +327,24 @@ impl Wallet {
             }
         }
 
+        if !proof.fingerprints.is_empty() {
+            if proof.fingerprints.len() != proof.conflicting_transactions.len()
+                || proof
+                    .fingerprints
+                    .iter()
+                    .any(|fp| !conflict_manager::verify_fingerprint_signature(fp))
+                || proof
+                    .conflicting_transactions
+                    .iter()
+                    .zip(&proof.fingerprints)
+                    .any(|(tx, fp)| !conflict_manager::fingerprint_matches_transaction(fp, tx))
+            {
+                return Err(VoucherCoreError::ProofImport(
+                    "Invalid or mismatched original fingerprint evidence".into(),
+                ));
+            }
+        }
+
         // --- SECURITY GATE 4: cryptographically verify conflicting transactions ---
         let mut layer2_voucher_id: Option<String> = None;
         for tx in &proof.conflicting_transactions {
@@ -333,8 +359,20 @@ impl Wallet {
         enum VerificationOutcome {
             FullyVerified,
             NoLocalContext,
+            FingerprintOnly,
         }
         let outcome = match &layer2_voucher_id {
+            Some(_)
+                if proof
+                    .conflicting_transactions
+                    .iter()
+                    .any(|tx| tx.t_type.contains("placeholder")) =>
+            {
+                // Signed fingerprints establish spend/owner evidence, but their
+                // synthetic timestamps and IDs are not full canonical bodies.
+                // They must not drive transaction-ID-based state mutations.
+                VerificationOutcome::FingerprintOnly
+            }
             Some(vid) => {
                 for tx in &proof.conflicting_transactions {
                     if crate::services::voucher_validation::verify_transaction_integrity_and_signature(tx, vid).is_err() {
@@ -348,6 +386,11 @@ impl Wallet {
                 VerificationOutcome::FullyVerified
             }
             None => {
+                if proof.fingerprints.is_empty()
+                    && crate::services::crypto::get_pubkey_from_user_id(&proof.offender_id).is_ok()
+                {
+                    return Err(VoucherCoreError::ProofImport("Identity attribution requires authenticated fingerprint evidence without local voucher context".into()));
+                }
                 log::warn!(
                     "Imported proof '{}': no local voucher context for cryptographic verification; storing as unverified witness note (no status mutation).",
                     proof.proof_id
@@ -447,6 +490,18 @@ impl Wallet {
 
         for tx in &proof.conflicting_transactions {
             if let Some(instance) = self.find_local_voucher_by_tx_id(&tx.t_id) {
+                let same_input = instance.voucher.transactions.iter().any(|local| {
+                    local.t_id == tx.t_id
+                        && local.sender_ephemeral_pub == tx.sender_ephemeral_pub
+                        && local
+                            .trap_data
+                            .as_ref()
+                            .zip(tx.trap_data.as_ref())
+                            .is_some_and(|(a, b)| a.ds_tag == b.ds_tag)
+                });
+                if !same_input {
+                    continue;
+                }
                 if matches!(instance.status, VoucherStatus::Active) {
                     has_active = true;
                 } else if matches!(instance.status, VoucherStatus::Quarantined { .. }) {
@@ -498,159 +553,89 @@ impl Wallet {
         fingerprints: &[TransactionFingerprint],
         archive: Option<&FileVoucherArchive>,
     ) -> Result<Option<crate::models::conflict::ProofOfDoubleSpend>, VoucherCoreError> {
+        let mut selected: Vec<TransactionFingerprint> = fingerprints
+            .iter()
+            .filter(|fp| {
+                !conflict_manager::is_init_fingerprint(fp)
+                    && conflict_manager::verify_fingerprint_signature(fp)
+            })
+            .cloned()
+            .collect();
+        conflict_manager::sort_and_dedup_fingerprints(&mut selected);
+        let mut local_anchor = None;
+        for fp in &selected {
+            if let Some(tx) = self.find_transaction_in_stores(&fp.t_id, archive)? {
+                if conflict_manager::fingerprint_matches_transaction(fp, &tx) {
+                    local_anchor = Some(fp.clone());
+                    break;
+                }
+            }
+        }
+        let context = local_anchor.as_ref().or_else(|| {
+            selected.iter().find(|a| {
+                selected
+                    .iter()
+                    .any(|b| crate::services::trap_manager::fingerprints_conflict(a, b))
+            })
+        });
+        let Some(context) = context else {
+            return Ok(None);
+        };
+        let context = (context.ds_tag.clone(), context.sender_ephemeral_pub.clone());
+        selected.retain(|fp| fp.ds_tag == context.0 && fp.sender_ephemeral_pub == context.1);
+        if selected.len() > conflict_manager::MAX_FOREIGN_BUCKET_CAP {
+            if let Some(anchor) = local_anchor {
+                if let Some(index) = selected.iter().position(|fp| fp == &anchor) {
+                    selected.swap(0, index);
+                }
+            }
+            selected.truncate(conflict_manager::MAX_FOREIGN_BUCKET_CAP);
+            conflict_manager::sort_and_dedup_fingerprints(&mut selected);
+        }
+        let fingerprints = selected.as_slice();
+        if !fingerprints.iter().any(|a| {
+            fingerprints
+                .iter()
+                .any(|b| crate::services::trap_manager::fingerprints_conflict(a, b))
+        }) {
+            return Ok(None);
+        }
         let mut conflicting_transactions = Vec::new();
-        let mut missing_t_ids = Vec::new();
-        // V2 Protocol: canonical `ephemeral:<pub>` offender claim produced by
-        // the pure-gossip branch (see below).
-        let mut gossip_offender_override: Option<String> = None;
-
-        // 1. Find the complete transactions corresponding to the fingerprints.
         for fp in fingerprints {
             if let Some(tx) = self.find_transaction_in_stores(&fp.t_id, archive)? {
-                conflicting_transactions.push(tx);
-            } else {
-                missing_t_ids.push(fp.t_id.clone());
-            }
-        }
-
-        if conflicting_transactions.is_empty() {
-            // FIX: For pure gossip conflicts, the local wallet never has the transactions
-            // in its store. If we have >= 2 fingerprints with distinct
-            // t_ids, we can still create a "Gossip Soft Proof".
-            //
-            // V2/V3 Protocol (Instant Gossip Proofs): incoming fingerprints were
-            // already authenticated at ingress (valid layer2_signature over
-            // the canonical digest by the named ephemeral key). We therefore build
-            // FULL synthetic placeholder transactions carrying the revealed
-            // key and the SST trap shards (shards travel with the gossip
-            // fingerprints) so that:
-            // - the soft proofs pass `verify_proof_structure` on import, and
-            // - a did:key attribution claim is only upheld when TWO colliding
-            //   shards reconstruct a valid Schnorr signature for it
-            //   (EUF-CMA-bound), keeping the anti-framing invariant intact.
-            //
-            // ATTRIBUTION HIERARCHY (AUDIT-01-F05): the canonical offender
-            // identifier for instant gossip proofs is the unforgeable
-            // ephemeral-key linkage `ephemeral:<sender_ephemeral_pub>`. A
-            // mathematically extracted did:key identity is recorded ONLY as
-            // advisory `suspected_identity` until full transaction chains
-            // with verifiable Schnorr ZKPs are imported.
-            if fingerprints.len() >= 2 {
-                let unique_t_ids: std::collections::HashSet<_> =
-                    fingerprints.iter().map(|fp| &fp.t_id).collect();
-                if unique_t_ids.len() >= 2 {
-                    let eph_pubs: std::collections::HashSet<&String> = fingerprints
-                        .iter()
-                        .map(|fp| &fp.sender_ephemeral_pub)
-                        .collect();
-                    // A genuine fork shares one input key per ds_tag; diverging
-                    // keys would make a single linkage claim ambiguous.
-                    let canonical_eph = if eph_pubs.len() == 1 {
-                        Some((*eph_pubs.iter().next().unwrap()).clone())
-                    } else {
-                        None
-                    };
-                    let offender_id = canonical_eph
-                        .as_ref()
-                        .map(|p| format!("ephemeral:{}", p))
-                        .unwrap_or_else(|| crate::models::voucher::ANONYMOUS_ID.to_string());
-
-                    // Use ds_tag as a proxy for fork_point_prev_hash,
-                    // as the actual prev_hash is not available.
-                    let fork_point_prev_hash = fingerprints[0].ds_tag.clone();
-
-                    for fp in fingerprints {
-                        let synthetic_tx = crate::models::voucher::Transaction {
-                            t_id: fp.t_id.clone(),
-                            sender_id: None,
-                            prev_hash: fork_point_prev_hash.clone(),
-                            t_type: "gossip_soft_placeholder".to_string(),
-                            amount: "0.00 (Gossip)".to_string(),
-                            sender_ephemeral_pub: Some(fp.sender_ephemeral_pub.clone()),
-                            layer2_signature: Some(fp.layer2_signature.clone()),
-                            trap_data: Some(crate::models::voucher::TrapData {
-                                ds_tag: fp.ds_tag.clone(),
-                                trap_r: fp.trap_r.clone(),
-                                trap_s: fp.trap_s.clone(),
-                            }),
-                            t_time: fp.encrypted_timestamp.to_string(),
-                            ..Default::default()
-                        };
-                        conflicting_transactions.push(synthetic_tx);
-                    }
-
-                    // Skip missing generation (all already covered)
-                    missing_t_ids.clear();
-
-                    // Store for the attribution hierarchy below.
-                    gossip_offender_override = Some(offender_id);
-                } else {
-                    return Ok(None);
-                }
-            } else {
-                return Ok(None);
-            }
-        }
-
-        // 2. Extract core data from the FIRST found transaction.
-        let mut offender_id = conflicting_transactions[0]
-            .sender_id
-            .clone()
-            .unwrap_or(crate::models::voucher::ANONYMOUS_ID.to_string());
-
-        // V2 Protocol: pure-gossip conflicts carry the unforgeable
-        // `ephemeral:<sender_ephemeral_pub>` linkage as the canonical
-        // offender identifier (set by the branch above).
-        if let Some(eph_claim) = &gossip_offender_override {
-            offender_id = eph_claim.clone();
-        }
-
-        // SECURITY (AUDIT-01-F08, false dispute injection): The >=2 verified
-        // trap proofs anti-framing invariant applies to EVERY did:key
-        // attribution claim — not only to the extraction branch below.
-        // `conflicting_transactions[0].sender_id` originates from locally
-        // held chain data whose SIBLING fork may be an unauthenticated gossip
-        // fingerprint (a fabricated t_id colliding with a publicly derivable
-        // ds_tag). Persisting the did:key verbatim would let any peer inject
-        // a false dispute naming an arbitrary identity (typically the wallet
-        // owner itself). If the stored trap proofs do not verify against the
-        // claimed point, the claim is downgraded to ANONYMOUS and the
-        // conservative extraction/ephemeral fallbacks below proceed
-        // unchanged. Non-did:key identifiers carry no attribution claim and
-        // are left untouched.
-        if offender_id != crate::models::voucher::ANONYMOUS_ID
-            && let Ok(claimed_pk) = crate::services::crypto::get_pubkey_from_user_id(&offender_id)
-        {
-            {
-                use curve25519_dalek::edwards::CompressedEdwardsY;
-                let attributed = CompressedEdwardsY::from_slice(claimed_pk.as_bytes())
-                    .ok()
-                    .and_then(|c| c.decompress())
-                    .map(|claimed_point| {
-                        // V3 SST (AUDIT-01-F08): single prefix-free gate — the
-                        // colliding shards must reconstruct a valid Schnorr
-                        // signature for exactly the claimed identity point.
-                        crate::services::trap_manager::verify_stored_trap_shards_against_identity(
-                            &conflicting_transactions,
-                            &claimed_point,
-                        )
-                        .is_ok()
-                    })
-                    .unwrap_or(false);
-                if !attributed {
-                    offender_id = crate::models::voucher::ANONYMOUS_ID.to_string();
+                if conflict_manager::fingerprint_matches_transaction(fp, &tx) {
+                    conflicting_transactions.push(tx);
+                    continue;
                 }
             }
+            conflicting_transactions.push(crate::models::voucher::Transaction {
+                t_id: fp.t_id.clone(),
+                t_type: "gossip_soft_placeholder".into(),
+                prev_hash: fp.ds_tag.clone(),
+                amount: "0.00 (Gossip)".into(),
+                sender_ephemeral_pub: Some(fp.sender_ephemeral_pub.clone()),
+                layer2_signature: Some(fp.layer2_signature.clone()),
+                trap_data: Some(crate::models::voucher::TrapData {
+                    ds_tag: fp.ds_tag.clone(),
+                    trap_r: fp.trap_r.clone(),
+                    trap_s: fp.trap_s.clone(),
+                }),
+                t_time: fp.encrypted_timestamp.to_string(),
+                ..Default::default()
+            });
         }
-
-        let real_txs: Vec<&crate::models::voucher::Transaction> = conflicting_transactions
+        let fork = conflicting_transactions
             .iter()
-            .filter(|t| !t.t_type.contains("placeholder"))
-            .collect();
+            .find(|tx| !tx.t_type.contains("placeholder"))
+            .map(|tx| tx.prev_hash.clone())
+            .unwrap_or_else(|| fingerprints[0].ds_tag.clone());
+        for tx in &mut conflicting_transactions {
+            if tx.t_type.contains("placeholder") {
+                tx.prev_hash = fork.clone();
+            }
+        }
+        let mut offender_id = format!("ephemeral:{}", fingerprints[0].sender_ephemeral_pub);
 
-        // 3. Attempt L2 verification for all available transactions.
-        // (Moved BEFORE de-anonymization so attribution can rely on it.)
-        let mut l2_verified_count = 0usize;
         let mut voucher_valid_until = "unknown".to_string();
         let mut affected_voucher_name = None;
         let mut voucher_standard_uuid = None;
@@ -662,39 +647,15 @@ impl Wallet {
                 .flatten()
         });
 
-        let l2_all_verified = if let Some(voucher) = &context_voucher {
+        if let Some(voucher) = &context_voucher {
             voucher_valid_until = voucher.valid_until.clone();
             affected_voucher_name = Some(voucher.voucher_standard.name.clone());
             voucher_standard_uuid = Some(voucher.voucher_standard.uuid.clone());
             is_test_voucher = voucher.non_redeemable_test_voucher;
+        }
 
-            if let Ok(layer2_voucher_id) =
-                crate::services::l2_gateway::extract_layer2_voucher_id(voucher)
-            {
-                for tx in &real_txs {
-                    if crate::services::voucher_validation::verify_transaction_integrity_and_signature(
-                        tx,
-                        &layer2_voucher_id,
-                    )
-                    .is_ok()
-                    {
-                        l2_verified_count += 1;
-                    }
-                }
-            }
-            !real_txs.is_empty() && l2_verified_count == real_txs.len()
-        } else {
-            false
-        };
-
-        // --- MATHEMATICAL DE-ANONYMIZATION (V3 SST, anti-framing hardened) ---
-        // Two colliding spend shards linearly reconstruct the underlying
-        // Schnorr signature; its challenge binds the result to exactly one
-        // public key. Attributing any other identity would constitute an
-        // EUF-CMA forgery, so a successful autonomous extraction IS the
-        // proof: it directly sets the definitive did:key offender identity
-        // (mirrored as advisory `suspected_identity`). Without a successful
-        // extraction the canonical `ephemeral:` linkage fallback applies.
+        // Self-verifying interpolation supplies an advisory signature candidate.
+        // Only a verified local receipt below can establish ownership of E.
         let mut suspected_identity: Option<String> = None;
         if fingerprints.len() >= 2 {
             // SECURITY (AUDIT-01-F16): deterministic pair evaluation. The
@@ -738,60 +699,85 @@ impl Wallet {
                         if let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes)
                             && let Ok(did_id) = crate::services::crypto::create_user_id(&pk, None)
                         {
-                            suspected_identity = Some(did_id.clone());
-                            // V3 SST: extraction IS the proof (EUF-CMA) —
-                            // definitive attribution that overrides any
-                            // earlier heuristic/downgraded identifier.
-                            offender_id = did_id;
+                            suspected_identity = Some(did_id);
                             break 'extraction;
                         }
                     }
                 }
             }
+        }
 
-            // Canonical fallback: ephemeral-key linkage over valid L2 signatures
-            // (only when no cryptographic identity extraction succeeded).
-            if suspected_identity.is_none()
-                && offender_id == crate::models::voucher::ANONYMOUS_ID
-                && l2_all_verified
-            {
-                let eph_pubs: std::collections::HashSet<&String> = real_txs
-                    .iter()
-                    .filter_map(|tx| tx.sender_ephemeral_pub.as_ref())
-                    .collect();
-                if eph_pubs.len() == 1 {
-                    offender_id = format!("ephemeral:{}", eph_pubs.iter().next().unwrap());
-                }
+        let mut victim_witnesses = Vec::new();
+        for (index, tx) in conflicting_transactions.iter().enumerate() {
+            let Some(guard) = tx.privacy_guard.as_deref() else {
+                continue;
+            };
+            let Ok(plaintext) = crate::services::crypto::decrypt_recipient_payload(
+                guard,
+                &identity.signing_key,
+                &identity.user_id,
+            ) else {
+                continue;
+            };
+            let Ok(payload) =
+                serde_json::from_slice::<crate::models::voucher::RecipientPayload>(&plaintext)
+            else {
+                continue;
+            };
+            let (
+                Some(r_sig),
+                Some(s_sig),
+                Some(m_r),
+                Some(m_s),
+                Some(k_trap),
+                Some(dleq_c),
+                Some(dleq_s),
+                Some(input_seed),
+            ) = (
+                payload.trap_r_sig,
+                payload.trap_s_sig,
+                payload.trap_m_r,
+                payload.trap_m_s,
+                payload.trap_k_point,
+                payload.dleq_c,
+                payload.dleq_s,
+                payload.input_key_seed,
+            )
+            else {
+                continue;
+            };
+            let disclosure = crate::models::conflict::VictimWitnessDisclosure {
+                fingerprint_index: index,
+                sender_permanent_did: payload.sender_permanent_did,
+                witness: crate::models::voucher::TrapWitness {
+                    r_sig,
+                    s_sig,
+                    m_r,
+                    m_s,
+                    k_trap,
+                    dleq_c,
+                    dleq_s,
+                    input_seed,
+                },
+            };
+            if let Ok(point) = crate::services::trap_manager::verify_victim_witness_disclosure(
+                &disclosure,
+                fingerprints,
+            ) {
+                let pk = ed25519_dalek::VerifyingKey::from_bytes(&point.compress().to_bytes())
+                    .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+                let did = crate::services::crypto::create_user_id(&pk, None)?;
+                offender_id = did.clone();
+                suspected_identity = Some(did);
+                victim_witnesses.push(disclosure);
+                break;
             }
         }
 
         let fork_point_prev_hash = conflicting_transactions[0].prev_hash.clone();
 
-        for t_id in missing_t_ids {
-            let mut synthetic_tx = crate::models::voucher::Transaction {
-                t_id: t_id.clone(),
-                sender_id: Some(offender_id.clone()),
-                prev_hash: fork_point_prev_hash.clone(),
-                t_type: "soft_placeholder".to_string(),
-                amount: "0.00 (Synthetic)".to_string(),
-                ..Default::default()
-            };
-            if let Some(fp) = fingerprints.iter().find(|fp| fp.t_id == t_id) {
-                synthetic_tx.sender_ephemeral_pub = Some(fp.sender_ephemeral_pub.clone());
-                synthetic_tx.layer2_signature = Some(fp.layer2_signature.clone());
-                synthetic_tx.trap_data = Some(crate::models::voucher::TrapData {
-                    ds_tag: fp.ds_tag.clone(),
-                    trap_r: fp.trap_r.clone(),
-                    trap_s: fp.trap_s.clone(),
-                });
-                synthetic_tx.t_time = fp.encrypted_timestamp.to_string();
-            }
-            conflicting_transactions.push(synthetic_tx);
-        }
-
-        // 6. Create the proof object.
-        // IMPORTANT: We NOW ALWAYS create the proof if we have >= 2 candidates,
-        // even if they could not be fully cryptographically verified ("Soft Proof").
+        // Every proof retains the original authenticated collision evidence.
+        // Private receipt data is included only after its public verifier passed.
         if conflicting_transactions.len() < 2 {
             return Ok(None);
         }
@@ -804,6 +790,9 @@ impl Wallet {
             identity,
             is_test_voucher,
         )?;
+
+        proof.fingerprints = fingerprints.to_vec();
+        proof.victim_witnesses = victim_witnesses;
 
         // Set metadata
         proof.affected_voucher_name = affected_voucher_name;
@@ -1035,7 +1024,6 @@ impl Wallet {
             let f1 = &pair[0];
             let f2 = &pair[1];
             if f1.ds_tag != f2.ds_tag
-                || f1.t_id == f2.t_id
                 || f1.sender_ephemeral_pub.is_empty()
                 || f1.sender_ephemeral_pub != f2.sender_ephemeral_pub
             {
@@ -1092,7 +1080,7 @@ impl Wallet {
                         .foreign_fingerprints
                         .entry(p.ds_tag.clone())
                         .or_default();
-                    if !entry.iter().any(|e| e.t_id == p.t_id) {
+                    if !entry.iter().any(|e| e == p) {
                         entry.push(p.clone());
                     }
                 }

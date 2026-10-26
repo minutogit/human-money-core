@@ -498,7 +498,7 @@ pub enum ValidationError {
     TrapWithoutPrivacyGuard,
 
     /// Payment rejected: transaction carries a trap shard but private SST witness is incomplete.
-    #[error("Payment rejected: transaction carries a trap shard but the private SST witness (trap_r_sig/trap_s_sig/trap_m_r/trap_m_s) is incomplete.")]
+    #[error("Payment rejected: transaction carries a trap shard but the private SST witness or input ownership opening is incomplete.")]
     IncompleteSstWitness,
 
     /// Payment rejected: missing sender_ephemeral_pub for SST witness check.

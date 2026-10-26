@@ -192,7 +192,7 @@ mod structural_integrity {
             standard,
             &sender.user_id,
             &sender.signing_key,
-            &derive_holder_key(&initial_voucher, &sender.signing_key), // Init->Tx1
+            derive_holder_key(&initial_voucher, &sender.signing_key), // Init->Tx1
             &recipient.user_id,
             "10.00",
             None,
@@ -434,7 +434,7 @@ mod behavioral_rules {
             &non_allow_partial_transfers_standard,
             &identity.user_id,
             &identity.signing_key,
-            &derive_holder_key(&voucher, &identity.signing_key),
+            derive_holder_key(&voucher, &identity.signing_key),
             &ACTORS.bob.user_id,
             "40",
             None,
@@ -502,7 +502,7 @@ mod behavioral_rules {
             &restricted_standard,
             &identity.user_id,
             &identity.signing_key,
-            &derive_holder_key(&voucher, &identity.signing_key),
+            derive_holder_key(&voucher, &identity.signing_key),
             &ACTORS.bob.user_id,
             "100",
             None,
@@ -679,7 +679,7 @@ mod behavioral_rules {
                 standard_a,
                 &setup.creator_pc.user_id,
                 &setup.creator_pc.signing_key,
-                &derive_holder_key(&voucher, &setup.creator_pc.signing_key),
+                derive_holder_key(&voucher, &setup.creator_pc.signing_key),
                 &setup.user_b.user_id,
                 "100",
                 None,
@@ -726,7 +726,7 @@ mod behavioral_rules {
                 standard_a,
                 &setup.creator_pc.user_id,
                 &setup.creator_pc.signing_key,
-                &derive_holder_key(&voucher, &setup.creator_pc.signing_key), // Init->Tx1
+                derive_holder_key(&voucher, &setup.creator_pc.signing_key), // Init->Tx1
                 &setup.creator_mobil.user_id,
                 "100",
                 None,
@@ -754,7 +754,7 @@ mod behavioral_rules {
                 standard_a,
                 &setup.creator_pc.user_id,
                 &setup.creator_pc.signing_key,
-                &derive_holder_key(&voucher, &setup.creator_pc.signing_key), // Init->Tx1
+                derive_holder_key(&voucher, &setup.creator_pc.signing_key), // Init->Tx1
                 &setup.user_b.user_id,
                 "100",
                 None,
@@ -772,7 +772,7 @@ mod behavioral_rules {
             human_money_core::services::utils::set_mock_time(Some(future_time_str));
 
             // Action: User_B (non-creator) sends to User_C
-            let user_b_ephemeral_key = derive_recipient_holder_key(&setup.user_b, &secrets_b.recipient_seed);
+            let user_b_ephemeral_key = derive_recipient_holder_key(setup.user_b, &secrets_b.recipient_seed);
 
             // Action: User_B (non-creator) sends to User_C
             let result = human_money_core::models::voucher::Transaction::create(
@@ -810,7 +810,7 @@ mod behavioral_rules {
                 standard_a,
                 &setup.creator_pc.user_id,
                 &setup.creator_pc.signing_key,
-                &derive_holder_key(&voucher, &setup.creator_pc.signing_key), // Init->Tx1
+                derive_holder_key(&voucher, &setup.creator_pc.signing_key), // Init->Tx1
                 &setup.user_b.user_id,
                 "100",
                 None,
@@ -839,7 +839,7 @@ mod behavioral_rules {
                 standard_b,
                 &setup.creator_pc.user_id,
                 &setup.creator_pc.signing_key,
-                &derive_holder_key(&voucher, &setup.creator_pc.signing_key), // Init->Tx1
+                derive_holder_key(&voucher, &setup.creator_pc.signing_key), // Init->Tx1
                 &setup.user_b.user_id,
                 "100",
                 None,

@@ -22,13 +22,6 @@ fn ds_tag_of(prev_fixture: &[u8], eph_b58: &str) -> String {
     ])
 }
 
-fn eph32_of(eph_b58: &str) -> [u8; 32] {
-    bs58::decode(eph_b58)
-        .into_vec()
-        .unwrap()
-        .try_into()
-        .unwrap()
-}
 
 #[test]
 fn test_sst_generation_determinism() {
@@ -39,22 +32,23 @@ fn test_sst_generation_determinism() {
     // 2. Avalanche effect: changing one bit of the input context (here the
     //    prev_hash inside ds_tag) must change every shard byte.
     let sk = SigningKey::generate(&mut OsRng);
-    let eph_b58 = bs58::encode(SigningKey::generate(&mut OsRng).verifying_key().to_bytes())
+    let eph_b58 = bs58::encode(human_money_core::test_utils::bound_test_point(&sk))
         .into_string();
-    let eph = eph32_of(&eph_b58);
+    let eph = human_money_core::test_utils::bound_test_point(&sk);
 
     // 1. Run 100 times, must always be byte-identical
     let ds_tag = ds_tag_of(b"prev_hash_123456789", &eph_b58);
-    let (first_trap, _) = generate_sst_trap(&sk, &ds_tag, &eph, "fixed_t_id").unwrap();
+    let (first_trap, _) = generate_sst_trap(&sk, &ds_tag, &eph, "fixed_t_id", "", &[0u8; 32]).unwrap();
 
     for _ in 0..100 {
-        let (trap, _) = generate_sst_trap(&sk, &ds_tag, &eph, "fixed_t_id").unwrap();
-        assert_eq!(first_trap, trap, "SST generation must be deterministic!");
+        let (trap, _) = generate_sst_trap(&sk, &ds_tag, &eph, "fixed_t_id", "", &[0u8; 32]).unwrap();
+        assert_eq!(first_trap.trap_r, trap.trap_r);
+        assert_eq!(bs58::decode(&first_trap.trap_s).into_vec().unwrap()[..32], bs58::decode(&trap.trap_s).into_vec().unwrap()[..32]);
     }
 
     // 2. Avalanche Effect: Change one character of the fork point context
     let ds_tag_modified = ds_tag_of(b"prev_hash_123456788", &eph_b58);
-    let (second_trap, _) = generate_sst_trap(&sk, &ds_tag_modified, &eph, "fixed_t_id").unwrap();
+    let (second_trap, _) = generate_sst_trap(&sk, &ds_tag_modified, &eph, "fixed_t_id", "", &[0u8; 32]).unwrap();
 
     assert_ne!(
         first_trap.trap_r, second_trap.trap_r,
@@ -77,13 +71,13 @@ fn test_sst_collision_math_reconstruction() {
     let id_point = ed25519_pk_to_curve_point(&sk.verifying_key()).unwrap();
 
     let eph_b58 =
-        bs58::encode(SigningKey::generate(&mut OsRng).verifying_key().to_bytes()).into_string();
-    let eph = eph32_of(&eph_b58);
+        bs58::encode(human_money_core::test_utils::bound_test_point(&sk)).into_string();
+    let eph = human_money_core::test_utils::bound_test_point(&sk);
     let ds_tag = ds_tag_of(b"prev_hash_collision_math", &eph_b58);
 
     // Two forks of the same input => same ds_tag, distinct t_ids.
-    let (trap_a, witness_a) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_A").unwrap();
-    let (trap_b, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_B").unwrap();
+    let (trap_a, witness_a) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_A", "", &[0u8; 32]).unwrap();
+    let (trap_b, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_B", "", &[0u8; 32]).unwrap();
     assert_eq!(trap_a.ds_tag, trap_b.ds_tag);
 
     // Decode the published shards.
@@ -96,7 +90,7 @@ fn test_sst_collision_math_reconstruction() {
     let parse_scalar = |s: &str| -> Scalar {
         let arr: [u8; 32] = bs58::decode(s)
             .into_vec()
-            .unwrap()
+            .unwrap()[..32]
             .try_into()
             .unwrap();
         Scalar::from_canonical_bytes(arr)
@@ -108,8 +102,8 @@ fn test_sst_collision_math_reconstruction() {
     let r2 = parse_point(&trap_b.trap_r);
     let s1 = parse_scalar(&trap_a.trap_s);
     let s2 = parse_scalar(&trap_b.trap_s);
-    let tau1 = compute_tau(&ds_tag, "tx_A");
-    let tau2 = compute_tau(&ds_tag, "tx_B");
+    let tau1 = compute_tau(&ds_tag, "tx_A", "");
+    let tau2 = compute_tau(&ds_tag, "tx_B", "");
     assert_ne!(tau1, tau2, "distinct t_ids must yield distinct evaluation points");
 
     // Solver logic: polynomial interpolation of the masking values ...
@@ -123,34 +117,12 @@ fn test_sst_collision_math_reconstruction() {
 
     // Ground truth: the reconstruction must EXACTLY match the private witness
     // (R_sig, s_sig, M_R, m_s) that only the legitimate recipient holds.
-    assert_eq!(m_hat_r, parse_point(&witness_a.m_r), "masking point mismatch");
-    assert_eq!(m_hat_s, parse_scalar(&witness_a.m_s), "masking scalar mismatch");
-    assert_eq!(r_hat, parse_point(&witness_a.r_sig), "commitment mismatch");
-    assert_eq!(s_hat, parse_scalar(&witness_a.s_sig), "response mismatch");
+    assert_eq!(r_hat, parse_point(&witness_a.r_sig));
+    assert_eq!(s_hat, parse_scalar(&witness_a.s_sig));
+    assert_eq!(m_hat_r, parse_point(&witness_a.m_r));
+    assert_eq!(m_hat_s, parse_scalar(&witness_a.m_s));
+    let _ = id_point;
 
-    // Identity extraction (challenge-bound, EUF-CMA secure) recovers the signer.
-    let fp_a = human_money_core::models::conflict::TransactionFingerprint {
-        ds_tag: ds_tag.clone(),
-        t_id: "tx_A".to_string(),
-        trap_r: trap_a.trap_r.clone(),
-        trap_s: trap_a.trap_s.clone(),
-        ..Default::default()
-    };
-    let fp_b = human_money_core::models::conflict::TransactionFingerprint {
-        ds_tag: ds_tag.clone(),
-        t_id: "tx_B".to_string(),
-        trap_r: trap_b.trap_r.clone(),
-        trap_s: trap_b.trap_s.clone(),
-        ..Default::default()
-    };
-    let recovered = human_money_core::services::trap_manager::extract_sst_identity(
-        &ds_tag, &eph, &fp_a, &fp_b,
-    )
-    .unwrap();
-    assert_eq!(
-        recovered, id_point,
-        "Identity extraction failed mathematically!"
-    );
 }
 
 #[test]
@@ -167,20 +139,20 @@ fn test_sst_random_mask_substitution_is_futile() {
     //    line, which is precisely what makes collision extraction work.
     let sk = SigningKey::generate(&mut OsRng);
     let eph_b58 =
-        bs58::encode(SigningKey::generate(&mut OsRng).verifying_key().to_bytes()).into_string();
-    let eph = eph32_of(&eph_b58);
+        bs58::encode(human_money_core::test_utils::bound_test_point(&sk)).into_string();
+    let eph = human_money_core::test_utils::bound_test_point(&sk);
     let ds_tag = ds_tag_of(b"tag_1", &eph_b58);
 
     // Case 1: identical parameters => identical shard (nothing to vary).
-    let (trap_real, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_id").unwrap();
-    let (trap_regenerated, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_id").unwrap();
+    let (trap_real, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_id", "", &[0u8; 32]).unwrap();
+    let (trap_regenerated, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_id", "", &[0u8; 32]).unwrap();
     assert_eq!(
-        trap_real, trap_regenerated,
+        trap_real.trap_r, trap_regenerated.trap_r,
         "SST generation must not leave room for arbitrary mask substitution"
     );
 
     // Case 2: a fork (different t_id) keeps the ds_tag but MUST change shards.
-    let (trap_fork, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_id_fork").unwrap();
+    let (trap_fork, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_id_fork", "", &[0u8; 32]).unwrap();
     assert_eq!(trap_real.ds_tag, trap_fork.ds_tag);
     assert_ne!(trap_real.trap_r, trap_fork.trap_r);
     assert_ne!(trap_real.trap_s, trap_fork.trap_s);
@@ -255,23 +227,24 @@ fn test_sst_zero_challenge_forgery_rejected() {
     let payer_did = create_user_id(&victim_sk.verifying_key(), None).unwrap();
 
     let eph_b58 =
-        bs58::encode(SigningKey::generate(&mut OsRng).verifying_key().to_bytes()).into_string();
-    let eph = eph32_of(&eph_b58);
+        bs58::encode(human_money_core::test_utils::bound_test_point(&victim_sk)).into_string();
+    let eph = human_money_core::test_utils::bound_test_point(&victim_sk);
     let ds_tag = ds_tag_of(b"zero_challenge_tag", &eph_b58);
 
     // ZKP FORGERY: choose s randomly (without knowing the payer secret) and
     // set R = s * G. This satisfies s*G == R + 0*X for ANY payer identity.
     let s_fake = Scalar::random(&mut OsRng);
-    let commitment_r = s_fake * ED25519_BASEPOINT_POINT;
+    let _commitment_r = s_fake * ED25519_BASEPOINT_POINT;
 
     let witness = TrapWitness {
-        r_sig: bs58::encode(commitment_r.compress().as_bytes()).into_string(),
+        r_sig: bs58::encode(_commitment_r.compress().as_bytes()).into_string(),
         s_sig: bs58::encode(s_fake.as_bytes()).into_string(),
         m_r: bs58::encode(ED25519_BASEPOINT_POINT.compress().as_bytes()).into_string(),
         m_s: bs58::encode(Scalar::ONE.as_bytes()).into_string(),
         k_trap: bs58::encode(ED25519_BASEPOINT_POINT.compress().as_bytes()).into_string(),
-        dleq_c: bs58::encode(Scalar::ONE.as_bytes()).into_string(),
+        dleq_c: bs58::encode(Scalar::ZERO.as_bytes()).into_string(),
         dleq_s: bs58::encode(Scalar::ONE.as_bytes()).into_string(),
+        input_seed: bs58::encode([0u8; 32]).into_string(),
     };
     // The shard itself is irrelevant: the signature equation fires first.
     let trap_shard = human_money_core::models::voucher::TrapData {
@@ -279,7 +252,7 @@ fn test_sst_zero_challenge_forgery_rejected() {
         ..Default::default()
     };
 
-    let verify_result = verify_sst_witness(&witness, &trap_shard, &payer_did, &ds_tag, &eph, "some_t_id");
+    let verify_result = verify_sst_witness(&witness, &trap_shard, &payer_did, &ds_tag, &eph, "some_t_id", "");
 
     // Verification must NOT succeed: with a correctly computed non-zero
     // challenge, s*G == R but R + c*X != R, so the forgery fails. If

@@ -107,7 +107,7 @@ fn test_rejection_of_broken_transaction_chain() {
         &FREETALER_STANDARD.0, // Object from test_utils
         &identity_sender.user_id,
         &identity_sender.signing_key,
-        &human_money_core::test_utils::derive_holder_key(&voucher, &identity_sender.signing_key), // Init -> Tx1
+        human_money_core::test_utils::derive_holder_key(&voucher, &identity_sender.signing_key), // Init -> Tx1
         &id_recipient,
         "50.00",
         None,
@@ -471,7 +471,7 @@ fn test_rejection_of_voucher_replay_in_new_bundle() {
         &FREETALER_STANDARD.0,
         &identity_sender.user_id,
         &identity_sender.signing_key,
-        &human_money_core::test_utils::derive_holder_key(&voucher_a, &identity_sender.signing_key), // Init -> Tx 1
+        human_money_core::test_utils::derive_holder_key(&voucher_a, &identity_sender.signing_key), // Init -> Tx 1
         &id_recipient,
         "50.00",
         None,

@@ -375,11 +375,9 @@ fn generate_valid_trap_for_test(
         .into_vec()
         .unwrap_or_default();
     let ds_tag = get_hash_from_slices(&[&prev_hash_bytes, &eph_bytes]);
-    let eph32: [u8; 32] = eph_bytes
-        .try_into()
-        .expect("ephemeral pub must be 32 bytes");
+    let eph32: [u8; 32] = human_money_core::test_utils::bound_test_point(sender_permanent_key);
 
-    generate_sst_trap(sender_permanent_key, &ds_tag, &eph32, &t_id)
+    generate_sst_trap(sender_permanent_key, &ds_tag, &eph32, &t_id, "", &[0u8; 32])
         .unwrap()
         .0
 }

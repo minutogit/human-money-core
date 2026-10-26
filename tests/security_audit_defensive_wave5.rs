@@ -151,10 +151,9 @@ fn wave5_foreign_equivocation_same_tid_divergent_shards_both_stored_and_detected
         let mut sk_bytes = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut sk_bytes);
         let sk = ed25519_dalek::SigningKey::from_bytes(&sk_bytes);
-        let mut eph = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut eph);
+        let eph = human_money_core::test_utils::bound_test_point(&sk);
         let td = format!("equiv-a-{}", &t_id_shared[..8]);
-        let (trap, _) = generate_sst_trap(&sk, &ds_tag, &eph, &td).unwrap();
+        let (trap, _) = generate_sst_trap(&sk, &ds_tag, &eph, &td, "", &[0u8; 32]).unwrap();
         trap
     };
     // For second shard use different eph-derived trap (guaranteed divergent)
@@ -162,10 +161,9 @@ fn wave5_foreign_equivocation_same_tid_divergent_shards_both_stored_and_detected
         let mut sk_bytes = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut sk_bytes);
         let sk = ed25519_dalek::SigningKey::from_bytes(&sk_bytes);
-        let mut eph = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut eph);
+        let eph = human_money_core::test_utils::bound_test_point(&sk);
         let td = format!("equiv-b-{}", &t_id_shared[..8]);
-        let (trap, _) = generate_sst_trap(&sk, &ds_tag, &eph, &td).unwrap();
+        let (trap, _) = generate_sst_trap(&sk, &ds_tag, &eph, &td, "", &[0u8; 32]).unwrap();
         trap
     };
     assert_ne!(trap_a.trap_r, trap_b.trap_r, "shards must diverge for equivocation");
@@ -240,9 +238,8 @@ fn wave5_foreign_bucket_cap_150_is_enforced() {
         let mut sk_bytes = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut sk_bytes);
         let sk = ed25519_dalek::SigningKey::from_bytes(&sk_bytes);
-        let mut eph = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut eph);
-        let (trap, _) = generate_sst_trap(&sk, &ds_tag, &eph, &t_id).unwrap();
+        let eph = human_money_core::test_utils::bound_test_point(&sk);
+        let (trap, _) = generate_sst_trap(&sk, &ds_tag, &eph, &t_id, "", &[0u8; 32]).unwrap();
         let fp = build_signed_fingerprint(&ds_tag, &t_id, &eph_sk, &eph_pub_b58, trap.trap_r, trap.trap_s);
         assert!(conflict_manager::verify_fingerprint_signature(&fp));
         fps.push(fp);

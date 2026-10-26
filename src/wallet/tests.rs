@@ -288,7 +288,7 @@ mod internal_logic {
         // canonical scalar under the same ds_tag/ephemeral key).
         let offender_sk = ed25519_dalek::SigningKey::from_bytes(&[42u8; 32]);
         let prev_hash_b58 = random_b58_32();
-        let eph_b58 = random_b58_32();
+        let eph_b58 = bs58::encode(crate::test_utils::bound_test_point(&offender_sk)).into_string();
         let ds_tag = {
             let prev = bs58::decode(&prev_hash_b58).into_vec().unwrap();
             let eph = bs58::decode(&eph_b58).into_vec().unwrap();
@@ -298,8 +298,8 @@ mod internal_logic {
 
         let t_a = random_b58_32();
         let t_b = random_b58_32();
-        let (trap_a, _) = trap_manager::generate_sst_trap(&offender_sk, &ds_tag, &eph_bytes, &t_a).unwrap();
-        let (trap_b, _) = trap_manager::generate_sst_trap(&offender_sk, &ds_tag, &eph_bytes, &t_b).unwrap();
+        let (trap_a, _) = trap_manager::generate_sst_trap(&offender_sk, &ds_tag, &eph_bytes, &t_a, "", &[0u8; 32]).unwrap();
+        let (trap_b, _) = trap_manager::generate_sst_trap(&offender_sk, &ds_tag, &eph_bytes, &t_b, "", &[0u8; 32]).unwrap();
 
         let mut junk_r = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut junk_r);
@@ -321,7 +321,15 @@ mod internal_logic {
             deletable_at: "2099-01-01T00:00:00Z".to_string(),
             ..Default::default()
         };
-        let fps = [mk_fp(t_a, &trap_a), mk_fp(t_b, &trap_b), mk_fp(t_c, &junk_trap)];
+        let mut fps = [mk_fp(t_a, &trap_a), mk_fp(t_b, &trap_b), mk_fp(t_c, &junk_trap)];
+        let input = crate::test_utils::bound_test_key(&offender_sk);
+        for fp in &mut fps {
+            fp.layer2_voucher_id = "none".into();
+            let id = crate::services::crypto::decode_bs58_fixed::<32>(&fp.t_id, "t_id").unwrap();
+            let digest = crate::services::l2_gateway::calculate_l2_payload_hash_raw("none", &fp.ds_tag, &id,
+                &eph_bytes, &fp.trap_r, &fp.trap_s, 0, 0, None, "");
+            fp.layer2_signature = bs58::encode(input.sign(&digest).to_bytes()).into_string();
+        }
 
         let mut known = KnownFingerprints::default();
         known
@@ -356,6 +364,7 @@ mod internal_logic {
                 .verify_and_create_proof(&identity.identity, bucket, None)
                 .expect("attribution must not error")
                 .expect("soft proof must be created");
+            assert_eq!(proof.suspected_identity.as_deref(), Some(expected_did.as_str()));
             observed.push(proof.offender_id);
         }
         observed.dedup();
@@ -366,7 +375,7 @@ mod internal_logic {
              function of the evidence set, got variants: {observed:?}"
         );
         assert_eq!(
-            observed[0], expected_did,
+            observed[0], format!("ephemeral:{}", eph_b58),
             "the deterministic outcome must be the genuine SST attribution"
         );
     }
@@ -475,4 +484,41 @@ mod internal_logic {
         // Oldest two (tid_00, tid_01) must have been removed
         assert_eq!(remaining[0].t_id, expected_kept_first_tid);
     }
+}
+
+#[test]
+fn sst_guard_equivocation_with_same_id_survives_proof_creation_and_import() {
+    use crate::services::{crypto, trap_manager, conflict_manager};
+    use crate::models::voucher::Transaction;
+    let owner = &ACTORS.bob.identity;
+    let reporter = &ACTORS.alice.identity;
+    let seed = [13; 32];
+    let input = crypto::derive_owned_ephemeral_key(&owner.signing_key, &seed).unwrap();
+    let eph = input.verifying_key().to_bytes();
+    let id = crypto::get_hash(b"same transaction ID");
+    let tag = crypto::get_hash(b"collision");
+    let mut txs: Vec<Transaction> = ["guard A", "guard B"].into_iter().map(|guard| {
+        let guard_hash = crate::services::l2_gateway::privacy_guard_commitment(Some(guard));
+        let (trap, _) = trap_manager::generate_sst_trap(&owner.signing_key, &tag, &eph, &id, &guard_hash, &seed).unwrap();
+        Transaction { t_id: id.clone(), prev_hash: tag.clone(), t_type: "gossip_soft_placeholder".into(),
+            sender_ephemeral_pub: Some(bs58::encode(eph).into_string()), trap_data: Some(trap),
+            privacy_guard: Some(guard.into()), ..Default::default() }
+    }).collect();
+    let fps = crate::test_utils::sign_proof_fingerprints(&mut txs, &input);
+    let source = setup_in_memory_wallet(reporter);
+    let mut proof = source.verify_and_create_proof(reporter, &fps, None).unwrap().unwrap();
+    assert_eq!(proof.conflicting_transactions.len(), 2);
+    assert_eq!(proof.fingerprints, fps);
+    conflict_manager::verify_proof_structure(&proof).unwrap();
+    assert_eq!(proof.offender_id, format!("ephemeral:{}", bs58::encode(eph).into_string()));
+    crate::test_utils::disclose_proof_receipt(&mut proof, owner, &seed, 0);
+    proof.offender_id = owner.user_id.clone();
+    proof.suspected_identity = Some(owner.user_id.clone());
+    proof.proof_id = conflict_manager::derive_proof_id(&proof.offender_id, &proof.fork_point_prev_hash).unwrap();
+    proof.reporter_signature = bs58::encode(crypto::sign_ed25519(&reporter.signing_key, proof.proof_id.as_bytes()).to_bytes()).into_string();
+    let pk = crypto::get_pubkey_from_user_id(&proof.offender_id).unwrap();
+    assert_eq!(pk, owner.public_key);
+    let mut destination = setup_in_memory_wallet(&ACTORS.charlie.identity);
+    destination.import_proof(proof).unwrap();
+    assert_eq!(destination.proof_store.proofs.len(), 1);
 }

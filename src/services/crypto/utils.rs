@@ -156,7 +156,7 @@ pub fn ed25519_pk_to_curve_point(ed_pub: &EdPublicKey) -> Result<EdwardsPoint, V
 /// # Returns
 ///
 /// The signature.
-pub fn sign_ed25519(signing_key: &SigningKey, message: &[u8]) -> Signature {
+pub fn sign_ed25519(signing_key: &(impl Signer<Signature> + ?Sized), message: &[u8]) -> Signature {
     signing_key.sign(message)
 }
 
@@ -178,8 +178,8 @@ pub fn sign_ed25519_scalar(
     let p_bytes = public_point.compress().to_bytes();
 
     let mut hasher = Sha512::new();
-    hasher.update(&r_bytes);
-    hasher.update(&p_bytes);
+    hasher.update(r_bytes);
+    hasher.update(p_bytes);
     hasher.update(message);
     let k = Scalar::from_hash(hasher);
 

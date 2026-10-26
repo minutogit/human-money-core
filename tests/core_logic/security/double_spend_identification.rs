@@ -9,21 +9,14 @@ use human_money_core::test_utils::{ACTORS, TestUser};
 // as collision context for autonomous identity extraction.
 fn setup_trap_data(prev_hash: &str, sender: &TestUser, t_id: &str) -> (TrapData, [u8; 32]) {
     // 1. Calculate Constant DS-Tag (Input based)
-    let (_ephemeral_secret, ephemeral_pub) = crypto::derive_ephemeral_key_pair(
-        &sender.signing_key,
-        prev_hash.as_bytes(),
-        "test_ephemeral_gen",
-        None,
-    )
-    .unwrap();
-    let eph32: [u8; 32] = *ephemeral_pub.as_bytes();
+    let eph32 = human_money_core::test_utils::bound_test_point(&sender.signing_key);
 
     let ds_tag = crypto::get_hash_from_slices(&[prev_hash.as_bytes(), &eph32]);
 
     // 2. Generate the SST shard pair for this fork. The shards are bound to
     //    tau(t_id), so distinct forks of the same input yield distinct shards
     //    on one shared-signature line.
-    let (trap, _) = generate_sst_trap(&sender.signing_key, &ds_tag, &eph32, t_id).unwrap();
+    let (trap, _) = generate_sst_trap(&sender.signing_key, &ds_tag, &eph32, t_id, "", &[0u8; 32]).unwrap();
     (trap, eph32)
 }
 

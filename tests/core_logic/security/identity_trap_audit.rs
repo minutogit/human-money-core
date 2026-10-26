@@ -108,27 +108,10 @@ fn test_fabricated_shards_do_not_reveal_or_frame_identity() {
         ..Default::default()
     };
 
-    // Assertions
-    // 1. Reconstruction of garbage shards yields SOME point (garbage in,
-    //    garbage out) — extraction itself is total on well-formed input.
-    let recovered = extract_sst_identity(&ds_tag, &eph, &fp1, &fp2).unwrap();
+    assert!(extract_sst_identity(&ds_tag, &eph, &fp1, &fp2).is_err(),
+        "fabricated evidence must fail closed before any identity attribution");
+    let _ = (attacker_id_point, victim_id_point);
 
-    // 2. But it is mathematically bound to NOTHING the attacker chose:
-    //    neither the attacker's own identity ...
-    assert_ne!(
-        recovered, attacker_id_point,
-        "Fabricated shards must not reconstruct to the fabricator's chosen identity"
-    );
-    // ... nor the framed victim (anti-framing, AUDIT-01-F07).
-    assert_ne!(
-        recovered, victim_id_point,
-        "Fabricated shards must not be steerable to a chosen victim identity"
-    );
-
-    // 3. The extracted point is mathematically garbage (not a real actor key).
-    let victim_compressed = victim_id_point.compress().to_bytes();
-    let recovered_compressed = recovered.compress().to_bytes();
-    assert_ne!(victim_compressed, recovered_compressed);
 }
 
 /// Test 2: test_honest_double_spend_identity_always_recovered
@@ -144,10 +127,11 @@ fn test_honest_double_spend_identity_always_recovered() {
     // Same prev_hash (Double-Spend condition), two distinct fork t_ids.
     let prev_hash = "prev_hash_test_2";
     let ephem_pub_bytes = *b"ephem_pub_test_2_32_bytes_long____";
-    let (ds_tag, eph) = sst_context(prev_hash, &ephem_pub_bytes);
+    let (ds_tag, _) = sst_context(prev_hash, &ephem_pub_bytes);
+    let eph = human_money_core::test_utils::bound_test_point(&sk);
 
-    let (trap1, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_A").unwrap();
-    let (trap2, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_B").unwrap();
+    let (trap1, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_A", "", &[0u8; 32]).unwrap();
+    let (trap2, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_B", "", &[0u8; 32]).unwrap();
 
     // Assertions
     // 1. Generation is deterministic and fork-distinct at the same time.
@@ -181,10 +165,11 @@ fn test_trap_replay_rejected_by_shard_mismatch() {
 
     let prev_hash = "prev_hash_test_3";
     let ephem_pub_bytes = *b"ephem_pub_test_3_32_bytes_long____";
-    let (ds_tag, eph) = sst_context(prev_hash, &ephem_pub_bytes);
+    let (ds_tag, _) = sst_context(prev_hash, &ephem_pub_bytes);
+    let eph = human_money_core::test_utils::bound_test_point(&sk);
 
     // Create valid TrapData + witness for Tx_A.
-    let (trap_a, witness_a) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_A").unwrap();
+    let (trap_a, witness_a) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_A", "", &[0u8; 32]).unwrap();
     let payer_did = create_user_id(&sk.verifying_key(), None).unwrap();
 
     // Tx_B reuses the copied shard under a different transaction id.
@@ -193,7 +178,7 @@ fn test_trap_replay_rejected_by_shard_mismatch() {
     // Assertions
     // 1. The L1 witness check rejects the replayed shard: tau(tx_B) differs,
     //    so the shard cannot lie on the witness line for THIS spend.
-    let result = verify_sst_witness(&witness_a, &trap_a, &payer_did, &ds_tag, &eph, t_id_b);
+    let result = verify_sst_witness(&witness_a, &trap_a, &payer_did, &ds_tag, &eph, t_id_b, "");
     assert!(result.is_err(), "Replayed trap must fail the witness check");
     let err_msg = result.err().unwrap().to_string();
     assert!(
@@ -223,9 +208,10 @@ fn test_forged_witness_without_key_knowledge_rejected() {
 
     let prev_hash = "prev_hash_test_4";
     let ephem_pub_bytes = *b"ephem_pub_test_4_32_bytes_long____";
-    let (ds_tag, eph) = sst_context(prev_hash, &ephem_pub_bytes);
+    let (ds_tag, _) = sst_context(prev_hash, &ephem_pub_bytes);
+    let eph = human_money_core::test_utils::bound_test_point(&sk);
 
-    let honest_trap = generate_sst_trap(&sk, &ds_tag, &eph, "honest_t_id").unwrap().0;
+    let honest_trap = generate_sst_trap(&sk, &ds_tag, &eph, "honest_t_id", "", &[0u8; 32]).unwrap().0;
 
     // Attacker tries to forge a witness over 1000 random attempts
     for _ in 0..1000 {
@@ -245,6 +231,7 @@ fn test_forged_witness_without_key_knowledge_rejected() {
             k_trap: bs58::encode(k_fake.compress().as_bytes()).into_string(),
             dleq_c: bs58::encode(dleq_c_fake.as_bytes()).into_string(),
             dleq_s: bs58::encode(dleq_s_fake.as_bytes()).into_string(),
+            input_seed: bs58::encode([0u8; 32]).into_string(),
         };
 
         // Assertions
@@ -252,7 +239,7 @@ fn test_forged_witness_without_key_knowledge_rejected() {
         //    without the payer secret).
         let verify_result = verify_sst_witness(
             &fake_witness, &honest_trap, &payer_did, &ds_tag, &eph, "honest_t_id",
-        );
+         "",);
         assert!(verify_result.is_err());
         let err_msg = verify_result.err().unwrap().to_string();
         assert!(
@@ -306,16 +293,16 @@ fn test_scalar_malleability_no_bypass() {
     let sk = SigningKey::generate(&mut OsRng);
     let prev_hash = "prev_hash_test_6";
     let ephem_pub_bytes = *b"ephem_pub_test_6_32_bytes_long____";
-    let (ds_tag, eph) = sst_context(prev_hash, &ephem_pub_bytes);
+    let (ds_tag, _) = sst_context(prev_hash, &ephem_pub_bytes);
+    let eph = human_money_core::test_utils::bound_test_point(&sk);
 
     // Generate an honest shard pair over two distinct forks.
-    let (trap1, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_one").unwrap();
-    let (trap2, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_two").unwrap();
+    let (trap1, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_one", "", &[0u8; 32]).unwrap();
+    let (trap2, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_two", "", &[0u8; 32]).unwrap();
 
     let s2_bytes: [u8; 32] = bs58::decode(&trap2.trap_s)
         .into_vec()
-        .unwrap()
-        .try_into()
+        .unwrap()[..32].try_into()
         .unwrap();
 
     // Modify the serialized s value by adding the curve order l
@@ -369,9 +356,10 @@ fn test_degenerate_and_invalid_extraction_handling() {
     let sk = SigningKey::generate(&mut OsRng);
     let prev_hash = "prev_hash_test_7";
     let ephem_pub_bytes = *b"ephem_pub_test_7_32_bytes_long____";
-    let (ds_tag, eph) = sst_context(prev_hash, &ephem_pub_bytes);
+    let (ds_tag, _) = sst_context(prev_hash, &ephem_pub_bytes);
+    let eph = human_money_core::test_utils::bound_test_point(&sk);
 
-    let (trap1, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_A").unwrap();
+    let (trap1, _) = generate_sst_trap(&sk, &ds_tag, &eph, "tx_A", "", &[0u8; 32]).unwrap();
 
     // AUDIT-01-F09 (V3 analogue of byte-identical blinded IDs): a second
     // fingerprint carrying the SAME shard values under a different t_id is a
@@ -393,7 +381,7 @@ fn test_degenerate_and_invalid_extraction_handling() {
 
     // Downstream validity handling (unchanged wallet-side logic):
     // 1. A returned EdwardsPoint can always be compressed.
-    let genuine_pair_trap2 = generate_sst_trap(&sk, &ds_tag, &eph, "tx_C").unwrap().0;
+    let genuine_pair_trap2 = generate_sst_trap(&sk, &ds_tag, &eph, "tx_C", "", &[0u8; 32]).unwrap().0;
     let fp_c = make_fp("tx_C", &genuine_pair_trap2);
     let recovered_point = extract_sst_identity(&ds_tag, &eph, &fp1, &fp_c).unwrap();
     let compressed_y = recovered_point.compress();
@@ -492,7 +480,7 @@ fn test_manipulated_shard_rejected_by_recipient_witness_check() {
         &eph,
         // Different t_id => different tau => shards off the honest line.
         "manipulated_evaluation_point",
-    ).unwrap();
+     "", &holder_key.input_seed().unwrap(),).unwrap();
     last_tx.trap_data = Some(fake_trap.clone());
 
     // Re-bind ONLY the layer2 digest to the manipulated shards (the attacker

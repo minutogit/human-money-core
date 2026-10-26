@@ -23,6 +23,8 @@ fn create_mock_proof(offender_id: &str) -> ProofOfDoubleSpend {
     let signature = crypto::sign_ed25519(&reporter.signing_key, proof_id.as_bytes());
 
     ProofOfDoubleSpend {
+        fingerprints: Vec::new(),
+        victim_witnesses: Vec::new(),
         proof_id,
         offender_id: offender_id.to_string(),
         suspected_identity: None,

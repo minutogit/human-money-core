@@ -393,54 +393,20 @@ pub fn verify_transactions(
         }
 
         if let Some(revealed_pub) = &tx.sender_ephemeral_pub {
-            let correct_anchor = if prev_tx.recipient_id == tx.sender_id.clone().unwrap_or_default()
-            {
-                let pub_bytes = crate::services::crypto::decode_bs58_fixed::<32>(
-                    revealed_pub, "revealed_pub",
-                )?;
-                let hash_pub = get_hash(pub_bytes);
-                if let Some(prev_recv_hash) = &prev_tx.receiver_ephemeral_pub_hash {
-                    if hash_pub == *prev_recv_hash {
-                        Some(prev_recv_hash)
-                    } else if let Some(prev_change_hash) = &prev_tx.change_ephemeral_pub_hash {
-                        if hash_pub == *prev_change_hash {
-                            Some(prev_change_hash)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                if Some(prev_tx.recipient_id.clone()) == tx.sender_id {
-                    prev_tx.receiver_ephemeral_pub_hash.as_ref()
-                } else if tx.sender_id.is_some() && tx.sender_id == prev_tx.sender_id {
-                    prev_tx.change_ephemeral_pub_hash.as_ref()
-                } else {
-                    let pub_bytes = crate::services::crypto::decode_bs58_fixed::<32>(
-                        revealed_pub, "revealed_pub",
-                    )?;
-                    let hash_pub = get_hash(pub_bytes);
-                    if let Some(prev_recv_hash) = &prev_tx.receiver_ephemeral_pub_hash {
-                        if hash_pub == *prev_recv_hash {
-                            Some(prev_recv_hash)
-                        } else if let Some(prev_change_hash) = &prev_tx.change_ephemeral_pub_hash {
-                            if hash_pub == *prev_change_hash {
-                                Some(prev_change_hash)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
+            let pub_bytes = crate::services::crypto::decode_bs58_fixed::<32>(revealed_pub, "revealed_pub")?;
+            let hash_pub = get_hash(pub_bytes);
+            let (correct_anchor, owner) = if prev_tx.receiver_ephemeral_pub_hash.as_ref() == Some(&hash_pub) {
+                (prev_tx.receiver_ephemeral_pub_hash.as_ref(), Some(prev_tx.recipient_id.as_str()))
+            } else if prev_tx.change_ephemeral_pub_hash.as_ref() == Some(&hash_pub) {
+                (prev_tx.change_ephemeral_pub_hash.as_ref(), prev_tx.sender_id.as_deref())
+            } else { (None, None) };
+            if let (Some(owner), Some(sender)) = (owner, tx.sender_id.as_deref()) {
+                if let Ok(owner_pk) = crate::services::crypto::get_pubkey_from_user_id(owner) {
+                    if owner_pk != crate::services::crypto::get_pubkey_from_user_id(sender)? {
+                        return Err(ValidationError::InvalidTransaction("Public sender differs from the spent output owner".into()).into());
                     }
                 }
-            };
+            }
 
             if correct_anchor.is_none() {
                 return Err(ValidationError::InvalidTransaction(

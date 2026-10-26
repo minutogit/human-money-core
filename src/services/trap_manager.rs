@@ -1,38 +1,21 @@
-//! # src/services/trap_manager.rs
+//! Compact V4 shared-signature traps and victim witness disclosure.
 //!
-//! Implements the cryptographic engine of the **Shared-Signature Trap (SST)**
-//! — the V3 identity-trap protocol (`HMC_TX_AUTH_V3`) of human_money_core.
+//! Honest spends share one Schnorr signature over mu = H(domain, ds_tag, E).
+//! The private nonce is H(domain, x, mu), never a hash of the disclosed VRF
+//! point K_trap. Both masks derive from (R_sig, s_sig, mu), so reconstructed
+//! lines can be checked without a private witness. Single-shard anonymity is
+//! computational; deterministic hash-derived masks are not perfect hiding.
 //!
-//! # Concepts (V3 / SST)
-//! - **Shared Schnorr signature:** every spend publishes a *shard*
-//!   $(R_i, s_i)$ of one deterministic Schnorr signature
-//!   $\sigma = (R_{sig}, s_{sig})$ over the spend input message $\mu$:
-//!   $$R_i = R_{sig} + \tau_i \cdot M_R \qquad s_i = s_{sig} + \tau_i \cdot m_s$$
-//! - **Information-theoretic anonymity:** a single shard hides the signer
-//!   behind four unknowns ($R_{sig}, s_{sig}, M_R, m_s$); no registry mining
-//!   ("P-pre") can link it to an identity.
-//! - **Autonomous deanonymization:** two colliding shards (same `ds_tag`)
-//!   linearly reconstruct $(\hat{R}, \hat{s})$; the challenge $c$ binds them to
-//!   exactly one public key $\hat{X}$. Extracting any identity other than the
-//!   true signer's key would constitute an EUF-CMA forgery against
-//!   Schnorr/Ed25519 — framing innocent third parties is computationally
-//!   infeasible (remediation AUDIT-01-F07).
-//! - **L1 fraud prevention (R5):** the private witness
-//!   $W = (R_{sig}, s_{sig}, M_R, m_s)$ travels in the encrypted
-//!   `RecipientPayload`, letting the recipient verify the trap at handover and
-//!   reject garbage/forged traps immediately.
+//! All outputs bind E = X + H(domain, seed, X)G to their owner. The opening
+//! seed stays inside the encrypted recipient guard during normal transfers.
+//! Public shards remain one point and one scalar (64 bytes).
 //!
-//! # Message binding ($\mu$)
-//! $\mu = H(\text{"HMC\_TRAP\_SIG\_V1"} \parallel ds\_tag \parallel E)$ where
-//! `E` is the revealed ephemeral key of the spender.
-//!
-//! The raw fork point `prev_hash` is deliberately NOT mixed into $\mu$: it is
-//! already cryptographically committed via
-//! `ds_tag = H(prev_hash \parallel E)` (second-preimage resistance), and —
-//! crucially — `prev_hash` is NOT part of a gossip fingerprint. Deriving
-//! $\mu$ from fingerprint data alone (`ds_tag`, `E`) is what enables ANY
-//! gossip recipient to perform the autonomous, single-round identity
-//! extraction without requesting heavy transaction chains.
+//! A malformed historical shard or a malicious signer's fresh nonce can make
+//! autonomous signature reconstruction fail. A direct victim can still prove
+//! the owner with its checked handover witness plus two conflicting E-signed
+//! fingerprints. Only that authenticated conflict permits witness disclosure
+//! and definitive DID attribution. Bare gossip yields an ephemeral offender
+//! and, if reconstruction succeeds, an advisory identity candidate.
 
 use crate::error::VoucherCoreError;
 use crate::models::conflict::TransactionFingerprint;
@@ -49,31 +32,31 @@ use crate::services::crypto::{
 };
 
 //==============================================================================
-// DOMAIN SEPARATION TAGS (V3 / SST)
+// DOMAIN SEPARATION TAGS (V4 / SST)
 //==============================================================================
 
 /// Domain tag binding the trap message $\mu$ to the spend input.
-pub const SST_DOMAIN_SIG_MSG: &[u8] = b"HMC_TRAP_SIG_V1";
+pub const SST_DOMAIN_SIG_MSG: &[u8] = b"HMC_TRAP_SIG_V4";
 /// Domain tag for the deterministic Schnorr nonce derivation.
-pub const SST_DOMAIN_NONCE: &[u8] = b"HMC_TRAP_NONCE_V1";
+pub const SST_DOMAIN_NONCE: &[u8] = b"HMC_TRAP_NONCE_V4";
 /// Domain tag for the Schnorr challenge hash.
-pub const SST_DOMAIN_CHALLENGE: &[u8] = b"HMC_TRAP_CHAL_V1";
+pub const SST_DOMAIN_CHALLENGE: &[u8] = b"HMC_TRAP_CHAL_V4";
 /// Domain tag for the masking point $M_R$ derivation.
-pub const SST_DOMAIN_MASK_R: &[u8] = b"HMC_MASK_R_V1";
+pub const SST_DOMAIN_MASK_R: &[u8] = b"HMC_MASK_R_V4";
 /// Domain tag for the masking scalar $m_s$ derivation.
-pub const SST_DOMAIN_MASK_S: &[u8] = b"HMC_MASK_S_V1";
+pub const SST_DOMAIN_MASK_S: &[u8] = b"HMC_MASK_S_V4";
 /// Domain tag for the spend-specific shard evaluation point $\tau_i$.
-pub const SST_DOMAIN_TAU: &[u8] = b"HMC_TAU_V1";
+pub const SST_DOMAIN_TAU: &[u8] = b"HMC_TAU_V4";
 /// Domain tag for VRF generator point H_mu derivation.
-pub const SST_DOMAIN_VRF_BASE: &[u8] = b"HMC_SST_VRF_BASE_V1";
+pub const SST_DOMAIN_VRF_BASE: &[u8] = b"HMC_SST_VRF_BASE_V4";
 /// Domain tag for deterministic DLEQ nonce derivation.
-pub const SST_DOMAIN_DLEQ_NONCE: &[u8] = b"HMC_SST_DLEQ_NONCE_V1";
+pub const SST_DOMAIN_DLEQ_NONCE: &[u8] = b"HMC_SST_DLEQ_NONCE_V4";
 /// Domain tag for Chaum-Pedersen DLEQ challenge hash.
-pub const SST_DOMAIN_DLEQ_CHAL: &[u8] = b"HMC_SST_DLEQ_CHAL_V1";
+pub const SST_DOMAIN_DLEQ_CHAL: &[u8] = b"HMC_SST_DLEQ_CHAL_V4";
 /// Domain tag for stealth key blinding scalar derivation.
-pub const SST_DOMAIN_STEALTH_BLIND: &[u8] = b"HMC_STEALTH_BLIND_V1";
+pub const SST_DOMAIN_STEALTH_BLIND: &[u8] = b"HMC_STEALTH_BLIND_V4";
 /// Domain tag for stealth key Ed25519 signing nonce derivation.
-pub const SST_DOMAIN_STEALTH_NONCE: &[u8] = b"HMC_STEALTH_NONCE_V1";
+pub const SST_DOMAIN_STEALTH_NONCE: &[u8] = b"HMC_STEALTH_NONCE_V4";
 
 /// Canonical marker for absent trap components (genesis transactions).
 pub const SST_NONE_PLACEHOLDER: &str = "none";
@@ -110,7 +93,7 @@ pub fn sst_scalar(tag: &[u8], parts: &[&[u8]]) -> Scalar {
 
 /// Computes the SST trap message $\mu$ that binds the shared signature to the
 /// spend input:
-/// $\mu = H(\text{"HMC\_TRAP\_SIG\_V1"} \parallel ds\_tag \parallel E)$.
+/// $\mu = H(\text{"HMC\_TRAP\_SIG\_V4"} \parallel ds\_tag \parallel E)$.
 ///
 /// All segments are length-prefixed. See the module docs for why the raw
 /// `prev_hash` is intentionally not part of $\mu$ (it is committed by
@@ -128,18 +111,17 @@ pub fn compute_trap_message_mu(ds_tag: &str, eph_pub: &[u8; 32]) -> [u8; 32] {
     ])
 }
 
-/// Computes the spend-specific shard evaluation point
-/// $\tau_i = H(\text{"HMC\_TAU\_V1"} \parallel ds\_tag \parallel t\_id_i) \bmod q$.
-///
-/// Distinct transactions spending the same input (distinct `t_id`)
-/// necessarily get distinct evaluation points, which is what makes collision
-/// reconstruction work.
-pub fn compute_tau(ds_tag: &str, t_id: &str) -> Scalar {
-    sst_scalar(SST_DOMAIN_TAU, &[ds_tag.as_bytes(), t_id.as_bytes()])
+/// Derives tau from the input, transaction ID, and authenticated guard hash.
+/// Different guards yield different evaluations even when the ID is reused.
+pub fn compute_tau(ds_tag: &str, t_id: &str, guard_hash: &str) -> Scalar {
+    sst_scalar(
+        SST_DOMAIN_TAU,
+        &[ds_tag.as_bytes(), t_id.as_bytes(), guard_hash.as_bytes()],
+    )
 }
 
 /// Computes the Schnorr challenge
-/// $c = H(\text{"HMC\_TRAP\_CHAL\_V1"} \parallel \mu \parallel R) \bmod q$.
+/// $c = H(\text{"HMC\_TRAP\_CHAL\_V4"} \parallel \mu \parallel R) \bmod q$.
 fn sst_challenge(mu: &[u8; 32], commitment_r: &EdwardsPoint) -> Scalar {
     sst_scalar(
         SST_DOMAIN_CHALLENGE,
@@ -164,34 +146,50 @@ pub fn compute_sst_challenge(mu: &[u8; 32], commitment_r: &EdwardsPoint) -> Scal
 /// This helper rejects any encoding that is not the canonical
 /// little-endian representation of a scalar below the group order.
 fn parse_canonical_scalar(bytes: &[u8], label: &str) -> Result<Scalar, VoucherCoreError> {
-    let arr: [u8; 32] = bytes.try_into().map_err(|_| {
-        VoucherCoreError::Crypto(format!("Invalid Scalar {} length", label))
-    })?;
-    Scalar::from_canonical_bytes(arr).into_option().ok_or_else(|| {
-        VoucherCoreError::Crypto(format!(
-            "Non-canonical scalar encoding for {} rejected",
-            label
-        ))
-    })
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| VoucherCoreError::Crypto(format!("Invalid Scalar {} length", label)))?;
+    Scalar::from_canonical_bytes(arr)
+        .into_option()
+        .ok_or_else(|| {
+            VoucherCoreError::Crypto(format!(
+                "Non-canonical scalar encoding for {} rejected",
+                label
+            ))
+        })
 }
 
 /// Decompresses a Base58-encoded Edwards point, rejecting malformed input.
 fn parse_point_bs58(encoded: &str, label: &str) -> Result<EdwardsPoint, VoucherCoreError> {
-    let bytes = bs58::decode(encoded).into_vec().map_err(|e| {
-        VoucherCoreError::Crypto(format!("Invalid Base58 for {}: {}", label, e))
-    })?;
-    CompressedEdwardsY::from_slice(&bytes)
-        .map_err(|_| VoucherCoreError::Crypto(format!("Invalid point {} length", label)))?
+    if encoded.len() > 44 {
+        return Err(VoucherCoreError::Crypto(format!(
+            "Point {} exceeds maximum Base58 length",
+            label
+        )));
+    }
+    let bytes = crate::services::crypto::decode_bs58_fixed::<32>(encoded, label)?;
+    ensure_canonical_y(&bytes)?;
+    let point = CompressedEdwardsY(bytes)
         .decompress()
-        .ok_or_else(|| {
-            VoucherCoreError::Crypto(format!("Decompression of {} failed", label))
-        })
+        .ok_or_else(|| VoucherCoreError::Crypto(format!("Decompression of {} failed", label)))?;
+    if point.compress().to_bytes() != bytes || !point.is_torsion_free() {
+        return Err(VoucherCoreError::Crypto(format!(
+            "Non-canonical or non-prime-order point {} rejected",
+            label
+        )));
+    }
+    Ok(point)
 }
 
 fn parse_scalar_bs58(encoded: &str, label: &str) -> Result<Scalar, VoucherCoreError> {
-    let bytes = bs58::decode(encoded).into_vec().map_err(|e| {
-        VoucherCoreError::Crypto(format!("Invalid Base58 for {}: {}", label, e))
-    })?;
+    if encoded.len() > 44 {
+        return Err(VoucherCoreError::Crypto(
+            "Scalar exceeds maximum Base58 length".into(),
+        ));
+    }
+    let bytes = bs58::decode(encoded)
+        .into_vec()
+        .map_err(|e| VoucherCoreError::Crypto(format!("Invalid Base58 for {}: {}", label, e)))?;
     parse_canonical_scalar(&bytes, label)
 }
 
@@ -202,10 +200,10 @@ fn parse_scalar_bs58(encoded: &str, label: &str) -> Result<Scalar, VoucherCoreEr
 /// decompress to a curve25519 Edwards point, `trap_s` must be a canonical
 /// (fully reduced) scalar encoding.
 ///
-/// The chain validator enforces this on every non-init transaction so a
-/// malicious payer cannot blind the SST with arbitrary signed garbage
-/// strings and thereby permanently evade double-spend attribution. The
-/// genesis placeholder pair ("none"/"none") fails the length/decoding gates
+/// The chain validator enforces this on every non-init transaction. This checks
+/// encodings and subgroups; historical shard correctness still requires a
+/// private witness or collision analysis. The genesis placeholder pair
+/// ("none"/"none") fails the length/decoding gates
 /// by design - placeholder shards are reserved for init fingerprints and
 /// must never appear inside a spend transaction.
 pub(crate) fn validate_shard_structure(trap_r: &str, trap_s: &str) -> Result<(), VoucherCoreError> {
@@ -216,28 +214,15 @@ pub(crate) fn validate_shard_structure(trap_r: &str, trap_s: &str) -> Result<(),
             "Shard string exceeds maximum Base58 length (64)".to_string(),
         ));
     }
-    let r_bytes = bs58::decode(trap_r).into_vec().map_err(|e| {
-        VoucherCoreError::Crypto(format!("Invalid Base58 for trap_r: {}", e))
-    })?;
-    let r_len = r_bytes.len();
-    let r_arr: [u8; 32] = r_bytes.try_into().map_err(|_| {
-        VoucherCoreError::Crypto(format!("Invalid point trap_r length ({})", r_len))
-    })?;
-    ensure_canonical_y(&r_arr)?;
-    // Decompressability gate: rejects byte strings that are not affine
-    // images of an Edwards point (no sqrt solution on the curve equation).
-    CompressedEdwardsY(r_arr)
-        .decompress()
-        .ok_or_else(|| VoucherCoreError::Crypto("Decompression of trap_r failed".to_string()))?;
+    parse_point_bs58(trap_r, "trap_r")?;
     parse_scalar_bs58(trap_s, "trap_s")?;
     Ok(())
 }
 
 /// Little-endian encoding of the base field prime p = 2^255 - 19.
 const FIELD_MODULUS_LE: [u8; 32] = [
-    0xED, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0xFF, 0x7F,
+    0xED, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F,
 ];
 
 /// SECURITY: Rejects non-canonical compressed Edwards encodings whose masked
@@ -264,70 +249,30 @@ fn ensure_canonical_y(encoded: &[u8; 32]) -> Result<(), VoucherCoreError> {
 // TRAP GENERATION & L1 WITNESS VERIFICATION
 //==============================================================================
 
-/// The private trap witness handed to the payment recipient at L1.
-///
-/// Contains everything needed to verify the trap shard locally:
-/// the underlying Schnorr signature $(R_{sig}, s_{sig})$, the masking
-/// values $(M_R, m_s)$, the VRF point $K_{trap}$, and the Chaum-Pedersen
-/// DLEQ proof $(c_{dleq}, s_{dleq})$ binding $K_{trap}$ to the payer's identity.
-/// All fields are Base58-encoded 32-byte values.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct TrapWitness {
-    /// The Schnorr commitment $R_{sig}$ over the spend input.
-    pub r_sig: String,
-    /// The Schnorr response $s_{sig}$ over the spend input.
-    pub s_sig: String,
-    /// The masking point $M_R$ (compressed, Base58).
-    pub m_r: String,
-    /// The masking scalar $m_s$ (canonical scalar, Base58).
-    pub m_s: String,
-    /// The VRF point $K_{trap} = x \cdot H_\mu$ (compressed point, Base58).
-    pub k_trap: String,
-    /// The Chaum-Pedersen DLEQ challenge $c_{dleq}$ (canonical scalar, Base58).
-    pub dleq_c: String,
-    /// The Chaum-Pedersen DLEQ response $s_{dleq}$ (canonical scalar, Base58).
-    pub dleq_s: String,
-}
+pub use crate::models::voucher::TrapWitness;
 
-/// Generates the SST trap data (public shard) and the private witness for a
-/// single spend transaction.
+/// Creates a compact public shard and the private handover witness.
 ///
-/// Math specification (V3 + Fix 1 VRF/DLEQ):
-/// 1. $\mu = H(\text{"SIG"} \parallel ds\_tag \parallel E)$
-/// 2. $H_\mu = \text{hash\_to\_curve}(\text{"VRF\_BASE"} \parallel \mu)$;\quad
-///    $K_{trap} = x \cdot H_\mu$
-/// 3. DLEQ proof $(\log_G(X_{payer}) == \log_{H_\mu}(K_{trap}))$:
-///    $k = H(\text{"DLEQ\_NONCE"} \parallel x \parallel \mu) \bmod q$;\quad
-///    $A = k \cdot G$;\quad $B = k \cdot H_\mu$;\quad
-///    $c_{dleq} = H(\text{"DLEQ\_CHAL"} \parallel \mu \parallel X \parallel H_\mu \parallel K_{trap} \parallel A \parallel B) \bmod q$;\quad
-///    $s_{dleq} = k + c_{dleq} \cdot x$
-/// 4. Line parameters derived deterministically from $K_{trap}$ and spend input:
-///    $r = H(\text{"NONCE"} \parallel K_{trap} \parallel \mu) \bmod q$;\quad
-///    $R_{sig} = r \cdot G$;\quad
-///    $c = H(\text{"CHAL"} \parallel \mu \parallel R_{sig})$;\quad
-///    $s_{sig} = r + c \cdot x$;\quad
-///    $M_R = \text{hash\_to\_curve}(\text{"MASK\_R"} \parallel K_{trap} \parallel E \parallel ds\_tag)$;\quad
-///    $m_s = H(\text{"MASK\_S"} \parallel K_{trap} \parallel E \parallel ds\_tag) \bmod q$
-/// 5. $\tau_i = H(\text{"TAU"} \parallel ds\_tag \parallel t\_id)$;\quad
-///    $R_i = R_{sig} + \tau_i \cdot M_R$;\quad
-///    $s_i = s_{sig} + \tau_i \cdot m_s$
+/// The Schnorr nonce r = H(domain, x, mu) stays secret even from the recipient.
+/// Mask parameters derive from the base signature (R_sig, s_sig) and mu.
+/// The DLEQ proof binds the auxiliary VRF point to the same permanent identity;
+/// it does not prove deterministic Schnorr nonce selection by a malicious signer.
+/// Such equivocation is attributable through victim witness disclosure.
 ///
-/// # Arguments
-/// * `sk` - The sender's long-term Ed25519 signing key ($x$, anchored to the `did:key`).
-/// * `ds_tag` - The double-spend tag of the input being spent.
-/// * `eph_pub` - The revealed ephemeral public key (32 raw bytes).
-/// * `t_id` - The unique ID of the NEW spending transaction.
-///
-/// # Returns
-/// A tuple of the public [`TrapData`] shard (embedded into the transaction)
-/// and the private [`TrapWitness`] (embedded ONLY into the encrypted
-/// `RecipientPayload` for the recipient).
+/// input_seed must open E to the signing identity. guard_hash is the exact
+/// commitment authenticated by the transaction/fingerprint signature. Creation
+/// first builds the private witness, then uses shard_from_witness once the
+/// encrypted guard is available, avoiding a guard/shard hash cycle.
 pub fn generate_sst_trap(
     sk: &ed25519_dalek::SigningKey,
     ds_tag: &str,
     eph_pub: &[u8; 32],
     t_id: &str,
+    guard_hash: &str,
+    input_seed: &[u8; 32],
 ) -> Result<(TrapData, TrapWitness), VoucherCoreError> {
+    let did = crate::services::crypto::create_user_id(&sk.verifying_key(), None)?;
+    verify_input_owner(&did, &bs58::encode(input_seed).into_string(), eph_pub)?;
     let x = get_secret_scalar(sk);
     let payer_point = ed25519_pk_to_curve_point(&sk.verifying_key())?;
 
@@ -355,26 +300,16 @@ pub fn generate_sst_trap(
     );
     let dleq_s = k + dleq_c * x;
 
-    // 4. Deterministic line parameters derived from K_trap and spend input
-    let r = sst_scalar(
-        SST_DOMAIN_NONCE,
-        &[k_trap.compress().as_bytes(), mu.as_slice()],
-    );
+    // 4. Secret Schnorr nonce and self-verifying signature-derived masks
+    let r = sst_scalar(SST_DOMAIN_NONCE, &[x.as_bytes(), mu.as_slice()]);
     let r_sig_point = r * ED25519_BASEPOINT_POINT;
     let c = sst_challenge(&mu, &r_sig_point);
     let s_sig = r + c * x;
 
-    let m_r_point = hash_to_curve(&sst_encoded_parts(
-        SST_DOMAIN_MASK_R,
-        &[k_trap.compress().as_bytes(), eph_pub.as_slice(), ds_tag.as_bytes()],
-    ));
-    let m_s = sst_scalar(
-        SST_DOMAIN_MASK_S,
-        &[k_trap.compress().as_bytes(), eph_pub.as_slice(), ds_tag.as_bytes()],
-    );
+    let (m_r_point, m_s) = mask_parameters(&r_sig_point, &s_sig, &mu);
 
     // 5. Spend-specific evaluation point & shards
-    let tau = compute_tau(ds_tag, t_id);
+    let tau = compute_tau(ds_tag, t_id, guard_hash);
     let r_i = r_sig_point + tau * m_r_point;
     let s_i = s_sig + tau * m_s;
 
@@ -385,6 +320,7 @@ pub fn generate_sst_trap(
     };
 
     let witness = TrapWitness {
+        input_seed: bs58::encode(input_seed).into_string(),
         r_sig: bs58::encode(r_sig_point.compress().as_bytes()).into_string(),
         s_sig: bs58::encode(s_sig.as_bytes()).into_string(),
         m_r: bs58::encode(m_r_point.compress().as_bytes()).into_string(),
@@ -397,27 +333,9 @@ pub fn generate_sst_trap(
     Ok((trap_data, witness))
 }
 
-/// Verifies the private L1 handover of a trap (fraud *prevention*, R5).
-///
-/// The recipient of a payment re-derives the challenge from the payer's
-/// public identity and checks:
-/// 1. **DLEQ Proof:** $\log_G(X_{payer}) == \log_{H_\mu}(K_{trap})$
-/// 2. **Line Determinism:** $(R_{sig}, M_R, m_s)$ match deterministic derivations from $K_{trap}$
-/// 3. **Signature validity:** $s_{sig} \cdot G \stackrel{?}{=} R_{sig} + c \cdot X_{payer}$
-///    with $c = H(\text{"CHAL"} \parallel \mu \parallel R_{sig})$
-/// 4. **Commitment shard:** $R_i \stackrel{?}{=} R_{sig} + \tau_i \cdot M_R$
-/// 5. **Response shard:** $s_i \stackrel{?}{=} s_{sig} + \tau_i \cdot m_s$
-///
-/// Any failing check proves a garbage/manipulated trap — the caller MUST
-/// reject the payment.
-///
-/// # Arguments
-/// * `witness` - The private witness $W$ from the `RecipientPayload`.
-/// * `trap_shard` - The public [`TrapData`] embedded in the transaction.
-/// * `payer_did` - The declared permanent DID of the payer.
-/// * `ds_tag` - The double-spend tag of the input being spent.
-/// * `eph_pub` - The revealed ephemeral public key (32 raw bytes).
-/// * `t_id` - The ID of the new spending transaction.
+/// Checks the input ownership opening, identity signature, DLEQ proof,
+/// signature-derived masks, and both shares for the authenticated evaluation.
+/// Invalid handover witnesses fail closed without exposing historical senders.
 pub fn verify_sst_witness(
     witness: &TrapWitness,
     trap_shard: &TrapData,
@@ -425,12 +343,15 @@ pub fn verify_sst_witness(
     ds_tag: &str,
     eph_pub: &[u8; 32],
     t_id: &str,
+    guard_hash: &str,
 ) -> Result<(), VoucherCoreError> {
     if trap_shard.ds_tag != ds_tag {
         return Err(VoucherCoreError::Crypto(
             "SST witness check failed: ds_tag mismatch".to_string(),
         ));
     }
+
+    verify_input_owner(payer_did, &witness.input_seed, eph_pub)?;
 
     // Parse witness components (strictly canonical response scalars).
     let r_sig_point = parse_point_bs58(&witness.r_sig, "R_sig")?;
@@ -466,7 +387,7 @@ pub fn verify_sst_witness(
 
     // 1. One-stage Schnorr signature verification against the payer identity.
     let c = sst_challenge(&mu, &r_sig_point);
-    if s_sig * ED25519_BASEPOINT_POINT != r_sig_point + c * payer_point {
+    if c == Scalar::ZERO || s_sig * ED25519_BASEPOINT_POINT != r_sig_point + c * payer_point {
         return Err(VoucherCoreError::Crypto(
             "SST witness rejected: signature does not verify against payer DID".to_string(),
         ));
@@ -494,29 +415,17 @@ pub fn verify_sst_witness(
         ));
     }
 
-    // 3. Deterministic line parameter verification derived from K_trap:
-    let expected_r = sst_scalar(
-        SST_DOMAIN_NONCE,
-        &[k_trap_point.compress().as_bytes(), mu.as_slice()],
-    );
-    let expected_r_sig_point = expected_r * ED25519_BASEPOINT_POINT;
-    let expected_m_r = hash_to_curve(&sst_encoded_parts(
-        SST_DOMAIN_MASK_R,
-        &[k_trap_point.compress().as_bytes(), eph_pub.as_slice(), ds_tag.as_bytes()],
-    ));
-    let expected_m_s = sst_scalar(
-        SST_DOMAIN_MASK_S,
-        &[k_trap_point.compress().as_bytes(), eph_pub.as_slice(), ds_tag.as_bytes()],
-    );
-
-    if r_sig_point != expected_r_sig_point || m_r_point != expected_m_r || m_s != expected_m_s {
+    // The masks are self-verifying from the base signature. Its nonce stays
+    // secret: deriving it from disclosed K_trap would expose the permanent key.
+    let (expected_m_r, expected_m_s) = mask_parameters(&r_sig_point, &s_sig, &mu);
+    if m_r_point != expected_m_r || m_s != expected_m_s {
         return Err(VoucherCoreError::Crypto(
-            "SST witness rejected: witness components do not match deterministic K_trap derivation".to_string(),
+            "SST witness rejected: non-deterministic signature masks".into(),
         ));
     }
 
     // 4. Shard consistency for THIS spend.
-    let tau = compute_tau(ds_tag, t_id);
+    let tau = compute_tau(ds_tag, t_id, guard_hash);
     let expected_r = r_sig_point + tau * m_r_point;
     let expected_s = s_sig + tau * m_s;
 
@@ -607,6 +516,13 @@ fn reconstruct_identity(
     let r_hat = sh1.r - sh1.tau * m_hat_r;
     let s_hat = sh1.s - sh1.tau * m_hat_s;
 
+    let (expected_m_r, expected_m_s) = mask_parameters(&r_hat, &s_hat, mu);
+    if m_hat_r != expected_m_r || m_hat_s != expected_m_s {
+        return Err(VoucherCoreError::Crypto(
+            "SST collision rejected: reconstructed signature masks do not match".into(),
+        ));
+    }
+
     // Identity extraction: X = (s*G - R) * c^-1.
     let c = sst_challenge(mu, &r_hat);
     if c == Scalar::ZERO {
@@ -619,8 +535,7 @@ fn reconstruct_identity(
     // Guard: the identity of a real actor is never the neutral element.
     if x_hat.is_identity() {
         return Err(VoucherCoreError::Crypto(
-            "SST collision rejected: extracted identity point is the neutral element"
-                .to_string(),
+            "SST collision rejected: extracted identity point is the neutral element".to_string(),
         ));
     }
 
@@ -639,24 +554,12 @@ fn reconstruct_identity(
     Ok((m_hat_r, m_hat_s, r_hat, s_hat, x_hat))
 }
 
-/// Extracts the offender's identity point directly from two colliding V3
-/// gossip fingerprints sharing the same input (`ds_tag`).
+/// Reconstructs a candidate signature identity from two self-verifying shards.
+/// Equal IDs are supported when their authenticated guard hashes differ.
 ///
-/// This is the autonomous, single-round-trip deanonymization step of the SST
-/// protocol: no transaction chains need to be requested. The result is
-/// mathematically bound to the true signer — attributing a different
-/// identity would require forging a Schnorr signature (EUF-CMA hardness),
-/// which is why the result may be published as a definitive `did:key`
-/// attribution (remediation AUDIT-01-F07).
-///
-/// # Arguments
-/// * `ds_tag` - The collision tag both fingerprints must share.
-/// * `eph_pub` - The revealed ephemeral public key of the spender (32 bytes).
-/// * `fp1`, `fp2` - The two colliding fingerprints (distinct `t_id`s).
-///
-/// # Returns
-/// The extracted identity point $\hat{X}$ (compressed bytes yield the
-/// offender's Ed25519 public key).
+/// This algebraic check alone does not prove that the identity owns E. Callers
+/// publishing a definitive offender DID must verify a victim ownership receipt
+/// and the signatures of the two conflicting spends. Junk pairs fail closed.
 pub fn extract_sst_identity(
     ds_tag: &str,
     eph_pub: &[u8; 32],
@@ -666,11 +569,6 @@ pub fn extract_sst_identity(
     if fp1.ds_tag != ds_tag || fp2.ds_tag != ds_tag {
         return Err(VoucherCoreError::Crypto(
             "SST extraction failed: fingerprints do not share the collision ds_tag".to_string(),
-        ));
-    }
-    if fp1.t_id == fp2.t_id {
-        return Err(VoucherCoreError::Crypto(
-            "SST extraction failed: identical t_ids (replay, not a fork)".to_string(),
         ));
     }
 
@@ -685,8 +583,16 @@ pub fn extract_sst_identity(
 
     let mu = compute_trap_message_mu(ds_tag, eph_pub);
 
-    let sh1 = parse_shard(&fp1.trap_r, &fp1.trap_s, compute_tau(ds_tag, &fp1.t_id))?;
-    let sh2 = parse_shard(&fp2.trap_r, &fp2.trap_s, compute_tau(ds_tag, &fp2.t_id))?;
+    let sh1 = parse_shard(
+        &fp1.trap_r,
+        &fp1.trap_s,
+        compute_tau(ds_tag, &fp1.t_id, &fp1.privacy_guard_hash),
+    )?;
+    let sh2 = parse_shard(
+        &fp2.trap_r,
+        &fp2.trap_s,
+        compute_tau(ds_tag, &fp2.t_id, &fp2.privacy_guard_hash),
+    )?;
 
     let (_, _, _, _, x_hat) = reconstruct_identity(&mu, &sh1, &sh2)?;
     Ok(x_hat)
@@ -700,8 +606,8 @@ pub fn extract_sst_identity(
 /// $R_j \stackrel{?}{=} \hat{R} + \tau_j \cdot \hat{M}_R$,\;
 /// $s_j \stackrel{?}{=} \hat{s} + \tau_j \cdot \hat{m}_s$.
 ///
-/// Used as the anti-framing attribution gate: publishing `expected_id` as a
-/// `did:key` offender claim is only allowed when this check passes.
+/// This checks a signature candidate. Definitive attribution additionally
+/// requires authenticated spend signatures and an input ownership opening.
 pub fn verify_sst_shards_consistency(
     shards: &[&TransactionFingerprint],
     expected_id: &EdwardsPoint,
@@ -736,7 +642,11 @@ pub fn verify_sst_shards_consistency(
                     "SST consistency check: shard carries foreign ds_tag".to_string(),
                 ));
             }
-            parse_shard(&fp.trap_r, &fp.trap_s, compute_tau(ds_tag, &fp.t_id))
+            parse_shard(
+                &fp.trap_r,
+                &fp.trap_s,
+                compute_tau(ds_tag, &fp.t_id, &fp.privacy_guard_hash),
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -773,25 +683,10 @@ pub fn verify_sst_shards_consistency(
     Ok(())
 }
 
-/// Verifies the stored SST trap shards of conflicting transactions against a
-/// claimed identity point.
-///
-/// This is the import-gate counterpart of [`verify_sst_shards_consistency`]
-/// operating on full [`Transaction`]s (e.g. inside a `ProofOfDoubleSpend`).
-/// Transactions without trap shards are skipped structurally.
-///
-/// # Security (AUDIT-01-F13): attribution stands on ANY consistent pair
-/// The generation side attributes a did:key when ONE colliding pair
-/// reconstructs a valid Schnorr signature under the extracted key, while a
-/// strict full-set line firewall here let a single attacker-broadcast
-/// off-line shard veto every honestly attributed report afterwards
-/// (attribution evasion / propagation DoS). This gate therefore succeeds as
-/// soon as ANY pair of colliding shards reconstructs a valid signature for
-/// exactly the claimed identity point. Extra shards neither contribute to
-/// nor weaken the claim: fabricating a verifying pair for an innocent key
-/// remains an EUF-CMA forgery, so anti-framing is unaffected. All shards of
-/// one collision must still agree on `ds_tag` and `sender_ephemeral_pub`;
-/// divergence is treated as tampered evidence.
+/// Checks whether any stored pair has a self-verifying base signature for the
+/// claimed candidate identity. Extra junk does not veto a valid pair. This
+/// primitive does not authenticate spend signatures or an E-to-DID binding;
+/// definitive proof import uses verify_victim_witness_disclosure instead.
 pub fn verify_stored_trap_shards_against_identity(
     transactions: &[Transaction],
     claimed_id_point: &EdwardsPoint,
@@ -808,8 +703,9 @@ pub fn verify_stored_trap_shards_against_identity(
                 "SST attribution: conflicting transaction lacks sender_ephemeral_pub".to_string(),
             )
         })?;
-        let eph_bytes: [u8; 32] = crate::services::crypto::decode_bs58_fixed::<32>(eph_str, "eph_pub")
-            .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+        let eph_bytes: [u8; 32] =
+            crate::services::crypto::decode_bs58_fixed::<32>(eph_str, "eph_pub")
+                .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
 
         // All shards of one collision share the same context.
         match context {
@@ -829,6 +725,9 @@ pub fn verify_stored_trap_shards_against_identity(
             t_id: tx.t_id.clone(),
             trap_r: trap.trap_r.clone(),
             trap_s: trap.trap_s.clone(),
+            privacy_guard_hash: crate::services::l2_gateway::privacy_guard_commitment(
+                tx.privacy_guard.as_deref(),
+            ),
             ..Default::default()
         });
     }
@@ -867,268 +766,316 @@ pub fn verify_stored_trap_shards_against_identity(
     }))
 }
 
-//==============================================================================
-// UNIT TESTS (round-trip & guards)
-//==============================================================================
+/// Recomputable after interpolation; prevents steered junk-shard attribution.
+fn mask_parameters(r: &EdwardsPoint, s: &Scalar, mu: &[u8; 32]) -> (EdwardsPoint, Scalar) {
+    let compressed = r.compress();
+    let parts: &[&[u8]] = &[compressed.as_bytes(), s.as_bytes(), mu];
+    (
+        hash_to_curve(&sst_encoded_parts(SST_DOMAIN_MASK_R, parts)),
+        sst_scalar(SST_DOMAIN_MASK_S, parts),
+    )
+}
+
+/// Publicly proves that a declared DID owns the spent output without revealing
+/// its secret key. The opening is published only together with signed conflicts.
+pub fn verify_input_owner(
+    payer_did: &str,
+    input_seed: &str,
+    eph_pub: &[u8; 32],
+) -> Result<(), VoucherCoreError> {
+    let pk = get_pubkey_from_user_id(payer_did)?;
+    let seed = crate::services::crypto::decode_bs58_fixed::<32>(input_seed, "input_seed")?;
+    if crate::services::crypto::derive_stealth_ephemeral_point(&pk, &seed)?
+        .compress()
+        .to_bytes()
+        != *eph_pub
+    {
+        return Err(VoucherCoreError::Crypto(
+            "Spent output is not derived from the declared owner identity".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Re-evaluates an already generated witness after the guard hash is known.
+pub fn shard_from_witness(
+    witness: &TrapWitness,
+    identity: &EdwardsPoint,
+    ds_tag: &str,
+    eph_pub: &[u8; 32],
+    t_id: &str,
+    guard_hash: &str,
+) -> Result<TrapData, VoucherCoreError> {
+    let r = parse_point_bs58(&witness.r_sig, "R_sig")?;
+    let s = parse_scalar_bs58(&witness.s_sig, "s_sig")?;
+    let (m_r, m_s) = mask_parameters(&r, &s, &compute_trap_message_mu(ds_tag, eph_pub));
+    let tau = compute_tau(ds_tag, t_id, guard_hash);
+    let trap = TrapData {
+        ds_tag: ds_tag.into(),
+        trap_r: bs58::encode((r + tau * m_r).compress().as_bytes()).into_string(),
+        trap_s: bs58::encode((s + tau * m_s).as_bytes()).into_string(),
+    };
+    let pk = ed25519_dalek::VerifyingKey::from_bytes(&identity.compress().to_bytes())
+        .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+    let did = crate::services::crypto::create_user_id(&pk, None)?;
+    verify_sst_witness(witness, &trap, &did, ds_tag, eph_pub, t_id, guard_hash)?;
+    Ok(trap)
+}
+
+/// Verifies a candidate signature identity from signed gossip. Definitive
+/// attribution additionally needs an authenticated input ownership opening.
+pub fn verify_fingerprint_shards_against_identity(
+    fingerprints: &[TransactionFingerprint],
+    claimed: &EdwardsPoint,
+) -> Result<(), VoucherCoreError> {
+    for i in 0..fingerprints.len() {
+        for j in i + 1..fingerprints.len() {
+            let a = &fingerprints[i];
+            let b = &fingerprints[j];
+            if !crate::services::conflict_manager::verify_fingerprint_signature(a)
+                || !crate::services::conflict_manager::verify_fingerprint_signature(b)
+            {
+                continue;
+            }
+            let Ok(eph) = crate::services::crypto::decode_bs58_fixed::<32>(
+                &a.sender_ephemeral_pub,
+                "sender_ephemeral_pub",
+            ) else {
+                continue;
+            };
+            if extract_sst_identity(&a.ds_tag, &eph, a, b).is_ok_and(|x| x == *claimed) {
+                return Ok(());
+            }
+        }
+    }
+    Err(VoucherCoreError::Crypto(
+        "No authenticated fingerprint pair proves the candidate identity".into(),
+    ))
+}
+
+/// True only for distinct authenticated spend contents for the same input.
+/// Signature re-randomization and retention changes alone are replays.
+pub fn fingerprints_conflict(a: &TransactionFingerprint, b: &TransactionFingerprint) -> bool {
+    !a.sender_ephemeral_pub.is_empty()
+        && a.ds_tag == b.ds_tag
+        && a.sender_ephemeral_pub == b.sender_ephemeral_pub
+        && (a.t_id != b.t_id
+            || a.privacy_guard_hash != b.privacy_guard_hash
+            || a.trap_r != b.trap_r
+            || a.trap_s != b.trap_s
+            || a.encrypted_timestamp != b.encrypted_timestamp
+            || a.created_at_ms != b.created_at_ms
+            || a.layer2_voucher_id != b.layer2_voucher_id)
+}
+
+/// Verifies a victim's private receipt against one honest handover AND a
+/// second E-signed spend. The second shard may be arbitrary junk. Verification
+/// is ordered so no ownership claim is accepted without authenticated fraud.
+pub fn verify_victim_witness_disclosure(
+    disclosure: &crate::models::conflict::VictimWitnessDisclosure,
+    fingerprints: &[TransactionFingerprint],
+) -> Result<EdwardsPoint, VoucherCoreError> {
+    let honest = fingerprints
+        .get(disclosure.fingerprint_index)
+        .ok_or_else(|| {
+            VoucherCoreError::ProofImport("Victim witness points outside the evidence set".into())
+        })?;
+    if !crate::services::conflict_manager::verify_fingerprint_signature(honest)
+        || !fingerprints.iter().any(|other| {
+            fingerprints_conflict(honest, other)
+                && crate::services::conflict_manager::verify_fingerprint_signature(other)
+        })
+    {
+        return Err(VoucherCoreError::ProofImport(
+            "Victim disclosure requires two authenticated conflicting spends".into(),
+        ));
+    }
+    let eph = crate::services::crypto::decode_bs58_fixed::<32>(
+        &honest.sender_ephemeral_pub,
+        "sender_ephemeral_pub",
+    )?;
+    let trap = TrapData {
+        ds_tag: honest.ds_tag.clone(),
+        trap_r: honest.trap_r.clone(),
+        trap_s: honest.trap_s.clone(),
+    };
+    verify_sst_witness(
+        &disclosure.witness,
+        &trap,
+        &disclosure.sender_permanent_did,
+        &honest.ds_tag,
+        &eph,
+        &honest.t_id,
+        &honest.privacy_guard_hash,
+    )?;
+    ed25519_pk_to_curve_point(&get_pubkey_from_user_id(&disclosure.sender_permanent_did)?)
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::RngCore;
+    use proptest::prelude::*;
 
-    fn fresh_signing_key() -> ed25519_dalek::SigningKey {
-        let mut seed = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut seed);
-        ed25519_dalek::SigningKey::from_bytes(&seed)
-    }
-
-    fn random_b58_32() -> String {
-        let mut b = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut b);
-        bs58::encode(b).into_string()
-    }
-
-    fn make_fp(t_id: &str, trap: &TrapData) -> TransactionFingerprint {
+    fn signed_fingerprint(
+        trap: &TrapData,
+        key: &crate::services::crypto::EphemeralKey,
+        id: &str,
+        guard: &str,
+    ) -> TransactionFingerprint {
+        let eph = key.verifying_key().to_bytes();
+        let id_bytes = crate::services::crypto::decode_bs58_fixed::<32>(id, "t_id").unwrap();
+        let digest = crate::services::l2_gateway::calculate_l2_payload_hash_raw(
+            "none",
+            &trap.ds_tag,
+            &id_bytes,
+            &eph,
+            &trap.trap_r,
+            &trap.trap_s,
+            0,
+            0,
+            None,
+            guard,
+        );
         TransactionFingerprint {
             ds_tag: trap.ds_tag.clone(),
-            t_id: t_id.to_string(),
+            t_id: id.into(),
             trap_r: trap.trap_r.clone(),
             trap_s: trap.trap_s.clone(),
+            privacy_guard_hash: guard.into(),
+            sender_ephemeral_pub: bs58::encode(eph).into_string(),
+            layer2_voucher_id: "none".into(),
+            layer2_signature: bs58::encode(key.sign(&digest).to_bytes()).into_string(),
             ..Default::default()
         }
     }
 
-    fn payer_did_of(sk: &ed25519_dalek::SigningKey) -> String {
-        let vk = sk.verifying_key();
-        let mut mc = vec![0xed, 0x01];
-        mc.extend_from_slice(vk.as_bytes());
-        format!("did:key:z{}", bs58::encode(mc).into_string())
-    }
-
-    #[test]
-    fn test_sst_roundtrip_generation_witness_and_extraction() {
-        let sk = fresh_signing_key();
-        let ds_tag = random_b58_32();
-        let mut eph = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut eph);
-
-        // Two forks of the same input (same ds_tag/eph).
-        let t_id_a = random_b58_32();
-        let t_id_b = random_b58_32();
-        let (trap_a, wit_a) = generate_sst_trap(&sk, &ds_tag, &eph, &t_id_a).unwrap();
-        let (trap_b, wit_b) = generate_sst_trap(&sk, &ds_tag, &eph, &t_id_b).unwrap();
-
-        // Witness verifies for both honest shards.
-        let payer_did = payer_did_of(&sk);
-        verify_sst_witness(&wit_a, &trap_a, &payer_did, &ds_tag, &eph, &t_id_a)
-            .expect("honest witness must verify");
-        verify_sst_witness(&wit_b, &trap_b, &payer_did, &ds_tag, &eph, &t_id_b)
-            .expect("honest witness must verify");
-
-        // One shared witness covers BOTH forks of the same input (that is the
-        // core SST property). A witness from a DIFFERENT signer must fail.
-        let stranger = fresh_signing_key();
-        assert!(verify_sst_witness(
-            &TrapWitness {
-                r_sig: wit_a.r_sig.clone(),
-                s_sig: wit_a.s_sig.clone(),
-                m_r: wit_a.m_r.clone(),
-                m_s: bs58::encode(
-                    (Scalar::from_canonical_bytes(
-                        bs58::decode(&wit_a.m_s)
-                            .into_vec()
-                            .unwrap()
-                            .try_into()
-                            .unwrap(),
-                    )
-                    .into_option()
-                    .unwrap()
-                        + Scalar::ONE)
-                        .as_bytes(),
-                )
-                .into_string(),
-                ..wit_a.clone()
-            },
-            &trap_a,
-            &payer_did,
-            &ds_tag,
-            &eph,
-            &t_id_a
-        )
-        .is_err());
-        assert!(verify_sst_witness(
-            &wit_a,
-            &trap_a,
-            &payer_did_of(&stranger),
-            &ds_tag,
-            &eph,
-            &t_id_a
-        )
-        .is_err());
-
-        // Collision extraction recovers the true identity point.
-        let expected_x = ed25519_pk_to_curve_point(&sk.verifying_key()).unwrap();
-        let fp_a = make_fp(&t_id_a, &trap_a);
-        let fp_b = make_fp(&t_id_b, &trap_b);
-        let x_hat = extract_sst_identity(&ds_tag, &eph, &fp_a, &fp_b).unwrap();
-        assert_eq!(
-            x_hat, expected_x,
-            "extraction must recover the signer identity"
-        );
-
-        // Consistency check passes for the true identity...
-        verify_sst_shards_consistency(&[&fp_a, &fp_b], &expected_x, &ds_tag, &eph)
-            .expect("genuine shards must be consistent");
-
-        // ...and fails for any other identity (anti-framing).
-        let stranger_pt = ed25519_pk_to_curve_point(&stranger.verifying_key()).unwrap();
-        assert!(verify_sst_shards_consistency(&[&fp_a, &fp_b], &stranger_pt, &ds_tag, &eph).is_err());
-    }
-
-    #[test]
-    fn test_sst_degenerate_guards_fire() {
-        let sk = fresh_signing_key();
-        let ds_tag = random_b58_32();
-        let mut eph = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut eph);
-
-        // Identical t_id => identical tau => replay guard fires.
-        let t_id = random_b58_32();
-        let (trap_a, _) = generate_sst_trap(&sk, &ds_tag, &eph, &t_id).unwrap();
-        let (trap_b, _) = generate_sst_trap(&sk, &ds_tag, &eph, &t_id).unwrap();
-        assert_eq!(trap_a, trap_b, "generation is deterministic");
-        let fp_a = make_fp(&t_id, &trap_a);
-        assert!(
-            extract_sst_identity(&ds_tag, &eph, &fp_a, &fp_a).is_err(),
-            "identical fingerprints (replay) must be rejected"
-        );
-        let _ = trap_b;
-    }
-
-    #[test]
-    fn test_sst_non_canonical_scalars_rejected() {
-        let sk = fresh_signing_key();
-        let ds_tag = random_b58_32();
-        let mut eph = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut eph);
-
-        let t_id_b = random_b58_32();
-        let (trap_b, _) = generate_sst_trap(&sk, &ds_tag, &eph, &t_id_b).unwrap();
-
-        // The original shard is canonical.
-        let s_bytes = bs58::decode(&trap_b.trap_s).into_vec().unwrap();
-        assert!(parse_canonical_scalar(&s_bytes, "trap_s").is_ok());
-
-        // A malleated BYTE encoding (s_bytes + L, same group element) must be
-        // rejected by strict canonical parsing.
-        const L_BYTES: [u8; 32] = [
-            0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde,
-            0xf9, 0xde, 0x14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
-        ];
-        let mut malleated_bytes = s_bytes;
-        let mut carry = 0u16;
-        for i in 0..32 {
-            let sum = malleated_bytes[i] as u16 + L_BYTES[i] as u16 + carry;
-            malleated_bytes[i] = (sum & 0xFF) as u8;
-            carry = sum >> 8;
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(48))]
+        #[test]
+        fn collision_and_victim_disclosure_invariants(secret in any::<[u8; 32]>(), seed in any::<[u8; 32]>(), same_id in any::<bool>()) {
+            let sk = ed25519_dalek::SigningKey::from_bytes(&secret);
+            let input = crate::services::crypto::derive_owned_ephemeral_key(&sk, &seed).unwrap();
+            let eph = input.verifying_key().to_bytes();
+            let did = crate::services::crypto::create_user_id(&sk.verifying_key(), None).unwrap();
+            let tag = crate::services::crypto::get_hash(b"input");
+            let a_id = crate::services::crypto::get_hash(b"a");
+            let b_id = if same_id { a_id.clone() } else { crate::services::crypto::get_hash(b"b") };
+            let (a, witness) = generate_sst_trap(&sk, &tag, &eph, &a_id, "guard A", &seed).unwrap();
+            let (b, _) = generate_sst_trap(&sk, &tag, &eph, &b_id, "guard B", &seed).unwrap();
+            verify_sst_witness(&witness, &a, &did, &tag, &eph, &a_id, "guard A").unwrap();
+            prop_assert!(verify_sst_witness(&witness, &a, &did, &tag, &eph, &a_id, "wrong").is_err());
+            let fa = signed_fingerprint(&a, &input, &a_id, "guard A");
+            let fb = signed_fingerprint(&b, &input, &b_id, "guard B");
+            let expected = ed25519_pk_to_curve_point(&sk.verifying_key()).unwrap();
+            prop_assert_eq!(extract_sst_identity(&tag, &eph, &fa, &fb).unwrap(), expected);
+            let disclosure = crate::models::conflict::VictimWitnessDisclosure { fingerprint_index: 0,
+                sender_permanent_did: did, witness };
+            prop_assert_eq!(verify_victim_witness_disclosure(&disclosure, &[fa.clone(), fb.clone()]).unwrap(), expected);
+            prop_assert!(verify_victim_witness_disclosure(&disclosure, &[fa.clone(), fa.clone()]).is_err());
+            let mut junk = b.clone();
+            junk.trap_r = bs58::encode(ED25519_BASEPOINT_POINT.compress().as_bytes()).into_string();
+            let signed_junk = signed_fingerprint(&junk, &input, &b_id, "guard B");
+            prop_assert!(extract_sst_identity(&tag, &eph, &fa, &signed_junk).is_err());
+            prop_assert_eq!(verify_victim_witness_disclosure(&disclosure, &[fa.clone(), signed_junk.clone()]).unwrap(), expected);
+            let mut forged = signed_junk;
+            forged.layer2_signature = fa.layer2_signature.clone();
+            prop_assert!(verify_victim_witness_disclosure(&disclosure, &[fa.clone(), forged]).is_err());
+            let mut bad_opening = disclosure;
+            bad_opening.witness.input_seed = bs58::encode([0xff; 32]).into_string();
+            prop_assert!(verify_victim_witness_disclosure(&bad_opening, &[fa, fb]).is_err());
+            prop_assert_eq!(bs58::decode(&a.trap_r).into_vec().unwrap().len() + bs58::decode(&a.trap_s).into_vec().unwrap().len(), 64);
         }
-        assert!(
-            parse_canonical_scalar(&malleated_bytes, "trap_s").is_err(),
-            "non-canonical scalar encodings must be rejected"
+    }
+
+    #[test]
+    fn private_witness_cannot_reveal_the_permanent_key_via_its_nonce() {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[11; 32]);
+        let seed = [12; 32];
+        let eph = crate::services::crypto::derive_owned_ephemeral_key(&sk, &seed)
+            .unwrap()
+            .verifying_key()
+            .to_bytes();
+        let (_, witness) = generate_sst_trap(&sk, "input", &eph, "a", "", &seed).unwrap();
+        let k = parse_point_bs58(&witness.k_trap, "K_trap").unwrap();
+        let mu = compute_trap_message_mu("input", &eph);
+        let public_nonce = sst_scalar(SST_DOMAIN_NONCE, &[k.compress().as_bytes(), &mu]);
+        let r = parse_point_bs58(&witness.r_sig, "R_sig").unwrap();
+        let s = parse_scalar_bs58(&witness.s_sig, "s_sig").unwrap();
+        let recovered = (s - public_nonce) * compute_sst_challenge(&mu, &r).invert();
+        assert_ne!(recovered, get_secret_scalar(&sk));
+    }
+
+    #[test]
+    fn non_deterministic_signer_nonce_cannot_evade_victim_disclosure() {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[21; 32]);
+        let input = crate::services::crypto::derive_owned_ephemeral_key(&sk, &[22; 32]).unwrap();
+        let eph = input.verifying_key().to_bytes();
+        let did = crate::services::crypto::create_user_id(&sk.verifying_key(), None).unwrap();
+        let tag = crate::services::crypto::get_hash(b"input");
+        let a_id = crate::services::crypto::get_hash(b"a");
+        let b_id = crate::services::crypto::get_hash(b"b");
+        let (a, witness) = generate_sst_trap(&sk, &tag, &eph, &a_id, "", &[22; 32]).unwrap();
+        let mut altered = witness.clone();
+        let nonce = Scalar::from(12345u64);
+        let r = nonce * ED25519_BASEPOINT_POINT;
+        let s = nonce
+            + sst_challenge(&compute_trap_message_mu(&tag, &eph), &r) * get_secret_scalar(&sk);
+        let (m_r, m_s) = mask_parameters(&r, &s, &compute_trap_message_mu(&tag, &eph));
+        altered.r_sig = bs58::encode(r.compress().as_bytes()).into_string();
+        altered.s_sig = bs58::encode(s.as_bytes()).into_string();
+        altered.m_r = bs58::encode(m_r.compress().as_bytes()).into_string();
+        altered.m_s = bs58::encode(m_s.as_bytes()).into_string();
+        let x = ed25519_pk_to_curve_point(&sk.verifying_key()).unwrap();
+        let b = shard_from_witness(&altered, &x, &tag, &eph, &b_id, "").unwrap();
+        let fps = [
+            signed_fingerprint(&a, &input, &a_id, ""),
+            signed_fingerprint(&b, &input, &b_id, ""),
+        ];
+        assert!(extract_sst_identity(&tag, &eph, &fps[0], &fps[1]).is_err());
+        let disclosure = crate::models::conflict::VictimWitnessDisclosure {
+            fingerprint_index: 0,
+            sender_permanent_did: did,
+            witness,
+        };
+        assert_eq!(
+            verify_victim_witness_disclosure(&disclosure, &fps).unwrap(),
+            x
         );
     }
 
     #[test]
-    fn test_sst_inconsistent_third_shard_rejected() {
-        let sk = fresh_signing_key();
-        let ds_tag = random_b58_32();
-        let mut eph = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut eph);
-
-        let t_a = random_b58_32();
-        let t_b = random_b58_32();
-        let (trap_a, _) = generate_sst_trap(&sk, &ds_tag, &eph, &t_a).unwrap();
-        let (trap_b, _) = generate_sst_trap(&sk, &ds_tag, &eph, &t_b).unwrap();
-
-        // A third shard from a DIFFERENT signer (inconsistent line).
-        let impostor = fresh_signing_key();
-        let t_c = random_b58_32();
-        let (trap_c, _) = generate_sst_trap(&impostor, &ds_tag, &eph, &t_c).unwrap();
-
-        let fp_a = make_fp(&t_a, &trap_a);
-        let fp_b = make_fp(&t_b, &trap_b);
-        let fp_c = make_fp(&t_c, &trap_c);
-
-        let expected_x = ed25519_pk_to_curve_point(&sk.verifying_key()).unwrap();
-        assert!(
-            verify_sst_shards_consistency(&[&fp_a, &fp_b, &fp_c], &expected_x, &ds_tag, &eph)
-                .is_err(),
-            "an inconsistent n>=3 shard set must be rejected"
-        );
-    }
-
-    #[test]
-    fn test_canonical_y_boundary_values() {
-        // Little-endian encodings around the base field prime
-        // p = 2^255 - 19 = [0xED, 0xFF x30, 0x7F] (sign bit cleared).
-        let mut y_p_minus_one = [0xFFu8; 32];
-        y_p_minus_one[0] = 0xEC;
-        y_p_minus_one[31] = 0x7F;
-
-        let mut y_p = [0xFFu8; 32];
-        y_p[0] = 0xED;
-        y_p[31] = 0x7F;
-
-        let mut y_p_plus_one = [0xFFu8; 32];
-        y_p_plus_one[0] = 0xEE;
-        y_p_plus_one[31] = 0x7F;
-
-        assert!(
-            ensure_canonical_y(&y_p_minus_one).is_ok(),
-            "the largest canonical coordinate y = p - 1 must be accepted"
-        );
-        assert!(
-            ensure_canonical_y(&y_p).is_err(),
-            "the modulus encoding itself (y = p) must be rejected"
-        );
-        assert!(
-            ensure_canonical_y(&y_p_plus_one).is_err(),
-            "y > p must be rejected"
-        );
-    }
-
-    #[test]
-    fn test_validate_shard_structure_accepts_max_canonical_point() {
-        // y = p - 1 ([0xEC, 0xFF x30, 0x7F], sign bit cleared) decompresses to
-        // the valid curve point (0, -1), so the maximal canonical coordinate
-        // must pass the full structural validation.
-        let mut max_canonical = [0xFFu8; 32];
-        max_canonical[0] = 0xEC;
-        max_canonical[31] = 0x7F;
-        assert!(
-            CompressedEdwardsY(max_canonical)
-                .decompress()
-                .is_some(),
-            "y = p - 1 must decompress to the curve point (0, -1)"
-        );
-        let trap_r_max = bs58::encode(max_canonical).into_string();
-        // Canonical scalar encoding as a well-formed trap_s companion.
-        let trap_s_valid = bs58::encode([0x01u8; 32]).into_string();
-
-        validate_shard_structure(&trap_r_max, &trap_s_valid)
-            .expect("maximal canonical trap_r encoding must be accepted");
-
-        // Encodings with y >= p fail the canonical-y gate BEFORE decompression
-        // is attempted (they would otherwise reduce modulo p implicitly).
-        for first_byte in [0xEDu8, 0xEE] {
-            let mut non_canonical = [0xFFu8; 32];
-            non_canonical[0] = first_byte;
-            non_canonical[31] = 0x7F;
-            let bad_trap_r = bs58::encode(non_canonical).into_string();
+    fn point_and_scalar_parsers_share_strict_canonical_subgroup_policy() {
+        use curve25519_dalek::constants::EIGHT_TORSION;
+        for torsion in EIGHT_TORSION.iter().skip(1) {
+            let point = bs58::encode(torsion.compress().as_bytes()).into_string();
+            assert!(parse_point_bs58(&point, "test").is_err());
             assert!(
-                validate_shard_structure(&bad_trap_r, &trap_s_valid).is_err(),
-                "non-canonical trap_r (y >= p) must be rejected"
+                validate_shard_structure(
+                    &point,
+                    &bs58::encode(Scalar::ONE.as_bytes()).into_string()
+                )
+                .is_err()
             );
         }
+        let mixed = ED25519_BASEPOINT_POINT + EIGHT_TORSION[1];
+        assert!(
+            parse_point_bs58(
+                &bs58::encode(mixed.compress().as_bytes()).into_string(),
+                "mixed"
+            )
+            .is_err()
+        );
+        let mut noncanonical = [0xff; 32];
+        noncanonical[0] = 0xee;
+        noncanonical[31] = 0x7f;
+        assert!(
+            parse_point_bs58(&bs58::encode(noncanonical).into_string(), "noncanonical").is_err()
+        );
+        let mut negative_zero = EdwardsPoint::default().compress().to_bytes();
+        negative_zero[31] |= 0x80;
+        assert!(
+            parse_point_bs58(&bs58::encode(negative_zero).into_string(), "negative zero").is_err()
+        );
+        assert!(parse_canonical_scalar(&[0xff; 32], "test").is_err());
     }
 }

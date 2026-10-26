@@ -414,13 +414,6 @@ impl ValidationPipeline {
                         }
                     }
                     if !matched {
-                        let candidate_key = ed25519_dalek::SigningKey::from_bytes(&seed_arr);
-                        let candidate_hash = crate::services::crypto::get_hash(candidate_key.verifying_key().to_bytes());
-                        if candidate_hash == *expected_recv_hash {
-                            matched = true;
-                        }
-                    }
-                    if !matched {
                         return Err(VoucherCoreError::Validation(ValidationError::SecurityViolation(
                             "Decrypted recipient key seed does not match receiver_ephemeral_pub_hash".to_string(),
                         )));
@@ -514,22 +507,11 @@ impl ValidationPipeline {
                         // Witness completeness gate
                         let missing_witness = || ValidationError::IncompleteSstWitness;
                         let witness = crate::services::trap_manager::TrapWitness {
-                            r_sig: payload
-                                .trap_r_sig
-                                .clone()
-                                .ok_or_else(missing_witness)?,
-                            s_sig: payload
-                                .trap_s_sig
-                                .clone()
-                                .ok_or_else(missing_witness)?,
-                            m_r: payload
-                                .trap_m_r
-                                .clone()
-                                .ok_or_else(missing_witness)?,
-                            m_s: payload
-                                .trap_m_s
-                                .clone()
-                                .ok_or_else(missing_witness)?,
+                            r_sig: payload.trap_r_sig.clone().ok_or_else(missing_witness)?,
+                            s_sig: payload.trap_s_sig.clone().ok_or_else(missing_witness)?,
+                            m_r: payload.trap_m_r.clone().ok_or_else(missing_witness)?,
+                            m_s: payload.trap_m_s.clone().ok_or_else(missing_witness)?,
+                            input_seed: payload.input_key_seed.clone().ok_or_else(missing_witness)?,
                             k_trap: payload
                                 .trap_k_point
                                 .clone()
@@ -569,6 +551,7 @@ impl ValidationPipeline {
                             &trap.ds_tag,
                             &eph_pub_bytes,
                             &last_tx.t_id,
+                            &crate::services::l2_gateway::privacy_guard_commitment(last_tx.privacy_guard.as_deref()),
                         )
                         .map_err(|e| ValidationError::SstWitnessVerificationFailed {
                             reason: e.to_string(),

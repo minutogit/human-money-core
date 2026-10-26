@@ -7,6 +7,12 @@ last_updated: "2026-10-26"
 blocks: []
 blocked_by: []
 priority_tasks:
+  - id: "CORE-007"
+    title: "SST V4 Input Ownership and Victim Witness Disclosure"
+    status: "closed"
+    priority: "critical"
+    depends_on: []
+    description: "Implemented identity-bound outputs, removal of legacy seed fallbacks, self-verifying signature masks, secret nonce derivation, same-ID guard evaluation, authenticated victim disclosure, and bounded original fingerprint evidence. Public shards remain 64 bytes; normal stealth history remains private. Workspace validation: 856 tests and 4 doctests passed, 6 pre-existing skips; Clippy, WASM and release checks passed."
   - id: "CORE-006"
     title: "V3 SST Trap Protocol Hardening (VRF/DLEQ, Stealth-Key Custody & Malleability Defense)"
     status: "closed"
@@ -48,6 +54,24 @@ priority_tasks:
 # Human Money Core — Status
 
 ## Current Focus
+
+SST V4 audit hardening (2026-10-26): identity-bound output keys and authenticated
+victim witness disclosure close identity swaps, historical junk-hop attribution
+evasion, and same-ID guard conflicts. The public shard stays 64 bytes. V4 also
+removes a permanent-key recovery path caused by deriving a disclosed signature's
+nonce from the private handover's `K_trap`. No historical ZK certificates are
+added to L1, and prior senders stay private during normal stealth handovers.
+See `docs/security/sst_v4_regression_hardening.md` for the changed authorization
+domain, API/key-derivation contract, attribution gates, and regression evidence.
+Validation completed:
+
+- `cargo nextest run --workspace --status-level fail --offline --no-fail-fast`: **856 passed, 0 failed, 6 pre-existing skips**. The skips cover external WoT vectors, retired container compatibility, host TOFU pinning, and wallet-seal catch-up; none belongs to these SST regressions.
+- `cargo test --workspace --doc --offline`: **4 passed**.
+- `cargo clippy --workspace --all-targets --offline -- -D warnings`: passed.
+- `cargo check --workspace --lib --target wasm32-unknown-unknown --offline`: passed; the pre-existing unused `auth` warning in `storage/wallet_transaction.rs` remains.
+- `cargo check --release --lib --no-default-features --offline`: passed without `test-utils`.
+- `git diff --check`: passed.
+
 
 Z01 fail-closed checkout release (2026-10-23): `Confirmed` live-proof verification
 is now a pure mathematical observation; automatic goods release is fail-closed and
@@ -95,7 +119,7 @@ The core library is stable and feature-rich. Current focus areas:
 - Voucher validation hardening (edge-case tests for ISO 8601, date rounding)
 - Security: Anti-Signature-Reuse-Firewall implemented
 - **New**: 'Endorsed' voucher status for persistent guarantor signature tracking
-- **New**: Trap-framing research completed (H-01-01 remediation design): "Shared-Signature Trap" (SST, 64 B, info-theoretic single-fingerprint anonymity, EUF-CMA framing immunity) recommended in `temp/trap-framing-evaluation/AUSWERTUNG.md`; **IMPLEMENTED as protocol V3** (see Recent Milestones).
+- **New**: SST V4 keeps 64-byte public shards with computational single-shard hiding, identity-bound keys, self-verifying signature masks, and authenticated victim receipt disclosure. Historical V3 security claims below are superseded by the V4 protocol report.
 - **New**: Storage Integrity for all wallet records
 - **New**: Wallet Event Sourcing (Append-only Ledger for transaction history)
 
@@ -141,6 +165,8 @@ The core library is stable and feature-rich. Current focus areas:
 - L2 integration uses mock/playground setup (no real L2 node exists yet)
 
 ## Recent Milestones
+
+- [x] **SST V4 security audit remediation (2026-10-26)**: Added fail-first regressions for the supplied audit (six original assertions reproduced red), plus an end-to-end historical junk-hop counterexample. Bound all output types and handover witnesses to their permanent owner; removed raw-seed legacy fallbacks; derived self-verifying masks from the base signature; kept the Schnorr nonce secret from the recipient; included signed guard commitments in tau. Victim witness disclosure now authenticates the true owner even when the other E-signed shard is junk. Full signed fingerprints, including same-ID guard and metadata variants, survive synthetic proof conversion and import. Definitive DID claims require the ownership receipt; unbound gossip remains ephemeral. Single-key/context checks and fingerprint-only import status prevent synthetic evidence from quarantining unrelated IDs. Ordinary L1 shards remain 64 bytes and normal stealth history carries no public receipts. Verified: 856 workspace tests and 4 doctests passed, 6 pre-existing skips; workspace Clippy with warnings denied, WASM, and release builds passed.
 
 - [x] **Z01 Fail-Closed Goods Release Boundary (2026-10-23)**: Decoupled mathematical live-proof verification from automatic goods release authorization in `models/layer2_api` and `app_service/conflicts.rs`. `CheckoutReleaseVerdict::new` now treats `L2ProcessingOutcome::Confirmed` strictly as a mathematical observation (14/20 live quorum + recipient challenge): `can_release_goods_automatically == false`, `is_goods_release_authorized == false`, and an explanatory `merchant_warning` is emitted until the backend durably commits purchase/operation state (Z08). Automatic release can only be minted through the new `with_durable_purchase_binding` escalation path, which requires the new capability token `DurablePurchaseBinding` (no public constructor, no serde, unconstructible from caller-supplied data). `AppService::verify_live_checkout_proof` still succeeds at cryptographic verification but returns the fail-closed verdict. Test suite updated in `checkout_release_tests` to assert the Z01 fail-closed boundary plus the explicit durable binding path. Known pre-existing failures: 6 `WalletLocked` transactionality/save-failure tests (reproduced on unchanged HEAD) and one timing-flaky session-refresh test (green in isolation).
 

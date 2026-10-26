@@ -851,6 +851,8 @@ fn audit_00_wildcard_42_proof_store_must_enforce_cap() {
     const ATTEMPTED: usize = 1500;
     for i in 0..ATTEMPTED {
         let proof = ProofOfDoubleSpend {
+        fingerprints: Vec::new(),
+        victim_witnesses: Vec::new(),
             proof_id: format!("proof_cap_test_{:05}", i),
             offender_id: format!("offender_{}", i % 10),
             reporter_id: alice_id.clone(),

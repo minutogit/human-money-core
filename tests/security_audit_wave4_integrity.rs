@@ -341,6 +341,8 @@ fn wh4_04_502_chain_time_ordering_must_reject_offset_confusion() {
         .into_vec()
         .expect("decode voucher_id");
 
+    let holder_key = human_money_core::test_utils::bound_test_key(&attacker_key);
+
     // --- init transaction (fully consistent, honest shape) ---
     let mut init_tx = Transaction {
         t_id: String::new(),
@@ -354,9 +356,7 @@ fn wh4_04_502_chain_time_ordering_must_reject_offset_confusion() {
         sender_ephemeral_pub: Some(
             bs58::encode(genesis_key.verifying_key().to_bytes()).into_string(),
         ),
-        receiver_ephemeral_pub_hash: Some(get_hash(
-            genesis_key.verifying_key().to_bytes(),
-        )),
+        receiver_ephemeral_pub_hash: Some(get_hash(holder_key.verifying_key().to_bytes())),
         change_ephemeral_pub_hash: None,
         privacy_guard: None,
         trap_data: None,
@@ -379,7 +379,7 @@ fn wh4_04_502_chain_time_ordering_must_reject_offset_confusion() {
     // --- transfer transaction with hostile mixed-offset t_time ---
     let transfer_prev_hash =
         get_hash(to_canonical_json(&signed_init).expect("canonicalize signed init"));
-    let input_pub_bytes = genesis_key.verifying_key().to_bytes();
+    let input_pub_bytes = holder_key.verifying_key().to_bytes();
 
     let mut transfer_tx = Transaction {
         t_id: String::new(),
@@ -412,11 +412,11 @@ fn wh4_04_502_chain_time_ordering_must_reject_offset_confusion() {
         &input_pub_bytes[..],
     ]);
     let (trap, _witness) = generate_sst_trap(
-        &genesis_key,
+        &attacker_key,
         &ds_tag,
         &input_pub_bytes,
         &transfer_tx.t_id,
-    )
+     "", &[0u8; 32],)
     .expect("SST trap generation failed");
     transfer_tx.trap_data = Some(trap);
 
@@ -427,7 +427,7 @@ fn wh4_04_502_chain_time_ordering_must_reject_offset_confusion() {
         transfer_tx,
         &attacker_key,
         &layer2_voucher_id,
-        Some(&genesis_key),
+        Some(&holder_key),
     );
 
     voucher.transactions.push(signed_init);
