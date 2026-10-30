@@ -1,12 +1,18 @@
 ---
 project: human-money-core
-version: "0.5.0"
+version: "0.5.1"
 phase: "active-development"
 health: "green"
-last_updated: "2026-10-26"
+last_updated: "2026-10-30"
 blocks: []
 blocked_by: []
 priority_tasks:
+  - id: "CORE-008"
+    title: "Agent-Native Wallet CLI Controller & Multi-Actor Scenario Framework"
+    status: "closed"
+    priority: "high"
+    depends_on: []
+    description: "Implemented high-performance `wallet-cli` binary with machine-readable JSON envelopes, full profile and voucher lifecycle management, detached guarantor workflows, P2P transfers, atomic profile snapshots for offline double-spending tests, in-memory scenario runner, L2/conflict inspection, and complete AI Wallet Operator documentation skill."
   - id: "CORE-007"
     title: "SST V4 Input Ownership and Victim Witness Disclosure"
     status: "closed"
@@ -54,6 +60,14 @@ priority_tasks:
 # Human Money Core — Status
 
 ## Current Focus
+
+Agent-Native Wallet CLI & Multi-Actor Testing Framework (2026-10-30): Delivered `wallet-cli`,
+an agent-native CLI controller and multi-wallet testing framework directly integrated with
+`AppService` and `FileStorage`. Enables sub-50ms execution, deterministic JSON envelopes
+(`--json`), non-interactive scriptability, atomic point-in-time profile snapshots (`snapshot save/restore`)
+for deterministic offline double-spend UI staging, an in-memory `scenario` runner executing complex
+multi-actor playbooks in <3s, full detached-signature guarantor cycles, and L1/L2 conflict forensics.
+Accompanied by the comprehensive `wallet-operator` skill and full E2E test suite.
 
 SST V4 audit hardening (2026-10-26): identity-bound output keys and authenticated
 victim witness disclosure close identity swaps, historical junk-hop attribution
@@ -165,6 +179,8 @@ The core library is stable and feature-rich. Current focus areas:
 - L2 integration uses mock/playground setup (no real L2 node exists yet)
 
 ## Recent Milestones
+
+- [x] **Agent-Native Wallet CLI & Multi-Actor Testing Framework (2026-10-30)**: Implemented `wallet-cli`, an agent-native and developer-friendly CLI controller built directly on `AppService` and `FileStorage`. Exposes full wallet and voucher operations with deterministic JSON envelopes (`--json`), non-interactive credentials (`--password`), and seamless interoperability with the Tauri desktop UI (`--auto-handover` for dynamic `WalletSeal` device binding and strict lockfile discipline). Subcommands include: `mnemonic` (generation/validation), `profile` (CRUD, public metadata, audit event history), `standards` (dynamic discovery and verification), `balance` (aggregated multi-standard balances), `voucher` (minting, status/standard filtering, detail inspection, incomplete cleanup), detached `sign` workflows (guarantor/notary request, inspect, endorse, attach, remove), P2P `tx` (greedy multi-source transfers, encrypted send/receive bundles), atomic `snapshot` time-travel (point-in-time state preservation and rollback for staging offline double-spends), high-speed in-memory `scenario` runner (<3s execution across multiple actors with cached unlocked sessions), and `conflict`/`l2` forensic inspection and gateway bridge tools. Fully documented in `.agents/skills/wallet-operator/SKILL.md` with operational golden rules, standard-specific issuance guides (FreeTaler vs Minuto gender parity), and copy-paste recipes for rapid UI test staging. Verified with comprehensive end-to-end integration tests (`tests/wallet_cli_e2e_tests.rs`).
 
 - [x] **SST V4 security audit remediation (2026-10-26)**: Added fail-first regressions for the supplied audit (six original assertions reproduced red), plus an end-to-end historical junk-hop counterexample. Bound all output types and handover witnesses to their permanent owner; removed raw-seed legacy fallbacks; derived self-verifying masks from the base signature; kept the Schnorr nonce secret from the recipient; included signed guard commitments in tau. Victim witness disclosure now authenticates the true owner even when the other E-signed shard is junk. Full signed fingerprints, including same-ID guard and metadata variants, survive synthetic proof conversion and import. Definitive DID claims require the ownership receipt; unbound gossip remains ephemeral. Single-key/context checks and fingerprint-only import status prevent synthetic evidence from quarantining unrelated IDs. Ordinary L1 shards remain 64 bytes and normal stealth history carries no public receipts. Verified: 856 workspace tests and 4 doctests passed, 6 pre-existing skips; workspace Clippy with warnings denied, WASM, and release builds passed.
 
