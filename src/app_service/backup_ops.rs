@@ -70,6 +70,10 @@ fn validate(payload: &BackupManifestPayload, key: &[u8; 32]) -> Result<(), Error
     if payload.format_version != 1 || payload.integrity.payload.version != 1 {
         return Err(invalid("Unsupported backup version"));
     }
+    let name = &payload.profile_name;
+    if name.is_empty() || name.len() > 128 || name.chars().any(|c| c.is_control()) {
+        return Err(invalid("Invalid backup profile name"));
+    }
     let folder = &payload.folder_name;
     if folder.is_empty()
         || !folder
@@ -485,9 +489,16 @@ impl AppService {
             )?;
             let mut voucher_queries = HashMap::new();
             for (id, instance) in &wallet.voucher_store.vouchers {
-                if instance.status == crate::wallet::instance::VoucherStatus::Active {
-                    voucher_queries.insert(id.clone(), wallet.build_voucher_status_query(id, 1)?);
+                if instance.status == crate::wallet::instance::VoucherStatus::Active
+                    && let Ok(query) = wallet.build_voucher_status_query(&identity, id, 1)
+                {
+                    voucher_queries.insert(id.clone(), query);
                 }
+            }
+            wallet.profile.l2_checkout_purchases.retain(|_, p| p.completed);
+            for intent in wallet.profile.l2_send_intents.values_mut() {
+                intent.stored_challenge = None;
+                intent.challenge_expires_at_ms = None;
             }
             // Loading may expire vouchers or migrate protocol state. Persist that state
             // in staging before signing the recovery seal over it.
@@ -580,8 +591,18 @@ impl AppService {
             let activation = (|| {
                 candidate.login(&folder_name, new_local_password, false, local_instance_id)?;
                 let mut profiles = self.list_profiles()?;
+                let mut target_name = payload.profile_name.clone();
+                if profiles.iter().any(|p| p.profile_name == target_name) {
+                    let mut disambiguated = format!("{} (Restored)", payload.profile_name);
+                    let mut counter = 2;
+                    while profiles.iter().any(|p| p.profile_name == disambiguated) {
+                        disambiguated = format!("{} (Restored {})", payload.profile_name, counter);
+                        counter += 1;
+                    }
+                    target_name = disambiguated;
+                }
                 profiles.push(ProfileInfo {
-                    profile_name: payload.profile_name.clone(),
+                    profile_name: target_name,
                     folder_name: folder_name.clone(),
                 });
                 let index_storage = FileStorage::new(self.base_storage_path.clone());
@@ -814,14 +835,31 @@ mod tests {
     #[test]
     fn old_backup_restores_queries_and_reconciles_spent_voucher() {
         let (_dir, mut app) = setup();
-        let id = "backup-voucher".to_string();
-        let (_, _, _, _, voucher, _) = crate::test_utils::setup_voucher_with_one_tx();
-        app.get_wallet_mut().unwrap().add_voucher_instance(
-            id.clone(),
-            voucher,
-            crate::wallet::instance::VoucherStatus::Active,
+        let owner_id = app.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+        let standard_str = crate::test_utils::generate_signed_standard_toml(
+            "voucher_standards/freetaler_v1/standard.toml",
         );
-        app.update_seal_after_state_change(Some("1234")).unwrap();
+        app.create_new_voucher(
+            &standard_str,
+            crate::models::voucher::NewVoucherData {
+                creator_profile: crate::models::profile::PublicProfile {
+                    id: Some(owner_id),
+                    ..Default::default()
+                },
+                nominal_value: crate::models::voucher::ValueDefinition {
+                    amount: "100".into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some("1234"),
+        )
+        .unwrap();
+        let id = app
+            .with_wallet_and_identity(|w, ident| w.list_vouchers(Some(ident), None, None, None))
+            .unwrap()[0]
+            .local_instance_id
+            .clone();
         let backup = app
             .create_differential_backup(None, BackupProtection::MnemonicOnly, Some("1234"))
             .unwrap();

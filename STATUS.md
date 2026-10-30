@@ -7,6 +7,12 @@ last_updated: "2026-10-30"
 blocks: []
 blocked_by: []
 priority_tasks:
+  - id: "CORE-009"
+    title: "Post-v0.5.1 Security Assurance Campaign (AI Audits, Mutation Hardening & Fuzzing)"
+    status: "closed"
+    priority: "critical"
+    depends_on: []
+    description: "Modernized the AI Security Audit suite (`00`–`07`, `DESIGN_INTENT_TRIAGE.md`) to v0.5.1, executed adversarial delta audits across SST V4/SAI, L2 Checkout/Quorum/Intents, and Storage/Backups/CLI, remediated all 20 confirmed findings via Fail-First TDD, closed 33 surviving test gaps uncovered by `cargo-mutants` across 7 v0.5.1 hotspot modules, and ran >1.27M `cargo-fuzz` executions across 5 fuzz targets with 0 crashes/panics. Workspace validation: 915 tests and 4 doctests passed, 6 pre-existing skips; Clippy, WASM, fuzz, and release checks passed."
   - id: "CORE-008"
     title: "Agent-Native Wallet CLI Controller & Multi-Actor Scenario Framework"
     status: "closed"
@@ -60,6 +66,19 @@ priority_tasks:
 # Human Money Core — Status
 
 ## Current Focus
+
+Post-v0.5.1 Security Assurance Campaign (2026-10-30): Executed a three-pillar post-milestone security and test-gap verification campaign across the v0.5.0/v0.5.1 architecture:
+1. **AI Security Audit Modernization & Adversarial Delta Audit (`docs/security/ai-audits/`)**: Updated modules `00`–`06` and `DESIGN_INTENT_TRIAGE.md` to v0.5.1, added `07_l2_checkout_and_intents.md`, and archived three adversarial delta audit reports in `docs/security/ai-audits/reports/`. Confirmed SST V4 algebra and AEAD/HMAC backup cryptography hold intact, while identifying and remediating **20 cross-boundary, state-machine, conflict-attribution, storage-rollback, and CLI vulnerabilities** via Fail-First TDD (`tests/security_audit_module_07_l2_checkout.rs`, `tests/security_audit_v051_conflicts_and_sai.rs`, `tests/security_audit_v051_storage_and_cli.rs`) without altering L1 serialization schemas.
+2. **Targeted Mutation Testing (`cargo-mutants`)**: Configured `.cargo/mutants.toml` for offline `nextest` execution and evaluated 121 security-critical mutants across `trap_manager.rs` (0 missed), `conflict_manager.rs`, `reconciliation.rs`, `checkout.rs`, `l2_intents.rs`, `backup_ops.rs`, and `wallet_transaction.rs`, closing all 33 real surviving boundary/logic test gaps across 3 dedicated hardening suites (`tests/mutation_hardening_*.rs`).
+3. **Fuzzing Campaign (`cargo-fuzz`)**: Synchronized `fuzz/` with v0.5.1 APIs, expanded SST V4 witness disclosure fuzzing, added `fuzz_backup_and_l2_envelopes`, and executed **1,276,313 fuzz runs** across all 5 fuzz targets with **0 crashes, panics, or OOMs**.
+Validation completed:
+- `cargo nextest run --workspace --status-level fail --offline --no-fail-fast`: **915 passed, 0 failed, 6 pre-existing skips**.
+- `cargo test --workspace --doc --offline`: **4 passed**.
+- `cargo clippy --workspace --all-targets --offline -- -D warnings`: passed (0 warnings).
+- `cargo check --workspace --lib --target wasm32-unknown-unknown --offline`: passed.
+- `cargo check --release --lib --no-default-features --offline`: passed without `test-utils`.
+- `cargo +nightly check --manifest-path fuzz/Cargo.toml --offline`: passed.
+- `git diff --check`: passed.
 
 Agent-Native Wallet CLI & Multi-Actor Testing Framework (2026-10-30): Delivered `wallet-cli`,
 an agent-native CLI controller and multi-wallet testing framework directly integrated with

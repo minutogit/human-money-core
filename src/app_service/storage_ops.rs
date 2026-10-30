@@ -234,7 +234,7 @@ impl AppService {
             if sync_state == SealSyncState::ForkDetected {
                 let mut locked_record = record;
                 locked_record.is_locked_due_to_fork = true;
-                let _ = storage.save_seal(auth, &locked_record);
+                storage.save_seal(auth, &locked_record)?;
             }
 
             Ok(sync_state)
@@ -337,6 +337,19 @@ impl AppService {
         })
     }
 
+    /// Explicitly triggers a transaction rollback for testing failure paths and state merge.
+    #[doc(hidden)]
+    pub fn rollback_transaction_for_test(
+        &mut self,
+        password: Option<&str>,
+    ) -> Result<(), Error> {
+        self.with_transactional_mut(password, |_temp_wallet, _, _, _| {
+            TransactionOutcome::Rollback(Error::App(crate::error::AppError::ReloadFailed {
+                reason: "Simulated test rollback".to_string(),
+            }))
+        })
+    }
+
     /// Reconciles local wallet state after an L2 rollback is detected.
     ///
     /// Scans vouchers, quarantines/archives already-spent vouchers on L2, retains unspent
@@ -356,14 +369,14 @@ impl AppService {
         TransactionOrchestrator::execute_reconciliation(self, password, move |temp_wallet, identity, storage, auth| {
             let mut archived = Vec::new();
             let mut retained = Vec::new();
-            let quarantined = Vec::new();
+            let mut quarantined = Vec::new();
 
             for (id, instance) in &mut temp_wallet.voucher_store.vouchers {
-                let is_spent = spent_ids.contains(id)
+                if matches!(instance.status, crate::wallet::instance::VoucherStatus::Quarantined { .. }) {
+                    quarantined.push(id.clone());
+                } else if spent_ids.contains(id)
                     || spent_ids.contains(&instance.voucher.voucher_id)
-                    || matches!(instance.status, crate::wallet::instance::VoucherStatus::Quarantined { .. });
-
-                if is_spent {
+                {
                     instance.status = crate::wallet::instance::VoucherStatus::Archived;
                     archived.push(id.clone());
                 } else if matches!(instance.status, crate::wallet::instance::VoucherStatus::Active) {
@@ -669,10 +682,20 @@ impl AppService {
                 ..
             } => {
                 let auth = Self::resolve_auth_method(password, session_cache)?;
-                storage.commit_wallet_atomic(wallet, identity, &auth)?;
-                crate::storage::seal_service::SealService::persist_seal_for_wallet_state(
-                    storage, identity, &auth, wallet,
-                )
+                let tx = storage.begin_wallet_transaction(&auth)?;
+                let step = (|| -> Result<(), Error> {
+                    storage.commit_wallet_atomic(wallet, identity, &auth)?;
+                    crate::storage::seal_service::SealService::persist_seal_for_wallet_state(
+                        storage, identity, &auth, wallet,
+                    )?;
+                    Ok(())
+                })();
+                if let Err(e) = step {
+                    let _ = tx.abort(storage);
+                    return Err(e);
+                }
+                tx.commit(storage)?;
+                Ok(())
             }
             AppState::Locked => Err(Error::WalletLocked),
         }

@@ -211,33 +211,35 @@ fn test_wallet_backup_restore_reconciles_already_spent_voucher_via_status_query(
     // Simulate backup restore scenario:
     // 1. Build voucher status query
     let status_query = wallet
-        .build_voucher_status_query(&local_id, 1)
+        .build_voucher_status_query(&identity, &local_id, 1)
         .expect("Build status query");
     assert_eq!(status_query.read_quorum, 1);
     assert!(!status_query.layer2_voucher_id.is_empty());
     assert!(!status_query.challenge_ds_tag.is_empty());
 
     // 2. Query returns HTTP 200 with child lock (remote spend occurred before backup was restored)
-    let child_t_id = [0x77u8; 32];
-    let child_lock = L2LockEntry {
-        causal_output: None,
-        layer2_voucher_id: status_query.layer2_voucher_id.clone(),
-        t_id: child_t_id,
-        sender_ephemeral_pub: [0x11u8; 32],
-        receiver_ephemeral_pub_hash: None,
-        change_ephemeral_pub_hash: None,
-        layer2_signature: [0x22u8; 64],
-        trap_r: Some("none".to_string()),
-        trap_s: Some("none".to_string()),
-        encrypted_timestamp: 12345,
-        created_at_ms: 1000,
-        deletable_at: None,
-        privacy_guard: None,
-    };
+    let mut remote_wallet = wallet.clone();
+    let spend_voucher = remote_wallet
+        ._execute_single_transfer(
+            &identity,
+            standard,
+            &local_id,
+            &ACTORS.bob.identity.user_id,
+            "100.00",
+            None,
+            None,
+            None,
+        )
+        .expect("spend remote");
+    let spend_tx = spend_voucher.transactions.last().unwrap();
+    let req = generate_lock_request(&status_query.layer2_voucher_id, spend_tx, &[0x42u8; 32])
+        .expect("generate lock request");
+    let child_lock = L2LockEntry::from(req);
+    let child_t_id = child_lock.t_id;
 
     // Reconcile voucher state with remote child lock
     let reconciliation_res = wallet
-        .reconcile_voucher_state(&local_id, Some(&child_lock))
+        .reconcile_voucher_state(&identity, &local_id, Some(&child_lock))
         .expect("Reconcile voucher state");
 
     let expected_successor_id = bs58::encode(child_t_id).into_string();
@@ -279,20 +281,40 @@ fn test_wallet_backup_restore_reconciles_already_spent_voucher_via_status_query(
         test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", password);
 
     // Add voucher in app and commit state with seal
-    let app_voucher_id = {
+    let (app_voucher_id, app_identity) = {
         let (wallet_mut, identity) = app.get_unlocked_mut_for_test();
-        test_utils::add_voucher_to_wallet(wallet_mut, identity, "50.00", standard, true).unwrap()
+        let vid = test_utils::add_voucher_to_wallet(wallet_mut, identity, "50.00", standard, true).unwrap();
+        (vid, identity.clone())
     };
     app.update_seal_after_state_change(Some(password)).unwrap();
 
+    let mut remote_app_wallet = app.get_wallet_for_test().unwrap().clone();
+    let app_spend_voucher = remote_app_wallet
+        ._execute_single_transfer(
+            &app_identity,
+            standard,
+            &app_voucher_id,
+            &ACTORS.bob.identity.user_id,
+            "50.00",
+            None,
+            None,
+            None,
+        )
+        .expect("spend remote app voucher");
+    let app_spend_tx = app_spend_voucher.transactions.last().unwrap();
+    let app_l2_id = extract_layer2_voucher_id(&app_spend_voucher).unwrap();
+    let app_req = generate_lock_request(&app_l2_id, app_spend_tx, &[0x43u8; 32]).unwrap();
+    let app_child_lock = L2LockEntry::from(app_req);
+    let app_expected_successor_id = bs58::encode(app_child_lock.t_id).into_string();
+
     // Test AppService::reconcile_voucher_state (Tier 2 micro-check through facade)
     let app_reconcile_res = app
-        .reconcile_voucher_state(&app_voucher_id, Some(&child_lock), Some(password))
+        .reconcile_voucher_state(&app_voucher_id, Some(&app_child_lock), Some(password))
         .expect("AppService reconcile voucher state");
     assert_eq!(
         app_reconcile_res,
         VoucherReconciliationResult::AlreadySpent {
-            successor_t_id: expected_successor_id,
+            successor_t_id: app_expected_successor_id,
         }
     );
 
@@ -330,25 +352,27 @@ fn test_wallet_prevents_accidental_double_spend_after_status_detects_successor()
             .expect("Add voucher");
 
     // Remote child lock detected via L2 status query
-    let child_lock = L2LockEntry {
-        causal_output: None,
-        layer2_voucher_id: "test_voucher_id".to_string(),
-        t_id: [0x55u8; 32],
-        sender_ephemeral_pub: [0x33u8; 32],
-        receiver_ephemeral_pub_hash: None,
-        change_ephemeral_pub_hash: None,
-        layer2_signature: [0x44u8; 64],
-        trap_r: Some("none".to_string()),
-        trap_s: Some("none".to_string()),
-        encrypted_timestamp: 100,
-        created_at_ms: 200,
-        deletable_at: None,
-        privacy_guard: None,
-    };
+    let mut remote_wallet = wallet.clone();
+    let spend_voucher = remote_wallet
+        ._execute_single_transfer(
+            &identity,
+            standard,
+            &local_id,
+            &ACTORS.bob.identity.user_id,
+            "100.00",
+            None,
+            None,
+            None,
+        )
+        .expect("spend remote");
+    let spend_tx = spend_voucher.transactions.last().unwrap();
+    let l2_id = extract_layer2_voucher_id(&spend_voucher).unwrap();
+    let req = generate_lock_request(&l2_id, spend_tx, &[0x55u8; 32]).unwrap();
+    let child_lock = L2LockEntry::from(req);
 
     // Reconcile -> marks voucher Archived
     let res = wallet
-        .reconcile_voucher_state(&local_id, Some(&child_lock))
+        .reconcile_voucher_state(&identity, &local_id, Some(&child_lock))
         .expect("Reconciliation succeeds");
     assert!(matches!(
         res,

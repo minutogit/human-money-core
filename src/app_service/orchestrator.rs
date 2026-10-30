@@ -335,9 +335,10 @@ impl TransactionOrchestrator {
                 // Commit marker rename succeeded: new state remains installed on disk.
                 // Complete journal cleanup if possible, but adopt the installed state.
                 let _ = transaction.abort(&storage);
-                let (recovered_wallet, _) =
+                let (mut recovered_wallet, _) =
                     Wallet::load(&storage, &auth, current_wallet.local_instance_id.clone())?;
-                let _ = SealService::verify_state_matches_seal(&storage, &auth, &recovered_wallet);
+                SealService::verify_state_matches_seal(&storage, &auth, &recovered_wallet)?;
+                StateMergeHook::apply(&current_wallet, &mut recovered_wallet);
                 service.state = AppState::Unlocked {
                     storage,
                     wallet: recovered_wallet,
@@ -352,9 +353,10 @@ impl TransactionOrchestrator {
             }
             Err(error) => {
                 transaction.abort(&storage)?;
-                let (recovered_wallet, _) =
+                let (mut recovered_wallet, _) =
                     Wallet::load(&storage, &auth, current_wallet.local_instance_id.clone())?;
-                let _ = SealService::verify_state_matches_seal(&storage, &auth, &recovered_wallet);
+                SealService::verify_state_matches_seal(&storage, &auth, &recovered_wallet)?;
+                StateMergeHook::apply(&current_wallet, &mut recovered_wallet);
                 service.state = AppState::Unlocked {
                     storage,
                     wallet: recovered_wallet,
@@ -518,8 +520,9 @@ impl TransactionOrchestrator {
                         generation,
                     }) => {
                         let _ = transaction.abort(&storage);
-                        let (recovered_wallet, _) =
+                        let (mut recovered_wallet, _) =
                             Wallet::load(&storage, &auth, current_wallet.local_instance_id.clone())?;
+                        StateMergeHook::apply(&current_wallet, &mut recovered_wallet);
                         service.state = AppState::Unlocked {
                             storage,
                             wallet: recovered_wallet,
@@ -534,8 +537,9 @@ impl TransactionOrchestrator {
                     }
                     Err(error) => {
                         transaction.abort(&storage)?;
-                        let (restored_wallet, _) =
+                        let (mut restored_wallet, _) =
                             Wallet::load(&storage, &auth, current_wallet.local_instance_id.clone())?;
+                        StateMergeHook::apply(&current_wallet, &mut restored_wallet);
                         service.state = AppState::Unlocked {
                             storage,
                             wallet: restored_wallet,
@@ -548,8 +552,9 @@ impl TransactionOrchestrator {
             }
             Err(error) => {
                 transaction.abort(&storage)?;
-                let (restored_wallet, _) =
+                let (mut restored_wallet, _) =
                     Wallet::load(&storage, &auth, current_wallet.local_instance_id.clone())?;
+                StateMergeHook::apply(&current_wallet, &mut restored_wallet);
                 service.state = AppState::Unlocked {
                     storage,
                     wallet: restored_wallet,

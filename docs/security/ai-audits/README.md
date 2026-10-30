@@ -1,6 +1,6 @@
 # AI Security Audit Suite for human-money-core
 
-Welcome to the **AI Security Audit Suite** of `human-money-core`.
+Welcome to the **AI Security Audit Suite** of `human-money-core` (v0.5.1).
 
 If you want to contribute to the security, correctness, and resilience of this project, you can use these tailored AI prompts to independently audit different layers of the codebase using any modern AI coding assistant (e.g. Antigravity, Claude, ChatGPT, Cursor).
 
@@ -11,29 +11,32 @@ If you want to contribute to the security, correctness, and resilience of this p
 `human_money_core` implements decentralized, file-based digital cash (vouchers) without requiring a global consensus blockchain. Because users can hand over vouchers offline (file-to-file), **double-spending cannot be prevented in real-time at the exact moment of offline transfer.**
 
 Instead, the system relies on fundamental cryptographic invariants:
-1. **Mathematical Trap (`TrapData` / Slope Calculation):** Anyone attempting to double-spend the same input voucher state is mathematically forced to reveal their cryptographic identity (`did:key`) via Schnorr NIZK / slope calculation ($V = u \cdot m + ID$).
-2. **DS-Tag Input Dependency:** The Double-Spend Tag $u = \text{Hash}(\text{prev\_hash} + \text{sender\_ephemeral\_pub})$ depends **strictly on input data**, never on outputs (amount or recipient).
-3. **Post-Quantum Forward Secrecy:** Unspent vouchers are anchored via SHA3-256 hashes of ephemeral keys; owner public keys remain secret until spending.
-4. **Public Key Firewall:** Binary 32-byte public keys are enforced—users cannot bypass role separation (e.g., creator vs. guarantor) using multiple did:key prefixes.
-5. **Deterministic L2 Quarantine:** Layer-2 servers and peer nodes detect duplicated DS-Tags in $O(1)$, trigger dispute proofs, and quarantine compromised vouchers.
-6. **Encrypted Storage & Memory Hygiene:** Private keys, seed phrases, and profiles must be securely encrypted at rest, and file writes must be atomic.
-7. **Strict Privacy Boundaries:** In Private/Stealth Mode, sender identifiers and signatures must be strictly omitted from interchange bundles without leaking metadata.
+1. **Shared-Signature Trap (SST V4):** Double-spending the same input anchor mathematically forces identity unmasking via SST V4: honest spends share one Schnorr signature line $\mu = H(\text{HMC\_TRAP\_SIG\_V4}, ds\_tag, E)$ with secret nonce derivation ($r = H(\text{HMC\_TRAP\_NONCE\_V4}, x, \mu)$), VRF + Chaum-Pedersen DLEQ line derivation, self-verifying signature masks ($M_R, m_s$), 64-byte compact public shards ($R_i, s_i$), and identity-bound output keys ($E = X + hG$).
+2. **Authenticated Victim Witness Disclosure:** Historical junk shards cannot be publicly validated in isolation without witness data. A direct victim holding the matching encrypted receipt discloses its input opening and trap witness upon detecting a signed collision under the same $ds\_tag$. Gossip-only nodes identify ephemeral offenders (`ephemeral:E`) without leaking private stealth history.
+3. **DS-Tag Input Dependency:** The Double-Spend Tag ($u = \text{Hash}(prev\_hash + sender\_ephemeral\_pub)$) depends **strictly on input data**, never on outputs (amount or recipient).
+4. **Post-Quantum Forward Secrecy & Key Firewall:** Unspent vouchers are anchored via SHA3-256 hashes of ephemeral keys; owner public keys remain secret until spending. Binary 32-byte public keys are enforced to prevent role obfuscation (e.g., creator vs. guarantor).
+5. **Layer-1 Sovereignty & Blind L2 Registry:** Layer 1 (`ProofChain`) is the sovereign cryptographic bedrock; Layer 2 is an auxiliary blind collision lock registry. Layer 2 never alters L1 transaction schemas or trap commitments.
+6. **L2 Idempotent Conflict Resolution:** If an L2 conflict transaction ID matches the local transaction ID (`existing_lock.t_id == local_t_id`), it is treated as an idempotent retry (Success), not as a double-spend attempt requiring quarantine.
+7. **Z01 Fail-Closed Checkout Release:** `Confirmed` live-proof verification is purely a mathematical observation (14/20 BFT quorum + recipient challenge); automatic goods release strictly requires the unforgeable crate-internal `DurablePurchaseBinding` capability token.
+8. **Crash-Atomic Wallet Transactions & Storage Integrity:** Multi-file wallet mutations are guarded by an encrypted undo journal and commit marker. Differential cloud backups strip local password slots and use HMAC-derived opaque blob names.
+9. **Strict Privacy Boundaries & Offline Forensics (HMSEC-SA06-05):** In Private/Stealth Mode, sender identifiers and signatures are omitted from interchange bundles. Direct counterparty DIDs are intentionally retained in the local encrypted wallet ledger to enable vital hop-by-hop double-spend forensics in offline decentralized networks.
 
 ---
 
 ## 📂 The Complete Audit Suite (Targeted Modules + Open Wildcard)
 
-The audit suite combines 6 domain-specific vertical modules with 1 open-ended adversarial wildcard prompt:
+The audit suite combines 7 domain-specific vertical modules with 1 open-ended adversarial wildcard prompt:
 
 | File | Area | Scope & Key Attack Vectors |
 | :--- | :--- | :--- |
 | [`00_general_adversarial_wildcard.md`](./00_general_adversarial_wildcard.md) | **Open-Ended Threat Modeling (Wildcard)** | Cross-cutting state desyncs, novel zero-days, architectural paradoxes, assumption-busting |
-| [`01_double_spend_and_conflicts.md`](./01_double_spend_and_conflicts.md) | **Double-Spend Trap & Conflict Detection** | Trap evasion, framing attacks, DS-tag collisions, L2 quarantine bypass |
+| [`01_double_spend_and_conflicts.md`](./01_double_spend_and_conflicts.md) | **Double-Spend Trap (SST V4) & Conflict Detection** | SST V4 line derivation, secret nonces, identity-bound outputs, victim witness disclosure, same-ID guards |
 | [`02_cryptography_and_identity.md`](./02_cryptography_and_identity.md) | **Cryptography & Identity Integrity** | Signature malleability, incomplete signing payloads, role obfuscation, key leakage |
 | [`03_standards_and_cel_engine.md`](./03_standards_and_cel_engine.md) | **Voucher Standards & Dynamic CEL Rules** | Missing context bypasses, CEL type-juggling, arithmetic precision, standard tampering |
 | [`04_transaction_and_state_integrity.md`](./04_transaction_and_state_integrity.md) | **Transaction Logic & Rust Robustness** | Split/Change anchor collisions, conservation of value, unwrap/expect panics on untrusted input |
-| [`05_storage_and_key_persistence.md`](./05_storage_and_key_persistence.md) | **Storage, Key Management & At-Rest Encryption** | Plaintext key leakage, weak KDF, partial write corruption, archive tampering |
-| [`06_privacy_and_protocol_bundles.md`](./06_privacy_and_protocol_bundles.md) | **Privacy Mode & Protocol Interchange** | De-anonymization in Private Mode, bundle spoofing, JWS tampering, event metadata leaks |
+| [`05_storage_and_key_persistence.md`](./05_storage_and_key_persistence.md) | **Storage, Key Management & Crash-Atomic Persistence** | Crash-atomic transactions, undo journal, differential cloud backups, staged restore, HMAC blobs |
+| [`06_privacy_and_protocol_bundles.md`](./06_privacy_and_protocol_bundles.md) | **Privacy Mode & Protocol Interchange** | De-anonymization in Private Mode, bundle spoofing, JWS tampering, `wallet-cli` JSON boundaries |
+| [`07_l2_checkout_and_intents.md`](./07_l2_checkout_and_intents.md) | **Layer-2 Checkout, Quorum Verification & Send-Intent Reconciliation** | Fail-closed checkout release, `DurablePurchaseBinding`, purchase replay idempotency, 30s retained-choice reconciliation, 14/20-BFT quorum proofs |
 
 ---
 
@@ -84,7 +87,7 @@ Every finding test file (e.g. `tests/security_audit_module_01_traps.rs`) must be
 ```rust
 //! # Security Audit Finding: [Concise Title]
 //!
-//! - Finding-ID: AUDIT-[MODULE]-[INDEX] (e.g. AUDIT-01-VULN-01)
+//! - Finding-ID: AUDIT-[MODULE]-[INDEX] (e.g. AUDIT-01-TRAP-01)
 //! - Severity: CRITICAL | HIGH | MEDIUM | LOW
 //! - CWE-Classification: CWE-[ID] (e.g. CWE-347: Improper Verification of Cryptographic Signature)
 //! - Target Location: src/[path/to/file.rs]:[start_line]-[end_line]
@@ -110,7 +113,7 @@ Every finding test file (e.g. `tests/security_audit_module_01_traps.rs`) must be
 ## 🚀 How to Run an Audit (2-Phase Workflow)
 
 1. **Phase 1 (Adversarial Exploration):**
-   * Pick one prompt file at a time from modules `00` through `06`.
+   * Pick one prompt file at a time from modules `00` through `07`.
    * Copy the prompt content into your AI coding assistant.
 2. **Phase 2 (Design-Intent Triage):**
    * Run all candidate findings through **[`DESIGN_INTENT_TRIAGE.md`](./DESIGN_INTENT_TRIAGE.md)**.
@@ -118,4 +121,3 @@ Every finding test file (e.g. `tests/security_audit_module_01_traps.rs`) must be
    * If a finding is a `[CONFIRMED VULNERABILITY]`, implement the fix using the Fail-First TDD methodology.
 3. **Submitting Results:**
    * Open a PR containing the test file, code comments / remediation, and the completed Triage Summary table.
-

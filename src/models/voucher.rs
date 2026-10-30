@@ -1163,11 +1163,14 @@ impl Voucher {
             let is_same_identity = |a: &str, b: &str| -> bool {
                 if a == b {
                     true
-                } else if a.contains(':') && b.contains(':') {
-                    crate::services::crypto::get_pubkey_from_user_id(a).ok()
-                        == crate::services::crypto::get_pubkey_from_user_id(b).ok()
                 } else {
-                    false
+                    match (
+                        crate::services::crypto::get_pubkey_from_user_id(a),
+                        crate::services::crypto::get_pubkey_from_user_id(b),
+                    ) {
+                        (Ok(pk_a), Ok(pk_b)) => pk_a == pk_b,
+                        _ => false,
+                    }
                 }
             };
 
@@ -1227,14 +1230,17 @@ impl Voucher {
         })?;
         let decimal_places = standard.immutable.features.amount_decimal_places as u32;
 
-        let is_creator_identity = |a: &str, b: &str| -> bool {
+        let is_same_user_id = |a: &str, b: &str| -> bool {
             if a == b {
                 true
-            } else if a.contains(':') && b.contains(':') {
-                crate::services::crypto::get_pubkey_from_user_id(a).ok()
-                    == crate::services::crypto::get_pubkey_from_user_id(b).ok()
             } else {
-                false
+                match (
+                    crate::services::crypto::get_pubkey_from_user_id(a),
+                    crate::services::crypto::get_pubkey_from_user_id(b),
+                ) {
+                    (Ok(pk_a), Ok(pk_b)) => pk_a == pk_b,
+                    _ => false,
+                }
             }
         };
         let balance_str = if let Some(hash) = current_holder_pub_hash {
@@ -1246,7 +1252,7 @@ impl Voucher {
                 "0"
             }
         } else {
-            if last_tx.t_type == "init" && is_creator_identity(&last_tx.recipient_id, user_id) {
+            if last_tx.t_type == "init" && is_same_user_id(&last_tx.recipient_id, user_id) {
                 &last_tx.amount
             } else if last_tx.t_type == "init" {
                 "0"

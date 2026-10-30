@@ -368,8 +368,8 @@ fn test_integration_detects_victim_role_on_loser_only() {
     let v_id = human_money_core::services::l2_gateway::calculate_layer2_voucher_id(&voucher_base.transactions[0]).unwrap();
 
     // --- 3. Bob double-spends: early to Charlie (Winner) and late to Alice (Loser) ---
-    let time_early = (Utc::now() - Duration::hours(1)).to_rfc3339();
-    let time_late = Utc::now().to_rfc3339();
+    let time_early = (Utc::now() + Duration::seconds(10)).to_rfc3339();
+    let time_late = (Utc::now() + Duration::seconds(30)).to_rfc3339();
 
     // Winner transaction to Charlie (Actor B) — SST trap + witness guard
     // attached before signing so the HMC_TX_AUTH_V3 digest and the fail-closed

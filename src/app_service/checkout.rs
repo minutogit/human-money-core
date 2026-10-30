@@ -25,6 +25,8 @@ pub struct CheckoutPurchase {
     pub context: LiveStateContext,
     pub expires_at_ms: u64,
     pub completed: bool,
+    #[serde(default)]
+    pub imported_local_instance_id: Option<String>,
 }
 /// Stable purchase identity lets a PoS distinguish idempotent completion from a
 /// new release event. Only an installed wallet commit can produce this result.
@@ -89,10 +91,37 @@ impl AppService {
         purchase_id: &str,
         bundle_data: &[u8],
     ) -> Result<Option<CheckoutCompletion>, Error> {
-        if !self.is_checkout_purchase_completed(purchase_id, bundle_data)? {
-            return Ok(None);
-        }
-        Ok(Some(completed_checkout_completion(purchase_id)))
+        let bundle_hash = *blake3::hash(bundle_data).as_bytes();
+        self.with_unlocked_ref(|wallet, identity, storage| {
+            if let Ok(Some(record)) =
+                storage.load_seal(&crate::storage::AuthMethod::RecoveryIdentity(identity))
+            {
+                if record.is_locked_due_to_fork {
+                    return Err(crate::Error::WalletLockedDueToFork);
+                }
+            }
+            let purchase = match wallet.profile.l2_checkout_purchases.get(purchase_id) {
+                Some(p) => p,
+                None => return Ok(None),
+            };
+            if purchase.bundle_hash != bundle_hash {
+                return Err(invalid("purchase ID already binds another bundle"));
+            }
+            if !purchase.completed {
+                return Ok(None);
+            }
+            if let Some(ref local_id) = purchase.imported_local_instance_id {
+                if let Some(instance) = wallet.voucher_store.vouchers.get(local_id) {
+                    if matches!(
+                        instance.status,
+                        crate::wallet::instance::VoucherStatus::Quarantined { .. }
+                    ) {
+                        return Err(invalid("imported purchase voucher was quarantined"));
+                    }
+                }
+            }
+            Ok(Some(completed_checkout_completion(purchase_id)))
+        })
     }
 
     /// Creates and durably installs one unpredictable recipient challenge bound to
@@ -253,6 +282,7 @@ impl AppService {
                             .saturating_add(CHECKOUT_CHALLENGE_TTL_MS)
                             .min(root_valid_until),
                         completed: false,
+                        imported_local_instance_id: None,
                     },
                 );
                 mutated = true;
@@ -284,76 +314,87 @@ impl AppService {
             return Err(invalid("purchase bundle too large"));
         }
         let hash = *blake3::hash(bundle_data).as_bytes();
-        let stored_purchase = self.with_wallet(|wallet| {
-            wallet
-                .profile
-                .l2_checkout_purchases
-                .get(purchase_id)
-                .map(|purchase| (purchase.bundle_hash, purchase.completed))
-        })?;
-        if let Some((stored_hash, completed)) = stored_purchase {
-            if stored_hash != hash {
-                return Err(invalid("purchase bundle mismatch"));
-            }
-            if completed {
-                return Ok(completed_checkout_completion(purchase_id));
-            }
-        }
         let registry = StandardRegistry::from_toml_map(standards)?;
         let epoch_info = self.get_epoch_info(password)?.unwrap_or_default();
         let (epoch_start, epoch) = epoch_info;
         let newly_committed = self.with_transactional_mut(password, |wallet, identity, _, _| {
-            let result = (|| {
-                let purchase = wallet
-                    .profile
-                    .l2_checkout_purchases
-                    .get(purchase_id)
-                    .cloned()
-                    .ok_or_else(|| invalid("purchase challenge missing"))?;
-                if purchase.bundle_hash != hash {
-                    return Err(invalid("purchase bundle mismatch"));
-                }
-                if purchase.completed {
-                    return Ok(false);
-                }
-                if now_ms >= purchase.expires_at_ms || now_ms >= purchase.context.root_valid_until {
-                    return Err(invalid("purchase challenge expired"));
-                }
-                let policy = wallet
-                    .profile
-                    .l2_regional_mesh_policy
-                    .as_ref()
-                    .ok_or_else(|| invalid("recipient authority missing"))?;
-                let committee =
-                    regional_committee(policy, views, purchase.context.shard_id, now_ms)
-                        .map_err(invalid)?;
-                if purchase.context.network != policy.network
-                    || purchase.context.committee != committee
-                {
-                    return Err(invalid("purchase authority changed"));
-                }
-                verify_live_state_proof(proof, &purchase.context).map_err(invalid)?;
-                let outcome = wallet.process_bundle_with_registry_inner(
-                    identity,
-                    bundle_data,
-                    None,
-                    &registry,
-                    Some(epoch_start.as_str()),
-                    epoch,
-                    false,
-                )?;
-                if outcome.involved_vouchers.len() != 1 {
-                    return Err(invalid("purchase did not import exactly one voucher"));
-                }
-                if !wallet.profile.mark_checkout_purchase_completed(purchase_id) {
-                    return Err(invalid("purchase disappeared"));
-                }
-                Ok(true)
-            })();
-            match result {
-                Ok(value) => TransactionOutcome::Commit(value),
-                Err(error) => TransactionOutcome::Rollback(error),
+            let purchase = match wallet.profile.l2_checkout_purchases.get(purchase_id) {
+                Some(p) => p.clone(),
+                None => return TransactionOutcome::Rollback(invalid("purchase challenge missing")),
+            };
+            if purchase.bundle_hash != hash {
+                return TransactionOutcome::Rollback(invalid("purchase bundle mismatch"));
             }
+            if purchase.completed {
+                if let Some(ref local_id) = purchase.imported_local_instance_id {
+                    if let Some(instance) = wallet.voucher_store.vouchers.get(local_id) {
+                        if matches!(
+                            instance.status,
+                            crate::wallet::instance::VoucherStatus::Quarantined { .. }
+                        ) {
+                            return TransactionOutcome::Rollback(invalid(
+                                "imported purchase voucher was quarantined",
+                            ));
+                        }
+                    }
+                }
+                return TransactionOutcome::Abort(false);
+            }
+            if now_ms >= purchase.expires_at_ms || now_ms >= purchase.context.root_valid_until {
+                return TransactionOutcome::Rollback(invalid("purchase challenge expired"));
+            }
+            let policy = match wallet.profile.l2_regional_mesh_policy.as_ref() {
+                Some(p) => p,
+                None => return TransactionOutcome::Rollback(invalid("recipient authority missing")),
+            };
+            let committee = match regional_committee(policy, views, purchase.context.shard_id, now_ms) {
+                Ok(c) => c,
+                Err(e) => return TransactionOutcome::Rollback(invalid(e)),
+            };
+            if purchase.context.network != policy.network
+                || purchase.context.committee != committee
+            {
+                return TransactionOutcome::Rollback(invalid("purchase authority changed"));
+            }
+            if let Err(e) = verify_live_state_proof(proof, &purchase.context) {
+                return TransactionOutcome::Rollback(invalid(e));
+            }
+            let outcome = match wallet.process_bundle_with_registry_inner(
+                identity,
+                bundle_data,
+                None,
+                &registry,
+                Some(epoch_start.as_str()),
+                epoch,
+                false,
+            ) {
+                Ok(o) => o,
+                Err(e) => return TransactionOutcome::Rollback(e),
+            };
+            if outcome.involved_vouchers.len() != 1 {
+                return TransactionOutcome::Rollback(invalid("purchase did not import exactly one voucher"));
+            }
+            if !outcome.check_result.verifiable_conflicts.is_empty()
+                || !outcome.check_result.unverifiable_warnings.is_empty()
+            {
+                return TransactionOutcome::Rollback(invalid("imported purchase bundle has conflicts or warnings"));
+            }
+            let imported_id = &outcome.involved_vouchers[0];
+            let Some(voucher_instance) = wallet.voucher_store.vouchers.get(imported_id) else {
+                return TransactionOutcome::Rollback(invalid("imported purchase voucher missing from store"));
+            };
+            if voucher_instance.status != crate::wallet::instance::VoucherStatus::Active {
+                return TransactionOutcome::Rollback(invalid("imported purchase voucher is not active"));
+            }
+
+            if !wallet.profile.mark_checkout_purchase_completed(purchase_id) {
+                return TransactionOutcome::Rollback(invalid("purchase disappeared"));
+            }
+            if let Some(purchase_mut) = wallet.profile.l2_checkout_purchases.get_mut(purchase_id) {
+                purchase_mut.imported_local_instance_id = Some(imported_id.clone());
+            }
+
+            TransactionOutcome::Commit(true)
         })?;
         Ok(CheckoutCompletion {
             purchase_id: purchase_id.into(),

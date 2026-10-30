@@ -32,7 +32,7 @@ use crate::models::layer2_api::{
 use crate::models::profile::UserIdentity;
 use crate::models::voucher::Transaction;
 
-use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, VerifyingKey};
 use humoco_proto::verify::verify_quorum_proof;
 
 /// Defines the synchronization verdict of a state anchor against Layer 2.
@@ -51,6 +51,8 @@ pub enum AnchorSyncVerdict {
     ForkConflict { foreign_entry: L2LockEntry },
     /// Unknown voucher / initial state -> Genesis lock required.
     GenesisRequired,
+    /// Insufficient consensus or no category reached the required read quorum.
+    Inconclusive,
 }
 
 /// Defines the action that AppService should perform after evaluating the verdict.
@@ -553,10 +555,40 @@ pub fn verify_lock_entry_proof(
     );
 
     #[cfg(feature = "test-utils")]
-    let signature_valid =
-        ephem_key.verify(&payload_hash, &signature).is_ok() || crate::is_signature_bypass_active();
+    let mut signature_valid = crate::services::crypto::verify_ed25519(&ephem_key, &payload_hash, &signature)
+        || crate::is_signature_bypass_active();
     #[cfg(not(feature = "test-utils"))]
-    let signature_valid = ephem_key.verify(&payload_hash, &signature).is_ok();
+    let mut signature_valid = crate::services::crypto::verify_ed25519(&ephem_key, &payload_hash, &signature);
+
+    if !signature_valid && effective_entry_voucher_id != lock_entry.layer2_voucher_id.as_str() {
+        let alt_hash = calculate_l2_payload_hash_raw(
+            lock_entry.layer2_voucher_id.as_str(),
+            challenge_ds_tag,
+            &lock_entry.t_id,
+            &lock_entry.sender_ephemeral_pub,
+            lock_entry
+                .trap_r
+                .as_deref()
+                .unwrap_or(TRAP_NONE_PLACEHOLDER),
+            lock_entry
+                .trap_s
+                .as_deref()
+                .unwrap_or(TRAP_NONE_PLACEHOLDER),
+            lock_entry.encrypted_timestamp,
+            lock_entry.created_at_ms,
+            lock_entry.deletable_at.as_deref(),
+            privacy_guard_commitment(lock_entry.privacy_guard.as_deref()).as_str(),
+        );
+        #[cfg(feature = "test-utils")]
+        {
+            signature_valid = crate::services::crypto::verify_ed25519(&ephem_key, &alt_hash, &signature)
+                || crate::is_signature_bypass_active();
+        }
+        #[cfg(not(feature = "test-utils"))]
+        {
+            signature_valid = crate::services::crypto::verify_ed25519(&ephem_key, &alt_hash, &signature);
+        }
+    }
 
     if !signature_valid {
         return Err(VoucherCoreError::Validation(
@@ -602,6 +634,11 @@ fn evaluate_quorum_certificate(
     authority: Option<&CheckoutAuthority>,
 ) -> Result<VerdictAction, VoucherCoreError> {
     let Some(certificate) = certificate_opt else {
+        if authority.is_some() {
+            return Err(VoucherCoreError::Validation(
+                crate::error::ValidationError::InvalidL2Proof,
+            ));
+        }
         return Ok(VerdictAction::ConfirmLocal);
     };
     let invalid = || VoucherCoreError::Validation(crate::error::ValidationError::InvalidL2Proof);
@@ -739,10 +776,10 @@ fn process_l2_verdict_internal(
     let verdict_hash = hasher.finalize();
 
     #[cfg(feature = "test-utils")]
-    let server_sig_valid = server_key.verify(&verdict_hash, &server_sig).is_ok()
+    let server_sig_valid = crate::services::crypto::verify_ed25519(&server_key, &verdict_hash, &server_sig)
         || crate::is_signature_bypass_active();
     #[cfg(not(feature = "test-utils"))]
-    let server_sig_valid = server_key.verify(&verdict_hash, &server_sig).is_ok();
+    let server_sig_valid = crate::services::crypto::verify_ed25519(&server_key, &verdict_hash, &server_sig);
 
     if !server_sig_valid {
         return Err(VoucherCoreError::Validation(
@@ -757,15 +794,50 @@ fn process_l2_verdict_internal(
             let local_t_id_bytes =
                 crate::services::crypto::decode_bs58_fixed::<32>(local_t_id, "local_t_id")
                     .unwrap_or([0u8; 32]);
-            let cert = envelope
-                .quorum_certificate
-                .unwrap_or_else(|| QuorumCertificateDto::from(proof.clone()));
-            evaluate_quorum_certificate(
-                Some(cert),
-                &local_t_id_bytes,
-                expected_voucher_id,
-                authority,
-            )
+            if let Some(cert) = envelope.quorum_certificate {
+                evaluate_quorum_certificate(
+                    Some(cert),
+                    &local_t_id_bytes,
+                    expected_voucher_id,
+                    authority,
+                )
+            } else if let Some(auth) = authority {
+                if auth.child_lock != local_t_id_bytes {
+                    return Err(VoucherCoreError::Validation(
+                        crate::error::ValidationError::InvalidL2Proof,
+                    ));
+                }
+                let digest = humoco_proto::live::original_approval_digest(
+                    auth.network,
+                    auth.shard_id,
+                    1,
+                    &auth.parent_lock,
+                    &auth.child_lock,
+                )
+                .map_err(|_| {
+                    VoucherCoreError::Validation(crate::error::ValidationError::InvalidL2Proof)
+                })?;
+
+                humoco_proto::verify::verify_quorum_proof(
+                    &proof,
+                    &digest,
+                    &auth.committee,
+                    14,
+                )
+                .map_err(|_| {
+                    VoucherCoreError::Validation(crate::error::ValidationError::InvalidL2Proof)
+                })?;
+
+                let cert = QuorumCertificateDto::from(proof);
+                Ok(VerdictAction::ConfirmFinal { certificate: cert })
+            } else {
+                evaluate_quorum_certificate(
+                    None,
+                    &local_t_id_bytes,
+                    expected_voucher_id,
+                    authority,
+                )
+            }
         }
         L2Verdict::Verified { lock_entry } => {
             // Cryptographically verify Proof of Truth and expected ephemeral key
@@ -830,6 +902,11 @@ fn process_l2_verdict_internal(
             })
         }
         L2Verdict::Ok { .. } => {
+            if authority.is_some() {
+                return Err(VoucherCoreError::Validation(
+                    crate::error::ValidationError::InvalidL2Proof,
+                ));
+            }
             // Fallback for older implementations
             Ok(VerdictAction::ConfirmLocal)
         }
@@ -1072,66 +1149,81 @@ pub fn evaluate_multi_node_anchor_verdicts(
     local_tag: &str,
     total_nodes: usize,
 ) -> AnchorSyncVerdict {
+    if verdicts.is_empty() {
+        return AnchorSyncVerdict::Inconclusive;
+    }
     let required_q = calculate_read_quorum(total_nodes) as usize;
     let mut syncd_count = 0;
-    let mut leap_count = 0;
-    let mut last_leap_point = String::new();
     let mut unknown_count = 0;
-    let mut rollback_count = 0;
-    let mut fork_count = 0;
-    let mut first_rollback: Option<AnchorSyncVerdict> = None;
-    let mut first_fork: Option<AnchorSyncVerdict> = None;
+    let mut rollbacks: std::collections::HashMap<[u8; 32], (usize, L2LockEntry)> =
+        std::collections::HashMap::new();
+    let mut forks: std::collections::HashMap<[u8; 32], (usize, L2LockEntry)> =
+        std::collections::HashMap::new();
+    let mut leaps: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     for v in verdicts {
-        match evaluate_anchor_verdict(v, local_t_id, local_tag) {
-            AnchorSyncVerdict::Synchronized => syncd_count += 1,
-            AnchorSyncVerdict::PendingLeapLock { sync_point } => {
-                leap_count += 1;
-                last_leap_point = sync_point;
-            }
-            AnchorSyncVerdict::GenesisRequired => unknown_count += 1,
-            AnchorSyncVerdict::RollbackDetected {
-                remote_t_id,
-                lock_entry,
-            } => {
-                rollback_count += 1;
-                if first_rollback.is_none() {
-                    first_rollback = Some(AnchorSyncVerdict::RollbackDetected {
-                        remote_t_id,
-                        lock_entry: lock_entry.clone(),
-                    });
+        match v {
+            L2Verdict::Confirmed { .. } | L2Verdict::Ok { .. } => syncd_count += 1,
+            L2Verdict::Verified { lock_entry } => {
+                if &lock_entry.t_id == local_t_id {
+                    syncd_count += 1;
+                } else {
+                    let entry = rollbacks
+                        .entry(lock_entry.t_id)
+                        .or_insert((0, lock_entry.clone()));
+                    entry.0 += 1;
                 }
             }
-            AnchorSyncVerdict::ForkConflict { foreign_entry } => {
-                fork_count += 1;
-                if first_fork.is_none() {
-                    first_fork = Some(AnchorSyncVerdict::ForkConflict {
-                        foreign_entry: foreign_entry.clone(),
-                    });
+            L2Verdict::Conflict { existing_lock } => {
+                if &existing_lock.t_id == local_t_id {
+                    syncd_count += 1;
+                } else {
+                    let entry = forks
+                        .entry(existing_lock.t_id)
+                        .or_insert((0, existing_lock.clone()));
+                    entry.0 += 1;
                 }
+            }
+            L2Verdict::MissingLocks { sync_point } => {
+                if sync_point == local_tag {
+                    syncd_count += 1;
+                } else {
+                    *leaps.entry(sync_point.clone()).or_insert(0) += 1;
+                }
+            }
+            L2Verdict::UnknownVoucher | L2Verdict::Rejected { .. } => {
+                unknown_count += 1;
             }
         }
     }
 
-    if rollback_count >= required_q {
-        return first_rollback.unwrap();
+    for (remote_t_id, (count, lock_entry)) in rollbacks {
+        if count >= required_q {
+            return AnchorSyncVerdict::RollbackDetected {
+                remote_t_id,
+                lock_entry,
+            };
+        }
     }
-    if fork_count >= required_q {
-        return first_fork.unwrap();
+    for (_foreign_t_id, (count, foreign_entry)) in forks {
+        if count >= required_q {
+            return AnchorSyncVerdict::ForkConflict { foreign_entry };
+        }
     }
 
     if syncd_count >= required_q {
         AnchorSyncVerdict::Synchronized
-    } else if leap_count >= required_q {
-        AnchorSyncVerdict::PendingLeapLock {
-            sync_point: last_leap_point,
-        }
-    } else if unknown_count >= required_q {
-        AnchorSyncVerdict::GenesisRequired
-    } else if let Some(first) = verdicts.first() {
-        evaluate_anchor_verdict(first, local_t_id, local_tag)
     } else {
-        AnchorSyncVerdict::GenesisRequired
+        for (sync_point, count) in leaps {
+            if count >= required_q {
+                return AnchorSyncVerdict::PendingLeapLock { sync_point };
+            }
+        }
+        if unknown_count >= required_q {
+            AnchorSyncVerdict::GenesisRequired
+        } else {
+            AnchorSyncVerdict::Inconclusive
+        }
     }
 }
 

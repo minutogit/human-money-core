@@ -31,11 +31,11 @@ Work backward from the worst-case failures. Can you find *any* path through the 
 ## 🎯 Target Codebase Scope
 
 **The entire repository:**
-- All services (`src/services/`)
-- Wallet & AppService orchestration (`src/wallet/`, `src/app_service/`)
-- Storage & Archival (`src/storage/`, `src/archive/`)
+- All services (`src/services/`, including `crypto/`, `voucher_validation/`, `trap_manager.rs`, `conflict_manager.rs`, `l2_gateway.rs`, `l2_causality.rs`)
+- Wallet & AppService orchestration (`src/wallet/`, `src/app_service/`, `src/wallet/conflicts/`, `src/wallet/transactions.rs`, `src/wallet/reconciliation.rs`, `src/wallet/l2_intents.rs`)
+- Storage & Archival (`src/storage/`, `src/archive/`, including `wallet_transaction.rs`, `integrity.rs`, `seal_service.rs`, `lock.rs`, `file_storage.rs`)
 - Protocol schemas & models (`src/models/`, `protocols/`)
-- WebAssembly & CLI bindings (`bindings/wasm/`, `src/bin/`)
+- WebAssembly & CLI bindings (`bindings/wasm/`, `src/bin/wallet_cli/`, `src/bin/voucher-cli.rs`, `src/bin/l2_client_simulator/`)
 
 ---
 

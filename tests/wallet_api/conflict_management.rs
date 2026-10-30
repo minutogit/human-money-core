@@ -29,7 +29,13 @@ fn create_mock_proof(offender_id: &str) -> ProofOfDoubleSpend {
         offender_id: offender_id.to_string(),
         suspected_identity: None,
         fork_point_prev_hash,
-        conflicting_transactions: vec![human_money_core::models::voucher::Transaction::default(), human_money_core::models::voucher::Transaction::default()],
+        conflicting_transactions: vec![
+            human_money_core::models::voucher::Transaction {
+                recipient_id: reporter.user_id.clone(),
+                ..Default::default()
+            },
+            human_money_core::models::voucher::Transaction::default(),
+        ],
         deletable_at: (Utc::now() + Duration::days(90)).to_rfc3339(),
         reporter_id: reporter.user_id.clone(),
         report_timestamp: Utc::now().to_rfc3339(),

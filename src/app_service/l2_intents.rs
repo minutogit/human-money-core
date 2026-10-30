@@ -194,6 +194,9 @@ impl AppService {
         password: Option<&str>,
     ) -> Result<humoco_proto::live::LiveStateContext, Error> {
         let intent = self.pending_l2_send_intent(local_id)?;
+        if intent.terminal_resolution.is_some() {
+            return Err(invalid("intent already terminally resolved"));
+        }
         if now_ms < intent.created_at_ms.saturating_add(30_000) {
             return Err(invalid("intent reconciliation is not due"));
         }
@@ -210,49 +213,76 @@ impl AppService {
         let entry = crate::models::layer2_api::L2LockEntry::from(&request);
         let state_digest = *blake3::hash(&serde_json::to_vec(&entry)?).as_bytes();
 
-        let mut nonce = [0u8; 32];
-        rand_core::OsRng
-            .try_fill_bytes(&mut nonce)
-            .map_err(|_| invalid("reconciliation entropy unavailable"))?;
-        if nonce == [0u8; 32] {
-            return Err(invalid("invalid reconciliation entropy"));
-        }
-
         self.with_transactional_mut(password, |wallet, _, _, _| {
-            let result = (|| {
-                let policy = wallet
-                    .profile
-                    .l2_regional_mesh_policy
-                    .as_ref()
-                    .ok_or_else(|| invalid("reconciliation authority missing"))?;
-                let committee =
-                    humoco_proto::mesh::regional_committee(policy, views, intent.shard_id, now_ms)
-                        .map_err(invalid)?;
-                let current = wallet.profile.l2_send_intents.get_mut(local_id)
-                    .ok_or_else(|| invalid("intent disappeared"))?;
-                if current.request_bytes != intent.request_bytes || current.network != intent.network {
-                    return Err(invalid("intent changed during reconciliation"));
-                }
-                current.stored_challenge = Some(nonce);
+            let policy = match wallet.profile.l2_regional_mesh_policy.as_ref() {
+                Some(p) => p,
+                None => return TransactionOutcome::Rollback(invalid("reconciliation authority missing")),
+            };
+            let committee = match humoco_proto::mesh::regional_committee(policy, views, intent.shard_id, now_ms) {
+                Ok(c) => c,
+                Err(e) => return TransactionOutcome::Rollback(invalid(e)),
+            };
+            let committee_arr: Option<[[u8; 32]; 20]> = committee.clone().try_into().ok();
+            let current = match wallet.profile.l2_send_intents.get_mut(local_id) {
+                Some(c) => c,
+                None => return TransactionOutcome::Rollback(invalid("intent disappeared")),
+            };
+            if current.terminal_resolution.is_some() {
+                return TransactionOutcome::Rollback(invalid("intent already terminally resolved"));
+            }
+            if current.request_bytes != intent.request_bytes || current.network != intent.network {
+                return TransactionOutcome::Rollback(invalid("intent changed during reconciliation"));
+            }
 
-                let context = humoco_proto::live::LiveStateContext {
-                    version: 1,
-                    network: intent.network,
-                    shard_id: intent.shard_id,
-                    voucher_id: request.layer2_voucher_id.clone(),
-                    lookup_tag: tag.clone(),
-                    parent_lock: parent,
-                    child_lock: request.transaction_hash,
-                    root_valid_until: intent.root_valid_until_ms,
-                    state_digest,
-                    recipient_nonce: nonce,
-                    committee,
-                };
-                Ok(context)
-            })();
-            match result {
-                Ok(context) => TransactionOutcome::Commit(context),
-                Err(error) => TransactionOutcome::Rollback(error),
+            let mut mutated = false;
+            let nonce = if let (Some(ch), Some(exp)) = (current.stored_challenge, current.challenge_expires_at_ms) {
+                if now_ms < exp && now_ms < intent.root_valid_until_ms {
+                    if current.stored_committee != committee_arr {
+                        current.stored_committee = committee_arr;
+                        mutated = true;
+                    }
+                    ch
+                } else {
+                    let mut fresh = [0u8; 32];
+                    if rand_core::OsRng.try_fill_bytes(&mut fresh).is_err() || fresh == [0u8; 32] {
+                        return TransactionOutcome::Rollback(invalid("reconciliation entropy unavailable"));
+                    }
+                    current.stored_challenge = Some(fresh);
+                    current.challenge_expires_at_ms = Some(now_ms.saturating_add(30_000));
+                    current.stored_committee = committee_arr;
+                    mutated = true;
+                    fresh
+                }
+            } else {
+                let mut fresh = [0u8; 32];
+                if rand_core::OsRng.try_fill_bytes(&mut fresh).is_err() || fresh == [0u8; 32] {
+                    return TransactionOutcome::Rollback(invalid("reconciliation entropy unavailable"));
+                }
+                current.stored_challenge = Some(fresh);
+                current.challenge_expires_at_ms = Some(now_ms.saturating_add(30_000));
+                current.stored_committee = committee_arr;
+                mutated = true;
+                fresh
+            };
+
+            let context = humoco_proto::live::LiveStateContext {
+                version: 1,
+                network: intent.network,
+                shard_id: intent.shard_id,
+                voucher_id: request.layer2_voucher_id.clone(),
+                lookup_tag: tag.clone(),
+                parent_lock: parent,
+                child_lock: request.transaction_hash,
+                root_valid_until: intent.root_valid_until_ms,
+                state_digest,
+                recipient_nonce: nonce,
+                committee,
+            };
+
+            if mutated {
+                TransactionOutcome::Commit(context)
+            } else {
+                TransactionOutcome::Abort(context)
             }
         })
     }
@@ -268,25 +298,41 @@ impl AppService {
         password: Option<&str>,
     ) -> Result<IntentTerminalResolution, Error> {
         self.with_transactional_mut(password, |wallet, _, _, _| {
-            let Some(intent) = wallet.profile.l2_send_intents.get_mut(local_id) else {
-                return TransactionOutcome::Rollback(invalid("intent disappeared"));
+            let (stored_nonce, challenge_expires_at, request_bytes, network, shard_id, root_valid_until_ms, change_id_opt, tx_t_id_opt) = {
+                let Some(intent) = wallet.profile.l2_send_intents.get(local_id) else {
+                    return TransactionOutcome::Rollback(invalid("intent disappeared"));
+                };
+                if let Some(res) = &intent.terminal_resolution {
+                    return TransactionOutcome::Abort(res.clone());
+                }
+                let stored_nonce = match intent.stored_challenge {
+                    Some(n) => n,
+                    None => return TransactionOutcome::Rollback(invalid("stored reconciliation challenge missing")),
+                };
+                let tx_t_id_opt = serde_json::from_slice::<crate::models::voucher::Transaction>(&intent.transaction_bytes)
+                    .ok()
+                    .map(|tx| tx.t_id);
+                (
+                    stored_nonce,
+                    intent.challenge_expires_at_ms,
+                    intent.request_bytes.clone(),
+                    intent.network,
+                    intent.shard_id,
+                    intent.root_valid_until_ms,
+                    intent.created_change_local_id.clone(),
+                    tx_t_id_opt,
+                )
             };
-            if let Some(res) = &intent.terminal_resolution {
-                return TransactionOutcome::Commit(res.clone());
+
+            if let Some(exp) = challenge_expires_at {
+                if now_ms >= exp {
+                    return TransactionOutcome::Rollback(invalid("reconciliation challenge expired"));
+                }
             }
-            let stored_nonce = match intent.stored_challenge {
-                Some(n) => n,
-                None => return TransactionOutcome::Rollback(invalid("stored reconciliation challenge missing")),
-            };
             if proof.context.recipient_nonce != stored_nonce {
                 return TransactionOutcome::Rollback(invalid("reconciliation challenge mismatch"));
             }
-            if now_ms >= intent.root_valid_until_ms {
-                let res = IntentTerminalResolution::Expired { resolved_at_ms: now_ms };
-                intent.terminal_resolution = Some(res.clone());
-                return TransactionOutcome::Commit(res);
-            }
-            let request: L2LockRequest = match serde_json::from_slice(&intent.request_bytes) {
+            let request: L2LockRequest = match serde_json::from_slice(&request_bytes) {
                 Ok(r) => r,
                 Err(e) => return TransactionOutcome::Rollback(invalid(&e.to_string())),
             };
@@ -308,49 +354,99 @@ impl AppService {
                 Some(p) => p,
                 None => return TransactionOutcome::Rollback(invalid("reconciliation authority missing")),
             };
-            let committee = match humoco_proto::mesh::regional_committee(policy, views, intent.shard_id, now_ms) {
+            let committee = match humoco_proto::mesh::regional_committee(policy, views, shard_id, now_ms) {
                 Ok(c) => c,
                 Err(e) => return TransactionOutcome::Rollback(invalid(e)),
             };
             let expected_context = humoco_proto::live::LiveStateContext {
                 version: 1,
-                network: intent.network,
-                shard_id: intent.shard_id,
+                network,
+                shard_id,
                 voucher_id: request.layer2_voucher_id,
                 lookup_tag: tag,
                 parent_lock: parent,
                 child_lock: request.transaction_hash,
-                root_valid_until: intent.root_valid_until_ms,
+                root_valid_until: root_valid_until_ms,
                 state_digest,
                 recipient_nonce: stored_nonce,
                 committee,
             };
+
+            if proof.context.child_lock == [0u8; 32] {
+                return TransactionOutcome::Rollback(invalid("parent slot is unoccupied on Layer 2; retry original intent"));
+            }
+
             let res = if proof.context.child_lock == request.transaction_hash {
-                if let Err(e) =
-                    humoco_proto::live::verify_live_state_proof(proof, &expected_context)
-                {
-                    return TransactionOutcome::Rollback(invalid(e));
+                if let Err(e) = humoco_proto::live::verify_live_state_proof(proof, &expected_context) {
+                    if now_ms >= root_valid_until_ms {
+                        IntentTerminalResolution::Expired { resolved_at_ms: now_ms }
+                    } else {
+                        return TransactionOutcome::Rollback(invalid(e));
+                    }
+                } else {
+                    IntentTerminalResolution::Confirmed { resolved_at_ms: now_ms }
                 }
-                IntentTerminalResolution::Confirmed { resolved_at_ms: now_ms }
             } else {
                 let expected_conflict_context = humoco_proto::live::LiveStateContext {
                     child_lock: proof.context.child_lock,
                     state_digest: proof.context.state_digest,
                     ..expected_context
                 };
-                if let Err(e) =
-                    humoco_proto::live::verify_live_state_proof(proof, &expected_conflict_context)
-                {
-                    return TransactionOutcome::Rollback(invalid(e));
-                }
-                intent.retained_original_observed = false;
-                IntentTerminalResolution::Conflicted {
-                    resolved_at_ms: now_ms,
-                    observed_child: hex::encode(proof.context.child_lock),
+                if let Err(e) = humoco_proto::live::verify_live_state_proof(proof, &expected_conflict_context) {
+                    if now_ms >= root_valid_until_ms {
+                        IntentTerminalResolution::Expired { resolved_at_ms: now_ms }
+                    } else {
+                        return TransactionOutcome::Rollback(invalid(e));
+                    }
+                } else {
+                    let reason = format!(
+                        "Parent L2 send intent conflicted: observed child {}",
+                        hex::encode(proof.context.child_lock)
+                    );
+
+                    if let Some(ref change_id) = change_id_opt {
+                        if wallet.voucher_store.vouchers.contains_key(change_id) {
+                            wallet.update_voucher_status(
+                                change_id,
+                                crate::wallet::instance::VoucherStatus::Quarantined {
+                                    reason: reason.clone(),
+                                },
+                            );
+                        }
+                    }
+                    if let Some(ref tx_id) = tx_t_id_opt {
+                        let matching_ids: Vec<String> = wallet
+                            .voucher_store
+                            .vouchers
+                            .iter()
+                            .filter(|(_, inst)| {
+                                inst.voucher.transactions.last().map(|t| &t.t_id) == Some(tx_id)
+                            })
+                            .map(|(id, _)| id.clone())
+                            .collect();
+                        for mid in matching_ids {
+                            wallet.update_voucher_status(
+                                &mid,
+                                crate::wallet::instance::VoucherStatus::Quarantined {
+                                    reason: reason.clone(),
+                                },
+                            );
+                        }
+                    }
+                    IntentTerminalResolution::Conflicted {
+                        resolved_at_ms: now_ms,
+                        observed_child: hex::encode(proof.context.child_lock),
+                    }
                 }
             };
-            intent.terminal_resolution = Some(res.clone());
-            intent.stored_challenge = None;
+            if let Some(intent) = wallet.profile.l2_send_intents.get_mut(local_id) {
+                intent.terminal_resolution = Some(res.clone());
+                intent.stored_challenge = None;
+                intent.challenge_expires_at_ms = None;
+                if matches!(res, IntentTerminalResolution::Conflicted { .. }) {
+                    intent.retained_original_observed = false;
+                }
+            }
             TransactionOutcome::Commit(res)
         })
     }
@@ -382,18 +478,19 @@ impl AppService {
     ) -> Result<Option<IntentTerminalResolution>, Error> {
         self.with_transactional_mut(password, |wallet, _, _, _| {
             let Some(intent) = wallet.profile.l2_send_intents.get_mut(local_id) else {
-                return TransactionOutcome::Commit(None);
+                return TransactionOutcome::Abort(None);
             };
             if let Some(res) = &intent.terminal_resolution {
-                return TransactionOutcome::Commit(Some(res.clone()));
+                return TransactionOutcome::Abort(Some(res.clone()));
             }
             if now_ms >= intent.root_valid_until_ms {
                 let res = IntentTerminalResolution::Expired { resolved_at_ms: now_ms };
                 intent.terminal_resolution = Some(res.clone());
                 intent.stored_challenge = None;
+                intent.challenge_expires_at_ms = None;
                 TransactionOutcome::Commit(Some(res))
             } else {
-                TransactionOutcome::Commit(None)
+                TransactionOutcome::Abort(None)
             }
         })
     }
@@ -407,9 +504,11 @@ impl AppService {
         password: Option<&str>,
     ) -> Result<usize, Error> {
         let needs_cleanup = self.get_wallet()?.profile.l2_send_intents.values().any(|intent| {
-            intent.terminal_resolution.as_ref().is_some_and(|res| {
+            if let Some(res) = &intent.terminal_resolution {
                 now_ms >= terminal_resolved_at(res).saturating_add(max_retain_ms)
-            }) || now_ms >= intent.root_valid_until_ms.saturating_add(30_000)
+            } else {
+                false
+            }
         });
         if !needs_cleanup {
             return Ok(0);
@@ -418,14 +517,10 @@ impl AppService {
             let initial_count = wallet.profile.l2_send_intents.len();
             wallet.profile.l2_send_intents.retain(|_, intent| {
                 if let Some(res) = &intent.terminal_resolution {
-                    if now_ms >= terminal_resolved_at(res).saturating_add(max_retain_ms) {
-                        return false;
-                    }
+                    now_ms < terminal_resolved_at(res).saturating_add(max_retain_ms)
+                } else {
+                    true
                 }
-                if now_ms >= intent.root_valid_until_ms.saturating_add(30_000) {
-                    return false;
-                }
-                true
             });
             let removed = initial_count.saturating_sub(wallet.profile.l2_send_intents.len());
             if removed == 0 {

@@ -20,6 +20,7 @@ use crate::error::VoucherCoreError;
 use crate::models::layer2_api::{
     L2AuthPayload, L2LockEntry, L2StatusQuery, VoucherReconciliationResult,
 };
+use crate::models::profile::UserIdentity;
 use crate::services::l2_gateway;
 use crate::wallet::instance::VoucherStatus;
 use crate::wallet::Wallet;
@@ -30,10 +31,11 @@ impl Wallet {
     ///
     /// Locates the voucher instance in `self.voucher_store.vouchers` (matching either
     /// `local_instance_id` or `voucher.voucher_id`), extracts its `layer2_voucher_id`,
-    /// derives the `challenge_ds_tag` from the latest transaction, generates locator prefixes
-    /// for LCA resolution, and packs the query with a fresh ephemeral auth key.
+    /// derives the next outgoing spend `ds_tag` from the latest transaction and current holder identity,
+    /// generates locator prefixes for LCA resolution, and packs the query with a fresh ephemeral auth key.
     pub fn build_voucher_status_query(
         &self,
+        identity: &UserIdentity,
         voucher_id_or_local_id: &str,
         read_quorum: u8,
     ) -> Result<L2StatusQuery, VoucherCoreError> {
@@ -56,7 +58,13 @@ impl Wallet {
             .last()
             .ok_or_else(|| crate::Error::Wallet(crate::error::WalletError::MissingTransactions))?;
 
-        let challenge_ds_tag = l2_gateway::derive_challenge_tag(last_tx)?;
+        let prev_hash = crate::services::crypto::get_hash(
+            crate::services::utils::to_canonical_json(last_tx)?,
+        );
+        let holder_ephem = self.rederive_secret_seed(&instance.voucher, identity)?;
+        let holder_pub_bs58 =
+            bs58::encode(holder_ephem.verifying_key().to_bytes()).into_string();
+        let challenge_ds_tag = crate::services::crypto::get_ds_tag(&prev_hash, &holder_pub_bs58)?;
         let locator_prefixes = l2_gateway::generate_locator_prefixes(&instance.voucher);
 
         let mut ephemeral_key = [0u8; 32];
@@ -85,22 +93,24 @@ impl Wallet {
     /// - `successor_lock == None` (HTTP 404): No successor lock exists on Layer 2. The voucher
     ///   output is unspent and safe to use. Status remains [`VoucherStatus::Active`].
     /// - `successor_lock == Some(lock)` (HTTP 200): A successor lock exists on Layer 2. The voucher
-    ///   output was already spent remotely. The wallet transitions the voucher to
+    ///   output was already spent remotely. Cryptographically verifies the successor proof against
+    ///   the expected outgoing spend `ds_tag` and holder public key before transitioning the voucher to
     ///   [`VoucherStatus::Archived`], immediately removing it from available balances and future
-    ///   spending pipelines.
+    ///   spending pipelines (preserving [`VoucherStatus::Quarantined`] if already quarantined).
     pub fn reconcile_voucher_state(
         &mut self,
+        identity: &UserIdentity,
         voucher_id_or_local_id: &str,
         successor_lock: Option<&L2LockEntry>,
     ) -> Result<VoucherReconciliationResult, VoucherCoreError> {
-        let (local_id, _instance_status) = self
+        let (local_id, instance) = self
             .voucher_store
             .vouchers
             .iter()
             .find(|(k, v)| {
                 *k == voucher_id_or_local_id || v.voucher.voucher_id == voucher_id_or_local_id
             })
-            .map(|(k, v)| (k.clone(), v.status.clone()))
+            .map(|(k, v)| (k.clone(), v.clone()))
             .ok_or_else(|| VoucherCoreError::VoucherNotFound(voucher_id_or_local_id.to_string()))?;
 
         match successor_lock {
@@ -111,9 +121,45 @@ impl Wallet {
             }
             Some(lock) => {
                 // Case B: 200 OK -> Child lock exists. The voucher was already spent remotely.
-                let successor_t_id = bs58::encode(lock.t_id).into_string();
-                self.update_voucher_status(&local_id, VoucherStatus::Archived);
-                Ok(VoucherReconciliationResult::AlreadySpent { successor_t_id })
+                let last_tx = instance
+                    .voucher
+                    .transactions
+                    .last()
+                    .ok_or_else(|| crate::Error::Wallet(crate::error::WalletError::MissingTransactions))?;
+
+                let lock_t_id_str = bs58::encode(lock.t_id).into_string();
+                if lock_t_id_str == last_tx.t_id {
+                    return Err(VoucherCoreError::Validation(
+                        crate::error::ValidationError::SecurityViolation(
+                            "successor lock cannot match current transaction id".into(),
+                        ),
+                    ));
+                }
+
+                let expected_l2_voucher_id =
+                    l2_gateway::extract_layer2_voucher_id(&instance.voucher)?;
+                let prev_hash = crate::services::crypto::get_hash(
+                    crate::services::utils::to_canonical_json(last_tx)?,
+                );
+                let holder_ephem = self.rederive_secret_seed(&instance.voucher, identity)?;
+                let expected_holder_pub =
+                    bs58::encode(holder_ephem.verifying_key().to_bytes()).into_string();
+                let expected_outgoing_ds_tag =
+                    crate::services::crypto::get_ds_tag(&prev_hash, &expected_holder_pub)?;
+
+                l2_gateway::verify_lock_entry_proof(
+                    lock,
+                    &expected_l2_voucher_id,
+                    Some(&expected_holder_pub),
+                    &expected_outgoing_ds_tag,
+                )?;
+
+                if !matches!(instance.status, VoucherStatus::Quarantined { .. }) {
+                    self.update_voucher_status(&local_id, VoucherStatus::Archived);
+                }
+                Ok(VoucherReconciliationResult::AlreadySpent {
+                    successor_t_id: lock_t_id_str,
+                })
             }
         }
     }

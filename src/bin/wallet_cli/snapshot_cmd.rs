@@ -168,6 +168,7 @@ pub fn save_snapshot_internal(
             data_dir.display()
         );
     }
+    check_no_active_lock(&profile_dir, &profile.profile_name)?;
 
     let snapshots_base = data_dir.join(SNAPSHOT_STORE_DIR).join(&profile.folder_name);
     let target_snapshot_dir = snapshots_base.join(tag);
@@ -520,11 +521,17 @@ fn validate_tag_name(tag: &str) -> Result<()> {
     if tag.is_empty() {
         bail!("Snapshot tag cannot be empty");
     }
+    if tag == "." {
+        bail!("Invalid snapshot tag '.': path traversal not allowed");
+    }
     if tag == "instance_id" {
         bail!("CRITICAL SECURITY VIOLATION: Tag cannot be named 'instance_id'");
     }
-    if tag.contains('/') || tag.contains('\\') || tag.contains("..") {
-        bail!("Invalid snapshot tag '{}': path separators and traversal not allowed", tag);
+    if tag.len() > 64 {
+        bail!("Snapshot tag '{}' exceeds maximum allowed length of 64 characters", tag);
+    }
+    if !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        bail!("Invalid snapshot tag '{}': path separators and traversal not allowed (must be ASCII alphanumeric, '_' or '-')", tag);
     }
     Ok(())
 }
@@ -540,7 +547,7 @@ fn check_no_active_lock(profile_dir: &Path, profile_name: &str) -> Result<()> {
                     s.refresh_processes();
                     if s.process(sysinfo::Pid::from_u32(pid)).is_some() {
                         bail!(
-                            "Cannot restore profile '{}': wallet is currently locked by active process (PID {})",
+                            "Cannot access profile '{}': wallet is currently locked by active process (PID {})",
                             profile_name,
                             pid
                         );
@@ -551,10 +558,32 @@ fn check_no_active_lock(profile_dir: &Path, profile_name: &str) -> Result<()> {
         #[cfg(target_arch = "wasm32")]
         {
             bail!(
-                "Cannot restore profile '{}': wallet lock file is present",
+                "Cannot access profile '{}': wallet lock file is present",
                 profile_name
             );
         }
     }
+
+    #[cfg(unix)]
+    {
+        let tx_lock_path = profile_dir.join(".wallet.transaction.lock");
+        if tx_lock_path.exists() {
+            if let Ok(file) = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&tx_lock_path)
+            {
+                if let Err(e) = file.try_lock() {
+                    bail!(
+                        "Cannot access profile '{}': wallet transaction is currently in progress ({})",
+                        profile_name,
+                        e
+                    );
+                }
+                let _ = file.unlock();
+            }
+        }
+    }
+
     Ok(())
 }

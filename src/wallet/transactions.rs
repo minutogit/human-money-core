@@ -985,14 +985,35 @@ impl Wallet {
 
         // 2. **Orchestration:** Execute `_execute_single_transfer` for each source on the copy.
         for source in request.sources {
-            if temp_wallet
+            if let Some(intent) = temp_wallet
                 .profile
                 .l2_send_intents
-                .contains_key(&source.local_instance_id)
+                .get(&source.local_instance_id)
             {
+                if intent.terminal_resolution.is_none()
+                    || matches!(
+                        intent.terminal_resolution,
+                        Some(crate::models::l2_intent::IntentTerminalResolution::Conflicted { .. })
+                    )
+                {
+                    return Err(VoucherCoreError::Validation(
+                        crate::error::ValidationError::SecurityViolation(
+                            "Output has an unresolved durable L2 send intent".into(),
+                        ),
+                    ));
+                }
+            }
+            if temp_wallet.profile.l2_send_intents.values().any(|intent| {
+                intent.created_change_local_id.as_deref() == Some(&source.local_instance_id)
+                    && (intent.terminal_resolution.is_none()
+                        || matches!(
+                            intent.terminal_resolution,
+                            Some(crate::models::l2_intent::IntentTerminalResolution::Conflicted { .. })
+                        ))
+            }) {
                 return Err(VoucherCoreError::Validation(
                     crate::error::ValidationError::SecurityViolation(
-                        "Output has an unresolved durable L2 send intent".into(),
+                        "Split change voucher is blocked by unresolved or conflicted parent intent".into(),
                     ),
                 ));
             }
@@ -1059,7 +1080,15 @@ impl Wallet {
             if let Some(network) = network {
                 // The input local ID is the durable transport handle. It stays
                 // bound to the exact spent branch, independently of split change.
-                temp_wallet.stage_l2_send_intent(&source.local_instance_id,&new_voucher,network)?;
+                temp_wallet.stage_l2_send_intent(&source.local_instance_id, &new_voucher, network)?;
+                if let Some(last_tx) = new_voucher.transactions.last() {
+                    if last_tx.sender_remaining_amount.is_some() {
+                        let change_id = Self::calculate_local_instance_id(&new_voucher, &identity.user_id)?;
+                        if let Some(intent_mut) = temp_wallet.profile.l2_send_intents.get_mut(&source.local_instance_id) {
+                            intent_mut.created_change_local_id = Some(change_id);
+                        }
+                    }
+                }
             }
             vouchers_for_bundle.push(new_voucher);
         }
@@ -1209,7 +1238,23 @@ impl Wallet {
         }
 
         // Case C: Init (creator)
-        if last_tx.t_type == "init" && last_tx.sender_id.as_ref() == Some(&identity.user_id) {
+        let is_init_creator = if last_tx.t_type == "init" {
+            if let Some(ref sender_id) = last_tx.sender_id {
+                match (
+                    crate::services::crypto::get_pubkey_from_user_id(sender_id),
+                    crate::services::crypto::get_pubkey_from_user_id(&identity.user_id),
+                ) {
+                    (Ok(pk_sender), Ok(pk_identity)) => pk_sender == pk_identity,
+                    _ => sender_id == &identity.user_id,
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if is_init_creator {
             let nonce_bytes = bs58::decode(&voucher.voucher_nonce)
                 .into_vec()
                 .map_err(|_| {
@@ -1218,8 +1263,9 @@ impl Wallet {
                     })
                 })?;
 
+            let id_for_prefix = last_tx.sender_id.as_deref().unwrap_or(&identity.user_id);
             let sender_id_prefix =
-                crate::services::crypto::get_prefix_from_user_id(&identity.user_id);
+                crate::services::crypto::get_prefix_from_user_id(id_for_prefix);
 
             let holder_secret = crate::services::crypto::derive_holder_ephemeral_key(
                 &identity.signing_key, &nonce_bytes, sender_id_prefix)?;
@@ -1552,7 +1598,14 @@ impl Wallet {
             .id
             .as_ref()
             .ok_or_else(|| crate::Error::Wallet(crate::error::WalletError::MissingCreatorId))?;
-        if &identity.user_id != creator_id {
+        let is_creator = match (
+            crate::services::crypto::get_pubkey_from_user_id(&identity.user_id),
+            crate::services::crypto::get_pubkey_from_user_id(creator_id),
+        ) {
+            (Ok(pk_id), Ok(pk_creator)) => pk_id == pk_creator,
+            _ => &identity.user_id == creator_id,
+        };
+        if !is_creator {
             return Err(VoucherCoreError::NotTheCreator);
         }
 

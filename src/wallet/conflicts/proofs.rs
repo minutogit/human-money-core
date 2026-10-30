@@ -283,6 +283,34 @@ impl Wallet {
                     proof_id: endorsement.proof_id.clone(),
                 })
             })?;
+
+        // SECURITY (AUDIT-01-V051-02): Offender cannot self-forgive
+        if crate::services::crypto::get_pubkey_from_user_id(&entry.proof.offender_id).ok().as_ref() == Some(&victim_pk) {
+            return Err(VoucherCoreError::Validation(crate::error::ValidationError::SecurityViolation(
+                "Cannot add endorsement: offender cannot endorse their own conflict resolution".to_string(),
+            )));
+        }
+
+        // SECURITY (AUDIT-01-V051-02): Victim must match at least one recipient of the conflicting transactions
+        let mut did_recipients_found = false;
+        let mut matched_recipient = false;
+
+        for tx in &entry.proof.conflicting_transactions {
+            if let Ok(tx_recipient_pk) = crate::services::crypto::get_pubkey_from_user_id(&tx.recipient_id) {
+                did_recipients_found = true;
+                if tx_recipient_pk == victim_pk {
+                    matched_recipient = true;
+                    break;
+                }
+            }
+        }
+
+        if did_recipients_found && !matched_recipient {
+            return Err(VoucherCoreError::Validation(crate::error::ValidationError::SecurityViolation(
+                "Cannot add endorsement: victim_id does not match any recipient in conflicting_transactions".to_string(),
+            )));
+        }
+
         let resolutions = entry.proof.resolutions.get_or_insert_with(Vec::new);
         if !resolutions
             .iter()

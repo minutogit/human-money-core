@@ -44,6 +44,15 @@ pub struct L2SendIntent {
     /// Stored fresh recipient challenge for live quorum reconciliation.
     #[serde(default)]
     pub stored_challenge: Option<[u8; 32]>,
+    /// Optional expiration timestamp for the stored recipient reconciliation challenge.
+    #[serde(default)]
+    pub challenge_expires_at_ms: Option<u64>,
+    /// Stored regional committee at the time the challenge was generated or refreshed.
+    #[serde(default)]
+    pub stored_committee: Option<[[u8; 32]; 20]>,
+    /// Local instance ID of any split-change voucher created during transfer.
+    #[serde(default)]
+    pub created_change_local_id: Option<String>,
     /// Explicit terminal resolution outcome if finalized.
     #[serde(default)]
     pub terminal_resolution: Option<IntentTerminalResolution>,

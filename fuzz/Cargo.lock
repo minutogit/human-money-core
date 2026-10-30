@@ -962,7 +962,7 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "human_money_core"
-version = "0.3.2"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -982,6 +982,7 @@ dependencies = [
  "hex",
  "hkdf",
  "hmac",
+ "humoco-proto",
  "lazy_static",
  "log",
  "pbkdf2",
@@ -1015,9 +1016,20 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "human_money_core",
+ "humoco-proto",
  "libfuzzer-sys",
  "serde_json",
  "toml",
+]
+
+[[package]]
+name = "humoco-proto"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "blake3",
+ "ed25519-dalek",
+ "serde",
 ]
 
 [[package]]

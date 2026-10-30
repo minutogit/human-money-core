@@ -469,8 +469,22 @@ impl Wallet {
 
         let mut latest_resolved = None;
 
+        let is_same_identity = |a: &str, b: &str| -> bool {
+            if a == b {
+                true
+            } else {
+                match (
+                    crate::services::crypto::get_pubkey_from_user_id(a),
+                    crate::services::crypto::get_pubkey_from_user_id(b),
+                ) {
+                    (Ok(pk_a), Ok(pk_b)) => pk_a == pk_b,
+                    _ => false,
+                }
+            }
+        };
+
         for entry in self.proof_store.proofs.values() {
-            if entry.proof.offender_id == offender_id {
+            if is_same_identity(&entry.proof.offender_id, offender_id) {
                 let is_officially_resolved = entry.proof.resolutions.as_ref().is_some_and(|r| !r.is_empty())
                     || entry.proof.layer2_verdict.is_some();
 

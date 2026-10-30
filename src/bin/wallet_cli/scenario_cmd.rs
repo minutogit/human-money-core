@@ -871,8 +871,10 @@ fn step_description(step: &ScenarioStep) -> String {
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() > max_len {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
+    let char_count = s.chars().count();
+    if char_count > max_len {
+        let prefix: String = s.chars().take(max_len.saturating_sub(3)).collect();
+        format!("{prefix}...")
     } else {
         s.to_string()
     }

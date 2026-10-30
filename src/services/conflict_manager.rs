@@ -548,6 +548,10 @@ pub fn derive_proof_id(
         bs58::decode(&sanitized[pos + 10..])
             .into_vec()
             .map_err(|_| VoucherCoreError::ProofImport("Invalid offender_id did format".to_string()))?
+    } else if let Some(rest) = sanitized.strip_prefix("did:key:z") {
+        bs58::decode(rest)
+            .into_vec()
+            .map_err(|_| VoucherCoreError::ProofImport("Invalid offender_id did format".to_string()))?
     } else {
         // Fallback for anonymous offenders (Gossip soft proofs):
         // If there is no DID format, use the hash of the offender_id string

@@ -618,7 +618,12 @@ pub enum L2ProcessingOutcome {
 }
 
 /// Checkout release verdict governing goods release and merchant approval requirements.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Uses a private `_sealed` field (rather than `#[non_exhaustive]` alone) so that even
+/// intra-crate modules outside `layer2_api` must construct verdicts via [`Self::new`] and
+/// [`Self::with_durable_purchase_binding`].
+#[allow(clippy::manual_non_exhaustive)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckoutReleaseVerdict {
     pub outcome: L2ProcessingOutcome,
@@ -626,6 +631,8 @@ pub struct CheckoutReleaseVerdict {
     pub requires_merchant_approval: bool,
     pub is_goods_release_authorized: bool,
     pub merchant_warning: Option<String>,
+    #[serde(skip)]
+    _sealed: (),
 }
 
 /// Capability token representing a backend-verified, durably committed
@@ -707,6 +714,7 @@ impl CheckoutReleaseVerdict {
             requires_merchant_approval: req_approval,
             is_goods_release_authorized: authorized,
             merchant_warning: warning,
+            _sealed: (),
         }
     }
 

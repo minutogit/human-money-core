@@ -16,9 +16,12 @@ Voucher standards in `human_money_core` (defined in TOML according to specificat
 
 Inspect the following files:
 - `src/services/dynamic_policy_engine.rs`
-- `src/services/standard_manager.rs`
 - `src/models/voucher_standard_definition.rs`
-- `src/app_service/standard_container_handler.rs`
+- `src/services/voucher_validation/pipeline.rs`
+- `src/services/voucher_validation/rules.rs`
+- `src/services/voucher_validation/mod.rs`
+- `src/app_service/transactions.rs`
+- `src/wallet/transactions.rs`
 
 ---
 
@@ -26,13 +29,14 @@ Inspect the following files:
 
 1. **Research & Codebase Exploration:**
    - Map out how CEL variables are populated from the voucher state, transaction context, and environment.
-   - Spawn subagents to parallelize inspection of the standard definitions and the policy execution pipeline if needed.
+   - Trace how `StandardRegistry` verifies and caches standards in `voucher_validation/pipeline.rs`.
+   - Spawn subagents to parallelize inspection of standard definitions and the policy execution pipeline if needed.
 2. **Hypothesis Generation & Vulnerability Scan:**
    - **Missing Context / Null-Coalescing Exploits:** If optional fields (e.g. `guarantors`, `min_signatures`, `valid_until`) are missing or null in the context map, do rules bypass silently or evaluate to `true`?
    - **Type-Juggling & Precision Loss:** Are timestamps (u64/u128), decimal amounts (`rust_decimal`), or lists coerced unsafely into integers/floats during CEL expression evaluation?
    - **Standard Tampering:** Can an attacker forge a modified standard TOML or inject arbitrary CEL logic into a voucher bundle that bypasses existing restrictions?
    - **Evaluation Timeouts & ReDoS:** Can crafted CEL expressions cause CPU exhaustion or infinite recursion during standard validation?
-   - **Open Exploration & Assumption-Busting:** The vectors above are non-exhaustive seeds. You are encouraged to explore any novel anomaly, unexpected rule interaction, or unstated assumption you encounter in this domain.
+   - **Open Exploration & Assumption-Busting:** The vectors above are non-exhaustive seeds. Explore any novel anomaly, unexpected rule interaction, or unstated assumption you encounter in this domain.
 3. **Verification & Proof (Fail-First TDD Invariant):**
    - Write a dedicated Rust test in `tests/security_audit_module_03_cel.rs`.
    - **The test MUST assert the secure invariant (Soll-Verhalten)**.
@@ -42,4 +46,3 @@ Inspect the following files:
 5. **Mandatory Post-Audit Design-Intent Triage:**
    - Run all candidate findings through [`DESIGN_INTENT_TRIAGE.md`](./DESIGN_INTENT_TRIAGE.md) and [`docs/security/PRIVACY_FAQ.md`](../PRIVACY_FAQ.md) before implementing fixes.
    - If a finding is an `[INTENTIONAL DESIGN REQUIREMENT]`, do not alter the logic; instead document the rationale in the code and protect it with an invariant test.
-

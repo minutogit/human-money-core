@@ -2,7 +2,7 @@
 
 use human_money_core::models::profile::TransactionBundle;
 use human_money_core::services::bundle_processor::{
-    open_and_verify_bundle, MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE, MAX_VOUCHERS_PER_BUNDLE,
+    open_and_verify_bundle, MAX_FINGERPRINTS_PER_VOUCHER, MAX_VOUCHERS_PER_BUNDLE,
 };
 use human_money_core::test_utils::ACTORS;
 use libfuzzer_sys::fuzz_target;
@@ -20,7 +20,7 @@ fuzz_target!(|data: &[u8]| {
         if let Ok(bundle) = serde_json::from_slice::<TransactionBundle>(data) {
             let _oversized_vouchers = bundle.vouchers.len() > MAX_VOUCHERS_PER_BUNDLE;
             let _oversized_fps =
-                bundle.forwarded_fingerprints.len() > MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE;
+                bundle.forwarded_fingerprints.len() > MAX_VOUCHERS_PER_BUNDLE * MAX_FINGERPRINTS_PER_VOUCHER;
 
             for v in &bundle.vouchers {
                 let _ = v.hop_depth();

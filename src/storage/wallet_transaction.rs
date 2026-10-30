@@ -246,11 +246,12 @@ fn decode_seal_bytes(
 impl FileStorage {
     /// Cleans recognized journal, marker, and managed-file random-nonce temporary files.
     /// Preserves unknown files. Callers must hold the exclusive wallet lock.
-    pub(crate) fn clean_orphaned_transaction_temps(&self) -> Result<(), StorageError> {
+    pub fn clean_orphaned_transaction_temps(&self) -> Result<(), StorageError> {
         if !self.user_storage_path.exists() {
             return Ok(());
         }
         let mut cleaned = false;
+        let mut cleaned_events = false;
         for entry in fs::read_dir(&self.user_storage_path)? {
             let entry = entry?;
             let name = match entry.file_name().to_str() {
@@ -269,11 +270,14 @@ impl FileStorage {
                         let relative = format!("events/{sub_name}");
                         if is_recognized_temp_file(&relative) && sub.file_type()?.is_file() {
                             let _ = fs::remove_file(sub.path());
-                            cleaned = true;
+                            cleaned_events = true;
                         }
                     }
                 }
             }
+        }
+        if cleaned_events {
+            let _ = self.sync_directory(&self.user_storage_path.join("events"));
         }
         if cleaned {
             let _ = self.sync_directory(&self.user_storage_path);

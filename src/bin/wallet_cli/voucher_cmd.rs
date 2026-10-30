@@ -19,6 +19,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    s.chars().take(max_chars).collect()
+}
+
 // ---------------------------------------------------------------------------
 // Result DTOs for CLI JSON Output
 // ---------------------------------------------------------------------------
@@ -493,13 +497,15 @@ pub fn handle_voucher(ctx: &CliContext, cmd: VoucherCommand) -> Result<()> {
                         VoucherStatus::Endorsed { role } => format!("Endorsed ({role})"),
                         VoucherStatus::Expired => "Expired".to_string(),
                     };
+                    let display_id = truncate_str(&v.local_instance_id, 14);
+                    let display_std = truncate_str(&v.display_standard_name, 16);
                     println!(
                         "  {:<16} {:<18} {:<12} {:<12} {:<18} {:<6} {}",
-                        &v.local_instance_id[..v.local_instance_id.len().min(14)],
+                        display_id,
                         status_str,
                         v.current_amount,
                         v.display_currency,
-                        &v.display_standard_name[..v.display_standard_name.len().min(16)],
+                        display_std,
                         if v.is_test_voucher { "yes" } else { "no" },
                         v.valid_until
                     );
@@ -557,7 +563,7 @@ pub fn handle_voucher(ctx: &CliContext, cmd: VoucherCommand) -> Result<()> {
                     println!(
                         "    [{}] T_ID: {} Amount: {} Sender: {:?} Recipient: {}",
                         i,
-                        &tx.t_id[..tx.t_id.len().min(12)],
+                        truncate_str(&tx.t_id, 12),
                         tx.amount,
                         tx.sender_id.as_deref().unwrap_or("genesis"),
                         tx.recipient_id
@@ -1112,7 +1118,7 @@ pub fn handle_tx(ctx: &CliContext, cmd: TxCommand) -> Result<()> {
                 for s in &r.involved_sources_details {
                     println!(
                         "    - ID: {} Standard: {} Amount: {} {}",
-                        &s.local_instance_id[..s.local_instance_id.len().min(14)],
+                        truncate_str(&s.local_instance_id, 14),
                         s.display_standard_name,
                         s.amount,
                         s.display_currency
@@ -1169,8 +1175,8 @@ pub fn handle_tx(ctx: &CliContext, cmd: TxCommand) -> Result<()> {
                 for v in &r.involved_vouchers_details {
                     println!(
                         "    - Local ID: {} Voucher ID: {} Standard: {} Amount: {} {}",
-                        &v.local_instance_id[..v.local_instance_id.len().min(14)],
-                        &v.voucher_id[..v.voucher_id.len().min(14)],
+                        truncate_str(&v.local_instance_id, 14),
+                        truncate_str(&v.voucher_id, 14),
                         v.display_standard_name,
                         v.amount,
                         v.display_currency

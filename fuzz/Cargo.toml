@@ -18,6 +18,7 @@ bs58 = "0.5"
 hex = "0.4"
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 curve25519-dalek = { version = "4.1", features = ["group", "digest", "rand_core"] }
+humoco-proto = { path = "../../humoco-proto" }
 
 [dependencies.human_money_core]
 path = ".."
@@ -48,5 +49,11 @@ doc = false
 [[bin]]
 name = "fuzz_conflict_proof_and_sst"
 path = "fuzz_targets/fuzz_conflict_proof_and_sst.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_backup_and_l2_envelopes"
+path = "fuzz_targets/fuzz_backup_and_l2_envelopes.rs"
 test = false
 doc = false

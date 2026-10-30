@@ -46,7 +46,10 @@ impl Wallet {
         for (hash, fps) in old_local_history {
             let entry = known.local_history.entry(hash).or_default();
             for fp in fps {
-                if !entry.iter().any(|e| e.t_id == fp.t_id) {
+                if !entry
+                    .iter()
+                    .any(|e| e.t_id == fp.t_id && e.privacy_guard_hash == fp.privacy_guard_hash)
+                {
                     entry.push(fp);
                 }
             }
@@ -402,11 +405,44 @@ impl Wallet {
         // --- Conflict resolution (determine offline winner and quarantine losers) ---
         // Only executed for fully verified proofs; unverified witness notes
         // must never mutate local voucher states.
+        let tx_ids: std::collections::HashSet<_> = proof
+            .conflicting_transactions
+            .iter()
+            .map(|tx| &tx.t_id)
+            .collect();
+
+        // SECURITY (AUDIT-01-V051-03): Determine predecessor floor timestamp from local voucher chain
+        let mut predecessor_floor_dt: Option<chrono::DateTime<chrono::FixedOffset>> = None;
+        for instance in self.voucher_store.vouchers.values() {
+            if let Some(pos) = instance
+                .voucher
+                .transactions
+                .iter()
+                .position(|tx| tx_ids.contains(&tx.t_id))
+            {
+                let floor_str = if pos > 0 {
+                    &instance.voucher.transactions[pos - 1].t_time
+                } else {
+                    &instance.voucher.creation_date
+                };
+                if let Ok(f_dt) = chrono::DateTime::parse_from_rfc3339(floor_str) {
+                    predecessor_floor_dt = Some(f_dt);
+                    break;
+                }
+            }
+        }
+
         let mut winner_tx_id: Option<String> = None;
         let mut earliest_dt: Option<chrono::DateTime<chrono::FixedOffset>> = None;
 
         for tx in &proof.conflicting_transactions {
             if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&tx.t_time) {
+                // SECURITY (AUDIT-01-V051-03): Disqualify epoch-backdated siblings earlier than the predecessor floor
+                if let Some(floor_dt) = predecessor_floor_dt {
+                    if dt < floor_dt {
+                        continue;
+                    }
+                }
                 match earliest_dt {
                     None => {
                         earliest_dt = Some(dt);
@@ -421,14 +457,9 @@ impl Wallet {
             }
         }
 
-        let tx_ids: std::collections::HashSet<_> = proof
-            .conflicting_transactions
-            .iter()
-            .map(|tx| &tx.t_id)
-            .collect();
         let mut quarantined_events = Vec::new();
 
-        if let (VerificationOutcome::FullyVerified, Some(winner_id)) = (&outcome, winner_tx_id) {
+        if let VerificationOutcome::FullyVerified = &outcome {
             for instance in self.voucher_store.vouchers.values_mut() {
                 if let Some(tx) = instance
                     .voucher
@@ -437,13 +468,16 @@ impl Wallet {
                     .find(|tx| tx_ids.contains(&tx.t_id))
                 {
                     let prev_status = instance.status.clone();
-                    instance.status = if tx.t_id == winner_id {
-                        VoucherStatus::Active
-                    } else {
-                        VoucherStatus::Quarantined {
+                    let is_winner = winner_tx_id.as_ref() == Some(&tx.t_id);
+
+                    // SECURITY (AUDIT-01-V051-03): Monotonic status transition:
+                    // Only Active vouchers can be quarantined by a lost race.
+                    // Proof import MUST NEVER resurrect a Quarantined or Archived voucher to Active.
+                    if matches!(prev_status, VoucherStatus::Active) && !is_winner {
+                        instance.status = VoucherStatus::Quarantined {
                             reason: "Lost race in imported proof".to_string(),
-                        }
-                    };
+                        };
+                    }
                     if !matches!(prev_status, VoucherStatus::Quarantined { .. })
                         && matches!(instance.status, VoucherStatus::Quarantined { .. })
                     {
@@ -516,6 +550,17 @@ impl Wallet {
             crate::models::conflict::ConflictRole::Witness
         };
 
+        // AUDIT-01-V051-04: Clamp unauthenticated report_timestamp to now if it is in the future or invalid
+        let now_utc = chrono::Utc::now();
+        if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&proof.report_timestamp) {
+            let max_allowed = now_utc + chrono::Duration::minutes(5);
+            if ts > max_allowed {
+                proof.report_timestamp = now_utc.to_rfc3339();
+            }
+        } else {
+            proof.report_timestamp = now_utc.to_rfc3339();
+        }
+
         let entry = crate::models::conflict::ProofStoreEntry {
             proof,
             local_override: false,
@@ -523,17 +568,34 @@ impl Wallet {
             conflict_role,
         };
 
-        // SECURITY (AUDIT-00-WILDCARD-42): Enforce upper bound on stored proofs to prevent memory bloat DoS
+        // SECURITY (AUDIT-00-WILDCARD-42 & AUDIT-01-V051-04): Enforce upper bound on stored proofs
+        // with tiered eviction to protect permanent-DID KnownOffenders from ephemeral flood DoS
         const MAX_PROOFS: usize = 1000;
         if self.proof_store.proofs.len() >= MAX_PROOFS
             && !self.proof_store.proofs.contains_key(&entry.proof.proof_id)
         {
-            // Evict the oldest proof by report_timestamp
+            let tier = |e: &crate::models::conflict::ProofStoreEntry| -> u8 {
+                if e.conflict_role != crate::models::conflict::ConflictRole::Witness {
+                    return 3;
+                }
+                if crate::services::crypto::get_pubkey_from_user_id(&e.proof.offender_id).is_err() {
+                    return 0; // Ephemeral / non-DID soft proof
+                }
+                let is_resolved = e.proof.resolutions.as_ref().is_some_and(|r| !r.is_empty())
+                    || e.proof.layer2_verdict.is_some()
+                    || e.local_override;
+                if is_resolved {
+                    1
+                } else {
+                    2
+                }
+            };
+
             let oldest_id = self
                 .proof_store
                 .proofs
                 .iter()
-                .min_by_key(|(_, e)| e.proof.report_timestamp.as_str())
+                .min_by_key(|(_, e)| (tier(e), e.proof.report_timestamp.as_str()))
                 .map(|(k, _)| k.clone());
             if let Some(id) = oldest_id {
                 self.proof_store.proofs.remove(&id);
@@ -869,7 +931,7 @@ impl Wallet {
     }
 
     /// Processes received fingerprints (active and implicit) and updates gossip queues and archives.
-    pub(crate) fn process_received_fingerprints(
+    pub fn process_received_fingerprints(
         &mut self,
         _bundle_header: &TransactionBundleHeader,
         vouchers: &[Voucher],
@@ -1065,23 +1127,47 @@ impl Wallet {
                 conflict_manager::assign_local_retention_to_wire_entry(&mut p0);
                 conflict_manager::assign_local_retention_to_wire_entry(&mut p1);
 
-                const MAX_QUARANTINE_RELAY_POOL: usize = 500;
-                while self.active_gossip.quarantine_relay_pool.len() >= MAX_QUARANTINE_RELAY_POOL {
-                    self.active_gossip.quarantine_relay_pool.pop_front();
+                // AUDIT-01-V051-05: Deduplicate quarantine_relay_pool by (ds_tag, t_id, privacy_guard_hash) pair
+                let is_duplicate_pair = self.active_gossip.quarantine_relay_pool.iter().any(|e| {
+                    (e[0].ds_tag == f1.ds_tag
+                        && e[0].t_id == f1.t_id
+                        && e[0].privacy_guard_hash == f1.privacy_guard_hash
+                        && e[1].t_id == f2.t_id
+                        && e[1].privacy_guard_hash == f2.privacy_guard_hash)
+                        || (e[0].ds_tag == f1.ds_tag
+                            && e[0].t_id == f2.t_id
+                            && e[0].privacy_guard_hash == f2.privacy_guard_hash
+                            && e[1].t_id == f1.t_id
+                            && e[1].privacy_guard_hash == f1.privacy_guard_hash)
+                });
+                if !is_duplicate_pair {
+                    const MAX_QUARANTINE_RELAY_POOL: usize = 500;
+                    while self.active_gossip.quarantine_relay_pool.len() >= MAX_QUARANTINE_RELAY_POOL {
+                        self.active_gossip.quarantine_relay_pool.pop_front();
+                    }
+                    self.active_gossip
+                        .quarantine_relay_pool
+                        .push_back([p0.clone(), p1.clone()]);
                 }
-                self.active_gossip
-                    .quarantine_relay_pool
-                    .push_back([p0.clone(), p1.clone()]);
 
-                // Also record in foreign fingerprints archive
-                for p in [&p0, &p1] {
-                    let entry = self
-                        .known_fingerprints
-                        .foreign_fingerprints
-                        .entry(p.ds_tag.clone())
-                        .or_default();
-                    if !entry.iter().any(|e| e == p) {
-                        entry.push(p.clone());
+                // AUDIT-01-V051-05: Record in foreign fingerprints archive under caps & dedup
+                for p in [p0, p1] {
+                    if current_total_foreign < conflict_manager::MAX_TOTAL_FOREIGN_FINGERPRINTS {
+                        let entry = self
+                            .known_fingerprints
+                            .foreign_fingerprints
+                            .entry(p.ds_tag.clone())
+                            .or_default();
+                        if entry.len() < conflict_manager::MAX_FOREIGN_BUCKET_CAP {
+                            let is_duplicate = entry.iter().any(|existing| {
+                                existing.t_id == p.t_id
+                                    && existing.privacy_guard_hash == p.privacy_guard_hash
+                            });
+                            if !is_duplicate {
+                                entry.push(p);
+                                current_total_foreign += 1;
+                            }
+                        }
                     }
                 }
             }

@@ -241,7 +241,35 @@ impl AppService {
             _ => return Err(Error::WalletLocked),
         };
 
-        let query = wallet.build_voucher_status_query(local_instance_id, 1)?;
+        let instance = wallet
+            .get_voucher_instance(local_instance_id)
+            .ok_or_else(|| Error::VoucherNotFound(local_instance_id.to_string()))?;
+
+        let layer2_voucher_id = l2_gateway::extract_layer2_voucher_id(&instance.voucher)?;
+        let last_tx = instance
+            .voucher
+            .transactions
+            .last()
+            .ok_or_else(|| Error::App(crate::error::AppError::NoTransactionsFound))?;
+
+        let challenge_ds_tag = l2_gateway::derive_challenge_tag(last_tx)?;
+        let locator_prefixes = l2_gateway::generate_locator_prefixes(&instance.voucher);
+
+        let mut ephemeral_key = [0u8; 32];
+        rand_core::OsRng.fill_bytes(&mut ephemeral_key);
+        let auth = crate::models::layer2_api::L2AuthPayload {
+            ephemeral_pubkey: ephemeral_key,
+            auth_signature: None,
+        };
+
+        let query = crate::models::layer2_api::L2StatusQuery {
+            auth,
+            layer2_voucher_id,
+            challenge_ds_tag,
+            locator_prefixes,
+            read_quorum: 1,
+        };
+
         serde_json::to_vec(&query).map_err(Error::from)
     }
 
@@ -273,8 +301,8 @@ impl AppService {
             self,
             password,
             ReloadPolicy::ReconcileReload,
-            move |temp_wallet, _identity, _storage, _auth| match temp_wallet
-                .reconcile_voucher_state(&local_id, successor_lock)
+            move |temp_wallet, identity, _storage, _auth| match temp_wallet
+                .reconcile_voucher_state(identity, &local_id, successor_lock)
             {
                 Ok(result) => TransactionOutcome::Commit(result),
                 Err(e) => TransactionOutcome::Rollback(e),

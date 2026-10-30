@@ -1,15 +1,34 @@
 # .cargo/mutants.toml
-# Suppressions for known, accepted mutants in cargo mutants.
+# Configuration and suppressions for known, accepted mutants in cargo-mutants (v26+).
 #
-# Each entry is either:
+# Each suppression entry is either:
 #   (A) semantically equivalent – behavior does not change
 #   (B) structurally untestable – no real input path reaches it
 #   (C) gossip limiter – slightly shifts limits without security relevance
 #   (D) wrappers & untested offline edge cases
 #
-# Docs: https://mutants.rs/configuration.html
+# Docs: https://mutants.rs/
+
+test_tool = "nextest"
+additional_cargo_args = ["--offline", "--config=profile.test.debug=0", "--config=profile.dev.debug=0", "--config=profile.test.opt-level=0"]
+cap_lints = true
+minimum_test_timeout = 20.0
+
+exclude_globs = [
+    "src/test_utils.rs",
+    "src/**/tests.rs",
+    "src/**/reputation_tests.rs",
+]
 
 exclude_re = [
+    # Zeroize / Drop implementations cannot be meaningfully asserted in safe unit tests
+    "impl Drop for .*",
+    "::drop\\b",
+    # Pure Debug / Display formatting impls
+    "impl.*fmt::(Debug|Display) for .*",
+    # Inline #[cfg(test)] helper functions
+    "\\btests::",
+
     # Crypto Utils
     "replace < with <= in build_hkdf_info",
     "replace \\|\\| with && in validate_user_id",
@@ -27,7 +46,7 @@ exclude_re = [
     "replace \\+ with \\* in create_proof_of_double_spend",
 
     # (E) Complex, internally shielded Layer-2 proofs (12 mutants)
-    # verify_and_create_proof is only conditionally reached via hostile end-to-end API tests. 
+    # verify_and_create_proof is only conditionally reached via hostile end-to-end API tests.
     # These are internal signature checks.
     "in Wallet::verify_and_create_proof",
 

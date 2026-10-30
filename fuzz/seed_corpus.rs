@@ -4,7 +4,6 @@ use human_money_core::models::secure_container::{
 };
 use human_money_core::services::bundle_processor::create_and_encrypt_bundle;
 use human_money_core::test_utils::{setup_voucher_with_one_tx, ACTORS};
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -65,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &bob.user_id,
         Some("fuzzing seed transaction note".into()),
         vec![],
-        HashMap::new(),
+        vec![],
         Some("Alice".into()),
     )?;
     fs::write(c2_dir.join("seed_sealed_bundle.bin"), &bundle_bytes)?;
@@ -127,6 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         trap_s: "trap_s_sample".into(),
         layer2_voucher_id: "v_id".into(),
         privacy_guard_hash: "guard_hash".into(),
+        created_at_ms: 1234567890,
     };
     fs::write(c4_dir.join("seed_fingerprint.json"), serde_json::to_vec_pretty(&fp)?)?;
 
