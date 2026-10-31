@@ -972,6 +972,83 @@ impl AppService {
             AppState::Locked => Err(Error::WalletLocked),
         }
     }
+
+    // --- Web-of-Trust Container Helpers ---
+
+    /// Seals and signs a .wot trust container payload.
+    /// Trust containers MUST be encrypted (TargetDid, TargetDids, or Password);
+    /// Cleartext configuration is rejected (CWE-311/CWE-347 prevention).
+    pub fn seal_trust_container(
+        &self,
+        payload: &[u8],
+        config: ContainerConfig,
+    ) -> Result<Vec<u8>, Error> {
+        if matches!(config, ContainerConfig::Cleartext) {
+            return Err(Error::PlaintextNotAllowedForFinancialPayload);
+        }
+
+        let identity = self.get_identity()?;
+        let container = SecureContainer::seal(
+            identity,
+            &config,
+            payload,
+            PayloadType::TrustAssertion,
+        )?;
+
+        serde_json::to_vec(&container).map_err(Error::from)
+    }
+
+    /// Opens, decrypts, and cryptographically authenticates a .wot trust container.
+    ///
+    /// CWE-347 Prevention: SecureContainer::open only decrypts the AEAD ciphertext;
+    /// this function additionally verifies container integrity and validates
+    /// the container's Ed25519 envelope signature against the extracted sender ID.
+    pub fn open_trust_container<F>(
+        &self,
+        container_bytes: &[u8],
+        password: Option<&str>,
+        extract_sender_id: F,
+    ) -> Result<Vec<u8>, Error>
+    where
+        F: FnOnce(&[u8]) -> Result<String, Error>,
+    {
+        if container_bytes.len() > crate::services::bundle_processor::MAX_CONTAINER_BYTES {
+            return Err(Error::Validation(
+                crate::error::ValidationError::InvalidTransaction(format!(
+                    "Container exceeds maximum size ({} > {} bytes)",
+                    container_bytes.len(),
+                    crate::services::bundle_processor::MAX_CONTAINER_BYTES
+                )),
+            ));
+        }
+
+        let identity = self.get_identity()?;
+        let container: SecureContainer = serde_json::from_slice(container_bytes)?;
+
+        if container.c != PayloadType::TrustAssertion {
+            return Err(Error::InvalidPayloadType);
+        }
+
+        if container.et == crate::models::secure_container::EncryptionType::None {
+            return Err(Error::PlaintextNotAllowedForFinancialPayload);
+        }
+
+        container.verify_integrity()?;
+
+        let plaintext = container.open(identity, password)?;
+
+        let sender_id = extract_sender_id(&plaintext)?;
+
+        if container.signature.is_empty() {
+            return Err(Error::Validation(
+                crate::error::ValidationError::InvalidContainerSignature,
+            ));
+        }
+
+        container.verify_container_signature(&sender_id)?;
+
+        Ok(plaintext)
+    }
 }
 
 #[cfg(test)]
@@ -1321,5 +1398,139 @@ signature = "5aomSjj76rEb4VVjhAd6p6qvmU79wkkTpj84AnY3D9p8xRDNfxBqKL4EbEHTKfPevgg
 
         let result = app.delete_voucher_standard("non_existent_id", &target_standards_dir);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_seal_open_trust_container_target_did() {
+        let (alice, _alice_dir) = setup_test_app("test_wot_target_did_alice");
+        let dir_bob = std::env::temp_dir().join("test_wot_target_did_bob");
+        if dir_bob.exists() {
+            let _ = fs::remove_dir_all(&dir_bob);
+        }
+        let _ = fs::create_dir_all(&dir_bob);
+        let mut bob = AppService::new(&dir_bob).unwrap();
+        let bob_mnemonic = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+        bob.create_profile(
+            "Bob Profile",
+            bob_mnemonic,
+            None,
+            Some("bob"),
+            "password123",
+            MnemonicLanguage::English,
+            "device-bob".to_string(),
+        )
+        .unwrap();
+
+        let alice_id = alice.get_identity().unwrap().user_id.clone();
+        let bob_id = bob.get_identity().unwrap().user_id.clone();
+
+        let payload = br#"{"version":1,"claims":[{"sub":"did:key:z123","level":2}]}"#;
+
+        let container_bytes = alice
+            .seal_trust_container(
+                payload,
+                ContainerConfig::TargetDid(bob_id.clone(), crate::models::secure_container::PrivacyMode::TrialDecryption),
+            )
+            .expect("Alice seal trust container must succeed");
+
+        let decrypted = bob
+            .open_trust_container(&container_bytes, None, |_| Ok(alice_id.clone()))
+            .expect("Bob open trust container must succeed");
+
+        assert_eq!(decrypted, payload);
+    }
+
+    #[test]
+    fn test_seal_open_trust_container_password() {
+        let (alice, _alice_dir) = setup_test_app("test_wot_pwd_alice");
+        let dir_bob = std::env::temp_dir().join("test_wot_pwd_bob");
+        if dir_bob.exists() {
+            let _ = fs::remove_dir_all(&dir_bob);
+        }
+        let _ = fs::create_dir_all(&dir_bob);
+        let mut bob = AppService::new(&dir_bob).unwrap();
+        let bob_mnemonic = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+        bob.create_profile(
+            "Bob Profile",
+            bob_mnemonic,
+            None,
+            Some("bob"),
+            "password123",
+            MnemonicLanguage::English,
+            "device-bob".to_string(),
+        )
+        .unwrap();
+
+        let alice_id = alice.get_identity().unwrap().user_id.clone();
+        let payload = br#"{"symmetric_wot_sync":true}"#;
+        let password = "WotContainerPassword999";
+
+        let container_bytes = alice
+            .seal_trust_container(payload, ContainerConfig::Password(password.to_string()))
+            .expect("Alice seal trust container with password must succeed");
+
+        // Wrong password fails
+        let wrong_open = bob.open_trust_container(&container_bytes, Some("WrongPassword"), |_| Ok(alice_id.clone()));
+        assert!(wrong_open.is_err());
+
+        // Correct password succeeds
+        let decrypted = bob
+            .open_trust_container(&container_bytes, Some(password), |_| Ok(alice_id.clone()))
+            .expect("Bob open trust container with correct password must succeed");
+
+        assert_eq!(decrypted, payload);
+    }
+
+    #[test]
+    fn test_seal_open_trust_container_spoofed_sender_rejected() {
+        let (alice, _alice_dir) = setup_test_app("test_wot_spoof_alice");
+        let dir_bob = std::env::temp_dir().join("test_wot_spoof_bob");
+        if dir_bob.exists() {
+            let _ = fs::remove_dir_all(&dir_bob);
+        }
+        let _ = fs::create_dir_all(&dir_bob);
+        let mut bob = AppService::new(&dir_bob).unwrap();
+        let bob_mnemonic = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+        bob.create_profile(
+            "Bob Profile",
+            bob_mnemonic,
+            None,
+            Some("bob"),
+            "password123",
+            MnemonicLanguage::English,
+            "device-bob".to_string(),
+        )
+        .unwrap();
+
+        let bob_id = bob.get_identity().unwrap().user_id.clone();
+        let payload = br#"{"claimed_sender":"did:key:zBob","payload":"tampered"}"#;
+        let password = "WotContainerPassword999";
+
+        // Alice seals container
+        let container_bytes = alice
+            .seal_trust_container(payload, ContainerConfig::Password(password.to_string()))
+            .expect("Alice seal container must succeed");
+
+        // Bob opens container, but extract_sender_id claims the sender was Bob!
+        // Signature verification MUST fail because container was signed by Alice!
+        let result = bob.open_trust_container(&container_bytes, Some(password), |_| Ok(bob_id.clone()));
+        assert!(result.is_err(), "Spoofed sender DID must fail signature verification");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, Error::Validation(crate::error::ValidationError::InvalidContainerSignature)),
+            "Expected InvalidContainerSignature, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_seal_trust_container_rejects_cleartext() {
+        let (alice, _alice_dir) = setup_test_app("test_wot_cleartext");
+        let result = alice.seal_trust_container(b"cleartext_data", ContainerConfig::Cleartext);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::PlaintextNotAllowedForFinancialPayload
+        ));
     }
 }

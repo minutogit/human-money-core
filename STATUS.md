@@ -3,10 +3,16 @@ project: human-money-core
 version: "0.5.1"
 phase: "active-development"
 health: "green"
-last_updated: "2026-10-30"
+last_updated: "2026-10-31"
 blocks: []
 blocked_by: []
 priority_tasks:
+  - id: "CORE-010"
+    title: "Web of Trust Transport Hooks, Authenticated Trust Containers & Gravitational Coin Selection (s_wot)"
+    status: "closed"
+    priority: "high"
+    depends_on: ["CORE-001", "WOT-005"]
+    description: "Added graph-free Web of Trust transport and scoring primitives while keeping `human-money-core` 100% independent of `humoco-wot`: 1) Optional `wot_sync_json` attachment (`MAX_WOT_SYNC_BYTES = 65_536`) in `TransactionBundle`, `MultiTransferRequest`, and `ProcessBundleResult` supporting E2E-encrypted transaction piggybacking across both Public and Stealth transfers; 2) Authenticated `.wot` container helpers (`AppService::seal_trust_container` and `AppService::open_trust_container`) enforcing `PayloadType::TrustAssertion`, mandatory encryption, `verify_integrity()`, and Ed25519 `verify_container_signature(&sender_id)` against CWE-347 sender spoofing; 3) Optional `s_wot` (`0..=1500`) bonus in Gravitational Coin Selection (`ScoreBreakdown`, `rank_vouchers_with_wot`, `prepare_transfer_with_wot`)."
   - id: "CORE-009"
     title: "Post-v0.5.1 Security Assurance Campaign (AI Audits, Mutation Hardening & Fuzzing)"
     status: "closed"
@@ -44,17 +50,17 @@ priority_tasks:
     depends_on: ["WOT-001", "WOT-002"]
     description: "Define trait interfaces for WoT integration (TrustProvider trait, identity mapping). WoT implementation lives in humoco-web-of-trust, NOT in core. Implemented: services/trust_provider.rs (TrustProvider + NoopTrustProvider + Fn impl), Wallet::check_reputation_with_provider."
   - id: "CORE-002"
-    title: "Offline trust proof protocol"
+    title: "Offline BLE/NFC stranger discovery handshake (Post-MVP)"
     status: "open"
-    priority: "high"
-    depends_on: ["WOT-003"]
-    description: "Implement BLE/NFC stranger discovery handshake in core"
+    priority: "low"
+    depends_on: []
+    description: "Optional interactive BLE/NFC stranger discovery handshake in core (standalone `.wot` containers and transaction piggybacking already delivered in CORE-010)."
   - id: "CORE-003"
     title: "Cuckoo filter implementation"
     status: "open"
-    priority: "medium"
-    depends_on: ["WOT-003"]
-    description: "Key-Value Cuckoo filter for efficient trust storage"
+    priority: "low"
+    depends_on: []
+    description: "Optional Cuckoo filter exploration (superseded for MVP by 128-bit SD-JWT Dual-Storage in humoco-wot)."
   - id: "CORE-004"
     title: "Stealth Mode Local Event Metadata Retention for Offline Forensics"
     status: "closed"
@@ -66,6 +72,11 @@ priority_tasks:
 # Human Money Core — Status
 
 ## Current Focus
+
+Web of Trust Transport, Container & Coin-Selection Hooks (`CORE-010`, 2026-10-31): Added clean, backward-compatible Layer-1 transport and coin-selection primitives for `humoco-wot` without introducing any social-graph dependency into `human-money-core`:
+- **Transaction Piggybacking (`wot_sync_json`)**: Optional `wot_sync_json: Option<String>` (`MAX_WOT_SYNC_BYTES = 65_536`) in `TransactionBundle`, `MultiTransferRequest`, and `ProcessBundleResult`, integrity-bound inside `bundle_id` / `sender_signature` and supported in both Public and Stealth transfers (`skip_serializing_if = "Option::is_none"` preserves 100% wire compatibility when absent).
+- **Authenticated `.wot` Trust Containers**: `AppService::seal_trust_container` and `AppService::open_trust_container` (`PayloadType::TrustAssertion`) rejecting cleartext containers and enforcing `verify_integrity()` + Ed25519 `verify_container_signature(&sender_id)` across both `TargetDid` and `Password` modes.
+- **Gravitational Coin Selection (`s_wot`)**: Added `s_wot: i64` (`0..=1500`) to `ScoreBreakdown` alongside `rank_vouchers_with_wot` and `prepare_transfer_with_wot` so callers can prioritize vouchers trusted by the recipient.
 
 Post-v0.5.1 Security Assurance Campaign (2026-10-30): Executed a three-pillar post-milestone security and test-gap verification campaign across the v0.5.0/v0.5.1 architecture:
 1. **AI Security Audit Modernization & Adversarial Delta Audit (`docs/security/ai-audits/`)**: Updated modules `00`–`06` and `DESIGN_INTENT_TRIAGE.md` to v0.5.1, added `07_l2_checkout_and_intents.md`, and archived three adversarial delta audit reports in `docs/security/ai-audits/reports/`. Confirmed SST V4 algebra and AEAD/HMAC backup cryptography hold intact, while identifying and remediating **20 cross-boundary, state-machine, conflict-attribution, storage-rollback, and CLI vulnerabilities** via Fail-First TDD (`tests/security_audit_module_07_l2_checkout.rs`, `tests/security_audit_v051_conflicts_and_sai.rs`, `tests/security_audit_v051_storage_and_cli.rs`) without altering L1 serialization schemas.

@@ -176,6 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             notes: Some("To Alice".to_string()),
             sender_profile_name: None,
             use_privacy_mode: None,
+            wot_sync_json: None,
         };
 
         let bundle_result = service_creator.create_transfer_bundle(
@@ -240,6 +241,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             notes: Some("To Bob".to_string()),
             sender_profile_name: None,
             use_privacy_mode: None,
+            wot_sync_json: None,
         };
 
         let bundle_result = service_creator.create_transfer_bundle(

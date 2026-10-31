@@ -266,6 +266,7 @@ fn test_v051_01_spendable_balance_matches_prefixed_sai_and_bare_did() {
                 notes: None,
                 sender_profile_name: None,
                 use_privacy_mode: Some(false),
+                wot_sync_json: None,
             },
             None,
         )

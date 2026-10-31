@@ -108,7 +108,7 @@ fn wave5_shard_structure_rejects_oversized_strings() {
     let id_alice = service.with_wallet(|w| w.get_user_id().to_string()).unwrap();
     service.unlock_session("pwd", 300).unwrap();
     let _bundle_res = service.create_transfer_bundle(
-        MultiTransferRequest { recipient_id: id_alice.clone(), sources: vec![SourceTransfer { local_instance_id: local_id, amount_to_send: "10".to_string() }], notes: None, sender_profile_name: None, use_privacy_mode: None },
+        MultiTransferRequest { recipient_id: id_alice.clone(), sources: vec![SourceTransfer { local_instance_id: local_id, amount_to_send: "10".to_string() }], notes: None, sender_profile_name: None, use_privacy_mode: None , wot_sync_json: None},
         &standards, None, Some("pwd"),
     ).unwrap();
     // Instead of bundle, test chain validation directly with huge shards on a cloned voucher
@@ -285,7 +285,7 @@ fn wave5_bundle_receive_atomicity_on_unknown_standard() {
     let sources: Vec<SourceTransfer> = summaries.iter().map(|s| SourceTransfer { local_instance_id: s.local_instance_id.clone(), amount_to_send: s.current_amount.clone() }).collect();
     let mut standards = HashMap::new();
     standards.insert(FREETALER_STANDARD.0.immutable.identity.uuid.clone(), freetaler_toml.clone());
-    let bundle_res = alice.create_transfer_bundle(MultiTransferRequest { recipient_id: id_bob.clone(), sources, notes: None, sender_profile_name: None, use_privacy_mode: None }, &standards, None, Some("pwd")).unwrap();
+    let bundle_res = alice.create_transfer_bundle(MultiTransferRequest { recipient_id: id_bob.clone(), sources, notes: None, sender_profile_name: None, use_privacy_mode: None , wot_sync_json: None}, &standards, None, Some("pwd")).unwrap();
 
     // Bob has pre-existing voucher
     bob.unlock_session("pwd", 300).unwrap();

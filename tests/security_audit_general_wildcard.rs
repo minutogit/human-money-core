@@ -486,6 +486,7 @@ fn audit_00_wildcard_24_future_locked_tip_must_not_grief_recipient() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
     human_money_core::set_signature_bypass(true);
     let bundle = sender_wallet.execute_multi_transfer_and_bundle(&sender_id, &defs, req, None);
@@ -514,6 +515,7 @@ fn audit_00_wildcard_24_future_locked_tip_must_not_grief_recipient() {
                     notes: None,
                     sender_profile_name: None,
                     use_privacy_mode: None,
+                    wot_sync_json: None,
                 };
                 human_money_core::set_signature_bypass(true);
                 let spend = recipient_wallet.execute_multi_transfer_and_bundle(&recipient_id, &defs, spend_req, None);

@@ -493,4 +493,56 @@ impl AppService {
             }
         })
     }
+
+    // --- Gravitational Coin Selection ---
+
+    /// Ranks vouchers for coin selection without requiring write access.
+    pub fn rank_vouchers(
+        &self,
+        target_amount: &str,
+        standard_uuid_filter: Option<&str>,
+        recipient_id: &str,
+    ) -> Result<Vec<crate::wallet::coin_selection::RankedVoucher>, Error> {
+        self.with_wallet(|wallet| {
+            wallet.rank_vouchers(target_amount, standard_uuid_filter, recipient_id)
+        })?
+    }
+
+    /// Ranks vouchers for coin selection with optional WoT score bonuses.
+    pub fn rank_vouchers_with_wot(
+        &self,
+        target_amount: &str,
+        standard_uuid_filter: Option<&str>,
+        recipient_id: &str,
+        wot_bonuses: Option<&HashMap<String, i64>>,
+    ) -> Result<Vec<crate::wallet::coin_selection::RankedVoucher>, Error> {
+        self.with_wallet(|wallet| {
+            wallet.rank_vouchers_with_wot(target_amount, standard_uuid_filter, recipient_id, wot_bonuses)
+        })?
+    }
+
+    /// Prepares a gravitational transfer plan without requiring write access.
+    pub fn prepare_transfer(
+        &self,
+        target_amount: &str,
+        standard_uuid_filter: Option<&str>,
+        recipient_id: &str,
+    ) -> Result<crate::wallet::coin_selection::TransferPlan, Error> {
+        self.with_wallet(|wallet| {
+            wallet.prepare_transfer(target_amount, standard_uuid_filter, recipient_id)
+        })?
+    }
+
+    /// Prepares a gravitational transfer plan with optional WoT score bonuses.
+    pub fn prepare_transfer_with_wot(
+        &self,
+        target_amount: &str,
+        standard_uuid_filter: Option<&str>,
+        recipient_id: &str,
+        wot_bonuses: Option<&HashMap<String, i64>>,
+    ) -> Result<crate::wallet::coin_selection::TransferPlan, Error> {
+        self.with_wallet(|wallet| {
+            wallet.prepare_transfer_with_wot(target_amount, standard_uuid_filter, recipient_id, wot_bonuses)
+        })?
+    }
 }

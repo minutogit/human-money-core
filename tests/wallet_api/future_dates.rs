@@ -47,6 +47,7 @@ fn test_future_dated_vouchers() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -82,6 +83,7 @@ fn test_future_dated_vouchers() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
     
     let spend_result = bob_wallet.execute_multi_transfer_and_bundle(
@@ -133,6 +135,7 @@ fn test_future_dated_vouchers() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let even_further_far_future_dt = far_future_dt + Duration::minutes(1);

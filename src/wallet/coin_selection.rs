@@ -69,6 +69,8 @@ pub struct ScoreBreakdown {
     pub s_age: i64,
     pub s_chain: i64,
     pub s_fit: i64,
+    #[serde(default)]
+    pub s_wot: i64,
 }
 
 /// Result of `prepare_transfer`: ordered list of sources to use.
@@ -176,7 +178,19 @@ pub fn rank_vouchers(
     recipient_id: &str,
     routing_memory: &RoutingMemoryStore,
 ) -> Vec<RankedVoucher> {
-    rank_vouchers_internal(wallet, target, standard_uuid_filter, recipient_id, routing_memory, Utc::now())
+    rank_vouchers_with_wot(wallet, target, standard_uuid_filter, recipient_id, routing_memory, None)
+}
+
+/// Rank all active vouchers for a given target, recipient, and optional WoT score bonuses.
+pub fn rank_vouchers_with_wot(
+    wallet: &crate::wallet::Wallet,
+    target: Decimal,
+    standard_uuid_filter: Option<&str>,
+    recipient_id: &str,
+    routing_memory: &RoutingMemoryStore,
+    wot_bonuses: Option<&HashMap<String, i64>>,
+) -> Vec<RankedVoucher> {
+    rank_vouchers_internal(wallet, target, standard_uuid_filter, recipient_id, routing_memory, wot_bonuses, Utc::now())
 }
 
 fn rank_vouchers_internal(
@@ -185,6 +199,7 @@ fn rank_vouchers_internal(
     standard_uuid_filter: Option<&str>,
     recipient_id: &str,
     routing_memory: &RoutingMemoryStore,
+    wot_bonuses: Option<&HashMap<String, i64>>,
     now: DateTime<Utc>,
 ) -> Vec<RankedVoucher> {
     // Collect ages for relative FEFO calculation.
@@ -300,7 +315,7 @@ fn rank_vouchers_internal(
 
         let chain_len = inst.voucher.transactions.len().saturating_sub(1);
 
-        let (score, breakdown) = score_voucher(
+        let (mut score, mut breakdown) = score_voucher(
             amount,
             target,
             is_boomerang,
@@ -311,6 +326,14 @@ fn rank_vouchers_internal(
             &inst.voucher.voucher_standard.uuid,
             recipient_id,
         );
+
+        if let Some(bonuses) = wot_bonuses {
+            if let Some(&bonus) = bonuses.get(lid) {
+                let clamped_bonus = bonus.clamp(0, 1500);
+                breakdown.s_wot = clamped_bonus;
+                score += clamped_bonus;
+            }
+        }
 
         ranked.push(RankedVoucher {
             local_instance_id: lid.clone(),
@@ -347,6 +370,18 @@ pub fn prepare_transfer(
     recipient_id: &str,
     routing_memory: &RoutingMemoryStore,
 ) -> Result<TransferPlan, crate::error::VoucherCoreError> {
+    prepare_transfer_with_wot(wallet, target, standard_uuid_filter, recipient_id, routing_memory, None)
+}
+
+/// Prepare a transfer plan for a given target amount with optional WoT score bonuses.
+pub fn prepare_transfer_with_wot(
+    wallet: &crate::wallet::Wallet,
+    target: Decimal,
+    standard_uuid_filter: Option<&str>,
+    recipient_id: &str,
+    routing_memory: &RoutingMemoryStore,
+    wot_bonuses: Option<&HashMap<String, i64>>,
+) -> Result<TransferPlan, crate::error::VoucherCoreError> {
     if target <= Decimal::ZERO {
         return Err(crate::error::VoucherCoreError::Wallet(
             crate::error::WalletError::InvalidAmount {
@@ -355,7 +390,7 @@ pub fn prepare_transfer(
         ));
     }
 
-    let ranked = rank_vouchers(wallet, target, standard_uuid_filter, recipient_id, routing_memory);
+    let ranked = rank_vouchers_with_wot(wallet, target, standard_uuid_filter, recipient_id, routing_memory, wot_bonuses);
 
     if ranked.is_empty() {
         return Err(crate::error::VoucherCoreError::Wallet(
@@ -632,5 +667,97 @@ mod tests {
         let result = find_exact_subset(&ranked, Decimal::from(10_000_000));
         // With 20 items and unique sums, states would exceed 2000, so it must return None cleanly
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_rank_vouchers_with_wot_bonus_clamping_and_ordering() {
+        use crate::test_utils::{setup_in_memory_wallet, ACTORS};
+        let alice = &ACTORS.alice.identity;
+        let bob_id = ACTORS.bob.identity.user_id.clone();
+        let mut wallet = setup_in_memory_wallet(alice);
+
+        let mut v1 = crate::Voucher::default();
+        v1.voucher_id = "v1".to_string();
+        v1.voucher_standard.uuid = "std-1".to_string();
+        v1.nominal_value.amount = "10.00".to_string();
+        v1.creation_date = "2024-01-01T00:00:00Z".to_string();
+
+        let mut v2 = v1.clone();
+        v2.voucher_id = "v2".to_string();
+
+        wallet.add_voucher_instance(
+            "inst-a".to_string(),
+            v1,
+            crate::wallet::instance::VoucherStatus::Active,
+        );
+        wallet.add_voucher_instance(
+            "inst-b".to_string(),
+            v2,
+            crate::wallet::instance::VoucherStatus::Active,
+        );
+
+        let mem = RoutingMemoryStore::new();
+
+        // Without WoT bonus: lexicographic tie-break: inst-a before inst-b
+        let unranked = rank_vouchers(&wallet, dec!(10), Some("std-1"), &bob_id, &mem);
+        assert_eq!(unranked[0].local_instance_id, "inst-a");
+        assert_eq!(unranked[0].breakdown.s_wot, 0);
+
+        // With WoT bonus: inst-b gets 500 bonus, should now rank first
+        let mut bonuses = HashMap::new();
+        bonuses.insert("inst-b".to_string(), 500);
+        let ranked = rank_vouchers_with_wot(&wallet, dec!(10), Some("std-1"), &bob_id, &mem, Some(&bonuses));
+        assert_eq!(ranked[0].local_instance_id, "inst-b");
+        assert_eq!(ranked[0].breakdown.s_wot, 500);
+        assert_eq!(ranked[1].local_instance_id, "inst-a");
+        assert_eq!(ranked[1].breakdown.s_wot, 0);
+        assert_eq!(ranked[0].score - ranked[1].score, 500);
+
+        // Clamping test: bonus > 1500 is clamped to 1500, negative bonus is clamped to 0
+        let mut clamped_bonuses = HashMap::new();
+        clamped_bonuses.insert("inst-a".to_string(), 3000); // should clamp to 1500
+        clamped_bonuses.insert("inst-b".to_string(), -200); // should clamp to 0
+        let ranked_clamped = rank_vouchers_with_wot(&wallet, dec!(10), Some("std-1"), &bob_id, &mem, Some(&clamped_bonuses));
+        assert_eq!(ranked_clamped[0].local_instance_id, "inst-a");
+        assert_eq!(ranked_clamped[0].breakdown.s_wot, 1500);
+        assert_eq!(ranked_clamped[1].local_instance_id, "inst-b");
+        assert_eq!(ranked_clamped[1].breakdown.s_wot, 0);
+    }
+
+    #[test]
+    fn test_prepare_transfer_with_wot() {
+        use crate::test_utils::{setup_in_memory_wallet, ACTORS};
+        let alice = &ACTORS.alice.identity;
+        let bob_id = ACTORS.bob.identity.user_id.clone();
+        let mut wallet = setup_in_memory_wallet(alice);
+
+        let mut v1 = crate::Voucher::default();
+        v1.voucher_id = "v1".to_string();
+        v1.voucher_standard.uuid = "std-1".to_string();
+        v1.nominal_value.amount = "10.00".to_string();
+        v1.creation_date = "2024-01-01T00:00:00Z".to_string();
+
+        let mut v2 = v1.clone();
+        v2.voucher_id = "v2".to_string();
+
+        wallet.add_voucher_instance(
+            "inst-a".to_string(),
+            v1,
+            crate::wallet::instance::VoucherStatus::Active,
+        );
+        wallet.add_voucher_instance(
+            "inst-b".to_string(),
+            v2,
+            crate::wallet::instance::VoucherStatus::Active,
+        );
+
+        let mem = RoutingMemoryStore::new();
+
+        let mut bonuses = HashMap::new();
+        bonuses.insert("inst-b".to_string(), 750);
+
+        let plan = prepare_transfer_with_wot(&wallet, dec!(10), Some("std-1"), &bob_id, &mem, Some(&bonuses)).unwrap();
+        assert_eq!(plan.selected[0].local_instance_id, "inst-b");
+        assert_eq!(plan.selected[0].breakdown.s_wot, 750);
     }
 }

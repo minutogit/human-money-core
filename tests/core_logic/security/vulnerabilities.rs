@@ -221,6 +221,7 @@ fn create_hacked_bundle_and_container(
         forwarded_fingerprints: Vec::new(),
         quarantine_pairs: Vec::new(),
         sender_profile_name: None,
+        wot_sync_json: None,
     };
     let bundle_json_for_id = to_canonical_json(&bundle).unwrap();
     bundle.bundle_id = get_hash(bundle_json_for_id);
@@ -449,6 +450,7 @@ fn test_attack_tamper_core_data_and_guarantors() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -690,6 +692,7 @@ fn test_attack_tamper_transaction_history() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -798,6 +801,7 @@ fn test_attack_create_inconsistent_transaction() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();

@@ -22,6 +22,7 @@ use crate::services::utils::{get_current_timestamp, to_canonical_json};
 pub const MAX_VOUCHERS_PER_BUNDLE: usize = 32;
 pub const MAX_FINGERPRINTS_PER_VOUCHER: usize = 10;
 pub const MAX_QUARANTINE_PAIRS_PER_VOUCHER: usize = 3;
+pub const MAX_WOT_SYNC_BYTES: usize = 65_536; // 64 KiB
 
 /// Deprecated static bundle limit alias, kept for backward compatibility and fuzzer guards:
 #[deprecated(
@@ -74,6 +75,32 @@ pub fn create_and_encrypt_bundle_with_causal_outputs(
     sender_profile_name: Option<String>,
     causal_outputs: std::collections::BTreeMap<String, humoco_proto::causal::CausalOutputProof>,
 ) -> Result<(Vec<u8>, TransactionBundle), VoucherCoreError> {
+    create_and_encrypt_bundle_with_causal_outputs_and_wot(
+        identity,
+        vouchers,
+        recipient_id,
+        notes,
+        forwarded_fingerprints,
+        quarantine_pairs,
+        sender_profile_name,
+        causal_outputs,
+        None,
+    )
+}
+
+/// Creates a `TransactionBundle` with optional L2 causal outputs and optional piggybacked WOT sync package.
+#[allow(clippy::too_many_arguments)]
+pub fn create_and_encrypt_bundle_with_causal_outputs_and_wot(
+    identity: &UserIdentity,
+    vouchers: Vec<Voucher>,
+    recipient_id: &str,
+    notes: Option<String>,
+    forwarded_fingerprints: Vec<TransactionFingerprint>,
+    quarantine_pairs: Vec<[TransactionFingerprint; 2]>,
+    sender_profile_name: Option<String>,
+    causal_outputs: std::collections::BTreeMap<String, humoco_proto::causal::CausalOutputProof>,
+    wot_sync_json: Option<String>,
+) -> Result<(Vec<u8>, TransactionBundle), VoucherCoreError> {
     if vouchers.len() > MAX_VOUCHERS_PER_BUNDLE {
         return Err(VoucherCoreError::Validation(
             ValidationError::InvalidTransaction(format!(
@@ -106,6 +133,15 @@ pub fn create_and_encrypt_bundle_with_causal_outputs(
             )),
         ));
     }
+    if wot_sync_json.as_ref().is_some_and(|s| s.len() > MAX_WOT_SYNC_BYTES) {
+        return Err(VoucherCoreError::Validation(
+            ValidationError::InvalidTransaction(format!(
+                "wot_sync_json exceeds maximum allowed size ({} > {} bytes)",
+                wot_sync_json.as_ref().unwrap().len(),
+                MAX_WOT_SYNC_BYTES
+            )),
+        ));
+    }
     validate_bundle_privacy_homogeneity(&vouchers)?;
 
     let mut bundle = TransactionBundle {
@@ -120,6 +156,7 @@ pub fn create_and_encrypt_bundle_with_causal_outputs(
         quarantine_pairs,
         sender_profile_name,
         causal_outputs,
+        wot_sync_json,
     };
 
     let bundle_json_for_id = to_canonical_json(&bundle)?;
@@ -251,6 +288,16 @@ pub fn open_and_verify_bundle(
         ));
     }
     let bundle: TransactionBundle = serde_json::from_slice(&decrypted_bundle_bytes)?;
+
+    if bundle.wot_sync_json.as_ref().is_some_and(|s| s.len() > MAX_WOT_SYNC_BYTES) {
+        return Err(VoucherCoreError::Validation(
+            ValidationError::InvalidTransaction(format!(
+                "wot_sync_json exceeds maximum allowed size ({} > {} bytes)",
+                bundle.wot_sync_json.as_ref().unwrap().len(),
+                MAX_WOT_SYNC_BYTES
+            )),
+        ));
+    }
 
     if bundle.vouchers.len() > MAX_VOUCHERS_PER_BUNDLE {
         return Err(VoucherCoreError::Validation(
@@ -409,6 +456,7 @@ mod tests {
             forwarded_fingerprints: vec![],
             quarantine_pairs: vec![],
             sender_profile_name: None,
+            wot_sync_json: None,
         };
 
         let signature = sign_ed25519(&sign_key, b"different_data");
@@ -419,6 +467,170 @@ mod tests {
         assert!(matches!(
             result.unwrap_err(),
             VoucherCoreError::Validation(ValidationError::InvalidBundleSignature)
+        ));
+    }
+
+    #[test]
+    fn test_bundle_wot_sync_roundtrip_public() {
+        let (pub_a, sign_a) = generate_ed25519_keypair_for_tests(None);
+        let alice = UserIdentity {
+            user_id: create_user_id(&pub_a, Some("alice")).unwrap(),
+            signing_key: sign_a,
+            public_key: pub_a,
+        };
+        let (pub_b, sign_b) = generate_ed25519_keypair_for_tests(None);
+        let bob = UserIdentity {
+            user_id: create_user_id(&pub_b, Some("bob")).unwrap(),
+            signing_key: sign_b,
+            public_key: pub_b,
+        };
+
+        let wot_sync_payload = r#"{"version":1,"trust_list":["did:key:zTest"]}"#.to_string();
+
+        let (container_bytes, created_bundle) =
+            create_and_encrypt_bundle_with_causal_outputs_and_wot(
+                &alice,
+                vec![],
+                &bob.user_id,
+                Some("Test wot sync".to_string()),
+                vec![],
+                vec![],
+                None,
+                Default::default(),
+                Some(wot_sync_payload.clone()),
+            )
+            .expect("Bundle creation with wot_sync_json must succeed");
+
+        assert_eq!(created_bundle.wot_sync_json, Some(wot_sync_payload.clone()));
+
+        // Decrypt on Bob's side
+        let opened_bundle = open_and_verify_bundle(&bob, &container_bytes)
+            .expect("Bob must successfully open and verify bundle");
+
+        assert_eq!(opened_bundle.wot_sync_json, Some(wot_sync_payload));
+        assert_eq!(opened_bundle.bundle_id, created_bundle.bundle_id);
+        assert_eq!(opened_bundle.sender_id, alice.user_id);
+    }
+
+    #[test]
+    fn test_bundle_wot_sync_roundtrip_stealth() {
+        let (pub_a, sign_a) = generate_ed25519_keypair_for_tests(None);
+        let alice = UserIdentity {
+            user_id: create_user_id(&pub_a, Some("alice")).unwrap(),
+            signing_key: sign_a,
+            public_key: pub_a,
+        };
+        let (pub_b, sign_b) = generate_ed25519_keypair_for_tests(None);
+        let bob = UserIdentity {
+            user_id: create_user_id(&pub_b, Some("bob")).unwrap(),
+            signing_key: sign_b,
+            public_key: pub_b,
+        };
+
+        let (_, _, _, _, mut stealth_voucher, _) =
+            crate::test_utils::setup_voucher_with_one_tx();
+        if let Some(last_tx) = stealth_voucher.transactions.last_mut() {
+            last_tx.recipient_id = crate::models::voucher::ANONYMOUS_ID.to_string();
+            last_tx.sender_id = None;
+        }
+
+        let wot_sync_payload = r#"{"stealth_sync":true}"#.to_string();
+
+        let (container_bytes, created_bundle) =
+            create_and_encrypt_bundle_with_causal_outputs_and_wot(
+                &alice,
+                vec![stealth_voucher],
+                &bob.user_id,
+                None,
+                vec![],
+                vec![],
+                None,
+                Default::default(),
+                Some(wot_sync_payload.clone()),
+            )
+            .expect("Stealth bundle creation with wot_sync_json must succeed");
+
+        // Verify that in stealth mode, container envelope signature is cleared (HMSEC-SA06-08)
+        let container: SecureContainer = serde_json::from_slice(&container_bytes).unwrap();
+        assert!(container.signature.is_empty(), "Stealth mode envelope signature must be cleared");
+
+        // Decrypt on Bob's side
+        let opened_bundle = open_and_verify_bundle(&bob, &container_bytes)
+            .expect("Bob must successfully open and verify stealth bundle");
+
+        assert_eq!(opened_bundle.wot_sync_json, Some(wot_sync_payload));
+        assert_eq!(opened_bundle.bundle_id, created_bundle.bundle_id);
+    }
+
+    #[test]
+    fn test_bundle_wot_sync_oversized_rejected() {
+        let (pub_a, sign_a) = generate_ed25519_keypair_for_tests(None);
+        let alice = UserIdentity {
+            user_id: create_user_id(&pub_a, Some("alice")).unwrap(),
+            signing_key: sign_a,
+            public_key: pub_a,
+        };
+        let (pub_b, sign_b) = generate_ed25519_keypair_for_tests(None);
+        let bob = UserIdentity {
+            user_id: create_user_id(&pub_b, Some("bob")).unwrap(),
+            signing_key: sign_b,
+            public_key: pub_b,
+        };
+
+        let oversized_wot = "x".repeat(MAX_WOT_SYNC_BYTES + 1);
+
+        // 1. Rejected at creation
+        let result = create_and_encrypt_bundle_with_causal_outputs_and_wot(
+            &alice,
+            vec![],
+            &bob.user_id,
+            None,
+            vec![],
+            vec![],
+            None,
+            Default::default(),
+            Some(oversized_wot.clone()),
+        );
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            VoucherCoreError::Validation(ValidationError::InvalidTransaction(_))
+        ));
+
+        // 2. Rejected at receive / open_and_verify_bundle
+        let mut bundle = TransactionBundle {
+            causal_outputs: Default::default(),
+            bundle_id: String::new(),
+            sender_id: alice.user_id.clone(),
+            recipient_id: bob.user_id.clone(),
+            vouchers: vec![],
+            timestamp: crate::services::utils::get_current_timestamp(),
+            notes: None,
+            sender_signature: String::new(),
+            forwarded_fingerprints: vec![],
+            quarantine_pairs: vec![],
+            sender_profile_name: None,
+            wot_sync_json: Some(oversized_wot),
+        };
+        bundle.bundle_id = get_hash(to_canonical_json(&bundle).unwrap());
+        let sig = sign_ed25519(&alice.signing_key, bundle.bundle_id.as_bytes());
+        bundle.sender_signature = bs58::encode(sig.to_bytes()).into_string();
+        let bundle_bytes = serde_json::to_vec(&bundle).unwrap();
+
+        let container = SecureContainer::seal(
+            &alice,
+            &ContainerConfig::TargetDid(bob.user_id.clone(), PrivacyMode::TrialDecryption),
+            &bundle_bytes,
+            PayloadType::TransactionBundle,
+        )
+        .unwrap();
+        let container_bytes = serde_json::to_vec(&container).unwrap();
+
+        let open_result = open_and_verify_bundle(&bob, &container_bytes);
+        assert!(open_result.is_err());
+        assert!(matches!(
+            open_result.unwrap_err(),
+            VoucherCoreError::Validation(ValidationError::InvalidTransaction(_))
         ));
     }
 }

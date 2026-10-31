@@ -666,6 +666,7 @@ fn execute_step(
                 notes,
                 sender_profile_name: Some(from_actor.profile.profile_name.clone()),
                 use_privacy_mode: None,
+                wot_sync_json: None,
             };
 
             let bundle_res = from_actor.app.create_transfer_bundle(

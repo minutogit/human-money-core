@@ -129,6 +129,7 @@ fn test_wallet_state_management_on_split() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();

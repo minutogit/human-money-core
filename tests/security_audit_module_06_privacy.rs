@@ -110,6 +110,7 @@ fn send_bundle(
                 notes: None,
                 sender_profile_name: None,
                 use_privacy_mode,
+                wot_sync_json: None,
             },
             None,
         )
@@ -275,6 +276,7 @@ fn sa06_02_received_bundle_content_must_match_signed_bundle_id() {
         forwarded_fingerprints: Vec::new(),
         quarantine_pairs: Vec::new(),
         sender_profile_name: Some("Alice Support Team".to_string()),
+        wot_sync_json: None,
     };
 
     // Step 3: Bob wraps the poisoned content in his OWN freshly encrypted
@@ -370,6 +372,7 @@ fn sa06_03_cleartext_financial_containers_must_be_rejected_on_receipt() {
         forwarded_fingerprints: Vec::new(),
         quarantine_pairs: Vec::new(),
         sender_profile_name: None,
+        wot_sync_json: None,
     };
     bundle.bundle_id = get_hash(to_canonical_json(&bundle).unwrap());
     let bundle_sig = sign_ed25519(&mallory.signing_key, bundle.bundle_id.as_bytes());
@@ -898,6 +901,7 @@ fn sa06_08_mixed_visibility_bundle_must_not_carry_permanent_key_envelope_signatu
             notes: None,
             sender_profile_name: None,
             use_privacy_mode: None,
+            wot_sync_json: None,
         },
         None,
     );
@@ -946,6 +950,7 @@ fn sa06_08_mixed_visibility_bundle_must_not_carry_permanent_key_envelope_signatu
         forwarded_fingerprints: Vec::new(),
         quarantine_pairs: Vec::new(),
         sender_profile_name: None,
+        wot_sync_json: None,
     };
     let bundle_canonical =
         human_money_core::services::utils::to_canonical_json(&crafted_bundle).unwrap();
@@ -1271,6 +1276,7 @@ fn sa06_10_received_display_name_must_be_sanitized_and_bounded() {
                 notes: None,
                 sender_profile_name: Some(attacker_name),
                 use_privacy_mode: None,
+                wot_sync_json: None,
             },
             None,
         )
@@ -1343,6 +1349,7 @@ fn sa06_10_received_display_name_must_be_sanitized_and_bounded() {
                 notes: None,
                 sender_profile_name: Some("Alice".to_string()),
                 use_privacy_mode: None,
+                wot_sync_json: None,
             },
             None,
         )
@@ -1459,6 +1466,7 @@ fn sa06_11_placeholder_shard_spend_must_fail_reception_validation() {
                 notes: None,
                 sender_profile_name: None,
                 use_privacy_mode: None,
+                wot_sync_json: None,
             },
             None,
         )
@@ -2040,6 +2048,7 @@ fn sa06_15_gossip_wireformat_must_not_link_family_spends_via_deletable_at() {
                 notes: None,
                 sender_profile_name: None,
                 use_privacy_mode: None,
+                wot_sync_json: None,
             },
             None,
         )
@@ -2071,6 +2080,7 @@ fn sa06_15_gossip_wireformat_must_not_link_family_spends_via_deletable_at() {
                 notes: None,
                 sender_profile_name: None,
                 use_privacy_mode: None,
+                wot_sync_json: None,
             },
             None,
         )

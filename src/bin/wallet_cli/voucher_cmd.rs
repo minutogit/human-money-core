@@ -1072,6 +1072,7 @@ pub fn handle_tx(ctx: &CliContext, cmd: TxCommand) -> Result<()> {
                 notes,
                 sender_profile_name: Some(profile_info.profile_name),
                 use_privacy_mode: privacy_mode,
+                wot_sync_json: None,
             };
 
             let create_res = match with_l2_intents {

@@ -441,3 +441,27 @@ fn test_wallet_rank_and_prepare_integration() {
     assert_eq!(plan.plan_reason, SelectionReason::ExactMatch);
     assert_eq!(plan.selected[0].local_instance_id, "local-int");
 }
+
+#[test]
+fn test_wallet_rank_and_prepare_with_wot_facade() {
+    human_money_core::set_signature_bypass(true);
+    let alice = &ACTORS.alice.identity;
+    let bob_id = ACTORS.bob.identity.user_id.clone();
+    let mut wallet = setup_in_memory_wallet(alice);
+    let std_uuid = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    let v1 = make_voucher("vid-1", std_uuid, "Freetaler", &bob_id, "20.00", vec![("t-1", &bob_id, Some("20.00"))], "2024-01-01T00:00:00.000000Z");
+    let v2 = make_voucher("vid-2", std_uuid, "Freetaler", &bob_id, "20.00", vec![("t-2", &bob_id, Some("20.00"))], "2024-01-01T00:00:00.000000Z");
+    insert_active(&mut wallet, "local-1", v1);
+    insert_active(&mut wallet, "local-2", v2);
+
+    let mut bonuses = std::collections::HashMap::new();
+    bonuses.insert("local-2".to_string(), 1200);
+
+    let ranked = wallet.rank_vouchers_with_wot("20.00", Some(std_uuid), &bob_id, Some(&bonuses)).unwrap();
+    assert_eq!(ranked[0].local_instance_id, "local-2");
+    assert_eq!(ranked[0].breakdown.s_wot, 1200);
+
+    let plan = wallet.prepare_transfer_with_wot("20.00", Some(std_uuid), &bob_id, Some(&bonuses)).unwrap();
+    assert_eq!(plan.selected[0].local_instance_id, "local-2");
+    assert_eq!(plan.selected[0].breakdown.s_wot, 1200);
+}

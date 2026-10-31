@@ -36,6 +36,7 @@ mod tests {
             notes: None,
             sender_profile_name: Some("Alice".to_string()),
             use_privacy_mode: Some(false),
+            wot_sync_json: None,
         };
         let bundle = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None).unwrap();
         
@@ -60,6 +61,7 @@ mod tests {
             notes: None,
             sender_profile_name: Some("Alice".to_string()),
             use_privacy_mode: Some(true),
+            wot_sync_json: None,
         };
         let result = bob_wallet.execute_multi_transfer_and_bundle(&bob.identity, &standards, request_private, None);
         assert!(result.is_err());
@@ -94,6 +96,7 @@ mod tests {
             notes: None,
             sender_profile_name: Some("Alice".to_string()),
             use_privacy_mode: Some(false),
+            wot_sync_json: None,
         };
         let bundle_pub = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request_pub, None).unwrap();
         let receive_pub = bob_wallet.process_encrypted_transaction_bundle(&bob.identity, &bundle_pub.bundle_bytes, None, &standards).unwrap();
@@ -119,6 +122,7 @@ mod tests {
             notes: None,
             sender_profile_name: Some("Alice".to_string()),
             use_privacy_mode: Some(true),
+            wot_sync_json: None,
         };
         let bundle_priv = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request_priv, None).unwrap();
         let receive_priv = bob_wallet.process_encrypted_transaction_bundle(&bob.identity, &bundle_priv.bundle_bytes, None, &standards).unwrap();
@@ -159,6 +163,7 @@ mod tests {
             notes: None,
             sender_profile_name: Some("Alice".to_string()),
             use_privacy_mode: None,
+            wot_sync_json: None,
         };
         let bundle = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None).unwrap();
         let receive_result = bob_wallet.process_encrypted_transaction_bundle(&bob.identity, &bundle.bundle_bytes, None, &standards).unwrap();

@@ -245,6 +245,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
     app.create_transfer_bundle(request1, &standards_toml, None, Some(password))?;
 
@@ -284,6 +285,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
     app.create_transfer_bundle(request2, &standards_toml, None, Some(password))?;
 

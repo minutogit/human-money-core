@@ -282,6 +282,7 @@ fn test_l2_double_spend_quarantine() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
     let mut standards_toml = HashMap::new();
     standards_toml.insert(
@@ -337,6 +338,7 @@ fn test_l2_double_spend_quarantine() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
     app.create_transfer_bundle(request_tx2, &standards_toml, None, Some(correct_password))
         .unwrap();
@@ -454,6 +456,7 @@ fn test_l2_signature_payload_manipulation() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
     let mut standards_toml = HashMap::new();
     standards_toml.insert(
@@ -580,6 +583,7 @@ fn test_l2_fake_double_spend_protection() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
     let mut standards_toml = HashMap::new();
     standards_toml.insert(
@@ -981,6 +985,7 @@ fn test_l2_lock_payload_hash_commits_to_created_at_ms() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
     let mut standards_toml = HashMap::new();
     standards_toml.insert(

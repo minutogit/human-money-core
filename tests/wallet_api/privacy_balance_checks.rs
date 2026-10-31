@@ -72,6 +72,7 @@ fn test_deep_privacy_balance_calculation() {
             recipient_id: ACTORS.bob.user_id.clone(),
             sources: vec![SourceTransfer { local_instance_id: alice_source_id_1, amount_to_send: "300".to_string() }],
             notes: None, sender_profile_name: None, use_privacy_mode: Some(true),
+            wot_sync_json: None,
         }, None).expect("Transfer Alice -> Bob failed");
 
     bob.process_encrypted_transaction_bundle(&ACTORS.bob.identity, &b1, None, &standards_map).unwrap();
@@ -94,6 +95,7 @@ fn test_deep_privacy_balance_calculation() {
             recipient_id: ACTORS.charlie.user_id.clone(),
             sources: vec![SourceTransfer { local_instance_id: bob_source_id, amount_to_send: "100".to_string() }],
             notes: None, sender_profile_name: None, use_privacy_mode: Some(true),
+            wot_sync_json: None,
         }, None).expect("Transfer Bob -> Charlie failed");
 
     charlie.process_encrypted_transaction_bundle(&ACTORS.charlie.identity, &b2, None, &standards_map).unwrap();
@@ -116,6 +118,7 @@ fn test_deep_privacy_balance_calculation() {
             recipient_id: ACTORS.david.user_id.clone(),
             sources: vec![SourceTransfer { local_instance_id: alice_source_id_3, amount_to_send: "250".to_string() }],
             notes: None, sender_profile_name: None, use_privacy_mode: Some(true),
+            wot_sync_json: None,
         }, None).expect("Transfer Alice -> Dave failed");
 
     dave.process_encrypted_transaction_bundle(&ACTORS.david.identity, &b3, None, &standards_map).unwrap();
@@ -138,6 +141,7 @@ fn test_deep_privacy_balance_calculation() {
             recipient_id: ACTORS.david.user_id.clone(),
             sources: vec![SourceTransfer { local_instance_id: charlie_source_id, amount_to_send: "100".to_string() }],
             notes: None, sender_profile_name: None, use_privacy_mode: Some(true),
+            wot_sync_json: None,
         }, None).expect("Transfer Charlie -> Dave failed");
 
     dave.process_encrypted_transaction_bundle(&ACTORS.david.identity, &b4, None, &standards_map).unwrap();

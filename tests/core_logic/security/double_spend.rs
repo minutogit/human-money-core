@@ -457,6 +457,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let transfer1_result =
@@ -563,6 +564,7 @@ fn test_proactive_double_spend_prevention_and_self_healing_in_appservice() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     // CORRECTION: E0425 Replace old sender_wallet logic
@@ -664,6 +666,7 @@ fn test_local_double_spend_detection_lifecycle() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -847,6 +850,7 @@ fn test_local_double_spend_detection_lifecycle() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -918,6 +922,7 @@ fn test_local_double_spend_detection_lifecycle() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -1009,6 +1014,7 @@ fn test_local_double_spend_detection_lifecycle() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();

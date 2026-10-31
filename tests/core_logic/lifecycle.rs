@@ -1074,6 +1074,7 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
         notes: Some("Here is the voucher I promised!".to_string()),
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();

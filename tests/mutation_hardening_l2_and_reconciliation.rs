@@ -140,6 +140,7 @@ fn setup_pos_fixture(dir: &Path) -> TestPoSFixture {
                 notes: None,
                 sender_profile_name: None,
                 use_privacy_mode: Some(false),
+                wot_sync_json: None,
             },
             &standards,
             None,
@@ -537,6 +538,7 @@ fn test_complete_checkout_purchase_fails_closed_on_conflicts_or_warnings() {
                 notes: Some("Spend A".into()),
                 sender_profile_name: None,
                 use_privacy_mode: Some(false),
+                wot_sync_json: None,
             },
             &standards,
             None,
@@ -561,6 +563,7 @@ fn test_complete_checkout_purchase_fails_closed_on_conflicts_or_warnings() {
                 notes: Some("Spend B".into()),
                 sender_profile_name: None,
                 use_privacy_mode: Some(false),
+                wot_sync_json: None,
             },
             None,
         )

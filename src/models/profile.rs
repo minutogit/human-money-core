@@ -108,6 +108,10 @@ pub struct TransactionBundle {
     /// Optional profile name of the sender.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_profile_name: Option<String>,
+
+    /// Optional serialized WOT sync package for trust graph piggybacking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wot_sync_json: Option<String>,
 }
 
 impl TransactionBundle {

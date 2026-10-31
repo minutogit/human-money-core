@@ -38,7 +38,7 @@ pub struct SourceTransfer {
 }
 
 /// The aggregated request for the universal transfer command.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MultiTransferRequest {
     /// The recipient's user ID.
     pub recipient_id: String,
@@ -52,6 +52,22 @@ pub struct MultiTransferRequest {
     /// Optional: Force or disable privacy mode (only for 'Flexible' standards).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub use_privacy_mode: Option<bool>,
+    /// Optional serialized WOT sync package for trust graph piggybacking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wot_sync_json: Option<String>,
+}
+
+impl MultiTransferRequest {
+    pub fn new(recipient_id: String, sources: Vec<SourceTransfer>) -> Self {
+        Self {
+            recipient_id,
+            sources,
+            notes: None,
+            sender_profile_name: None,
+            use_privacy_mode: None,
+            wot_sync_json: None,
+        }
+    }
 }
 
 /// Summarizes the results of a transfer per standard.
@@ -83,6 +99,9 @@ pub struct ProcessBundleResult {
     /// Detailed breakdown of each received voucher.
     #[serde(default)]
     pub involved_vouchers_details: Vec<InvolvedVoucherInfo>,
+    /// Optional piggybacked WOT sync package extracted from the bundle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wot_sync_json: Option<String>,
 }
 
 /// The result of a double-spend check.

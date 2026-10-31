@@ -37,6 +37,7 @@ mod tests {
             notes: Some("Zahlung 1".to_string()),
             sender_profile_name: Some("Alice".to_string()),
             use_privacy_mode: Some(true),
+            wot_sync_json: None,
         };
 
         alice_wallet.execute_multi_transfer_and_bundle(
@@ -64,6 +65,7 @@ mod tests {
             notes: Some("Zahlung 2".to_string()),
             sender_profile_name: Some("Alice".to_string()),
             use_privacy_mode: Some(true),
+            wot_sync_json: None,
         };
 
         let result2 = alice_wallet.execute_multi_transfer_and_bundle(

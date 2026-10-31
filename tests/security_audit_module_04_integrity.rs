@@ -121,6 +121,7 @@ fn sa04_01_receive_bundle_must_not_panic_on_amount_sum_overflow() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let bundle_result = attacker_wallet
@@ -398,6 +399,7 @@ fn sa04_03_aborted_multi_transfer_must_leave_archive_untouched() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let mut definitions = HashMap::new();
@@ -538,6 +540,7 @@ fn sa04_04_failed_multi_voucher_receive_must_not_partially_commit() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let bundle_result = sender_wallet
@@ -849,6 +852,7 @@ fn sa04_06_forged_bundle_and_foreign_container_signatures_must_fail_end_to_end()
                 notes: None,
                 sender_profile_name: None,
                 use_privacy_mode: None,
+                wot_sync_json: None,
             },
             None,
         )
@@ -1047,6 +1051,7 @@ fn sa04_07_storage_formatting_is_exact_within_validated_precision_domain() {
                 notes: None,
                 sender_profile_name: None,
                 use_privacy_mode: None,
+                wot_sync_json: None,
             },
             None,
         )
@@ -1192,6 +1197,7 @@ fn sa04_08_guard_equivocation_must_produce_attributable_evidence() {
                 notes: None,
                 sender_profile_name: None,
                 use_privacy_mode: None,
+                wot_sync_json: None,
             },
             None,
         )
@@ -1211,6 +1217,7 @@ fn sa04_08_guard_equivocation_must_produce_attributable_evidence() {
                 notes: None,
                 sender_profile_name: None,
                 use_privacy_mode: None,
+                wot_sync_json: None,
             },
             None,
         )
@@ -1699,6 +1706,7 @@ fn sa04_10_fingerprint_ingress_must_bind_to_local_input_context() {
                 notes: None,
                 sender_profile_name: None,
                 use_privacy_mode: None,
+                wot_sync_json: None,
             },
             &standards_map,
             None,

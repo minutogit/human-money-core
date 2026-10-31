@@ -300,6 +300,7 @@ fn test_rejection_of_self_received_bundle() {
         notes: Some("For Bob".to_string()),
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let bundle_result = service_sender
@@ -391,6 +392,7 @@ fn test_rejection_of_identical_bundle_replay() {
         notes: None,
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let bundle_result = service_sender
@@ -630,6 +632,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
         notes: Some("For Bob's mobile".to_string()),
         sender_profile_name: None,
         use_privacy_mode: None,
+        wot_sync_json: None,
     };
 
     let bundle_result = service_sender

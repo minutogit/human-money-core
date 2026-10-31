@@ -101,6 +101,31 @@ impl Wallet {
         quarantine_pairs: Vec<[crate::models::conflict::TransactionFingerprint; 2]>,
         sender_profile_name: Option<String>,
     ) -> Result<(Vec<u8>, TransactionBundleHeader), VoucherCoreError> {
+        self.create_and_encrypt_transaction_bundle_with_wot(
+            identity,
+            vouchers,
+            recipient_id,
+            notes,
+            forwarded_fingerprints,
+            quarantine_pairs,
+            sender_profile_name,
+            None,
+        )
+    }
+
+    /// Creates a `TransactionBundle` with optional piggybacked WOT sync package, packages it, and updates the wallet state.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_and_encrypt_transaction_bundle_with_wot(
+        &mut self,
+        identity: &UserIdentity,
+        vouchers: Vec<Voucher>,
+        recipient_id: &str,
+        notes: Option<String>,
+        forwarded_fingerprints: Vec<crate::models::conflict::TransactionFingerprint>,
+        quarantine_pairs: Vec<[crate::models::conflict::TransactionFingerprint; 2]>,
+        sender_profile_name: Option<String>,
+        wot_sync_json: Option<String>,
+    ) -> Result<(Vec<u8>, TransactionBundleHeader), VoucherCoreError> {
         for v in &vouchers {
             let local_id = Self::calculate_local_instance_id(v, &identity.user_id)?;
             if let Some(instance) = self.voucher_store.vouchers.get(&local_id)
@@ -122,7 +147,7 @@ impl Wallet {
             })
             .collect();
         let (container_bytes, bundle) =
-            bundle_processor::create_and_encrypt_bundle_with_causal_outputs(
+            bundle_processor::create_and_encrypt_bundle_with_causal_outputs_and_wot(
                 identity,
                 vouchers.clone(),
                 recipient_id,
@@ -131,6 +156,7 @@ impl Wallet {
                 quarantine_pairs,
                 sender_profile_name,
                 causal_outputs,
+                wot_sync_json,
             )?;
 
         let header = bundle.to_header(TransactionDirection::Sent);
@@ -551,6 +577,7 @@ impl Wallet {
             transfer_summary,
             involved_vouchers,
             involved_vouchers_details,
+            wot_sync_json: bundle.wot_sync_json,
         })
     }
 
@@ -1101,7 +1128,7 @@ impl Wallet {
         // archiving pass (the bundle creation below consumes the originals).
         let transferred_states = vouchers_for_bundle.clone();
 
-        let (container_bytes, header) = temp_wallet.create_and_encrypt_transaction_bundle(
+        let (container_bytes, header) = temp_wallet.create_and_encrypt_transaction_bundle_with_wot(
             identity,
             vouchers_for_bundle,
             &request.recipient_id,
@@ -1109,6 +1136,7 @@ impl Wallet {
             fingerprints_to_send,
             quarantine_pairs_to_send,
             request.sender_profile_name,
+            request.wot_sync_json,
         )?;
 
         // 4. **Commit:** If all operations were successful, replace the

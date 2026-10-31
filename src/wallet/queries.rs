@@ -661,12 +661,30 @@ impl Wallet {
         standard_uuid_filter: Option<&str>,
         recipient_id: &str,
     ) -> Result<Vec<crate::wallet::coin_selection::RankedVoucher>, VoucherCoreError> {
+        self.rank_vouchers_with_wot(target_amount, standard_uuid_filter, recipient_id, None)
+    }
+
+    /// Returns ranked list sorted descending with optional WoT score bonuses.
+    pub fn rank_vouchers_with_wot(
+        &self,
+        target_amount: &str,
+        standard_uuid_filter: Option<&str>,
+        recipient_id: &str,
+        wot_bonuses: Option<&HashMap<String, i64>>,
+    ) -> Result<Vec<crate::wallet::coin_selection::RankedVoucher>, VoucherCoreError> {
         let target = Decimal::from_str(target_amount).map_err(|e| {
             crate::error::VoucherCoreError::Wallet(crate::error::WalletError::InvalidAmount {
                 reason: format!("Invalid target amount '{}': {}", target_amount, e),
             })
         })?;
-        let ranked = crate::wallet::coin_selection::rank_vouchers(self, target, standard_uuid_filter, recipient_id, &self.routing_memory);
+        let ranked = crate::wallet::coin_selection::rank_vouchers_with_wot(
+            self,
+            target,
+            standard_uuid_filter,
+            recipient_id,
+            &self.routing_memory,
+            wot_bonuses,
+        );
         Ok(ranked)
     }
 
@@ -677,12 +695,30 @@ impl Wallet {
         standard_uuid_filter: Option<&str>,
         recipient_id: &str,
     ) -> Result<crate::wallet::coin_selection::TransferPlan, VoucherCoreError> {
+        self.prepare_transfer_with_wot(target_amount, standard_uuid_filter, recipient_id, None)
+    }
+
+    /// Prepares a gravitational transfer plan with optional WoT score bonuses.
+    pub fn prepare_transfer_with_wot(
+        &self,
+        target_amount: &str,
+        standard_uuid_filter: Option<&str>,
+        recipient_id: &str,
+        wot_bonuses: Option<&HashMap<String, i64>>,
+    ) -> Result<crate::wallet::coin_selection::TransferPlan, VoucherCoreError> {
         let target = Decimal::from_str(target_amount).map_err(|e| {
             crate::error::VoucherCoreError::Wallet(crate::error::WalletError::InvalidAmount {
                 reason: format!("Invalid target amount '{}': {}", target_amount, e),
             })
         })?;
-        let plan = crate::wallet::coin_selection::prepare_transfer(self, target, standard_uuid_filter, recipient_id, &self.routing_memory)?;
+        let plan = crate::wallet::coin_selection::prepare_transfer_with_wot(
+            self,
+            target,
+            standard_uuid_filter,
+            recipient_id,
+            &self.routing_memory,
+            wot_bonuses,
+        )?;
         Ok(plan)
     }
 
