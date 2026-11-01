@@ -264,6 +264,135 @@ impl AppService {
             Ok(())
         })
     }
+}
+
+/// Plan for uploading pending wallet state anchors to Layer 2.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AnchorSyncUploadPlan {
+    pub chain_request: crate::models::layer2_api::L2ChainLockRequest,
+    pub target_checkpoint: crate::models::seal::SyncedAnchorCheckpoint,
+}
+
+/// Context for querying and verifying the next outgoing anchor slot against Layer 2.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AnchorStatusQueryContext {
+    pub query: crate::models::layer2_api::L2StatusQuery,
+    pub local_t_id: [u8; 32],
+    pub challenge_tag: String,
+    pub epoch: u64,
+    pub step_nonce: u64,
+    pub expected_step_pub: [u8; 32],
+    pub anchor_id: String,
+}
+
+impl AppService {
+    /// Prepares an upload plan for pending anchor state to Layer 2.
+    pub fn prepare_anchor_sync_upload(&self) -> Result<Option<AnchorSyncUploadPlan>, Error> {
+        match &self.state {
+            AppState::Unlocked {
+                storage,
+                identity,
+                session_cache,
+                ..
+            } => {
+                let auth = match self.get_read_auth(session_cache) {
+                    Ok(a) => a,
+                    Err(_) => crate::storage::AuthMethod::RecoveryIdentity(identity),
+                };
+                let record = storage
+                    .load_seal(&auth)?
+                    .ok_or(Error::App(crate::error::AppError::MissingLocalSeal))?;
+                if record.sync_status != SyncStatus::PendingUpload {
+                    return Ok(None);
+                }
+                let current_seal_hash = record.seal.compute_hash()?;
+                let target_state_bytes =
+                    crate::models::seal::seal_state_hash_bytes(&record.seal.payload.state_hash);
+                let epoch = record.seal.payload.epoch as u64;
+                let target_checkpoint = crate::models::seal::SyncedAnchorCheckpoint {
+                    epoch: record.seal.payload.epoch,
+                    tx_nonce: record.seal.payload.tx_nonce,
+                    seal_hash: current_seal_hash.clone(),
+                    state_hash: record.seal.payload.state_hash.clone(),
+                };
+                let anchor_id = crate::models::seal::derive_l2_anchor_id(identity, epoch);
+
+                let chain = match &record.last_synced_anchor {
+                    Some(cp) if cp.epoch == record.seal.payload.epoch => {
+                        let step_nonce = cp.tx_nonce.checked_add(1).ok_or_else(|| {
+                            Error::Crypto("step_nonce counter overflow".to_string())
+                        })?;
+                        let out_tag =
+                            crate::models::seal::derive_anchor_step_tag(&cp.seal_hash, step_nonce);
+                        let leap_lock = crate::services::l2_gateway::build_anchor_leap_lock(
+                            identity,
+                            epoch,
+                            step_nonce,
+                            &out_tag,
+                            &target_state_bytes,
+                        )?;
+                        vec![leap_lock]
+                    }
+                    _ => {
+                        let hop_0 = crate::services::l2_gateway::build_anchor_genesis_lock(
+                            identity,
+                            epoch,
+                            &target_state_bytes,
+                            None,
+                        )?;
+                        if record.seal.payload.tx_nonce == 0 {
+                            vec![hop_0]
+                        } else {
+                            let hop_1 = crate::services::l2_gateway::build_anchor_leap_lock(
+                                identity,
+                                epoch,
+                                1,
+                                &crate::models::seal::derive_anchor_step_tag(&anchor_id, 1),
+                                &target_state_bytes,
+                            )?;
+                            vec![hop_0, hop_1]
+                        }
+                    }
+                };
+
+                let last_ephem = chain
+                    .last()
+                    .map(|l| l.sender_ephemeral_pub)
+                    .unwrap_or_default();
+                let chain_request = crate::models::layer2_api::L2ChainLockRequest {
+                    auth: crate::models::layer2_api::L2AuthPayload {
+                        ephemeral_pubkey: last_ephem,
+                        auth_signature: None,
+                    },
+                    layer2_voucher_id: anchor_id,
+                    chain,
+                };
+
+                Ok(Some(AnchorSyncUploadPlan {
+                    chain_request,
+                    target_checkpoint,
+                }))
+            }
+            AppState::Locked => Err(Error::WalletLocked),
+        }
+    }
+
+    /// Completes anchor sync upload after Layer 2 confirmation, marking Synced and saving checkpoint.
+    pub fn complete_anchor_sync_upload(
+        &mut self,
+        checkpoint: crate::models::seal::SyncedAnchorCheckpoint,
+        password: Option<&str>,
+    ) -> Result<bool, Error> {
+        TransactionOrchestrator::execute_seal_only(self, password, |storage, auth, _wallet, _identity| {
+            if let Some(mut record) = storage.load_seal(auth)? {
+                record.sync_status = SyncStatus::Synced;
+                record.last_synced_anchor = Some(checkpoint);
+                storage.save_seal(auth, &record)?;
+                return Ok(true);
+            }
+            Ok(false)
+        })
+    }
 
     /// Flushes any pending anchor sync to L2 (e.g. on backgrounding or before close).
     pub fn flush_pending_anchor_sync(&mut self, password: Option<&str>) -> Result<bool, Error> {
@@ -271,6 +400,13 @@ impl AppService {
             if let Some(mut record) = storage.load_seal(auth)? {
                 if record.sync_status == SyncStatus::PendingUpload {
                     record.sync_status = SyncStatus::Synced;
+                    let current_seal_hash = record.seal.compute_hash().unwrap_or_default();
+                    record.last_synced_anchor = Some(crate::models::seal::SyncedAnchorCheckpoint {
+                        epoch: record.seal.payload.epoch,
+                        tx_nonce: record.seal.payload.tx_nonce,
+                        seal_hash: current_seal_hash,
+                        state_hash: record.seal.payload.state_hash.clone(),
+                    });
                     storage.save_seal(auth, &record)?;
                     return Ok(true);
                 }
@@ -279,9 +415,8 @@ impl AppService {
         })
     }
 
-    /// Prepares an L2StatusQuery for state anchor synchronization.
-    /// Returns (query, local_t_id, challenge_ds_tag).
-    pub fn prepare_anchor_status_query(&self) -> Result<(crate::models::layer2_api::L2StatusQuery, [u8; 32], String), Error> {
+    /// Prepares context and L2StatusQuery for state anchor synchronization.
+    pub fn prepare_anchor_status_query_context(&self) -> Result<AnchorStatusQueryContext, Error> {
         match &self.state {
             AppState::Unlocked {
                 storage,
@@ -289,39 +424,176 @@ impl AppService {
                 session_cache,
                 ..
             } => {
-                let auth = self.get_read_auth(session_cache)?;
-                let record = storage.load_seal(&auth)?.ok_or(Error::App(crate::error::AppError::MissingLocalSeal))?;
+                let auth = match self.get_read_auth(session_cache) {
+                    Ok(a) => a,
+                    Err(_) => crate::storage::AuthMethod::RecoveryIdentity(identity),
+                };
+                let record = storage
+                    .load_seal(&auth)?
+                    .ok_or(Error::App(crate::error::AppError::MissingLocalSeal))?;
                 let epoch = record.seal.payload.epoch as u64;
-                let tx_nonce = record.seal.payload.tx_nonce;
-                let prev_hash = &record.seal.payload.prev_seal_hash;
-                let current_tag = crate::models::seal::derive_anchor_step_tag(prev_hash, tx_nonce);
+                let anchor_id = crate::models::seal::derive_l2_anchor_id(identity, epoch);
+                let local_t_id =
+                    crate::models::seal::seal_state_hash_bytes(&record.seal.payload.state_hash);
 
-                let mut local_t_id = [0u8; 32];
-                if let Ok(bytes) = hex::decode(&record.seal.payload.state_hash) {
-                    if bytes.len() == 32 {
-                        local_t_id.copy_from_slice(&bytes);
+                let (step_nonce, challenge_tag, locator_prefixes) = match &record.last_synced_anchor {
+                    Some(cp) if cp.epoch == record.seal.payload.epoch => {
+                        let nonce = cp.tx_nonce.checked_add(1).ok_or_else(|| {
+                            Error::Crypto("step_nonce counter overflow".to_string())
+                        })?;
+                        let tag = crate::models::seal::derive_anchor_step_tag(&cp.seal_hash, nonce);
+                        let cp_bytes = crate::models::seal::seal_state_hash_bytes(&cp.state_hash);
+                        let prefix: String = bs58::encode(cp_bytes)
+                            .into_string()
+                            .chars()
+                            .take(10)
+                            .collect();
+                        (nonce, tag, vec![prefix])
                     }
-                } else if let Ok(bytes) = bs58::decode(&record.seal.payload.state_hash).into_vec() {
-                    if bytes.len() == 32 {
-                        local_t_id.copy_from_slice(&bytes);
+                    _ => {
+                        let nonce = 1;
+                        let tag = if record.seal.payload.tx_nonce == 0 {
+                            let h = record.seal.compute_hash()?;
+                            crate::models::seal::derive_anchor_step_tag(&h, 1)
+                        } else {
+                            crate::models::seal::derive_anchor_step_tag(&anchor_id, 1)
+                        };
+                        (nonce, tag, vec![])
                     }
-                } else {
-                    let h = blake3::hash(record.seal.payload.state_hash.as_bytes());
-                    local_t_id = *h.as_bytes();
-                }
+                };
 
+                let (_sk, pk) = crate::models::seal::derive_anchor_step_key(
+                    &identity.signing_key,
+                    epoch,
+                    step_nonce,
+                );
+                let expected_step_pub = pk.to_bytes();
                 let query = crate::services::l2_gateway::build_anchor_status_query(
                     identity,
                     epoch,
-                    tx_nonce,
-                    &current_tag,
-                    vec![],
+                    step_nonce,
+                    &challenge_tag,
+                    locator_prefixes,
                     1,
                 )?;
-                Ok((query, local_t_id, current_tag))
+
+                Ok(AnchorStatusQueryContext {
+                    query,
+                    local_t_id,
+                    challenge_tag,
+                    epoch,
+                    step_nonce,
+                    expected_step_pub,
+                    anchor_id,
+                })
             }
             AppState::Locked => Err(Error::WalletLocked),
         }
+    }
+
+    /// Prepares an L2StatusQuery for state anchor synchronization.
+    /// Returns (query, local_t_id, challenge_ds_tag).
+    pub fn prepare_anchor_status_query(&self) -> Result<(crate::models::layer2_api::L2StatusQuery, [u8; 32], String), Error> {
+        let ctx = self.prepare_anchor_status_query_context()?;
+        Ok((ctx.query, ctx.local_t_id, ctx.challenge_tag))
+    }
+
+    /// Evaluates multi-gateway responses for a state anchor query with zero-trust cryptographic verification.
+    pub fn evaluate_verified_anchor_envelopes(
+        &self,
+        envelopes: &[crate::models::layer2_api::L2ResponseEnvelope],
+    ) -> Result<crate::services::l2_gateway::AnchorSyncVerdict, Error> {
+        let ctx = self.prepare_anchor_status_query_context()?;
+        let record = match &self.state {
+            AppState::Unlocked {
+                storage,
+                identity,
+                session_cache,
+                ..
+            } => {
+                let auth = match self.get_read_auth(session_cache) {
+                    Ok(a) => a,
+                    Err(_) => crate::storage::AuthMethod::RecoveryIdentity(identity),
+                };
+                storage
+                    .load_seal(&auth)?
+                    .ok_or(Error::App(crate::error::AppError::MissingLocalSeal))?
+            }
+            AppState::Locked => return Err(Error::WalletLocked),
+        };
+
+        let expected_step_pub_bs58 = bs58::encode(ctx.expected_step_pub).into_string();
+
+        // 1. Mandatory cryptographic proof check on all Verified / Conflict entries
+        for env in envelopes {
+            let entry_opt = match &env.verdict {
+                crate::models::layer2_api::L2Verdict::Verified { lock_entry } => Some(lock_entry),
+                crate::models::layer2_api::L2Verdict::Conflict { existing_lock } => Some(existing_lock),
+                _ => None,
+            };
+
+            if let Some(entry) = entry_opt {
+                if crate::services::l2_gateway::verify_lock_entry_proof(
+                    entry,
+                    &ctx.anchor_id,
+                    Some(&expected_step_pub_bs58),
+                    &ctx.challenge_tag,
+                )
+                .is_ok()
+                {
+                    // Valid positive cryptographic signature proof!
+                    if entry.t_id != ctx.local_t_id {
+                        return Ok(crate::services::l2_gateway::AnchorSyncVerdict::RollbackDetected {
+                            remote_t_id: entry.t_id,
+                            lock_entry: entry.clone(),
+                        });
+                    } else {
+                        return Ok(crate::services::l2_gateway::AnchorSyncVerdict::Synchronized);
+                    }
+                }
+                // If verify_lock_entry_proof failed: ignore that malicious/corrupt envelope!
+            }
+        }
+
+        // 2. Check for MissingLocks or UnknownVoucher
+        let mut missing_locks_point = None;
+        let mut unknown_voucher = false;
+
+        for env in envelopes {
+            match &env.verdict {
+                crate::models::layer2_api::L2Verdict::MissingLocks { sync_point, .. } => {
+                    missing_locks_point = Some(sync_point.clone());
+                }
+                crate::models::layer2_api::L2Verdict::UnknownVoucher => {
+                    unknown_voucher = true;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(sync_point) = missing_locks_point {
+            if record.sync_status == SyncStatus::PendingUpload {
+                return Ok(crate::services::l2_gateway::AnchorSyncVerdict::PendingLeapLock {
+                    sync_point,
+                });
+            } else {
+                return Ok(crate::services::l2_gateway::AnchorSyncVerdict::Synchronized);
+            }
+        }
+
+        if unknown_voucher {
+            return Ok(crate::services::l2_gateway::AnchorSyncVerdict::GenesisRequired);
+        }
+
+        Ok(crate::services::l2_gateway::AnchorSyncVerdict::Inconclusive)
+    }
+
+    /// Evaluates a single verified response envelope for an anchor query.
+    pub fn verify_and_evaluate_anchor_envelope(
+        &self,
+        envelope: &crate::models::layer2_api::L2ResponseEnvelope,
+    ) -> Result<crate::services::l2_gateway::AnchorSyncVerdict, Error> {
+        self.evaluate_verified_anchor_envelopes(std::slice::from_ref(envelope))
     }
 
     /// Explicitly archives a voucher and marks the state for debounced anchor update.
@@ -430,10 +702,17 @@ impl AppService {
                 }
             };
 
+            let seal_hash = updated_seal.compute_hash().unwrap_or_default();
             let new_record = crate::models::seal::LocalSealRecord {
                 seal: updated_seal.clone(),
                 sync_status: SyncStatus::Synced,
                 is_locked_due_to_fork: false,
+                last_synced_anchor: Some(crate::models::seal::SyncedAnchorCheckpoint {
+                    epoch: updated_seal.payload.epoch,
+                    tx_nonce: updated_seal.payload.tx_nonce,
+                    seal_hash,
+                    state_hash: updated_seal.payload.state_hash.clone(),
+                }),
             };
             storage.save_seal(auth, &new_record)?;
 
@@ -624,6 +903,7 @@ impl AppService {
                 seal: migrated_seal.clone(),
                 sync_status: SyncStatus::PendingUpload,
                 is_locked_due_to_fork: false,
+                last_synced_anchor: None,
             };
             storage
                 .save_seal(&auth, &new_record)?;

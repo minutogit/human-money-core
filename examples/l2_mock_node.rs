@@ -128,10 +128,11 @@ impl MockL2Node {
 
         // 3. Locator search (Find Last Common Ancestor for sync)
         for prefix in &req.locator_prefixes {
-            for ds_tag in voucher_locks.keys() {
+            for (ds_tag, entry) in voucher_locks {
                 if ds_tag.starts_with(prefix) {
                     return self.wrap_and_sign(L2Verdict::MissingLocks {
                         sync_point: prefix.clone(),
+                        anchor_lock: Some(entry.clone()),
                     });
                 }
             }
@@ -141,6 +142,7 @@ impl MockL2Node {
         // (should rarely happen with proper Genesis handling)
         self.wrap_and_sign(L2Verdict::MissingLocks {
             sync_point: "genesis".to_string(),
+            anchor_lock: None,
         })
     }
 }

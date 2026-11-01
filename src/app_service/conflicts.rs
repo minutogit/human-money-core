@@ -8,7 +8,7 @@ use super::{AppService, AppState, TransactionOutcome};
 use crate::Error;
 use crate::app_service::orchestrator::{ReloadPolicy, TransactionOrchestrator};
 use crate::models::conflict::{ProofOfDoubleSpend, ResolutionEndorsement};
-use crate::models::layer2_api::{L2LockEntry, VoucherReconciliationResult};
+use crate::models::layer2_api::{L2LockEntry, L2Verdict, VoucherReconciliationResult};
 use crate::services::l2_gateway::{self, VerdictAction};
 use crate::wallet::CleanupReport;
 use crate::wallet::ProofOfDoubleSpendSummary;
@@ -303,6 +303,52 @@ impl AppService {
             ReloadPolicy::ReconcileReload,
             move |temp_wallet, identity, _storage, _auth| match temp_wallet
                 .reconcile_voucher_state(identity, &local_id, successor_lock)
+            {
+                Ok(result) => TransactionOutcome::Commit(result),
+                Err(e) => TransactionOutcome::Rollback(e),
+            },
+        )
+    }
+
+    /// Reconciles an individual voucher's status when Layer 2 returns `MissingLocks`
+    /// with an optional `anchor_lock`.
+    pub fn reconcile_voucher_missing_locks(
+        &mut self,
+        local_instance_id: &str,
+        sync_point: &str,
+        anchor_lock: Option<&L2LockEntry>,
+        password: Option<&str>,
+    ) -> Result<VoucherReconciliationResult, Error> {
+        let local_id = local_instance_id.to_string();
+        let sp = sync_point.to_string();
+        TransactionOrchestrator::execute_with_policy(
+            self,
+            password,
+            ReloadPolicy::ReconcileReload,
+            move |temp_wallet, identity, _storage, _auth| match temp_wallet
+                .reconcile_voucher_missing_locks(identity, &local_id, &sp, anchor_lock)
+            {
+                Ok(result) => TransactionOutcome::Commit(result),
+                Err(e) => TransactionOutcome::Rollback(e),
+            },
+        )
+    }
+
+    /// Reconciles an individual voucher's status directly against any `L2Verdict`.
+    pub fn reconcile_voucher_verdict(
+        &mut self,
+        local_instance_id: &str,
+        verdict: &L2Verdict,
+        password: Option<&str>,
+    ) -> Result<VoucherReconciliationResult, Error> {
+        let local_id = local_instance_id.to_string();
+        let verdict_cloned = verdict.clone();
+        TransactionOrchestrator::execute_with_policy(
+            self,
+            password,
+            ReloadPolicy::ReconcileReload,
+            move |temp_wallet, identity, _storage, _auth| match temp_wallet
+                .reconcile_voucher_verdict(identity, &local_id, &verdict_cloned)
             {
                 Ok(result) => TransactionOutcome::Commit(result),
                 Err(e) => TransactionOutcome::Rollback(e),
@@ -703,6 +749,7 @@ mod checkout_release_tests {
             .collect();
 
         let valid_proof = LiveStateProof {
+            occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
             context: valid_context.clone(),
             votes: votes.clone(),
         };
@@ -736,6 +783,7 @@ mod checkout_release_tests {
         // 13 signatures (sub-quorum) must be rejected
         let short_votes = votes[..13].to_vec();
         let short_proof = LiveStateProof {
+            occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
             context: valid_context.clone(),
             votes: short_votes,
         };
@@ -746,6 +794,7 @@ mod checkout_release_tests {
         let mut dup_votes = votes.clone();
         dup_votes[13] = dup_votes[0].clone();
         let dup_proof = LiveStateProof {
+            occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
             context: valid_context.clone(),
             votes: dup_votes,
         };
@@ -756,6 +805,7 @@ mod checkout_release_tests {
         let mut forged_votes = votes.clone();
         forged_votes[0].signature = [0; 64];
         let forged_proof = LiveStateProof {
+            occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
             context: valid_context.clone(),
             votes: forged_votes,
         };
@@ -984,6 +1034,7 @@ mod regional_mesh_backend_tests {
             })
             .collect();
         let proof = LiveStateProof {
+            occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
             context: expected.clone(),
             votes,
         };
@@ -1071,6 +1122,7 @@ mod regional_mesh_backend_tests {
         self_chosen.committee.reverse();
         let wrong_digest = humoco_proto::live::live_state_digest(&self_chosen).unwrap();
         let wrong_proof = LiveStateProof {
+            occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
             context: self_chosen.clone(),
             votes: keys
                 .iter()

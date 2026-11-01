@@ -37,6 +37,7 @@ mod tests {
                 },
                 sync_status: human_money_core::models::seal::SyncStatus::Synced,
                 is_locked_due_to_fork: true,
+                last_synced_anchor: None,
             };
             
             storage.save_seal(&auth, &seal_record).unwrap();

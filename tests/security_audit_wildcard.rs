@@ -342,10 +342,10 @@ fn audit_00_wildcard_32_multi_node_quorum_must_not_collapse_syncd_and_leap() {
 
     // 2x Synchronized (MissingLocks matching local), 2x Leap (MissingLocks non-matching), 1x Unknown
     let verdicts = vec![
-        L2Verdict::MissingLocks { sync_point: local_t_id_str.clone() },
-        L2Verdict::MissingLocks { sync_point: local_t_id_str },
-        L2Verdict::MissingLocks { sync_point: "other_pt".to_string() },
-        L2Verdict::MissingLocks { sync_point: "other_pt".to_string() },
+        L2Verdict::MissingLocks { sync_point: local_t_id_str.clone(), anchor_lock: None },
+        L2Verdict::MissingLocks { sync_point: local_t_id_str, anchor_lock: None },
+        L2Verdict::MissingLocks { sync_point: "other_pt".to_string(), anchor_lock: None },
+        L2Verdict::MissingLocks { sync_point: "other_pt".to_string(), anchor_lock: None },
         L2Verdict::UnknownVoucher,
     ];
 

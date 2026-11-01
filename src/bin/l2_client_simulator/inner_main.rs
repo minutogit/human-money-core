@@ -768,7 +768,7 @@ async fn cmd_query(url: &str, voucher_id: &str) {
             L2Verdict::UnknownVoucher => {
                 println!("  Server: [UNKNOWN VOUCHER] – not yet registered on L2.");
             }
-            L2Verdict::MissingLocks { sync_point } => {
+            L2Verdict::MissingLocks { sync_point, .. } => {
                 println!("  Server: [MISSING LOCKS] – sync from '{}'", sync_point);
             }
             other => {
@@ -1449,7 +1449,7 @@ async fn cmd_sync(url: &str, voucher_id: &str) {
     let offline_locks = voucher.leaves[0].offline_locks.clone();
 
     match envelope.verdict {
-        L2Verdict::MissingLocks { sync_point } => {
+        L2Verdict::MissingLocks { sync_point, .. } => {
             println!("  Server: [MISSING LOCKS] sync_point = '{}'", sync_point);
 
             // Determine start index: first lock whose ds_tag starts with sync_point

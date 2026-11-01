@@ -3,7 +3,8 @@ use super::{AppService, TransactionOutcome};
 use crate::{
     Error,
     models::layer2_api::{
-        CheckoutReleaseVerdict, DurablePurchaseBinding, L2LockEntry, L2ProcessingOutcome,
+        CheckoutReleaseVerdict, DurablePurchaseBinding, L2CheckoutRequest, L2LockEntry,
+        L2ProcessingOutcome,
     },
     services::{bundle_processor, l2_gateway, voucher_validation::StandardRegistry},
 };
@@ -356,6 +357,9 @@ impl AppService {
             {
                 return TransactionOutcome::Rollback(invalid("purchase authority changed"));
             }
+            if proof.occupancy != humoco_proto::live::LiveSlotOccupancy::Occupied {
+                return TransactionOutcome::Rollback(invalid("checkout slot is unoccupied on Layer 2"));
+            }
             if let Err(e) = verify_live_state_proof(proof, &purchase.context) {
                 return TransactionOutcome::Rollback(invalid(e));
             }
@@ -403,6 +407,153 @@ impl AppService {
                 .with_durable_purchase_binding(DurablePurchaseBinding::backend_verified()),
         })
     }
+
+    /// Prepares a full Layer-2 checkout request containing the verified lock chain
+    /// and the durably established live context with recipient challenge.
+    pub fn prepare_checkout_request(
+        &mut self,
+        purchase_id: &str,
+        bundle_data: &[u8],
+        views: &[RegionalMeshView],
+        now_ms: u64,
+        password: Option<&str>,
+    ) -> Result<L2CheckoutRequest, Error> {
+        let live_context =
+            self.begin_checkout_purchase(purchase_id, bundle_data, views, now_ms, password)?;
+        let bundle = self.with_unlocked_ref(|_wallet, identity, _storage| {
+            bundle_processor::open_and_verify_bundle(identity, bundle_data)
+        })?;
+        if bundle.vouchers.len() != 1 {
+            return Err(invalid(
+                "automatic checkout requires one voucher addressed to this recipient",
+            ));
+        }
+        let voucher = &bundle.vouchers[0];
+        let root = voucher
+            .transactions
+            .first()
+            .ok_or_else(|| invalid("purchase root missing"))?;
+        let expected_vid = l2_gateway::calculate_layer2_voucher_id(root)?;
+        if expected_vid != live_context.voucher_id {
+            return Err(invalid("bundle voucher id mismatch"));
+        }
+        let last = voucher
+            .transactions
+            .last()
+            .ok_or_else(|| invalid("purchase transaction missing"))?;
+        let mut target_spend_req =
+            l2_gateway::generate_lock_request(&expected_vid, last, &[0; 32])?;
+        target_spend_req.causal_output = bundle.causal_outputs.get(&last.t_id).cloned();
+        if let Some(proof) = &target_spend_req.causal_output {
+            crate::services::l2_causality::validate_output_proof(voucher, last, proof)?;
+        }
+        let lock_chain = l2_gateway::build_voucher_lock_chain_with_outputs(
+            voucher,
+            None,
+            target_spend_req,
+            &bundle.causal_outputs,
+        )?;
+        Ok(L2CheckoutRequest {
+            lock_chain: Some(lock_chain),
+            live_context,
+        })
+    }
+
+    /// Verifies and durably records an upstream double-spend conflict detected during
+    /// Layer-2 checkout into the wallet's foreign fingerprints store.
+    /// Returns Ok(true) if a valid conflicting lock entry was attributed and recorded,
+    /// or Ok(false) if verification failed or the entry was already known/matching.
+    pub fn record_checkout_upstream_conflict(
+        &mut self,
+        bundle_data: &[u8],
+        conflicting_lock: &L2LockEntry,
+        password: Option<&str>,
+    ) -> Result<bool, Error> {
+        let bundle = self.with_unlocked_ref(|_wallet, identity, _storage| {
+            bundle_processor::open_and_verify_bundle(identity, bundle_data)
+        })?;
+
+        for voucher in &bundle.vouchers {
+            let expected_voucher_id = match l2_gateway::extract_layer2_voucher_id(voucher) {
+                Ok(vid) => vid,
+                Err(_) => continue,
+            };
+
+            for hop_tx in &voucher.transactions {
+                let lookup_tag = match l2_gateway::derive_challenge_tag(hop_tx) {
+                    Ok(tag) => tag,
+                    Err(_) => continue,
+                };
+
+                if l2_gateway::verify_lock_entry_proof(
+                    conflicting_lock,
+                    &expected_voucher_id,
+                    hop_tx.sender_ephemeral_pub.as_deref(),
+                    &lookup_tag,
+                )
+                .is_err()
+                {
+                    continue;
+                }
+
+                let local_hop_t_id = match crate::services::crypto::decode_bs58_fixed::<32>(
+                    &hop_tx.t_id,
+                    "hop_tx.t_id",
+                ) {
+                    Ok(bytes) => bytes,
+                    Err(_) => continue,
+                };
+
+                if conflicting_lock.t_id != local_hop_t_id {
+                    let fp = crate::models::conflict::TransactionFingerprint {
+                        ds_tag: lookup_tag.clone(),
+                        t_id: bs58::encode(conflicting_lock.t_id).into_string(),
+                        encrypted_timestamp: conflicting_lock.encrypted_timestamp,
+                        layer2_signature: bs58::encode(conflicting_lock.layer2_signature)
+                            .into_string(),
+                        sender_ephemeral_pub: bs58::encode(
+                            conflicting_lock.sender_ephemeral_pub,
+                        )
+                        .into_string(),
+                        deletable_at: conflicting_lock
+                            .deletable_at
+                            .clone()
+                            .unwrap_or_else(|| voucher.valid_until.clone()),
+                        trap_r: conflicting_lock
+                            .trap_r
+                            .clone()
+                            .unwrap_or_else(|| "none".to_string()),
+                        trap_s: conflicting_lock
+                            .trap_s
+                            .clone()
+                            .unwrap_or_else(|| "none".to_string()),
+                        layer2_voucher_id: conflicting_lock.layer2_voucher_id.clone(),
+                        privacy_guard_hash: crate::services::l2_gateway::privacy_guard_commitment(
+                            conflicting_lock.privacy_guard.as_deref(),
+                        ),
+                        created_at_ms: conflicting_lock.created_at_ms,
+                    };
+
+                    self.with_transactional_mut(password, |wallet, _, _, _| {
+                        let entry = wallet
+                            .known_fingerprints
+                            .foreign_fingerprints
+                            .entry(fp.ds_tag.clone())
+                            .or_default();
+                        let is_dup = entry.iter().any(|existing| existing.t_id == fp.t_id);
+                        if !is_dup {
+                            entry.push(fp.clone());
+                        }
+                        TransactionOutcome::Commit(())
+                    })?;
+
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    }
 }
 
 #[cfg(test)]
@@ -449,6 +600,7 @@ mod tests {
                 })
                 .collect();
             LiveStateProof {
+                occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
                 context: context.clone(),
                 votes,
             }
@@ -622,6 +774,7 @@ mod tests {
             }
         }
         let dummy_proof = LiveStateProof {
+            occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
             context: context.clone(),
             votes: Vec::new(),
         };
@@ -848,6 +1001,7 @@ mod tests {
             })
             .collect();
         let proof = LiveStateProof {
+            occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
             context: renewed.clone(),
             votes,
         };
@@ -960,6 +1114,7 @@ mod tests {
             })
             .collect();
         let proof = LiveStateProof {
+            occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
             context: refreshed.clone(),
             votes,
         };
@@ -1279,6 +1434,7 @@ mod tests {
             })
             .collect();
         let proof = LiveStateProof {
+            occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
             context: context.clone(),
             votes,
         };

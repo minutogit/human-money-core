@@ -99,6 +99,7 @@ impl MockL2Node {
                 if ds_tag.starts_with(prefix) {
                     return self.wrap_and_sign(L2Verdict::MissingLocks {
                         sync_point: prefix.clone(),
+                        anchor_lock: voucher_locks.get(ds_tag).cloned(),
                     });
                 }
             }
@@ -106,6 +107,7 @@ impl MockL2Node {
 
         self.wrap_and_sign(L2Verdict::MissingLocks {
             sync_point: "genesis".to_string(),
+            anchor_lock: None,
         })
     }
 }
@@ -299,7 +301,7 @@ fn test_scenario_2_offline_sync() {
     let envelope: L2ResponseEnvelope = serde_json::from_slice(&resp_query).unwrap();
 
     // Should indicate MissingLocks with sync_point from Genesis (since only Genesis is known)
-    if let L2Verdict::MissingLocks { sync_point } = envelope.verdict {
+    if let L2Verdict::MissingLocks { sync_point, .. } = envelope.verdict {
         assert!(sync_point.len() == 10 || sync_point == "genesis");
     } else {
         panic!("Expected MissingLocks, got {:?}", envelope.verdict);

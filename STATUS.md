@@ -7,6 +7,18 @@ last_updated: "2026-11-01"
 blocks: []
 blocked_by: []
 priority_tasks:
+  - id: "CORE-013"
+    title: "Proof-Carrying L2 Reconciliation, Unoccupied Intent Retry & 1-RTT PoS Checkout"
+    status: "closed"
+    priority: "high"
+    depends_on: ["CORE-012"]
+    description: "Implemented `verify_intent_unoccupied_for_retry` (14/20 `LIVE_UNOCCUPIED_STATE` verification), fail-closed `Occupied` enforcement on checkout, `prepare_checkout_request` + `record_checkout_upstream_conflict` for 1-RTT offline-buyer PoS checkout, and verified `MissingLocks.anchor_lock` upstream conflict quarantine."
+  - id: "CORE-012"
+    title: "Next-Step WalletSeal Anchor-Sync & Canonical Proto Domain Alignment"
+    status: "closed"
+    priority: "critical"
+    depends_on: []
+    description: "Added `SyncedAnchorCheckpoint` (`last_synced_anchor`) to `LocalSealRecord` for gapless leap-lock continuity, switched `prepare_anchor_status_query` to challenge the outgoing successor slot (`n + 1`), enforced mandatory `verify_lock_entry_proof` in `evaluate_verified_anchor_envelopes`, and re-exported canonical `HMC_TX_AUTH_V4_DOMAIN` from `humoco-proto`."
   - id: "CORE-011"
     title: "Multi-Recipient SecureContainer Scaling (MAX_RECIPIENTS = 256) for Dunbar-Scale .wot Sharing"
     status: "closed"
@@ -78,6 +90,11 @@ priority_tasks:
 # Human Money Core — Status
 
 ## Current Focus
+
+Proof-Carrying L2 Reconciliation & Next-Step Anchor Sync (`CORE-012` & `CORE-013`, 2026-11-01):
+- **Next-Step WalletSeal Anchor-Sync (`CORE-012`)**: Stored `SyncedAnchorCheckpoint` (`last_synced_anchor`) in `LocalSealRecord` ensuring gapless leap-lock continuity across restarts, aligned `prepare_anchor_status_query` to challenge successor slot $n+1$, enforced mandatory `verify_lock_entry_proof` during envelope evaluation, and aligned wire domains to canonical `HMC_TX_AUTH_V4_DOMAIN` re-exported directly from `humoco-proto`.
+- **Proof-Carrying L2 Reconciliation & 1-RTT Checkout (`CORE-013`)**: Implemented `verify_intent_unoccupied_for_retry` accepting verified 14/20 `LIVE_UNOCCUPIED_STATE` proofs for safe intent re-dispatch, enforced fail-closed `Occupied` checkout status, wired `prepare_checkout_request` and `record_checkout_upstream_conflict` for 1-RTT offline-buyer PoS checkout, and quarantined upstream conflicts via verified `MissingLocks.anchor_lock` envelopes.
+- **Validation**: 903 tests passing, 0 clippy warnings, clean WASM compilation.
 
 Multi-Recipient SecureContainer Scaling (`CORE-011`, 2026-11-01): Raised `MAX_RECIPIENTS` to `256` (`MAX_RECIPIENT_SLOTS = 257` preserving sender Double-Key-Wrapping) in `models::secure_container` and fuzz targets so a single encrypted `.wot` `TrustAssertion` container can address all rated personal contacts (`PrivacyMode::TrialDecryption`) without requiring a file password. Verified with 32- and 256-recipient roundtrip unit tests and full integration suite.
 

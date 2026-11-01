@@ -156,10 +156,11 @@ impl MockL2Node {
 
         // 3. Logarithmic Locators
         for prefix in &req.locator_prefixes {
-            for ds_tag in voucher_locks.keys() {
+            for (ds_tag, entry) in voucher_locks {
                 if ds_tag.starts_with(prefix) {
                     let verdict = L2Verdict::MissingLocks {
                         sync_point: prefix.clone(),
+                        anchor_lock: Some(entry.clone()),
                     };
                     return self.wrap_and_sign(verdict);
                 }
@@ -168,6 +169,7 @@ impl MockL2Node {
 
         self.wrap_and_sign(L2Verdict::MissingLocks {
             sync_point: "genesis".to_string(),
+            anchor_lock: None,
         })
     }
 }

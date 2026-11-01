@@ -436,6 +436,15 @@ pub struct SealPayload {
     pub instance_id: String,
 }
 
+/// Checkpoint of the last state anchor verifiably confirmed on Layer 2.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SyncedAnchorCheckpoint {
+    pub epoch: u32,
+    pub tx_nonce: u64,
+    pub seal_hash: String,
+    pub state_hash: String,
+}
+
 /// The local storage wrapper for disk (storage format).
 ///
 /// Contains the pure cryptographic seal plus local metadata that
@@ -449,6 +458,9 @@ pub struct LocalSealRecord {
     /// Persistent lock if a multi-device fork was detected.
     /// Can only be cleared via `recover_wallet_and_set_new_password`.
     pub is_locked_due_to_fork: bool,
+    /// The last anchor checkpoint verifiably confirmed on Layer 2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_synced_anchor: Option<SyncedAnchorCheckpoint>,
 }
 
 /// Status of the local seal regarding cloud/Layer 2.
@@ -538,6 +550,27 @@ pub fn derive_anchor_step_tag(prev_seal_hash: &str, tx_nonce: u64) -> String {
     hasher.update(prev_seal_hash.as_bytes());
     hasher.update(&tx_nonce.to_le_bytes());
     bs58::encode(hasher.finalize().as_bytes()).into_string()
+}
+
+/// Canonical 32-byte representation of a seal state hash.
+///
+/// Decodes 32-byte hex, else 32-byte Base58, else falls back to BLAKE3 hash of the string bytes.
+pub fn seal_state_hash_bytes(state_hash: &str) -> [u8; 32] {
+    if let Ok(bytes) = hex::decode(state_hash) {
+        if bytes.len() == 32 {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            return arr;
+        }
+    }
+    if let Ok(bytes) = bs58::decode(state_hash).into_vec() {
+        if bytes.len() == 32 {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            return arr;
+        }
+    }
+    *blake3::hash(state_hash.as_bytes()).as_bytes()
 }
 
 /// Calculates the Merkle root of all active (non-archived) vouchers in the wallet.

@@ -161,6 +161,7 @@ impl SealService {
                     seal: seal.clone(),
                     sync_status: SyncStatus::PendingUpload,
                     is_locked_due_to_fork: false,
+                    last_synced_anchor: None,
                 };
                 storage.save_seal(auth, &new_record)?;
                 seal

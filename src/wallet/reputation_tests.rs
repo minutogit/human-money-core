@@ -670,6 +670,7 @@ mod tests {
             seal: future_seal,
             sync_status: crate::models::seal::SyncStatus::Synced,
             is_locked_due_to_fork: false,
+            last_synced_anchor: None,
         };
         storage.save_seal(&auth, &seal_record).unwrap();
 
@@ -703,6 +704,7 @@ mod tests {
             seal: past_seal,
             sync_status: crate::models::seal::SyncStatus::Synced,
             is_locked_due_to_fork: false,
+            last_synced_anchor: None,
         };
         storage.save_seal(&auth, &seal_record_past).unwrap();
 

@@ -157,6 +157,7 @@ impl AppService {
             seal: initial_seal,
             sync_status: SyncStatus::PendingUpload,
             is_locked_due_to_fork: false,
+            last_synced_anchor: None,
         };
         storage
             .save_seal(&AuthMethod::Password(password), &seal_record)?;
@@ -384,6 +385,7 @@ impl AppService {
                 seal: recovered_seal,
                 sync_status: SyncStatus::PendingUpload,
                 is_locked_due_to_fork: false, // Recovery lifts the fork lock!
+                last_synced_anchor: None,
             };
             storage
                 .save_seal(&auth_for_seal, &new_record)?;
@@ -532,6 +534,7 @@ impl AppService {
             seal: new_seal.clone(),
             sync_status: crate::models::seal::SyncStatus::PendingUpload,
             is_locked_due_to_fork: false,
+            last_synced_anchor: old_record.last_synced_anchor,
         };
         storage
             .save_seal(&auth, &new_record)

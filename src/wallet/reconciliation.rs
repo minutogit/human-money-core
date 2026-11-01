@@ -18,7 +18,7 @@
 
 use crate::error::VoucherCoreError;
 use crate::models::layer2_api::{
-    L2AuthPayload, L2LockEntry, L2StatusQuery, VoucherReconciliationResult,
+    L2AuthPayload, L2LockEntry, L2StatusQuery, L2Verdict, VoucherReconciliationResult,
 };
 use crate::models::profile::UserIdentity;
 use crate::services::l2_gateway;
@@ -160,6 +160,122 @@ impl Wallet {
                 Ok(VoucherReconciliationResult::AlreadySpent {
                     successor_t_id: lock_t_id_str,
                 })
+            }
+        }
+    }
+
+    /// Reconciles an individual voucher's status when Layer 2 returns `MissingLocks`.
+    ///
+    /// If `anchor_lock` is attached, verifies its cryptographic proof against the historical
+    /// transaction matching `sync_point`. If the anchor lock's transaction ID diverges from
+    /// our local history at that hop, an upstream double-spend is detected: the voucher is
+    /// immediately quarantined and `VoucherReconciliationResult::ConflictDetected` is returned.
+    /// If the anchor lock matches or `anchor_lock` is `None`, returns `VoucherReconciliationResult::UnspentSafe`.
+    pub fn reconcile_voucher_missing_locks(
+        &mut self,
+        _identity: &UserIdentity,
+        voucher_id_or_local_id: &str,
+        sync_point: &str,
+        anchor_lock: Option<&L2LockEntry>,
+    ) -> Result<VoucherReconciliationResult, VoucherCoreError> {
+        let (local_id, instance) = self
+            .voucher_store
+            .vouchers
+            .iter()
+            .find(|(k, v)| {
+                *k == voucher_id_or_local_id || v.voucher.voucher_id == voucher_id_or_local_id
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .ok_or_else(|| VoucherCoreError::VoucherNotFound(voucher_id_or_local_id.to_string()))?;
+
+        let Some(entry) = anchor_lock else {
+            return Ok(VoucherReconciliationResult::UnspentSafe);
+        };
+
+        let expected_l2_voucher_id = l2_gateway::extract_layer2_voucher_id(&instance.voucher)?;
+
+        let hop_tx = if sync_point == "genesis" {
+            instance.voucher.transactions.first()
+        } else {
+            instance.voucher.transactions.iter().find(|tx| {
+                tx.t_id == sync_point
+                    || tx.trap_data.as_ref().is_some_and(|td| td.ds_tag == sync_point)
+                    || tx.t_id.starts_with(sync_point)
+                    || tx.trap_data.as_ref().is_some_and(|td| td.ds_tag.starts_with(sync_point))
+            })
+        }
+        .ok_or_else(|| {
+            VoucherCoreError::Validation(crate::error::ValidationError::InvalidTransaction(
+                format!("sync_point '{}' not found in voucher history", sync_point),
+            ))
+        })?;
+
+        let challenge_ds_tag = l2_gateway::derive_challenge_tag(hop_tx)?;
+
+        l2_gateway::verify_lock_entry_proof(
+            entry,
+            &expected_l2_voucher_id,
+            hop_tx.sender_ephemeral_pub.as_deref(),
+            &challenge_ds_tag,
+        )?;
+
+        let local_hop_t_id =
+            crate::services::crypto::decode_bs58_fixed::<32>(&hop_tx.t_id, "hop_tx.t_id")?;
+
+        if entry.t_id != local_hop_t_id {
+            self.update_voucher_status(
+                &local_id,
+                VoucherStatus::Quarantined {
+                    reason: format!(
+                        "Upstream double-spend detected via L2 anchor_lock at sync_point {}",
+                        sync_point
+                    ),
+                },
+            );
+            Ok(VoucherReconciliationResult::ConflictDetected {
+                conflicting_lock: entry.clone(),
+            })
+        } else {
+            Ok(VoucherReconciliationResult::UnspentSafe)
+        }
+    }
+
+    /// Reconciles an individual voucher's status directly against any `L2Verdict`.
+    ///
+    /// Dispatches to `reconcile_voucher_missing_locks` for `MissingLocks`,
+    /// or `reconcile_voucher_state` for `Verified`, `Conflict`, and `UnknownVoucher`.
+    pub fn reconcile_voucher_verdict(
+        &mut self,
+        identity: &UserIdentity,
+        voucher_id_or_local_id: &str,
+        verdict: &L2Verdict,
+    ) -> Result<VoucherReconciliationResult, VoucherCoreError> {
+        match verdict {
+            L2Verdict::MissingLocks {
+                sync_point,
+                anchor_lock,
+            } => self.reconcile_voucher_missing_locks(
+                identity,
+                voucher_id_or_local_id,
+                sync_point,
+                anchor_lock.as_ref(),
+            ),
+            L2Verdict::Verified { lock_entry } => {
+                self.reconcile_voucher_state(identity, voucher_id_or_local_id, Some(lock_entry))
+            }
+            L2Verdict::Conflict { existing_lock } => {
+                self.reconcile_voucher_state(identity, voucher_id_or_local_id, Some(existing_lock))
+            }
+            L2Verdict::UnknownVoucher => {
+                self.reconcile_voucher_state(identity, voucher_id_or_local_id, None)
+            }
+            L2Verdict::Confirmed { .. } | L2Verdict::Ok { .. } => {
+                self.reconcile_voucher_state(identity, voucher_id_or_local_id, None)
+            }
+            L2Verdict::Rejected { reason } => {
+                Err(VoucherCoreError::Validation(crate::error::ValidationError::SecurityViolation(
+                    format!("Layer 2 verdict rejected: {}", reason),
+                )))
             }
         }
     }

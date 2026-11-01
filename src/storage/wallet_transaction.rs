@@ -305,7 +305,7 @@ impl FileStorage {
     /// Requires the caller's exclusive `WalletLockGuard`.
     pub(crate) fn begin_wallet_transaction(
         &self,
-        auth: &AuthMethod,
+        _auth: &AuthMethod,
     ) -> Result<WalletTransaction, StorageError> {
         #[cfg(not(unix))]
         return Err(invalid(
@@ -313,6 +313,7 @@ impl FileStorage {
         ));
         #[cfg(unix)]
         {
+            let auth = _auth;
             self.clean_orphaned_transaction_temps()?;
             if self.user_storage_path.join(JOURNAL).try_exists()? {
                 return Err(invalid(

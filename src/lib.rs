@@ -52,7 +52,10 @@ pub mod wallet;
 // Models & Error
 pub use error::{AppFacadeError, Error, StandardDefinitionError, ValidationError, VoucherCoreError};
 pub use models::profile::{UserIdentity, UserProfile, VoucherStore};
-pub use models::seal::{LocalSealRecord, SealPayload, SealSyncState, SyncStatus, WalletSeal};
+pub use models::seal::{
+    LocalSealRecord, SealPayload, SealSyncState, SyncStatus, SyncedAnchorCheckpoint, WalletSeal,
+    seal_state_hash_bytes,
+};
 pub use models::secure_container::{ContainerConfig, EncryptionType, PayloadType, PrivacyMode, SecureContainer};
 pub use models::storage_integrity::{IntegrityPayload, IntegrityReport, LocalIntegrityRecord, StorageIntegrityRecord};
 pub use models::voucher::{
@@ -61,8 +64,8 @@ pub use models::voucher::{
 };
 pub use models::discovery::{BootstrapNodeEntry, BootstrapSeedFile, CustomServerEntry};
 pub use models::layer2_api::{
-    CheckoutReleaseVerdict, DurablePurchaseBinding, L2ProcessingOutcome,
-    VoucherReconciliationResult,
+    CheckoutReleaseVerdict, DurablePurchaseBinding, L2CheckoutRequest, L2CheckoutResponse,
+    L2ProcessingOutcome, VoucherReconciliationResult,
 };
 pub use humoco_proto;
 pub use hex;
@@ -73,6 +76,7 @@ pub use wallet::instance::{ValidationFailureReason, VoucherInstance, VoucherStat
 
 // Wallet & Storage Facades
 pub use services::mnemonic::MnemonicLanguage;
+pub use app_service::storage_ops::{AnchorStatusQueryContext, AnchorSyncUploadPlan};
 pub use storage::file_storage::FileStorage;
 pub use storage::{AuthMethod, StorageError};
 pub use wallet::Wallet;

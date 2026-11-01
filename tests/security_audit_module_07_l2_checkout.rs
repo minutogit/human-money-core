@@ -79,7 +79,14 @@ impl TestPoSFixture {
     }
 
     fn proof_for_context(&self, context: &LiveStateContext) -> LiveStateProof {
-        let digest = humoco_proto::live::live_state_digest(context).unwrap();
+        let digest = humoco_proto::live::live_state_digest(context)
+            .or_else(|_| humoco_proto::live::live_unoccupied_digest(context))
+            .unwrap();
+        let occupancy = if context.child_lock == [0; 32] {
+            humoco_proto::live::LiveSlotOccupancy::Unoccupied
+        } else {
+            humoco_proto::live::LiveSlotOccupancy::Occupied
+        };
         let votes = context
             .committee
             .iter()
@@ -97,6 +104,7 @@ impl TestPoSFixture {
             })
             .collect();
         LiveStateProof {
+            occupancy,
             context: context.clone(),
             votes,
         }
@@ -1068,9 +1076,11 @@ fn audit_07_07_multi_node_anchor_never_trusts_verdicts_first_without_quorum() {
         },
         L2Verdict::MissingLocks {
             sync_point: local_tag.into(),
+            anchor_lock: None,
         },
         L2Verdict::MissingLocks {
             sync_point: local_tag.into(),
+            anchor_lock: None,
         },
         L2Verdict::UnknownVoucher,
         L2Verdict::UnknownVoucher,
@@ -1308,3 +1318,204 @@ fn audit_07_bug_03_backup_profile_name_sanitization_and_disambiguation() {
         "Second restore of duplicate profile MUST name it '<Name> (Restored 2)'"
     );
 }
+
+/// Tests that verify_intent_unoccupied_for_retry:
+/// - Rejects Occupied proofs with Ok(false)
+/// - Rejects forged signatures with Err
+/// - Valid 14/20 Unoccupied proof clears challenge and returns Ok(true) leaving intent non-terminal
+#[test]
+fn test_verify_intent_unoccupied_for_retry() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let mut fixture = setup_pos_fixture(dir.path());
+
+    let (wallet, _) = fixture.sender.get_unlocked_for_test();
+    let v_id = wallet.voucher_store.vouchers.keys().next().unwrap().clone();
+
+    let _intent = fixture
+        .sender
+        .prepare_l2_send_intent(&v_id, 0, Some(fixture.sender_pw))
+        .unwrap();
+
+    let context = fixture
+        .sender
+        .begin_intent_reconciliation(
+            &v_id,
+            &[fixture.view.clone()],
+            fixture.now + 31_000,
+            Some(fixture.sender_pw),
+        )
+        .unwrap();
+
+    assert!(
+        fixture
+            .sender
+            .pending_l2_send_intent(&v_id)
+            .unwrap()
+            .stored_challenge
+            .is_some()
+    );
+
+    // Build valid 14/20 Unoccupied live state proof
+    let expected_base = humoco_proto::live::LiveStateContext {
+        child_lock: [0; 32],
+        state_digest: [0; 32],
+        root_valid_until: 0,
+        ..context.clone()
+    };
+    let unoccupied_digest = humoco_proto::live::live_unoccupied_digest(&expected_base).unwrap();
+
+    let votes: Vec<AttestationVote> = context
+        .committee
+        .iter()
+        .take(14)
+        .map(|public| {
+            let key = fixture
+                .keys
+                .iter()
+                .find(|k| k.verifying_key().to_bytes() == *public)
+                .unwrap();
+            AttestationVote {
+                signer_pubkey: *public,
+                signature: key.sign(&unoccupied_digest).to_bytes(),
+            }
+        })
+        .collect();
+
+    let unoccupied_proof = LiveStateProof {
+        occupancy: humoco_proto::live::LiveSlotOccupancy::Unoccupied,
+        context: humoco_proto::live::LiveStateContext {
+            child_lock: [0; 32],
+            state_digest: [0; 32],
+            root_valid_until: 0,
+            ..context.clone()
+        },
+        votes,
+    };
+
+    // 1. Occupied proof returns Ok(false)
+    let mut occupied_proof = unoccupied_proof.clone();
+    occupied_proof.occupancy = humoco_proto::live::LiveSlotOccupancy::Occupied;
+    let res_occ = fixture
+        .sender
+        .verify_intent_unoccupied_for_retry(
+            &v_id,
+            &occupied_proof,
+            &[fixture.view.clone()],
+            fixture.now + 31_500,
+            Some(fixture.sender_pw),
+        )
+        .unwrap();
+    assert!(!res_occ, "Occupied proof must not permit intent retry");
+
+    // 2. Forged vote signature returns Err
+    let mut forged_proof = unoccupied_proof.clone();
+    forged_proof.votes[0].signature = [0xAA; 64];
+    let res_forged = fixture.sender.verify_intent_unoccupied_for_retry(
+        &v_id,
+        &forged_proof,
+        &[fixture.view.clone()],
+        fixture.now + 31_500,
+        Some(fixture.sender_pw),
+    );
+    assert!(res_forged.is_err(), "Forged unoccupied proof must fail verification");
+
+    // 3. Valid Unoccupied proof succeeds, clears challenge, leaves intent non-terminal
+    let res_unocc = fixture
+        .sender
+        .verify_intent_unoccupied_for_retry(
+            &v_id,
+            &unoccupied_proof,
+            &[fixture.view.clone()],
+            fixture.now + 31_500,
+            Some(fixture.sender_pw),
+        )
+        .unwrap();
+    assert!(res_unocc, "Valid unoccupied proof must succeed for retry");
+
+    let updated_intent = fixture.sender.pending_l2_send_intent(&v_id).unwrap();
+    assert!(updated_intent.terminal_resolution.is_none());
+    assert_eq!(updated_intent.stored_challenge, None);
+}
+
+/// Tests prepare_checkout_request and record_checkout_upstream_conflict
+#[test]
+fn test_prepare_checkout_request_and_conflict_recording() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let mut fixture = setup_pos_fixture(dir.path());
+
+    // 1. Test prepare_checkout_request
+    let checkout_req = fixture
+        .receiver
+        .prepare_checkout_request(
+            "purchase_wp3_test",
+            &fixture.bundle_bytes,
+            &[fixture.view.clone()],
+            fixture.now + 1000,
+            Some(fixture.receiver_pw),
+        )
+        .unwrap();
+
+    assert!(checkout_req.lock_chain.is_some());
+    assert_ne!(checkout_req.live_context.recipient_nonce, [0; 32]);
+    assert_eq!(checkout_req.live_context.committee.len(), 20);
+
+    // 2. Test record_checkout_upstream_conflict with forged vs valid conflicting lock
+    let sender_ephem = {
+        let (_, receiver_id) = fixture.receiver.get_unlocked_for_test();
+        let bundle = human_money_core::services::bundle_processor::open_and_verify_bundle(
+            receiver_id,
+            &fixture.bundle_bytes,
+        )
+        .unwrap();
+        let hop = &bundle.vouchers[0].transactions[0];
+        human_money_core::services::crypto::decode_bs58_fixed::<32>(
+            hop.sender_ephemeral_pub.as_deref().unwrap(),
+            "sender_ephem",
+        )
+        .unwrap()
+    };
+
+    let conflicting_lock = L2LockEntry {
+        causal_output: None,
+        layer2_voucher_id: checkout_req.live_context.voucher_id.clone(),
+        t_id: [0x55; 32],
+        sender_ephemeral_pub: sender_ephem,
+        receiver_ephemeral_pub_hash: None,
+        change_ephemeral_pub_hash: None,
+        layer2_signature: [0x77; 64],
+        trap_r: Some("none".to_string()),
+        trap_s: Some("none".to_string()),
+        encrypted_timestamp: 0,
+        created_at_ms: 0,
+        deletable_at: None,
+        privacy_guard: None,
+    };
+
+    // Forged signature fails verification -> returns Ok(false)
+    let res_forged = fixture
+        .receiver
+        .record_checkout_upstream_conflict(
+            &fixture.bundle_bytes,
+            &conflicting_lock,
+            Some(fixture.receiver_pw),
+        )
+        .unwrap();
+    assert!(!res_forged);
+
+    // Under signature bypass, records conflict in foreign_fingerprints -> returns Ok(true)
+    human_money_core::set_signature_bypass(true);
+    let res_valid = fixture
+        .receiver
+        .record_checkout_upstream_conflict(
+            &fixture.bundle_bytes,
+            &conflicting_lock,
+            Some(fixture.receiver_pw),
+        )
+        .unwrap();
+    human_money_core::set_signature_bypass(false);
+    assert!(res_valid);
+
+    let (wallet, _) = fixture.receiver.get_unlocked_for_test();
+    assert!(!wallet.known_fingerprints.foreign_fingerprints.is_empty());
+}
+

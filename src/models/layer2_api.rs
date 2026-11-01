@@ -379,6 +379,20 @@ pub struct L2ChainLockRequest {
     pub chain: Vec<L2LockRequest>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct L2CheckoutRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_chain: Option<L2ChainLockRequest>,
+    pub live_context: humoco_proto::live::LiveStateContext,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct L2CheckoutResponse {
+    pub proof: humoco_proto::live::LiveStateProof,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflicting_lock: Option<L2LockEntry>,
+}
+
 /// Response: The verdict of the L2 server regarding the state of a tag or the chain.
 /// Signed attestation from a consensus or ingress node.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -516,6 +530,8 @@ pub enum L2Verdict {
     MissingLocks {
         /// The 10-character prefix of the last common transaction.
         sync_point: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchor_lock: Option<L2LockEntry>,
     },
     /// The voucher (Voucher ID) is completely unknown to the Layer 2 system.
     UnknownVoucher,
@@ -752,10 +768,14 @@ impl CheckoutReleaseVerdict {
 ///   - `AlreadySpent` (HTTP 200): A child lock exists. The voucher was already spent.
 ///     The wallet marks it as `VoucherStatus::Archived` and updates balances.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 pub enum VoucherReconciliationResult {
     /// No successor lock exists on L2 (HTTP 404). Output is unspent and safe to spend.
     UnspentSafe,
     /// A successor lock exists on L2 (HTTP 200). The voucher was already spent remotely.
     /// The wallet has updated its status to `VoucherStatus::Archived` and adjusted balances.
     AlreadySpent { successor_t_id: String },
+    /// An upstream lock conflict was detected via MissingLocks anchor_lock verification.
+    /// The voucher was double-spent upstream and has been placed in quarantine.
+    ConflictDetected { conflicting_lock: L2LockEntry },
 }

@@ -70,6 +70,7 @@ impl TestPoSFixture {
             })
             .collect();
         LiveStateProof {
+            occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
             context: context.clone(),
             votes,
         }
@@ -368,6 +369,7 @@ fn test_complete_checkout_purchase_oversized_bundle_boundary() {
     // Guards against: replacing `>` with `==` in `checkout.rs:313`
     let oversized_bundle = vec![0u8; MAX_CONTAINER_BYTES + 1];
     let dummy_proof = LiveStateProof {
+        occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
         context: LiveStateContext {
             version: 1,
             network: 0,
@@ -645,6 +647,7 @@ fn test_complete_checkout_purchase_fails_closed_on_conflicts_or_warnings() {
         })
         .collect();
     let proof = LiveStateProof {
+        occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
         context,
         votes,
     };

@@ -304,10 +304,7 @@ pub fn generate_lock_request(
 ///
 /// The digest authenticates the SST shards, guard commitment, timestamps, and
 /// voucher/input context with the revealed ephemeral input key.
-pub const HMC_TX_AUTH_V4_DOMAIN: &[u8] = b"HMC_TX_AUTH_V4";
-
-/// Canonical placeholder for absent trap components (genesis transactions).
-pub const TRAP_NONE_PLACEHOLDER: &str = "none";
+pub use humoco_proto::crypto::{HMC_TX_AUTH_V4_DOMAIN, TRAP_NONE_PLACEHOLDER};
 
 /// Calculates the layer2_voucher_id from a genesis transaction.
 pub fn calculate_layer2_voucher_id(transaction: &Transaction) -> Result<String, VoucherCoreError> {
@@ -891,7 +888,7 @@ fn process_l2_verdict_internal(
                 Ok(VerdictAction::TriggerQuarantine(server_t_id))
             }
         }
-        L2Verdict::MissingLocks { sync_point } => {
+        L2Verdict::MissingLocks { sync_point, .. } => {
             // Signal that we need to synchronize
             Ok(VerdictAction::TriggerSync { sync_point })
         }
@@ -1118,7 +1115,7 @@ pub fn evaluate_anchor_verdict(
                 }
             }
         }
-        L2Verdict::MissingLocks { sync_point } => {
+        L2Verdict::MissingLocks { sync_point, .. } => {
             if sync_point == local_tag {
                 AnchorSyncVerdict::Synchronized
             } else {
@@ -1184,7 +1181,7 @@ pub fn evaluate_multi_node_anchor_verdicts(
                     entry.0 += 1;
                 }
             }
-            L2Verdict::MissingLocks { sync_point } => {
+            L2Verdict::MissingLocks { sync_point, .. } => {
                 if sync_point == local_tag {
                     syncd_count += 1;
                 } else {

@@ -469,6 +469,108 @@ impl AppService {
         }
     }
 
+    /// Verifies a 14/20 unoccupied live proof from shard custodians.
+    ///
+    /// If valid, the slot is confirmed still unoccupied on Layer 2:
+    /// clears the stored challenge so the host supervisor can safely re-dispatch the intent,
+    /// leaving terminal_resolution = None, and returns Ok(true).
+    /// If the proof is Occupied, returns Ok(false).
+    pub fn verify_intent_unoccupied_for_retry(
+        &mut self,
+        local_id: &str,
+        proof: &humoco_proto::live::LiveStateProof,
+        views: &[humoco_proto::mesh::RegionalMeshView],
+        now_ms: u64,
+        password: Option<&str>,
+    ) -> Result<bool, Error> {
+        if proof.occupancy != humoco_proto::live::LiveSlotOccupancy::Unoccupied {
+            return Ok(false);
+        }
+        self.with_transactional_mut(password, |wallet, _, _, _| {
+            let (stored_nonce, challenge_expires_at, request_bytes, network, shard_id) = {
+                let Some(intent) = wallet.profile.l2_send_intents.get(local_id) else {
+                    return TransactionOutcome::Rollback(invalid("intent disappeared"));
+                };
+                if intent.terminal_resolution.is_some() {
+                    return TransactionOutcome::Abort(false);
+                }
+                let stored_nonce = match intent.stored_challenge {
+                    Some(n) => n,
+                    None => {
+                        return TransactionOutcome::Rollback(invalid(
+                            "stored reconciliation challenge missing",
+                        ))
+                    }
+                };
+                (
+                    stored_nonce,
+                    intent.challenge_expires_at_ms,
+                    intent.request_bytes.clone(),
+                    intent.network,
+                    intent.shard_id,
+                )
+            };
+
+            if let Some(exp) = challenge_expires_at {
+                if now_ms >= exp {
+                    return TransactionOutcome::Rollback(invalid("reconciliation challenge expired"));
+                }
+            }
+            if proof.context.recipient_nonce != stored_nonce {
+                return TransactionOutcome::Rollback(invalid("reconciliation challenge mismatch"));
+            }
+            let request: L2LockRequest = match serde_json::from_slice(&request_bytes) {
+                Ok(r) => r,
+                Err(e) => return TransactionOutcome::Rollback(invalid(&e.to_string())),
+            };
+            let tag = if request.is_genesis {
+                bs58::encode(request.transaction_hash).into_string()
+            } else {
+                match &request.ds_tag {
+                    Some(t) => t.clone(),
+                    None => return TransactionOutcome::Rollback(invalid("intent parent missing")),
+                }
+            };
+            let parent = *blake3::hash(tag.as_bytes()).as_bytes();
+            let policy = match wallet.profile.l2_regional_mesh_policy.as_ref() {
+                Some(p) => p,
+                None => {
+                    return TransactionOutcome::Rollback(invalid("reconciliation authority missing"))
+                }
+            };
+            let committee =
+                match humoco_proto::mesh::regional_committee(policy, views, shard_id, now_ms) {
+                    Ok(c) => c,
+                    Err(e) => return TransactionOutcome::Rollback(invalid(e)),
+                };
+            let expected_context = humoco_proto::live::LiveStateContext {
+                version: 1,
+                network,
+                shard_id,
+                voucher_id: request.layer2_voucher_id,
+                lookup_tag: tag,
+                parent_lock: parent,
+                child_lock: [0u8; 32],
+                root_valid_until: 0,
+                state_digest: [0u8; 32],
+                recipient_nonce: stored_nonce,
+                committee,
+            };
+
+            if let Err(e) =
+                humoco_proto::live::verify_live_unoccupied_proof(proof, &expected_context)
+            {
+                return TransactionOutcome::Rollback(invalid(e));
+            }
+
+            if let Some(intent) = wallet.profile.l2_send_intents.get_mut(local_id) {
+                intent.stored_challenge = None;
+                intent.challenge_expires_at_ms = None;
+            }
+            TransactionOutcome::Commit(true)
+        })
+    }
+
     /// Checks and marks the intent Expired if physical root validity has passed.
     pub fn expire_intent_if_overdue(
         &mut self,
@@ -818,6 +920,7 @@ mod tests {
             })
             .collect();
         let proof = LiveStateProof {
+            occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
             context: context.clone(),
             votes,
         };
@@ -889,6 +992,7 @@ mod tests {
             })
             .collect();
         LiveStateProof {
+            occupancy: humoco_proto::live::LiveSlotOccupancy::Occupied,
             context: context.clone(),
             votes,
         }

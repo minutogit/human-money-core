@@ -164,6 +164,7 @@ fn test_l2_missing_locks_guidance() {
 
     let verdict = L2Verdict::MissingLocks {
         sync_point: remote_sync_point.to_string(),
+        anchor_lock: None,
     };
 
     let anchor_verdict = evaluate_anchor_verdict(&verdict, &local_t_id, local_tag);
@@ -177,6 +178,7 @@ fn test_l2_missing_locks_guidance() {
     // When sync_point matches local_tag, wallet is considered synchronized
     let verdict_matching = L2Verdict::MissingLocks {
         sync_point: local_tag.to_string(),
+        anchor_lock: None,
     };
     let anchor_verdict_matching =
         evaluate_anchor_verdict(&verdict_matching, &local_t_id, local_tag);
@@ -285,9 +287,11 @@ fn test_fault_tolerant_quorum_2_of_3() {
 
     let node1_verdict = L2Verdict::MissingLocks {
         sync_point: "sync_pt_1".to_string(),
+        anchor_lock: None,
     };
     let node2_verdict = L2Verdict::MissingLocks {
         sync_point: "sync_pt_1".to_string(),
+        anchor_lock: None,
     };
     let node3_verdict = L2Verdict::UnknownVoucher; // Partitioned / desynced node
 
@@ -321,6 +325,7 @@ fn test_bootstrap_village_mode_quorum() {
 
     let single_verdict = L2Verdict::MissingLocks {
         sync_point: "village_sync_point".to_string(),
+        anchor_lock: None,
     };
 
     let res = evaluate_multi_node_anchor_verdicts(&[single_verdict], &local_t_id, local_tag, 1);
@@ -405,6 +410,7 @@ fn test_single_malicious_node_cannot_lock_wallet() {
     };
     let honest_sync = L2Verdict::MissingLocks {
         sync_point: local_tag.to_string(),
+        anchor_lock: None,
     };
 
     // 2 honest synchronized vs 1 malicious rollback -> must be Synchronized
@@ -518,6 +524,7 @@ fn test_cryptographic_proof_of_rollback_detection() {
     // Two nodes report the conflicting lock (quorum for N=3 is 2), one is synchronized
     let honest_sync = L2Verdict::MissingLocks {
         sync_point: local_tag.to_string(),
+        anchor_lock: None,
     };
     let rollback_verdict = L2Verdict::Verified {
         lock_entry: lock_entry.clone(),
@@ -642,3 +649,223 @@ fn test_status_query_key_matches_step_nonce() {
         "Different epoch must yield different keys"
     );
 }
+
+/// 14. test_seal_anchor_backup_rollback_detection:
+/// Tests that restoring an older backup triggers RollbackDetected upon checking Layer 2 anchor status,
+/// while forged signatures on the anchor slot are safely discarded.
+#[test]
+fn test_seal_anchor_backup_rollback_detection() {
+    use ed25519_dalek::{Signer, SigningKey};
+    use human_money_core::models::layer2_api::L2ResponseEnvelope;
+
+    let dir = TempDir::new().unwrap();
+    let (mut app, _profile) =
+        test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", PASSWORD);
+
+    let identity = &ACTORS.alice.identity;
+    let initial_epoch = 0u32;
+
+    // Simulate syncing Seal_0:
+    let plan = app.prepare_anchor_sync_upload().unwrap();
+    assert!(plan.is_some());
+    let plan = plan.unwrap();
+    assert_eq!(plan.target_checkpoint.epoch, initial_epoch);
+    let completed = app
+        .complete_anchor_sync_upload(plan.target_checkpoint, Some(PASSWORD))
+        .unwrap();
+    assert!(completed);
+
+    // Query context at this point:
+    let ctx = app.prepare_anchor_status_query_context().unwrap();
+    assert_eq!(ctx.step_nonce, 2);
+
+    // Honest response: MissingLocks (since next step 1 is unspent)
+    let honest_env = L2ResponseEnvelope {
+        verdict: L2Verdict::MissingLocks {
+            sync_point: "genesis".to_string(),
+            anchor_lock: None,
+        },
+        server_signature: [0u8; 64],
+        quorum_certificate: None,
+    };
+    let verdict = app.evaluate_verified_anchor_envelopes(&[honest_env]).unwrap();
+    assert_eq!(verdict, AnchorSyncVerdict::Synchronized);
+
+    // Now simulate an attacker/remote state where a subsequent anchor (from an advanced wallet state)
+    // was durably committed on Layer 2 with a different local_t_id:
+    let remote_t_id = [0xEEu8; 32];
+    let (step_sk, step_pk) = derive_anchor_step_key(&identity.signing_key, ctx.epoch, ctx.step_nonce);
+    let payload_hash = calculate_l2_payload_hash_raw(
+        &ctx.anchor_id,
+        &ctx.challenge_tag,
+        &remote_t_id,
+        &step_pk.to_bytes(),
+        "none",
+        "none",
+        0,
+        0,
+        None,
+        "",
+    );
+    let valid_sig = step_sk.sign(&payload_hash);
+
+    let valid_advanced_entry = L2LockEntry {
+        causal_output: None,
+        layer2_voucher_id: ctx.anchor_id.clone(),
+        t_id: remote_t_id,
+        sender_ephemeral_pub: step_pk.to_bytes(),
+        receiver_ephemeral_pub_hash: None,
+        change_ephemeral_pub_hash: None,
+        layer2_signature: valid_sig.to_bytes(),
+        trap_r: Some("none".to_string()),
+        trap_s: Some("none".to_string()),
+        encrypted_timestamp: 0,
+        created_at_ms: 0,
+        deletable_at: None,
+        privacy_guard: None,
+    };
+
+    // Craft a forged envelope signed with a random key (should be ignored):
+    let bogus_key = SigningKey::generate(&mut rand::thread_rng());
+    let forged_sig = bogus_key.sign(&payload_hash);
+    let forged_entry = L2LockEntry {
+        layer2_signature: forged_sig.to_bytes(),
+        ..valid_advanced_entry.clone()
+    };
+    let forged_env = L2ResponseEnvelope {
+        verdict: L2Verdict::Verified {
+            lock_entry: forged_entry,
+        },
+        server_signature: [0u8; 64],
+        quorum_certificate: None,
+    };
+
+    // When only the forged envelope is presented:
+    let forged_verdict = app.evaluate_verified_anchor_envelopes(std::slice::from_ref(&forged_env)).unwrap();
+    assert_ne!(
+        forged_verdict,
+        AnchorSyncVerdict::RollbackDetected {
+            remote_t_id,
+            lock_entry: valid_advanced_entry.clone(),
+        },
+        "Forged entry must be rejected/ignored"
+    );
+
+    // When the valid remote anchor entry is presented:
+    let valid_env = L2ResponseEnvelope {
+        verdict: L2Verdict::Verified {
+            lock_entry: valid_advanced_entry.clone(),
+        },
+        server_signature: [0u8; 64],
+        quorum_certificate: None,
+    };
+
+    let rollback_verdict = app.evaluate_verified_anchor_envelopes(&[forged_env, valid_env]).unwrap();
+    match rollback_verdict {
+        AnchorSyncVerdict::RollbackDetected {
+            remote_t_id: found_t_id,
+            lock_entry: found_entry,
+        } => {
+            assert_eq!(found_t_id, remote_t_id);
+            assert_eq!(found_entry.t_id, remote_t_id);
+        }
+        other => panic!("Expected RollbackDetected, got {:?}", other),
+    }
+}
+
+/// 15. test_missing_locks_with_anchor_lock_conflict_and_safe:
+/// Tests that reconcile_voucher_missing_locks and reconcile_voucher_verdict:
+/// - Detects upstream double-spend and returns ConflictDetected (quarantining voucher) when anchor_lock diverges.
+/// - Verifies that forged anchor_lock returns a cryptographic error.
+/// - Returns UnspentSafe when anchor_lock matches or is None.
+#[test]
+fn test_missing_locks_with_anchor_lock_conflict_and_safe() {
+    use human_money_core::models::layer2_api::VoucherReconciliationResult;
+
+    let dir = TempDir::new().unwrap();
+    let (mut app, _profile) =
+        test_utils::setup_service_with_profile(dir.path(), &ACTORS.alice, "Alice", PASSWORD);
+
+    let (standard, _) = (
+        &test_utils::standards::FREETALER_STANDARD.0,
+        &test_utils::standards::FREETALER_STANDARD.1,
+    );
+    let (local_id, expected_vid, root_tx, sender_ephem_bytes) = {
+        let (wallet_mut, identity) = app.get_unlocked_mut_for_test();
+        let local_id = test_utils::add_voucher_to_wallet(wallet_mut, identity, "100.00", standard, true)
+            .expect("Failed to add voucher");
+        let instance = wallet_mut.get_voucher_instance(&local_id).unwrap();
+        let root_tx = instance.voucher.transactions.first().unwrap().clone();
+        let expected_vid = human_money_core::services::l2_gateway::extract_layer2_voucher_id(&instance.voucher).unwrap();
+        let sender_ephem_str = root_tx.sender_ephemeral_pub.as_deref().unwrap();
+        let sender_ephem_bytes = human_money_core::services::crypto::decode_bs58_fixed::<32>(sender_ephem_str, "ephem").unwrap();
+        (local_id, expected_vid, root_tx, sender_ephem_bytes)
+    };
+    app.update_seal_after_state_change(Some(PASSWORD)).unwrap();
+
+    // 1. Case A: Matching anchor_lock -> UnspentSafe
+    let root_req = human_money_core::services::l2_gateway::generate_lock_request(&expected_vid, &root_tx, &[0u8; 32]).unwrap();
+    let matching_lock = L2LockEntry::from(&root_req);
+
+    let res_matching = app
+        .reconcile_voucher_missing_locks(&local_id, "genesis", Some(&matching_lock), Some(PASSWORD))
+        .unwrap();
+    assert_eq!(res_matching, VoucherReconciliationResult::UnspentSafe);
+
+    // 2. Case B: None anchor_lock -> UnspentSafe
+    let res_none = app
+        .reconcile_voucher_missing_locks(&local_id, "genesis", None, Some(PASSWORD))
+        .unwrap();
+    assert_eq!(res_none, VoucherReconciliationResult::UnspentSafe);
+
+    // 3. Case C: Forged anchor_lock (invalid signature) -> Err
+    let mut forged_lock = matching_lock.clone();
+    forged_lock.layer2_signature = [0xFFu8; 64];
+    let res_forged = app.reconcile_voucher_missing_locks(&local_id, "genesis", Some(&forged_lock), Some(PASSWORD));
+    assert!(res_forged.is_err(), "Forged anchor lock must fail signature verification");
+
+    // 4. Case D: Competing anchor_lock with diverging t_id (upstream double-spend)
+    let competing_t_id = [0x77u8; 32];
+    let competing_lock = L2LockEntry {
+        causal_output: None,
+        layer2_voucher_id: expected_vid.clone(),
+        t_id: competing_t_id,
+        sender_ephemeral_pub: sender_ephem_bytes,
+        receiver_ephemeral_pub_hash: None,
+        change_ephemeral_pub_hash: None,
+        layer2_signature: matching_lock.layer2_signature,
+        trap_r: Some("none".to_string()),
+        trap_s: Some("none".to_string()),
+        encrypted_timestamp: 0,
+        created_at_ms: 0,
+        deletable_at: None,
+        privacy_guard: None,
+    };
+
+    let verdict = L2Verdict::MissingLocks {
+        sync_point: "genesis".to_string(),
+        anchor_lock: Some(competing_lock.clone()),
+    };
+
+    human_money_core::set_signature_bypass(true);
+    let res_conflict = app
+        .reconcile_voucher_verdict(&local_id, &verdict, Some(PASSWORD))
+        .unwrap();
+    human_money_core::set_signature_bypass(false);
+
+    match res_conflict {
+        VoucherReconciliationResult::ConflictDetected { conflicting_lock } => {
+            assert_eq!(conflicting_lock.t_id, competing_t_id);
+        }
+        other => panic!("Expected ConflictDetected, got {:?}", other),
+    }
+
+    // Check that voucher was quarantined
+    let (wallet_after, _) = app.get_unlocked_for_test();
+    let inst_after = wallet_after.get_voucher_instance(&local_id).unwrap();
+    assert!(
+        matches!(inst_after.status, VoucherStatus::Quarantined { .. }),
+        "Voucher must be quarantined upon upstream double spend"
+    );
+}
+

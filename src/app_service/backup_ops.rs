@@ -567,6 +567,7 @@ impl AppService {
                     seal: seal.clone(),
                     sync_status: crate::models::seal::SyncStatus::PendingUpload,
                     is_locked_due_to_fork: false,
+                    last_synced_anchor: None,
                 },
             )?;
             storage.save_integrity(&StorageIntegrityRecord::create_record(

@@ -195,6 +195,7 @@ impl MockL2Node {
                 if ds_tag.starts_with(prefix) {
                     let verdict = L2Verdict::MissingLocks {
                         sync_point: prefix.clone(),
+                        anchor_lock: voucher_locks.get(ds_tag).cloned(),
                     };
                     return self.wrap_and_sign(verdict);
                 }
@@ -204,6 +205,7 @@ impl MockL2Node {
         // Nothing found -> Synchronization from genesis
         let verdict = L2Verdict::MissingLocks {
             sync_point: "genesis".to_string(),
+            anchor_lock: None,
         };
         self.wrap_and_sign(verdict)
     }
