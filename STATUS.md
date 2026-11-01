@@ -3,10 +3,16 @@ project: human-money-core
 version: "0.5.1"
 phase: "active-development"
 health: "green"
-last_updated: "2026-10-31"
+last_updated: "2026-11-01"
 blocks: []
 blocked_by: []
 priority_tasks:
+  - id: "CORE-011"
+    title: "Multi-Recipient SecureContainer Scaling (MAX_RECIPIENTS = 256) for Dunbar-Scale .wot Sharing"
+    status: "closed"
+    priority: "high"
+    depends_on: ["CORE-010"]
+    description: "Raised `MAX_RECIPIENTS` to `256` (`MAX_RECIPIENT_SLOTS = 257` preserving sender Double-Key-Wrapping) in `models::secure_container` and fuzz targets so a single encrypted `.wot` `TrustAssertion` container can address all rated personal contacts (`PrivacyMode::TrialDecryption`) without requiring a file password. Verified with 32- and 256-recipient roundtrip unit tests and full integration suite."
   - id: "CORE-010"
     title: "Web of Trust Transport Hooks, Authenticated Trust Containers & Gravitational Coin Selection (s_wot)"
     status: "closed"
@@ -72,6 +78,8 @@ priority_tasks:
 # Human Money Core — Status
 
 ## Current Focus
+
+Multi-Recipient SecureContainer Scaling (`CORE-011`, 2026-11-01): Raised `MAX_RECIPIENTS` to `256` (`MAX_RECIPIENT_SLOTS = 257` preserving sender Double-Key-Wrapping) in `models::secure_container` and fuzz targets so a single encrypted `.wot` `TrustAssertion` container can address all rated personal contacts (`PrivacyMode::TrialDecryption`) without requiring a file password. Verified with 32- and 256-recipient roundtrip unit tests and full integration suite.
 
 Web of Trust Transport, Container & Coin-Selection Hooks (`CORE-010`, 2026-10-31): Added clean, backward-compatible Layer-1 transport and coin-selection primitives for `humoco-wot` without introducing any social-graph dependency into `human-money-core`:
 - **Transaction Piggybacking (`wot_sync_json`)**: Optional `wot_sync_json: Option<String>` (`MAX_WOT_SYNC_BYTES = 65_536`) in `TransactionBundle`, `MultiTransferRequest`, and `ProcessBundleResult`, integrity-bound inside `bundle_id` / `sender_signature` and supported in both Public and Stealth transfers (`skip_serializing_if = "Option::is_none"` preserves 100% wire compatibility when absent).
@@ -209,6 +217,10 @@ The core library is stable and feature-rich. Current focus areas:
 - L2 integration uses mock/playground setup (no real L2 node exists yet)
 
 ## Recent Milestones
+
+- [x] **Multi-Recipient SecureContainer Scaling (`CORE-011`, 2026-11-01)**: Raised `MAX_RECIPIENTS` to `256` (`MAX_RECIPIENT_SLOTS = 257` preserving sender Double-Key-Wrapping) in `models::secure_container` and fuzz targets so a single encrypted `.wot` `TrustAssertion` container can address all rated personal contacts (`PrivacyMode::TrialDecryption`) without requiring a file password. Verified with 32- and 256-recipient roundtrip unit tests and full integration suite.
+
+- [x] **Web of Trust Transport Hooks, Authenticated Trust Containers & Gravitational Coin Selection (`CORE-010`, 2026-10-31)**: Added graph-free Web of Trust transport and scoring primitives (`wot_sync_json` piggybacking, Ed25519-authenticated `.wot` containers, `s_wot` coin selection bonus).
 
 - [x] **Agent-Native Wallet CLI & Multi-Actor Testing Framework (2026-10-30)**: Implemented `wallet-cli`, an agent-native and developer-friendly CLI controller built directly on `AppService` and `FileStorage`. Exposes full wallet and voucher operations with deterministic JSON envelopes (`--json`), non-interactive credentials (`--password`), and seamless interoperability with the Tauri desktop UI (`--auto-handover` for dynamic `WalletSeal` device binding and strict lockfile discipline). Subcommands include: `mnemonic` (generation/validation), `profile` (CRUD, public metadata, audit event history), `standards` (dynamic discovery and verification), `balance` (aggregated multi-standard balances), `voucher` (minting, status/standard filtering, detail inspection, incomplete cleanup), detached `sign` workflows (guarantor/notary request, inspect, endorse, attach, remove), P2P `tx` (greedy multi-source transfers, encrypted send/receive bundles), atomic `snapshot` time-travel (point-in-time state preservation and rollback for staging offline double-spends), high-speed in-memory `scenario` runner (<3s execution across multiple actors with cached unlocked sessions), and `conflict`/`l2` forensic inspection and gateway bridge tools. Fully documented in `.agents/skills/wallet-operator/SKILL.md` with operational golden rules, standard-specific issuance guides (FreeTaler vs Minuto gender parity), and copy-paste recipes for rapid UI test staging. Verified with comprehensive end-to-end integration tests (`tests/wallet_cli_e2e_tests.rs`).
 

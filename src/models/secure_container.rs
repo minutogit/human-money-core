@@ -21,7 +21,9 @@ use serde_json::json;
 use sha2::Sha256;
 use zeroize::Zeroize;
 
-pub const MAX_RECIPIENTS: usize = 16;
+pub const MAX_RECIPIENTS: usize = 256;
+/// Maximum total recipients in the JWE envelope (256 target recipients + 1 sender double-key-wrapping slot).
+pub const MAX_RECIPIENT_SLOTS: usize = MAX_RECIPIENTS + 1;
 
 /// Defines the type of content transported in the `SecureContainer`.
 ///
@@ -447,11 +449,11 @@ impl SecureContainer {
     /// bytes. `i` and `signature` are excluded exactly as during creation,
     /// so the check covers ALL AEAD-exempt envelope fields (`unprotected`, `salt`, `et`, `c`, recipients, ...).
     pub fn verify_integrity(&self) -> Result<(), VoucherCoreError> {
-        if self.recipients.len() > MAX_RECIPIENTS {
+        if self.recipients.len() > MAX_RECIPIENT_SLOTS {
             return Err(VoucherCoreError::ContainerValidation(format!(
                 "Too many recipients: {} exceeds maximum allowed {}",
                 self.recipients.len(),
-                MAX_RECIPIENTS
+                MAX_RECIPIENT_SLOTS
             )));
         }
         let mut container_for_hash = self.clone();
@@ -493,11 +495,11 @@ impl SecureContainer {
         recipient_identity: &UserIdentity,
         password: Option<&str>,
     ) -> Result<Vec<u8>, VoucherCoreError> {
-        if self.recipients.len() > MAX_RECIPIENTS {
+        if self.recipients.len() > MAX_RECIPIENT_SLOTS {
             return Err(VoucherCoreError::ContainerValidation(format!(
                 "Too many recipients: {} exceeds maximum allowed {}",
                 self.recipients.len(),
-                MAX_RECIPIENTS
+                MAX_RECIPIENT_SLOTS
             )));
         }
         match self.et {
@@ -726,6 +728,208 @@ mod tests {
             },
             _ => panic!("Wrong variant deserialized"),
         }
+    }
+
+    #[test]
+    fn test_max_recipients_limit_enforced() {
+        use crate::services::crypto::{create_user_id, generate_ed25519_keypair_for_tests};
+
+        let (sender_pub, sender_sk) = generate_ed25519_keypair_for_tests(Some("max_recip_sender"));
+        let sender_did = create_user_id(&sender_pub, Some("sender")).unwrap();
+        let sender = UserIdentity {
+            user_id: sender_did,
+            signing_key: sender_sk,
+            public_key: sender_pub,
+        };
+
+        // 1. Sealing with MAX_RECIPIENTS + 1 (257) recipient IDs must fail immediately.
+        let too_many_dids: Vec<String> = (0..=MAX_RECIPIENTS)
+            .map(|i| format!("did:key:z6Mkdummydummydummydummydummydummydummy{}", i))
+            .collect();
+        assert_eq!(too_many_dids.len(), MAX_RECIPIENTS + 1);
+
+        let seal_res = SecureContainer::seal(
+            &sender,
+            &ContainerConfig::TargetDids(too_many_dids, PrivacyMode::TrialDecryption),
+            b"test payload",
+            PayloadType::TrustAssertion,
+        );
+        match seal_res {
+            Err(VoucherCoreError::ContainerValidation(msg)) => {
+                assert!(
+                    msg.contains(&format!("Too many recipients: {} exceeds maximum allowed {}", MAX_RECIPIENTS + 1, MAX_RECIPIENTS)),
+                    "Expected recipient cap error, got: {}",
+                    msg
+                );
+            }
+            other => panic!("Expected ContainerValidation error, got: {:?}", other),
+        }
+
+        // 2. A container with MAX_RECIPIENT_SLOTS + 1 (258) recipients must be rejected by verify_integrity().
+        let mut inflated_container = SecureContainer::default();
+        inflated_container.recipients = vec![
+            JweRecipient {
+                header: None,
+                encrypted_key: "dummy_key".to_string(),
+            };
+            MAX_RECIPIENT_SLOTS + 1
+        ];
+        let integrity_res = inflated_container.verify_integrity();
+        match integrity_res {
+            Err(VoucherCoreError::ContainerValidation(msg)) => {
+                assert!(
+                    msg.contains(&format!("Too many recipients: {} exceeds maximum allowed {}", MAX_RECIPIENT_SLOTS + 1, MAX_RECIPIENT_SLOTS)),
+                    "Expected recipient cap error, got: {}",
+                    msg
+                );
+            }
+            other => panic!("Expected ContainerValidation error, got: {:?}", other),
+        }
+
+        // 3. A container with MAX_RECIPIENT_SLOTS + 1 (258) recipients must be rejected by open().
+        let open_res = inflated_container.open(&sender, None);
+        match open_res {
+            Err(VoucherCoreError::ContainerValidation(msg)) => {
+                assert!(
+                    msg.contains(&format!("Too many recipients: {} exceeds maximum allowed {}", MAX_RECIPIENT_SLOTS + 1, MAX_RECIPIENT_SLOTS)),
+                    "Expected recipient cap error, got: {}",
+                    msg
+                );
+            }
+            other => panic!("Expected ContainerValidation error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_multi_recipient_wot_trust_assertion_container() {
+        use crate::services::crypto::{create_user_id, generate_ed25519_keypair_for_tests};
+
+        let (sender_pub, sender_sk) = generate_ed25519_keypair_for_tests(Some("wot_ta_sender"));
+        let sender_did = create_user_id(&sender_pub, None).unwrap();
+        let sender = UserIdentity {
+            user_id: sender_did,
+            signing_key: sender_sk,
+            public_key: sender_pub,
+        };
+
+        // Create 32 recipient identities (Dunbar subset)
+        const RECIPIENT_COUNT: usize = 32;
+        let mut recipients: Vec<UserIdentity> = Vec::with_capacity(RECIPIENT_COUNT);
+        let mut recipient_dids: Vec<String> = Vec::with_capacity(RECIPIENT_COUNT);
+
+        for i in 0..RECIPIENT_COUNT {
+            let seed = format!("wot_ta_recipient_{}", i);
+            let (pub_k, sign_k) = generate_ed25519_keypair_for_tests(Some(&seed));
+            let did = create_user_id(&pub_k, None).unwrap();
+            recipients.push(UserIdentity {
+                user_id: did.clone(),
+                signing_key: sign_k,
+                public_key: pub_k,
+            });
+            recipient_dids.push(did);
+        }
+
+        // Unauthorized identity
+        let (unauth_pub, unauth_sk) = generate_ed25519_keypair_for_tests(Some("wot_ta_unauth"));
+        let unauth_did = create_user_id(&unauth_pub, None).unwrap();
+        let unauth = UserIdentity {
+            user_id: unauth_did,
+            signing_key: unauth_sk,
+            public_key: unauth_pub,
+        };
+
+        let secret_trust_assertion_payload = b"{\"type\":\"TrustAssertion\",\"level\":3,\"target\":\"did:key:target123\"}";
+
+        // Seal container with 32 recipients in TrialDecryption mode
+        let container = SecureContainer::seal(
+            &sender,
+            &ContainerConfig::TargetDids(recipient_dids, PrivacyMode::TrialDecryption),
+            secret_trust_assertion_payload,
+            PayloadType::TrustAssertion,
+        )
+        .expect("Sealing TrustAssertion for 32 recipients should succeed");
+
+        // Verify container envelope and metadata
+        assert_eq!(container.c, PayloadType::TrustAssertion);
+        assert_eq!(container.et, EncryptionType::Asymmetric);
+        // 32 recipients + 1 double-key-wrapping sender entry
+        assert_eq!(container.recipients.len(), RECIPIENT_COUNT + 1);
+        assert!(container.verify_integrity().is_ok());
+        assert!(container.verify_container_signature(&sender.user_id).is_ok());
+
+        // Verify that multiple recipients (including first, middle, last) can open and decrypt
+        for idx in [0, 1, 15, 16, 30, 31] {
+            let decrypted = container
+                .open(&recipients[idx], None)
+                .unwrap_or_else(|e| panic!("Recipient {} failed to open container: {:?}", idx, e));
+            assert_eq!(
+                decrypted,
+                secret_trust_assertion_payload,
+                "Recipient {} decrypted content mismatch",
+                idx
+            );
+        }
+
+        // Verify that the sender can re-open their own container (Double Key Wrapping)
+        let sender_decrypted = container
+            .open(&sender, None)
+            .expect("Sender must be able to reopen container via Double Key Wrapping");
+        assert_eq!(sender_decrypted, secret_trust_assertion_payload);
+
+        // Verify that an unauthorized party cannot decrypt
+        let unauth_result = container.open(&unauth, None);
+        assert!(matches!(
+            unauth_result,
+            Err(VoucherCoreError::NotAnIntendedRecipient)
+        ));
+
+        // Full Dunbar capacity test: seal and open with exact MAX_RECIPIENTS (256) target DIDs
+        let mut dunbar_recipients: Vec<UserIdentity> = Vec::with_capacity(MAX_RECIPIENTS);
+        let mut dunbar_recipient_dids: Vec<String> = Vec::with_capacity(MAX_RECIPIENTS);
+
+        for i in 0..MAX_RECIPIENTS {
+            let seed = format!("wot_dunbar_rec_{}", i);
+            let (pub_k, sign_k) = generate_ed25519_keypair_for_tests(Some(&seed));
+            let did = create_user_id(&pub_k, None).unwrap();
+            dunbar_recipients.push(UserIdentity {
+                user_id: did.clone(),
+                signing_key: sign_k,
+                public_key: pub_k,
+            });
+            dunbar_recipient_dids.push(did);
+        }
+
+        let container_256 = SecureContainer::seal(
+            &sender,
+            &ContainerConfig::TargetDids(dunbar_recipient_dids, PrivacyMode::TrialDecryption),
+            secret_trust_assertion_payload,
+            PayloadType::TrustAssertion,
+        )
+        .expect("Sealing TrustAssertion for full 256 recipients (Dunbar capacity) must succeed");
+
+        assert_eq!(container_256.recipients.len(), MAX_RECIPIENT_SLOTS);
+        assert!(container_256.verify_integrity().is_ok());
+        assert!(container_256.verify_container_signature(&sender.user_id).is_ok());
+
+        // Verify recipient at index 0, index 127, and index 255 (first, middle, last)
+        for idx in [0, 127, 255] {
+            let decrypted = container_256
+                .open(&dunbar_recipients[idx], None)
+                .unwrap_or_else(|e| panic!("Dunbar recipient {} failed to open container: {:?}", idx, e));
+            assert_eq!(decrypted, secret_trust_assertion_payload);
+        }
+
+        // Verify sender can reopen the 256-recipient container
+        let sender_decrypted_256 = container_256
+            .open(&sender, None)
+            .expect("Sender must be able to reopen 256-recipient container via Double Key Wrapping");
+        assert_eq!(sender_decrypted_256, secret_trust_assertion_payload);
+
+        // Verify unauthorized party cannot decrypt 256-recipient container
+        assert!(matches!(
+            container_256.open(&unauth, None),
+            Err(VoucherCoreError::NotAnIntendedRecipient)
+        ));
     }
 }
 

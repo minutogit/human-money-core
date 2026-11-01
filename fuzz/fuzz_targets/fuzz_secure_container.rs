@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use human_money_core::models::secure_container::{SecureContainer, MAX_RECIPIENTS};
+use human_money_core::models::secure_container::{SecureContainer, MAX_RECIPIENT_SLOTS};
 use human_money_core::services::bundle_processor::MAX_CONTAINER_BYTES;
 use human_money_core::test_utils::ACTORS;
 
@@ -13,7 +13,7 @@ fuzz_target!(|data: &[u8]| {
 
     if let Ok(container) = serde_json::from_slice::<SecureContainer>(data) {
         // Invariant 1: Recipient count limit
-        if container.recipients.len() > MAX_RECIPIENTS {
+        if container.recipients.len() > MAX_RECIPIENT_SLOTS {
             assert!(container.verify_integrity().is_err());
         } else {
             let _ = container.verify_integrity();
