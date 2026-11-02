@@ -898,15 +898,6 @@ fn process_l2_verdict_internal(
                 sync_point: "genesis".to_string(),
             })
         }
-        L2Verdict::Ok { .. } => {
-            if authority.is_some() {
-                return Err(VoucherCoreError::Validation(
-                    crate::error::ValidationError::InvalidL2Proof,
-                ));
-            }
-            // Fallback for older implementations
-            Ok(VerdictAction::ConfirmLocal)
-        }
         L2Verdict::Rejected { reason } => Err(VoucherCoreError::Validation(
             crate::error::ValidationError::L2Rejected { reason },
         )),
@@ -1125,7 +1116,6 @@ pub fn evaluate_anchor_verdict(
             }
         }
         L2Verdict::UnknownVoucher => AnchorSyncVerdict::GenesisRequired,
-        L2Verdict::Ok { .. } => AnchorSyncVerdict::Synchronized,
         L2Verdict::Rejected { .. } => AnchorSyncVerdict::GenesisRequired,
     }
 }
@@ -1160,7 +1150,7 @@ pub fn evaluate_multi_node_anchor_verdicts(
 
     for v in verdicts {
         match v {
-            L2Verdict::Confirmed { .. } | L2Verdict::Ok { .. } => syncd_count += 1,
+            L2Verdict::Confirmed { .. } => syncd_count += 1,
             L2Verdict::Verified { lock_entry } => {
                 if &lock_entry.t_id == local_t_id {
                     syncd_count += 1;

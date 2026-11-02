@@ -69,11 +69,9 @@ impl MockL2Node {
         let voucher_locks = self.locks.entry(req.layer2_voucher_id.clone()).or_default();
 
         let entry = L2LockEntry::from(&req);
-        voucher_locks.insert(ds_tag, entry);
+        voucher_locks.insert(ds_tag, entry.clone());
 
-        let verdict = L2Verdict::Ok {
-            signature: [0u8; 64],
-        };
+        let verdict = L2Verdict::Verified { lock_entry: entry };
         self.wrap_and_sign(verdict)
     }
 

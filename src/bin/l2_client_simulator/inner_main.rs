@@ -269,7 +269,7 @@ async fn cmd_genesis(url: &str) {
     if status.is_success() {
         let envelope: L2ResponseEnvelope = res.json().await.expect("Failed to parse response");
         match &envelope.verdict {
-            L2Verdict::Verified { .. } | L2Verdict::Ok { .. } | L2Verdict::Confirmed { .. } => {
+            L2Verdict::Verified { .. } | L2Verdict::Confirmed { .. } => {
                 println!("  Server     : [OK] Verified / Accepted");
             }
             other => {
@@ -400,7 +400,7 @@ async fn cmd_transfer(url: &str, voucher_id: &str) {
     if status.is_success() {
         let envelope: L2ResponseEnvelope = res.json().await.expect("Failed to parse response");
         match &envelope.verdict {
-            L2Verdict::Verified { .. } | L2Verdict::Ok { .. } | L2Verdict::Confirmed { .. } => {
+            L2Verdict::Verified { .. } | L2Verdict::Confirmed { .. } => {
                 println!("  Server       : [OK] Transfer accepted!");
             }
             L2Verdict::Rejected { reason } => {
@@ -522,7 +522,7 @@ async fn cmd_split(url: &str, voucher_id: &str) {
     if status.is_success() {
         let envelope: L2ResponseEnvelope = res.json().await.expect("Failed to parse response");
         match &envelope.verdict {
-            L2Verdict::Verified { .. } | L2Verdict::Ok { .. } | L2Verdict::Confirmed { .. } => {
+            L2Verdict::Verified { .. } | L2Verdict::Confirmed { .. } => {
                 println!("  Server            : [OK] Split anchor accepted!");
             }
             L2Verdict::Rejected { reason } => {
@@ -922,8 +922,8 @@ async fn run_compliance_test(url: &str, _server_pubkey: Option<&str>) {
 
     let envelope: L2ResponseEnvelope = res.json().await.expect("Failed to parse L2ResponseEnvelope");
     match envelope.verdict {
-        L2Verdict::Verified { .. } | L2Verdict::Ok { .. } | L2Verdict::Confirmed { .. } => println!("   [OK] Genesis Lock verified!"),
-        _ => panic!("Expected Verified or Ok verdict!"),
+        L2Verdict::Verified { .. } | L2Verdict::Confirmed { .. } => println!("   [OK] Genesis Lock verified!"),
+        _ => panic!("Expected Verified or Confirmed verdict!"),
     }
 
     // 1b. Idempotent Retry (Gateway Retry Invariance)
@@ -941,10 +941,10 @@ async fn run_compliance_test(url: &str, _server_pubkey: Option<&str>) {
     );
     let envelope: L2ResponseEnvelope = res.json().await.expect("Failed to parse retry L2ResponseEnvelope");
     match envelope.verdict {
-        L2Verdict::Verified { .. } | L2Verdict::Ok { .. } | L2Verdict::Confirmed { .. } => {
+        L2Verdict::Verified { .. } | L2Verdict::Confirmed { .. } => {
             println!("   [OK] Idempotent retry verified successfully!");
         }
-        other => panic!("Expected Verified or Ok verdict on idempotent retry, got {:?}", other),
+        other => panic!("Expected Verified or Confirmed verdict on idempotent retry, got {:?}", other),
     }
 
     // 2. Happy Path Query
@@ -971,7 +971,6 @@ async fn run_compliance_test(url: &str, _server_pubkey: Option<&str>) {
     let envelope: L2ResponseEnvelope = res.json().await.expect("Parse failed");
     match envelope.verdict {
         L2Verdict::Verified { .. } | L2Verdict::Confirmed { .. } => println!("   [OK] Happy Path Verified!"),
-        L2Verdict::Ok { .. } => println!("   [OK] Happy Path Verified (Legacy OK)!"),
         _ => panic!("Expected Verified verdict for Genesis status!"),
     }
 
@@ -1063,7 +1062,7 @@ async fn run_compliance_test(url: &str, _server_pubkey: Option<&str>) {
             L2Verdict::Rejected { reason } => {
                 println!("   [OK] Invalid Signature rejected by server: {}", reason);
             }
-            L2Verdict::Verified { .. } | L2Verdict::Ok { .. } | L2Verdict::Confirmed { .. } => {
+            L2Verdict::Verified { .. } | L2Verdict::Confirmed { .. } => {
                 panic!("Server accepted invalid cryptographic signature!");
             }
             other => {
@@ -1496,7 +1495,7 @@ async fn cmd_sync(url: &str, voucher_id: &str) {
                     let env: L2ResponseEnvelope =
                         res.json().await.expect("Failed to parse lock response");
                     match env.verdict {
-                        L2Verdict::Verified { .. } | L2Verdict::Ok { .. } | L2Verdict::Confirmed { .. } => {
+                        L2Verdict::Verified { .. } | L2Verdict::Confirmed { .. } => {
                             println!(
                                 "    [{}/{}] ds_tag={} → [OK]",
                                 start_idx + i + 1, n_locks, ds_display

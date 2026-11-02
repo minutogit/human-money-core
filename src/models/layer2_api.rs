@@ -1,12 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-pub use humoco_proto::crypto::{
-    DOMAIN_L2_EQUIVOCATION, DOMAIN_L2_STATUS_QUERY, DOMAIN_L2_WRITE,
-    compute_lock_attestation_digest, compute_status_attestation_digest,
-};
-pub use humoco_proto::types::{
-    AttestationVote, L2Verdict as CanonicalL2Verdict, NodePubKey, QuorumProof, ShardId,
-};
+pub use humoco_proto::types::{AttestationVote, NodePubKey, QuorumProof, ShardId};
+
 
 pub mod base58_32 {
     use serde::{Deserialize, Deserializer, Serializer, de};
@@ -535,40 +530,8 @@ pub enum L2Verdict {
     },
     /// The voucher (Voucher ID) is completely unknown to the Layer 2 system.
     UnknownVoucher,
-    /// Deprecated/Fallback: General confirmation (should be replaced by Verified).
-    #[serde(rename = "Ok")]
-    Ok {
-        #[serde(with = "crate::models::layer2_api::base58_64")]
-        signature: [u8; 64],
-    },
     /// The request was rejected by the server (e.g. invalid signature).
     Rejected { reason: String },
-}
-
-impl From<CanonicalL2Verdict> for L2Verdict {
-    fn from(v: CanonicalL2Verdict) -> Self {
-        match v {
-            CanonicalL2Verdict::Confirmed { proof } => L2Verdict::Confirmed { proof },
-            CanonicalL2Verdict::Conflict { existing_tag } => L2Verdict::Conflict {
-                existing_lock: L2LockEntry {
-                    causal_output: None,
-                    layer2_voucher_id: String::new(),
-                    t_id: existing_tag,
-                    sender_ephemeral_pub: [0u8; 32],
-                    receiver_ephemeral_pub_hash: None,
-                    change_ephemeral_pub_hash: None,
-                    layer2_signature: [0u8; 64],
-                    trap_r: None,
-                    trap_s: None,
-                    encrypted_timestamp: 0,
-                    created_at_ms: 0,
-                    deletable_at: None,
-                    privacy_guard: None,
-                },
-            },
-            CanonicalL2Verdict::Rejected { reason } => L2Verdict::Rejected { reason },
-        }
-    }
 }
 
 /// Envelope for all L2 server responses.

@@ -153,7 +153,7 @@ impl MockL2Node {
             deletable_at: req.deletable_at.clone(),
             privacy_guard: req.privacy_guard.clone(),
         };
-        voucher_locks.insert(ds_tag, entry);
+        voucher_locks.insert(ds_tag, entry.clone());
 
         // Add new UTXOs
         if let Some(r) = req.receiver_ephemeral_pub_hash {
@@ -163,9 +163,7 @@ impl MockL2Node {
             self.spendable_outputs.insert(c);
         }
 
-        let verdict = L2Verdict::Ok {
-            signature: [0u8; 64],
-        };
+        let verdict = L2Verdict::Verified { lock_entry: entry };
         self.wrap_and_sign(verdict)
     }
 
@@ -262,7 +260,7 @@ fn test_l2_double_spend_quarantine() {
     let req_genesis = app.generate_l2_lock_request(&voucher_id).unwrap();
     let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
     let envelope_genesis: L2ResponseEnvelope = serde_json::from_slice(&resp_genesis).unwrap();
-    assert!(matches!(envelope_genesis.verdict, L2Verdict::Ok { .. }));
+    assert!(matches!(envelope_genesis.verdict, L2Verdict::Verified { .. }));
     app.process_l2_response(voucher_id.clone(), &resp_genesis, Some(correct_password))
         .unwrap();
 
@@ -317,7 +315,7 @@ fn test_l2_double_spend_quarantine() {
     let req_tx1 = app.generate_l2_lock_request(&voucher_id_tx1).unwrap();
     let resp_tx1 = mock_l2.handle_lock_request(&req_tx1);
     let envelope_tx1: L2ResponseEnvelope = serde_json::from_slice(&resp_tx1).unwrap();
-    assert!(matches!(envelope_tx1.verdict, L2Verdict::Ok { .. }));
+    assert!(matches!(envelope_tx1.verdict, L2Verdict::Verified { .. }));
     app.process_l2_response(voucher_id_tx1.clone(), &resp_tx1, Some(correct_password))
         .unwrap();
 
@@ -371,7 +369,7 @@ fn test_l2_double_spend_quarantine() {
     let req_malicious_bytes = serde_json::to_vec(&req_malicious).unwrap();
     let resp_malicious = mock_l2.handle_lock_request(&req_malicious_bytes);
     let envelope_malicious: L2ResponseEnvelope = serde_json::from_slice(&resp_malicious).unwrap();
-    assert!(matches!(envelope_malicious.verdict, L2Verdict::Ok { .. })); // L2 server accepts hacker
+    assert!(matches!(envelope_malicious.verdict, L2Verdict::Verified { .. })); // L2 server accepts hacker
 
     // 6. Legitimate redemption (we arrive too late)
     let resp_tx2 = mock_l2.handle_lock_request(&req_valid_bytes);
@@ -442,7 +440,7 @@ fn test_l2_signature_payload_manipulation() {
     let req_genesis = app.generate_l2_lock_request(&voucher_id).unwrap();
     let resp_genesis = mock_l2.handle_lock_request(&req_genesis);
     let envelope_genesis: L2ResponseEnvelope = serde_json::from_slice(&resp_genesis).unwrap();
-    assert!(matches!(envelope_genesis.verdict, L2Verdict::Ok { .. }));
+    assert!(matches!(envelope_genesis.verdict, L2Verdict::Verified { .. }));
     app.process_l2_response(voucher_id.clone(), &resp_genesis, Some(correct_password))
         .unwrap();
 
@@ -1103,7 +1101,7 @@ fn test_gateway_retry_invariance_idempotency() {
     // Initial submission of req_bytes_1 to Gateway
     let resp1 = mock_l2.handle_lock_request(&req_bytes_1);
     let env1: L2ResponseEnvelope = serde_json::from_slice(&resp1).unwrap();
-    assert!(matches!(env1.verdict, L2Verdict::Ok { .. }));
+    assert!(matches!(env1.verdict, L2Verdict::Verified { .. }));
 
     let outcome1 = app
         .process_l2_response(voucher_id.clone(), &resp1, Some(correct_password))

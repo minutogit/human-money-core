@@ -1162,22 +1162,11 @@ fn audit_07_08_authority_verdict_rejects_missing_quorum_certificate_and_bare_ok(
         serde_json::to_vec(&env).unwrap()
     };
 
-    // 1. Bare L2Verdict::Ok with authority MUST FAIL
-    let env_ok = sign_envelope(L2Verdict::Ok {
-        signature: [0u8; 64],
-    });
-    let res_ok = process_l2_verdict_with_authority(
-        &env_ok,
-        server_pk.as_bytes(),
-        "local_t_id",
-        "tag",
-        None,
-        "voucher_id",
-        &authority,
-    );
+    // 1. Legacy L2Verdict::Ok payload MUST FAIL deserialization (variant eradicated)
+    let raw_env_ok = r#"{"verdict":{"type":"Ok","signature":"1111111111111111111111111111111111111111111111111111111111111111"},"server_signature":"1111111111111111111111111111111111111111111111111111111111111111"}"#;
     assert!(
-        matches!(res_ok, Err(VoucherCoreError::Validation(ValidationError::InvalidL2Proof))),
-        "Bare L2Verdict::Ok with authority MUST return InvalidL2Proof!"
+        serde_json::from_str::<L2ResponseEnvelope>(raw_env_ok).is_err(),
+        "Legacy L2Verdict::Ok payload MUST fail deserialization!"
     );
 
     // 2. L2Verdict::Verified with missing quorum_certificate and authority MUST FAIL

@@ -269,7 +269,7 @@ impl Wallet {
             L2Verdict::UnknownVoucher => {
                 self.reconcile_voucher_state(identity, voucher_id_or_local_id, None)
             }
-            L2Verdict::Confirmed { .. } | L2Verdict::Ok { .. } => {
+            L2Verdict::Confirmed { .. } => {
                 self.reconcile_voucher_state(identity, voucher_id_or_local_id, None)
             }
             L2Verdict::Rejected { reason } => {

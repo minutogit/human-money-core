@@ -120,7 +120,7 @@ impl MockL2Node {
             deletable_at: req.deletable_at.clone(),
             privacy_guard: None,
         };
-        voucher_locks.insert(ds_tag, entry);
+        voucher_locks.insert(ds_tag, entry.clone());
 
         // Register new UTXOs (recipient and change)
         if let Some(r) = req.receiver_ephemeral_pub_hash {
@@ -130,9 +130,7 @@ impl MockL2Node {
             self.spendable_outputs.insert(c);
         }
 
-        let verdict = L2Verdict::Ok {
-            signature: [0u8; 64],
-        };
+        let verdict = L2Verdict::Verified { lock_entry: entry };
         self.wrap_and_sign(verdict)
     }
 

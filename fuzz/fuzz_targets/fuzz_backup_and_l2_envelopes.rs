@@ -11,8 +11,7 @@ use human_money_core::models::layer2_api::{
 use human_money_core::services::l2_gateway;
 use humoco_proto::causal::CausalOutputProof;
 use humoco_proto::live::{
-    live_state_digest, validate_live_context, verify_live_state_proof, LiveStateContext,
-    LiveStateProof,
+    live_state_digest, verify_live_state_proof, LiveStateContext, LiveStateProof,
 };
 use libfuzzer_sys::fuzz_target;
 use std::collections::HashMap;
@@ -177,7 +176,6 @@ fuzz_target!(|data: &[u8]| {
         let _ = app.verify_live_checkout_proof(&proof, &proof.context, true);
     }
     if let Ok(context) = serde_json::from_slice::<LiveStateContext>(data) {
-        let _ = validate_live_context(&context);
         let _ = live_state_digest(&context);
     }
 

@@ -98,12 +98,10 @@ impl MockL2Node {
         };
 
         // Store entry in in-memory DB ("Locking")
-        voucher_locks.insert(ds_tag, entry);
+        voucher_locks.insert(ds_tag, entry.clone());
 
-        // Send confirmation back (Fallback/Old-Style Ok in this example)
-        let verdict = L2Verdict::Ok {
-            signature: [0u8; 64],
-        };
+        // Send confirmation back
+        let verdict = L2Verdict::Verified { lock_entry: entry };
         self.wrap_and_sign(verdict)
     }
 
