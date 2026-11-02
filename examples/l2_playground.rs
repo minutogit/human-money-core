@@ -24,8 +24,6 @@ pub struct MockL2Node {
     pub vouchers: HashSet<String>,
     /// Simulates L2 database. Key: layer2_voucher_id, Value: Map of ds_tag -> L2LockEntry
     pub locks: HashMap<String, HashMap<String, human_money_core::models::layer2_api::L2LockEntry>>,
-    /// Simulates UTXO model for P2PKH anchors
-    pub spendable_outputs: HashSet<[u8; 32]>,
     /// Server keypair for signatures
     pub signing_key: SigningKey,
 }
@@ -43,7 +41,6 @@ impl MockL2Node {
         Self {
             vouchers: HashSet::new(),
             locks: HashMap::new(),
-            spendable_outputs: HashSet::new(),
             signing_key,
         }
     }
@@ -110,8 +107,6 @@ impl MockL2Node {
             layer2_voucher_id: req.layer2_voucher_id.clone(),
             t_id: req.transaction_hash,
             sender_ephemeral_pub: req.sender_ephemeral_pub,
-            receiver_ephemeral_pub_hash: req.receiver_ephemeral_pub_hash,
-            change_ephemeral_pub_hash: req.change_ephemeral_pub_hash,
             layer2_signature: req.layer2_signature,
             trap_r: req.trap_r.clone(),
             trap_s: req.trap_s.clone(),
@@ -121,14 +116,6 @@ impl MockL2Node {
             privacy_guard: None,
         };
         voucher_locks.insert(ds_tag, entry.clone());
-
-        // Register new UTXOs (recipient and change)
-        if let Some(r) = req.receiver_ephemeral_pub_hash {
-            self.spendable_outputs.insert(r);
-        }
-        if let Some(c) = req.change_ephemeral_pub_hash {
-            self.spendable_outputs.insert(c);
-        }
 
         let verdict = L2Verdict::Verified { lock_entry: entry };
         self.wrap_and_sign(verdict)
@@ -467,17 +454,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             bs58::encode(req.sender_ephemeral_pub).into_string());
         println!("│    layer2_signature       = \x1b[32m{}\x1b[0m  \x1b[90m[64 Bytes | Ed25519 Sig]\x1b[0m",
             bs58::encode(req.layer2_signature).into_string());
-        println!("│  \x1b[1;37mUTXO-Anker (Outputs):\x1b[0m");
-        match req.receiver_ephemeral_pub_hash {
-            Some(h) => println!("│    receiver_ephem_hash    = \x1b[32m{}\x1b[0m  \x1b[90m[32 Bytes]\x1b[0m",
-                bs58::encode(h).into_string()),
-            None => println!("│    receiver_ephem_hash    = \x1b[90m(kein)\x1b[0m"),
-        }
-        match req.change_ephemeral_pub_hash {
-            Some(h) => println!("│    change_ephem_hash      = \x1b[32m{}\x1b[0m  \x1b[90m[32 Bytes]\x1b[0m",
-                bs58::encode(h).into_string()),
-            None => println!("│    change_ephem_hash      = \x1b[90m(kein)\x1b[0m"),
-        }
+        println!("│  \x1b[1;37mMetadata-Minimierung:\x1b[0m");
+        println!("│    receiver/change_ephem_hash = \x1b[90m(auf Draht entfernt – Zero-Knowledge Blind Registry)\x1b[0m");
         println!("│  \x1b[1;37mAuth-Payload:\x1b[0m");
         println!("│    auth.ephemeral_pubkey  = \x1b[32m{}\x1b[0m  \x1b[90m[32 Bytes]\x1b[0m",
             bs58::encode(req.auth.ephemeral_pubkey).into_string());
@@ -515,27 +493,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let f_voucher_id   = entry.layer2_voucher_id.len();
             let f_t_id         = 32usize;
             let f_sender_pub   = 32usize;
-            let f_recv_hash    = if entry.receiver_ephemeral_pub_hash.is_some() { 32 } else { 0 };
-            let f_change_hash  = if entry.change_ephemeral_pub_hash.is_some() { 32 } else { 0 };
             let f_sig          = 64usize;
             let f_deletable    = entry.deletable_at.as_ref().map(|s| s.len()).unwrap_or(0);
-            let fixed_total    = f_t_id + f_sender_pub + f_recv_hash + f_change_hash + f_sig;
+            let fixed_total    = f_t_id + f_sender_pub + f_sig;
 
             println!("  \x1b[1;34m┌─ DS-Tag (Schlüssel): {}\x1b[0m", ds_tag_key);
             println!("  │  \x1b[1;37mGespeicherte Felder:\x1b[0m");
             println!("  │    layer2_voucher_id      {} Bytes  \x1b[90m(Hex-String)\x1b[0m", f_voucher_id);
             println!("  │    t_id                   {} Bytes  \x1b[90m(raw [u8;32] = Transaktions-Hash)\x1b[0m", f_t_id);
             println!("  │    sender_ephemeral_pub   {} Bytes  \x1b[90m(raw [u8;32] = Einmal-PubKey)\x1b[0m", f_sender_pub);
-            if f_recv_hash > 0 {
-                println!("  │    receiver_ephem_hash   {} Bytes  \x1b[90m(raw [u8;32] = UTXO Empfänger)\x1b[0m", f_recv_hash);
-            } else {
-                println!("  │    receiver_ephem_hash    \x1b[90m– nicht gesetzt\x1b[0m");
-            }
-            if f_change_hash > 0 {
-                println!("  │    change_ephem_hash      {} Bytes  \x1b[90m(raw [u8;32] = UTXO Wechselgeld)\x1b[0m", f_change_hash);
-            } else {
-                println!("  │    change_ephem_hash      \x1b[90m– nicht gesetzt\x1b[0m");
-            }
             println!("  │    layer2_signature       {} Bytes  \x1b[90m(raw [u8;64] = Ed25519 Beweis)\x1b[0m", f_sig);
             if f_deletable > 0 {
                 println!("  │    deletable_at           {} Bytes  \x1b[90m(ISO8601-String, nur Genesis)\x1b[0m",
@@ -545,7 +511,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             println!("  │");
             println!("  │  \x1b[1;37mSpeicher-Aufschlüsselung:\x1b[0m");
-            println!("  │    Feste kryptograph. Nutzdaten  {:>4} Bytes  \x1b[90m(t_id + pub + hashes + sig)\x1b[0m", fixed_total);
+            println!("  │    Feste kryptograph. Nutzdaten  {:>4} Bytes  \x1b[90m(t_id + pub + sig)\x1b[0m", fixed_total);
             println!("  │    Voucher-ID (String-Overhead)  {:>4} Bytes", f_voucher_id);
             println!("  │    Zeitstempel (deletable_at)    {:>4} Bytes", f_deletable);
             println!("  │    JSON-Serialisierungsrahmen    {:>4} Bytes  \x1b[90m(Keys, Anführungszeichen, etc.)\x1b[0m",
@@ -586,16 +552,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  │  │    Bit-Array für 1% Fehlerrate:   {:>4} Bits  = {} Bytes",
         bloom_bits, bloom_bytes);
     println!("  │  └─");
-    println!("  │");
-    println!("  │  \x1b[1;37m┌─ UTXO-Anker (spendable_outputs)\x1b[0m");
-    let utxo_bytes = server.spendable_outputs.len() * 32;
-    println!("  │  │    Eingetragene Outputs:          {:>4}   (je 32 Bytes = [u8;32])",
-        server.spendable_outputs.len());
-    println!("  │  │    Speicher (raw):                {:>4} Bytes  ≈ {:.1} KB",
-        utxo_bytes, utxo_bytes as f64 / 1024.0);
-    println!("  │  └─");
-    println!("  │");
-    let grand_total = total_lock_bytes + bloom_bytes + utxo_bytes;
+    let grand_total = total_lock_bytes + bloom_bytes;
     println!("  │  \x1b[1;32m──────────────────────────────────────────────────\x1b[0m");
     println!("  │  \x1b[1;32mGesamt-RAM-Footprint (geschätzt):  {:>5} Bytes  ≈ {:.1} KB\x1b[0m",
         grand_total, grand_total as f64 / 1024.0);
@@ -604,7 +561,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n\x1b[90mHinweis: Produktiv-Implementierungen würden die Locks binär kodieren\x1b[0m");
     println!("\x1b[90m(z.B. als feste Byte-Arrays ohne JSON-Overhead), was den Speicherbedarf\x1b[0m");
     println!("\x1b[90mpro Eintrag auf ≈ {} Bytes reduzieren würde.\x1b[0m\n",
-        32 + 32 + 32 + 32 + 64); // t_id + sender_pub + recv_hash + change_hash + sig
+        32 + 32 + 64); // t_id + sender_pub + sig
 
     Ok(())
 }

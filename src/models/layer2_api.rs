@@ -199,12 +199,6 @@ pub struct L2LockRequest {
     #[serde(with = "crate::models::layer2_api::base58_32")]
     pub sender_ephemeral_pub: [u8; 32],
 
-    #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
-    pub receiver_ephemeral_pub_hash: Option<[u8; 32]>,
-
-    #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
-    pub change_ephemeral_pub_hash: Option<[u8; 32]>,
-
     #[serde(with = "crate::models::layer2_api::base58_64")]
     pub layer2_signature: [u8; 64],
 
@@ -270,10 +264,6 @@ pub struct L2LockEntry {
     pub t_id: [u8; 32],
     #[serde(with = "crate::models::layer2_api::base58_32")]
     pub sender_ephemeral_pub: [u8; 32],
-    #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
-    pub receiver_ephemeral_pub_hash: Option<[u8; 32]>,
-    #[serde(with = "crate::models::layer2_api::base58_32_opt", default)]
-    pub change_ephemeral_pub_hash: Option<[u8; 32]>,
     #[serde(with = "crate::models::layer2_api::base58_64")]
     pub layer2_signature: [u8; 64],
     // --- V3 Protocol (HMC_TX_AUTH_V3 / SST): trap binding fields ---
@@ -308,8 +298,6 @@ impl From<&L2LockRequest> for L2LockEntry {
             layer2_voucher_id: req.layer2_voucher_id.clone(),
             t_id: req.transaction_hash,
             sender_ephemeral_pub: req.sender_ephemeral_pub,
-            receiver_ephemeral_pub_hash: req.receiver_ephemeral_pub_hash,
-            change_ephemeral_pub_hash: req.change_ephemeral_pub_hash,
             layer2_signature: req.layer2_signature,
             trap_r: req.trap_r.clone(),
             trap_s: req.trap_s.clone(),
@@ -328,8 +316,6 @@ impl From<L2LockRequest> for L2LockEntry {
             layer2_voucher_id: req.layer2_voucher_id,
             t_id: req.transaction_hash,
             sender_ephemeral_pub: req.sender_ephemeral_pub,
-            receiver_ephemeral_pub_hash: req.receiver_ephemeral_pub_hash,
-            change_ephemeral_pub_hash: req.change_ephemeral_pub_hash,
             layer2_signature: req.layer2_signature,
             trap_r: req.trap_r,
             trap_s: req.trap_s,
@@ -395,12 +381,10 @@ pub struct AttestationDto {
     pub lock_id: String,
     pub parent_lock: String,
     pub node_id: u16,
-    /// Full 32-byte Ed25519 NodePubKey of the signer (hex). Empty for legacy payloads.
-    #[serde(default)]
+    /// Full 32-byte Ed25519 NodePubKey of the signer (hex).
     pub node_pubkey: String,
     pub timestamp: u64,
     pub signature: String,
-    #[serde(default)]
     pub shard_id: u16,
 }
 

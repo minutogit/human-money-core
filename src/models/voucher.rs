@@ -120,6 +120,7 @@ pub struct Address {
 /// Schnorr signature and mathematically reveal the offender's `did:key`
 /// identity with EUF-CMA security (no framing possible).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
 pub struct TrapData {
     pub ds_tag: String,
     /// The spend-specific commitment shard $R_i$ (compressed point, Base58).

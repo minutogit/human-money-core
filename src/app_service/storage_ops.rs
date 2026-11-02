@@ -208,7 +208,6 @@ impl AppService {
                 &wallet.local_instance_id,
             ) {
                 Ok(crate::models::seal::SealValidationResult::Valid) => {},
-                Ok(crate::models::seal::SealValidationResult::LegacyValid) => {},
                 Ok(crate::models::seal::SealValidationResult::DeviceMismatch { .. }) => {
                     // Remote seal from other device is OK for comparison (indicator for fork check)
                 },
@@ -762,7 +761,7 @@ impl AppService {
         storage: &FileStorage,
         password: &str,
         local_instance_id: &str,
-    ) -> Result<bool, Error> {
+    ) -> Result<(), Error> {
         let auth = AuthMethod::Password(password);
         let seal_record = storage.load_seal(&auth).ok().flatten();
 
@@ -781,10 +780,6 @@ impl AppService {
 
             match validation {
                 crate::models::seal::SealValidationResult::Valid => {}
-                crate::models::seal::SealValidationResult::LegacyValid => {
-                    println!("Legacy Wallet detected. Will bind to this device after login.");
-                    return Ok(true); // needs_legacy_binding = true
-                }
                 crate::models::seal::SealValidationResult::DeviceMismatch { expected, actual } => {
                     let err_msg = format!(
                         "Device Mismatch: This wallet is bound to device '{}', but you are on '{}'. \
@@ -826,81 +821,40 @@ impl AppService {
                 return Err(Error::StateRollbackDetected);
             }
         }
-        Ok(false)
+        Ok(())
     }
 
-    pub(super) fn migrate_seal_on_login(
+    pub(super) fn initialize_seal_if_missing(
         storage: &mut FileStorage,
         wallet: &crate::wallet::Wallet,
         identity: &crate::models::profile::UserIdentity,
         password: &str,
-        needs_legacy_binding: bool,
     ) -> Result<(), Error> {
         let auth = AuthMethod::Password(password);
         let seal_record = storage
             .load_seal(&auth)?;
 
-        // Only migrate if necessary (legacy binding or no seal present)
-        if needs_legacy_binding || seal_record.is_none() {
+        if seal_record.is_none() {
             let merkle_root = crate::models::seal::calculate_voucher_merkle_root(&wallet.voucher_store.vouchers);
             let own_fp_hash =
                 crate::storage::seal_service::SealService::calculate_state_hash(&wallet.own_fingerprints)?;
 
-            let migrated_seal = if needs_legacy_binding {
-                if let Some(existing_record) = seal_record {
-                    let next_epoch = existing_record.seal.payload.epoch as u64;
-                    let next_nonce = existing_record.seal.payload.tx_nonce.checked_add(1).ok_or_else(|| {
-                        crate::error::VoucherCoreError::Validation(
-                            crate::error::ValidationError::InvalidTransaction(
-                                "Seal tx_nonce overflow: counter at u64::MAX, wallet requires recovery".to_string(),
-                            ),
-                        )
-                    })?;
-                    let comp_hash = crate::storage::seal_service::SealService::calculate_comprehensive_state_hash(
-                        next_epoch,
-                        next_nonce,
-                        &merkle_root,
-                        &own_fp_hash,
-                    );
-                    // Legacy Migration: Update existing seal to preserve the tx_nonce
-                    existing_record.seal.update(
-                        identity,
-                        &comp_hash,
-                        &wallet.local_instance_id,
-                    )?
-                } else {
-                    let genesis_hash = crate::storage::seal_service::SealService::calculate_comprehensive_state_hash(
-                        0,
-                        0,
-                        &merkle_root,
-                        &own_fp_hash,
-                    );
-                    // Completely new seal (Genesis)
-                    WalletSeal::create_initial(
-                        &identity.user_id,
-                        identity,
-                        &genesis_hash,
-                        &wallet.local_instance_id,
-                    )?
-                }
-            } else {
-                let genesis_hash = crate::storage::seal_service::SealService::calculate_comprehensive_state_hash(
-                    0,
-                    0,
-                    &merkle_root,
-                    &own_fp_hash,
-                );
-                // Completely new seal (Genesis)
-                WalletSeal::create_initial(
-                    &identity.user_id,
-                    identity,
-                    &genesis_hash,
-                    &wallet.local_instance_id,
-                )?
-            };
+            let genesis_hash = crate::storage::seal_service::SealService::calculate_comprehensive_state_hash(
+                0,
+                0,
+                &merkle_root,
+                &own_fp_hash,
+            );
+            // Completely new seal (Genesis)
+            let new_seal = WalletSeal::create_initial(
+                &identity.user_id,
+                identity,
+                &genesis_hash,
+                &wallet.local_instance_id,
+            )?;
 
             let new_record = LocalSealRecord {
-                seal: migrated_seal.clone(),
+                seal: new_seal.clone(),
                 sync_status: SyncStatus::PendingUpload,
                 is_locked_due_to_fork: false,
                 last_synced_anchor: None,
@@ -908,11 +862,11 @@ impl AppService {
             storage
                 .save_seal(&auth, &new_record)?;
 
-            // Initialize integrity for the new migrated seal
+            // Initialize integrity for the new seal
             let hashes = storage.get_all_item_hashes().unwrap_or_default();
             if let Ok(ir) = StorageIntegrityRecord::create_record(
                 identity,
-                &migrated_seal,
+                &new_seal,
                 hashes,
             ) {
                 let _ = storage.save_integrity(&ir);

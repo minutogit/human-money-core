@@ -39,7 +39,6 @@ pub(crate) const PROOF_STORE_FILE_NAME: &str = "proofs.enc";
 pub(crate) const OWN_FINGERPRINTS_FILE_NAME: &str = "own_fingerprints.enc";
 pub(crate) const ACTIVE_GOSSIP_FILE_NAME: &str = "active_gossip.enc";
 pub(crate) const SEAL_FILE_NAME: &str = "seal.enc";
-pub(crate) const LEGACY_EVENTS_FILE_NAME: &str = "events.json.enc";
 pub(crate) const EVENTS_DIR_NAME: &str = "events";
 
 /// Private module to encapsulate Serde logic for Base64 encoding of vectors.
@@ -369,9 +368,6 @@ impl FileStorage {
                     .map_err(|e| {
                         StorageError::InvalidFormat(format!("Failed to decrypt store: {}", e))
                     })?;
-
-            // Schema gate (HMSEC-SA05-08)
-            crate::storage::encrypted_store::gate_legacy_transaction_schema(&store_bytes)?;
 
             serde_json::from_slice(&store_bytes)
                 .map_err(|e| StorageError::InvalidFormat(e.to_string()))?

@@ -170,10 +170,7 @@ impl WalletSeal {
         }
 
         // 3. Check instance ID (Cloning Protection)
-        // [INTENTIONAL DESIGN REQUIREMENT: LEGACY WALLET MIGRATION]
-        // An empty `self.payload.instance_id` indicates a legacy wallet created prior to cloning protection.
-        // It is considered valid on first login to allow seamless automatic migration and binding to the new device.
-        if !self.payload.instance_id.is_empty() && self.payload.instance_id != local_instance_id {
+        if self.payload.instance_id.is_empty() || self.payload.instance_id != local_instance_id {
             return Ok(SealValidationResult::DeviceMismatch {
                 expected: self.payload.instance_id.clone(),
                 actual: local_instance_id.to_string(),
@@ -198,11 +195,7 @@ impl WalletSeal {
             return Ok(SealValidationResult::InvalidSignature);
         }
 
-        if self.payload.instance_id.is_empty() {
-            Ok(SealValidationResult::LegacyValid)
-        } else {
-            Ok(SealValidationResult::Valid)
-        }
+        Ok(SealValidationResult::Valid)
     }
 
     /// Associated helper alias for `verify_integrity`.
@@ -498,8 +491,6 @@ pub enum SealSyncState {
 pub enum SealValidationResult {
     /// The seal is valid and bound to the correct device.
     Valid,
-    /// The seal is valid, but not yet bound to a device (legacy).
-    LegacyValid,
     /// The signature is invalid.
     InvalidSignature,
     /// The user ID in the seal does not match the wallet.

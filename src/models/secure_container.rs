@@ -83,24 +83,15 @@ impl PayloadType {
 
 /// Defines the type of encryption for the container.
 ///
-/// Backward compatibility is ensured via the `Default` trait:
-/// Legacy containers without the `et` field are automatically parsed as `Asymmetric`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum EncryptionType {
-    /// Default: Encrypted with ephemeral key and recipient DID(s) (asymmetric).
+    /// Encrypted with ephemeral key and recipient DID(s) (asymmetric).
     Asymmetric,
     /// Encrypted with a one-time password/PIN via PBKDF2 (symmetric).
     Symmetric,
     /// Unencrypted (cleartext, only for signing requests and other non-financial payloads!).
     None,
-}
-
-impl Default for EncryptionType {
-    /// The default is `Asymmetric` to ensure backward compatibility.
-    fn default() -> Self {
-        EncryptionType::Asymmetric
-    }
 }
 
 /// Defines the privacy mode for asymmetric encryption.
@@ -157,7 +148,6 @@ pub struct JweRecipient {
 /// The structure implements Forward Secrecy through ephemeral keys in the
 /// Protected Header and supports multiple recipients via the recipients array.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[derive(Default)]
 pub struct SecureContainer {
     /// Base64url-encoded Protected Header as string.
     /// Must contain at least 'alg', 'enc', 'typ' and 'epk' (Ephemeral Public Key).
@@ -188,7 +178,6 @@ pub struct SecureContainer {
     /// `encryption_type`: Configuration of encryption (Asymmetric, Symmetric, None).
     /// For JWE this is implicitly determined by the presence of recipients,
     /// but is retained for internal logic.
-    #[serde(default)]
     pub et: EncryptionType,
 
     /// `salt`: Salt for PBKDF2 derivation (only set for Symmetric).
@@ -664,7 +653,19 @@ mod tests {
     fn test_secure_container_drop() {
         // We just ensure that drop doesn't panic.
         // Verifying actual zeroization requires unsafe memory inspection which is beyond unit tests.
-        let container = SecureContainer::default();
+        let container = SecureContainer {
+            protected: String::new(),
+            unprotected: None,
+            recipients: Vec::new(),
+            iv: String::new(),
+            ciphertext: String::new(),
+            tag: String::new(),
+            signature: String::new(),
+            et: EncryptionType::Asymmetric,
+            salt: None,
+            i: String::new(),
+            c: PayloadType::TransactionBundle,
+        };
         drop(container);
     }
 
@@ -766,14 +767,25 @@ mod tests {
         }
 
         // 2. A container with MAX_RECIPIENT_SLOTS + 1 (258) recipients must be rejected by verify_integrity().
-        let mut inflated_container = SecureContainer::default();
-        inflated_container.recipients = vec![
-            JweRecipient {
-                header: None,
-                encrypted_key: "dummy_key".to_string(),
-            };
-            MAX_RECIPIENT_SLOTS + 1
-        ];
+        let inflated_container = SecureContainer {
+            protected: String::new(),
+            unprotected: None,
+            recipients: vec![
+                JweRecipient {
+                    header: None,
+                    encrypted_key: "dummy_key".to_string(),
+                };
+                MAX_RECIPIENT_SLOTS + 1
+            ],
+            iv: String::new(),
+            ciphertext: String::new(),
+            tag: String::new(),
+            signature: String::new(),
+            et: EncryptionType::Asymmetric,
+            salt: None,
+            i: String::new(),
+            c: PayloadType::TrustAssertion,
+        };
         let integrity_res = inflated_container.verify_integrity();
         match integrity_res {
             Err(VoucherCoreError::ContainerValidation(msg)) => {

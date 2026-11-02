@@ -89,7 +89,7 @@ fn validate(payload: &BackupManifestPayload, key: &[u8; 32]) -> Result<(), Error
             &seal.payload.user_id,
             &seal.payload.instance_id
         )?,
-        SealValidationResult::Valid | SealValidationResult::LegacyValid
+        SealValidationResult::Valid
     ) {
         return Err(invalid("Invalid backup seal"));
     }
@@ -535,7 +535,7 @@ impl AppService {
                                 &identity.user_id,
                                 &record.seal.payload.instance_id
                             )?,
-                            SealValidationResult::Valid | SealValidationResult::LegacyValid
+                            SealValidationResult::Valid
                         )
                     {
                         last_known_seal = record.seal;

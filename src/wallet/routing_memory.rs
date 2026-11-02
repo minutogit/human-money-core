@@ -14,7 +14,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Maximum corridor weight (cap for asymptotic reinforcement).
 pub const CORRIDOR_CAP: u32 = 1000;
@@ -41,14 +41,8 @@ fn corridor_key(standard_uuid: &str, recipient_id: &str) -> String {
 pub struct CorridorEntry {
     /// Current corridor weight in 0..=1000.
     pub weight: u32,
-    /// Set of already counted `bundle_id`s for deduplication.
-    /// Kept with `#[serde(default)]` for seamless backward compatibility with
-    /// existing wallet files. New code also maintains `seen_bundle_timestamps`.
-    #[serde(default)]
-    pub seen_bundle_ids: HashSet<String>,
-    /// New: timestamped bundle deduplication map. Allows windowed expiry and
-    /// LRU eviction per corridor. `#[serde(default)]` ensures old wallets
-    /// (only `seen_bundle_ids`) deserialize cleanly.
+    /// Timestamped bundle deduplication map. Allows windowed expiry and
+    /// LRU eviction per corridor.
     #[serde(default)]
     pub seen_bundle_timestamps: HashMap<String, DateTime<Utc>>,
     /// Last access / update timestamp (used for lazy decay and LRU).
@@ -60,27 +54,8 @@ impl CorridorEntry {
     pub fn new(now: DateTime<Utc>) -> Self {
         Self {
             weight: 0,
-            seen_bundle_ids: HashSet::new(),
             seen_bundle_timestamps: HashMap::new(),
             last_update: now,
-        }
-    }
-
-    /// Migrate legacy `seen_bundle_ids` into `seen_bundle_timestamps` if the
-    /// latter is empty. Keeps `seen_bundle_ids` for backward-compatible writes.
-    pub fn migrate_legacy(&mut self) {
-        if self.seen_bundle_timestamps.is_empty() && !self.seen_bundle_ids.is_empty() {
-            for id in self.seen_bundle_ids.iter() {
-                self.seen_bundle_timestamps
-                    .insert(id.clone(), self.last_update);
-            }
-        }
-        // Ensure set and map stay in sync for legacy readers: populate set
-        // from timestamps if set is empty but map has entries (new→old compat).
-        if self.seen_bundle_ids.is_empty() && !self.seen_bundle_timestamps.is_empty() {
-            for k in self.seen_bundle_timestamps.keys() {
-                self.seen_bundle_ids.insert(k.clone());
-            }
         }
     }
 
@@ -91,8 +66,7 @@ impl CorridorEntry {
             let days = elapsed_secs / 86_400.0;
             days <= BUNDLE_DEDUP_WINDOW_DAYS
         } else {
-            // Fallback to legacy set if timestamp map not populated
-            self.seen_bundle_ids.contains(bundle_id)
+            false
         }
     }
 
@@ -110,7 +84,6 @@ impl CorridorEntry {
     /// Prune expired bundle IDs older than `BUNDLE_DEDUP_WINDOW_DAYS`.
     /// Returns number of entries removed.
     pub fn prune_expired_bundles(&mut self, now: DateTime<Utc>) -> usize {
-        self.migrate_legacy();
         let mut to_remove = Vec::new();
         for (bid, ts) in &self.seen_bundle_timestamps {
             let elapsed_secs = (now - *ts).num_seconds().max(0) as f64;
@@ -122,7 +95,6 @@ impl CorridorEntry {
         let n = to_remove.len();
         for bid in to_remove {
             self.seen_bundle_timestamps.remove(&bid);
-            self.seen_bundle_ids.remove(&bid);
         }
         n
     }
@@ -142,22 +114,13 @@ impl CorridorEntry {
         let to_evict = entries.len() - MAX_BUNDLE_IDS_PER_CORRIDOR;
         for (bid, _) in entries.iter().take(to_evict) {
             self.seen_bundle_timestamps.remove(bid);
-            self.seen_bundle_ids.remove(bid);
         }
     }
 
     /// Removes a bundle_id **only if it exists**. Returns true if removed.
     /// Conditional removal helper required by hardening spec.
     pub fn remove_bundle_id(&mut self, bundle_id: &str) -> bool {
-        let existed = self.seen_bundle_timestamps.contains_key(bundle_id)
-            || self.seen_bundle_ids.contains(bundle_id);
-        if existed {
-            self.seen_bundle_timestamps.remove(bundle_id);
-            self.seen_bundle_ids.remove(bundle_id);
-            true
-        } else {
-            false
-        }
+        self.seen_bundle_timestamps.remove(bundle_id).is_some()
     }
 
     /// Removes a bundle_id **only if it is expired** (older than dedup window).
@@ -212,7 +175,7 @@ impl CorridorEntry {
 
     /// Number of tracked bundle IDs (timestamp map size).
     pub fn bundle_count(&self) -> usize {
-        self.seen_bundle_timestamps.len().max(self.seen_bundle_ids.len())
+        self.seen_bundle_timestamps.len()
     }
 }
 
@@ -226,20 +189,10 @@ pub struct RoutingMemoryStore {
     pub corridors: HashMap<String, CorridorEntry>,
 }
 
-
-
 impl RoutingMemoryStore {
     /// Create a new empty store.
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Migrate legacy `seen_bundle_ids` into `seen_bundle_timestamps` for all
-    /// corridors. Called on wallet load to ensure backward compatibility.
-    pub fn migrate_legacy(&mut self) {
-        for entry in self.corridors.values_mut() {
-            entry.migrate_legacy();
-        }
     }
 
     /// Prune expired bundle IDs across all corridors at `now`.
@@ -351,10 +304,9 @@ impl RoutingMemoryStore {
             self.corridors.insert(key.clone(), CorridorEntry::new(now));
         }
         let entry = self.corridors.get_mut(&key).unwrap();
-        entry.migrate_legacy();
         entry.prune_expired_bundles(now);
         entry.apply_lazy_decay(now);
-        // Bundle deduplication via timestamp map (with fallback to legacy set)
+        // Bundle deduplication via timestamp map
         if entry.contains_bundle(bundle_id, now) {
             return false;
         }
@@ -370,12 +322,10 @@ impl RoutingMemoryStore {
                     .map(|(k, _)| k.clone())
                 {
                     entry.seen_bundle_timestamps.remove(&oldest);
-                    entry.seen_bundle_ids.remove(&oldest);
                 }
             }
         }
         entry.seen_bundle_timestamps.insert(bundle_id.to_string(), now);
-        entry.seen_bundle_ids.insert(bundle_id.to_string());
         entry.ensure_bundle_capacity();
         entry.reinforce();
         entry.last_update = now;
@@ -405,9 +355,8 @@ impl RoutingMemoryStore {
     }
 
     /// Apply lazy decay to all entries (e.g., on wallet load). Uses `now`.
-    /// Also migrates legacy dedup sets and prunes expired bundles.
+    /// Also prunes expired bundles.
     pub fn decay_all(&mut self, now: DateTime<Utc>) {
-        self.migrate_legacy();
         self.prune_expired_bundles(now);
         for entry in self.corridors.values_mut() {
             entry.apply_lazy_decay(now);
@@ -494,7 +443,6 @@ mod tests {
     fn test_lazy_decay_half_life() {
         let mut entry = CorridorEntry {
             weight: 1000,
-            seen_bundle_ids: HashSet::new(),
             seen_bundle_timestamps: HashMap::new(),
             last_update: fixed_time(0),
         };
@@ -535,7 +483,6 @@ mod tests {
             let key = format!("zero-weight-{}", i);
             store.insert_for_test(&key, "did:key:zBob", CorridorEntry {
                 weight: 0,
-                seen_bundle_ids: HashSet::new(),
                 seen_bundle_timestamps: HashMap::new(),
                 last_update: t1,
             });
@@ -544,7 +491,6 @@ mod tests {
         // Add 1 hot corridor with high weight updated at earlier t0 (old timestamp)
         store.insert_for_test("hot-corridor", "did:key:zBob", CorridorEntry {
             weight: 900,
-            seen_bundle_ids: HashSet::new(),
             seen_bundle_timestamps: HashMap::new(),
             last_update: t0,
         });
@@ -565,27 +511,11 @@ mod tests {
     }
 
     #[test]
-    fn test_migrate_legacy_seen_bundle_ids() {
-        // Simulate old wallet JSON with only seen_bundle_ids
-        let json = r#"{"weight":100,"seen_bundle_ids":["b1","b2"],"last_update":"2025-01-01T00:00:00Z"}"#;
-        let mut entry: CorridorEntry = serde_json::from_str(json).unwrap();
-        assert!(entry.seen_bundle_timestamps.is_empty());
-        entry.migrate_legacy();
-        assert_eq!(entry.seen_bundle_timestamps.len(), 2);
-        assert!(entry.seen_bundle_timestamps.contains_key("b1"));
-        assert!(entry.seen_bundle_timestamps.contains_key("b2"));
-        // IDs still present for backward compat
-        assert!(entry.seen_bundle_ids.contains("b1"));
-    }
-
-    #[test]
     fn test_prune_expired_bundles() {
         let mut entry = CorridorEntry::new(fixed_time(0));
         // Insert bundles at t0
         entry.seen_bundle_timestamps.insert("old".to_string(), fixed_time(0));
-        entry.seen_bundle_ids.insert("old".to_string());
         entry.seen_bundle_timestamps.insert("fresh".to_string(), fixed_time(80 * 86_400));
-        entry.seen_bundle_ids.insert("fresh".to_string());
         // Prune at 100 days: old (100d) > 90d window expires, fresh (20d) stays
         let now = fixed_time(100 * 86_400);
         let pruned = entry.prune_expired_bundles(now);
@@ -598,7 +528,6 @@ mod tests {
     fn test_remove_bundle_id_conditional() {
         let mut entry = CorridorEntry::new(fixed_time(0));
         entry.seen_bundle_timestamps.insert("b1".to_string(), fixed_time(0));
-        entry.seen_bundle_ids.insert("b1".to_string());
         // Remove only if exists -> true
         assert!(entry.remove_bundle_id("b1"));
         assert!(!entry.seen_bundle_timestamps.contains_key("b1"));
@@ -612,7 +541,6 @@ mod tests {
         let mut entry = CorridorEntry::new(fixed_time(0));
         for i in 0..(MAX_BUNDLE_IDS_PER_CORRIDOR + 10) {
             entry.seen_bundle_timestamps.insert(format!("b{}", i), fixed_time(i as i64));
-            entry.seen_bundle_ids.insert(format!("b{}", i));
         }
         assert!(entry.seen_bundle_timestamps.len() > MAX_BUNDLE_IDS_PER_CORRIDOR);
         entry.ensure_bundle_capacity();

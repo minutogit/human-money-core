@@ -68,11 +68,6 @@ const KDF_RAW: &str = "raw";
 /// File name of the sealed per-voucher manifest (extension deliberately not
 /// `.json` so record scanners never mistake it for a state record).
 const MANIFEST_FILE_NAME: &str = "archive_manifest.sealed";
-/// Legacy manifest format identifier (v1, plain id entries without freshness
-/// binding). Still READ for pre-existing installations; new writes always use
-/// [`MANIFEST_FORMAT_ID_V2`].
-#[allow(dead_code)]
-const MANIFEST_FORMAT_ID: &str = "hmc-archive-manifest-v1";
 /// Manifest format v2 (AUDIT-W4-STO-001): entries carry the SHA-3 hash of
 /// each record's envelope bytes so whole-record content substitution is
 /// detectable.
@@ -82,34 +77,6 @@ const MANIFEST_FORMAT_ID_V2: &str = "hmc-archive-manifest-v2";
 /// `O_EXCL` (`create_new(true)`) + `sync_all` before rename to prevent
 /// deterministic `*.tmp` races and symlink following.
 fn write_atomic_archive(dest: &Path, data: &[u8]) -> Result<(), StorageError> {
-    // Fault-injection compatibility: if legacy deterministic tmp exists, fail
-    let legacy_tmp = dest.with_file_name(format!(
-        "{}.tmp",
-        dest.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("tmp")
-    ));
-    if legacy_tmp.exists() {
-        return Err(StorageError::Io(format!(
-            "legacy tmp shadow exists at {} (fault injection)",
-            legacy_tmp.display()
-        )));
-    }
-    // For archive_voucher's `.json.tmp` pattern, also check that legacy sibling
-    let legacy_json_tmp = {
-        let fname = dest
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("tmp");
-        // e.g. dest "abc.json" -> legacy "abc.json.tmp"
-        dest.with_file_name(format!("{}.tmp", fname))
-    };
-    if legacy_json_tmp.exists() && legacy_json_tmp != legacy_tmp {
-        return Err(StorageError::Io(format!(
-            "legacy tmp shadow exists at {} (fault injection)",
-            legacy_json_tmp.display()
-        )));
-    }
     let mut nonce_bytes = [0u8; 16];
     OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = hex::encode(nonce_bytes);
@@ -158,9 +125,8 @@ fn write_atomic_archive(dest: &Path, data: &[u8]) -> Result<(), StorageError> {
 struct ManifestEntry {
     /// Basename (without `.json`) of the archived state.
     id: String,
-    /// SHA-3 hash of the envelope bytes on disk. `None` for legacy v1
-    /// manifests (no freshness binding available).
-    sha3: Option<String>,
+    /// SHA-3 hash of the envelope bytes on disk.
+    sha3: String,
 }
 
 /// Key source used to protect the archive records.
@@ -483,13 +449,6 @@ impl FileVoucherArchive {
             })?
             .iter()
             .map(|entry| {
-                if let Some(s) = entry.as_str() {
-                    // Legacy v1 entry: id only, no freshness binding.
-                    return Ok(ManifestEntry {
-                        id: s.to_string(),
-                        sha3: None,
-                    });
-                }
                 let obj = entry.as_object().ok_or_else(|| {
                     StorageError::IntegrityViolation(format!(
                         "Archive manifest {} contains an invalid record entry.",
@@ -502,10 +461,15 @@ impl FileVoucherArchive {
                         path.display()
                     ))
                 })?;
-                let sha3 = obj.get("sha3").and_then(|v| v.as_str()).map(String::from);
+                let sha3 = obj.get("sha3").and_then(|v| v.as_str()).ok_or_else(|| {
+                    StorageError::IntegrityViolation(format!(
+                        "Archive manifest {} contains a record entry without sha3.",
+                        path.display()
+                    ))
+                })?;
                 Ok(ManifestEntry {
                     id: id.to_string(),
-                    sha3,
+                    sha3: sha3.to_string(),
                 })
             })
             .collect::<Result<Vec<ManifestEntry>, StorageError>>()?;
@@ -766,7 +730,7 @@ impl FileVoucherArchive {
         // directory) is detected even though AEAD authenticates both records.
         let hash_by_id: std::collections::HashMap<&str, &str> = expected_entries
             .iter()
-            .filter_map(|e| e.sha3.as_deref().map(|h| (e.id.as_str(), h)))
+            .map(|e| (e.id.as_str(), e.sha3.as_str()))
             .collect();
 
         let mut states: Vec<Voucher> = Vec::new();

@@ -224,7 +224,7 @@ impl AppService {
         storage.recover_wallet_transaction(&AuthMethod::Password(password))?;
 
         // --- WALLET SEAL: Load seal and verify RAW state hash ---
-        let needs_legacy_binding = Self::verify_seal_on_login(&storage, password, &local_instance_id)?;
+        Self::verify_seal_on_login(&storage, password, &local_instance_id)?;
         // --- WALLET SEAL: Pre-Check END ---
 
         let (mut wallet, identity) = Wallet::load(&storage, &AuthMethod::Password(password), local_instance_id)
@@ -277,8 +277,8 @@ impl AppService {
             }
         }
 
-        // --- WALLET SEAL: Migration for existing wallets without seal or without InstanceID ---
-        Self::migrate_seal_on_login(&mut storage, &wallet, &identity, password, needs_legacy_binding)?;
+        // --- WALLET SEAL: Initialize seal for new wallets if not present ---
+        Self::initialize_seal_if_missing(&mut storage, &wallet, &identity, password)?;
         // --- WALLET SEAL END ---
 
         // Acquire lock

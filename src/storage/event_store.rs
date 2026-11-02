@@ -1,11 +1,10 @@
 //! # src/storage/event_store.rs
 //!
-//! Monthly-chunked wallet event persistence with legacy migration.
+//! Monthly-chunked wallet event persistence.
 //!
 //! Extracted from `file_storage.rs` (Streamline Phase-2). Events are grouped
 //! by `YYYY_MM` derived from `WalletEvent.timestamp` and stored as
-//! `events/YYYY_MM.json.enc`. A lazy migration converts a legacy monolithic
-//! `events.json.enc` into the chunked layout on the next `append_events` call.
+//! `events/YYYY_MM.json.enc`. The month-chunk store is the only canonical format.
 //! `load_events` streams chunks newest-first, honoring `offset`/`limit`.
 
 use std::collections::{HashMap, HashSet};
@@ -15,7 +14,7 @@ use super::{AuthMethod, StorageError};
 use crate::models::wallet_event::WalletEvent;
 use crate::services::crypto;
 use crate::storage::file_storage::{
-    EncryptedStorageContainer, FileStorage, EVENTS_DIR_NAME, LEGACY_EVENTS_FILE_NAME,
+    EncryptedStorageContainer, FileStorage, EVENTS_DIR_NAME,
 };
 
 type EventsStorageContainer = EncryptedStorageContainer;
@@ -107,12 +106,10 @@ fn merge_and_write_chunk(
     )
 }
 
-/// Appends `events` to the month-chunked store, performing lazy migration
-/// of a legacy `events.json.enc` if present.
+/// Appends `events` to the month-chunked store.
 ///
-/// Preserves the exact semantics of `FileStorage::append_events` including
-/// per-month grouping, deduplication by `event_id`, atomic writes via
-/// `FileStorage::write_atomic`, and legacy file removal after migration.
+/// Preserves per-month grouping, deduplication by `event_id`, and atomic writes
+/// via `FileStorage::write_atomic`.
 pub(crate) fn append_events(
     storage: &mut FileStorage,
     auth: &AuthMethod,
@@ -126,28 +123,7 @@ pub(crate) fn append_events(
     let events_dir = storage.user_storage_path.join(EVENTS_DIR_NAME);
     fs::create_dir_all(&events_dir)?;
 
-    // 1. Lazy Migration
-    let legacy_path = storage.user_storage_path.join(LEGACY_EVENTS_FILE_NAME);
-    if legacy_path.exists() {
-        let container_bytes = fs::read(&legacy_path)?;
-        let container: EventsStorageContainer = serde_json::from_slice(&container_bytes)
-            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-        let decrypted = crypto::decrypt_data(&file_key, &container.encrypted_store_payload)
-            .map_err(|e| {
-                StorageError::InvalidFormat(format!("Failed to decrypt legacy events: {}", e))
-            })?;
-        let legacy_events: Vec<WalletEvent> = serde_json::from_slice(&decrypted)
-            .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-        for (month, m_events) in group_events_by_month(legacy_events) {
-            merge_and_write_chunk(storage, &file_key, &month, m_events)?;
-        }
-
-        // Completion of migration
-        storage.remove_durable(LEGACY_EVENTS_FILE_NAME)?;
-    }
-
-    // 2. Group and append new events
+    // Group and append new events
     for (month, m_events) in group_events_by_month(events.iter().cloned()) {
         merge_and_write_chunk(storage, &file_key, &month, m_events)?;
     }
@@ -219,29 +195,6 @@ pub(crate) fn load_events(
         result.extend(page);
         remaining_limit -= to_take;
         current_offset = 0;
-    }
-
-    // 3. Legacy support (if migration has not run yet)
-    if remaining_limit > 0 {
-        let legacy_path = storage.user_storage_path.join(LEGACY_EVENTS_FILE_NAME);
-        if legacy_path.exists() {
-            let l_bytes = fs::read(&legacy_path)?;
-            let l_container: EventsStorageContainer = serde_json::from_slice(&l_bytes)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-            let l_decrypted = crypto::decrypt_data(&file_key, &l_container.encrypted_store_payload)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-            let mut l_events: Vec<WalletEvent> = serde_json::from_slice(&l_decrypted)
-                .map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
-
-            l_events.reverse();
-
-            let len = l_events.len();
-            if current_offset < len {
-                let to_take = std::cmp::min(remaining_limit, len - current_offset);
-                let page: Vec<_> = l_events.into_iter().skip(current_offset).take(to_take).collect();
-                result.extend(page);
-            }
-        }
     }
 
     Ok(result)

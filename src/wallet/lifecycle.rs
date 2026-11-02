@@ -251,8 +251,7 @@ impl Wallet {
         // --- END EXPIRATION SWEEP ---
 
         // --- ROUTING MEMORY MAINTENANCE ---
-        // Migrate legacy dedup sets and prune expired/decayed entries.
-        wallet.routing_memory.migrate_legacy();
+        // Prune expired/decayed entries.
         wallet.routing_memory.decay_all(now);
         // --- END ROUTING MEMORY MAINTENANCE ---
 

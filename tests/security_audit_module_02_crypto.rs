@@ -1620,8 +1620,6 @@ mod security_audit_module_02 {
             layer2_voucher_id: "voucher-B-of-victim".to_string(), // RELABELED
             t_id: t_id_bytes,
             sender_ephemeral_pub: spender_pk,
-            receiver_ephemeral_pub_hash: None,
-            change_ephemeral_pub_hash: None,
             layer2_signature: l2_signature,
             trap_r: Some(trap_r.clone()),
             trap_s: Some(trap_s.clone()),

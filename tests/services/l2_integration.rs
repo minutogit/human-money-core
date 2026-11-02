@@ -21,8 +21,6 @@ pub struct MockL2Node {
     // Simulates the L2 database (Key-Value)
     // Key: ds_tag (Base58), Value: L2LockEntry
     locks: HashMap<String, HashMap<String, human_money_core::models::layer2_api::L2LockEntry>>,
-    // Simulates the UTXO model for P2PKH anchors
-    spendable_outputs: HashSet<[u8; 32]>,
     // Private key of the L2 server for signing verdicts
     server_key: SigningKey,
 }
@@ -38,7 +36,6 @@ impl MockL2Node {
         Self {
             vouchers: HashSet::new(),
             locks: HashMap::new(),
-            spendable_outputs: HashSet::new(),
             server_key: SigningKey::generate(&mut rand::thread_rng()),
         }
     }
@@ -143,8 +140,6 @@ impl MockL2Node {
             layer2_voucher_id: req.layer2_voucher_id.clone(),
             t_id: req.transaction_hash,
             sender_ephemeral_pub: req.sender_ephemeral_pub,
-            receiver_ephemeral_pub_hash: req.receiver_ephemeral_pub_hash,
-            change_ephemeral_pub_hash: req.change_ephemeral_pub_hash,
             layer2_signature: req.layer2_signature,
             trap_r: req.trap_r.clone(),
             trap_s: req.trap_s.clone(),
@@ -154,14 +149,6 @@ impl MockL2Node {
             privacy_guard: req.privacy_guard.clone(),
         };
         voucher_locks.insert(ds_tag, entry.clone());
-
-        // Add new UTXOs
-        if let Some(r) = req.receiver_ephemeral_pub_hash {
-            self.spendable_outputs.insert(r);
-        }
-        if let Some(c) = req.change_ephemeral_pub_hash {
-            self.spendable_outputs.insert(c);
-        }
 
         let verdict = L2Verdict::Verified { lock_entry: entry };
         self.wrap_and_sign(verdict)
@@ -498,7 +485,7 @@ fn test_l2_signature_payload_manipulation() {
 
     // 5. Send manipulated request to L2 Node; the rejection MUST NOT mutate
     // any server-side state.
-    let outputs_before_rejection = mock_l2.spendable_outputs.clone();
+    let locks_before_rejection = mock_l2.locks.clone();
     let resp_manipulated = mock_l2.handle_lock_request(&req_manipulated_bytes);
     let envelope_manipulated: L2ResponseEnvelope =
         serde_json::from_slice(&resp_manipulated).unwrap();
@@ -511,9 +498,9 @@ fn test_l2_signature_payload_manipulation() {
     );
 
     // Verify that the manipulated request was rejected BEFORE mutating state:
-    // the UTXO set must be identical to the pre-rejection snapshot.
+    // the lock registry must be identical to the pre-rejection snapshot.
     assert_eq!(
-        mock_l2.spendable_outputs, outputs_before_rejection,
+        mock_l2.locks, locks_before_rejection,
         "A signature-invalid lock request must not alter server state"
     );
 }
@@ -642,8 +629,6 @@ fn test_l2_fake_double_spend_protection() {
         layer2_voucher_id: l2_voucher_id.clone(),
         t_id: fake_t_id,
         sender_ephemeral_pub: expected_ephem_pub,
-        receiver_ephemeral_pub_hash: None,
-        change_ephemeral_pub_hash: None,
         layer2_signature: [0u8; 64], // Invalid
         trap_r: Some("none".to_string()),
         trap_s: Some("none".to_string()),
@@ -705,8 +690,6 @@ fn test_l2_fake_double_spend_protection() {
         layer2_voucher_id: l2_voucher_id.clone(),
         t_id: fake_t_id,
         sender_ephemeral_pub: malicious_pub,
-        receiver_ephemeral_pub_hash: None,
-        change_ephemeral_pub_hash: None,
         layer2_signature: malicious_sig_b,
         trap_r: Some(fake_trap_r),
         trap_s: Some(fake_trap_s),
@@ -837,8 +820,6 @@ fn test_l2_voucher_id_mixup_protection() {
         layer2_voucher_id: fake_voucher_id,
         t_id: fake_t_id,
         sender_ephemeral_pub: expected_ephem_pub,
-        receiver_ephemeral_pub_hash: None,
-        change_ephemeral_pub_hash: None,
         layer2_signature: [0u8; 64],
         trap_r: Some("none".to_string()),
         trap_s: Some("none".to_string()),

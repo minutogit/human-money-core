@@ -15,6 +15,7 @@ use std::collections::{HashMap, VecDeque};
 /// This structure contains all necessary cryptographic information to prove a double spend,
 /// verify input authority via V4 signatures, and manage expired fingerprints.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[serde(deny_unknown_fields)]
 pub struct TransactionFingerprint {
     /// The double-spend tag (DS tag).
     /// This is the primary key used to group potential conflicts.

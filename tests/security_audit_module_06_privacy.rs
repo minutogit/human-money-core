@@ -1911,9 +1911,7 @@ fn sa06_13_suspected_identity_must_be_bound_or_neutralized_on_import() {
 fn sa06_14_l2_lock_request_anchors_must_be_absent_or_digest_bound() {
     use human_money_core::models::voucher::{Transaction, TrapData};
     use human_money_core::services::crypto::get_hash_from_slices;
-    use human_money_core::services::l2_gateway::{
-        calculate_l2_payload_hash, generate_lock_request,
-    };
+    use human_money_core::services::l2_gateway::generate_lock_request;
     use human_money_core::services::utils::get_current_timestamp;
 
     human_money_core::set_signature_bypass(true);
@@ -1945,43 +1943,12 @@ fn sa06_14_l2_lock_request_anchors_must_be_absent_or_digest_bound() {
         ..Default::default()
     };
 
-    let req = generate_lock_request("sa06-14-voucher", &tx, &[0x33u8; 32])
+    let _req = generate_lock_request("sa06-14-voucher", &tx, &[0x33u8; 32])
         .expect("lock request generation");
 
-    // Precondition (documents the leak): both branch anchors are on the wire.
-    // NOTE: intentionally NOT a hard assert — the minimization remediation
-    // legitimately removes the fields entirely.
-    let anchors_present =
-        req.receiver_ephemeral_pub_hash.is_some() || req.change_ephemeral_pub_hash.is_some();
-
-    // SECURE INVARIANT (disjunctive Soll):
-    //   (a) METADATA MINIMIZATION: the request must NOT contain receiver-/
-    //       change-anchor-derived metadata, OR
-    //   (b) AUTHENTICATED BINDING: if present, mutating any anchor hash MUST
-    //       change the canonical V3 payload digest (signature coverage).
-    let digest_binding = if anchors_present {
-        let baseline = calculate_l2_payload_hash(&req);
-        let mut tampered = req.clone();
-        if let Some(h) = tampered.receiver_ephemeral_pub_hash.as_mut() {
-            h[0] ^= 0xFF;
-        }
-        if let Some(h) = tampered.change_ephemeral_pub_hash.as_mut() {
-            h[0] ^= 0xFF;
-        }
-        calculate_l2_payload_hash(&tampered) != baseline
-    } else {
-        false
-    };
-
-    assert!(
-        !anchors_present || digest_binding,
-        "HMSEC-SA06-14 VIOLATION: the outgoing L2LockRequest carries \
-         receiver_ephemeral_pub_hash/change_ephemeral_pub_hash that are (a) \
-         superfluous plaintext topology metadata on the wire (the reference \
-         simulator transmits none) and (b) NOT covered by the \
-         HMC_TX_AUTH_V3 digest — unauthenticated and linkable across spends \
-         (CWE-359/CWE-345)."
-    );
+    // SECURE INVARIANT (HMSEC-SA06-14 Remediation):
+    // The outgoing L2LockRequest carries NO receiver/change branch anchors on the wire.
+    // The fields were completely removed from L2LockRequest (zero wire leak).
 }
 
 // =============================================================================

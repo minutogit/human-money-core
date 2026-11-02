@@ -187,7 +187,6 @@ fn test_get_event_history_merging() {
     // Ensure it has a newer timestamp
     event2.timestamp = Utc::now() + Duration::seconds(10);
     
-    let mut wallet = wallet;
     wallet.pending_events.push(event2);
     
     // 3. Query

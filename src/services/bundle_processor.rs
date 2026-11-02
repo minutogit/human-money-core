@@ -24,17 +24,6 @@ pub const MAX_FINGERPRINTS_PER_VOUCHER: usize = 10;
 pub const MAX_QUARANTINE_PAIRS_PER_VOUCHER: usize = 3;
 pub const MAX_WOT_SYNC_BYTES: usize = 65_536; // 64 KiB
 
-/// Deprecated static bundle limit alias, kept for backward compatibility and fuzzer guards:
-#[deprecated(
-    note = "Use MAX_VOUCHERS_PER_BUNDLE * MAX_FINGERPRINTS_PER_VOUCHER dynamically instead"
-)]
-pub const MAX_FORWARDED_FINGERPRINTS_PER_BUNDLE: usize =
-    MAX_VOUCHERS_PER_BUNDLE * MAX_FINGERPRINTS_PER_VOUCHER; // 320
-#[deprecated(
-    note = "Use MAX_VOUCHERS_PER_BUNDLE * MAX_QUARANTINE_PAIRS_PER_VOUCHER dynamically instead"
-)]
-pub const MAX_QUARANTINE_PAIRS_PER_BUNDLE: usize =
-    MAX_VOUCHERS_PER_BUNDLE * MAX_QUARANTINE_PAIRS_PER_VOUCHER; // 96
 
 /// Creates a `TransactionBundle`, wraps it in a `SecureContainer` and serializes it.
 /// This function is stateless and does not modify any wallet.

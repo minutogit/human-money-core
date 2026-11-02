@@ -237,16 +237,6 @@ pub fn generate_lock_request(
     )?;
 
     // SECURITY (HMSEC-SA06-14): Metadata minimization on the L2 wire.
-    // The receiver-/change-anchor hashes of both output branches are NOT
-    // consumed by the lock protocol (the reference client sends none) and
-    // are NOT bound into the authenticating digest, so publishing them would
-    // leak the topology/split-degree of otherwise-anonymous spends and
-    // enable output-graph correlation across lock requests. They are
-    // therefore never emitted; the fields remain in the wire model for
-    // deserialization compatibility with legacy peers.
-    let receiver_ephemeral_pub_hash: Option<[u8; 32]> = None;
-    let change_ephemeral_pub_hash: Option<[u8; 32]> = None;
-
     // SECURITY: Fail closed on malformed signatures as well.
     let layer2_sig_str = transaction
         .layer2_signature
@@ -276,8 +266,6 @@ pub fn generate_lock_request(
         transaction_hash: t_id,
         is_genesis,
         sender_ephemeral_pub,
-        receiver_ephemeral_pub_hash,
-        change_ephemeral_pub_hash,
         layer2_signature,
         trap_r,
         trap_s,
@@ -991,8 +979,6 @@ pub fn build_anchor_genesis_lock(
         transaction_hash: *state_hash,
         is_genesis: true,
         sender_ephemeral_pub: step_pub_bytes,
-        receiver_ephemeral_pub_hash: None,
-        change_ephemeral_pub_hash: None,
         layer2_signature: sig.to_bytes(),
         trap_r: Some(TRAP_NONE_PLACEHOLDER.into()),
         trap_s: Some(TRAP_NONE_PLACEHOLDER.into()),
@@ -1042,8 +1028,6 @@ pub fn build_anchor_leap_lock(
         transaction_hash: *target_state_hash,
         is_genesis: false,
         sender_ephemeral_pub: step_pub_bytes,
-        receiver_ephemeral_pub_hash: None,
-        change_ephemeral_pub_hash: None,
         layer2_signature: sig.to_bytes(),
         trap_r: Some(TRAP_NONE_PLACEHOLDER.into()),
         trap_s: Some(TRAP_NONE_PLACEHOLDER.into()),
@@ -1362,11 +1346,12 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     fn make_dummy_attestation(node_id: u16, _shard_id: u16, lock_id: &str) -> AttestationDto {
+        let dummy_key = [node_id as u8; 32];
         AttestationDto {
             lock_id: lock_id.to_string(),
             parent_lock: "test_parent_lock".to_string(),
             node_id,
-            node_pubkey: String::new(),
+            node_pubkey: hex::encode(dummy_key),
             timestamp: 1_000_000,
             signature: "dummy_sig_hex".to_string(),
             shard_id: _shard_id,
@@ -1516,8 +1501,6 @@ mod tests {
             layer2_voucher_id: voucher_id.to_string(),
             t_id: existing_t_id,
             sender_ephemeral_pub: *conflict_pk.as_bytes(),
-            receiver_ephemeral_pub_hash: None,
-            change_ephemeral_pub_hash: None,
             layer2_signature: conflict_sig.to_bytes(),
             trap_r: Some("none".to_string()),
             trap_s: Some("none".to_string()),
@@ -1592,8 +1575,6 @@ mod tests {
             layer2_voucher_id: voucher_id.clone(),
             t_id,
             sender_ephemeral_pub: *client_pk.as_bytes(),
-            receiver_ephemeral_pub_hash: None,
-            change_ephemeral_pub_hash: None,
             layer2_signature: client_sig.to_bytes(),
             trap_r: Some(TRAP_NONE_PLACEHOLDER.to_string()),
             trap_s: Some(TRAP_NONE_PLACEHOLDER.to_string()),
@@ -1712,8 +1693,6 @@ mod tests {
             transaction_hash: t_id,
             is_genesis: true,
             sender_ephemeral_pub: pk1,
-            receiver_ephemeral_pub_hash: None,
-            change_ephemeral_pub_hash: None,
             layer2_signature: sig,
             trap_r: Some(TRAP_NONE_PLACEHOLDER.to_string()),
             trap_s: Some(TRAP_NONE_PLACEHOLDER.to_string()),
@@ -1733,8 +1712,6 @@ mod tests {
             transaction_hash: [0x33u8; 32],
             is_genesis: false,
             sender_ephemeral_pub: pk2,
-            receiver_ephemeral_pub_hash: None,
-            change_ephemeral_pub_hash: None,
             layer2_signature: sig,
             trap_r: Some("trapR".to_string()),
             trap_s: Some("trapS".to_string()),

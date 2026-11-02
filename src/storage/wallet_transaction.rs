@@ -112,7 +112,6 @@ fn managed_base(name: &str) -> bool {
             | "active_gossip.enc"
             | "seal.enc"
             | "storage_integrity.json"
-            | "events.json.enc"
             | ".wallet.generation"
     ) || (name.starts_with("generic_") && name.ends_with(".enc"))
 }
@@ -632,23 +631,13 @@ mod tests {
         let key = storage
             .get_master_key_from_auth(&AuthMethod::Password(PASSWORD))
             .expect("fixture key");
-        // Valid empty encrypted stores exercise physical proof deletion and event migration.
+        // Valid empty encrypted stores exercise physical proof deletion.
         storage
             .write_atomic(
                 "proofs.enc",
                 &encrypted(&key, &crate::models::conflict::ProofStore::default()).expect("proofs"),
             )
             .expect("seed proofs");
-        storage
-            .write_atomic(
-                "events.json.enc",
-                &encrypted(
-                    &key,
-                    &Vec::<crate::models::wallet_event::WalletEvent>::new(),
-                )
-                .expect("events"),
-            )
-            .expect("seed events");
         service.logout();
         fs::write(base.join(FOLDER), &profile.folder_name).expect("folder");
         profile.folder_name
@@ -768,7 +757,6 @@ mod tests {
             "delete:proofs.enc",
             "write:active_gossip.enc",
             &event,
-            "delete:events.json.enc",
             "write:.wallet.generation",
             "write:seal.enc",
             "write:storage_integrity.json",
