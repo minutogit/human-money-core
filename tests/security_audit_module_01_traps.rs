@@ -493,6 +493,7 @@ mod security_audit_module_01 {
             sender_profile_name: None,
             use_privacy_mode: None,
             wot_sync_json: None,
+            contact_card_json: None,
         };
         alice
             .unlock_session(PASSWORD, 300)
@@ -1235,6 +1236,7 @@ mod security_audit_module_01 {
             sender_profile_name: None,
             use_privacy_mode: None,
             wot_sync_json: None,
+            contact_card_json: None,
         };
         let result = alice
             .create_transfer_bundle(request, &standards_map, None, Some(PASSWORD))
@@ -1420,6 +1422,7 @@ mod security_audit_module_01 {
             sender_profile_name: None,
             use_privacy_mode: None,
             wot_sync_json: None,
+            contact_card_json: None,
         };
         let honest = alice
             .create_transfer_bundle(request, &standards_map, None, Some(PASSWORD))
@@ -1942,6 +1945,7 @@ mod security_audit_module_01 {
             sender_profile_name: None,
             use_privacy_mode: None,
             wot_sync_json: None,
+            contact_card_json: None,
         };
         let result = alice
             .create_transfer_bundle(request, &standards_map, None, Some(PASSWORD))

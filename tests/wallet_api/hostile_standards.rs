@@ -68,6 +68,7 @@ fn test_disallowed_transaction_type() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let mut standards_toml = std::collections::HashMap::new();

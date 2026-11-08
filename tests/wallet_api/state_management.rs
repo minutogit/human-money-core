@@ -518,6 +518,7 @@ fn api_wallet_save_and_load_fidelity() {
             sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(freetaler_standard.immutable.identity.uuid.clone(), freetaler_toml.clone());
@@ -566,6 +567,7 @@ fn api_wallet_save_and_load_fidelity() {
                 sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
             };
 
             let mut standards_toml = std::collections::HashMap::new();
@@ -600,6 +602,7 @@ fn api_wallet_save_and_load_fidelity() {
             sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
         };
         let mut standards_toml = std::collections::HashMap::new();
         standards_toml.insert(freetaler_standard.immutable.identity.uuid.clone(), freetaler_toml.clone());
@@ -865,6 +868,7 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let result_actor =
@@ -894,6 +898,7 @@ fn test_concurrent_app_service_causes_stale_state_double_spend() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let result_stale =

@@ -62,6 +62,7 @@ fn test_chained_workflow_strict_public() {
             sender_profile_name: None,
             use_privacy_mode: Some(true), 
             wot_sync_json: None,
+            contact_card_json: None,
         },
         None
     ).is_err(), "Public standard should reject use_privacy_mode=true");
@@ -75,6 +76,7 @@ fn test_chained_workflow_strict_public() {
             sender_profile_name: None,
             use_privacy_mode: Some(false),
             wot_sync_json: None,
+            contact_card_json: None,
         },
         None
     ).expect("Alice transfer to Bob failed");
@@ -99,6 +101,7 @@ fn test_chained_workflow_strict_public() {
             sender_profile_name: None,
             use_privacy_mode: None,
             wot_sync_json: None,
+            contact_card_json: None,
         },
         None
     ).expect("Bob transfer to Charlie failed");
@@ -141,6 +144,7 @@ fn test_chained_workflow_strict_private() {
         recipient_id: ACTORS.bob.user_id.clone(),
         sources: vec![SourceTransfer { local_instance_id: local_id, amount_to_send: "60".to_string() }],
         notes: None, sender_profile_name: None, use_privacy_mode: None, wot_sync_json: None,
+        contact_card_json: None,
     }, None).unwrap();
     bob.process_encrypted_transaction_bundle(&ACTORS.bob.identity, &bundle_bytes, None, &standards_map).expect("Bob processing failed");
 
@@ -154,6 +158,7 @@ fn test_chained_workflow_strict_private() {
         recipient_id: ACTORS.charlie.user_id.clone(),
         sources: vec![SourceTransfer { local_instance_id: get_first_local_id(&bob), amount_to_send: "20".to_string() }],
         notes: None, sender_profile_name: None, use_privacy_mode: None, wot_sync_json: None,
+        contact_card_json: None,
     }, None).unwrap();
     charlie.process_encrypted_transaction_bundle(&ACTORS.charlie.identity, &bundle_bytes, None, &standards_map).unwrap();
 
@@ -167,6 +172,7 @@ fn test_chained_workflow_strict_private() {
         recipient_id: ACTORS.david.user_id.clone(),
         sources: vec![SourceTransfer { local_instance_id: get_first_local_id(&charlie), amount_to_send: "20".to_string() }],
         notes: None, sender_profile_name: None, use_privacy_mode: None, wot_sync_json: None,
+        contact_card_json: None,
     }, None).unwrap();
     dave.process_encrypted_transaction_bundle(&ACTORS.david.identity, &bundle_bytes, None, &standards_map).unwrap();
 
@@ -202,6 +208,7 @@ fn test_chained_workflow_ultimate_flexible() {
         recipient_id: ACTORS.bob.user_id.clone(),
         sources: vec![SourceTransfer { local_instance_id: local_id, amount_to_send: "50".to_string() }],
         notes: None, sender_profile_name: None, use_privacy_mode: Some(false), wot_sync_json: None,
+        contact_card_json: None,
     }, None).unwrap();
     bob.process_encrypted_transaction_bundle(&ACTORS.bob.identity, &bundle_bytes, None, &standards_map).unwrap();
 
@@ -215,6 +222,7 @@ fn test_chained_workflow_ultimate_flexible() {
         recipient_id: ACTORS.charlie.user_id.clone(),
         sources: vec![SourceTransfer { local_instance_id: get_first_local_id(&bob), amount_to_send: "30".to_string() }],
         notes: None, sender_profile_name: None, use_privacy_mode: Some(true), wot_sync_json: None,
+        contact_card_json: None,
     }, None).expect("Bob private split failed");
     charlie.process_encrypted_transaction_bundle(&ACTORS.charlie.identity, &bundle_bytes, None, &standards_map).unwrap();
     
@@ -228,6 +236,7 @@ fn test_chained_workflow_ultimate_flexible() {
         recipient_id: ACTORS.david.user_id.clone(),
         sources: vec![SourceTransfer { local_instance_id: get_first_local_id(&charlie), amount_to_send: "30".to_string() }],
         notes: None, sender_profile_name: None, use_privacy_mode: Some(false), wot_sync_json: None,
+        contact_card_json: None,
     }, None).unwrap();
     dave.process_encrypted_transaction_bundle(&ACTORS.david.identity, &bundle_bytes, None, &standards_map).unwrap();
 
@@ -236,6 +245,7 @@ fn test_chained_workflow_ultimate_flexible() {
         recipient_id: ACTORS.david.user_id.clone(),
         sources: vec![SourceTransfer { local_instance_id: get_first_local_id(&alice), amount_to_send: "50".to_string() }],
         notes: None, sender_profile_name: None, use_privacy_mode: Some(true), wot_sync_json: None,
+        contact_card_json: None,
     }, None).unwrap();
     dave.process_encrypted_transaction_bundle(&ACTORS.david.identity, &bundle_bytes, None, &standards_map).unwrap();
 

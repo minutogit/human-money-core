@@ -301,6 +301,7 @@ fn test_rejection_of_self_received_bundle() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let bundle_result = service_sender
@@ -393,6 +394,7 @@ fn test_rejection_of_identical_bundle_replay() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let bundle_result = service_sender
@@ -633,6 +635,7 @@ fn test_rejection_of_bundle_for_different_prefix_same_identity() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let bundle_result = service_sender

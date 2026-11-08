@@ -55,6 +55,10 @@ pub struct MultiTransferRequest {
     /// Optional serialized WOT sync package for trust graph piggybacking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wot_sync_json: Option<String>,
+    /// Optional serialized contact card JSON for marketplace piggybacking.
+    /// This field is an opaque transport payload, not interpreted by `human-money-core`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contact_card_json: Option<String>,
 }
 
 impl MultiTransferRequest {
@@ -66,6 +70,7 @@ impl MultiTransferRequest {
             sender_profile_name: None,
             use_privacy_mode: None,
             wot_sync_json: None,
+            contact_card_json: None,
         }
     }
 }
@@ -102,6 +107,10 @@ pub struct ProcessBundleResult {
     /// Optional piggybacked WOT sync package extracted from the bundle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wot_sync_json: Option<String>,
+    /// Optional piggybacked contact card JSON extracted from the bundle.
+    /// This field is an opaque transport payload, not interpreted by `human-money-core`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contact_card_json: Option<String>,
 }
 
 /// The result of a double-spend check.

@@ -176,6 +176,7 @@ mod tests {
             sender_profile_name: Some("Alice".to_string()),
             use_privacy_mode: None,
             wot_sync_json: None,
+            contact_card_json: None,
         };
         let bundle = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None).unwrap();
         
@@ -193,6 +194,7 @@ mod tests {
             sender_profile_name: Some("Bob".to_string()),
             use_privacy_mode: None,
             wot_sync_json: None,
+            contact_card_json: None,
         };
         bob_wallet.execute_multi_transfer_and_bundle(&bob.identity, &standards, request, None).unwrap();
 
@@ -232,6 +234,7 @@ mod tests {
             sender_profile_name: Some("Alice".to_string()),
             use_privacy_mode: Some(true),
             wot_sync_json: None,
+            contact_card_json: None,
         };
         let bundle = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None).unwrap();
         let bob_receive = bob_wallet.process_encrypted_transaction_bundle(&bob.identity, &bundle.bundle_bytes, None, &standards).unwrap();
@@ -248,6 +251,7 @@ mod tests {
             sender_profile_name: Some("Bob".to_string()),
             use_privacy_mode: Some(true),
             wot_sync_json: None,
+            contact_card_json: None,
         };
         let bundle = bob_wallet.execute_multi_transfer_and_bundle(&bob.identity, &standards, request, None).unwrap();
         let charlie_receive = charlie_wallet.process_encrypted_transaction_bundle(&charlie.identity, &bundle.bundle_bytes, None, &standards).unwrap();
@@ -292,6 +296,7 @@ mod tests {
             sender_profile_name: Some("Alice".to_string()),
             use_privacy_mode: Some(true), // <<--- TOGGLE PRIVACY ON
             wot_sync_json: None,
+            contact_card_json: None,
         };
 
         let bundle = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None).unwrap();
@@ -339,6 +344,7 @@ mod tests {
             sender_profile_name: None,
             use_privacy_mode: Some(true),
             wot_sync_json: None,
+            contact_card_json: None,
         };
 
         let result = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None);

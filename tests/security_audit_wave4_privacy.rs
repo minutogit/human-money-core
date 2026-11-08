@@ -182,6 +182,7 @@ fn wh4_06_701_received_notes_must_be_sanitized_and_bounded_in_bundle_history() {
                 sender_profile_name: None,
                 use_privacy_mode: None,
                 wot_sync_json: None,
+                contact_card_json: None,
             },
             None,
         )
@@ -269,6 +270,7 @@ fn wh4_06_701_received_notes_must_be_sanitized_and_bounded_in_bundle_history() {
                 sender_profile_name: None,
                 use_privacy_mode: None,
                 wot_sync_json: None,
+                contact_card_json: None,
             },
             None,
         )

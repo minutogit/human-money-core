@@ -110,10 +110,11 @@ impl Wallet {
             quarantine_pairs,
             sender_profile_name,
             None,
+            None,
         )
     }
 
-    /// Creates a `TransactionBundle` with optional piggybacked WOT sync package, packages it, and updates the wallet state.
+    /// Creates a `TransactionBundle` with optional piggybacked WOT sync package and contact card, packages it, and updates the wallet state.
     #[allow(clippy::too_many_arguments)]
     pub fn create_and_encrypt_transaction_bundle_with_wot(
         &mut self,
@@ -125,6 +126,7 @@ impl Wallet {
         quarantine_pairs: Vec<[crate::models::conflict::TransactionFingerprint; 2]>,
         sender_profile_name: Option<String>,
         wot_sync_json: Option<String>,
+        contact_card_json: Option<String>,
     ) -> Result<(Vec<u8>, TransactionBundleHeader), VoucherCoreError> {
         for v in &vouchers {
             let local_id = Self::calculate_local_instance_id(v, &identity.user_id)?;
@@ -157,6 +159,7 @@ impl Wallet {
                 sender_profile_name,
                 causal_outputs,
                 wot_sync_json,
+                contact_card_json,
             )?;
 
         let header = bundle.to_header(TransactionDirection::Sent);
@@ -578,6 +581,7 @@ impl Wallet {
             involved_vouchers,
             involved_vouchers_details,
             wot_sync_json: bundle.wot_sync_json,
+            contact_card_json: bundle.contact_card_json,
         })
     }
 
@@ -1137,6 +1141,7 @@ impl Wallet {
             quarantine_pairs_to_send,
             request.sender_profile_name,
             request.wot_sync_json,
+            request.contact_card_json,
         )?;
 
         // 4. **Commit:** If all operations were successful, replace the

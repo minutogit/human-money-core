@@ -298,6 +298,7 @@ mod tests {
             sender_profile_name: None,
             use_privacy_mode: None,
             wot_sync_json: None,
+            contact_card_json: None,
         };
 
         let bundle_res = alice_service

@@ -632,6 +632,7 @@ fn w4_wc_003_spending_garbage_ttime_voucher_must_fail_gracefully_regression_guar
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
     let mut standards_toml = HashMap::new();
     standards_toml.insert(

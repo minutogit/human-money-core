@@ -107,6 +107,7 @@ fn api_app_service_full_lifecycle() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
     let mut standards_toml = std::collections::HashMap::new();
     standards_toml.insert(standard.immutable.identity.uuid.clone(), freetaler_standard_toml.clone());
@@ -432,6 +433,7 @@ fn api_wallet_transfer_full_amount() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -505,6 +507,7 @@ fn api_wallet_transfer_split_amount() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -573,6 +576,7 @@ fn api_wallet_transfer_invalid_amount() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -601,6 +605,7 @@ fn api_wallet_transfer_invalid_amount() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -654,6 +659,7 @@ fn api_wallet_transfer_inactive_voucher() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -705,6 +711,7 @@ fn api_wallet_proactive_double_spend_prevention() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -727,6 +734,7 @@ fn api_wallet_proactive_double_spend_prevention() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -1124,6 +1132,7 @@ fn api_wallet_transfer_multi_source() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();
@@ -1181,5 +1190,251 @@ fn api_wallet_transfer_multi_source() {
         2,
         "Bob should have received two new vouchers"
     );
+}
+
+#[test]
+fn test_app_service_transfer_with_contact_card_roundtrip() {
+    let freetaler_standard_toml =
+        generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
+    let (standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
+    let dir_alice = tempdir().expect("Failed to create temp dir for Alice");
+    let dir_bob = tempdir().expect("Failed to create temp dir for Bob");
+
+    let (mut service_alice, _) =
+        setup_service_with_profile(dir_alice.path(), &ACTORS.alice, "Alice", "password");
+    let (mut service_bob, _) =
+        setup_service_with_profile(dir_bob.path(), &ACTORS.bob, "Bob", "password");
+
+    let id_alice = service_alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+    let id_bob = service_bob.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+
+    service_alice.unlock_session("password", 60).unwrap();
+    service_alice
+        .create_new_voucher(
+            &freetaler_standard_toml,
+            NewVoucherData {
+                nominal_value: ValueDefinition {
+                    amount: "50".to_string(),
+                    ..Default::default()
+                },
+                creator_profile: PublicProfile {
+                    id: Some(id_alice.clone()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some("password"),
+        )
+        .unwrap();
+
+    let summaries_alice = service_alice
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
+    let local_id_alice = summaries_alice[0].local_instance_id.clone();
+
+    let card_json = r#"{"name":"Alice","skills":["Rust","Decentralization"]}"#.to_string();
+
+    let request = human_money_core::wallet::MultiTransferRequest {
+        recipient_id: id_bob.clone(),
+        sources: vec![human_money_core::wallet::SourceTransfer {
+            local_instance_id: local_id_alice.clone(),
+            amount_to_send: "50".to_string(),
+        }],
+        notes: Some("Payment with business card".to_string()),
+        sender_profile_name: Some("Alice".to_string()),
+        use_privacy_mode: None,
+        wot_sync_json: None,
+        contact_card_json: Some(card_json.clone()),
+    };
+
+    let mut standards_toml = std::collections::HashMap::new();
+    standards_toml.insert(standard.immutable.identity.uuid.clone(), freetaler_standard_toml.clone());
+
+    let create_res = service_alice
+        .create_transfer_bundle(request, &standards_toml, None, Some("password"))
+        .expect("Transfer creation with contact_card_json must succeed");
+
+    service_bob.unlock_session("password", 60).unwrap();
+    let receive_res = service_bob
+        .receive_bundle(&create_res.bundle_bytes, &standards_toml, None, Some("password"), false)
+        .expect("Receive bundle must succeed");
+
+    assert_eq!(receive_res.contact_card_json, Some(card_json));
+    let bob_vouchers = service_bob
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
+    assert_eq!(bob_vouchers.len(), 1);
+    assert_eq!(bob_vouchers[0].status, VoucherStatus::Active);
+    assert_eq!(bob_vouchers[0].current_amount, "50.00");
+}
+
+#[test]
+fn test_app_service_transfer_with_oversized_contact_card_fails_creation() {
+    let freetaler_standard_toml =
+        generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
+    let (standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
+    let dir_alice = tempdir().expect("Failed to create temp dir for Alice");
+
+    let (mut service_alice, _) =
+        setup_service_with_profile(dir_alice.path(), &ACTORS.alice, "Alice", "password");
+    let id_alice = service_alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+
+    service_alice.unlock_session("password", 60).unwrap();
+    service_alice
+        .create_new_voucher(
+            &freetaler_standard_toml,
+            NewVoucherData {
+                nominal_value: ValueDefinition {
+                    amount: "50".to_string(),
+                    ..Default::default()
+                },
+                creator_profile: PublicProfile {
+                    id: Some(id_alice.clone()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some("password"),
+        )
+        .unwrap();
+
+    let summaries_alice = service_alice
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
+    let local_id_alice = summaries_alice[0].local_instance_id.clone();
+
+    let oversized_card = "c".repeat(human_money_core::services::bundle_processor::MAX_CONTACT_CARD_JSON_BYTES + 1);
+
+    let request = human_money_core::wallet::MultiTransferRequest {
+        recipient_id: ACTORS.bob.user_id.clone(),
+        sources: vec![human_money_core::wallet::SourceTransfer {
+            local_instance_id: local_id_alice,
+            amount_to_send: "50".to_string(),
+        }],
+        notes: None,
+        sender_profile_name: None,
+        use_privacy_mode: None,
+        wot_sync_json: None,
+        contact_card_json: Some(oversized_card),
+    };
+
+    let mut standards_toml = std::collections::HashMap::new();
+    standards_toml.insert(standard.immutable.identity.uuid.clone(), freetaler_standard_toml);
+
+    let result = service_alice.create_transfer_bundle(request, &standards_toml, None, Some("password"));
+    assert!(result.is_err(), "Oversized contact card must fail on creation");
+    assert!(matches!(
+        result.unwrap_err(),
+        human_money_core::Error::Validation(human_money_core::ValidationError::InvalidTransaction(_))
+    ));
+}
+
+#[test]
+fn test_app_service_receive_oversized_contact_card_succeeds_and_drops_field() {
+    use human_money_core::models::secure_container::{SecureContainer, ContainerConfig, PrivacyMode, PayloadType};
+    use human_money_core::services::crypto::{get_hash, sign_ed25519};
+    use human_money_core::services::utils::to_canonical_json;
+
+    let freetaler_standard_toml =
+        generate_signed_standard_toml("voucher_standards/freetaler_v1/standard.toml");
+    let (standard, _) = (&FREETALER_STANDARD.0, &FREETALER_STANDARD.1);
+    let dir_alice = tempdir().expect("Failed to create temp dir for Alice");
+    let dir_bob = tempdir().expect("Failed to create temp dir for Bob");
+
+    let (mut service_alice, _) =
+        setup_service_with_profile(dir_alice.path(), &ACTORS.alice, "Alice", "password");
+    let (mut service_bob, _) =
+        setup_service_with_profile(dir_bob.path(), &ACTORS.bob, "Bob", "password");
+
+    let id_alice = service_alice.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+    let id_bob = service_bob.with_wallet(|w| w.get_user_id().to_string()).unwrap();
+
+    service_alice.unlock_session("password", 60).unwrap();
+    service_alice
+        .create_new_voucher(
+            &freetaler_standard_toml,
+            NewVoucherData {
+                nominal_value: ValueDefinition {
+                    amount: "50".to_string(),
+                    ..Default::default()
+                },
+                creator_profile: PublicProfile {
+                    id: Some(id_alice.clone()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some("password"),
+        )
+        .unwrap();
+
+    let summaries_alice = service_alice
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
+    let local_id_alice = summaries_alice[0].local_instance_id.clone();
+
+    // Normal valid bundle creation without card
+    let request = human_money_core::wallet::MultiTransferRequest {
+        recipient_id: id_bob.clone(),
+        sources: vec![human_money_core::wallet::SourceTransfer {
+            local_instance_id: local_id_alice,
+            amount_to_send: "50".to_string(),
+        }],
+        notes: None,
+        sender_profile_name: None,
+        use_privacy_mode: None,
+        wot_sync_json: None,
+        contact_card_json: None,
+    };
+
+    let mut standards_toml = std::collections::HashMap::new();
+    standards_toml.insert(standard.immutable.identity.uuid.clone(), freetaler_standard_toml.clone());
+
+    let create_res = service_alice
+        .create_transfer_bundle(request, &standards_toml, None, Some("password"))
+        .unwrap();
+
+    // Now Alice's identity re-wraps the transferred voucher in a bundle with >8192 bytes contact_card_json
+    let container_bytes_with_oversized_card = service_alice.with_wallet_and_identity(|_w, alice_id| {
+        let open_container: SecureContainer = serde_json::from_slice(&create_res.bundle_bytes).unwrap();
+        let decrypted_bytes = open_container.open(alice_id, None).unwrap();
+        let mut bundle: human_money_core::models::profile::TransactionBundle = serde_json::from_slice(&decrypted_bytes).unwrap();
+
+        // Attach oversized card (>8192 bytes)
+        let oversized_card = "c".repeat(human_money_core::services::bundle_processor::MAX_CONTACT_CARD_JSON_BYTES + 500);
+        bundle.contact_card_json = Some(oversized_card);
+
+        // Recompute bundle_id and sign
+        bundle.bundle_id = String::new();
+        bundle.sender_signature = String::new();
+        bundle.bundle_id = get_hash(to_canonical_json(&bundle).unwrap());
+        let sig = sign_ed25519(&alice_id.signing_key, bundle.bundle_id.as_bytes());
+        bundle.sender_signature = bs58::encode(sig.to_bytes()).into_string();
+
+        let bundle_bytes = serde_json::to_vec(&bundle).unwrap();
+        let container = SecureContainer::seal(
+            alice_id,
+            &ContainerConfig::TargetDid(id_bob.clone(), PrivacyMode::TrialDecryption),
+            &bundle_bytes,
+            PayloadType::TransactionBundle,
+        ).unwrap();
+        Ok::<_, human_money_core::Error>(serde_json::to_vec(&container).unwrap())
+    }).unwrap().unwrap();
+
+    service_bob.unlock_session("password", 60).unwrap();
+    let receive_res = service_bob
+        .receive_bundle(&container_bytes_with_oversized_card, &standards_toml, None, Some("password"), false)
+        .expect("Receive of oversized contact card must succeed and NOT reject payment");
+
+    // contact_card_json is safely dropped to None!
+    assert_eq!(receive_res.contact_card_json, None);
+
+    // Voucher is correctly accepted into Bob's wallet!
+    let bob_vouchers = service_bob
+        .with_wallet_and_identity(|w, id| w.list_vouchers(Some(id), None, None, None))
+        .unwrap();
+    assert_eq!(bob_vouchers.len(), 1);
+    assert_eq!(bob_vouchers[0].status, VoucherStatus::Active);
+    assert_eq!(bob_vouchers[0].current_amount, "50.00");
 }
 

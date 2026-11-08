@@ -98,10 +98,16 @@ These methods modify the wallet state and require authentication.
 
 #### `pub fn create_transfer_bundle(...) -> Result<CreateBundleResult, String>`
 * **Description:** The primary function for **sending** value. It bundles one or more voucher `sources` into an encrypted `SecureContainer` (returned as `bundle_bytes: Vec<u8>`) for the recipient.
+* **Payload Piggybacking (`MultiTransferRequest`):**
+    * `wot_sync_json`: Optional serialized Web of Trust sync package (max 64 KiB, `MAX_WOT_SYNC_BYTES`).
+    * `contact_card_json`: Optional serialized contact card JSON for marketplace piggybacking (max 8 KiB, `MAX_CONTACT_CARD_JSON_BYTES`). Opaque transport payload not interpreted by core. Exceeding 8192 bytes fails creation with `ValidationError::InvalidTransaction`.
 * **Auth:** Requires `password: Option<&str>`.
 
 #### `pub fn receive_bundle(...) -> Result<ProcessBundleResult, String>`
 * **Description:** The primary function for **receiving** value. It processes a `bundle_data` blob. It validates the transaction, checks for double-spending, and adds the new value to the wallet.
+* **Payload Piggybacking (`ProcessBundleResult`):**
+    * `wot_sync_json`: Extracted Web of Trust sync package, if present.
+    * `contact_card_json`: Extracted contact card JSON, if present. If received `contact_card_json` exceeds `MAX_CONTACT_CARD_JSON_BYTES` (8192 bytes), it is safely dropped (`None`) after signature verification; the payment and voucher transfer are **never** rejected due to an oversized contact card.
 * **Auth:** Requires `password: Option<&str>`.
 
 ---

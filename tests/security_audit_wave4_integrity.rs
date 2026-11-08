@@ -572,6 +572,7 @@ fn wh4_04_k4_committed_multi_send_must_not_silently_lose_forensics() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let result = sender_wallet.execute_multi_transfer_and_bundle(

@@ -1075,6 +1075,7 @@ fn test_secure_voucher_transfer_via_encrypted_bundle() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();

@@ -32,6 +32,7 @@ fn test_quarantined_voucher_behavior() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
     let mut standards_map = std::collections::HashMap::new();
     standards_map.insert(standard.immutable.identity.uuid.clone(), standard.clone());

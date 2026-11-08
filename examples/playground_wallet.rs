@@ -101,6 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let mut standards_map = std::collections::HashMap::new();

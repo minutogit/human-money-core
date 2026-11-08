@@ -1177,6 +1177,7 @@ mod security_audit_module_02 {
             sender_profile_name: None,
             use_privacy_mode: None,
             wot_sync_json: None,
+            contact_card_json: None,
         };
         let result = alice
             .create_transfer_bundle(request, &standards_map, None, Some(PASSWORD))

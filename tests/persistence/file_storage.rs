@@ -374,6 +374,7 @@ fn test_save_and_load_with_bundle_history() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let mut standards = std::collections::HashMap::new();

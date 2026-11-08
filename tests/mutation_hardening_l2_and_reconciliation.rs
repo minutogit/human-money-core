@@ -142,6 +142,7 @@ fn setup_pos_fixture(dir: &Path) -> TestPoSFixture {
                 sender_profile_name: None,
                 use_privacy_mode: Some(false),
                 wot_sync_json: None,
+                contact_card_json: None,
             },
             &standards,
             None,
@@ -541,6 +542,7 @@ fn test_complete_checkout_purchase_fails_closed_on_conflicts_or_warnings() {
                 sender_profile_name: None,
                 use_privacy_mode: Some(false),
                 wot_sync_json: None,
+                contact_card_json: None,
             },
             &standards,
             None,
@@ -566,6 +568,7 @@ fn test_complete_checkout_purchase_fails_closed_on_conflicts_or_warnings() {
                 sender_profile_name: None,
                 use_privacy_mode: Some(false),
                 wot_sync_json: None,
+                contact_card_json: None,
             },
             None,
         )

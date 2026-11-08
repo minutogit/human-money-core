@@ -648,6 +648,7 @@ fn audit_00_wildcard_35_expired_voucher_spend_must_be_rejected() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let spend_result = wallet.execute_multi_transfer_and_bundle(

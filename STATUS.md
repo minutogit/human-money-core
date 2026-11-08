@@ -3,10 +3,16 @@ project: human-money-core
 version: "0.5.1"
 phase: "active-development"
 health: "green"
-last_updated: "2026-11-01"
+last_updated: "2026-11-08"
 blocks: []
 blocked_by: []
 priority_tasks:
+  - id: "CORE-014"
+    title: "Opaque Contact Card Piggybacking Transport Field (MAX_CONTACT_CARD_JSON_BYTES = 8192)"
+    status: "completed"
+    priority: "high"
+    depends_on: []
+    description: "Added opaque `contact_card_json: Option<String>` (`MAX_CONTACT_CARD_JSON_BYTES = 8192`) to `TransactionBundle`, `MultiTransferRequest`, and `ProcessBundleResult` for marketplace business card piggybacking. Sending enforces the 8 KiB size limit. Verification ensures tamper-proof signature coverage over the card, and receiving safely drops oversized cards (`None`) after signature verification so payments never fail."
   - id: "CORE-013"
     title: "Proof-Carrying L2 Reconciliation, Unoccupied Intent Retry & 1-RTT PoS Checkout"
     status: "closed"
@@ -90,6 +96,12 @@ priority_tasks:
 # Human Money Core — Status
 
 ## Current Focus
+
+Opaque Contact Card Piggybacking Transport Field (`CORE-014`, 2026-11-08):
+- **Opaque Transport Field (`contact_card_json`)**: Added `contact_card_json: Option<String>` (`MAX_CONTACT_CARD_JSON_BYTES = 8192` / 8 KiB) to `TransactionBundle`, `MultiTransferRequest`, and `ProcessBundleResult` right next to `wot_sync_json`. The field is an opaque payload not interpreted by `human-money-core`.
+- **Tamper Protection**: The field is hashed into canonical `bundle_id` and signed by the sender (`sender_signature`). Any modification or removal of the card invalidates the bundle signature.
+- **Fail-Safe Receive Semantics**: If an incoming bundle contains an oversized `contact_card_json` (> 8192 bytes), the bundle signature and `bundle_id` integrity are verified against the received payload first; upon successful verification, the oversized field is safely discarded (`None`) in the returned result. The payment and voucher ingestion **never** fail due to `contact_card_json`.
+- **Validation**: 100% test pass rate across unit and integration tests.
 
 Proof-Carrying L2 Reconciliation & Next-Step Anchor Sync (`CORE-012` & `CORE-013`, 2026-11-01):
 - **Next-Step WalletSeal Anchor-Sync (`CORE-012`)**: Stored `SyncedAnchorCheckpoint` (`last_synced_anchor`) in `LocalSealRecord` ensuring gapless leap-lock continuity across restarts, aligned `prepare_anchor_status_query` to challenge successor slot $n+1$, enforced mandatory `verify_lock_entry_proof` during envelope evaluation, and aligned wire domains to canonical `HMC_TX_AUTH_V4_DOMAIN` re-exported directly from `humoco-proto`.

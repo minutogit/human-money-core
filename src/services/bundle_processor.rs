@@ -23,6 +23,7 @@ pub const MAX_VOUCHERS_PER_BUNDLE: usize = 32;
 pub const MAX_FINGERPRINTS_PER_VOUCHER: usize = 10;
 pub const MAX_QUARANTINE_PAIRS_PER_VOUCHER: usize = 3;
 pub const MAX_WOT_SYNC_BYTES: usize = 65_536; // 64 KiB
+pub const MAX_CONTACT_CARD_JSON_BYTES: usize = 8192; // 8 KiB
 
 
 /// Creates a `TransactionBundle`, wraps it in a `SecureContainer` and serializes it.
@@ -74,10 +75,12 @@ pub fn create_and_encrypt_bundle_with_causal_outputs(
         sender_profile_name,
         causal_outputs,
         None,
+        None,
     )
 }
 
-/// Creates a `TransactionBundle` with optional L2 causal outputs and optional piggybacked WOT sync package.
+/// Creates a `TransactionBundle` with optional L2 causal outputs, optional piggybacked WOT sync package,
+/// and optional piggybacked contact card JSON.
 #[allow(clippy::too_many_arguments)]
 pub fn create_and_encrypt_bundle_with_causal_outputs_and_wot(
     identity: &UserIdentity,
@@ -89,6 +92,7 @@ pub fn create_and_encrypt_bundle_with_causal_outputs_and_wot(
     sender_profile_name: Option<String>,
     causal_outputs: std::collections::BTreeMap<String, humoco_proto::causal::CausalOutputProof>,
     wot_sync_json: Option<String>,
+    contact_card_json: Option<String>,
 ) -> Result<(Vec<u8>, TransactionBundle), VoucherCoreError> {
     if vouchers.len() > MAX_VOUCHERS_PER_BUNDLE {
         return Err(VoucherCoreError::Validation(
@@ -131,6 +135,15 @@ pub fn create_and_encrypt_bundle_with_causal_outputs_and_wot(
             )),
         ));
     }
+    if contact_card_json.as_ref().is_some_and(|s| s.len() > MAX_CONTACT_CARD_JSON_BYTES) {
+        return Err(VoucherCoreError::Validation(
+            ValidationError::InvalidTransaction(format!(
+                "contact_card_json exceeds maximum allowed size ({} > {} bytes)",
+                contact_card_json.as_ref().unwrap().len(),
+                MAX_CONTACT_CARD_JSON_BYTES
+            )),
+        ));
+    }
     validate_bundle_privacy_homogeneity(&vouchers)?;
 
     let mut bundle = TransactionBundle {
@@ -146,6 +159,7 @@ pub fn create_and_encrypt_bundle_with_causal_outputs_and_wot(
         sender_profile_name,
         causal_outputs,
         wot_sync_json,
+        contact_card_json,
     };
 
     let bundle_json_for_id = to_canonical_json(&bundle)?;
@@ -276,7 +290,7 @@ pub fn open_and_verify_bundle(
             "Decrypted bundle exceeds maximum size".into(),
         ));
     }
-    let bundle: TransactionBundle = serde_json::from_slice(&decrypted_bundle_bytes)?;
+    let mut bundle: TransactionBundle = serde_json::from_slice(&decrypted_bundle_bytes)?;
 
     if bundle.wot_sync_json.as_ref().is_some_and(|s| s.len() > MAX_WOT_SYNC_BYTES) {
         return Err(VoucherCoreError::Validation(
@@ -350,6 +364,16 @@ pub fn open_and_verify_bundle(
 
     // 2. Then verify the internal signature of the *bundle*.
     verify_bundle_signature(&bundle)?;
+
+    // CORE-014: If contact_card_json exceeds MAX_CONTACT_CARD_JSON_BYTES, drop it (None)
+    // after the signature and bundle_id have been verified so payment never fails because of an oversized card.
+    if bundle
+        .contact_card_json
+        .as_ref()
+        .is_some_and(|s| s.len() > MAX_CONTACT_CARD_JSON_BYTES)
+    {
+        bundle.contact_card_json = None;
+    }
 
     Ok(bundle)
 }
@@ -446,6 +470,7 @@ mod tests {
             quarantine_pairs: vec![],
             sender_profile_name: None,
             wot_sync_json: None,
+            contact_card_json: None,
         };
 
         let signature = sign_ed25519(&sign_key, b"different_data");
@@ -487,6 +512,7 @@ mod tests {
                 None,
                 Default::default(),
                 Some(wot_sync_payload.clone()),
+                None,
             )
             .expect("Bundle creation with wot_sync_json must succeed");
 
@@ -536,6 +562,7 @@ mod tests {
                 None,
                 Default::default(),
                 Some(wot_sync_payload.clone()),
+                None,
             )
             .expect("Stealth bundle creation with wot_sync_json must succeed");
 
@@ -579,6 +606,7 @@ mod tests {
             None,
             Default::default(),
             Some(oversized_wot.clone()),
+            None,
         );
         assert!(result.is_err());
         assert!(matches!(
@@ -600,6 +628,7 @@ mod tests {
             quarantine_pairs: vec![],
             sender_profile_name: None,
             wot_sync_json: Some(oversized_wot),
+            contact_card_json: None,
         };
         bundle.bundle_id = get_hash(to_canonical_json(&bundle).unwrap());
         let sig = sign_ed25519(&alice.signing_key, bundle.bundle_id.as_bytes());
@@ -621,5 +650,251 @@ mod tests {
             open_result.unwrap_err(),
             VoucherCoreError::Validation(ValidationError::InvalidTransaction(_))
         ));
+    }
+
+    #[test]
+    fn test_bundle_contact_card_roundtrip() {
+        let (pub_a, sign_a) = generate_ed25519_keypair_for_tests(None);
+        let alice = UserIdentity {
+            user_id: create_user_id(&pub_a, Some("alice")).unwrap(),
+            signing_key: sign_a,
+            public_key: pub_a,
+        };
+        let (pub_b, sign_b) = generate_ed25519_keypair_for_tests(None);
+        let bob = UserIdentity {
+            user_id: create_user_id(&pub_b, Some("bob")).unwrap(),
+            signing_key: sign_b,
+            public_key: pub_b,
+        };
+
+        let card_payload = r#"{"name":"Alice Smith","email":"alice@example.com"}"#.to_string();
+
+        let (container_bytes, created_bundle) =
+            create_and_encrypt_bundle_with_causal_outputs_and_wot(
+                &alice,
+                vec![],
+                &bob.user_id,
+                Some("Here is my card".to_string()),
+                vec![],
+                vec![],
+                None,
+                Default::default(),
+                None,
+                Some(card_payload.clone()),
+            )
+            .expect("Bundle creation with contact_card_json must succeed");
+
+        assert_eq!(created_bundle.contact_card_json, Some(card_payload.clone()));
+
+        let opened_bundle = open_and_verify_bundle(&bob, &container_bytes)
+            .expect("Bob must successfully open and verify bundle");
+
+        assert_eq!(opened_bundle.contact_card_json, Some(card_payload));
+        assert_eq!(opened_bundle.bundle_id, created_bundle.bundle_id);
+    }
+
+    #[test]
+    fn test_bundle_contact_card_missing_omitted_in_json() {
+        let bundle = TransactionBundle {
+            contact_card_json: None,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&bundle).unwrap();
+        assert!(!json.contains("contact_card_json"));
+    }
+
+    #[test]
+    fn test_bundle_contact_card_oversized_rejected_on_creation() {
+        let (pub_a, sign_a) = generate_ed25519_keypair_for_tests(None);
+        let alice = UserIdentity {
+            user_id: create_user_id(&pub_a, Some("alice")).unwrap(),
+            signing_key: sign_a,
+            public_key: pub_a,
+        };
+        let (pub_b, sign_b) = generate_ed25519_keypair_for_tests(None);
+        let bob = UserIdentity {
+            user_id: create_user_id(&pub_b, Some("bob")).unwrap(),
+            signing_key: sign_b,
+            public_key: pub_b,
+        };
+
+        let oversized_card = "c".repeat(MAX_CONTACT_CARD_JSON_BYTES + 1);
+
+        let result = create_and_encrypt_bundle_with_causal_outputs_and_wot(
+            &alice,
+            vec![],
+            &bob.user_id,
+            None,
+            vec![],
+            vec![],
+            None,
+            Default::default(),
+            None,
+            Some(oversized_card),
+        );
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            VoucherCoreError::Validation(ValidationError::InvalidTransaction(_))
+        ));
+    }
+
+    #[test]
+    fn test_bundle_contact_card_oversized_dropped_on_receive() {
+        let (pub_a, sign_a) = generate_ed25519_keypair_for_tests(None);
+        let alice = UserIdentity {
+            user_id: create_user_id(&pub_a, Some("alice")).unwrap(),
+            signing_key: sign_a,
+            public_key: pub_a,
+        };
+        let (pub_b, sign_b) = generate_ed25519_keypair_for_tests(None);
+        let bob = UserIdentity {
+            user_id: create_user_id(&pub_b, Some("bob")).unwrap(),
+            signing_key: sign_b,
+            public_key: pub_b,
+        };
+
+        // Handcraft a bundle with >8192 bytes contact_card_json and sign it legitimately
+        let oversized_card = "c".repeat(MAX_CONTACT_CARD_JSON_BYTES + 100);
+        let mut bundle = TransactionBundle {
+            causal_outputs: Default::default(),
+            bundle_id: String::new(),
+            sender_id: alice.user_id.clone(),
+            recipient_id: bob.user_id.clone(),
+            vouchers: vec![],
+            timestamp: crate::services::utils::get_current_timestamp(),
+            notes: None,
+            sender_signature: String::new(),
+            forwarded_fingerprints: vec![],
+            quarantine_pairs: vec![],
+            sender_profile_name: None,
+            wot_sync_json: None,
+            contact_card_json: Some(oversized_card),
+        };
+        bundle.bundle_id = get_hash(to_canonical_json(&bundle).unwrap());
+        let sig = sign_ed25519(&alice.signing_key, bundle.bundle_id.as_bytes());
+        bundle.sender_signature = bs58::encode(sig.to_bytes()).into_string();
+        let bundle_bytes = serde_json::to_vec(&bundle).unwrap();
+
+        let container = SecureContainer::seal(
+            &alice,
+            &ContainerConfig::TargetDid(bob.user_id.clone(), PrivacyMode::TrialDecryption),
+            &bundle_bytes,
+            PayloadType::TransactionBundle,
+        )
+        .unwrap();
+        let container_bytes = serde_json::to_vec(&container).unwrap();
+
+        // On receive: verification succeeds, payment is NOT rejected, but contact_card_json is None!
+        let opened_bundle = open_and_verify_bundle(&bob, &container_bytes)
+            .expect("Receive must succeed even if contact_card_json is oversized");
+        assert_eq!(opened_bundle.contact_card_json, None);
+        assert_eq!(opened_bundle.bundle_id, bundle.bundle_id);
+    }
+
+    #[test]
+    fn test_bundle_contact_card_opaque_garbage_payload() {
+        let (pub_a, sign_a) = generate_ed25519_keypair_for_tests(None);
+        let alice = UserIdentity {
+            user_id: create_user_id(&pub_a, Some("alice")).unwrap(),
+            signing_key: sign_a,
+            public_key: pub_a,
+        };
+        let (pub_b, sign_b) = generate_ed25519_keypair_for_tests(None);
+        let bob = UserIdentity {
+            user_id: create_user_id(&pub_b, Some("bob")).unwrap(),
+            signing_key: sign_b,
+            public_key: pub_b,
+        };
+
+        // Garbage non-JSON string with control/unicode characters
+        let garbage = "not-json\x00\x01\x1f---🚀🎉\n\t--random-bytes-opaque";
+
+        let (container_bytes, created_bundle) =
+            create_and_encrypt_bundle_with_causal_outputs_and_wot(
+                &alice,
+                vec![],
+                &bob.user_id,
+                None,
+                vec![],
+                vec![],
+                None,
+                Default::default(),
+                None,
+                Some(garbage.to_string()),
+            )
+            .expect("Bundle creation with opaque garbage payload must succeed");
+
+        assert_eq!(created_bundle.contact_card_json, Some(garbage.to_string()));
+
+        let opened_bundle = open_and_verify_bundle(&bob, &container_bytes)
+            .expect("Bob must successfully open bundle with opaque garbage");
+
+        assert_eq!(opened_bundle.contact_card_json, Some(garbage.to_string()));
+    }
+
+    #[test]
+    fn test_bundle_contact_card_tampering_detected() {
+        let (pub_a, sign_a) = generate_ed25519_keypair_for_tests(None);
+        let alice = UserIdentity {
+            user_id: create_user_id(&pub_a, Some("alice")).unwrap(),
+            signing_key: sign_a,
+            public_key: pub_a,
+        };
+        let (pub_b, sign_b) = generate_ed25519_keypair_for_tests(None);
+        let bob = UserIdentity {
+            user_id: create_user_id(&pub_b, Some("bob")).unwrap(),
+            signing_key: sign_b,
+            public_key: pub_b,
+        };
+
+        let card_payload = r#"{"name":"Alice Smith"}"#.to_string();
+
+        let mut bundle = TransactionBundle {
+            causal_outputs: Default::default(),
+            bundle_id: String::new(),
+            sender_id: alice.user_id.clone(),
+            recipient_id: bob.user_id.clone(),
+            vouchers: vec![],
+            timestamp: crate::services::utils::get_current_timestamp(),
+            notes: None,
+            sender_signature: String::new(),
+            forwarded_fingerprints: vec![],
+            quarantine_pairs: vec![],
+            sender_profile_name: None,
+            wot_sync_json: None,
+            contact_card_json: Some(card_payload),
+        };
+        bundle.bundle_id = get_hash(to_canonical_json(&bundle).unwrap());
+        let sig = sign_ed25519(&alice.signing_key, bundle.bundle_id.as_bytes());
+        bundle.sender_signature = bs58::encode(sig.to_bytes()).into_string();
+
+        // 1. Tamper by changing payload content
+        let mut tampered_bundle = bundle.clone();
+        tampered_bundle.contact_card_json = Some(r#"{"name":"Eve Smith"}"#.to_string());
+        let tampered_bytes = serde_json::to_vec(&tampered_bundle).unwrap();
+        let container = SecureContainer::seal(
+            &alice,
+            &ContainerConfig::TargetDid(bob.user_id.clone(), PrivacyMode::TrialDecryption),
+            &tampered_bytes,
+            PayloadType::TransactionBundle,
+        )
+        .unwrap();
+        let res = open_and_verify_bundle(&bob, &serde_json::to_vec(&container).unwrap());
+        assert!(res.is_err(), "Tampered contact_card_json must fail verification");
+
+        // 2. Tamper by clearing payload (Some -> None)
+        let mut tampered_bundle2 = bundle.clone();
+        tampered_bundle2.contact_card_json = None;
+        let tampered_bytes2 = serde_json::to_vec(&tampered_bundle2).unwrap();
+        let container2 = SecureContainer::seal(
+            &alice,
+            &ContainerConfig::TargetDid(bob.user_id.clone(), PrivacyMode::TrialDecryption),
+            &tampered_bytes2,
+            PayloadType::TransactionBundle,
+        )
+        .unwrap();
+        let res2 = open_and_verify_bundle(&bob, &serde_json::to_vec(&container2).unwrap());
+        assert!(res2.is_err(), "Removing contact_card_json must fail verification");
     }
 }

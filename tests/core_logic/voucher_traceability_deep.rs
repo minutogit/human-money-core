@@ -41,6 +41,7 @@ mod tests {
             sender_profile_name: Some("Alice".to_string()),
             use_privacy_mode: None,
             wot_sync_json: None,
+            contact_card_json: None,
         };
         let bundle = alice_wallet.execute_multi_transfer_and_bundle(&alice.identity, &standards, request, None).unwrap();
 
@@ -61,6 +62,7 @@ mod tests {
             notes: None,
             use_privacy_mode: None,
             wot_sync_json: None,
+            contact_card_json: None,
             sender_profile_name: Some("Bob".to_string()),
         };
         let bundle = bob_wallet.execute_multi_transfer_and_bundle(&bob.identity, &standards, request, None).unwrap();
@@ -93,6 +95,7 @@ mod tests {
             sender_profile_name: Some("Bob".to_string()),
             use_privacy_mode: None,
             wot_sync_json: None,
+            contact_card_json: None,
         };
         let bundle = bob_wallet.execute_multi_transfer_and_bundle(&bob.identity, &standards, request, None).unwrap();
 
@@ -125,6 +128,7 @@ mod tests {
             sender_profile_name: Some("Bob".to_string()),
             use_privacy_mode: None,
             wot_sync_json: None,
+            contact_card_json: None,
         };
         let bundle = bob_wallet.execute_multi_transfer_and_bundle(&bob.identity, &standards, request, None).unwrap();
 

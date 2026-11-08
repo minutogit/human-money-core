@@ -114,6 +114,7 @@ fn test_transfer_bundle_is_transactional_on_save_failure() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let mut standards_toml = std::collections::HashMap::new();
@@ -234,6 +235,7 @@ fn test_receive_bundle_is_transactional_on_save_failure() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let mut standards_toml = std::collections::HashMap::new();
@@ -823,6 +825,7 @@ fn test_balances_are_summable_behavior() {
         sender_profile_name: None,
         use_privacy_mode: None,
         wot_sync_json: None,
+        contact_card_json: None,
     };
 
     let bundle_res = service_sender.create_transfer_bundle(request, &standards_map, None, Some("pwd")).unwrap();

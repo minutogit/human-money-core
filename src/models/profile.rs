@@ -112,6 +112,11 @@ pub struct TransactionBundle {
     /// Optional serialized WOT sync package for trust graph piggybacking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wot_sync_json: Option<String>,
+
+    /// Optional serialized contact card JSON for marketplace piggybacking.
+    /// This field is an opaque transport payload, not interpreted by `human-money-core`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contact_card_json: Option<String>,
 }
 
 impl TransactionBundle {
