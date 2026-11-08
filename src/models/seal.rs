@@ -15,6 +15,8 @@
 
 use serde::{Deserialize, Serialize};
 use ed25519_dalek::{SigningKey, VerifyingKey as EdPublicKey};
+use chrono::Datelike;
+use subtle::ConstantTimeEq;
 use crate::error::VoucherCoreError;
 use crate::models::profile::UserIdentity;
 use crate::services::crypto::{get_hash, get_pubkey_from_user_id, sign_ed25519, verify_ed25519};
@@ -41,6 +43,7 @@ impl WalletSeal {
     /// - `tx_nonce = 0`
     /// - `prev_seal_hash = Hash("")` (deterministic genesis)
     /// - `epoch_start_time = now()`
+    /// - `epoch_valid_until = canonical_epoch_valid_until_for_timestamp(&now)`
     ///
     /// # Arguments
     /// * `user_id` - The full user ID (incl. SAI prefix).
@@ -53,13 +56,23 @@ impl WalletSeal {
         initial_state_hash: &str,
         local_instance_id: &str,
     ) -> Result<Self, VoucherCoreError> {
+        if local_instance_id.trim().is_empty() {
+            return Err(VoucherCoreError::Validation(
+                crate::error::ValidationError::InvalidTransaction(
+                    "Local instance ID cannot be empty".to_string(),
+                ),
+            ));
+        }
+
         let now = get_current_timestamp();
+        let epoch_valid_until = canonical_epoch_valid_until_for_timestamp(&now);
 
         let payload = SealPayload {
             version: 1,
             user_id: user_id.to_string(),
             epoch: 0,
             epoch_start_time: now.clone(),
+            epoch_valid_until,
             tx_nonce: 0,
             prev_seal_hash: get_hash(""), // Deterministic genesis hash
             state_hash: initial_state_hash.to_string(),
@@ -68,16 +81,6 @@ impl WalletSeal {
         };
 
         Self::sign_payload(payload, identity)
-    }
-
-    /// Alias for `create_initial`.
-    pub fn create_initial_seal(
-        user_id: &str,
-        identity: &UserIdentity,
-        initial_state_hash: &str,
-        local_instance_id: &str,
-    ) -> Result<Self, VoucherCoreError> {
-        Self::create_initial(user_id, identity, initial_state_hash, local_instance_id)
     }
 
     /// Updates a seal after a transaction.
@@ -97,6 +100,14 @@ impl WalletSeal {
         new_state_hash: &str,
         local_instance_id: &str,
     ) -> Result<Self, VoucherCoreError> {
+        if local_instance_id.trim().is_empty() {
+            return Err(VoucherCoreError::Validation(
+                crate::error::ValidationError::InvalidTransaction(
+                    "Local instance ID cannot be empty".to_string(),
+                ),
+            ));
+        }
+
         // Compute hash of previous seal (canonical serialization)
         let prev_seal_canonical = to_canonical_json(self)?;
         let prev_hash = get_hash(prev_seal_canonical.as_bytes());
@@ -118,6 +129,7 @@ impl WalletSeal {
             user_id: self.payload.user_id.clone(),
             epoch: self.payload.epoch,
             epoch_start_time: self.payload.epoch_start_time.clone(),
+            epoch_valid_until: self.payload.epoch_valid_until.clone(),
             tx_nonce: next_nonce,
             prev_seal_hash: prev_hash,
             state_hash: new_state_hash.to_string(),
@@ -126,16 +138,6 @@ impl WalletSeal {
         };
 
         Self::sign_payload(payload, identity)
-    }
-
-    /// Associated helper alias for `update`.
-    pub fn update_seal(
-        prev_seal: &Self,
-        identity: &UserIdentity,
-        new_state_hash: &str,
-        local_instance_id: &str,
-    ) -> Result<Self, VoucherCoreError> {
-        prev_seal.update(identity, new_state_hash, local_instance_id)
     }
 
     /// Verifies the signature and integrity of a seal.
@@ -198,22 +200,13 @@ impl WalletSeal {
         Ok(SealValidationResult::Valid)
     }
 
-    /// Associated helper alias for `verify_integrity`.
-    pub fn verify_seal_integrity(
-        seal: &Self,
-        expected_user_id: &str,
-        expected_pubkey_user_id: &str,
-        local_instance_id: &str,
-    ) -> Result<SealValidationResult, VoucherCoreError> {
-        seal.verify_integrity(expected_user_id, expected_pubkey_user_id, local_instance_id)
-    }
-
     /// Initiates a new epoch (Recovery). Epoch is strictly incremented.
     ///
     /// Called after a successful wallet recovery.
     /// - `epoch` is incremented by 1 (or set to 1 if no previous seal exists).
     /// - `tx_nonce` is reset to 0.
     /// - `epoch_start_time` is set to current timestamp.
+    /// - `epoch_valid_until` is deterministically computed from the current timestamp.
     /// - `prev_seal_hash` points to last known seal (if available).
     /// - `instance_id` is bound to the new device.
     ///
@@ -230,7 +223,16 @@ impl WalletSeal {
         current_state_hash: &str,
         local_instance_id: &str,
     ) -> Result<Self, VoucherCoreError> {
+        if local_instance_id.trim().is_empty() {
+            return Err(VoucherCoreError::Validation(
+                crate::error::ValidationError::InvalidTransaction(
+                    "Local instance ID cannot be empty".to_string(),
+                ),
+            ));
+        }
+
         let now = get_current_timestamp();
+        let epoch_valid_until = canonical_epoch_valid_until_for_timestamp(&now);
 
         // SECURITY (AUDIT-00-WILDCARD-22 / CWE-190): checked epoch bump — wrap
         // at u32::MAX would collide with genesis epoch 0.
@@ -258,6 +260,7 @@ impl WalletSeal {
             user_id: user_id.to_string(),
             epoch: new_epoch,
             epoch_start_time: now.clone(),
+            epoch_valid_until,
             tx_nonce: 0,
             prev_seal_hash: prev_hash,
             state_hash: current_state_hash.to_string(),
@@ -266,17 +269,6 @@ impl WalletSeal {
         };
 
         Self::sign_payload(payload, identity)
-    }
-
-    /// Associated helper alias for `recover_epoch`.
-    pub fn recover_seal_epoch(
-        last_known_seal: Option<&Self>,
-        user_id: &str,
-        identity: &UserIdentity,
-        current_state_hash: &str,
-        local_instance_id: &str,
-    ) -> Result<Self, VoucherCoreError> {
-        Self::recover_epoch(last_known_seal, user_id, identity, current_state_hash, local_instance_id)
     }
 
     /// Compares two verified seals and determines synchronization state.
@@ -369,11 +361,6 @@ impl WalletSeal {
         Ok(get_hash(canonical.as_bytes()))
     }
 
-    /// Associated helper alias for `compute_hash`.
-    pub fn compute_seal_hash(seal: &Self) -> Result<String, VoucherCoreError> {
-        seal.compute_hash()
-    }
-
     // --- Private helper methods ---
 
     /// Signs a `SealPayload` and creates a complete `WalletSeal`.
@@ -410,6 +397,9 @@ pub struct SealPayload {
     /// Used for the zone model during bundle reception to detect
     /// pre-epoch replays.
     pub epoch_start_time: String,
+    /// Canonical voucher-indistinguishable RFC3339 expiration timestamp.
+    /// Defaults to YYYY-12-31T23:59:59Z where YYYY = epoch_start_year + 2.
+    pub epoch_valid_until: String,
     /// Monotonic transaction counter within the current epoch.
     /// Incremented by 1 on every outgoing transaction.
     /// Reset to 0 on epoch change (recovery).
@@ -425,7 +415,6 @@ pub struct SealPayload {
     pub timestamp: String,
     /// Unique ID of the device on which the wallet was initialized.
     /// Serves as protection against cloning wallet files to other devices.
-    #[serde(default)]
     pub instance_id: String,
 }
 
@@ -434,8 +423,35 @@ pub struct SealPayload {
 pub struct SyncedAnchorCheckpoint {
     pub epoch: u32,
     pub tx_nonce: u64,
+    pub l2_slot: u64,
     pub seal_hash: String,
     pub state_hash: String,
+    pub causal_state_hash: [u8; 32],
+    pub epoch_valid_until: String,
+}
+
+/// Reason for wallet lockdown if superseded by handover, concurrent clone, or fork.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SealLockReason {
+    SupersededByHandover {
+        target_epoch: u32,
+        is_seed_recovery: bool,
+        detected_at: String,
+    },
+    ConcurrentCloneDetected {
+        detected_at: String,
+    },
+    ForkDetected,
+}
+
+/// Pending epoch tombstone to upload to Layer 2 to decommission a predecessor epoch.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingEpochTombstone {
+    pub old_epoch: u32,
+    pub old_epoch_valid_until: String,
+    pub target_epoch: u32,
+    pub kind: AnchorLockKind,
+    pub last_known_checkpoint: Option<SyncedAnchorCheckpoint>,
 }
 
 /// The local storage wrapper for disk (storage format).
@@ -448,12 +464,19 @@ pub struct LocalSealRecord {
     pub seal: WalletSeal,
     /// The local upload status regarding cloud/Layer 2.
     pub sync_status: SyncStatus,
-    /// Persistent lock if a multi-device fork was detected.
-    /// Can only be cleared via `recover_wallet_and_set_new_password`.
-    pub is_locked_due_to_fork: bool,
+    /// Reason for wallet lockdown if superseded by handover, concurrent clone, or fork.
+    pub lock_reason: Option<SealLockReason>,
+    /// Pending epoch tombstones to upload to Layer 2 to decommission predecessor epochs.
+    pub pending_tombstones: Vec<PendingEpochTombstone>,
     /// The last anchor checkpoint verifiably confirmed on Layer 2.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_synced_anchor: Option<SyncedAnchorCheckpoint>,
+}
+
+impl LocalSealRecord {
+    pub fn is_locked(&self) -> bool {
+        self.lock_reason.is_some()
+    }
 }
 
 /// Status of the local seal regarding cloud/Layer 2.
@@ -502,59 +525,349 @@ pub enum SealValidationResult {
 
 // --- Deterministic Key Derivation & Anchor Tree Functions ---
 
-/// Derives the Layer 2 anchor ID (virtual voucher ID) deterministically from the
-/// master signing key and epoch.
-pub fn derive_l2_anchor_id(identity: &UserIdentity, epoch: u64) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"HMC_ANCHOR_ID_V1");
-    hasher.update(&identity.signing_key.to_bytes());
-    hasher.update(&epoch.to_le_bytes());
-    hex::encode(hasher.finalize().as_bytes())
+/// Canonical voucher-indistinguishable RFC3339 timestamp.
+///
+/// Computes year from `iso_ts[0..4]` parsed as `i32` (defaulting to current UTC year) + 2,
+/// formatted as `YYYY-12-31T23:59:59Z`.
+pub fn canonical_epoch_valid_until_for_timestamp(iso_ts: &str) -> String {
+    let year = if iso_ts.len() >= 4 {
+        iso_ts[0..4].parse::<i32>().unwrap_or_else(|_| chrono::Utc::now().year())
+    } else {
+        chrono::Utc::now().year()
+    };
+    format!("{:04}-12-31T23:59:59Z", year + 2)
 }
 
-/// Derives the ephemeral step key pair for an anchor step without storing any keys on disk.
+/// Parses an RFC3339 timestamp string into epoch milliseconds.
+pub fn parse_epoch_valid_until_ms(rfc3339: &str) -> Result<u64, VoucherCoreError> {
+    chrono::DateTime::parse_from_rfc3339(rfc3339)
+        .map_err(|e| {
+            VoucherCoreError::Validation(crate::error::ValidationError::InvalidTransaction(format!(
+                "invalid epoch_valid_until timestamp: {e}"
+            )))
+        })
+        .and_then(|dt| {
+            u64::try_from(dt.timestamp_millis()).map_err(|_| {
+                VoucherCoreError::Validation(crate::error::ValidationError::InvalidTransaction(
+                    "negative or overflowing epoch_valid_until timestamp".into(),
+                ))
+            })
+        })
+}
+
+/// Derives the anchor master seed strictly binding the user's master signing key and
+/// full user ID (including SAI prefix).
+pub fn derive_anchor_master_seed(identity: &UserIdentity) -> [u8; 32] {
+    let mut key_material = Vec::with_capacity(32 + 4 + identity.user_id.len());
+    key_material.extend_from_slice(&identity.signing_key.to_bytes());
+    key_material.extend_from_slice(&(identity.user_id.len() as u32).to_le_bytes());
+    key_material.extend_from_slice(identity.user_id.as_bytes());
+    blake3::derive_key("HUMOCO_V1_WALLET_ANCHOR_MASTER", &key_material)
+}
+
+/// Derives the ephemeral step key pair for an anchor slot without storing keys on disk.
+///
+/// Binds master seed, epoch, and contiguous L2 slot counter (`0, 1, 2, ...`).
 pub fn derive_anchor_step_key(
-    master_key: &SigningKey,
+    identity: &UserIdentity,
     epoch: u64,
-    tx_nonce: u64,
+    l2_slot: u64,
 ) -> (SigningKey, EdPublicKey) {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"HMC_ANCHOR_STEP_KEY_V1");
+    let master_seed = derive_anchor_master_seed(identity);
+    let mut hasher = blake3::Hasher::new_keyed(&master_seed);
+    hasher.update(b"STEP_KEY");
     hasher.update(&epoch.to_le_bytes());
-    hasher.update(&tx_nonce.to_le_bytes());
-    let k_seed = hasher.finalize();
+    hasher.update(&l2_slot.to_le_bytes());
+    let seed = hasher.finalize();
     crate::services::crypto::derive_ephemeral_key_pair(
-        master_key,
-        k_seed.as_bytes(),
+        &identity.signing_key,
+        seed.as_bytes(),
         "anchor_step",
         None,
     )
     .expect("HKDF expansion for 32 bytes never fails")
 }
 
-/// Derives the deterministic challenge/DS tag for an anchor step from the previous
-/// seal hash and current transaction nonce.
-pub fn derive_anchor_step_tag(prev_seal_hash: &str, tx_nonce: u64) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"HMC_ANCHOR_STEP_TAG_V1");
-    hasher.update(&(prev_seal_hash.len() as u32).to_le_bytes());
-    hasher.update(prev_seal_hash.as_bytes());
-    hasher.update(&tx_nonce.to_le_bytes());
-    bs58::encode(hasher.finalize().as_bytes()).into_string()
+/// Derives the deterministic transaction ID for slot 0 (Genesis root).
+///
+/// Independent of local device instance ID so 24-word Cold Recovery can compute it.
+pub fn derive_anchor_genesis_t_id(identity: &UserIdentity, epoch: u64) -> [u8; 32] {
+    let master_seed = derive_anchor_master_seed(identity);
+    let mut hasher = blake3::Hasher::new_keyed(&master_seed);
+    hasher.update(b"GENESIS_TID");
+    hasher.update(&epoch.to_le_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+/// Derives the deterministic causal state hash for slot 0 (Genesis root).
+///
+/// Deterministic from `(master_seed, epoch)` only, so blank-disk cold recovery
+/// can query slot 1 challenge tag without knowing previous wallet state hash.
+pub fn derive_anchor_genesis_causal_state_hash(identity: &UserIdentity, epoch: u64) -> [u8; 32] {
+    let master_seed = derive_anchor_master_seed(identity);
+    let mut hasher = blake3::Hasher::new_keyed(&master_seed);
+    hasher.update(b"ANCHOR_GENESIS_CAUSAL_STATE");
+    hasher.update(&epoch.to_le_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+/// Derives the Layer 2 anchor ID (virtual voucher ID) deterministically.
+///
+/// Matches `human-money-node` canonical L1 root preimage check:
+/// `Sha256(genesis_t_id || step_pub(epoch, 0) || Sha3_256(step_pub(epoch, 1)) || epoch_valid_until.as_bytes())`
+/// encoded as 64-char lowercase hex.
+pub fn derive_l2_anchor_id(identity: &UserIdentity, epoch: u64, epoch_valid_until: &str) -> String {
+    let genesis_t_id = derive_anchor_genesis_t_id(identity, epoch);
+    let (_sk0, step_pub0) = derive_anchor_step_key(identity, epoch, 0);
+    let (_sk1, step_pub1) = derive_anchor_step_key(identity, epoch, 1);
+    use sha3::Digest as Sha3Digest;
+    let step_pub1_hash: [u8; 32] = sha3::Sha3_256::digest(step_pub1.as_bytes()).into();
+
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(genesis_t_id);
+    hasher.update(step_pub0.as_bytes());
+    hasher.update(step_pub1_hash);
+    hasher.update(epoch_valid_until.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+/// Derives the canonical SST challenge/DS tag for an anchor spend step from the
+/// predecessor causal state hash and step ephemeral public key.
+///
+/// `Sha3_256(32u32.to_le_bytes() || prev_causal_state_hash || 32u32.to_le_bytes() || step_pub_bytes)` encoded with `bs58`.
+pub fn derive_anchor_canonical_ds_tag(
+    prev_causal_state_hash: &[u8; 32],
+    step_pub_bytes: &[u8; 32],
+) -> String {
+    use sha3::Digest;
+    let mut hasher = sha3::Sha3_256::new();
+    hasher.update(32u32.to_le_bytes());
+    hasher.update(prev_causal_state_hash);
+    hasher.update(32u32.to_le_bytes());
+    hasher.update(step_pub_bytes);
+    bs58::encode(hasher.finalize()).into_string()
+}
+
+/// Derives a 48-bit (6-byte) device attribution fingerprint.
+pub fn derive_anchor_device_fp48(identity: &UserIdentity, local_instance_id: &str) -> [u8; 6] {
+    let master_seed = derive_anchor_master_seed(identity);
+    let mut hasher = blake3::Hasher::new_keyed(&master_seed);
+    hasher.update(b"DEVICE_FP48");
+    hasher.update(local_instance_id.as_bytes());
+    let mut fp = [0u8; 6];
+    fp.copy_from_slice(&hasher.finalize().as_bytes()[0..6]);
+    fp
+}
+
+/// Derives the transaction ID `t_id` for an anchor step lock.
+pub fn derive_anchor_step_t_id(
+    identity: &UserIdentity,
+    epoch: u64,
+    l2_slot: u64,
+    kind: AnchorLockKind,
+    target_epoch: u32,
+    origin_device_fp48: &[u8; 6],
+    payload_commitment: &[u8; 32],
+) -> [u8; 32] {
+    let master_seed = derive_anchor_master_seed(identity);
+    let mut t_hasher = blake3::Hasher::new_keyed(&master_seed);
+    t_hasher.update(b"ANCHOR_STEP_TID");
+    t_hasher.update(&[kind as u8]);
+    t_hasher.update(&epoch.to_le_bytes());
+    t_hasher.update(&l2_slot.to_le_bytes());
+    t_hasher.update(&target_epoch.to_le_bytes());
+    t_hasher.update(payload_commitment);
+    t_hasher.update(origin_device_fp48);
+    *t_hasher.finalize().as_bytes()
+}
+
+/// Derives the causal state hash for an anchor step lock.
+pub fn derive_anchor_step_causal_hash(
+    identity: &UserIdentity,
+    epoch: u64,
+    l2_slot: u64,
+    t_id: &[u8; 32],
+) -> [u8; 32] {
+    let master_seed = derive_anchor_master_seed(identity);
+    let mut c_hasher = blake3::Hasher::new_keyed(&master_seed);
+    c_hasher.update(b"ANCHOR_CAUSAL_STATE");
+    c_hasher.update(&epoch.to_le_bytes());
+    c_hasher.update(&l2_slot.to_le_bytes());
+    c_hasher.update(t_id);
+    *c_hasher.finalize().as_bytes()
+}
+
+/// Derives indistinguishable SST trap data (`trap_r` and `trap_s`) for non-genesis anchor locks.
+///
+/// `trap_r`: valid Ed25519 curve point encoded as Base58.
+/// `trap_s`: 32-byte scalar candidate with top 4 bits cleared (< 16) encoded as Base58.
+pub fn derive_anchor_indistinguishable_traps(
+    identity: &UserIdentity,
+    epoch: u64,
+    l2_slot: u64,
+    t_id: &[u8; 32],
+) -> (String, String) {
+    let master_seed = derive_anchor_master_seed(identity);
+
+    let mut r_hasher = blake3::Hasher::new_keyed(&master_seed);
+    r_hasher.update(b"ANCHOR_TRAP_R");
+    r_hasher.update(&epoch.to_le_bytes());
+    r_hasher.update(&l2_slot.to_le_bytes());
+    r_hasher.update(t_id);
+    let r_seed = *r_hasher.finalize().as_bytes();
+    let r_point = SigningKey::from_bytes(&r_seed).verifying_key().to_bytes();
+    let trap_r = bs58::encode(r_point).into_string();
+
+    let mut s_hasher = blake3::Hasher::new_keyed(&master_seed);
+    s_hasher.update(b"ANCHOR_TRAP_S");
+    s_hasher.update(&epoch.to_le_bytes());
+    s_hasher.update(&l2_slot.to_le_bytes());
+    s_hasher.update(t_id);
+    let mut s_bytes = *s_hasher.finalize().as_bytes();
+    s_bytes[31] &= 0x0F;
+    let trap_s = bs58::encode(s_bytes).into_string();
+
+    (trap_r, trap_s)
+}
+
+/// Kind of lock operation represented in an anchor lock descriptor.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AnchorLockKind {
+    RegularStateUpdate = 1,
+    HandoverTombstone = 2,
+    SeedRecoveryTombstone = 3,
+}
+
+impl AnchorLockKind {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            1 => Some(Self::RegularStateUpdate),
+            2 => Some(Self::HandoverTombstone),
+            3 => Some(Self::SeedRecoveryTombstone),
+            _ => None,
+        }
+    }
+}
+
+/// Self-readable 128-bit descriptor embedded into `encrypted_timestamp`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnchorLockDescriptor {
+    pub kind: AnchorLockKind,
+    pub target_epoch: u32,
+    pub origin_device_fp48: [u8; 6],
+}
+
+impl AnchorLockDescriptor {
+    /// Encodes this descriptor into a 128-bit masked `encrypted_timestamp`.
+    pub fn encode_encrypted_timestamp(
+        &self,
+        identity: &UserIdentity,
+        anchor_id: &str,
+        epoch: u64,
+        l2_slot: u64,
+        t_id: &[u8; 32],
+    ) -> u128 {
+        let master_seed = derive_anchor_master_seed(identity);
+
+        let mut p = [0u8; 16];
+        p[0] = 0xA1;
+        p[1] = self.kind as u8;
+        p[2..6].copy_from_slice(&self.target_epoch.to_le_bytes());
+        p[6..12].copy_from_slice(&self.origin_device_fp48);
+
+        let mut mac_hasher = blake3::Hasher::new_keyed(&master_seed);
+        mac_hasher.update(b"ANCHOR_DESC_MAC");
+        mac_hasher.update(&(anchor_id.len() as u32).to_le_bytes());
+        mac_hasher.update(anchor_id.as_bytes());
+        mac_hasher.update(&epoch.to_le_bytes());
+        mac_hasher.update(&l2_slot.to_le_bytes());
+        mac_hasher.update(t_id);
+        mac_hasher.update(&p[0..12]);
+        let mac = mac_hasher.finalize();
+        p[12..16].copy_from_slice(&mac.as_bytes()[0..4]);
+
+        let mut pad_hasher = blake3::Hasher::new_keyed(&master_seed);
+        pad_hasher.update(b"ANCHOR_DESC_PAD");
+        pad_hasher.update(&epoch.to_le_bytes());
+        pad_hasher.update(&l2_slot.to_le_bytes());
+        pad_hasher.update(t_id);
+        let pad = pad_hasher.finalize();
+        let pad_16 = &pad.as_bytes()[0..16];
+
+        let mut cipher = [0u8; 16];
+        for i in 0..16 {
+            cipher[i] = p[i] ^ pad_16[i];
+        }
+
+        u128::from_le_bytes(cipher)
+    }
+
+    /// Decodes and verifies this descriptor from a 128-bit `encrypted_timestamp`.
+    pub fn decode_encrypted_timestamp(
+        identity: &UserIdentity,
+        anchor_id: &str,
+        epoch: u64,
+        l2_slot: u64,
+        t_id: &[u8; 32],
+        encrypted_timestamp: u128,
+    ) -> Option<Self> {
+        let master_seed = derive_anchor_master_seed(identity);
+
+        let mut pad_hasher = blake3::Hasher::new_keyed(&master_seed);
+        pad_hasher.update(b"ANCHOR_DESC_PAD");
+        pad_hasher.update(&epoch.to_le_bytes());
+        pad_hasher.update(&l2_slot.to_le_bytes());
+        pad_hasher.update(t_id);
+        let pad = pad_hasher.finalize();
+        let pad_16 = &pad.as_bytes()[0..16];
+
+        let cipher = encrypted_timestamp.to_le_bytes();
+        let mut p = [0u8; 16];
+        for i in 0..16 {
+            p[i] = cipher[i] ^ pad_16[i];
+        }
+
+        if p[0] != 0xA1 {
+            return None;
+        }
+
+        let kind = AnchorLockKind::from_u8(p[1])?;
+
+        let mut mac_hasher = blake3::Hasher::new_keyed(&master_seed);
+        mac_hasher.update(b"ANCHOR_DESC_MAC");
+        mac_hasher.update(&(anchor_id.len() as u32).to_le_bytes());
+        mac_hasher.update(anchor_id.as_bytes());
+        mac_hasher.update(&epoch.to_le_bytes());
+        mac_hasher.update(&l2_slot.to_le_bytes());
+        mac_hasher.update(t_id);
+        mac_hasher.update(&p[0..12]);
+        let expected_mac = mac_hasher.finalize();
+        let expected_mac32 = &expected_mac.as_bytes()[0..4];
+
+        if p[12..16].ct_eq(expected_mac32).unwrap_u8() != 1 {
+            return None;
+        }
+
+        let mut epoch_bytes = [0u8; 4];
+        epoch_bytes.copy_from_slice(&p[2..6]);
+        let target_epoch = u32::from_le_bytes(epoch_bytes);
+
+        let mut origin_device_fp48 = [0u8; 6];
+        origin_device_fp48.copy_from_slice(&p[6..12]);
+
+        Some(Self {
+            kind,
+            target_epoch,
+            origin_device_fp48,
+        })
+    }
 }
 
 /// Canonical 32-byte representation of a seal state hash.
 ///
-/// Decodes 32-byte hex, else 32-byte Base58, else falls back to BLAKE3 hash of the string bytes.
+/// Decodes 32-byte hex; otherwise falls back to BLAKE3 hash of the string bytes.
 pub fn seal_state_hash_bytes(state_hash: &str) -> [u8; 32] {
     if let Ok(bytes) = hex::decode(state_hash) {
-        if bytes.len() == 32 {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&bytes);
-            return arr;
-        }
-    }
-    if let Ok(bytes) = bs58::decode(state_hash).into_vec() {
         if bytes.len() == 32 {
             let mut arr = [0u8; 32];
             arr.copy_from_slice(&bytes);
@@ -842,6 +1155,209 @@ mod tests {
         assert_eq!(
             WalletSeal::compare_seals(&seal_branch_a, &seal_branch_b),
             SealSyncState::ForkDetected
+        );
+    }
+
+    #[test]
+    fn test_empty_local_instance_id_rejected() {
+        let identity = test_identity();
+        let state_hash = get_hash("initial_state");
+
+        assert!(WalletSeal::create_initial(&identity.user_id, &identity, &state_hash, "").is_err());
+        assert!(WalletSeal::create_initial(&identity.user_id, &identity, &state_hash, "   ").is_err());
+
+        let seal = WalletSeal::create_initial(&identity.user_id, &identity, &state_hash, "valid_device").unwrap();
+        assert!(seal.update(&identity, &get_hash("state2"), "").is_err());
+        assert!(seal.update(&identity, &get_hash("state2"), "   ").is_err());
+
+        assert!(WalletSeal::recover_epoch(Some(&seal), &identity.user_id, &identity, &get_hash("state2"), "").is_err());
+        assert!(WalletSeal::recover_epoch(Some(&seal), &identity.user_id, &identity, &get_hash("state2"), "   ").is_err());
+    }
+
+    #[test]
+    fn test_prefix_isolation_and_device_convergence() {
+        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let (pubkey, signing_key) = crate::services::crypto::derive_ed25519_keypair(
+            mnemonic,
+            None,
+            crate::services::mnemonic::MnemonicLanguage::English,
+        ).unwrap();
+
+        let user_id_pc = create_user_id(&pubkey, Some("pc")).unwrap();
+        let user_id_mobil = create_user_id(&pubkey, Some("mobil")).unwrap();
+
+        let identity_pc_device_a = UserIdentity {
+            signing_key: SigningKey::from_bytes(&signing_key.to_bytes()),
+            public_key: pubkey,
+            user_id: user_id_pc.clone(),
+        };
+
+        let identity_pc_device_b = UserIdentity {
+            signing_key: SigningKey::from_bytes(&signing_key.to_bytes()),
+            public_key: pubkey,
+            user_id: user_id_pc,
+        };
+
+        let identity_mobil = UserIdentity {
+            signing_key: SigningKey::from_bytes(&signing_key.to_bytes()),
+            public_key: pubkey,
+            user_id: user_id_mobil,
+        };
+
+        let epoch = 0u64;
+        let valid_until = canonical_epoch_valid_until_for_timestamp("2026-11-06T12:00:00Z");
+
+        // Device A and Device B with SAME prefix have identical master seed and anchor id
+        let seed_a = derive_anchor_master_seed(&identity_pc_device_a);
+        let seed_b = derive_anchor_master_seed(&identity_pc_device_b);
+        assert_eq!(seed_a, seed_b);
+
+        let anchor_id_a = derive_l2_anchor_id(&identity_pc_device_a, epoch, &valid_until);
+        let anchor_id_b = derive_l2_anchor_id(&identity_pc_device_b, epoch, &valid_until);
+        assert_eq!(anchor_id_a, anchor_id_b);
+
+        let (sk_a, pk_a) = derive_anchor_step_key(&identity_pc_device_a, epoch, 0);
+        let (sk_b, pk_b) = derive_anchor_step_key(&identity_pc_device_b, epoch, 0);
+        assert_eq!(sk_a.to_bytes(), sk_b.to_bytes());
+        assert_eq!(pk_a.to_bytes(), pk_b.to_bytes());
+
+        // Same mnemonic with DIFFERENT prefix ("pc" vs "mobil") has completely distinct master seed & anchor id
+        let seed_mobil = derive_anchor_master_seed(&identity_mobil);
+        assert_ne!(seed_a, seed_mobil);
+
+        let anchor_id_mobil = derive_l2_anchor_id(&identity_mobil, epoch, &valid_until);
+        assert_ne!(anchor_id_a, anchor_id_mobil);
+
+        let (_sk_m, pk_m) = derive_anchor_step_key(&identity_mobil, epoch, 0);
+        assert_ne!(pk_a.to_bytes(), pk_m.to_bytes());
+    }
+
+    #[test]
+    fn test_node_root_preimage_compliance() {
+        let identity = test_identity();
+        let epoch = 0u64;
+        let valid_until = "2028-12-31T23:59:59Z";
+
+        let anchor_id = derive_l2_anchor_id(&identity, epoch, valid_until);
+        assert_eq!(anchor_id.len(), 64);
+        assert!(anchor_id.chars().all(|c| c.is_ascii_hexdigit()));
+
+        let genesis_t_id = derive_anchor_genesis_t_id(&identity, epoch);
+        let (_sk0, step_pub0) = derive_anchor_step_key(&identity, epoch, 0);
+        let (_sk1, step_pub1) = derive_anchor_step_key(&identity, epoch, 1);
+        use sha3::Digest as Sha3Digest;
+        let step_pub1_hash: [u8; 32] = sha3::Sha3_256::digest(step_pub1.as_bytes()).into();
+
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(genesis_t_id);
+        hasher.update(step_pub0.as_bytes());
+        hasher.update(step_pub1_hash);
+        hasher.update(valid_until.as_bytes());
+        let expected_anchor_id = hex::encode(hasher.finalize());
+
+        assert_eq!(anchor_id, expected_anchor_id);
+    }
+
+    #[test]
+    fn test_anchor_lock_descriptor_roundtrip_and_tamper_rejection() {
+        let identity = test_identity();
+        let anchor_id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let epoch = 1u64;
+        let l2_slot = 3u64;
+        let t_id = [0x5Au8; 32];
+        let origin_device_fp48 = derive_anchor_device_fp48(&identity, "device_origin");
+
+        let desc = AnchorLockDescriptor {
+            kind: AnchorLockKind::HandoverTombstone,
+            target_epoch: 2,
+            origin_device_fp48,
+        };
+
+        let encrypted = desc.encode_encrypted_timestamp(&identity, anchor_id, epoch, l2_slot, &t_id);
+
+        // Honest decode
+        let decoded = AnchorLockDescriptor::decode_encrypted_timestamp(
+            &identity,
+            anchor_id,
+            epoch,
+            l2_slot,
+            &t_id,
+            encrypted,
+        );
+        assert_eq!(decoded, Some(desc));
+
+        // Wrong identity fails MAC check
+        let (other_pub, other_sk) = generate_ed25519_keypair_for_tests(Some("other_identity_seed"));
+        let other_identity = UserIdentity {
+            signing_key: other_sk,
+            public_key: other_pub,
+            user_id: "other@did:key:z6M...".to_string(),
+        };
+        assert_eq!(
+            AnchorLockDescriptor::decode_encrypted_timestamp(
+                &other_identity,
+                anchor_id,
+                epoch,
+                l2_slot,
+                &t_id,
+                encrypted,
+            ),
+            None
+        );
+
+        // Wrong slot fails
+        assert_eq!(
+            AnchorLockDescriptor::decode_encrypted_timestamp(
+                &identity,
+                anchor_id,
+                epoch,
+                l2_slot + 1,
+                &t_id,
+                encrypted,
+            ),
+            None
+        );
+
+        // Wrong epoch fails
+        assert_eq!(
+            AnchorLockDescriptor::decode_encrypted_timestamp(
+                &identity,
+                anchor_id,
+                epoch + 1,
+                l2_slot,
+                &t_id,
+                encrypted,
+            ),
+            None
+        );
+
+        // Wrong t_id fails
+        let mut corrupted_tid = t_id;
+        corrupted_tid[0] ^= 0x01;
+        assert_eq!(
+            AnchorLockDescriptor::decode_encrypted_timestamp(
+                &identity,
+                anchor_id,
+                epoch,
+                l2_slot,
+                &corrupted_tid,
+                encrypted,
+            ),
+            None
+        );
+
+        // Bit flip in encrypted timestamp fails
+        let corrupted_encrypted = encrypted ^ 0x0001_0000;
+        assert_eq!(
+            AnchorLockDescriptor::decode_encrypted_timestamp(
+                &identity,
+                anchor_id,
+                epoch,
+                l2_slot,
+                &t_id,
+                corrupted_encrypted,
+            ),
+            None
         );
     }
 }

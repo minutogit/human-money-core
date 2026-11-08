@@ -97,8 +97,21 @@ impl AppService {
             if let Ok(Some(record)) =
                 storage.load_seal(&crate::storage::AuthMethod::RecoveryIdentity(identity))
             {
-                if record.is_locked_due_to_fork {
-                    return Err(crate::Error::WalletLockedDueToFork);
+                if let Some(reason) = &record.lock_reason {
+                    match reason {
+                        crate::models::seal::SealLockReason::SupersededByHandover { target_epoch, .. } => {
+                            return Err(crate::Error::WalletSupersededByHandover {
+                                target_epoch: *target_epoch,
+                                is_seed_recovery: false,
+                            });
+                        }
+                        crate::models::seal::SealLockReason::ConcurrentCloneDetected { .. } => {
+                            return Err(crate::Error::WalletConcurrentCloneDetected);
+                        }
+                        crate::models::seal::SealLockReason::ForkDetected => {
+                            return Err(crate::Error::WalletLockedDueToFork);
+                        }
+                    }
                 }
             }
             let purchase = match wallet.profile.l2_checkout_purchases.get(purchase_id) {

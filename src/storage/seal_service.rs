@@ -160,7 +160,8 @@ impl SealService {
                 let new_record = LocalSealRecord {
                     seal: seal.clone(),
                     sync_status: SyncStatus::PendingUpload,
-                    is_locked_due_to_fork: false,
+                    lock_reason: None,
+                    pending_tombstones: Vec::new(),
                     last_synced_anchor: None,
                 };
                 storage.save_seal(auth, &new_record)?;

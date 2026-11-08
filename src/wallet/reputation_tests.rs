@@ -658,6 +658,7 @@ mod tests {
                 user_id: ACTORS.alice.identity.user_id.clone(),
                 epoch: 0,
                 epoch_start_time: "2099-01-01T00:00:00Z".to_string(),
+                epoch_valid_until: "2099-12-31T23:59:59Z".to_string(),
                 tx_nonce: 0,
                 prev_seal_hash: "none".to_string(),
                 state_hash: "hash".to_string(),
@@ -669,7 +670,8 @@ mod tests {
         let seal_record = crate::models::seal::LocalSealRecord {
             seal: future_seal,
             sync_status: crate::models::seal::SyncStatus::Synced,
-            is_locked_due_to_fork: false,
+            lock_reason: None,
+            pending_tombstones: Vec::new(),
             last_synced_anchor: None,
         };
         storage.save_seal(&auth, &seal_record).unwrap();
@@ -692,6 +694,7 @@ mod tests {
                 user_id: ACTORS.alice.identity.user_id.clone(),
                 epoch: 0,
                 epoch_start_time: sixty_days_ago_str.clone(),
+                epoch_valid_until: crate::models::seal::canonical_epoch_valid_until_for_timestamp(&sixty_days_ago_str),
                 tx_nonce: 0,
                 prev_seal_hash: "none".to_string(),
                 state_hash: "hash".to_string(),
@@ -703,7 +706,8 @@ mod tests {
         let seal_record_past = crate::models::seal::LocalSealRecord {
             seal: past_seal,
             sync_status: crate::models::seal::SyncStatus::Synced,
-            is_locked_due_to_fork: false,
+            lock_reason: None,
+            pending_tombstones: Vec::new(),
             last_synced_anchor: None,
         };
         storage.save_seal(&auth, &seal_record_past).unwrap();

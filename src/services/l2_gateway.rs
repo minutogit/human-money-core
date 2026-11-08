@@ -42,7 +42,23 @@ pub enum AnchorSyncVerdict {
     Synchronized,
     /// Local is ahead of L2 due to offline transactions.
     PendingLeapLock { sync_point: String },
-    /// L2 has a lock on local tip -> local state is behind (rollback detected).
+    /// Superseded by device handover or seed recovery tombstone.
+    SupersededByHandover {
+        target_epoch: u32,
+        is_seed_recovery: bool,
+        lock_entry: L2LockEntry,
+    },
+    /// Replay / rollback on the same device.
+    SameDeviceRollback {
+        remote_t_id: [u8; 32],
+        lock_entry: L2LockEntry,
+    },
+    /// Concurrent transaction performed with identical prefix on another device.
+    ConcurrentCloneDetected {
+        remote_t_id: [u8; 32],
+        lock_entry: L2LockEntry,
+    },
+    /// Generic rollback detected before identity attribution / descriptor decoding.
     RollbackDetected {
         remote_t_id: [u8; 32],
         lock_entry: L2LockEntry,
@@ -931,107 +947,201 @@ pub fn generate_locator_prefixes(voucher: &crate::models::voucher::Voucher) -> V
 
 // --- State Anchor (Virtual Voucher) Gateway Operations ---
 
-/// Builds an L2LockRequest for the genesis anchor of a wallet state anchor.
+/// Builds an L2LockRequest for the genesis anchor of a wallet state anchor (Slot 0).
 pub fn build_anchor_genesis_lock(
     identity: &UserIdentity,
     epoch: u64,
-    state_hash: &[u8; 32],
-    deletable_at: Option<String>,
+    epoch_valid_until: &str,
+    local_instance_id: &str,
 ) -> Result<L2LockRequest, VoucherCoreError> {
-    let anchor_id = crate::models::seal::derive_l2_anchor_id(identity, epoch);
-    let (step_key, step_pub) =
-        crate::models::seal::derive_anchor_step_key(&identity.signing_key, epoch, 0);
-    let step_pub_bytes = step_pub.to_bytes();
-    let state_hash_bs58 = bs58::encode(state_hash).into_string();
+    let anchor_id = crate::models::seal::derive_l2_anchor_id(identity, epoch, epoch_valid_until);
+    let t_id = crate::models::seal::derive_anchor_genesis_t_id(identity, epoch);
+    let causal_state_hash =
+        crate::models::seal::derive_anchor_genesis_causal_state_hash(identity, epoch);
+    let (step_key0, step_pub0) = crate::models::seal::derive_anchor_step_key(identity, epoch, 0);
+    let (_sk1, step_pub1) = crate::models::seal::derive_anchor_step_key(identity, epoch, 1);
+    let step_pub0_bytes = step_pub0.to_bytes();
+    let step_pub1_bytes = step_pub1.to_bytes();
 
-    let del = deletable_at.unwrap_or_else(|| {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        (now_ms + 2 * 365 * 24 * 3600 * 1000).to_string()
-    });
+    use sha3::Digest as Sha3Digest;
+    let receiver_pubkey_hash: [u8; 32] = sha3::Sha3_256::digest(step_pub1_bytes).into();
+    let root_valid_until_ms = crate::models::seal::parse_epoch_valid_until_ms(epoch_valid_until)?;
+
+    let mut proof = humoco_proto::causal::CausalOutputProof {
+        version: 1,
+        voucher_id: anchor_id.clone(),
+        transaction_id: t_id,
+        state_hash: causal_state_hash,
+        sender_pubkey: step_pub0_bytes,
+        receiver_pubkey_hash: Some(receiver_pubkey_hash),
+        change_pubkey_hash: None,
+        root_valid_until_ms,
+        is_root: true,
+        signature: [0; 64],
+    };
+    let proof_digest = proof
+        .digest()
+        .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+    proof.signature = step_key0.sign(&proof_digest).to_bytes();
+
+    let origin_device_fp48 =
+        crate::models::seal::derive_anchor_device_fp48(identity, local_instance_id);
+    let descriptor = crate::models::seal::AnchorLockDescriptor {
+        kind: crate::models::seal::AnchorLockKind::RegularStateUpdate,
+        target_epoch: epoch as u32,
+        origin_device_fp48,
+    };
+    let encrypted_timestamp =
+        descriptor.encode_encrypted_timestamp(identity, &anchor_id, epoch, 0, &t_id);
 
     let created_at_ms = crate::services::utils::current_unix_timestamp_ms();
+    let challenge_ds_tag = bs58::encode(t_id).into_string();
 
     let payload_hash = calculate_l2_payload_hash_raw(
         TRAP_NONE_PLACEHOLDER,
-        &state_hash_bs58,
-        state_hash,
-        &step_pub_bytes,
+        &challenge_ds_tag,
+        &t_id,
+        &step_pub0_bytes,
         TRAP_NONE_PLACEHOLDER,
         TRAP_NONE_PLACEHOLDER,
-        0,
+        encrypted_timestamp,
         created_at_ms,
-        Some(&del),
+        Some(epoch_valid_until),
         "",
     );
-    let sig = step_key.sign(&payload_hash);
+    let sig = step_key0.sign(&payload_hash);
 
     Ok(L2LockRequest {
-        causal_output: None,
+        causal_output: Some(proof),
         auth: L2AuthPayload {
-            ephemeral_pubkey: step_pub_bytes,
+            ephemeral_pubkey: step_pub0_bytes,
             auth_signature: None,
         },
         layer2_voucher_id: anchor_id,
         ds_tag: None,
-        transaction_hash: *state_hash,
+        transaction_hash: t_id,
         is_genesis: true,
-        sender_ephemeral_pub: step_pub_bytes,
+        sender_ephemeral_pub: step_pub0_bytes,
         layer2_signature: sig.to_bytes(),
         trap_r: Some(TRAP_NONE_PLACEHOLDER.into()),
         trap_s: Some(TRAP_NONE_PLACEHOLDER.into()),
-        encrypted_timestamp: 0,
+        encrypted_timestamp,
         created_at_ms,
-        deletable_at: Some(del),
+        deletable_at: Some(epoch_valid_until.to_string()),
         privacy_guard: None,
     })
 }
 
-/// Builds an L2LockRequest for a fast-forward leap-lock transition from an unspent L2 tag to a target state hash.
-pub fn build_anchor_leap_lock(
+/// Builds an L2LockRequest for a non-genesis anchor step (Slot >= 1).
+#[allow(clippy::too_many_arguments)]
+pub fn build_anchor_step_lock(
     identity: &UserIdentity,
     epoch: u64,
-    current_tx_nonce: u64,
-    ds_tag: &str,
-    target_state_hash: &[u8; 32],
+    epoch_valid_until: &str,
+    l2_slot: u64,
+    prev_causal_state_hash: &[u8; 32],
+    kind: crate::models::seal::AnchorLockKind,
+    target_epoch: u32,
+    local_instance_id: &str,
+    payload_commitment: &[u8; 32],
 ) -> Result<L2LockRequest, VoucherCoreError> {
-    let anchor_id = crate::models::seal::derive_l2_anchor_id(identity, epoch);
-    let (step_key, step_pub) =
-        crate::models::seal::derive_anchor_step_key(&identity.signing_key, epoch, current_tx_nonce);
-    let step_pub_bytes = step_pub.to_bytes();
+    if l2_slot == 0 {
+        return Err(VoucherCoreError::Validation(
+            crate::error::ValidationError::InvalidTransaction(
+                "build_anchor_step_lock requires l2_slot >= 1".to_string(),
+            ),
+        ));
+    }
+    let anchor_id = crate::models::seal::derive_l2_anchor_id(identity, epoch, epoch_valid_until);
+    let (step_key_slot, step_pub_slot) =
+        crate::models::seal::derive_anchor_step_key(identity, epoch, l2_slot);
+    let (_sk_next, step_pub_next) =
+        crate::models::seal::derive_anchor_step_key(identity, epoch, l2_slot + 1);
+    let step_pub_slot_bytes = step_pub_slot.to_bytes();
+    let step_pub_next_bytes = step_pub_next.to_bytes();
+
+    let ds_tag =
+        crate::models::seal::derive_anchor_canonical_ds_tag(prev_causal_state_hash, &step_pub_slot_bytes);
+    let origin_device_fp48 =
+        crate::models::seal::derive_anchor_device_fp48(identity, local_instance_id);
+    let t_id = crate::models::seal::derive_anchor_step_t_id(
+        identity,
+        epoch,
+        l2_slot,
+        kind,
+        target_epoch,
+        &origin_device_fp48,
+        payload_commitment,
+    );
+    let causal_state_hash = crate::models::seal::derive_anchor_step_causal_hash(
+        identity,
+        epoch,
+        l2_slot,
+        &t_id,
+    );
+
+    use sha3::Digest as Sha3Digest;
+    let receiver_pubkey_hash: [u8; 32] = sha3::Sha3_256::digest(step_pub_next_bytes).into();
+    let root_valid_until_ms = crate::models::seal::parse_epoch_valid_until_ms(epoch_valid_until)?;
+
+    let mut proof = humoco_proto::causal::CausalOutputProof {
+        version: 1,
+        voucher_id: anchor_id.clone(),
+        transaction_id: t_id,
+        state_hash: causal_state_hash,
+        sender_pubkey: step_pub_slot_bytes,
+        receiver_pubkey_hash: Some(receiver_pubkey_hash),
+        change_pubkey_hash: None,
+        root_valid_until_ms,
+        is_root: false,
+        signature: [0; 64],
+    };
+    let proof_digest = proof
+        .digest()
+        .map_err(|e| VoucherCoreError::Crypto(e.to_string()))?;
+    proof.signature = step_key_slot.sign(&proof_digest).to_bytes();
+
+    let (trap_r, trap_s) =
+        crate::models::seal::derive_anchor_indistinguishable_traps(identity, epoch, l2_slot, &t_id);
+    let descriptor = crate::models::seal::AnchorLockDescriptor {
+        kind,
+        target_epoch,
+        origin_device_fp48,
+    };
+    let encrypted_timestamp =
+        descriptor.encode_encrypted_timestamp(identity, &anchor_id, epoch, l2_slot, &t_id);
+
     let created_at_ms = crate::services::utils::current_unix_timestamp_ms();
 
     let payload_hash = calculate_l2_payload_hash_raw(
         &anchor_id,
-        ds_tag,
-        target_state_hash,
-        &step_pub_bytes,
-        TRAP_NONE_PLACEHOLDER,
-        TRAP_NONE_PLACEHOLDER,
-        0,
+        &ds_tag,
+        &t_id,
+        &step_pub_slot_bytes,
+        &trap_r,
+        &trap_s,
+        encrypted_timestamp,
         created_at_ms,
         None,
         "",
     );
-    let sig = step_key.sign(&payload_hash);
+    let sig = step_key_slot.sign(&payload_hash);
 
     Ok(L2LockRequest {
-        causal_output: None,
+        causal_output: Some(proof),
         auth: L2AuthPayload {
-            ephemeral_pubkey: step_pub_bytes,
+            ephemeral_pubkey: step_pub_slot_bytes,
             auth_signature: None,
         },
         layer2_voucher_id: anchor_id,
-        ds_tag: Some(ds_tag.to_string()),
-        transaction_hash: *target_state_hash,
+        ds_tag: Some(ds_tag),
+        transaction_hash: t_id,
         is_genesis: false,
-        sender_ephemeral_pub: step_pub_bytes,
+        sender_ephemeral_pub: step_pub_slot_bytes,
         layer2_signature: sig.to_bytes(),
-        trap_r: Some(TRAP_NONE_PLACEHOLDER.into()),
-        trap_s: Some(TRAP_NONE_PLACEHOLDER.into()),
-        encrypted_timestamp: 0,
+        trap_r: Some(trap_r),
+        trap_s: Some(trap_s),
+        encrypted_timestamp,
         created_at_ms,
         deletable_at: None,
         privacy_guard: None,
@@ -1042,14 +1152,14 @@ pub fn build_anchor_leap_lock(
 pub fn build_anchor_status_query(
     identity: &UserIdentity,
     epoch: u64,
-    tx_nonce: u64,
+    epoch_valid_until: &str,
+    l2_slot: u64,
     challenge_ds_tag: &str,
     locator_prefixes: Vec<String>,
     read_quorum: u8,
 ) -> Result<L2StatusQuery, VoucherCoreError> {
-    let anchor_id = crate::models::seal::derive_l2_anchor_id(identity, epoch);
-    let (_sk, pk) =
-        crate::models::seal::derive_anchor_step_key(&identity.signing_key, epoch, tx_nonce);
+    let anchor_id = crate::models::seal::derive_l2_anchor_id(identity, epoch, epoch_valid_until);
+    let (_sk, pk) = crate::models::seal::derive_anchor_step_key(identity, epoch, l2_slot);
 
     Ok(L2StatusQuery {
         auth: L2AuthPayload {

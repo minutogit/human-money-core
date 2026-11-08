@@ -617,10 +617,10 @@ fn test_wallet_transaction_recover_refuses_restoring_unlocked_seal_over_active_f
             .expect("decrypt seal");
     let mut seal_record: serde_json::Value =
         serde_json::from_slice(&decrypted_seal_bytes).expect("parse seal record json");
-    assert_eq!(seal_record["is_locked_due_to_fork"], false);
+    assert!(seal_record["lock_reason"].is_null());
 
     // Mark locked
-    seal_record["is_locked_due_to_fork"] = serde_json::Value::Bool(true);
+    seal_record["lock_reason"] = serde_json::json!("ForkDetected");
     let locked_seal_plain = serde_json::to_vec(&seal_record).expect("encode locked seal");
     let locked_seal_enc =
         crypto::encrypt_data(&master_key, &locked_seal_plain).expect("encrypt locked seal");
@@ -674,7 +674,7 @@ fn test_wallet_transaction_recover_refuses_restoring_unlocked_seal_over_active_f
             .expect("decrypt");
     let disk_seal_val: serde_json::Value = serde_json::from_slice(&disk_seal_plain).unwrap();
     assert_eq!(
-        disk_seal_val["is_locked_due_to_fork"], true,
+        disk_seal_val["lock_reason"], "ForkDetected",
         "Fork lock must remain active and not be wiped"
     );
 }

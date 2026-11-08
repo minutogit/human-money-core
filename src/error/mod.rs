@@ -171,6 +171,17 @@ pub enum Error {
     #[error("Security Lockdown: Wallet is locked due to a detected fork in the transaction history. Recovery required.")]
     WalletLockedDueToFork,
 
+    /// The wallet has been superseded by a handover or seed recovery on another device.
+    #[error("Security Notice: This wallet profile was transferred to another device (target epoch #{target_epoch}, is_seed_recovery: {is_seed_recovery}). Deactivated on this device.")]
+    WalletSupersededByHandover {
+        target_epoch: u32,
+        is_seed_recovery: bool,
+    },
+
+    /// Concurrent active usage with the same seed and user prefix detected on another device without handover.
+    #[error("Security Lockdown: Concurrent clone detected! Another device has performed transactions with the exact same prefix without a handover.")]
+    WalletConcurrentCloneDetected,
+
     /// Zone 2: Bundle timestamp is 5 minutes to 24 hours before the epoch_start_time.
     /// Potential double-spend trap. Requires explicit user confirmation.
     #[error("Warning: This transaction occurred shortly before the recent wallet recovery. Confirm with force_accept_tolerance_bundle.")]

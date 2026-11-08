@@ -128,10 +128,29 @@ impl TransactionOrchestrator {
 
                 // Recovery precedes every disk gate while the OS lock is held.
                 let recovered = storage.recover_wallet_transaction(&auth)?;
-                if let Some(record) = storage.load_seal(&auth)?
-                    && record.is_locked_due_to_fork
-                {
-                    return Err(crate::Error::WalletLockedDueToFork);
+                if let Some(record) = storage.load_seal(&auth)? {
+                    if let Some(reason) = record.lock_reason {
+                        service.state = AppState::Unlocked {
+                            storage,
+                            wallet,
+                            identity,
+                            session_cache,
+                        };
+                        match reason {
+                            crate::models::seal::SealLockReason::SupersededByHandover { target_epoch, .. } => {
+                                return Err(crate::Error::WalletSupersededByHandover {
+                                    target_epoch,
+                                    is_seed_recovery: false,
+                                });
+                            }
+                            crate::models::seal::SealLockReason::ConcurrentCloneDetected { .. } => {
+                                return Err(crate::Error::WalletConcurrentCloneDetected);
+                            }
+                            crate::models::seal::SealLockReason::ForkDetected => {
+                                return Err(crate::Error::WalletLockedDueToFork);
+                            }
+                        }
+                    }
                 }
 
                 // Reload-Before-Write with policy

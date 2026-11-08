@@ -475,14 +475,22 @@ impl AppService {
             if stored.seal != payload.seal {
                 return Err(invalid("Restored seal mismatch"));
             }
-            let anchor_tag = crate::models::seal::derive_anchor_step_tag(
-                &payload.seal.payload.prev_seal_hash,
-                payload.seal.payload.tx_nonce,
-            );
+            let epoch = payload.seal.payload.epoch as u64;
+            let epoch_valid_until = &payload.seal.payload.epoch_valid_until;
+            let slot = payload.seal.payload.tx_nonce.max(1);
+            let (_sk, pk) = crate::models::seal::derive_anchor_step_key(&identity, epoch, slot);
+            let anchor_tag = if slot == 1 {
+                let genesis_causal = crate::models::seal::derive_anchor_genesis_causal_state_hash(&identity, epoch);
+                crate::models::seal::derive_anchor_canonical_ds_tag(&genesis_causal, &pk.to_bytes())
+            } else {
+                let prev_state_bytes = crate::models::seal::seal_state_hash_bytes(&payload.seal.payload.state_hash);
+                crate::models::seal::derive_anchor_canonical_ds_tag(&prev_state_bytes, &pk.to_bytes())
+            };
             let anchor_query = crate::services::l2_gateway::build_anchor_status_query(
                 &identity,
-                payload.seal.payload.epoch as u64,
-                payload.seal.payload.tx_nonce,
+                epoch,
+                epoch_valid_until,
+                slot,
                 &anchor_tag,
                 vec![],
                 1,
@@ -561,12 +569,27 @@ impl AppService {
                 &state_hash,
                 &local_instance_id,
             )?;
+            let mut pending_tombstones = stored.pending_tombstones.clone();
+            let last_known_checkpoint = if last_known_seal.payload.epoch == stored.seal.payload.epoch {
+                stored.last_synced_anchor.clone()
+            } else {
+                None
+            };
+            pending_tombstones.push(crate::models::seal::PendingEpochTombstone {
+                old_epoch: last_known_seal.payload.epoch,
+                old_epoch_valid_until: last_known_seal.payload.epoch_valid_until.clone(),
+                target_epoch: seal.payload.epoch,
+                kind: crate::models::seal::AnchorLockKind::HandoverTombstone,
+                last_known_checkpoint,
+            });
+
             storage.save_seal(
                 &AuthMethod::Password(new_local_password),
                 &crate::models::seal::LocalSealRecord {
                     seal: seal.clone(),
                     sync_status: crate::models::seal::SyncStatus::PendingUpload,
-                    is_locked_due_to_fork: false,
+                    lock_reason: None,
+                    pending_tombstones,
                     last_synced_anchor: None,
                 },
             )?;

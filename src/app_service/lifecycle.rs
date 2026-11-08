@@ -156,7 +156,8 @@ impl AppService {
         let seal_record = LocalSealRecord {
             seal: initial_seal,
             sync_status: SyncStatus::PendingUpload,
-            is_locked_due_to_fork: false,
+            lock_reason: None,
+            pending_tombstones: Vec::new(),
             last_synced_anchor: None,
         };
         storage
@@ -381,10 +382,25 @@ impl AppService {
                 &local_instance_id,
             )?;
 
+            let mut pending_tombstones = existing_seal
+                .as_ref()
+                .map(|r| r.pending_tombstones.clone())
+                .unwrap_or_default();
+            if let Some(old_rec) = &existing_seal {
+                pending_tombstones.push(crate::models::seal::PendingEpochTombstone {
+                    old_epoch: old_rec.seal.payload.epoch,
+                    old_epoch_valid_until: old_rec.seal.payload.epoch_valid_until.clone(),
+                    target_epoch: recovered_seal.payload.epoch,
+                    kind: crate::models::seal::AnchorLockKind::SeedRecoveryTombstone,
+                    last_known_checkpoint: old_rec.last_synced_anchor.clone(),
+                });
+            }
+
             let new_record = LocalSealRecord {
                 seal: recovered_seal,
                 sync_status: SyncStatus::PendingUpload,
-                is_locked_due_to_fork: false, // Recovery lifts the fork lock!
+                lock_reason: None, // Recovery lifts any fork/lock reason!
+                pending_tombstones,
                 last_synced_anchor: None,
             };
             storage
@@ -530,11 +546,21 @@ impl AppService {
             .map_err(|e| Error::Crypto(format!("Loading seal for handover failed: {}", e)))?
             .ok_or(Error::RequiresSealRecovery)?;
         let new_seal = wallet.force_device_handover(&identity, Some(&old_record.seal))?;
+        let mut pending_tombstones = old_record.pending_tombstones.clone();
+        pending_tombstones.push(crate::models::seal::PendingEpochTombstone {
+            old_epoch: old_record.seal.payload.epoch,
+            old_epoch_valid_until: old_record.seal.payload.epoch_valid_until.clone(),
+            target_epoch: new_seal.payload.epoch,
+            kind: crate::models::seal::AnchorLockKind::HandoverTombstone,
+            last_known_checkpoint: old_record.last_synced_anchor.clone(),
+        });
+
         let new_record = crate::models::seal::LocalSealRecord {
             seal: new_seal.clone(),
             sync_status: crate::models::seal::SyncStatus::PendingUpload,
-            is_locked_due_to_fork: false,
-            last_synced_anchor: old_record.last_synced_anchor,
+            lock_reason: None,
+            pending_tombstones,
+            last_synced_anchor: None,
         };
         storage
             .save_seal(&auth, &new_record)

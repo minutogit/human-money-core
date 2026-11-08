@@ -27,6 +27,7 @@ mod tests {
                         user_id: ACTORS.alice.identity.user_id.clone(),
                         epoch: 0,
                         epoch_start_time: "dummy".to_string(),
+                        epoch_valid_until: "2099-12-31T23:59:59Z".to_string(),
                         tx_nonce: 0,
                         prev_seal_hash: "".to_string(),
                         state_hash: "dummy".to_string(),
@@ -36,7 +37,8 @@ mod tests {
                     signature: "dummy".to_string(),
                 },
                 sync_status: human_money_core::models::seal::SyncStatus::Synced,
-                is_locked_due_to_fork: true,
+                lock_reason: Some(human_money_core::models::seal::SealLockReason::ForkDetected),
+                pending_tombstones: Vec::new(),
                 last_synced_anchor: None,
             };
             

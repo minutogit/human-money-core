@@ -1,13 +1,14 @@
 use human_money_core::FileStorage;
 use human_money_core::models::layer2_api::{L2LockEntry, L2Verdict};
 use human_money_core::models::seal::{
-    SyncStatus, calculate_voucher_merkle_root, derive_anchor_step_key, derive_anchor_step_tag,
-    derive_l2_anchor_id,
+    calculate_voucher_merkle_root, derive_anchor_canonical_ds_tag,
+    derive_anchor_genesis_causal_state_hash, derive_anchor_step_key, derive_l2_anchor_id,
+    AnchorLockKind, SyncStatus,
 };
 use human_money_core::services::l2_gateway::{
-    AnchorSyncVerdict, build_anchor_leap_lock, build_anchor_status_query,
-    calculate_l2_payload_hash_raw, calculate_read_quorum, evaluate_anchor_verdict,
-    evaluate_multi_node_anchor_verdicts,
+    build_anchor_status_query, build_anchor_step_lock, calculate_l2_payload_hash_raw,
+    calculate_read_quorum, evaluate_anchor_verdict, evaluate_multi_node_anchor_verdicts,
+    AnchorSyncVerdict,
 };
 use human_money_core::storage::AuthMethod;
 use human_money_core::storage::seal_service::SealService;
@@ -94,19 +95,20 @@ fn test_time_insensitivity_and_expiration() {
 }
 
 /// 3. test_deterministic_key_derivation_zero_storage:
-/// Anchor ID, step key, and step tag are derived purely on the fly with no disk storage needed.
+/// Anchor ID, step key, and SST tag are derived purely on the fly with no disk storage needed.
 #[test]
 fn test_deterministic_key_derivation_zero_storage() {
     let identity = &ACTORS.alice.identity;
     let epoch = 0;
     let tx_nonce = 42;
+    let valid_until = "2099-12-31T23:59:59Z";
 
-    let anchor_id_1 = derive_l2_anchor_id(identity, epoch);
-    let anchor_id_2 = derive_l2_anchor_id(identity, epoch);
+    let anchor_id_1 = derive_l2_anchor_id(identity, epoch, valid_until);
+    let anchor_id_2 = derive_l2_anchor_id(identity, epoch, valid_until);
     assert_eq!(anchor_id_1, anchor_id_2, "Anchor ID must be deterministic");
 
-    let (sk1, pk1) = derive_anchor_step_key(&identity.signing_key, epoch, tx_nonce);
-    let (sk2, pk2) = derive_anchor_step_key(&identity.signing_key, epoch, tx_nonce);
+    let (sk1, pk1) = derive_anchor_step_key(identity, epoch, tx_nonce);
+    let (sk2, pk2) = derive_anchor_step_key(identity, epoch, tx_nonce);
     assert_eq!(
         sk1.to_bytes(),
         sk2.to_bytes(),
@@ -118,40 +120,50 @@ fn test_deterministic_key_derivation_zero_storage() {
         "Step public key must be deterministic"
     );
 
-    let prev_hash = "prev_seal_hash_123456789";
-    let tag1 = derive_anchor_step_tag(prev_hash, tx_nonce);
-    let tag2 = derive_anchor_step_tag(prev_hash, tx_nonce);
-    assert_eq!(tag1, tag2, "Step tag must be deterministic");
-    assert_ne!(tag1, derive_anchor_step_tag(prev_hash, tx_nonce + 1));
+    let prev_causal = [0x55u8; 32];
+    let tag1 = derive_anchor_canonical_ds_tag(&prev_causal, &pk1.to_bytes());
+    let tag2 = derive_anchor_canonical_ds_tag(&prev_causal, &pk2.to_bytes());
+    assert_eq!(tag1, tag2, "SST tag must be deterministic");
+    assert_ne!(
+        tag1,
+        derive_anchor_canonical_ds_tag(&[0x66u8; 32], &pk1.to_bytes())
+    );
 }
 
-/// 4. test_fast_forward_leap_lock_5_offline_steps:
-/// 5 offline transactions can be synchronized in a single Leap-Lock request jumping from nonce 0 to 5.
+/// 4. test_fast_forward_step_lock_with_causal_proof:
+/// Verifies anchor step lock construction carrying CausalOutputProof, indistinguishable traps, and descriptor.
 #[test]
-fn test_fast_forward_leap_lock_5_offline_steps() {
+fn test_fast_forward_step_lock_with_causal_proof() {
     let identity = &ACTORS.alice.identity;
     let epoch = 0;
-    let start_nonce = 0;
-    let genesis_tag = "genesis_tag_step_0";
+    let l2_slot = 1;
+    let valid_until = "2099-12-31T23:59:59Z";
+    let genesis_causal = derive_anchor_genesis_causal_state_hash(identity, epoch);
     let target_state_hash = [7u8; 32];
+    let instance_id = "test-device-alice";
 
-    let leap_lock = build_anchor_leap_lock(
+    let step_lock = build_anchor_step_lock(
         identity,
         epoch,
-        start_nonce,
-        genesis_tag,
+        valid_until,
+        l2_slot,
+        &genesis_causal,
+        AnchorLockKind::RegularStateUpdate,
+        epoch as u32,
+        instance_id,
         &target_state_hash,
     )
-    .expect("Building leap lock should succeed");
+    .expect("Building step lock should succeed");
 
-    assert_eq!(leap_lock.ds_tag, Some(genesis_tag.to_string()));
-    assert_eq!(leap_lock.transaction_hash, target_state_hash);
-    assert!(!leap_lock.is_genesis);
+    assert!(step_lock.ds_tag.is_some());
+    assert!(!step_lock.is_genesis);
+    assert!(step_lock.causal_output.is_some());
+    let proof = step_lock.causal_output.as_ref().unwrap();
+    assert!(!proof.is_root);
 
-    // Verify cryptographic signature of the leap-lock request using derived step key
-    let (_expected_sk, expected_pk) =
-        derive_anchor_step_key(&identity.signing_key, epoch, start_nonce);
-    assert_eq!(leap_lock.sender_ephemeral_pub, expected_pk.to_bytes());
+    // Verify cryptographic signature of the step lock request using derived step key
+    let (_expected_sk, expected_pk) = derive_anchor_step_key(identity, epoch, l2_slot);
+    assert_eq!(step_lock.sender_ephemeral_pub, expected_pk.to_bytes());
 }
 
 /// 5. test_l2_missing_locks_guidance:
@@ -225,8 +237,9 @@ fn test_rollback_detection_and_reconciliation() {
     let auth = AuthMethod::Password(PASSWORD);
     let record = storage.load_seal(&auth).unwrap().expect("Seal must exist");
     assert_eq!(record.seal.payload.tx_nonce, 3);
-    assert!(!record.is_locked_due_to_fork);
-    assert_eq!(record.sync_status, SyncStatus::Synced);
+    assert!(!record.is_locked());
+    assert!(record.lock_reason.is_none());
+    assert_eq!(record.sync_status, SyncStatus::PendingUpload);
 
     // Verify wallet state: v_id1 is Archived, v_id2 is still Active
     let (wallet, _) = app.get_unlocked_for_test();
@@ -474,9 +487,10 @@ fn test_cryptographic_proof_of_rollback_detection() {
     let ds_tag = "challenge_tag_for_proof";
 
     // Derive anchor ID and step key that L2 would have used for the remote lock
-    let anchor_id = derive_l2_anchor_id(identity, epoch);
+    let valid_until = "2099-12-31T23:59:59Z";
+    let anchor_id = derive_l2_anchor_id(identity, epoch, valid_until);
     let (step_sk, step_pk) =
-        derive_anchor_step_key(&identity.signing_key, epoch, tx_nonce_for_lock);
+        derive_anchor_step_key(identity, epoch, tx_nonce_for_lock);
     let step_pub_bytes = step_pk.to_bytes();
 
     // Create payload hash exactly as L2 would sign it for an anchor leap lock (non-genesis)
@@ -610,11 +624,13 @@ fn test_status_query_key_matches_step_nonce() {
     let challenge = "challenge_tag_123";
     let locator = vec!["loc1".to_string()];
 
+    let valid_until = "2099-12-31T23:59:59Z";
+
     for tx_nonce in [0u64, 1, 5, 42, 12345] {
         let query =
-            build_anchor_status_query(identity, epoch, tx_nonce, challenge, locator.clone(), 1)
+            build_anchor_status_query(identity, epoch, valid_until, tx_nonce, challenge, locator.clone(), 1)
                 .expect("build query should succeed");
-        let (_sk, expected_pk) = derive_anchor_step_key(&identity.signing_key, epoch, tx_nonce);
+        let (_sk, expected_pk) = derive_anchor_step_key(identity, epoch, tx_nonce);
         assert_eq!(
             query.auth.ephemeral_pubkey,
             expected_pk.to_bytes(),
@@ -623,21 +639,21 @@ fn test_status_query_key_matches_step_nonce() {
         );
         assert_eq!(query.challenge_ds_tag, challenge);
         assert_eq!(query.locator_prefixes, locator);
-        let expected_anchor_id = derive_l2_anchor_id(identity, epoch);
+        let expected_anchor_id = derive_l2_anchor_id(identity, epoch, valid_until);
         assert_eq!(query.layer2_voucher_id, expected_anchor_id);
     }
 
     // Different nonces must produce different keys
-    let q0 = build_anchor_status_query(identity, epoch, 0, challenge, vec![], 1).unwrap();
-    let q1 = build_anchor_status_query(identity, epoch, 1, challenge, vec![], 1).unwrap();
+    let q0 = build_anchor_status_query(identity, epoch, valid_until, 0, challenge, vec![], 1).unwrap();
+    let q1 = build_anchor_status_query(identity, epoch, valid_until, 1, challenge, vec![], 1).unwrap();
     assert_ne!(
         q0.auth.ephemeral_pubkey, q1.auth.ephemeral_pubkey,
         "Different tx_nonce must yield different ephemeral keys"
     );
 
     // Different epoch must produce different key even with same nonce
-    let q_epoch0 = build_anchor_status_query(identity, 0, 10, challenge, vec![], 1).unwrap();
-    let q_epoch1 = build_anchor_status_query(identity, 1, 10, challenge, vec![], 1).unwrap();
+    let q_epoch0 = build_anchor_status_query(identity, 0, valid_until, 10, challenge, vec![], 1).unwrap();
+    let q_epoch1 = build_anchor_status_query(identity, 1, valid_until, 10, challenge, vec![], 1).unwrap();
     assert_ne!(
         q_epoch0.auth.ephemeral_pubkey, q_epoch1.auth.ephemeral_pubkey,
         "Different epoch must yield different keys"
@@ -688,7 +704,7 @@ fn test_seal_anchor_backup_rollback_detection() {
     // Now simulate an attacker/remote state where a subsequent anchor (from an advanced wallet state)
     // was durably committed on Layer 2 with a different local_t_id:
     let remote_t_id = [0xEEu8; 32];
-    let (step_sk, step_pk) = derive_anchor_step_key(&identity.signing_key, ctx.epoch, ctx.step_nonce);
+    let (step_sk, step_pk) = derive_anchor_step_key(identity, ctx.epoch, ctx.step_nonce);
     let payload_hash = calculate_l2_payload_hash_raw(
         &ctx.anchor_id,
         &ctx.challenge_tag,

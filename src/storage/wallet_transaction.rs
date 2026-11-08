@@ -462,10 +462,10 @@ impl WalletTransaction {
 
         // Ensure recovery does not restore an unlocked seal over an active fork lock
         if let Ok(Some(current_seal)) = load_seal_record(storage, &self.key) {
-            if current_seal.is_locked_due_to_fork {
+            if current_seal.is_locked() {
                 if let Some(undo_seal_file) = self.undo.files.get(super::file_storage::SEAL_FILE_NAME) {
                     if let Ok(undo_seal) = decode_seal_bytes(&self.key, &undo_seal_file.0) {
-                        if !undo_seal.is_locked_due_to_fork {
+                        if !undo_seal.is_locked() {
                             return Err(invalid("refusing to restore unlocked seal over active fork lock"));
                         }
                     }
@@ -956,7 +956,7 @@ mod tests {
         {
             let _guard = crate::storage::WalletLockGuard::new(&storage).expect("guard");
             let mut record = storage.load_seal(&auth).expect("load seal").unwrap();
-            record.is_locked_due_to_fork = true;
+            record.lock_reason = Some(crate::models::seal::SealLockReason::ForkDetected);
             storage.save_seal(&auth, &record).expect("save seal");
             let current_gen = storage.read_generation().expect("read gen");
             let new_gen = storage.advance_generation(current_gen).expect("advance gen");
@@ -977,7 +977,7 @@ mod tests {
 
         // 5. Verify the fork lock is STILL active and was NOT erased/unlocked
         let seal_after = storage.load_seal(&auth).expect("load").unwrap();
-        assert!(seal_after.is_locked_due_to_fork, "Fork lock must remain active");
+        assert!(seal_after.is_locked(), "Fork lock must remain active");
 
         // 6. Login with stale journal present fails during recovery check
         let mut service_with_stale = AppService::new(dir.path()).expect("service");
